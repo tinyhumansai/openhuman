@@ -86,13 +86,3 @@ export function getIsAndroid(): boolean {
 export function getIsMobile(): boolean {
   return getIsIOS() || getIsAndroid();
 }
-
-/**
- * Convenience re-export as a constant.
- * Safe to import and use at module level — evaluated once on import.
- *
- * NOTE: if you need test overrides to work, call getIsIOS() instead,
- * since this is evaluated at module load time.
- */
-export const isIOS: boolean = detectIOS();
-export const isAndroid: boolean = detectAndroid();

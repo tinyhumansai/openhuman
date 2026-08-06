@@ -1,7 +1,7 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { QueuedFollowup } from '../../store/chatRuntimeSlice';
 
-export interface QueuedFollowupsProps {
+interface QueuedFollowupsProps {
   /** Follow-ups queued for the current thread while a turn is streaming. */
   items: QueuedFollowup[];
   /** Dismiss every queued follow-up (clears the backend run-queue too). */

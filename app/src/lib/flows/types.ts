@@ -36,8 +36,29 @@ export interface Position {
 }
 
 /**
- * The 12 node kinds `tinyflows` currently defines (`tinyflows::model::NodeKind`).
+ * The 15 node kinds `tinyflows` currently defines (`tinyflows::model::NodeKind`).
  * Wire values are `snake_case` (`#[serde(rename_all = "snake_case")]`).
+ *
+ * `memory` (issue #5226) is the 13th kind — declarative, in-graph memory
+ * access (`recall`/`search`/`flavour`/`people`/`remember`/`forget`, see
+ * `my_docs/memory_access_in_workflows/08-memory-node.md`). Its config is
+ * still the same free-form `WorkflowNode.config` bag as every other kind
+ * (see {@link WorkflowNode}); there is no dedicated TS config interface
+ * because no other kind has one either — the node-config form
+ * (`nodeConfig/memoryFields.tsx`) reads/writes the known keys
+ * (`operation`, `scope`, `query`, `flavour`, `key`, `value`, `limit`,
+ * `min_score`) directly off that bag, same as `condition`/`switch`/etc.
+ *
+ * `dedup` (issue #5263) is the 14th kind — skips items already seen, keyed
+ * by a stable per-item `=`-expression (e.g. `=item.id`). Same free-form
+ * config bag pattern: its one field, `key`, is read/written directly by
+ * `nodeConfig/dedupFields.tsx`.
+ *
+ * `loop` is the 15th kind — a bounded loop head. It emits on `body` until its
+ * `max_iterations` cap (or its optional `condition`) says otherwise, then on
+ * `done`; the loop is closed by wiring the body's last node back to it. Same
+ * free-form config bag: `max_iterations`, `on_exceeded` (`error` | `continue`),
+ * and `condition` are read/written by `nodeConfig/loopFields.tsx`.
  */
 export type NodeKind =
   | 'trigger'
@@ -51,7 +72,10 @@ export type NodeKind =
   | 'split_out'
   | 'transform'
   | 'output_parser'
-  | 'sub_workflow';
+  | 'sub_workflow'
+  | 'memory'
+  | 'dedup'
+  | 'loop';
 
 /**
  * A named connection point on a node. Mirrors `tinyflows::model::Port`.

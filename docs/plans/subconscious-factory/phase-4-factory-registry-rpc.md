@@ -85,6 +85,6 @@ blocker for the Rust work — the additions are backward-compatible.
 
 ## 4.5 `about_app`
 
-Update `src/openhuman/about_app/` copy: the subconscious is now described as
+Update `src/openhuman/platform/about_app/` copy: the subconscious is now described as
 per-world instances (memory awareness + tiny.place orchestration steering),
 per the repo rule that user-facing feature changes update about_app.

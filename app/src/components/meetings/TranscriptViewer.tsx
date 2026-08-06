@@ -25,7 +25,7 @@ function buildPlainText(lines: MeetCallTranscriptLine[]): string {
     .join('\n');
 }
 
-export function TranscriptViewer({ lines }: TranscriptViewerProps) {
+function TranscriptViewer({ lines }: TranscriptViewerProps) {
   const { t } = useT();
 
   async function handleCopy() {

@@ -39,7 +39,7 @@ export type ArtifactErrorCode =
   | 'DELETE_FAILED';
 
 /** Outcome surfaced to the UI for a single download attempt. */
-export interface DownloadArtifactOutcome {
+interface DownloadArtifactOutcome {
   ok: boolean;
   /** Absolute destination path when `ok === true`. */
   path?: string;
@@ -56,7 +56,7 @@ export interface DownloadArtifactOutcome {
 }
 
 /** Outcome surfaced to the UI for a single delete attempt (#3024). */
-export interface DeleteArtifactOutcome {
+interface DeleteArtifactOutcome {
   ok: boolean;
   /**
    * Stable failure code when `ok === false`. Pair with `error` (raw
@@ -70,9 +70,9 @@ export interface DeleteArtifactOutcome {
   error?: string;
 }
 
-export type ListedArtifactKind = 'presentation' | 'document' | 'image' | 'other';
+type ListedArtifactKind = 'presentation' | 'document' | 'image' | 'other';
 
-export interface ListedThreadArtifact {
+interface ListedThreadArtifact {
   artifactId: string;
   kind: ListedArtifactKind;
   title: string;
@@ -80,7 +80,7 @@ export interface ListedThreadArtifact {
   sizeBytes: number;
 }
 
-export interface ListThreadArtifactsOutcome {
+interface ListThreadArtifactsOutcome {
   ok: boolean;
   artifacts: ListedThreadArtifact[];
   error?: string;

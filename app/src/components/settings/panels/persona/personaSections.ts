@@ -13,7 +13,7 @@
 /** Managed field keys the guided builder can edit. */
 export type PersonaFieldKey = 'personality' | 'voice' | 'about';
 
-export interface PersonaSectionDef {
+interface PersonaSectionDef {
   key: PersonaFieldKey;
   /** Canonical `## ` heading text this field maps to inside SOUL.md. */
   heading: string;
@@ -24,13 +24,13 @@ export interface PersonaSectionDef {
  * in the bundled SOUL.md; `About You` is created on demand the first time the
  * user fills it in. Anything not listed here is preserved verbatim.
  */
-export const PERSONA_SECTIONS: readonly PersonaSectionDef[] = [
+const PERSONA_SECTIONS: readonly PersonaSectionDef[] = [
   { key: 'personality', heading: 'Personality' },
   { key: 'voice', heading: 'Voice' },
   { key: 'about', heading: 'About You' },
 ] as const;
 
-export type PersonaFields = Record<PersonaFieldKey, string>;
+type PersonaFields = Record<PersonaFieldKey, string>;
 
 const HEADING_FOR: Record<PersonaFieldKey, string> = {
   personality: 'Personality',

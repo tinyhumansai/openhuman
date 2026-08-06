@@ -1,12 +1,12 @@
 //! Context management configuration.
 //!
-//! Knobs for the global `src/openhuman/context/` module — budget
+//! Knobs for the global `src/openhuman/agent/context/` module — budget
 //! thresholds, summarization trigger percentages, microcompact behavior,
 //! and the session-memory extraction cadence. Wired into the root
 //! [`super::Config`] as the `context` section; env overrides live in
 //! [`super::load`].
 
-use crate::openhuman::context::session_memory::SessionMemoryConfig;
+use crate::openhuman::agent::context::session_memory::SessionMemoryConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ContextConfig {
-    /// Master switch. When `false`, [`crate::openhuman::context::ContextManager`]
+    /// Master switch. When `false`, [`crate::openhuman::agent::context::ContextManager`]
     /// skips every reduction stage and the summarizer is never invoked.
     /// Useful for tests and diagnostics; not recommended for production.
     #[serde(default = "default_enabled")]
@@ -128,11 +128,11 @@ pub struct ContextConfig {
     ///
     /// Read once at session/thread construction, so toggling it only
     /// affects threads started afterwards (the value is baked into the
-    /// frozen turn-1 context). Default: `true`. Env override:
-    /// `OPENHUMAN_SUPER_CONTEXT` (set to `0` to opt out). Surfaced in the
-    /// UI as the "super context" toggle next to the chat composer's
-    /// Quick/Reasoning mode switch, shown only on a fresh thread.
-    #[serde(default = "default_true")]
+    /// frozen turn-1 context). Default: `false` — it's an expensive pass, so
+    /// it's opt-in. Env override: `OPENHUMAN_SUPER_CONTEXT` (set to `1` to opt
+    /// in). Surfaced in the UI as the "super context" toggle next to the chat
+    /// composer's Quick/Reasoning mode switch, shown only on a fresh thread.
+    #[serde(default = "default_false")]
     pub super_context_enabled: bool,
 }
 
@@ -144,12 +144,16 @@ fn default_true() -> bool {
     true
 }
 
+fn default_false() -> bool {
+    false
+}
+
 fn default_microcompact_keep_recent() -> usize {
-    crate::openhuman::context::DEFAULT_KEEP_RECENT_TOOL_RESULTS
+    crate::openhuman::agent::context::DEFAULT_KEEP_RECENT_TOOL_RESULTS
 }
 
 fn default_tool_result_budget_bytes() -> usize {
-    crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES
+    crate::openhuman::agent::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES
 }
 
 fn default_summarizer_payload_threshold_tokens() -> usize {
@@ -178,7 +182,7 @@ impl Default for ContextConfig {
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
             compaction_enabled: default_true(),
-            super_context_enabled: default_true(),
+            super_context_enabled: default_false(),
         }
     }
 }

@@ -4,10 +4,7 @@ use openhuman_core::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlTool
 use openhuman_core::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use openhuman_core::openhuman::agent::Agent;
 use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
-use openhuman_core::openhuman::context::session_memory::SessionMemoryConfig;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
-};
+use openhuman_core::openhuman::agent::context::session_memory::SessionMemoryConfig;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
@@ -19,6 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 use tokio::time::{sleep, Duration, Instant};
 
 struct EnvGuard {
@@ -52,22 +53,27 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
 }
 
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<CapturedRequest>>,
-    native_tools: bool,
+    profile: ModelProfile,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>, native_tools: bool) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>, native_tools: bool) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             requests: Mutex::new(Vec::new()),
-            native_tools,
+            profile: ModelProfile {
+                provider: Some("round20".to_string()),
+                tool_calling: native_tools,
+                parallel_tool_calls: native_tools,
+                ..ModelProfile::default()
+            },
         })
     }
 
@@ -77,43 +83,25 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(
-        &self,
-    ) -> openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities {
-        openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities {
-            native_tool_calling: self.native_tools,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("checkpoint: {message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         self.requests.lock().push(CapturedRequest {
-            messages: request.messages.to_vec(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
+            messages: request.messages,
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
         });
         self.responses
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final", None)))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -274,54 +262,37 @@ impl Tool for Round20Tool {
     }
 }
 
-fn text_response(text: &str, usage: Option<UsageInfo>) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
-        usage,
-        reasoning_content: None,
+fn text_response(text: &str, usage: Option<Usage>) -> ModelResponse {
+    let response = ModelResponse::assistant(text);
+    match usage {
+        Some(usage) => response.with_usage(usage),
+        None => response,
     }
 }
 
-fn native_tool_response(name: &str, arguments: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some("native call".to_string()),
-        tool_calls: vec![ToolCall {
-            id: "round20-native-1".to_string(),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
-        usage: Some(UsageInfo {
-            input_tokens: 7_000,
-            output_tokens: 600,
-            context_window: 16_000,
-            cached_input_tokens: 250,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.002,
-        }),
-        reasoning_content: Some("native hidden reasoning".to_string()),
+fn tool_response(name: &str, arguments: serde_json::Value, usage: Usage) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("native call".to_string()),
+                ContentBlock::thinking("native hidden reasoning"),
+            ],
+            tool_calls: vec![ToolCall::new("round20-native-1", name, arguments)],
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn xml_tool_response(name: &str, value: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!(
-            "before <tool_call>{{\"name\":\"{name}\",\"arguments\":{{\"value\":\"{value}\"}}}}</tool_call>"
-        )),
-        tool_calls: Vec::new(),
-        usage: Some(UsageInfo {
-            input_tokens: 5_000,
-            output_tokens: 500,
-            context_window: 16_000,
-            cached_input_tokens: 100,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.001,
-        }),
-        reasoning_content: None,
-    }
+fn usage(input_tokens: u64, output_tokens: u64, cached_input_tokens: u64) -> Usage {
+    let mut usage = Usage::new(input_tokens, output_tokens);
+    usage.cache_read_tokens = cached_input_tokens;
+    usage
 }
 
 fn workspace(label: &str) -> (TempDir, PathBuf) {
@@ -356,7 +327,7 @@ fn tool(
 }
 
 #[tokio::test]
-async fn native_turn_dedups_duplicate_tool_specs_and_recovers_invalid_arguments() {
+async fn native_turn_dedups_duplicate_tool_specs_and_executes_empty_arguments() {
     let _env = env_lock();
     let (_temp, workspace_path) = workspace("native-dedup-invalid-args");
     let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
@@ -364,16 +335,16 @@ async fn native_turn_dedups_duplicate_tool_specs_and_recovers_invalid_arguments(
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
     let seen_args = Arc::new(Mutex::new(Vec::new()));
-    let provider = ScriptedProvider::new(
+    let provider = ScriptedModel::new(
         vec![
-            native_tool_response("round20_dup", "{not valid json"),
+            tool_response("round20_dup", json!({}), usage(7_000, 600, 250)),
             text_response("native final", None),
         ],
         true,
     );
 
     let mut agent = Agent::builder()
-        .provider_arc(provider.clone())
+        .chat_model(provider.clone())
         .tools(vec![
             tool(
                 "round20_dup",
@@ -414,7 +385,8 @@ async fn native_turn_dedups_duplicate_tool_specs_and_recovers_invalid_arguments(
     assert!(provider.requests()[1]
         .messages
         .iter()
-        .any(|message| message.role == "tool" && message.content.contains("first-tool:empty")));
+        .any(|message| matches!(message, Message::Tool(_))
+            && message.text().contains("first-tool:empty")));
 }
 
 #[tokio::test]
@@ -425,16 +397,20 @@ async fn xml_turn_persists_tool_cycle_and_fires_failure_hook_context() {
     let hook_calls = Arc::new(AtomicUsize::new(0));
     let hook_contexts = Arc::new(Mutex::new(Vec::new()));
     let failure_calls = Arc::new(AtomicUsize::new(0));
-    let provider = ScriptedProvider::new(
+    let provider = ScriptedModel::new(
         vec![
-            xml_tool_response("round20_fail", "bad"),
+            tool_response(
+                "round20_fail",
+                json!({"value": "bad"}),
+                usage(5_000, 500, 100),
+            ),
             text_response("xml final", None),
         ],
         false,
     );
 
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![tool(
             "round20_fail",
             "semantic failure",
@@ -494,27 +470,20 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
     let hook_calls = Arc::new(AtomicUsize::new(0));
     let hook_contexts = Arc::new(Mutex::new(Vec::new()));
     let calls = Arc::new(AtomicUsize::new(0));
-    let provider = ScriptedProvider::new(
+    let provider = ScriptedModel::new(
         vec![
-            xml_tool_response("round20_ok", "flush"),
-            text_response(
-                "flush final",
-                Some(UsageInfo {
-                    input_tokens: 8_000,
-                    output_tokens: 1_000,
-                    context_window: 16_000,
-                    cached_input_tokens: 10,
-                    cache_creation_tokens: 0,
-                    reasoning_tokens: 0,
-                    charged_amount_usd: 0.003,
-                }),
+            tool_response(
+                "round20_ok",
+                json!({"value": "flush"}),
+                usage(5_000, 500, 100),
             ),
+            text_response("flush final", Some(usage(8_000, 1_000, 10))),
         ],
         false,
     );
 
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![tool(
             "round20_ok",
             "ok-output",
@@ -559,9 +528,9 @@ async fn session_memory_threshold_path_runs_only_after_successful_turn() {
     assert_eq!(hook_contexts.lock()[0].iteration_count, 2);
 
     let (_empty_tmp, empty_workspace) = workspace("empty-failed-turn");
-    let empty_provider = ScriptedProvider::new(vec![text_response("   ", None)], false);
+    let empty_provider = ScriptedModel::new(vec![text_response("   ", None)], false);
     let mut failed_agent = Agent::builder()
-        .provider_arc(empty_provider)
+        .chat_model(empty_provider)
         .tools(Vec::new())
         .memory(RecordingMemory::new())
         .tool_dispatcher(Box::new(XmlToolDispatcher))

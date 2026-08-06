@@ -13,7 +13,7 @@
 //! runs their own provider key, no `errorCode` is present). The presence of an
 //! `errorCode` is therefore the single load-bearing signal for two decisions:
 //!
-//! 1. **Classification** ([`super::super::super::channels::providers::web_errors::classify_inference_error`]):
+//! 1. **Classification** ([`super::super::super::web_chat::web_errors::classify_inference_error`]):
 //!    when an `errorCode` is present, branch on it FIRST and ignore the
 //!    substring heuristics; when it is absent, fall back to the substring
 //!    ladder (the BYO / direct-provider path, whose "check your API key" /
@@ -31,7 +31,7 @@
 //! error is collapsed to a `String` at the native-bus boundary before it
 //! reaches the channel classifier or the higher-layer re-report sites.
 
-use super::openhuman_backend;
+use super::openhuman_backend_model;
 
 /// A recognised backend `errorCode` token (PR #870).
 ///
@@ -121,7 +121,7 @@ pub fn extract_backend_error_code_token(err: &str) -> Option<String> {
 /// downstream sites (`expected_error_kind`, `before_send`) that no longer carry
 /// the typed provider.
 pub fn is_managed_backend_envelope(err: &str) -> bool {
-    let label = openhuman_backend::PROVIDER_LABEL.to_ascii_lowercase();
+    let label = openhuman_backend_model::PROVIDER_LABEL.to_ascii_lowercase();
     let lower = err.to_ascii_lowercase();
     lower.contains(&format!("{label} api error"))
         || lower.contains(&format!("{label} streaming api error"))
@@ -184,7 +184,7 @@ pub fn is_backend_malformed_bad_request(err: &str) -> bool {
 ///   `too_large` reject), so an over-limit request reaching the backend means
 ///   the aggregate slipped past those gates.
 /// - `CONTEXT_LENGTH_EXCEEDED`: the client manages context before send (the
-///   context stats state's `context_window`, `src/openhuman/context/stats.rs`),
+///   context stats state's `context_window`, `src/openhuman/agent/context/stats.rs`),
 ///   so a backend rejection means that fitting / trimming failed.
 ///
 /// The backend does not ops-alert either (they are 4xx, not 500), so if the FE

@@ -1,8 +1,20 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentProfile } from '../../../../types/agentProfile';
 import type { CoreCronJob } from '../../../../utils/tauriCommands';
 import CronJobFormModal, { type CronJobFormModalProps } from './CronJobFormModal';
+
+const sampleProfiles: AgentProfile[] = [
+  { id: 'writer', name: 'Writer', description: '', agentId: 'orchestrator', builtIn: false },
+  {
+    id: 'researcher',
+    name: 'Researcher',
+    description: '',
+    agentId: 'orchestrator',
+    builtIn: false,
+  },
+];
 
 // ── Mock i18n ──────────────────────────────────────────────────────────
 vi.mock('../../../../lib/i18n/I18nContext', () => ({
@@ -34,6 +46,9 @@ vi.mock('../../../../lib/i18n/I18nContext', () => ({
         'settings.cron.jobs.formSessionTarget': 'Session target',
         'settings.cron.jobs.formSessionIsolated': 'Isolated (recommended)',
         'settings.cron.jobs.formSessionMain': 'Main session',
+        'settings.cron.jobs.formProfile': 'Agent profile',
+        'settings.cron.jobs.formProfileNone': 'No profile',
+        'settings.cron.jobs.formProfileHint': 'Run this job as the selected profile.',
         'settings.cron.jobs.formDelivery': 'Delivery mode',
         'settings.cron.jobs.formDeliveryNone': 'None (output only)',
         'settings.cron.jobs.formDeliveryProactive': 'Proactive (push notification)',
@@ -434,5 +449,83 @@ describe('<CronJobFormModal />', () => {
     expect(screen.queryByTestId('cron-form-prompt')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('cron-form-job-type-agent'));
     expect(screen.getByTestId('cron-form-prompt')).toBeInTheDocument();
+  });
+
+  // ── Agent profile attribution picker ─────────────────────────────────
+  it('renders a profile picker with a "no profile" default plus each profile for agent jobs', () => {
+    render(<CronJobFormModal {...makeProps({ profiles: sampleProfiles })} />);
+    const picker = screen.getByTestId('cron-form-profile') as HTMLSelectElement;
+    const optionValues = Array.from(picker.options).map(o => o.value);
+    expect(optionValues).toEqual(['', 'writer', 'researcher']);
+    // Defaults to "no profile".
+    expect(picker.value).toBe('');
+  });
+
+  it('associates the profile label with the select for screen readers', () => {
+    render(<CronJobFormModal {...makeProps({ profiles: sampleProfiles })} />);
+    // getByLabelText only resolves when the <label htmlFor> matches the select id.
+    const labelled = screen.getByLabelText('Agent profile') as HTMLSelectElement;
+    expect(labelled).toBe(screen.getByTestId('cron-form-profile'));
+  });
+
+  it('hides the profile picker for shell jobs', () => {
+    render(<CronJobFormModal {...makeProps({ profiles: sampleProfiles })} />);
+    fireEvent.click(screen.getByTestId('cron-form-job-type-shell'));
+    expect(screen.queryByTestId('cron-form-profile')).not.toBeInTheDocument();
+  });
+
+  it('omits profile_id from create params when "no profile" is selected', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<CronJobFormModal {...makeProps({ onCreate, profiles: sampleProfiles })} />);
+    fireEvent.change(screen.getByTestId('cron-form-prompt'), { target: { value: 'go' } });
+    fireEvent.click(screen.getByTestId('cron-form-submit'));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
+    const [params] = onCreate.mock.calls[0];
+    expect(params).not.toHaveProperty('profile_id');
+  });
+
+  it('includes profile_id in create params when a profile is selected', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<CronJobFormModal {...makeProps({ onCreate, profiles: sampleProfiles })} />);
+    fireEvent.change(screen.getByTestId('cron-form-prompt'), { target: { value: 'go' } });
+    fireEvent.change(screen.getByTestId('cron-form-profile'), { target: { value: 'researcher' } });
+    fireEvent.click(screen.getByTestId('cron-form-submit'));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
+    const [params] = onCreate.mock.calls[0];
+    expect(params.profile_id).toBe('researcher');
+  });
+
+  it('prefills the picker from job.profile_id and patches the same id on edit', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const job: CoreCronJob = { ...sampleJob, profile_id: 'writer' };
+    render(
+      <CronJobFormModal {...makeProps({ mode: 'edit', job, onUpdate, profiles: sampleProfiles })} />
+    );
+    expect((screen.getByTestId('cron-form-profile') as HTMLSelectElement).value).toBe('writer');
+    fireEvent.click(screen.getByTestId('cron-form-submit'));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    const [, patch] = onUpdate.mock.calls[0];
+    expect(patch.profile_id).toBe('writer');
+  });
+
+  it('sends profile_id: null on edit when the attribution is cleared to "no profile"', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const job: CoreCronJob = { ...sampleJob, profile_id: 'writer' };
+    render(
+      <CronJobFormModal {...makeProps({ mode: 'edit', job, onUpdate, profiles: sampleProfiles })} />
+    );
+    fireEvent.change(screen.getByTestId('cron-form-profile'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('cron-form-submit'));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    const [, patch] = onUpdate.mock.calls[0];
+    expect(patch.profile_id).toBeNull();
+  });
+
+  it('keeps a deleted attributed profile selectable by its raw id', () => {
+    const job: CoreCronJob = { ...sampleJob, profile_id: 'ghost' };
+    render(<CronJobFormModal {...makeProps({ mode: 'edit', job, profiles: sampleProfiles })} />);
+    const picker = screen.getByTestId('cron-form-profile') as HTMLSelectElement;
+    expect(picker.value).toBe('ghost');
+    expect(Array.from(picker.options).map(o => o.value)).toContain('ghost');
   });
 });

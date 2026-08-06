@@ -124,10 +124,6 @@ vi.mock('../../hooks/useStickToBottom', () => ({
   useStickToBottom: vi.fn(() => ({ containerRef: { current: null }, endRef: { current: null } })),
 }));
 
-vi.mock('../../features/autocomplete/useAutocompleteSkillStatus', () => ({
-  useAutocompleteSkillStatus: vi.fn(() => ({ status: 'idle', skills: [] })),
-}));
-
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 vi.mock('../../lib/coreState/store', () => ({

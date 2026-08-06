@@ -241,5 +241,3 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
     </div>
   );
 }
-
-export default VaultHealthChecklist;

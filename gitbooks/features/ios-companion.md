@@ -56,7 +56,7 @@ The QR payload (carried as an `openhuman://pair?...` deep link) contains the cha
 
 ## The end-to-end tunnel
 
-Confidentiality and integrity live entirely on the two endpoints. The exact primitives, from `src/openhuman/devices/crypto.rs`:
+Confidentiality and integrity live entirely on the two endpoints. The exact primitives, from `src/openhuman/security/devices/crypto.rs`:
 
 * **Key agreement:** X25519 Diffie-Hellman. Each side has a long-term static keypair (the core's is in the QR; the device's is minted at scan time) plus an ephemeral keypair minted per session for forward secrecy.
 * **Session-key derivation:** HKDF-SHA256 over `ikm = static_dh || eph_dh`, salted with `client_eph_pub || server_eph_pub`. Two **directional** 32-byte subkeys are expanded with distinct info tags (`openhuman-tunnel/v1/c2s` and `openhuman-tunnel/v1/s2c`), so a frame one side seals can never decrypt under its own opener (closes the cross-direction reflection attack class).

@@ -14,7 +14,9 @@ import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type ApprovalDecision, type PendingApproval } from '../../services/api/approvalApi';
-import Button from '../ui/Button';
+import ApprovalDecisionCard, {
+  type ApprovalDecisionAction,
+} from '../approvals/ApprovalDecisionCard';
 
 interface Props {
   approval: PendingApproval;
@@ -27,8 +29,37 @@ export function FlowRunPendingApprovalCard({ approval, deciding, onDecide }: Pro
   const { t } = useT();
   const [localDecision, setLocalDecision] = useState<ApprovalDecision | null>(null);
 
-  const handleDecide = (decision: ApprovalDecision) => {
+  const actionDecisions: Record<string, ApprovalDecision> = {
+    [`flow-run-pending-approval-approve-${approval.request_id}`]: 'approve_once',
+    [`flow-run-pending-approval-always-${approval.request_id}`]: 'approve_always_for_flow',
+    [`flow-run-pending-approval-deny-${approval.request_id}`]: 'deny',
+  };
+  const actions: ApprovalDecisionAction[] = [
+    {
+      id: `flow-run-pending-approval-approve-${approval.request_id}`,
+      label: t('flowRuns.inspector.approval.approve'),
+      busyLabel: t('flowRuns.inspector.approval.deciding'),
+      variant: 'primary',
+    },
+    {
+      id: `flow-run-pending-approval-always-${approval.request_id}`,
+      label: t('flowRuns.inspector.approval.approveAlways'),
+      busyLabel: t('flowRuns.inspector.approval.deciding'),
+      variant: 'secondary',
+      title: t('flowRuns.inspector.approval.approveAlwaysHint'),
+    },
+    {
+      id: `flow-run-pending-approval-deny-${approval.request_id}`,
+      label: t('flowRuns.inspector.approval.deny'),
+      busyLabel: t('flowRuns.inspector.approval.deciding'),
+      variant: 'secondary',
+    },
+  ];
+
+  const handleAction = (actionId: string) => {
     if (deciding) return;
+    const decision = actionDecisions[actionId];
+    if (!decision) return;
     setLocalDecision(decision);
     void onDecide(decision).catch(() => {
       // Error surfaces via the hook's shared `error` field; nothing extra to
@@ -37,64 +68,32 @@ export function FlowRunPendingApprovalCard({ approval, deciding, onDecide }: Pro
     });
   };
 
-  return (
-    <div
-      role="alertdialog"
-      aria-label={t('flowRuns.inspector.pendingApprovals')}
-      data-testid={`flow-run-pending-approval-${approval.request_id}`}
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs shadow-sm dark:border-amber-700 dark:bg-amber-950">
-      <div className="flex items-start gap-2">
-        <span aria-hidden className="text-sm leading-none">
-          🔒
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="break-words text-amber-800/90 dark:text-amber-200/90">
-            {approval.action_summary}
-          </p>
-          <p className="mt-1 text-[11px] text-amber-800/80 dark:text-amber-200/80">
-            {t('flowRuns.inspector.approval.tool')}{' '}
-            <span className="font-mono text-amber-950 dark:text-amber-100">
-              {approval.tool_name}
-            </span>
-          </p>
+  const busyActionId = deciding
+    ? localDecision
+      ? actions.find(action => actionDecisions[action.id] === localDecision)?.id
+      : `flow-run-pending-approval-busy-${approval.request_id}`
+    : null;
 
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Button
-              variant="primary"
-              size="xs"
-              data-testid={`flow-run-pending-approval-approve-${approval.request_id}`}
-              disabled={deciding}
-              onClick={() => handleDecide('approve_once')}>
-              {deciding && localDecision === 'approve_once'
-                ? t('flowRuns.inspector.approval.deciding')
-                : t('flowRuns.inspector.approval.approve')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="xs"
-              data-testid={`flow-run-pending-approval-always-${approval.request_id}`}
-              disabled={deciding}
-              title={t('flowRuns.inspector.approval.approveAlwaysHint')}
-              onClick={() => handleDecide('approve_always_for_flow')}>
-              {deciding && localDecision === 'approve_always_for_flow'
-                ? t('flowRuns.inspector.approval.deciding')
-                : t('flowRuns.inspector.approval.approveAlways')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="xs"
-              data-testid={`flow-run-pending-approval-deny-${approval.request_id}`}
-              disabled={deciding}
-              onClick={() => handleDecide('deny')}>
-              {deciding && localDecision === 'deny'
-                ? t('flowRuns.inspector.approval.deciding')
-                : t('flowRuns.inspector.approval.deny')}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+  return (
+    <ApprovalDecisionCard
+      ariaLabel={t('flowRuns.inspector.pendingApprovals')}
+      testId={`flow-run-pending-approval-${approval.request_id}`}
+      className="text-xs"
+      density="compact"
+      summary={
+        <p className="break-words text-amber-800/90 dark:text-amber-200/90">
+          {approval.action_summary}
+        </p>
+      }
+      metadata={
+        <p className="mt-1 text-[11px] text-amber-800/80 dark:text-amber-200/80">
+          {t('flowRuns.inspector.approval.tool')}{' '}
+          <span className="font-mono text-amber-950 dark:text-amber-100">{approval.tool_name}</span>
+        </p>
+      }
+      actions={actions}
+      busyActionId={busyActionId}
+      onAction={handleAction}
+    />
   );
 }
-
-export default FlowRunPendingApprovalCard;

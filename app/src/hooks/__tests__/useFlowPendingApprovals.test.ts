@@ -2,18 +2,18 @@
  * useFlowPendingApprovals (flow-approval surface — run details) — poll +
  * decide contract.
  *
- * Asserts: no-op while `flowId`/`runId` is null; polls
+ * Asserts: no-op while `flowId`/`runId` is null; selects from the shared poller
  * `approval_list_pending` every 2s while both are set; filters to gates
- * matching `source_context.{kind:"flow",flow_id,run_id}`; stops polling on a
- * fetch error (surfacing it) without hammering the endpoint; resets state
- * when `flowId`/`runId` change; `decide()` calls `decideApproval` and
- * optimistically drops the request on success, surfaces `error` and keeps it
- * in the list on failure; cleans up timers on unmount.
+ * matching `source_context.{kind:"flow",flow_id,run_id}`; preserves approvals
+ * and retries after a transient error; hides shared state when disabled;
+ * `decide()` calls `decideApproval`, refreshes the shared source on success,
+ * and surfaces local decision failures; releases polling on unmount.
  */
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PendingApproval } from '../../services/api/approvalApi';
+import { resetFlowPendingApprovalsStoreForTests } from '../flowPendingApprovalsStore';
 import { useFlowPendingApprovals } from '../useFlowPendingApprovals';
 
 const fetchPendingApprovals = vi.hoisted(() => vi.fn());
@@ -38,9 +38,11 @@ describe('useFlowPendingApprovals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    resetFlowPendingApprovalsStoreForTests();
   });
 
   afterEach(() => {
+    resetFlowPendingApprovalsStoreForTests();
     vi.useRealTimers();
   });
 
@@ -86,19 +88,30 @@ describe('useFlowPendingApprovals', () => {
     expect(fetchPendingApprovals).toHaveBeenCalledTimes(2);
   });
 
-  it('surfaces an error and stops polling on a failed fetch', async () => {
-    fetchPendingApprovals.mockRejectedValue(new Error('network down'));
+  it('keeps approvals, surfaces an error, and retries after a failed fetch', async () => {
+    fetchPendingApprovals
+      .mockResolvedValueOnce([makeApproval({ request_id: 'req-a' })])
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce([]);
     const { result } = renderHook(() => useFlowPendingApprovals('flow-1', 'run-1'));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(result.current.error).toBe('network down');
+    expect(result.current.approvals).toHaveLength(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
-    expect(fetchPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe('network down');
+    expect(result.current.approvals).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(3);
+    expect(result.current.approvals).toEqual([]);
+    expect(result.current.error).toBeNull();
   });
 
   it('resets approvals when flowId/runId change', async () => {
@@ -117,21 +130,87 @@ describe('useFlowPendingApprovals', () => {
     expect(result.current.approvals).toEqual([]);
   });
 
-  it('decide() calls decideApproval and optimistically drops the request on success', async () => {
-    fetchPendingApprovals.mockResolvedValue([makeApproval({ request_id: 'req-a' })]);
+  it('decide() refreshes every shared-source consumer on success', async () => {
+    fetchPendingApprovals
+      .mockResolvedValueOnce([
+        makeApproval({ request_id: 'req-a' }),
+        makeApproval({
+          request_id: 'req-b',
+          source_context: { kind: 'flow', flow_id: 'flow-2', run_id: 'run-2' },
+        }),
+      ])
+      .mockResolvedValueOnce([]);
     decideApproval.mockResolvedValue(undefined);
     const { result } = renderHook(() => useFlowPendingApprovals('flow-1', 'run-1'));
+    const other = renderHook(() => useFlowPendingApprovals('flow-2', 'run-2'));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(result.current.approvals).toHaveLength(1);
+    expect(other.result.current.approvals).toHaveLength(1);
 
     await act(async () => {
       await result.current.decide('req-a', 'approve_once');
     });
 
     expect(decideApproval).toHaveBeenCalledWith('req-a', 'approve_once');
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(2);
+    expect(result.current.approvals).toEqual([]);
+    expect(other.result.current.approvals).toEqual([]);
+    expect(result.current.decidingId).toBeNull();
+  });
+
+  it('decide() queues and awaits one post-decision refresh when a poll is already in flight', async () => {
+    let resolvePreDecisionPoll!: (approvals: PendingApproval[]) => void;
+    let resolvePostDecisionPoll!: (approvals: PendingApproval[]) => void;
+    fetchPendingApprovals
+      .mockImplementationOnce(
+        () =>
+          new Promise<PendingApproval[]>(resolve => {
+            resolvePreDecisionPoll = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PendingApproval[]>(resolve => {
+            resolvePostDecisionPoll = resolve;
+          })
+      );
+    decideApproval.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useFlowPendingApprovals('flow-1', 'run-1'));
+
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(1);
+
+    let decisionSettled = false;
+    let decisionPromise!: Promise<void>;
+    await act(async () => {
+      decisionPromise = result.current.decide('req-a', 'approve_once');
+      void decisionPromise.finally(() => {
+        decisionSettled = true;
+      });
+      await Promise.resolve();
+    });
+
+    expect(decideApproval).toHaveBeenCalledWith('req-a', 'approve_once');
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePreDecisionPoll([makeApproval({ request_id: 'req-a' })]);
+      await Promise.resolve();
+    });
+
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(2);
+    expect(decisionSettled).toBe(false);
+    expect(result.current.decidingId).toBe('req-a');
+
+    await act(async () => {
+      resolvePostDecisionPoll([]);
+      await decisionPromise;
+    });
+
+    expect(fetchPendingApprovals).toHaveBeenCalledTimes(2);
+    expect(decisionSettled).toBe(true);
     expect(result.current.approvals).toEqual([]);
     expect(result.current.decidingId).toBeNull();
   });

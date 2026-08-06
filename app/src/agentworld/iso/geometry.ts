@@ -29,7 +29,7 @@ export interface ScreenPoint {
   y: number;
 }
 
-export interface TilePoint {
+interface TilePoint {
   x: number;
   y: number;
 }
@@ -62,7 +62,7 @@ export function screenToTile(screenX: number, screenY: number): TilePoint {
  * Layer biases keep entities that share a tile in a stable front-to-back order
  * without disturbing the dominant `gridX + gridY` ordering.
  */
-export const DEPTH_TILE_SCALE = 16;
+const DEPTH_TILE_SCALE = 16;
 export const LAYER_FLOOR = 0;
 export const LAYER_DECAL = 1;
 export const LAYER_WALL = 2;
@@ -77,9 +77,4 @@ export function depthAt(gridX: number, gridY: number, level = 0, layer = 0): num
 /** Linear interpolation between two scalars. */
 export function lerp(from: number, to: number, amount: number): number {
   return from + (to - from) * amount;
-}
-
-/** Euclidean distance between two tile points. */
-export function tileDistance(from: TilePoint, to: TilePoint): number {
-  return Math.hypot(to.x - from.x, to.y - from.y);
 }

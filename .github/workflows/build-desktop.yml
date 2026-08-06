@@ -98,7 +98,7 @@ jobs:
   build:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
     runs-on: ${{ matrix.settings.platform }}
-    timeout-minutes: 70
+    timeout-minutes: 90
     environment: Production
     strategy:
       fail-fast: false
@@ -172,6 +172,8 @@ jobs:
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Install Tauri dependencies (ubuntu only)
         if: startsWith(matrix.settings.platform, 'ubuntu-')
+        env:
+          MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -180,7 +182,12 @@ jobs:
             libevdev-dev libssl-dev libclang-dev desktop-file-utils \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-            libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
+            libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev \
+            xvfb dbus dbus-x11
+          if [ "$MATRIX_TARGET" = "x86_64-unknown-linux-gnu" ] \
+            && ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install -y apparmor
+          fi
       # NOTE: The post-build dump lives further down (after `cargo tauri build`)
       # so the binary actually exists when ldd runs. Running it here pre-build
       # silently no-op'd and gave us no signal during the
@@ -528,19 +535,19 @@ jobs:
           done
 
       # Strip host graphics libraries (Mesa/libdrm/libva/libgbm) that lib4bin
-      # ldd-walks into the AppImage. Those drivers must come from the user's
-      # host system — even on a current Ubuntu runner the bundled Mesa can
-      # fail to initialize newer GPUs (RDNA3, Intel Arc, Lovelace) and
-      # crashes CEF on launch because the bundled libs shadow the host's
-      # working ones on LD_LIBRARY_PATH. CEF's own SwiftShader subdir is
-      # untouched. Re-signs the AppImage + updater tarball when signing
-      # is enabled.
-      - name: Strip host graphics libs from AppImage
+      # ldd-walks into the AppImage. Final-artifact validation runs before
+      # re-signing: amd64 also gets a bounded Xvfb launch from a foreign CWD,
+      # while arm64 receives static validation in this change. CEF's own
+      # SwiftShader subdir is untouched, and updater archives are rebuilt only
+      # after the validated image is final.
+      - name: Strip host graphics libs and validate final AppImage
         if: startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
           PROFILE: ${{ inputs.build_profile }}
+          APPIMAGE_RUNTIME_SMOKE: ${{ matrix.settings.target == 'x86_64-unknown-linux-gnu' && '1' || '0' }}
+          APPIMAGE_RUNTIME_APPARMOR_USERNS: ${{ matrix.settings.target == 'x86_64-unknown-linux-gnu' && '1' || '0' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
         run: |

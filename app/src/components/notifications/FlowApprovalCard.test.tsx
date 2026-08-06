@@ -1,15 +1,20 @@
 /**
- * Approve/Dismiss/View-run contract for the flow-pending-approval
- * notification card (issues B3a + B3b). Asserts that Approve reads
- * `{ flow_id, thread_id, node_ids }` from the notification's action payload,
- * calls `flowsApi.resumeFlow` with those args, clears the notification on
- * success, surfaces a localized error on failure (including when `node_ids`
- * contains non-string entries — an invalid payload), that Dismiss clears the
- * notification WITHOUT calling any RPC (there is no `flows_deny` endpoint
- * yet), and that "View run" opens the {@link FlowRunInspectorDrawer}.
+ * Approve/Dismiss/View-run/Fix-with-agent contract for the
+ * flow-pending-approval notification card (issues B3a + B3b + B22). Asserts
+ * that Approve reads `{ flow_id, thread_id, node_ids }` from the notification's
+ * action payload, calls `flowsApi.resumeFlow` with those args, clears the
+ * notification on success, surfaces a localized error on failure (including
+ * when `node_ids` contains non-string entries — an invalid payload), that
+ * Dismiss clears the notification WITHOUT calling any RPC (there is no
+ * `flows_deny` endpoint yet), that "View run" opens the
+ * {@link FlowRunInspectorDrawer}, and that the drawer's "Fix with agent"
+ * action navigates to the flow's canvas seeded with a `copilotRepair` state
+ * (issue B22 — this card can render anywhere in the app, so it always
+ * navigates rather than assuming the canvas is already open).
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../store';
@@ -19,9 +24,20 @@ import FlowApprovalCard from './FlowApprovalCard';
 const resumeFlow = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({ resumeFlow }));
 
+// Capture the props `FlowApprovalCard` hands the drawer (mirrors
+// `FlowCanvasPage.test.tsx`'s copilot-panel stub pattern) so tests can invoke
+// `onFixWithAgent` directly without needing the drawer's own run-polling
+// machinery.
+const inspectorDrawerProps = vi.hoisted(() => ({
+  current: null as Record<string, unknown> | null,
+}));
 vi.mock('../flows/FlowRunInspectorDrawer', () => ({
-  FlowRunInspectorDrawer: ({ runId }: { runId: string | null; onClose: () => void }) =>
-    runId ? <div data-testid="flow-run-inspector-drawer-stub">{runId}</div> : null,
+  FlowRunInspectorDrawer: (props: Record<string, unknown>) => {
+    inspectorDrawerProps.current = props;
+    return props.runId ? (
+      <div data-testid="flow-run-inspector-drawer-stub">{props.runId as string}</div>
+    ) : null;
+  },
 }));
 
 function makeItem(overrides: Partial<NotificationItem> = {}): NotificationItem {
@@ -43,10 +59,21 @@ function makeItem(overrides: Partial<NotificationItem> = {}): NotificationItem {
   };
 }
 
+/** Renders whatever `location.state` a navigation landed with, for assertions. */
+function LocationStateProbe() {
+  const location = useLocation();
+  return <div data-testid="location-state-probe">{JSON.stringify(location.state)}</div>;
+}
+
 function renderCard(item: NotificationItem) {
   return render(
     <Provider store={store}>
-      <FlowApprovalCard notification={item} />
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<FlowApprovalCard notification={item} />} />
+          <Route path="/flows/:id" element={<LocationStateProbe />} />
+        </Routes>
+      </MemoryRouter>
     </Provider>
   );
 }
@@ -55,6 +82,7 @@ describe('FlowApprovalCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     store.dispatch({ type: 'notifications/clearAll' });
+    inspectorDrawerProps.current = null;
   });
 
   it('renders both Approve and Dismiss buttons', () => {
@@ -226,5 +254,47 @@ describe('FlowApprovalCard', () => {
     const drawer = screen.getByTestId('flow-run-inspector-drawer-stub');
     expect(drawer).toBeInTheDocument();
     expect(drawer).toHaveTextContent('thread-1');
+  });
+
+  it('passes onFixWithAgent through to the run inspector drawer', () => {
+    renderCard(makeItem());
+    fireEvent.click(screen.getByTestId('flow-approval-view-run'));
+
+    expect(inspectorDrawerProps.current?.onFixWithAgent).toBeInstanceOf(Function);
+  });
+
+  it('"Fix with agent" navigates to the flow canvas seeded with the repair context (B22)', async () => {
+    renderCard(makeItem());
+    fireEvent.click(screen.getByTestId('flow-approval-view-run'));
+    expect(screen.getByTestId('flow-run-inspector-drawer-stub')).toBeInTheDocument();
+
+    act(() => {
+      (
+        inspectorDrawerProps.current?.onFixWithAgent as (request: {
+          flowId: string;
+          runId: string;
+          error?: string | null;
+          failingNodeIds?: string[];
+        }) => void
+      )({
+        flowId: 'flow-1',
+        runId: 'thread-1',
+        error: 'GMAIL_SEND_EMAIL: empty body',
+        failingNodeIds: ['send_summary'],
+      });
+    });
+
+    // Navigated away — the drawer stub (and the whole card) unmounts.
+    await waitFor(() =>
+      expect(screen.queryByTestId('flow-run-inspector-drawer-stub')).not.toBeInTheDocument()
+    );
+    const probe = await screen.findByTestId('location-state-probe');
+    expect(JSON.parse(probe.textContent ?? 'null')).toEqual({
+      copilotRepair: {
+        runId: 'thread-1',
+        error: 'GMAIL_SEND_EMAIL: empty body',
+        failingNodeIds: ['send_summary'],
+      },
+    });
   });
 });

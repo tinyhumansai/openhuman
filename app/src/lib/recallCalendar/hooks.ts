@@ -16,7 +16,7 @@ import type { RecallCalendarStatus } from './recallCalendarApi';
 const POLL_INTERVAL_MS = 5000;
 type CalendarProvider = 'composio' | 'recall';
 
-export interface UseRecallCalendar {
+interface UseRecallCalendar {
   status: RecallCalendarStatus | null;
   loading: boolean;
   busy: boolean;

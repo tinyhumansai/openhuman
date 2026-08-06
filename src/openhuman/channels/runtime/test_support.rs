@@ -9,12 +9,13 @@ use super::dispatch::{
 pub use super::startup::test_support::resolve_yuanbao_app_secret_for_test;
 use crate::core::event_bus::{init_global, register_native_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
+use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
 use crate::openhuman::channels::traits::{ChannelMessage, SendMessage};
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::{MultimodalConfig, MultimodalFileConfig, ReliabilityConfig};
-use crate::openhuman::inference::provider::{ChatMessage, Provider, ProviderRuntimeOptions};
+use crate::openhuman::inference::provider::ProviderRuntimeOptions;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
@@ -23,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 #[derive(Debug, Clone)]
 pub struct DispatchHarnessOptions {
@@ -177,18 +179,21 @@ impl Channel for HarnessChannel {
     }
 }
 
-struct HarnessProvider;
+struct HarnessModel;
 
 #[async_trait]
-impl Provider for HarnessProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for HarnessModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("provider echo: {message}"))
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let message = request
+            .messages
+            .last()
+            .map(|message| message.text())
+            .unwrap_or_default();
+        Ok(ModelResponse::assistant(format!("model echo: {message}")))
     }
 }
 
@@ -398,9 +403,12 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
     let mut channels_by_name = HashMap::new();
     channels_by_name.insert(options.channel_name.clone(), channel);
 
-    let provider: Arc<dyn Provider> = Arc::new(HarnessProvider);
+    let model: Arc<dyn ChatModel<()>> = Arc::new(HarnessModel);
     let mut provider_cache = HashMap::new();
-    provider_cache.insert("harness-provider".to_string(), Arc::clone(&provider));
+    provider_cache.insert(
+        "harness-provider".to_string(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::clone(&model)),
+    );
     let conversation_histories = Arc::new(Mutex::new(HashMap::new()));
     let history_key = if options.channel_name == "telegram" {
         format!("{}_alice_reply", options.channel_name)
@@ -420,7 +428,9 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
 
     let ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider,
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
+        ),
         default_provider: Arc::new("harness-provider".to_string()),
         memory: Arc::new(HarnessMemory {
             entries: options
@@ -437,7 +447,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         max_tool_iterations: 3,
         min_relevance_score: 0.2,
         conversation_histories: Arc::clone(&conversation_histories),
-        provider_cache: Arc::new(Mutex::new(provider_cache)),
+        turn_model_source_cache: Arc::new(Mutex::new(provider_cache)),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -447,6 +457,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         message_timeout_secs: options.timeout_secs,
         multimodal: MultimodalConfig::default(),
         multimodal_files: MultimodalFileConfig::default(),
+        config: None,
     });
 
     let expected_event_channel = options.channel_name.clone();

@@ -11,12 +11,13 @@ use super::types::{Agent, AgentBuilder};
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
-use crate::openhuman::inference::provider::{self, ConversationMessage, ToolCall};
+use crate::openhuman::agent::messages::ConversationMessage;
+use crate::openhuman::inference::provider::{self, ToolCall};
 use crate::openhuman::memory::Memory;
-use crate::openhuman::prompt_injection::{
+use crate::openhuman::security::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
+use crate::openhuman::tools::agent_policy::ToolPolicyEngine;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -61,7 +62,7 @@ impl Agent {
     /// parent-context builder to share the parent's provider instance with
     /// spawned sub-agents (so they share connection pools, retry budgets, and
     /// rate-limit state) — issue #4249, Phase 3 / Motion A.
-    pub fn turn_model_source(&self) -> crate::openhuman::tinyagents::TurnModelSource {
+    pub fn turn_model_source(&self) -> crate::openhuman::agent::tinyagents::TurnModelSource {
         self.turn_model_source.clone()
     }
 
@@ -93,9 +94,76 @@ impl Agent {
         &self.visible_tool_names
     }
 
+    #[cfg(test)]
+    pub(crate) fn subagent_tool_ceiling_names_for_test(
+        &self,
+    ) -> &std::collections::HashSet<String> {
+        &self.subagent_tool_ceiling_names
+    }
+
     /// Borrow the agent's memory backing store as an `Arc`.
     pub fn memory_arc(&self) -> Arc<dyn Memory> {
         Arc::clone(&self.memory)
+    }
+
+    /// The full host [`Config`](crate::openhuman::config::Config) this session
+    /// was built with, when it was built through the factory.
+    ///
+    /// `None` on the bare-builder path (`AgentBuilder` without
+    /// `AgentFactory`), which is used by tests and by callers assembling a
+    /// session by hand. Every capability adapter that needs host config treats
+    /// `None` as "not available" rather than loading one itself — see
+    /// [`Self::host_capabilities_available`].
+    pub fn runtime_config(&self) -> Option<Arc<crate::openhuman::config::Config>> {
+        self.runtime_config.clone()
+    }
+
+    /// Whether the config-dependent capability adapters can be built from this
+    /// session.
+    ///
+    /// Four of the ten host capabilities (`BudgetGate`, `ContextComposer`,
+    /// `ModelResolver`, and the policy half of `SecurityGate`) need a full
+    /// `Config`, which only the factory path supplies. This is the one-line
+    /// check a caller uses before reaching for them, so "this session cannot
+    /// answer that" stays distinguishable from "the capability failed" — the
+    /// same absence-versus-failure rule the traits themselves are built on.
+    pub fn host_capabilities_available(&self) -> bool {
+        self.runtime_config.is_some()
+    }
+
+    /// OpenHuman's [`AgentMemory`](tinyagents::harness::host::AgentMemory)
+    /// capability over this session's memory backend.
+    ///
+    /// Built on demand rather than stored: it is a thin adapter over an `Arc`
+    /// the session already holds, so constructing one is a refcount bump, and
+    /// storing it would create a second handle that could drift from
+    /// `self.memory` if the backend were ever swapped.
+    pub fn host_agent_memory(
+        &self,
+    ) -> crate::openhuman::agent::tinyagents::host::OpenHumanAgentMemory {
+        crate::openhuman::agent::tinyagents::host::OpenHumanAgentMemory::new(self.memory_arc())
+    }
+
+    /// OpenHuman's [`ExperienceStore`](tinyagents::harness::host::ExperienceStore)
+    /// capability, scoped to this session's agent profile.
+    ///
+    /// Writes go to this session's own `memory`; recall additionally consults
+    /// `shared_experience_memory` when the session was given one.
+    ///
+    /// That asymmetry mirrors the live turn path in `session/turn/core.rs`. For
+    /// a dedicated-profile session `memory` is the profile-local store and
+    /// `shared_experience_memory` is the global one holding unstamped records
+    /// from pre-profile builds — so reading both is what keeps old experience
+    /// reachable, while writing only to the profile-local store is what keeps
+    /// new records inside the profile subtree.
+    pub fn host_experience_store(
+        &self,
+    ) -> crate::openhuman::agent::tinyagents::host::OpenHumanExperienceStore {
+        crate::openhuman::agent::tinyagents::host::OpenHumanExperienceStore::with_profile(
+            self.memory_arc(),
+            self.active_profile_id.clone(),
+        )
+        .with_shared_recall_memory(self.shared_experience_memory.clone())
     }
 
     /// The agent's working directory.
@@ -122,7 +190,7 @@ impl Agent {
     /// Active Composio integrations fetched at session start.
     pub fn connected_integrations(
         &self,
-    ) -> &[crate::openhuman::context::prompt::ConnectedIntegration] {
+    ) -> &[crate::openhuman::agent::context::prompt::ConnectedIntegration] {
         &self.connected_integrations
     }
 
@@ -145,17 +213,34 @@ impl Agent {
     /// fetch result when the agent was built outside the normal turn loop).
     pub fn set_connected_integrations(
         &mut self,
-        integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+        integrations: Vec<crate::openhuman::agent::context::prompt::ConnectedIntegration>,
     ) {
         self.connected_integrations = integrations;
         self.connected_integrations_initialized = true;
         self.last_seen_integrations_hash =
-            crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
+            crate::openhuman::integrations::composio::connected_set_hash(
+                &self.connected_integrations,
+            );
     }
 
     /// The agent's runtime config snapshot.
     pub fn agent_config(&self) -> &crate::openhuman::config::AgentConfig {
         &self.config
+    }
+
+    /// Override the agent's tool-iteration cap after construction.
+    ///
+    /// Issue #4868 — `build_session_agent_inner` now stamps every agent with
+    /// its `AgentDefinition::effective_max_iterations()`, which is the correct
+    /// behavior for direct-invocation call sites. A handful of callers need a
+    /// *different* cap than the definition's declared budget (e.g. long-running
+    /// workflow/task-dispatcher runs that intentionally exceed any single
+    /// agent's normal budget). Those callers should apply their override
+    /// AFTER construction via this setter, so the shared definition-cap logic
+    /// in the builder doesn't get silently clobbered by pre-construction
+    /// mutations (and vice versa).
+    pub fn set_max_tool_iterations(&mut self, cap: usize) {
+        self.config.max_tool_iterations = cap;
     }
 
     /// Returns the current conversation history.
@@ -334,21 +419,21 @@ impl Agent {
         let learned = crate::openhuman::agent::prompts::LearnedContextData::default();
         let system_prompt = self.build_system_prompt(learned)?;
 
-        let mut cached: Vec<crate::openhuman::inference::provider::ChatMessage> =
+        let mut cached: Vec<crate::openhuman::agent::messages::ChatMessage> =
             Vec::with_capacity(prior.len() + 1);
-        cached.push(crate::openhuman::inference::provider::ChatMessage::system(
+        cached.push(crate::openhuman::agent::messages::ChatMessage::system(
             system_prompt,
         ));
         for (role, content) in prior {
             let chat = match role.as_str() {
-                "user" => crate::openhuman::inference::provider::ChatMessage::user(content),
+                "user" => crate::openhuman::agent::messages::ChatMessage::user(content),
                 "agent" | "assistant" => {
-                    crate::openhuman::inference::provider::ChatMessage::assistant(content)
+                    crate::openhuman::agent::messages::ChatMessage::assistant(content)
                 }
                 // Fall back to user role for unknown senders rather than
                 // dropping the message — losing context is worse than
                 // mislabelling a system/tool message.
-                _ => crate::openhuman::inference::provider::ChatMessage::user(content),
+                _ => crate::openhuman::agent::messages::ChatMessage::user(content),
             };
             cached.push(chat);
         }
@@ -371,11 +456,144 @@ impl Agent {
         Ok(())
     }
 
+    /// Cold-boot resume for the web-chat path: pre-populate this session's
+    /// LLM context from the **full-fidelity** `session_raw/{stem}.jsonl`
+    /// transcript for `thread_id`.
+    ///
+    /// This is the high-fidelity counterpart to
+    /// [`Self::seed_resume_from_messages`]. That fallback sources lossy
+    /// `(sender, content)` prose from the conversation log, so it drops every
+    /// tool call, tool-role result, and reasoning block — after an app restart
+    /// the model then "forgets" all its tool interactions. This path instead
+    /// routes thread → transcript via
+    /// [`transcript::find_root_transcript_for_thread`] and reuses the exact
+    /// [`transcript::read_transcript`] +
+    /// [`Self::bound_cached_transcript_messages`] machinery as
+    /// [`Self::try_load_session_transcript`], so `tool_calls`, `role:"tool"`
+    /// messages, and `reasoning_content` all survive the round-trip. The only
+    /// difference from `try_load_session_transcript` is the lookup key (thread
+    /// id vs. per-thread agent name), so a thread whose transcript was written
+    /// under a differently-scoped agent name still resumes.
+    ///
+    /// Returns `true` when a transcript was found, loaded, and seeded into
+    /// `cached_transcript_messages`; `false` (a no-op) when the agent is already
+    /// warm, no root transcript exists for the thread, the transcript is empty,
+    /// or it fails to parse — the caller then falls back to prose-pair seeding.
+    ///
+    /// Best-effort like `try_load_session_transcript`: read/parse failures are
+    /// logged and reported as `false` rather than propagated. The current turn's
+    /// user message is appended later by [`Self::run_single`] / `turn`, so it is
+    /// intentionally absent from the loaded prefix — no dedup is needed here (the
+    /// on-disk transcript ends at the previous completed turn).
+    pub fn seed_resume_from_thread_transcript(&mut self, thread_id: &str) -> bool {
+        if !self.history.is_empty() || self.cached_transcript_messages.is_some() {
+            log::debug!(
+                "[web-channel] seed_resume_from_thread_transcript no-op — agent already warm \
+                 (history_len={}, cached={}) thread={thread_id}",
+                self.history.len(),
+                self.cached_transcript_messages.is_some()
+            );
+            return false;
+        }
+
+        // The thread's conversation belongs to the THREAD, not the active
+        // profile. Resolve via the cross-dir finder, which scans the shared
+        // `session_raw/` AND every profile-scoped `session_raw-<id>/` for this
+        // exact `thread_id` and returns the NEWEST match. So switching the active
+        // profile mid-thread (e.g. the Quick↔Reasoning toggle) continues the same
+        // conversation even when earlier turns were written under a different
+        // profile's subtree — a dedicated-memory personality, or a profile an
+        // earlier build wrongly scoped (#5351).
+        //
+        // Deliberately NOT own-dir-first (`in_dir(session_raw_subdir).or_else(…)`):
+        // that would let an *older* transcript in the agent's own dir shadow a
+        // *newer* one a sibling scoped dir holds for the same thread — dropping
+        // the most recent turns, and diverging from the transcript view + turn
+        // mirror, which both use this same newest-across-dirs resolver. The own
+        // dir is already included in the scan, so newest-wins is a superset.
+        // Keyed on `thread_id`, so it never bleeds an unrelated session across
+        // profiles; a blank id short-circuits to `None`.
+        let Some(path) =
+            super::transcript::find_root_transcript_for_thread(&self.workspace_dir, thread_id)
+        else {
+            log::debug!(
+                "[web-channel] no root session_raw transcript for thread={thread_id} in any \
+                 (shared or profile-scoped) session_raw dir — falling back to \
+                 conversation-log prose seeding"
+            );
+            return false;
+        };
+
+        log::info!(
+            "[web-channel] cold-boot resume — loading full-fidelity transcript for \
+             thread={thread_id} path={}",
+            path.display()
+        );
+
+        match super::transcript::read_transcript(&path) {
+            Ok(session) => {
+                if session.messages.is_empty() {
+                    log::debug!(
+                        "[web-channel] root transcript for thread={thread_id} is empty — \
+                         falling back to prose seeding"
+                    );
+                    return false;
+                }
+                let loaded_count = session.messages.len();
+                // Count the tool-role results carried into the resumed prefix —
+                // the fidelity the prose fallback would have silently dropped.
+                let tool_result_msgs = session.messages.iter().filter(|m| m.role == "tool").count();
+                let bounded = self.bound_cached_transcript_messages(session.messages);
+                if bounded.len() < loaded_count {
+                    log::warn!(
+                        "[web-channel] resume prefix trimmed from {} to {} messages \
+                         (max_history_messages={}) for thread={thread_id}",
+                        loaded_count,
+                        bounded.len(),
+                        self.config.max_history_messages
+                    );
+                }
+                log::info!(
+                    "[web-channel] cold-boot resume — primed {} transcript message(s) \
+                     ({} tool-role result(s) preserved) for thread={thread_id}",
+                    bounded.len(),
+                    tool_result_msgs
+                );
+                self.cached_transcript_messages = Some(bounded);
+                true
+            }
+            Err(err) => {
+                log::warn!(
+                    "[web-channel] failed to parse root transcript {} for thread={thread_id}: \
+                     {err} — falling back to prose seeding",
+                    path.display()
+                );
+                false
+            }
+        }
+    }
+
     /// Drain and return memory citations collected for the latest completed turn.
     pub fn take_last_turn_citations(
         &mut self,
-    ) -> Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation> {
+    ) -> Vec<crate::openhuman::memory::agent::memory_loader::MemoryCitation> {
         std::mem::take(&mut self.last_turn_citations)
+    }
+
+    /// Borrow the holistic token/cost/context totals for the latest completed
+    /// turn (parent + sub-agents) **without consuming them**. `None` until a
+    /// turn has run.
+    ///
+    /// This is the public, non-draining counterpart to
+    /// [`take_last_turn_usage_totals`](Self::take_last_turn_usage_totals): a
+    /// downstream crate embedding OpenHuman as a library (e.g. the OpenCompany
+    /// hosting platform's cost-metering hook) can read per-turn token and USD
+    /// totals after [`Agent::turn`](crate::openhuman::agent::Agent) returns,
+    /// while leaving the value in place for the web-channel drain path.
+    pub fn last_turn_usage(
+        &self,
+    ) -> Option<&crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
+        self.last_turn_usage_totals.as_ref()
     }
 
     /// Drain and return the holistic token/cost/context totals for the latest
@@ -385,6 +603,15 @@ impl Agent {
         &mut self,
     ) -> Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
         self.last_turn_usage_totals.take()
+    }
+
+    /// Whether the most recently completed [`Self::turn`] / [`Self::run_single`]
+    /// paused because it hit `max_tool_iterations`, rather than finishing
+    /// naturally (see the field doc on `last_turn_hit_cap`). `false` before
+    /// any turn has run. Not draining — unlike the usage totals above, a
+    /// caller may reasonably check this more than once per turn.
+    pub fn last_turn_hit_cap(&self) -> bool {
+        self.last_turn_hit_cap
     }
 
     // ─────────────────────────────────────────────────────────────────

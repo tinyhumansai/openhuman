@@ -1,5 +1,5 @@
 import { useT } from '../../lib/i18n/I18nContext';
-import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../../utils/links';
+import { DISCORD_INVITE_URL, PRICING_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 
 function formatUsd(amount: number): string {
@@ -53,7 +53,7 @@ export function UsageLimitBanner({
             <button
               type="button"
               onClick={() => {
-                void openUrl(BILLING_DASHBOARD_URL);
+                void openUrl(PRICING_URL);
               }}
               className={`cursor-pointer border-b border-dashed font-bold ${styles.button}`}>
               {ctaLabel}
@@ -101,7 +101,7 @@ export function PromotionalCreditsBanner({ promoCredits }: { promoCredits: numbe
           <button
             type="button"
             onClick={() => {
-              void openUrl(BILLING_DASHBOARD_URL);
+              void openUrl(PRICING_URL);
             }}
             className="cursor-pointer border-b border-dashed border-amber-700 font-bold text-amber-700 hover:text-amber-800 dark:border-amber-300 dark:text-amber-300 dark:hover:text-amber-200">
             {t('home.banners.getSubscription')}
@@ -143,7 +143,7 @@ export function EarlyBirdyBanner({ onDismiss }: { onDismiss?: () => void }) {
             <button
               type="button"
               onClick={() => {
-                void openUrl(BILLING_DASHBOARD_URL);
+                void openUrl(PRICING_URL);
               }}
               className="cursor-pointer border-b border-amber-700 border-dashed font-bold text-amber-700 hover:text-amber-800 dark:border-amber-300 dark:text-amber-300 dark:hover:text-amber-200">
               {t('home.banners.earlyBirdFirstSub')}

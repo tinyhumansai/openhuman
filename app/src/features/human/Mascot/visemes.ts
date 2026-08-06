@@ -6,7 +6,7 @@
  * the original happy curve so the idle face stays alive.
  */
 
-export type VisemeId = 'REST' | 'A' | 'E' | 'I' | 'O' | 'U' | 'M' | 'F';
+type VisemeId = 'REST' | 'A' | 'E' | 'I' | 'O' | 'U' | 'M' | 'F';
 
 export interface VisemeShape {
   /** 0 = closed, 1 = fully open vertically. */

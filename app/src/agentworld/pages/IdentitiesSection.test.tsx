@@ -17,6 +17,7 @@ import {
   type DirectoryIdentityListingsResponse,
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import IdentitiesSection, { IDENTITY_PRICING_TIERS } from './IdentitiesSection';
 
@@ -38,6 +39,11 @@ vi.mock('../AgentWorldShell', () => ({
     },
   },
 }));
+
+// External-link opener — assert the seller CTA hands off to the OS browser
+// without actually invoking Tauri.
+// openUrl returns a Promise (the CTA chains .then/.catch for diagnostics).
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 // Default happy-path resolutions so async hooks settle without unhandled
 // rejections. Individual tests override per-case.
@@ -611,6 +617,7 @@ describe('Registry tab', () => {
     await gotoTab('Registry');
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
     expect(screen.getByText(/directory down/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toContainElement(screen.getByText(/directory down/));
   });
 
   test('shows the wallet-locked banner when the error mentions a missing wallet', async () => {
@@ -898,6 +905,7 @@ describe('Trading tab — listed for sale', () => {
     await gotoTab('Trading');
     expect(await screen.findByText('Failed to load')).toBeInTheDocument();
     expect(screen.getByText(/listings down/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toContainElement(screen.getByText(/listings down/));
   });
 });
 
@@ -1278,5 +1286,30 @@ describe('IDENTITY_PRICING_TIERS', () => {
     expect(screen.getByText('100 USDC')).toBeInTheDocument();
     expect(screen.queryByText('$250/yr')).not.toBeInTheDocument();
     expect(screen.queryByText('$10/yr')).not.toBeInTheDocument();
+  });
+});
+
+// Unit coverage only, by design: the affordance is a static info note whose CTA
+// hands off to the OS browser via the mocked `openUrl`. There is one real
+// cross-process effect (that the OS browser actually opens) but it isn't worth a
+// desktop WDIO E2E — these unit tests cover the note + the openUrl call. E2E is
+// intentionally skipped for this change (#4920).
+describe('Trading tab — seller web-only note', () => {
+  test('renders the seller pointer note on the Trading tab', async () => {
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    const note = await screen.findByTestId('sell-on-web');
+    expect(note).toHaveTextContent(/listing a handle for sale and accepting offers/i);
+    expect(screen.getByTestId('sell-on-web-cta')).toHaveAttribute(
+      'data-analytics-id',
+      'identities.sellOnWeb'
+    );
+  });
+
+  test('CTA opens the tiny.place identities page via openUrl', async () => {
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByTestId('sell-on-web-cta'));
+    expect(vi.mocked(openUrl)).toHaveBeenCalledWith('https://tiny.place/identities');
   });
 });

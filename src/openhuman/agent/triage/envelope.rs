@@ -10,7 +10,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::openhuman::todos::ops::BoardLocation;
+use crate::openhuman::threads::todos::ops::BoardLocation;
 
 /// Links a trigger to the task-board card it concerns, so the triage
 /// `apply_decision` arm can hand the card to the deterministic dispatcher

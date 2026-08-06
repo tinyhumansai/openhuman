@@ -1,8 +1,8 @@
 //! RPC operations for conversation thread management.
 
-use crate::openhuman::channels::providers::web as web_channel;
+use crate::core::runtime::context::CoreContext;
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
@@ -12,9 +12,15 @@ use crate::openhuman::memory::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
-use crate::openhuman::memory_conversations::{
-    self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
-    ConversationThread, CreateConversationThread, CrossThreadHit,
+// Every conversation-store call in this module goes through
+// `conversations::blocking::*`, which runs the store's synchronous,
+// globally-locked, fsync'ing operations on tokio's blocking pool. Calling the
+// sync entry points directly from these handlers parked async worker threads on
+// the store's `parking_lot` mutex, which starved the runtime and made
+// `threads_create_new` blow the frontend's 30 s RPC budget (#5156).
+use crate::openhuman::memory::conversations::{
+    self as conversations, ConversationMessage, ConversationMessagePatch, ConversationThread,
+    CreateConversationThread, CrossThreadHit,
 };
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
@@ -26,10 +32,13 @@ use crate::openhuman::threads::turn_state::{
     GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::openhuman::threads::ThreadsError;
+use crate::openhuman::web_chat as web_channel;
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 
 fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -68,6 +77,49 @@ async fn workspace_dir() -> Result<PathBuf, String> {
         .await
         .map(|c| c.workspace_dir)
         .map_err(|e| format!("load config: {e}"))
+}
+
+/// Run a destructive sequence to completion even if the caller's future is
+/// dropped (client disconnect, RPC timeout).
+///
+/// Moving the store onto the blocking pool (#5156) introduced a cancellation
+/// point that did not exist before. `spawn_blocking` work is never cancelled
+/// when its `JoinHandle` is dropped, so the store mutation lands regardless —
+/// but the `.await` on that handle *is* a yield point, and previously the
+/// synchronous store call had none. Dropping the handler there leaves the thread
+/// deleted while the cleanup that follows it never runs: the web-channel session
+/// stays live and can append to a thread index row that no longer exists,
+/// detached sub-agents keep running and queueing completions, and the turn
+/// snapshot survives to resurface as `Interrupted` for a thread that is gone.
+/// Those are precisely the invariants `thread_delete`'s ordering comments exist
+/// to hold.
+///
+/// Owning the mutation *and* its cleanup in one spawned task decouples the
+/// sequence from the caller's lifetime. The ambient [`CoreContext`] is carried
+/// across explicitly: a bare `tokio::spawn` drops the `task_local` scope, and
+/// `CoreContext::current` then silently falls back to the process default —
+/// which under multi-tenant scoped dispatch is the wrong workspace.
+async fn run_to_completion<T, F>(operation: &'static str, fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+    T: Send + 'static,
+{
+    let ctx = CoreContext::current();
+    tokio::spawn(async move {
+        match ctx {
+            Some(ctx) => CoreContext::scope(ctx, fut).await,
+            None => fut.await,
+        }
+    })
+    .await
+    .unwrap_or_else(|error| {
+        tracing::warn!(
+            operation,
+            error = %error,
+            "[threads] destructive task failed to join"
+        );
+        Err(format!("{operation} task failed: {error}"))
+    })
 }
 
 fn thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
@@ -125,7 +177,7 @@ fn fallback_title_from_user_message(thread_id: &str, user_message: &str) -> Opti
     title
 }
 
-fn update_thread_with_fallback_title(
+async fn update_thread_with_fallback_title(
     dir: PathBuf,
     thread: ConversationThread,
     user_message: &str,
@@ -136,7 +188,13 @@ fn update_thread_with_fallback_title(
     if title == thread.title {
         return Ok(thread);
     }
-    conversations::update_thread_title(dir, &thread.id, &title, &chrono::Utc::now().to_rfc3339())
+    conversations::blocking::update_thread_title(
+        dir,
+        thread.id.clone(),
+        title,
+        chrono::Utc::now().to_rfc3339(),
+    )
+    .await
 }
 
 /// Lists all conversation threads.
@@ -144,7 +202,8 @@ pub async fn threads_list(
     _request: EmptyRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadsListResponse>>, String> {
     let dir = workspace_dir().await?;
-    let threads = conversations::list_threads(dir)?
+    let threads = conversations::blocking::list_threads(dir)
+        .await?
         .into_iter()
         .map(thread_to_summary)
         .collect::<Vec<_>>();
@@ -161,7 +220,7 @@ pub async fn thread_upsert(
     request: UpsertConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
-    let thread = conversations::ensure_thread(
+    let thread = conversations::blocking::ensure_thread(
         dir,
         CreateConversationThread {
             id: request.id,
@@ -171,7 +230,8 @@ pub async fn thread_upsert(
             labels: request.labels,
             personality_id: request.personality_id,
         },
-    )?;
+    )
+    .await?;
     Ok(envelope(
         thread_to_summary(thread),
         Some(counts([("num_threads", 1)])),
@@ -188,7 +248,7 @@ pub async fn thread_create_new(
     let now = chrono::Local::now();
     let title = format!("Chat {} {}", now.format("%b %-d"), now.format("%-I:%M %p"));
     let created_at = chrono::Utc::now().to_rfc3339();
-    let thread = conversations::ensure_thread(
+    let thread = conversations::blocking::ensure_thread(
         dir,
         CreateConversationThread {
             id,
@@ -201,7 +261,8 @@ pub async fn thread_create_new(
             labels: request.labels,
             personality_id: request.personality_id,
         },
-    )?;
+    )
+    .await?;
     tracing::debug!(
         thread_id = %thread.id,
         labels = ?thread.labels,
@@ -219,7 +280,8 @@ pub async fn messages_list(
     request: ConversationMessagesRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationMessagesResponse>>, String> {
     let dir = workspace_dir().await?;
-    let messages = conversations::get_messages(dir, &request.thread_id)?
+    let messages = conversations::blocking::get_messages(dir, request.thread_id.clone())
+        .await?
         .into_iter()
         .map(message_to_record)
         .collect::<Vec<_>>();
@@ -250,11 +312,13 @@ pub async fn transcript_search(
         limit,
         exclude_thread_id
     );
-    let hits = ConversationStore::new(dir).search_cross_thread_messages(
-        query,
+    let hits = conversations::blocking::search_cross_thread_messages(
+        dir,
+        query.to_string(),
         limit,
-        exclude_thread_id,
-    )?;
+        exclude_thread_id.map(str::to_string),
+    )
+    .await?;
     log::debug!("[threads][transcript_search] hits={}", hits.len());
     Ok(hits)
 }
@@ -264,9 +328,13 @@ pub async fn message_append(
     request: AppendConversationMessageRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationMessageRecord>>, ThreadsError> {
     let dir = workspace_dir().await?;
-    let message =
-        conversations::append_message(dir, &request.thread_id, record_to_message(request.message))
-            .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
+    let message = conversations::blocking::append_message(
+        dir,
+        request.thread_id.clone(),
+        record_to_message(request.message),
+    )
+    .await
+    .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
     Ok(envelope(
         message_to_record(message),
         Some(counts([("num_messages", 1)])),
@@ -282,7 +350,8 @@ pub async fn thread_generate_title(
         .await
         .map_err(|e| format!("load config: {e}"))?;
     let dir = config.workspace_dir.clone();
-    let Some(thread) = conversations::list_threads(dir.clone())?
+    let Some(thread) = conversations::blocking::list_threads(dir.clone())
+        .await?
         .into_iter()
         .find(|thread| thread.id == request.thread_id)
     else {
@@ -303,7 +372,8 @@ pub async fn thread_generate_title(
         ));
     }
 
-    let messages = conversations::get_messages(dir.clone(), &request.thread_id)?;
+    let messages =
+        conversations::blocking::get_messages(dir.clone(), request.thread_id.clone()).await?;
     let Some(first_user_message) = messages
         .iter()
         .find(|message| message.sender == "user" && !message.content.trim().is_empty())
@@ -338,7 +408,7 @@ pub async fn thread_generate_title(
             thread_id = %request.thread_id,
             "{THREAD_TITLE_LOG_PREFIX} no assistant message yet; applying fallback title"
         );
-        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message)?;
+        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
         return Ok(envelope(
             thread_to_summary(updated),
             Some(counts([("num_threads", 1)])),
@@ -346,28 +416,16 @@ pub async fn thread_generate_title(
         ));
     };
 
-    let provider_runtime_options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
-
-    let provider = match provider::create_intelligent_routing_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &config,
-        &provider_runtime_options,
-    ) {
-        Ok(provider) => provider,
+    let chat_model = match provider::create_chat_model("summarization", &config, 0.2) {
+        Ok(model) => model,
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,
                 error = %error,
                 "{THREAD_TITLE_LOG_PREFIX} provider init failed; applying fallback title"
             );
-            let updated = update_thread_with_fallback_title(dir, thread, &first_user_message)?;
+            let updated =
+                update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
             return Ok(envelope(
                 thread_to_summary(updated),
                 Some(counts([("num_threads", 1)])),
@@ -384,23 +442,27 @@ pub async fn thread_generate_title(
         "{THREAD_TITLE_LOG_PREFIX} generating thread title"
     );
 
-    let raw_title = match provider
-        .chat_with_system(
-            Some(THREAD_TITLE_SYSTEM_PROMPT),
-            &build_title_prompt(&first_user_message, &assistant_message),
-            THREAD_TITLE_MODEL_HINT,
-            0.2,
+    let raw_title = match chat_model
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(THREAD_TITLE_SYSTEM_PROMPT),
+                Message::user(build_title_prompt(&first_user_message, &assistant_message)),
+            ])
+            .with_model(THREAD_TITLE_MODEL_HINT)
+            .with_temperature(0.2),
         )
         .await
     {
-        Ok(title) => title,
+        Ok(response) => response.text(),
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,
                 error = %error,
                 "{THREAD_TITLE_LOG_PREFIX} title generation failed; applying fallback title"
             );
-            let updated = update_thread_with_fallback_title(dir, thread, &first_user_message)?;
+            let updated =
+                update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
             return Ok(envelope(
                 thread_to_summary(updated),
                 Some(counts([("num_threads", 1)])),
@@ -416,7 +478,7 @@ pub async fn thread_generate_title(
             raw_title_hash = %title_log_fingerprint(&raw_title),
             "{THREAD_TITLE_LOG_PREFIX} generated empty title after sanitization; applying fallback title"
         );
-        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message)?;
+        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
         return Ok(envelope(
             thread_to_summary(updated),
             Some(counts([("num_threads", 1)])),
@@ -432,12 +494,13 @@ pub async fn thread_generate_title(
         ));
     }
 
-    let updated = conversations::update_thread_title(
+    let updated = conversations::blocking::update_thread_title(
         dir,
-        &request.thread_id,
-        &title,
-        &chrono::Utc::now().to_rfc3339(),
+        request.thread_id.clone(),
+        title,
+        chrono::Utc::now().to_rfc3339(),
     )
+    .await
     .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
 
     tracing::debug!(
@@ -463,12 +526,13 @@ pub async fn thread_update_labels(
     request: UpdateConversationThreadLabelsRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
-    let thread = conversations::update_thread_labels(
+    let thread = conversations::blocking::update_thread_labels(
         dir,
-        &request.thread_id,
+        request.thread_id.clone(),
         request.labels.clone(),
-        &chrono::Utc::now().to_rfc3339(),
-    )?;
+        chrono::Utc::now().to_rfc3339(),
+    )
+    .await?;
     tracing::debug!(
         thread_id = %request.thread_id,
         labels = ?request.labels,
@@ -490,12 +554,13 @@ pub async fn thread_update_title(
     if title.is_empty() {
         return Err("title must not be empty".to_string());
     }
-    let updated = conversations::update_thread_title(
+    let updated = conversations::blocking::update_thread_title(
         dir,
-        &request.thread_id,
-        &title,
-        &chrono::Utc::now().to_rfc3339(),
+        request.thread_id.clone(),
+        title,
+        chrono::Utc::now().to_rfc3339(),
     )
+    .await
     .map_err(|err| format!("update title: {err}"))?;
     tracing::debug!(
         thread_id = %request.thread_id,
@@ -514,14 +579,15 @@ pub async fn message_update(
     request: UpdateConversationMessageRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ConversationMessageRecord>>, String> {
     let dir = workspace_dir().await?;
-    let message = conversations::update_message(
+    let message = conversations::blocking::update_message(
         dir,
-        &request.thread_id,
-        &request.message_id,
+        request.thread_id.clone(),
+        request.message_id.clone(),
         ConversationMessagePatch {
             extra_metadata: request.extra_metadata,
         },
-    )?;
+    )
+    .await?;
     Ok(envelope(
         message_to_record(message),
         Some(counts([("num_messages", 1)])),
@@ -530,12 +596,28 @@ pub async fn message_update(
 }
 
 /// Deletes a conversation thread and its message log.
+///
+/// The store mutation and every cleanup step it implies run inside one
+/// [`run_to_completion`] task, so a caller that disconnects mid-delete cannot
+/// leave the thread gone from the store with its sessions, sub-agents and turn
+/// snapshot still live.
 pub async fn thread_delete(
     request: DeleteConversationThreadRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
     let dir = workspace_dir().await?;
-    let deleted = ConversationStore::new(dir.clone())
-        .delete_thread(&request.thread_id, &request.deleted_at)?;
+    run_to_completion("thread_delete", thread_delete_inner(dir, request)).await
+}
+
+async fn thread_delete_inner(
+    dir: PathBuf,
+    request: DeleteConversationThreadRequest,
+) -> Result<RpcOutcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
+    let deleted = conversations::blocking::delete_thread(
+        dir.clone(),
+        request.thread_id.clone(),
+        request.deleted_at.clone(),
+    )
+    .await?;
     // Invalidate the in-process web-channel session BEFORE the
     // turn-state cleanup. The snapshot deletion is fallible and
     // returns early on error; if invalidation ran after, an active
@@ -547,11 +629,11 @@ pub async fn thread_delete(
     // completion in the gap between the two calls, then discard anything already
     // queued for delivery. Both target a thread that's being deleted, so there's
     // nowhere left to deliver to — abort + cleanup is the whole behavior.
-    let cancelled = crate::openhuman::agent_orchestration::running_subagents::cancel_for_thread(
+    let cancelled = crate::openhuman::agent::orchestration::running_subagents::cancel_for_thread(
         &request.thread_id,
     );
     let discarded =
-        crate::openhuman::agent_orchestration::background_completions::discard_for_thread(
+        crate::openhuman::agent::orchestration::background_completions::discard_for_thread(
             &request.thread_id,
         );
     log::debug!(
@@ -582,18 +664,28 @@ pub async fn thread_delete(
 }
 
 /// Purges all conversation threads and messages.
+///
+/// Same cancellation contract as [`thread_delete`]: the purge and its sub-agent
+/// / turn-snapshot cleanup are one [`run_to_completion`] unit, so a dropped
+/// caller cannot leave every thread wiped while their sub-agents keep running.
 pub async fn threads_purge(
     _request: EmptyRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<PurgeConversationThreadsResponse>>, String> {
     let dir = workspace_dir().await?;
-    let stats = conversations::purge_threads(dir.clone())?;
+    run_to_completion("threads_purge", threads_purge_inner(dir)).await
+}
+
+async fn threads_purge_inner(
+    dir: PathBuf,
+) -> Result<RpcOutcome<ApiEnvelope<PurgeConversationThreadsResponse>>, String> {
+    let stats = conversations::blocking::purge_threads(dir.clone()).await?;
     // No parent thread survives a purge, so cancel every detached sub-agent and
     // wipe every queued result. Same ordering as `thread_delete`: abort the
     // in-flight runs first, then clear the delivery queue. Tombstone each
     // cancelled sub-agent's thread BEFORE the final wipe so a straggler that
     // wins the cooperative-abort race (records after the wipe) is still dropped
     // by `record_completion` rather than delivered into a purged thread.
-    use crate::openhuman::agent_orchestration::{background_completions, running_subagents};
+    use crate::openhuman::agent::orchestration::{background_completions, running_subagents};
     let cancelled_threads = running_subagents::cancel_all();
     let mut discarded = 0;
     for thread_id in &cancelled_threads {
@@ -699,6 +791,57 @@ pub async fn turn_state_clear(
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ThreadTokenUsageRequest {
     pub thread_id: String,
+}
+
+/// Request for [`transcript_get`]: the thread to project, plus newest-first
+/// pagination controls. `cursor` is the opaque token from a prior page's
+/// `nextCursor`; `limit` defaults to one screen.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TranscriptGetRequest {
+    pub thread_id: String,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Project a thread's settled transcript (derived from `session_raw/*.jsonl`)
+/// into typed display items, newest-first paginated. Returns an empty page with
+/// `hasTranscript: false` when the thread has no persisted transcript yet.
+pub async fn transcript_get(
+    request: TranscriptGetRequest,
+) -> Result<
+    RpcOutcome<ApiEnvelope<crate::openhuman::threads::transcript_view::TranscriptPage>>,
+    String,
+> {
+    let dir = workspace_dir().await?;
+    let thread_id = request.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("thread_id is required".to_string());
+    }
+    let page = crate::openhuman::threads::transcript_view::get_page(
+        &dir,
+        thread_id,
+        request.cursor.as_deref(),
+        request.limit,
+    );
+    let counts = counts([
+        ("items", page.items.len()),
+        ("total", page.total),
+        ("has_transcript", usize::from(page.has_transcript)),
+    ]);
+    let pagination = Some(PaginationMeta {
+        limit: request
+            .limit
+            .unwrap_or(crate::openhuman::threads::transcript_view::DEFAULT_LIMIT),
+        offset: request
+            .cursor
+            .as_deref()
+            .and_then(|c| c.trim().parse::<usize>().ok())
+            .unwrap_or(0),
+        count: page.total,
+    });
+    Ok(envelope(page, Some(counts), pagination))
 }
 
 /// Aggregated token/cost usage for one thread, read back from its persisted

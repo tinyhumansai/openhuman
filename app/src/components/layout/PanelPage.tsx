@@ -23,7 +23,7 @@ export interface PanelPageTab<T extends string = string> {
   chipTestId?: string;
 }
 
-export interface PanelPageProps<T extends string = string> {
+interface PanelPageProps<T extends string = string> {
   /** Page title, shown in the header above the description (optional). */
   title?: ReactNode;
   /** Page description, shown below the title and above any chips. */

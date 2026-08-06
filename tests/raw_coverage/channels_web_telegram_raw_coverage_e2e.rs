@@ -16,7 +16,7 @@ use axum::{
 };
 use openhuman_core::core::event_bus::{init_global, publish_global, DomainEvent};
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
-use openhuman_core::openhuman::channels::providers::web::{
+use openhuman_core::openhuman::web_chat::{
     cancel_chat, register_approval_surface_subscriber, start_chat, subscribe_web_channel_events,
     test_support as web_test_support, ChatRequestMetadata,
 };

@@ -27,10 +27,10 @@
 //! export OPENHUMAN_MEMORY_EXTRACT_MODEL=qwen2.5:0.5b
 //! export OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT=http://localhost:11434
 //! export OPENHUMAN_MEMORY_SUMMARISE_MODEL=llama3.1:8b
-//! export RUST_LOG=info,openhuman_core::openhuman::composio::providers::slack=debug,openhuman_core::openhuman::memory=debug
+//! export RUST_LOG=info,openhuman_core::openhuman::integrations::composio::providers::slack=debug,openhuman_core::openhuman::memory=debug
 //!
-//! cargo run --bin slack-backfill                              # all active slack connections
-//! cargo run --bin slack-backfill -- --connection conn_abc     # one specific connection
+//! cargo run --features bin-tools --bin slack-backfill                          # all active slack connections
+//! cargo run --features bin-tools --bin slack-backfill -- --connection conn_abc # one specific connection
 //! ```
 
 use std::sync::Arc;
@@ -39,18 +39,14 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 
-use openhuman_core::openhuman::composio::client::{
+use openhuman_core::openhuman::config::Config;
+use openhuman_core::openhuman::integrations::composio::client::{
     create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
 };
-use openhuman_core::openhuman::composio::providers::registry::{
-    get_provider, init_default_providers,
-};
-use openhuman_core::openhuman::composio::providers::slack::run_backfill_via_search;
-use openhuman_core::openhuman::composio::providers::{ProviderContext, SyncReason};
-use openhuman_core::openhuman::composio::types::{
+use openhuman_core::openhuman::integrations::composio::providers::registry::init_default_providers;
+use openhuman_core::openhuman::integrations::composio::types::{
     ComposioConnectionsResponse, ComposioExecuteResponse,
 };
-use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory;
 
 /// Dispatch a Composio action through the live `ComposioClientKind`.
@@ -194,10 +190,6 @@ async fn main() -> Result<()> {
     // Idempotent — safe even if called twice.
     init_default_providers();
 
-    let provider = get_provider("slack").ok_or_else(|| {
-        anyhow::anyhow!("SlackProvider not registered after init_default_providers")
-    })?;
-
     // Resolve through the mode-aware factory so the backfill runs in
     // EITHER backend mode (legacy JWT-driven path) OR direct mode (BYO
     // Composio API key on the user's personal tenant) — #1710 Wave 2.
@@ -212,7 +204,7 @@ async fn main() -> Result<()> {
     if cli.seal_probe {
         use chrono::{Duration, Utc};
         use openhuman_core::openhuman::memory::ingest_pipeline::ingest_chat;
-        use openhuman_core::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
+        use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
 
         let connection_id = cli.connection_id.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -331,8 +323,8 @@ async fn main() -> Result<()> {
         enum Outcome {
             Ok,
             Ratelimit,
-            OtherFail(String),
-            Transport(String),
+            OtherFail,
+            Transport,
         }
         let mut outcomes: Vec<(u32, std::time::Duration, Outcome)> = Vec::with_capacity(n as usize);
         let probe_started = Instant::now();
@@ -350,7 +342,10 @@ async fn main() -> Result<()> {
             .await;
             let dt = t0.elapsed();
             let outcome = match resp {
-                Err(e) => Outcome::Transport(format!("{e:#}")),
+                Err(e) => {
+                    log::warn!("[probe-ratelimit] transport error on call {i}: {e:#}");
+                    Outcome::Transport
+                }
                 Ok(r) if r.successful => Outcome::Ok,
                 Ok(r) => {
                     let err = r.error.as_deref().unwrap_or("provider failure");
@@ -364,7 +359,11 @@ async fn main() -> Result<()> {
                         );
                         Outcome::Ratelimit
                     } else {
-                        Outcome::OtherFail(err.to_string())
+                        log::warn!(
+                            "[probe-ratelimit] provider failure on call {i}: {}",
+                            sanitize_probe_error(err)
+                        );
+                        Outcome::OtherFail
                     }
                 }
             };
@@ -387,11 +386,11 @@ async fn main() -> Result<()> {
             .count();
         let other = outcomes
             .iter()
-            .filter(|(_, _, o)| matches!(o, Outcome::OtherFail(_)))
+            .filter(|(_, _, o)| matches!(o, Outcome::OtherFail))
             .count();
         let transport = outcomes
             .iter()
-            .filter(|(_, _, o)| matches!(o, Outcome::Transport(_)))
+            .filter(|(_, _, o)| matches!(o, Outcome::Transport))
             .count();
         let avg_ms = if !outcomes.is_empty() {
             outcomes.iter().map(|(_, d, _)| d.as_millis()).sum::<u128>() / outcomes.len() as u128
@@ -442,27 +441,18 @@ async fn main() -> Result<()> {
         let started = Instant::now();
         let mut total_buckets = 0usize;
         for conn in &slack_conns {
-            // `ProviderContext` no longer caches a pre-baked client —
-            // `ctx.execute(...)` resolves via the mode-aware factory
-            // per call (#1710 / Wave 1). The local `client` handle is
-            // still used above for backend-only metadata probes.
-            let ctx = ProviderContext {
-                config: Arc::clone(&config),
-                toolkit: conn.toolkit.clone(),
-                connection_id: Some(conn.id.clone()),
-                usage: Default::default(),
-                max_items: None,
-                sync_depth_days: None,
-            };
-            match run_backfill_via_search(&ctx, cli.days).await {
+            match openhuman_core::openhuman::memory::tinycortex::run_slack_search_backfill(
+                &conn.id,
+                cli.days,
+                config.as_ref(),
+            )
+            .await
+            {
                 Ok(outcome) => {
-                    total_buckets += outcome.items_ingested;
+                    total_buckets += outcome.records_ingested as usize;
                     println!(
-                        "connection={} buckets={} elapsed_ms={} summary={:?}",
-                        conn.id,
-                        outcome.items_ingested,
-                        outcome.elapsed_ms(),
-                        outcome.summary,
+                        "connection={} records={} summary={:?}",
+                        conn.id, outcome.records_ingested, outcome.note,
                     );
                 }
                 Err(err) => {
@@ -546,24 +536,19 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        let ctx = ProviderContext {
-            config: Arc::clone(&config),
-            toolkit: conn.toolkit.clone(),
-            connection_id: Some(conn.id.clone()),
-            usage: Default::default(),
-            max_items: None,
-            sync_depth_days: None,
-        };
-        match provider.sync(&ctx, SyncReason::Manual).await {
+        match openhuman_core::openhuman::memory::tinycortex::run_composio_connection(
+            "slack",
+            &conn.id,
+            config.as_ref(),
+        )
+        .await
+        {
             Ok(outcome) => {
                 connections_ok += 1;
-                total_buckets += outcome.items_ingested;
+                total_buckets += outcome.records_ingested as usize;
                 println!(
-                    "connection={} buckets_flushed={} elapsed_ms={} summary={:?}",
-                    conn.id,
-                    outcome.items_ingested,
-                    outcome.elapsed_ms(),
-                    outcome.summary,
+                    "connection={} records_ingested={} summary={:?}",
+                    conn.id, outcome.records_ingested, outcome.note,
                 );
             }
             Err(err) => {
@@ -588,5 +573,29 @@ fn component_status(endpoint: &Option<String>, model: &Option<String>) -> String
             format!("on/{}", m.trim())
         }
         _ => "off".to_string(),
+    }
+}
+
+fn sanitize_probe_error(error: &str) -> String {
+    let single_line = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    openhuman_core::openhuman::inference::provider::ops::sanitize_api_error(&single_line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_probe_error;
+
+    #[test]
+    fn probe_error_summary_is_single_line_bounded_and_secret_safe() {
+        let raw = format!(
+            "provider failed\nwith xoxb-secret-token {}",
+            "x".repeat(300)
+        );
+        let summary = sanitize_probe_error(&raw);
+
+        assert!(!summary.contains('\n'));
+        assert!(!summary.contains("xoxb-secret-token"));
+        assert!(summary.contains("[REDACTED]"));
+        assert!(summary.chars().count() <= 203);
     }
 }

@@ -291,8 +291,8 @@ if should_run_suite "notifications"; then
   echo "## Running suite: notifications"
   run "test/e2e/specs/notifications.spec.ts"                  "notifications"             "notifications"
   run "test/e2e/specs/memory-roundtrip.spec.ts"               "memory-roundtrip"          "notifications"
+  run "test/e2e/specs/coding-session-memory.spec.ts"           "coding-session-memory"     "notifications"
   run "test/e2e/specs/cron-jobs-flow.spec.ts"                 "cron-jobs"                 "notifications"
-  run "test/e2e/specs/autocomplete-flow.spec.ts"              "autocomplete"              "notifications"
   _mini_summary "notifications"
 fi
 
@@ -403,7 +403,7 @@ if should_run_suite "settings"; then
 fi
 
 # ---------------------------------------------------------------------------
-# System / AI / voice / screen / Tauri
+# System / AI / voice / Tauri
 # linux-cef-deb-runtime.spec.ts is Linux-only (tests /usr/bin path resolution
 # for .deb package installs) — skipped on macOS/Windows.
 # ---------------------------------------------------------------------------
@@ -412,7 +412,6 @@ if should_run_suite "system"; then
   echo "## Running suite: system"
   run "test/e2e/specs/local-model-runtime.spec.ts"            "local-model"               "system"
   run "test/e2e/specs/voice-mode.spec.ts"                     "voice-mode"                "system"
-  run "test/e2e/specs/screen-intelligence.spec.ts"            "screen-intelligence"       "system"
   run "test/e2e/specs/audio-toolkit-flow.spec.ts"             "audio-toolkit"             "system"
   run "test/e2e/specs/tauri-commands.spec.ts"                 "tauri-commands"            "system"
   # service-connectivity-flow tests the old sidecar service model removed in

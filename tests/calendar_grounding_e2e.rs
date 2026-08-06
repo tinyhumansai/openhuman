@@ -2,37 +2,31 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
-};
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
+use tinyagents::harness::message::{AssistantMessage, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
 
-struct MockCalendarProvider {
-    captured_messages: Arc<Mutex<Vec<ChatMessage>>>,
+struct MockCalendarModel {
+    captured_messages: Arc<Mutex<Vec<Message>>>,
     iter_count: Arc<Mutex<usize>>,
+    profile: ModelProfile,
 }
 
 #[async_trait]
-impl Provider for MockCalendarProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("ok".into())
+impl ChatModel<()> for MockCalendarModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat(
+    async fn invoke(
         &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         let mut count = self.iter_count.lock();
         *count += 1;
 
@@ -43,35 +37,41 @@ impl Provider for MockCalendarProvider {
 
         if *count == 1 {
             // Return a tool call to GOOGLECALENDAR_EVENTS_LIST
-            Ok(ChatResponse {
-                text: Some("Checking your calendar for this week...".into()),
-                tool_calls: vec![ToolCall {
-                    id: "call_1".into(),
-                    name: "GOOGLECALENDAR_EVENTS_LIST".into(),
-                    arguments: json!({
+            Ok(ModelResponse {
+                message: AssistantMessage {
+                    id: None,
+                    content: Vec::new(),
+                    tool_calls: vec![ToolCall::new(
+                        "call_1",
+                        "GOOGLECALENDAR_EVENTS_LIST",
+                        json!({
                         "timeMin": "2026-04-27T00:00:00Z",
                         "timeMax": "2026-05-04T00:00:00Z"
-                    })
-                    .to_string(),
-                    extra_content: None,
-                }],
+                        }),
+                    )],
+                    usage: None,
+                },
                 usage: None,
-                reasoning_content: None,
+                finish_reason: Some("tool_calls".into()),
+                raw: None,
+                resolved_model: None,
+                continue_turn: None,
             })
         } else {
             // End the loop
-            Ok(ChatResponse {
-                text: Some("You have no events this week.".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            })
+            Ok(ModelResponse::assistant("You have no events this week."))
         }
     }
+}
 
-    fn supports_native_tools(&self) -> bool {
-        true
-    }
+fn calendar_model(captured_messages: Arc<Mutex<Vec<Message>>>) -> Arc<MockCalendarModel> {
+    let mut profile = ModelProfile::default();
+    profile.tool_calling = true;
+    Arc::new(MockCalendarModel {
+        captured_messages,
+        iter_count: Arc::new(Mutex::new(0)),
+        profile,
+    })
 }
 
 struct MockCalendarTool;
@@ -104,13 +104,10 @@ impl Tool for MockCalendarTool {
 #[tokio::test]
 async fn test_orchestrator_has_current_date_context() -> Result<()> {
     let captured_messages = Arc::new(Mutex::new(Vec::new()));
-    let provider = Arc::new(MockCalendarProvider {
-        captured_messages: captured_messages.clone(),
-        iter_count: Arc::new(Mutex::new(0)),
-    });
+    let model = calendar_model(captured_messages.clone());
 
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(model)
         .tools(vec![Box::new(MockCalendarTool)])
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .memory(Arc::new(StubMemory))
@@ -126,19 +123,19 @@ async fn test_orchestrator_has_current_date_context() -> Result<()> {
     // so a long-lived session can't go stale.
     messages
         .iter()
-        .find(|m| m.role == "system" && m.content.contains("## Current Date & Time"))
+        .find(|m| matches!(m, Message::System(_)) && m.text().contains("## Current Date & Time"))
         .expect("System prompt should carry the Current Date & Time grounding rule");
 
     // The live date/time is injected on the user message every turn. Assert it
     // carries the stamp and a concrete year token.
     let user_msg = messages
         .iter()
-        .find(|m| m.role == "user" && m.content.contains("Current Date & Time:"))
+        .find(|m| matches!(m, Message::User(_)) && m.text().contains("Current Date & Time:"))
         .expect("User message should carry the per-turn Current Date & Time stamp");
     // Assert a concrete `YYYY-MM-DD HH:MM:SS` shape rather than a decade token
     // (which would rot as years advance).
-    let after = user_msg
-        .content
+    let user_text = user_msg.text();
+    let after = user_text
         .split("Current Date & Time: ")
         .nth(1)
         .expect("stamp must follow the canonical prefix");
@@ -154,22 +151,19 @@ async fn test_orchestrator_has_current_date_context() -> Result<()> {
 #[tokio::test]
 async fn test_integrations_agent_has_current_date_context() -> Result<()> {
     let captured_messages = Arc::new(Mutex::new(Vec::new()));
-    let provider = Arc::new(MockCalendarProvider {
-        captured_messages: captured_messages.clone(),
-        iter_count: Arc::new(Mutex::new(0)),
-    });
+    let model = calendar_model(captured_messages.clone());
 
     let _ = openhuman_core::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
 
     let parent = openhuman_core::openhuman::agent::harness::ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["integrations_agent".to_string()].into_iter().collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
-            provider.clone(),
-        ),
+        turn_model_source:
+            openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(vec![Box::new(MockCalendarTool)]),
         all_tool_specs: Arc::new(vec![MockCalendarTool.spec()]),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
@@ -181,7 +175,8 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
-        tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::PFormat,
+        tool_call_format:
+            openhuman_core::openhuman::agent::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
@@ -198,7 +193,7 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
     // #1710, a Hint sub-agent builds a fresh provider via the workload
     // factory instead of inheriting `parent.provider` — which here would
     // resolve to the OpenHuman backend and fail with "No backend session"
-    // before the MockCalendarProvider ever sees a request. This test only
+    // before the MockCalendarModel ever sees a request. This test only
     // asserts prompt construction (the "Current Date & Time" context), so
     // override the model spec to Inherit to keep the real integrations_agent
     // definition (prompt, tools, scope) while routing through the captured
@@ -220,7 +215,7 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
     // Use substring search on all user messages
     let mut found = false;
     for m in messages.iter() {
-        if m.role == "user" && m.content.contains("Current Date & Time:") {
+        if matches!(m, Message::User(_)) && m.text().contains("Current Date & Time:") {
             found = true;
             break;
         }

@@ -1,6 +1,8 @@
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useEffect, useRef } from 'react';
 
 import { useDaemonLifecycle } from '../hooks/useDaemonLifecycle';
+import { subscribeCompanionStateChanged } from '../services/companionEvents';
 import { callCoreRpc } from '../services/coreRpcClient';
 import { socketService } from '../services/socketService';
 import { setBackend, setCore } from '../store/connectivitySlice';
@@ -86,6 +88,24 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       socketService.disconnect();
     }
   }, [token]);
+
+  // Bridge the shell's `companion://state_changed` Tauri events into the
+  // companion Redux slice (replaces the old core Socket.IO companion bridge).
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let disposed = false;
+    void subscribeCompanionStateChanged().then(fn => {
+      if (disposed) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Cleanup on unmount only
   useEffect(() => {

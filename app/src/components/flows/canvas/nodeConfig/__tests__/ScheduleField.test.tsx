@@ -55,4 +55,23 @@ describe('ScheduleField', () => {
     fireEvent.change(cron, { target: { value: '15 3 * * *' } });
     expect(onChange).toHaveBeenLastCalledWith('15 3 * * *');
   });
+
+  // F-m7: a hand-written step outside buildCron's clamp range (e.g. "every 90
+  // minutes") must open in the advanced field, exactly like any other cron
+  // the visual builder doesn't model — not the visual "minutes" editor with an
+  // out-of-range interval, whose next unrelated patch() would silently
+  // rewrite it to */59.
+  it('opens the advanced cron field for an out-of-range step instead of the visual minutes editor', () => {
+    setup('*/90 * * * *');
+    expect(screen.getByTestId('sched-cron')).toHaveValue('*/90 * * * *');
+    expect(screen.queryByTestId('sched-interval')).not.toBeInTheDocument();
+  });
+
+  it('leaves an out-of-range custom cron untouched by onChange on mount (no silent rewrite)', () => {
+    const { onChange } = setup('*/90 * * * *');
+    // Only the mount-seed effect can call onChange unprompted, and it's
+    // guarded on an empty value — an out-of-range but non-empty value must
+    // never be silently recompiled to */59.
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { agentMessageText } from '../helpers/chat-locators';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -177,7 +178,7 @@ test.describe('Chat Multi Tool Round', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, PROMPT);
 
-    await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 50_000 });
+    await expect(agentMessageText(page, CANARY_FINAL)).toBeVisible({ timeout: 50_000 });
 
     await expect
       .poll(

@@ -66,7 +66,7 @@ impl TinyPlaceState {
                 log::debug!("{LOG_PREFIX} building client base_url={}", self.base_url);
                 // Derive 32-byte Ed25519 seed from the user's Solana wallet key.
                 // The seed is consumed immediately; never logged or persisted.
-                let seed = crate::openhuman::wallet::tinyplace_signer_seed().await?;
+                let seed = crate::openhuman::web3::wallet::tinyplace_signer_seed().await?;
                 let signer: Arc<dyn tinyplace::Signer> = Arc::new(
                     LocalSigner::from_seed(&seed)
                         .map_err(|e| format!("tinyplace signer init: {e}"))?,

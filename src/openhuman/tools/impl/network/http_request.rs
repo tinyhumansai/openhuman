@@ -3,10 +3,38 @@ use crate::openhuman::config::HttpRequestConfig;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
+// Only used by the `web3`-gated x402 402-retry path below.
+#[cfg(feature = "web3")]
 use base64::engine::Engine as _;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Build the egress descriptor for an outbound HTTP request (privacy epic S2,
+/// #4436). The host is the destination; a request body carries tool arguments
+/// and any custom headers (e.g. an `Authorization` token) are metadata that
+/// also leaves the device — so a header-only call is not under-reported as
+/// URL-only (codex P2, PR #4812). Pure over its inputs so it is unit-testable
+/// off the network path.
+fn network_egress_descriptor(
+    url: &str,
+    has_body: bool,
+    has_headers: bool,
+) -> crate::openhuman::security::egress::EgressDescriptor {
+    use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut desc = EgressDescriptor::network_fetch(host);
+    if has_body {
+        desc = desc.with_data_kind(DataKind::ToolArguments);
+    }
+    if has_headers {
+        desc = desc.with_data_kind(DataKind::Metadata);
+    }
+    desc
+}
 
 /// HTTP request tool for API interactions.
 /// Supports GET, POST, PUT, DELETE methods with configurable security.
@@ -135,6 +163,11 @@ impl HttpRequestTool {
         Ok(request.send().await?)
     }
 
+    // x402 machine-payment retry — gated with the `web3` feature (the x402
+    // domain, its ledger, and the `SettlementResponse`/`PaymentRecord` types
+    // are compiled out when web3 is disabled). With the feature off, a 402 is
+    // returned to the caller unpaid (see the call site).
+    #[cfg(feature = "web3")]
     async fn handle_x402_payment(
         &self,
         _initial_response: reqwest::Response,
@@ -143,7 +176,7 @@ impl HttpRequestTool {
         headers: Vec<(String, String)>,
         body: Option<&str>,
     ) -> Result<reqwest::Response, String> {
-        use crate::openhuman::x402;
+        use crate::openhuman::web3::x402;
 
         log::debug!("[tool.http_request] 402 received with PAYMENT-REQUIRED, attempting x402 payment for {url}");
 
@@ -353,10 +386,43 @@ impl Tool for HttpRequestTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
+        // Local-only enforcement (privacy epic S7, #4441): mirror the read-only
+        // `can_act()` deny above — under LocalOnly, refuse the outbound request
+        // before URL validation / DNS so nothing (not even a DNS lookup for the
+        // host) leaves the device. The post-validation `emit_external_transfer`
+        // below stays the S2 disclosure point for permitted requests.
+        {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(
+                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+            ) {
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         let url = match self.validate_url(url).await {
             Ok(v) => v,
             Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
+
+        // Egress spine (privacy epic S2, #4436): an agent-driven HTTP request to
+        // an allowlisted host leaves the device — disclose the destination and
+        // everything that rides with it (body + custom headers) before the
+        // round-trip.
+        {
+            let has_headers = headers_val
+                .as_object()
+                .map(|h| !h.is_empty())
+                .unwrap_or(false);
+            crate::openhuman::security::egress::emit_external_transfer(network_egress_descriptor(
+                &url,
+                body.is_some(),
+                has_headers,
+            ));
+        }
 
         let method = match self.validate_method(method_str) {
             Ok(m) => m,
@@ -374,7 +440,9 @@ impl Tool for HttpRequestTool {
         };
 
         // x402: if the server returns 402 with a PAYMENT-REQUIRED header,
-        // attempt to pay using the wallet's Solana key and retry.
+        // attempt to pay using the wallet's Solana key and retry. Compiled out
+        // when the `web3` feature is off — a 402 then passes through unpaid.
+        #[cfg(feature = "web3")]
         let response = if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED
             && (response.headers().get("PAYMENT-REQUIRED").is_some()
                 || response.headers().get("X-PAYMENT-REQUIRED").is_some())

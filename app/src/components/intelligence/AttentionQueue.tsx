@@ -12,7 +12,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { AttentionAction, AttentionQueue } from '../../lib/orchestration/orchestrationClient';
 import AttentionQueueItem from './AttentionQueueItem';
 
-export interface AttentionQueueProps {
+interface AttentionQueueProps {
   queue: AttentionQueue | null;
   loading?: boolean;
   onAction?: (action: AttentionAction) => void;

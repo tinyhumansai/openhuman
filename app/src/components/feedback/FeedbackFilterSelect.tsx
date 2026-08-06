@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
-export interface FilterOption {
+interface FilterOption {
   value: string;
   label: string;
 }

@@ -6,7 +6,7 @@ single provider runtime.
 
 ## Scope
 
-The contract lives in the top-level `src/openhuman/image/` module and
+The contract lives in the top-level `src/openhuman/media/image/` module and
 currently covers two model-facing tools:
 
 | Tool | Purpose | Permission | Output |
@@ -18,7 +18,6 @@ This layer is intentionally high level. Existing lower-level tools still own
 their concrete behavior:
 
 - `image_info` reads local image metadata and optional base64 text.
-- Browser screenshot tooling captures pages and writes image files.
 - Agent multimodal preparation normalizes `[IMAGE:...]` markers for providers
   that accept image data.
 
@@ -83,7 +82,7 @@ runtime adapter, not in the hosted contract module.
 ## Media generation (GMI): image and video tools
 
 Separate from the high-level `image_generation` contract above, the
-`src/openhuman/media_generation/` domain ships **wired, executing** tools that
+`src/openhuman/media/generation/` domain ships **wired, executing** tools that
 generate images and video through the OpenHuman backend's `media_generation`
 provider (GMI Cloud: Seedream, SeedEdit, Seedance, Veo).
 

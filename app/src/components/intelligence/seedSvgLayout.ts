@@ -18,14 +18,14 @@
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 import { VIEWPORT_H, VIEWPORT_W } from './memoryGraphLayout';
 
-export interface SeededPosition {
+interface SeededPosition {
   x: number;
   y: number;
   /** True when the node had no carried-over position (newly arrived). */
   isNew: boolean;
 }
 
-export interface SeedResult {
+interface SeedResult {
   /** Index-aligned with the input `nodes`. */
   positions: SeededPosition[];
   /** Edge index pairs [childIdx, parentIdx] (tree) or [fromIdx, toIdx] (contacts). */

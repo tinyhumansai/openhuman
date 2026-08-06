@@ -369,7 +369,7 @@ fn computer_use_only_action_detection_is_correct() {
     assert!(is_computer_use_only_action("mouse_drag"));
     assert!(is_computer_use_only_action("key_type"));
     assert!(is_computer_use_only_action("key_press"));
-    assert!(is_computer_use_only_action("screen_capture"));
+    assert!(!is_computer_use_only_action("screen_capture"));
     assert!(!is_computer_use_only_action("open"));
     assert!(!is_computer_use_only_action("snapshot"));
 }
@@ -483,23 +483,33 @@ fn parse_get_title_and_get_url() {
 }
 
 #[test]
-fn parse_screenshot_optional_fields() {
-    let action = parse_browser_action("screenshot", &json!({})).unwrap();
-    if let BrowserAction::Screenshot { path, full_page } = action {
-        assert!(path.is_none());
-        assert!(!full_page);
-    } else {
-        panic!("expected Screenshot");
-    }
+fn parse_pixel_capture_actions_are_unsupported_while_snapshot_remains_supported() {
+    assert!(parse_browser_action("snapshot", &json!({})).is_ok());
+    assert!(parse_browser_action("screenshot", &json!({})).is_err());
+    assert!(parse_browser_action("screen_capture", &json!({})).is_err());
+}
 
-    let action2 = parse_browser_action(
-        "screenshot",
-        &json!({"path": "/tmp/s.png", "full_page": true}),
-    )
-    .unwrap();
-    if let BrowserAction::Screenshot { path, full_page } = action2 {
-        assert_eq!(path.as_deref(), Some("/tmp/s.png"));
-        assert!(full_page);
+#[tokio::test]
+async fn pixel_capture_actions_are_rejected_before_backend_dispatch() {
+    let security = Arc::new(SecurityPolicy::default());
+    let tool = BrowserTool::new_with_backend(
+        security,
+        vec!["*".into()],
+        None,
+        "computer_use".into(),
+        true,
+        "http://127.0.0.1:9515".into(),
+        None,
+        ComputerUseConfig {
+            endpoint: "http://public.example.test/".into(),
+            ..ComputerUseConfig::default()
+        },
+    );
+
+    for action in ["screenshot", "screen_capture"] {
+        let result = tool.execute(json!({ "action": action })).await.unwrap();
+        assert!(result.is_error);
+        assert_eq!(result.output(), format!("Unknown action: {action}"));
     }
 }
 
@@ -627,7 +637,6 @@ fn supported_action_detection_is_exhaustive() {
         "get_text",
         "get_title",
         "get_url",
-        "screenshot",
         "wait",
         "press",
         "hover",
@@ -640,7 +649,6 @@ fn supported_action_detection_is_exhaustive() {
         "mouse_drag",
         "key_type",
         "key_press",
-        "screen_capture",
     ];
     for action in supported {
         assert!(
@@ -649,6 +657,8 @@ fn supported_action_detection_is_exhaustive() {
         );
     }
     assert!(!is_supported_browser_action("teleport"));
+    assert!(!is_supported_browser_action("screenshot"));
+    assert!(!is_supported_browser_action("screen_capture"));
     assert!(!is_supported_browser_action(""));
 }
 
@@ -921,6 +931,14 @@ fn browser_tool_schema_has_required_action() {
     let schema = tool.parameters_schema();
     let required = schema["required"].as_array().unwrap();
     assert!(required.contains(&json!("action")));
+    let actions = schema["properties"]["action"]["enum"]
+        .as_array()
+        .expect("action enum");
+    assert!(actions.contains(&json!("snapshot")));
+    assert!(!actions.contains(&json!("screenshot")));
+    assert!(!actions.contains(&json!("screen_capture")));
+    assert!(schema["properties"].get("full_page").is_none());
+    assert!(schema["properties"].get("path").is_none());
 }
 
 #[test]

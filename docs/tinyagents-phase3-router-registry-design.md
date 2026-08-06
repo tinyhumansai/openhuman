@@ -1,8 +1,11 @@
 # Phase 3 — RouterProvider → crate ModelRegistry: design & ground truth
 
-**Status:** design (starting Phase 3). Grounded in a full read of both the crate
+**Status:** superseded on 2026-07-22 by
+[`tinyagents-migration-plan-2026-07-22.md`](tinyagents-migration-plan-2026-07-22.md).
+Phase 3's client cutover landed in #4783/#4784; this document is retained as
+historical design rationale, not current status. Grounded in a full read of both the crate
 (`vendor/tinyagents/src/harness/model`, `harness/agent_loop`, `harness/retry`,
-`registry/`) and the host seam (`src/openhuman/tinyagents/{mod,routes,model}.rs`,
+`registry/`) and the host seam (`src/openhuman/agent/tinyagents/{mod,routes,model}.rs`,
 `inference/provider/{router,factory}.rs`).
 **Relates to:** `docs/tinyagents-inference-migration-plan.md` (Phase 3),
 `docs/tinyagents-drift-ledger.md` (P1-9), issue #4249.

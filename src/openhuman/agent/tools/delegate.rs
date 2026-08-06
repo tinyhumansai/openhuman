@@ -1,16 +1,18 @@
 use crate::openhuman::config::DelegateAgentConfig;
 use crate::openhuman::inference::provider::{
-    create_backend_inference_provider, Provider, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
+    OpenHumanBackendModel, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
 };
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tool_timeout::tool_execution_timeout_secs;
+use crate::openhuman::tools::timeout::tool_execution_timeout_secs;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 /// Tool that delegates a subtask to a named agent with a different
 /// provider/model configuration. Enables multi-agent workflows where
@@ -177,19 +179,11 @@ impl Tool for DelegateTool {
             return Ok(ToolResult::error(error));
         }
 
-        let provider: Box<dyn Provider> = match create_backend_inference_provider(
-            None,
-            None,
+        let model = OpenHumanBackendModel::new(
             None,
             &self.provider_runtime_options,
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to create inference client for delegate agent '{agent_name}': {e}"
-                )));
-            }
-        };
+            agent_config.model.clone(),
+        );
 
         // Build the message
         let full_prompt = if context.is_empty() {
@@ -204,11 +198,19 @@ impl Tool for DelegateTool {
         // Wrap the provider call in a timeout to prevent indefinite blocking
         let result = tokio::time::timeout(
             Duration::from_secs(delegate_timeout_secs),
-            provider.chat_with_system(
-                agent_config.system_prompt.as_deref(),
-                &full_prompt,
-                &agent_config.model,
-                temperature,
+            model.invoke(
+                &(),
+                ModelRequest::new(
+                    agent_config
+                        .system_prompt
+                        .as_deref()
+                        .map(Message::system)
+                        .into_iter()
+                        .chain(std::iter::once(Message::user(full_prompt)))
+                        .collect(),
+                )
+                .with_model(agent_config.model.clone())
+                .with_temperature(temperature),
             ),
         )
         .await;
@@ -224,7 +226,7 @@ impl Tool for DelegateTool {
 
         match result {
             Ok(response) => {
-                let mut rendered = response;
+                let mut rendered = response.text();
                 if rendered.trim().is_empty() {
                     rendered = "[Empty response]".to_string();
                 }

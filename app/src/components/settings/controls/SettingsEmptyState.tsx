@@ -1,4 +1,4 @@
-export interface SettingsEmptyStateProps {
+interface SettingsEmptyStateProps {
   label: string;
   className?: string;
 }

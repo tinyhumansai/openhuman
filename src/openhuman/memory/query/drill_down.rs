@@ -1,6 +1,6 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::query::backend;
-use crate::openhuman::memory_tree::retrieval::rpc::DrillDownRequest;
+use crate::openhuman::memory::tree::retrieval::rpc::DrillDownRequest;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -191,7 +191,7 @@ mod tests {
         );
         assert_eq!(parsed, json!([]));
 
-        let direct = crate::openhuman::memory_tree::retrieval::drill_down::drill_down(
+        let direct = crate::openhuman::memory::tree::retrieval::drill_down::drill_down(
             &cfg,
             "summary-does-not-exist",
             1,

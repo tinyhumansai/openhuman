@@ -5,7 +5,7 @@ use crate::openhuman::channels::context::{
     clear_sender_history, conversation_history_key, ChannelRouteSelection, ChannelRuntimeContext,
 };
 use crate::openhuman::channels::traits::ChannelMessage;
-use crate::openhuman::memory_conversations::{
+use crate::openhuman::memory::conversations::{
     self as conversations, ConversationThread, CreateConversationThread,
 };
 
@@ -270,7 +270,7 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
         );
     }
 
-    crate::openhuman::channels::providers::web::invalidate_thread_sessions(&thread_id).await;
+    crate::openhuman::web_chat::invalidate_thread_sessions(&thread_id).await;
 
     tracing::info!(
         "{LOG_PREFIX} new session thread_id={thread_id} reply_target={} sender_key={sender_key}",

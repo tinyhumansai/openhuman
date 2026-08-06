@@ -8,7 +8,7 @@ icon: database
 
 # Memory Sources & Scoping
 
-A **memory source** is a configured connector that feeds the [Memory Tree](memory-tree.md). Where the tree owns _"how do I store and summarize?"_, the `memory_sources` domain (`src/openhuman/memory_sources/`) owns the upstream question: **"what feeds my memory?"** It is a typed registry of connectors, persisted in `config.toml` under `[[memory_sources]]`, with CRUD at runtime, a uniform reader abstraction, per-source sync status, and the `openhuman.memory_sources_*` RPC surface.
+A **memory source** is a configured connector that feeds the [Memory Tree](memory-tree.md). Where the tree owns _"how do I store and summarize?"_, the `memory_sources` domain (`src/openhuman/memory/sources/`) owns the upstream question: **"what feeds my memory?"** It is a typed registry of connectors, persisted in `config.toml` under `[[memory_sources]]`, with CRUD at runtime, a uniform reader abstraction, per-source sync status, and the `openhuman.memory_sources_*` RPC surface.
 
 The domain only _defines connectors and reads from them_. The ingestion engine and sync scheduling live in `memory` / `memory_sync`; sources dispatch work to the right backend.
 
@@ -16,7 +16,7 @@ The domain only _defines connectors and reads from them_. The ingestion engine a
 
 ## Source kinds
 
-Every source is a single flat `MemorySourceEntry` (`src/openhuman/memory_sources/types.rs`) whose `kind` discriminator (the `SourceKind` enum) decides which fields are required. Validation is enforced at add/update time by `validate()`, not the type system. The kinds:
+Every source is a single flat `MemorySourceEntry` (`src/openhuman/memory/sources/types.rs`) whose `kind` discriminator (the `SourceKind` enum) decides which fields are required. Validation is enforced at add/update time by `validate()`, not the type system. The kinds:
 
 | Kind             | `SourceKind`   | What it ingests                                                                              |
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------- |
@@ -34,7 +34,7 @@ Each entry also carries optional per-sync budgets (`max_tokens_per_sync`, `max_c
 
 ## Adding and configuring sources
 
-Sources are CRUD-ed through the `memory_sources` controllers (`src/openhuman/memory_sources/schemas.rs` → `rpc.rs`), namespace `openhuman.memory_sources_*`:
+Sources are CRUD-ed through the `memory_sources` controllers (`src/openhuman/memory/sources/schemas.rs` → `rpc.rs`), namespace `openhuman.memory_sources_*`:
 
 | RPC           | Purpose                                                             |
 | ------------- | ------------------------------------------------------------------ |
@@ -54,7 +54,7 @@ All mutations reload the live `Config`, apply the change, and `config.save()` at
 
 ## The reader abstraction
 
-Every kind implements one async trait, `SourceReader` (`src/openhuman/memory_sources/readers/mod.rs`):
+Every kind implements one async trait, `SourceReader` (`src/openhuman/memory/sources/readers/mod.rs`):
 
 ```rust
 #[async_trait]

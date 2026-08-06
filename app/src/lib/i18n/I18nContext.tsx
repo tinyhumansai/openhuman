@@ -99,5 +99,3 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 export function useT(): I18nContextValue {
   return useContext(I18nContext);
 }
-
-export { type Locale } from './types';

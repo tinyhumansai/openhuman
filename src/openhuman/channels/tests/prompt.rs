@@ -1,5 +1,5 @@
 use super::common::make_workspace;
-use crate::openhuman::context::channels_prompt::{build_system_prompt, BOOTSTRAP_MAX_CHARS};
+use crate::openhuman::agent::context::channels_prompt::{build_system_prompt, BOOTSTRAP_MAX_CHARS};
 use tempfile::TempDir;
 
 #[test]

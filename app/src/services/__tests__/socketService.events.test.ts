@@ -417,6 +417,33 @@ describe('socketService — agent_meetings event handlers (lines 428-480)', () =
     expect(signal.message).toBeUndefined();
   });
 
+  it('scopes a memory-sourced "user_error" to memory rather than cron (#5354)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    ingestRuntimeErrorSignalMock.mockClear();
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-user-error-memory');
+
+    await pollUntil(() => expect(handlers['user_error']).toBeDefined());
+
+    // The memory embedder health gate is the second producer of this event.
+    // Scope is part of the panel entry's dedupe identity, so it must follow the
+    // producing domain instead of staying pinned to the cron default.
+    handlers['user_error']!({ error_type: 'local_model_unavailable', error_source: 'memory' });
+
+    expect(ingestRuntimeErrorSignalMock).toHaveBeenCalledTimes(1);
+    const signal = ingestRuntimeErrorSignalMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(signal).toMatchObject({
+      errorType: 'local_model_unavailable',
+      scope: 'memory',
+      sourceDomain: 'memory',
+    });
+    expect(signal.message).toBeUndefined();
+  });
+
   it('defaults "user_error" sourceDomain to cron when error_source is absent (#4165)', async () => {
     const { handlers, mockSocket } = buildMockSocket();
 

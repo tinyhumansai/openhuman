@@ -47,7 +47,7 @@ export function useTwoPanelLayout(id: string, defaults?: Partial<PanelLayout>) {
   };
 }
 
-export interface TwoPanelLayoutProps {
+interface TwoPanelLayoutProps {
   /** Stable id used as the persistence key for this layout's geometry. */
   id: string;
   /** Content of the mini sidebar (left pane). */
@@ -103,7 +103,7 @@ export interface TwoPanelLayoutProps {
 }
 
 /** Default card look shared by both panes. */
-export const DEFAULT_PANE_CLASS = 'bg-surface rounded-2xl shadow-soft border border-line';
+const DEFAULT_PANE_CLASS = 'bg-surface rounded-2xl shadow-soft border border-line';
 
 const DEFAULT_MIN_WIDTH = 180;
 const DEFAULT_MAX_WIDTH = 480;

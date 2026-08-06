@@ -1,7 +1,7 @@
 //! Crate-native OpenAI-compatible client construction (issue #4727, Motion B).
 //!
-//! The cutover replaces the in-house [`OpenAiCompatibleProvider`] wire client with
-//! the vendored `tinyagents` crate's `OpenAiModel` — a `ChatModel` that speaks the
+//! The cutover replaced the in-house OpenAI-compatible wire client with the
+//! vendored `tinyagents` crate's `OpenAiModel` — a `ChatModel` that speaks the
 //! OpenAI Chat Completions wire and, since tinyagents #44/#47/#48, carries the
 //! host-parity config the OpenHuman provider catalog needs: configurable auth
 //! styles + static headers, per-model temperature suppression/override, and
@@ -15,17 +15,15 @@
 //! (`/v1/responses` + query-param auth) — stay as host `ChatModel` impls and do
 //! **not** route through here.
 //!
-//! **Status: scaffolding.** The builder + auth mapping are complete and
-//! unit-tested; wiring it as the factory's default construction path (and the
-//! per-provider wire-parity validation that must precede deleting
-//! `compatible*.rs`) is the follow-up within this cutover.
+//! The builder + auth mapping are the factory's default construction path and
+//! are covered by the provider wire-parity suite.
 
 use std::sync::Arc;
 
 use tinyagents::harness::model::ChatModel;
 use tinyagents::harness::providers::openai::{AuthStyle as CrateAuthStyle, OpenAiModel};
 
-use super::compatible::AuthStyle as HostAuthStyle;
+use super::auth::AuthStyle as HostAuthStyle;
 
 /// Map the host [`AuthStyle`](HostAuthStyle) to the crate's `AuthStyle`. The
 /// variants are 1:1 (both were derived from the same OpenHuman provider catalog).
@@ -95,8 +93,7 @@ pub(crate) struct CrateOpenAiConfig<'a> {
 }
 
 /// Build a crate-native `OpenAiModel` (`ChatModel`) for the given OpenAI-compatible
-/// provider config — the cutover replacement for constructing an
-/// `OpenAiCompatibleProvider`.
+/// provider config.
 pub(crate) fn build_crate_openai_model(config: CrateOpenAiConfig<'_>) -> Arc<dyn ChatModel<()>> {
     let mut model = OpenAiModel::compatible_provider(
         config.provider_name,
@@ -147,11 +144,9 @@ pub(crate) fn build_crate_openai_model(config: CrateOpenAiConfig<'_>) -> Arc<dyn
     Arc::new(model)
 }
 
-/// Factory-level crate-native builder — the drop-in parallel to the host
-/// `make_openai_compatible_provider_with_config`, taking the same resolved
-/// inputs (provider slug, endpoint, credential, host auth style, model, the
-/// config temperature-suppression list + per-workload override) and returning a
-/// crate `ChatModel` instead of a `Box<dyn Provider>`.
+/// Factory-level native builder taking resolved provider slug, endpoint,
+/// credential, host auth style, model, temperature-suppression list, and
+/// per-workload override and returning a crate `ChatModel`.
 ///
 /// The cutover swaps each generic OpenAI-compatible construction site over to
 /// this. `merge_system_into_user` is threaded per-provider (the catalog knows
@@ -190,8 +185,7 @@ pub(crate) fn make_crate_openai_chat_model(
 }
 
 /// Build a crate-native `ChatModel` for a **local OpenAI-compatible runtime**
-/// (Ollama, LM Studio, MLX, OMLX, local-openai) — the crate-native counterpart
-/// of the host `make_*_provider` local builders. Local runtimes reject the
+/// (Ollama, LM Studio, MLX, OMLX, local-openai). Local runtimes reject the
 /// OpenAI `tools` parameter and are text-only, so native tool calling and vision
 /// are forced off; `num_ctx` (Ollama) rides baked provider options as
 /// `{"options": {"num_ctx": N}}`, matching the host provider's wire shape.

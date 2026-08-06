@@ -8,7 +8,7 @@ use axum::{
     routing::post,
     Router,
 };
-use openhuman_core::openhuman::channels::providers::web::{
+use openhuman_core::openhuman::web_chat::{
     cancel_chat, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{YuanbaoChannel, YuanbaoConfig};
@@ -310,7 +310,7 @@ async fn web_channel_validation_cancel_and_classifier_snapshots_are_publicly_exe
     assert!(blocked.is_err());
 
     let rate_limited =
-        openhuman_core::openhuman::channels::web::test_support::classify_error_for_test(
+        openhuman_core::openhuman::web_chat::test_support::classify_error_for_test(
             r#"openrouter API error (429 Too Many Requests): {"error":{"message":"slow down","retry_after":1.2}}"#,
         );
     assert_eq!(rate_limited.error_type, "rate_limited");
@@ -320,38 +320,38 @@ async fn web_channel_validation_cancel_and_classifier_snapshots_are_publicly_exe
     assert!(rate_limited.retryable);
 
     let business_429 =
-        openhuman_core::openhuman::channels::web::test_support::classify_error_for_test(
+        openhuman_core::openhuman::web_chat::test_support::classify_error_for_test(
             "zai API error (429): code 1311 no available package",
         );
     assert_eq!(business_429.error_type, "rate_limited");
     assert!(!business_429.retryable);
 
     let action_budget =
-        openhuman_core::openhuman::channels::web::test_support::classify_error_for_test(
+        openhuman_core::openhuman::web_chat::test_support::classify_error_for_test(
             "rate limit exceeded: action budget exhausted",
         );
     assert_eq!(action_budget.error_type, "action_budget_exceeded");
     assert_eq!(action_budget.source, "openhuman_budget");
     assert_eq!(action_budget.provider, None);
 
-    let exhausted = openhuman_core::openhuman::channels::web::test_support::classify_error_for_test(
+    let exhausted = openhuman_core::openhuman::web_chat::test_support::classify_error_for_test(
         "All providers/models failed. Attempts: openai API error (503 Service Unavailable)",
     );
     assert_eq!(exhausted.fallback_available, Some(false));
 
     assert_eq!(
-        openhuman_core::openhuman::channels::web::test_support::retry_after_secs_for_test(
+        openhuman_core::openhuman::web_chat::test_support::retry_after_secs_for_test(
             r#"{"retry_after": 0.1}"#
         ),
         Some(1)
     );
-    assert!(openhuman_core::openhuman::channels::web::test_support::extracted_provider_detail_for_test(
+    assert!(openhuman_core::openhuman::web_chat::test_support::extracted_provider_detail_for_test(
         r#"openai API error (404): {"error":{"message":"Project does not have access to model x"}}"#
     )
     .expect("provider detail")
     .contains("model"));
     assert!(
-        openhuman_core::openhuman::channels::web::test_support::is_non_retryable_rate_limit_for_test(
+        openhuman_core::openhuman::web_chat::test_support::is_non_retryable_rate_limit_for_test(
             "plan does not include this model"
         )
     );

@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::openhuman::wallet::EvmNetwork;
+use crate::openhuman::web3::wallet::EvmNetwork;
 
 /// deBridge's internal chain id for Solana mainnet (`/supported-chains-info`).
 /// EVM chains use their real chain ids; Solana is a synthetic id. Mirrors the

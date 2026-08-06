@@ -21,8 +21,19 @@ import { APP_VERSION } from './utils/config';
 import { getStoredCoreMode } from './utils/configPersistence';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { missingHashRedirectTarget } from './utils/hashRouterBootstrap';
+import { installIpcTransportFallback } from './utils/ipcTransportFallback';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
 import { isTauri as tauriRuntimeAvailable } from './utils/tauriCommands/common';
+
+// Must run before anything can `invoke()`. Tauri's vendored IPC bootstrap
+// falls back to `window.ipc.postMessage(...)` once the `ipc://` custom-protocol
+// fetch rejects even once, and CEF never wires `window.ipc` — that dereference
+// is Sentry TAURI-REACT-6 / #5155. Installing a working fallback here makes the
+// undefined access impossible AND lets the latched fallback keep serving IPC
+// instead of bricking the session. Module-body position is early enough: ESM
+// hoists every import above this line, and no imported module invokes at
+// import time — the first real `invoke()` happens in a React effect.
+installIpcTransportFallback();
 
 setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 

@@ -18,7 +18,7 @@ import { createPortal } from 'react-dom';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useT } from '../../lib/i18n/I18nContext';
 
-export interface FlowRowMenuItem {
+interface FlowRowMenuItem {
   key: string;
   label: string;
   onSelect: () => void;
@@ -27,7 +27,7 @@ export interface FlowRowMenuItem {
   testId?: string;
 }
 
-export interface FlowRowMenuProps {
+interface FlowRowMenuProps {
   items: FlowRowMenuItem[];
   /** Suffixed onto test ids so multiple rows stay addressable. */
   rowId: string;

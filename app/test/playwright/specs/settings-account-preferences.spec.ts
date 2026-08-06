@@ -72,14 +72,13 @@ test.describe('Settings - Account Preferences', () => {
   test('renders the crypto settings section route with recovery phrase + balances', async ({
     page,
   }) => {
-    // /settings/crypto is retired and redirects to the Wallet Balances panel,
-    // whose sub-nav family surfaces recovery-phrase + wallet-balances.
+    // /settings/crypto is retired and redirects to Connections → Wallet.
     await gotoSettingsRoute(page, '/settings/crypto');
 
-    // Panel titles were dropped in the PanelPage migration; the Wallet family is
-    // confirmed by its sub-nav leaves below.
-    await expect(page.getByTestId('settings-subnav-recovery-phrase')).toBeVisible();
-    await expect(page.getByTestId('settings-subnav-wallet-balances')).toBeVisible();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/connections?tab=wallet');
+    await expect(page.getByTestId('wallet-panel')).toBeVisible();
   });
 
   test('saves a generated recovery phrase and exposes configured wallet state', async ({

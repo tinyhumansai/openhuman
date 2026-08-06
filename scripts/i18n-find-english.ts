@@ -55,8 +55,10 @@ const INTENTIONAL_ENGLISH = new Set([
   "agentWorld.world.title", // "Tiny Place" — brand/product name, same in every locale
   "app.connectionIndicator.coreOffline",
   "channels.activeRouteValue",
+  "conversations.backgroundTasks.cronSchedCron", // Cron expression label; Cron is the scheduler name
   "composio.integrationSlugsExample",
   "composio.integrationSlugsPlaceholder",
+  "settings.ai.deploymentNamePlaceholder", // Example Azure deployment id; an identifier, not prose
   "devOptions.toolPolicyDiagnostics.mcpAllowlists.allowDeny",
   "intelligence.agents.subagentCountOne",
   "intelligence.diagram.skillInstallCommand",
@@ -64,16 +66,16 @@ const INTENTIONAL_ENGLISH = new Set([
   "mcp.playground.argsLabel",
   "mcp.tab.source.smithery",
   "memorySources.globPatternPlaceholder",
-  "modelCouncil.editCouncilAria",
-  "modelCouncil.jurorLabel",
   "rewards.community.discordDetails", // "Discord" — brand/product name, same in every locale
   "rewards.community.rewardTokens", // "+{tokens} tokens" — "tokens" is the technical unit, kept in every locale (the recurring "/mo" variant IS translated)
   "nav.agentWorld",
+  "orchPage.medulla.title", // "Medulla" — brand/product name, same in every locale
   "memorySources.searchQueryPlaceholder",
   "migration.vendor.hermes",
   "namespaceOverview.entitiesShort",
-  "screenAwareness.debug.defaultPanicHotkey",
   "settings.ai.connectionsPerTick",
+  "settings.ai.claudeCode.button", // Claude Code is a product name
+  "settings.ai.claudeCode.modalTitle", // Claude Code CLI is a product name
   "settings.ai.localModelResolved",
   "settings.ai.localOllama",
   "settings.ai.minutesShort",
@@ -91,6 +93,8 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.sandbox.backend.landlock",
   "settings.search.allowedSitesPlaceholder",
   "settings.search.engineBraveLabel",
+  "flows.nodeSummary.agent.withPrompt", // "“{prompt}” · {model}" — quoted prompt + model id; only the quote glyph varies per locale, no prose to translate
+  "flows.nodeSummary.http.withUrl", // "{method} {url}" — HTTP method + URL are literal, untranslatable data
   "settings.taskSources.name",
   "skills.create.allowedToolsPlaceholder",
   "skills.create.optional",

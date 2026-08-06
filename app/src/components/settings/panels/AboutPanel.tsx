@@ -9,6 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 
+import { GitHubStarCard } from '../../../features/star/GitHubStarCard';
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../../store/hooks';
@@ -154,6 +155,12 @@ const AboutPanel = () => {
           </Button>
         </div>
       </SettingsSection>
+
+      {/* Star us on GitHub — a subtle, dismissible CTA (#5005). The card owns
+          its own surface styling and renders nothing once the user stars or
+          dismisses it (durable, per-user), so it is not wrapped in a
+          SettingsSection that would leave a hollow box behind. */}
+      <GitHubStarCard />
 
       {/* Diagnostics (app logs, restart tour, staging Sentry test) —
             relocated here from the retired Developer & Diagnostics page. */}

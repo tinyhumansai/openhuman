@@ -17,9 +17,7 @@
 //     `__openhumanCaptionsBridgeInfo()` for the Tauri shell to drive
 //     over CDP `Runtime.evaluate`.
 //
-// Why scraping (and not getDisplayMedia, or Web Speech, or Meet's
-// undocumented APIs)?
-//   - getDisplayMedia would prompt the user for screen-share permission.
+// Why scraping (and not Web Speech or Meet's undocumented APIs)?
 //   - Web Speech doesn't reach the remote participants' audio — only
 //     local mic.
 //   - Meet has no public caption API.
@@ -27,7 +25,7 @@
 //     obfuscate often, so we lean on `aria-label="Captions"` (which
 //     Meet keeps stable for accessibility).
 //
-// Wake-word handling lives in the core (`src/openhuman/meet_agent/`),
+// Wake-word handling lives in the core (`src/openhuman/meet/agent/`),
 // not here — the page just streams every caption line out and core
 // decides when to act.
 

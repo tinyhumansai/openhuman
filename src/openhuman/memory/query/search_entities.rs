@@ -1,7 +1,7 @@
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory_tree::retrieval;
-use crate::openhuman::memory_tree::retrieval::rpc::SearchEntitiesRequest;
-use crate::openhuman::memory_tree::score::extract::EntityKind;
+use crate::openhuman::memory::tree::retrieval;
+use crate::openhuman::memory::tree::retrieval::rpc::SearchEntitiesRequest;
+use crate::openhuman::memory::tree::score::extract::EntityKind;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;

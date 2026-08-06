@@ -132,7 +132,7 @@ function mapToActionableItem(item: ExtractedActionable, index: number): Actionab
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export interface UseConsciousItemsResult {
+interface UseConsciousItemsResult {
   items: ActionableItem[];
   loading: boolean;
   isRunning: boolean;

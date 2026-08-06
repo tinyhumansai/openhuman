@@ -17,17 +17,10 @@ use controllers::{
 #[cfg(test)]
 use helpers::{
     deserialize_params, json_output, optional_bool, optional_json, optional_string,
-    required_string, to_json, ActivityLevelSettingsUpdate, AgentPathsUpdate, AgentSettingsUpdate,
-    AnalyticsSettingsUpdate, AutonomySettingsUpdate, BrowserSettingsUpdate,
-    ComposioTriggerSettingsUpdate, DictationSettingsUpdate, LocalAiSettingsUpdate,
-    MeetSettingsUpdate, MemorySettingsUpdate, MemorySyncSettingsUpdate, ModelSettingsUpdate,
-    OnboardingCompletedSetParams, RuntimeSettingsUpdate, SandboxSettingsUpdate,
-    ScreenIntelligenceSettingsUpdate, SearchSettingsUpdate, SetBrowserAllowAllParams,
-    VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams,
-    DEFAULT_ONBOARDING_FLAG_NAME,
+    required_string, to_json, AutonomySettingsUpdate, LocalAiSettingsUpdate, MemorySettingsUpdate,
+    ModelSettingsUpdate, OnboardingCompletedSetParams, SetBrowserAllowAllParams,
+    WorkspaceOnboardingFlagParams, WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
 };
-#[cfg(test)]
-use schema_defs::schemas;
 #[cfg(test)]
 use serde_json::{Map, Value};
 

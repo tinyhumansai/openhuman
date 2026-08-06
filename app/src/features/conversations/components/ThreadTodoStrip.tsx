@@ -191,5 +191,3 @@ function cardLabel(card: TaskBoardCard): string {
   if (objective) return objective;
   return card.id;
 }
-
-export default ThreadTodoStrip;

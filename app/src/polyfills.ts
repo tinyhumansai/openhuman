@@ -44,7 +44,3 @@ import process from 'process';
     (global as any).util = util;
   }
 })();
-
-// Export for use in modules
-export { Buffer, process, util };
-export default Buffer;

@@ -35,6 +35,8 @@
  *            transitions through `phase: 'subagent'` at some point.
  *          - `chatRuntime.toolTimelineByThread[<thread>]` records an
  *            entry whose `id` starts with `<thread>:subagent:`.
+ *          - Or the async delegation acknowledgement renders in the
+ *            conversation (the durable signal after the parent turn ends).
  *          - The final orchestrator text (canary) renders in the DOM.
  *
  *        Rust:
@@ -58,7 +60,7 @@ import {
   waitForSocketConnected,
 } from '../helpers/chat-harness';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { textExists } from '../helpers/element-helpers';
+import { textExists, visibleTextExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
 import { getRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
@@ -72,6 +74,7 @@ const PROMPT = 'Please delegate a llama-research task and return the marker.';
 const DELEGATE_PROMPT = 'Return the coded marker phrase.';
 const RESEARCHER_REPLY = 'The researcher trace signal is FORTY-TWO.';
 const CANARY_FINAL = 'subagent-canary-final-7afe2';
+const ASYNC_DELEGATION_ACK = 'Accepted async sub-agent';
 
 // Content-addressed keyword rules — never depleted, immune to extra
 // ancillary /chat/completions calls (#4517).
@@ -202,6 +205,7 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     // entry should appear.
     let sawSubagentPhase = false;
     let sawSubagentTimeline = false;
+    let sawAsyncDelegationAck = false;
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       const snap = await snapshotRuntime(threadId);
@@ -212,9 +216,13 @@ describe('Chat harness — orchestrator → subagent flow', () => {
       ) {
         sawSubagentTimeline = true;
       }
-      if (sawSubagentPhase && sawSubagentTimeline) break;
-      if (await textExists(CANARY_FINAL)) {
+      sawAsyncDelegationAck =
+        sawAsyncDelegationAck || (await visibleTextExists(ASYNC_DELEGATION_ACK));
+      if ((sawSubagentPhase && sawSubagentTimeline) || sawAsyncDelegationAck) break;
+      if (await visibleTextExists(CANARY_FINAL)) {
         sawSubagentTimeline = sawSubagentTimeline || (await hasRenderedSubagentTimeline());
+        sawAsyncDelegationAck =
+          sawAsyncDelegationAck || (await visibleTextExists(ASYNC_DELEGATION_ACK));
         break;
       }
       await browser.pause(200);
@@ -222,10 +230,10 @@ describe('Chat harness — orchestrator → subagent flow', () => {
 
     sawSubagentTimeline = sawSubagentTimeline || (await hasRenderedSubagentTimeline());
 
-    // At least ONE of the two signals must have fired — the timeline
-    // entry is the more durable check (the live phase can flip back to
-    // 'thinking' or 'idle' before our 200ms poll catches it).
-    expect(sawSubagentPhase || sawSubagentTimeline).toBe(true);
+    // At least one delegation signal must have fired. Async delegation
+    // completes the parent tool call immediately, so its phase/timeline can
+    // disappear before the 200 ms poll; the acknowledgement remains visible.
+    expect(sawSubagentPhase || sawSubagentTimeline || sawAsyncDelegationAck).toBe(true);
 
     // Final canary must land in the DOM after the orchestrator wraps up.
     await browser.waitUntil(async () => await textExists(CANARY_FINAL), {

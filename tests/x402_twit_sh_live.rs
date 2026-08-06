@@ -4,7 +4,7 @@
 //!   GGML_NATIVE=OFF cargo test --test x402_twit_sh_live -- --ignored --nocapture
 
 use openhuman_core::openhuman::tools::traits::Tool;
-use openhuman_core::openhuman::x402;
+use openhuman_core::openhuman::web3::x402;
 use serde_json::json;
 
 #[tokio::test]

@@ -366,7 +366,7 @@ impl Tool for ThreadTranscriptSearchTool {
             .get("exclude_thread_id")
             .and_then(serde_json::Value::as_str)
         {
-            None => crate::openhuman::inference::provider::thread_context::current_thread_id(),
+            None => crate::openhuman::agent::tinyagents::thread_context::current_thread_id(),
             Some(s) if s.trim().is_empty() => None,
             Some(s) => Some(s.trim().to_string()),
         };
@@ -660,6 +660,7 @@ impl Tool for ThreadTaskBoardReadTool {
         log::debug!("[tool][threads] task_board_read invoked");
         let thread_id = read_required_str(&args, "thread_id")?;
         let board = board_for_thread(&self.config.workspace_dir, &thread_id)
+            .await
             .map_err(|e| anyhow::anyhow!("thread_task_board_read: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&json!({
             "task_board": board,
@@ -725,6 +726,7 @@ impl Tool for ThreadTaskBoardWriteTool {
         };
         let saved = TaskBoardStore::new(self.config.workspace_dir.clone())
             .put(board)
+            .await
             .map_err(|e| anyhow::anyhow!("thread_task_board_write: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&json!({
             "task_board": saved,

@@ -17,15 +17,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
-use openhuman_core::openhuman::connectivity::ops::is_port_in_use;
-use openhuman_core::openhuman::connectivity::rpc::{
+use openhuman_core::openhuman::platform::connectivity::ops::is_port_in_use;
+use openhuman_core::openhuman::platform::connectivity::rpc::{
     diag, pick_listen_port, pick_listen_port_for_host, PickListenPortError,
 };
-use openhuman_core::openhuman::connectivity::{
+use openhuman_core::openhuman::platform::connectivity::{
     all_connectivity_controller_schemas, all_connectivity_registered_controllers,
     connectivity_controller_schema,
 };
-use openhuman_core::openhuman::socket::{set_global_socket_manager, SocketManager};
+use openhuman_core::openhuman::platform::socket::{set_global_socket_manager, SocketManager};
 
 const TEST_RPC_TOKEN: &str = "connectivity-raw-coverage-e2e-token";
 

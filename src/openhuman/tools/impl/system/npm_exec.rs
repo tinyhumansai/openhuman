@@ -2,7 +2,7 @@
 //! toolchain.
 //!
 //! Thin wrapper over `npm <subcommand> <args...>` that piggybacks on
-//! [`crate::openhuman::javascript::NodeBootstrap`] for binary resolution.
+//! [`crate::openhuman::runtime::javascript::NodeBootstrap`] for binary resolution.
 //! Same security posture as
 //! [`crate::openhuman::tools::impl::system::shell::ShellTool`] and
 //! [`crate::openhuman::tools::impl::system::node_exec::NodeExecTool`]:
@@ -18,7 +18,7 @@
 //! POSIX-safe single-quoting.
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::javascript::NodeBootstrap;
+use crate::openhuman::runtime::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
@@ -217,7 +217,7 @@ impl NpmExecTool {
 
         // No default deadline — only a caller-supplied `timeout_secs` (capped)
         // bounds the run. `None` ⇒ run to completion.
-        let explicit_timeout = crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+        let explicit_timeout = crate::openhuman::tools::timeout::explicit_call_timeout_duration(
             args.get("timeout_secs").and_then(|v| v.as_u64()),
             NPM_TIMEOUT_MAX_SECS,
         );
@@ -229,6 +229,20 @@ impl NpmExecTool {
                 "[policy-blocked] Action blocked: the agent is in read-only mode and cannot run npm.",
             ));
         }
+        let path_policy = super::security_for_tool_context(&self.security, context, "npm_exec");
+        let cwd = match resolve_cwd(&path_policy.action_dir, cwd_override.as_deref()) {
+            Ok(p) => p,
+            Err(msg) => return Ok(ToolResult::error(msg)),
+        };
+        let guard_command = std::iter::once(subcommand.as_str())
+            .chain(extra_args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if let Err(reason) =
+            super::check_cross_profile_command(&path_policy, &guard_command, &cwd, "npm_exec")
+        {
+            return Ok(ToolResult::error(reason));
+        }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",
@@ -239,13 +253,6 @@ impl NpmExecTool {
                 "Rate limit exceeded: action budget exhausted",
             ));
         }
-
-        let path_policy = super::security_for_tool_context(&self.security, context, "npm_exec");
-
-        let cwd = match resolve_cwd(&path_policy.action_dir, cwd_override.as_deref()) {
-            Ok(p) => p,
-            Err(msg) => return Ok(ToolResult::error(msg)),
-        };
 
         let resolved = match self.bootstrap.resolve().await {
             Ok(r) => r,
@@ -398,7 +405,7 @@ impl NpmExecTool {
         // eventually reclaim a wedged sandbox process. The native path runs
         // truly unbounded.
         let effective = timeout.unwrap_or_else(|| {
-            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+            Duration::from_secs(crate::openhuman::tools::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
         });
 
         // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
@@ -624,5 +631,94 @@ mod tests {
                 "{var} must be forwarded for Windows child processes"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn args_cannot_target_sibling_profile() {
+        use crate::openhuman::agent::host_runtime::NativeRuntime;
+        use crate::openhuman::config::schema::NodeConfig;
+        use crate::openhuman::security::policy::ActiveProfileGuard;
+        use crate::openhuman::security::AutonomyLevel;
+
+        let temp = tempfile::tempdir().unwrap();
+        let action_root = temp.path().join("actions");
+        let alice = action_root.join("profiles/alice");
+        std::fs::create_dir_all(action_root.join("profiles/bob")).unwrap();
+        std::fs::create_dir_all(&alice).unwrap();
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: temp.path().join("state"),
+            action_dir: alice,
+            workspace_only: false,
+            active_profile: Some(ActiveProfileGuard {
+                profile_id: "alice".into(),
+                action_dir: action_root,
+            }),
+            ..SecurityPolicy::default()
+        });
+        let bootstrap = Arc::new(NodeBootstrap::new(
+            NodeConfig::default(),
+            temp.path().to_path_buf(),
+            reqwest::Client::new(),
+        ));
+        let tool = NpmExecTool::new(security, Arc::new(NativeRuntime::new()), bootstrap);
+
+        let result = tool
+            .execute(json!({
+                "subcommand": "install",
+                "args": ["--prefix", "../bob"]
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.text().contains("Cross-profile access blocked"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinked_cwd_cannot_target_sibling_profile() {
+        use crate::openhuman::agent::host_runtime::NativeRuntime;
+        use crate::openhuman::config::schema::NodeConfig;
+        use crate::openhuman::security::policy::ActiveProfileGuard;
+        use crate::openhuman::security::AutonomyLevel;
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let action_root = temp.path().join("actions");
+        let alice = action_root.join("profiles/alice");
+        let bob = action_root.join("profiles/bob");
+        std::fs::create_dir_all(&bob).unwrap();
+        std::fs::create_dir_all(&alice).unwrap();
+        symlink(&bob, alice.join("link")).unwrap();
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: temp.path().join("state"),
+            action_dir: alice,
+            workspace_only: false,
+            active_profile: Some(ActiveProfileGuard {
+                profile_id: "alice".into(),
+                action_dir: action_root,
+            }),
+            ..SecurityPolicy::default()
+        });
+        let bootstrap = Arc::new(NodeBootstrap::new(
+            NodeConfig::default(),
+            temp.path().to_path_buf(),
+            reqwest::Client::new(),
+        ));
+        let tool = NpmExecTool::new(security, Arc::new(NativeRuntime::new()), bootstrap);
+
+        let result = tool
+            .execute(json!({
+                "subcommand": "run",
+                "args": ["build"],
+                "cwd": "link"
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.text().contains("Cross-profile access blocked"));
     }
 }

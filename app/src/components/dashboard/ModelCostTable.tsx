@@ -2,7 +2,7 @@ import type { CostDashboardModelStats } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
 import { formatCurrency, formatTokens } from './formatCurrency';
 
-export interface ModelCostTableProps {
+interface ModelCostTableProps {
   models: CostDashboardModelStats[];
   currency: string;
 }

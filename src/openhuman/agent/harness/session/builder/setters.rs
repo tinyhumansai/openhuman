@@ -4,13 +4,13 @@
 //! required fields are present and assembles the final [`Agent`].
 
 use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
+use crate::openhuman::agent::context::ContextManager;
 use crate::openhuman::agent::harness::session::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::harness::TriggerMemoryAgent;
-use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
-use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::config::ContextConfig;
-use crate::openhuman::context::ContextManager;
+use crate::openhuman::memory::agent::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::tools::agent_policy::ToolPolicyEngine;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use anyhow::Result;
 use std::sync::Arc;
@@ -22,7 +22,9 @@ impl AgentBuilder {
             turn_model_source: None,
             tools: None,
             visible_tool_names: None,
+            subagent_tool_ceiling_names: None,
             memory: None,
+            shared_experience_memory: None,
             prompt_builder: None,
             tool_dispatcher: None,
             memory_loader: None,
@@ -33,6 +35,7 @@ impl AgentBuilder {
             temperature: None,
             workspace_dir: None,
             action_dir: None,
+            workspace_descriptor: None,
             workflows: None,
             auto_save: None,
             post_turn_hooks: Vec::new(),
@@ -41,40 +44,47 @@ impl AgentBuilder {
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
+            active_profile_id: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            memory_subdir: None,
+            session_raw_subdir: None,
             session_parent_prefix: None,
             omit_profile: None,
             omit_memory_md: None,
             payload_summarizer: None,
             trigger_memory_agent: None,
-            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
+            tokenjuice_compression:
+                crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Full,
             tool_policy: None,
             archivist_hook: None,
         }
     }
 
-    /// Sets the AI provider for the agent.
-    ///
-    /// Accepts a `Box<dyn Provider>` for backward compatibility but wraps it in
-    /// the seam [`TurnModelSource`](crate::openhuman::tinyagents::TurnModelSource)
-    /// internally (issue #4249, Phase 3 / Motion A) so the agent + sub-agents
-    /// spawned from it share the same source.
-    pub fn provider(
-        mut self,
-        provider: Box<dyn crate::openhuman::inference::provider::Provider>,
-    ) -> Self {
-        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(
-            Arc::from(provider),
-        ));
+    /// Sets an already-constructed TinyAgents chat model. This is the native
+    /// injection seam for tests and embedders; no legacy `Provider` adapter is
+    /// constructed.
+    pub fn chat_model(mut self, model: Arc<dyn tinyagents::harness::model::ChatModel<()>>) -> Self {
+        self.turn_model_source =
+            Some(crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model));
         self
     }
 
-    /// Sets the AI provider from an existing `Arc`. Use this when sharing
-    /// a provider instance across multiple agents.
-    pub fn provider_arc(
+    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
+    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
+    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
+    /// crate `OpenAiModel`) instead of wrapping `provider` in `native model adapters.
+    /// Used by the production session factory; the plain
+    /// [`provider`](Self::provider) setter (Provider path) stays for tests that
+    /// inject a mock they observe.
+    pub fn crate_native_provider(
         mut self,
-        provider: Arc<dyn crate::openhuman::inference::provider::Provider>,
+        role: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
     ) -> Self {
-        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(provider));
+        self.turn_model_source = Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::new_crate_native(role, config),
+        );
         self
     }
 
@@ -92,16 +102,31 @@ impl AgentBuilder {
         self
     }
 
+    /// Restrict the tool names that delegated agents may inherit from the full
+    /// registry. Empty/`None` keeps delegation governed by each child
+    /// definition unless the channel policy adds a ceiling.
+    pub fn subagent_tool_ceiling_names(mut self, names: std::collections::HashSet<String>) -> Self {
+        self.subagent_tool_ceiling_names = Some(names);
+        self
+    }
+
     /// Sets the memory system for the agent.
     pub fn memory(mut self, memory: Arc<dyn Memory>) -> Self {
         self.memory = Some(memory);
         self
     }
 
+    /// Retains the shared store for experience recall when `memory` is a
+    /// dedicated profile subtree.
+    pub fn shared_experience_memory(mut self, memory: Option<Arc<dyn Memory>>) -> Self {
+        self.shared_experience_memory = memory;
+        self
+    }
+
     /// Sets the system prompt builder for the agent.
     pub fn prompt_builder(
         mut self,
-        prompt_builder: crate::openhuman::context::prompt::SystemPromptBuilder,
+        prompt_builder: crate::openhuman::agent::context::prompt::SystemPromptBuilder,
     ) -> Self {
         self.prompt_builder = Some(prompt_builder);
         self
@@ -119,7 +144,7 @@ impl AgentBuilder {
     /// Sets the memory loader for the agent.
     pub fn memory_loader(
         mut self,
-        memory_loader: Box<dyn crate::openhuman::agent_memory::memory_loader::MemoryLoader>,
+        memory_loader: Box<dyn crate::openhuman::memory::agent::memory_loader::MemoryLoader>,
     ) -> Self {
         self.memory_loader = Some(memory_loader);
         self
@@ -168,6 +193,52 @@ impl AgentBuilder {
 
     pub fn action_dir(mut self, action_dir: std::path::PathBuf) -> Self {
         self.action_dir = Some(action_dir);
+        self
+    }
+
+    /// Sets the per-profile workspace descriptor (section D of agent-profile
+    /// homes). When set, the top-level chat turn threads it through so acting
+    /// tools resolve their default cwd to the profile's dedicated workspace.
+    pub fn workspace_descriptor(
+        mut self,
+        descriptor: Option<tinyagents::harness::workspace::WorkspaceDescriptor>,
+    ) -> Self {
+        self.workspace_descriptor = descriptor;
+        self
+    }
+
+    /// Sets the active agent-profile id for this session (1a plumbing).
+    ///
+    /// `None` (default) is the profile-less session. When set, the id is
+    /// carried on the built [`Agent`] and threaded into the post-turn
+    /// [`TurnContext`](crate::openhuman::agent::hooks::TurnContext) so
+    /// profile-scoped hooks (agent-experience capture) can stamp records with
+    /// it. A `None` here keeps every downstream consumer on its legacy path.
+    pub fn active_profile_id(mut self, profile_id: Option<String>) -> Self {
+        self.active_profile_id = profile_id;
+        self
+    }
+
+    /// Binds the active profile's SOUL.md as the session identity override.
+    pub fn personality_soul_md(mut self, soul_md: Option<String>) -> Self {
+        self.personality_soul_md = soul_md;
+        self
+    }
+
+    /// Binds the active profile's curated MEMORY.md to the frozen session
+    /// prompt. `None` keeps the legacy workspace-root fallback.
+    pub fn personality_memory_md(mut self, memory_md: Option<String>) -> Self {
+        self.personality_memory_md = memory_md;
+        self
+    }
+
+    pub fn profile_memory_storage(
+        mut self,
+        memory_subdir: String,
+        session_raw_subdir: String,
+    ) -> Self {
+        self.memory_subdir = Some(memory_subdir);
+        self.session_raw_subdir = Some(session_raw_subdir);
         self
     }
 
@@ -302,13 +373,15 @@ impl AgentBuilder {
 
     /// Wire an oversized-tool-result summarizer into the agent. The live
     /// TinyAgents turn path passes it to `ToolOutputMiddleware`, which calls
-    /// [`crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer::maybe_summarize_in_parent`]
+    /// [`crate::openhuman::agent::tinyagents::payload_summarizer::PayloadSummarizer::maybe_summarize_in_parent`]
     /// on successful tool output and replaces the raw payload with the
     /// compressed summary on success. Currently set only for the orchestrator
     /// session by [`Agent::build_session_agent_inner`].
     pub fn payload_summarizer(
         mut self,
-        summarizer: Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
+        summarizer: Arc<
+            dyn crate::openhuman::agent::tinyagents::payload_summarizer::PayloadSummarizer,
+        >,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
         self
@@ -353,7 +426,7 @@ impl AgentBuilder {
     /// Set the per-agent TokenJuice tool-output compression profile.
     pub fn tokenjuice_compression(
         mut self,
-        profile: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
+        profile: crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression,
     ) -> Self {
         self.tokenjuice_compression = profile;
         self
@@ -393,6 +466,41 @@ impl AgentBuilder {
             &visible_names,
         );
 
+        // A child agent inherits explicit profile and channel restrictions, but
+        // not the coordinator's own role-specific tool scope. For example, the
+        // orchestrator intentionally cannot call `file_write` directly while
+        // its code-executor specialist must be able to do so. Conflating those
+        // two surfaces silently stripped specialist tools (#5118 merge).
+        //
+        // Build a second policy snapshot without the role visibility filter.
+        // `tool_policy_session` marks both channel-blocked and role-hidden tools
+        // as restricted, so deriving the child ceiling from it would reintroduce
+        // exactly that conflation.
+        let channel_policy_session = ToolPolicyEngine::build_session(
+            &agent_definition_name,
+            &event_channel,
+            "session",
+            &config.channel_permissions,
+            &tools,
+            &std::collections::HashSet::new(),
+        );
+        let mut subagent_tool_ceiling_names = self.subagent_tool_ceiling_names.unwrap_or_default();
+        if channel_policy_session.has_restrictions() {
+            let policy_allowed: std::collections::HashSet<String> = tool_specs
+                .iter()
+                .filter(|spec| channel_policy_session.is_allowed(&spec.name))
+                .map(|spec| spec.name.clone())
+                .collect();
+            if subagent_tool_ceiling_names.is_empty() {
+                subagent_tool_ceiling_names = policy_allowed;
+            } else {
+                subagent_tool_ceiling_names.retain(|name| policy_allowed.contains(name));
+                if subagent_tool_ceiling_names.is_empty() {
+                    subagent_tool_ceiling_names.insert("__subagent_no_tools__".to_string());
+                }
+            }
+        }
+
         // Build the filtered spec list that the main agent sends to the
         // provider. The explicit visible-tool allowlist and the resolved
         // channel permission policy must stay aligned so prompt-visible
@@ -425,9 +533,9 @@ impl AgentBuilder {
             .turn_model_source
             .ok_or_else(|| anyhow::anyhow!("provider is required"))?;
 
-        let prompt_builder = self
-            .prompt_builder
-            .unwrap_or_else(crate::openhuman::context::prompt::SystemPromptBuilder::with_defaults);
+        let prompt_builder = self.prompt_builder.unwrap_or_else(
+            crate::openhuman::agent::context::prompt::SystemPromptBuilder::with_defaults,
+        );
 
         let model_name = self
             .model_name
@@ -450,6 +558,10 @@ impl AgentBuilder {
             .workspace_dir
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         let action_dir = self.action_dir.unwrap_or_else(|| workspace_dir.clone());
+        let memory_subdir = self.memory_subdir.unwrap_or_else(|| "memory".to_string());
+        let session_raw_subdir = self
+            .session_raw_subdir
+            .unwrap_or_else(|| "session_raw".to_string());
 
         Ok(Agent {
             turn_model_source,
@@ -457,10 +569,12 @@ impl AgentBuilder {
             tool_specs: Arc::new(tool_specs),
             visible_tool_specs: Arc::new(visible_tool_specs),
             visible_tool_names: visible_names,
+            subagent_tool_ceiling_names,
             tool_policy_session,
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
+            shared_experience_memory: self.shared_experience_memory,
             tool_dispatcher: std::sync::Arc::from(
                 self.tool_dispatcher
                     .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
@@ -474,11 +588,13 @@ impl AgentBuilder {
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir,
             action_dir,
+            workspace_descriptor: self.workspace_descriptor,
             workflows: self.workflows.unwrap_or_default(),
             auto_save: self.auto_save.unwrap_or(false),
             last_memory_context: None,
             last_turn_citations: Vec::new(),
             last_turn_usage_totals: None,
+            last_turn_hit_cap: false,
             history: Vec::new(),
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
@@ -492,7 +608,13 @@ impl AgentBuilder {
             // `refresh_delegation_tools` to re-resolve the agent's
             // `subagents` declaration against the global registry.
             agent_definition_id: agent_definition_name.clone(),
+            active_profile_id: self.active_profile_id,
+            personality_soul_md: self.personality_soul_md,
+            personality_memory_md: self.personality_memory_md,
+            memory_subdir,
+            session_raw_subdir,
             session_transcript_path: None,
+            persisted_transcript_messages: Vec::new(),
             session_key: {
                 let unix_ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -517,7 +639,7 @@ impl AgentBuilder {
             run_queue: None,
             connected_integrations: Vec::new(),
             connected_integrations_initialized: false,
-            integration_runtime_config: None,
+            runtime_config: None,
             // Default to `true` (omit) so legacy / custom agents built
             // without a definition stay lean. Opt-in agents thread their
             // `omit_profile = false` through the builder.

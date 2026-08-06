@@ -19,10 +19,10 @@ use tempfile::TempDir;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
 use crate::openhuman::memory::ingest_pipeline::ingest_chat;
-use crate::openhuman::memory_queue::drain_until_idle;
-use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::retrieval::{query_source, search_entities};
-use crate::openhuman::memory_tree::score::embed::build_embedder_from_config;
+use crate::openhuman::memory::queue::drain_until_idle;
+use crate::openhuman::memory::tree::retrieval::{query_source, search_entities};
+use crate::openhuman::memory::tree::score::embed::build_embedder_from_config;
+use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
 
 fn test_config() -> (TempDir, Config) {
     let tmp = TempDir::new().unwrap();
@@ -148,7 +148,7 @@ async fn full_pipeline_ingest_to_retrieval() {
         // query_source returns summaries from sealed source trees.  With
         // enough chunks the seal fires and we expect at least one hit.
         // Both sources are Chat kind.
-        use crate::openhuman::memory_store::chunks::types::SourceKind;
+        use crate::openhuman::memory::store::chunks::types::SourceKind;
         let source_resp = query_source(&cfg, None, Some(SourceKind::Chat), None, None, 20)
             .await
             .expect("query_source on Chat kind must succeed");
@@ -258,7 +258,7 @@ async fn pipeline_works_with_embeddings_disabled() {
             .expect("drain_until_idle must succeed with embeddings disabled");
 
         // ── Source-tree retrieval without a query (recency only) ─────────
-        use crate::openhuman::memory_store::chunks::types::SourceKind;
+        use crate::openhuman::memory::store::chunks::types::SourceKind;
         let recency_resp = query_source(&cfg, None, Some(SourceKind::Chat), None, None, 20)
             .await
             .expect("query_source (recency) must succeed with embeddings disabled");

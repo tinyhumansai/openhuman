@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
@@ -171,6 +171,58 @@ describe('DiscordConfig', () => {
       );
     });
   });
+
+  // Regression: #5161 / Sentry TAURI-REACT-39 — "Cannot read properties of null
+  // (reading 'checked')". Both memory checkboxes (the managed_dm branch and the
+  // all-other-modes branch) used to read `event.currentTarget.checked` inside
+  // the functional setState updater. React nulls `currentTarget` once the
+  // handler returns and only evaluates an updater eagerly while the fiber has no
+  // pending work, so a second toggle in the same batch ran its updater later
+  // against a nulled `currentTarget` and threw. One case per render branch.
+  for (const { label, authMode, capabilities } of [
+    { label: 'bot token', authMode: 'bot_token' as const, capabilities: ['read', 'write'] },
+    { label: 'managed DM', authMode: 'managed_dm' as const, capabilities: ['dm'] },
+  ]) {
+    it(`toggles the ${label} memory checkbox when React defers the state updater (#5161)`, async () => {
+      const store = createTestStore();
+      store.dispatch(
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode,
+          patch: { status: 'connected', capabilities },
+        })
+      );
+      vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+      renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+      const checkbox = screen.getByLabelText(/also delete memory/i) as HTMLInputElement;
+
+      // Three toggles in ONE batch: the first takes React's eager-state path,
+      // the rest defer their updater to render time — the window where
+      // `event.currentTarget` is already null.
+      act(() => {
+        fireEvent.click(checkbox);
+        fireEvent.click(checkbox);
+        fireEvent.click(checkbox);
+      });
+
+      // Odd number of toggles ⇒ still checked, proving the deferred updates
+      // applied rather than being swallowed.
+      expect(checkbox.checked).toBe(true);
+
+      const disconnectButton = screen
+        .getAllByRole('button', { name: 'Disconnect' })
+        .find(button => !button.hasAttribute('disabled'));
+      fireEvent.click(disconnectButton!);
+
+      await waitFor(() => {
+        expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith('discord', authMode, {
+          clearMemory: true,
+        });
+      });
+    });
+  }
 
   it('hides managed channel auth modes for local users', () => {
     coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });

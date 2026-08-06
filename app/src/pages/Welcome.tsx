@@ -15,6 +15,10 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { resolveTheme, setThemeMode, type ThemeMode } from '../store/themeSlice';
 import { clearAllAppData } from '../utils/clearAllAppData';
 import { clearStoredCoreMode, clearStoredCoreToken, storeRpcUrl } from '../utils/configPersistence';
+import {
+  CORE_CONFIG_UNREADABLE_I18N_KEY,
+  isCoreConfigUnreadableError,
+} from '../utils/coreConfigFailure';
 import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from '../utils/links';
 import { createLocalSessionToken, LOCAL_SESSION_USER } from '../utils/localSession';
 import { openUrl } from '../utils/openUrl';
@@ -26,7 +30,12 @@ const Welcome = () => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const { storeSessionToken } = useCoreState();
-  const { isProcessing, errorMessage, requiresAppDataReset } = useDeepLinkAuthState();
+  const { isProcessing, errorMessage, errorMessageKey, requiresAppDataReset } =
+    useDeepLinkAuthState();
+  // Deep-link auth runs outside React and cannot translate its own copy, so it
+  // hands over a key for the failures whose copy is localized. Everything else
+  // still carries a literal message.
+  const deepLinkError = errorMessageKey ? t(errorMessageKey) : errorMessage;
   const themeMode = useAppSelector(state => state.theme?.mode ?? 'system') as ThemeMode;
   const resolvedTheme = resolveTheme(themeMode);
   const isDark = resolvedTheme === 'dark';
@@ -72,7 +81,14 @@ const Welcome = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log('[welcome] local session login failed: %s', message);
-      setLocalLoginError(message || 'Could not start a local session.');
+      // A config-read denial is permanent and host-side; showing the raw
+      // anyhow chain (absolute path + `os error 13`) gives the user nothing to
+      // act on. Unrecognized failures keep their original message.
+      setLocalLoginError(
+        isCoreConfigUnreadableError(message)
+          ? t(CORE_CONFIG_UNREADABLE_I18N_KEY)
+          : message || t('welcome.localSessionErrorFallback')
+      );
       setIsLocalSigningIn(false);
     }
   };
@@ -140,11 +156,11 @@ const Welcome = () => {
             {t('welcome.subtitle')}
           </p>
 
-          {errorMessage ? (
+          {deepLinkError ? (
             <div
               role="alert"
               className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              <p>{errorMessage}</p>
+              <p>{deepLinkError}</p>
               {requiresAppDataReset ? (
                 <div className="mt-3 space-y-2">
                   <Button

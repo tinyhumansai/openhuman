@@ -139,6 +139,19 @@ impl PromptSection for DynamicPromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
+/// Injects the pre-loaded `AGENTS.md` instruction layers
+/// ([`PromptContext::agents_md_global`] + [`PromptContext::agents_md_local`])
+/// under a `## Project instructions (AGENTS.md)` heading — OpenHuman's analog
+/// of Claude Code's `CLAUDE.md` / Codex's `AGENTS.md`.
+///
+/// Global (workspace) content renders first, then the local (project) layer.
+/// Empty (and skipped) when neither layer carries content — e.g. no `AGENTS.md`
+/// exists, or the `agents_md_enabled` config gate is off (the loader hands
+/// `None` for both fields in that case). Content is pre-loaded once at
+/// system-prompt build time and capped at [`BOOTSTRAP_MAX_CHARS`] per layer, so
+/// a growing on-disk file can't push the prompt out of the cache-friendly
+/// prefix range.
+pub struct AgentsInstructionsSection;
 /// Renders the canonical grounding / anti-hallucination contract
 /// ([`GROUNDING_BODY`]). Always included; never gated.
 pub struct GroundingSection;
@@ -184,6 +197,31 @@ pub struct UserIdentitySection;
 /// 2000-char cap and the load-once rule documented on
 /// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
+
+/// Framing preamble emitted immediately before the injected `MEMORY.md`
+/// (and, in the snapshot path, `USER.md`) block.
+///
+/// `MEMORY.md` is durable, cross-session memory — archivist-curated facts
+/// carried over from *past* sessions and previously ingested history. Without
+/// a frame, a relevant curated observation reads to the model as something
+/// already said *in this thread*, so on a brand-new thread it asserts
+/// continuity that isn't there ("already covered this in a previous chat")
+/// and shortcuts its answer (GH-4745). This note scopes the block as
+/// background knowledge and forbids claiming in-thread continuity.
+///
+/// `pub(crate)` so the sub-agent renderer
+/// ([`super::render_helpers::render_subagent_system_prompt_with_format`])
+/// can share the exact same frame — Inline/File sub-agents inject
+/// `MEMORY.md` through their own path and must not drift from this note.
+pub(crate) const MEMORY_MD_FRAMING: &str =
+    "### Long-term memory (background — not this conversation)\n\n\
+The block below is your durable, cross-session memory: facts and observations \
+carried over from *past* sessions and previously ingested history. Treat it as \
+background knowledge only — it is **not** part of the current thread. Do not \
+treat it as messages already exchanged here, never claim you \"already covered \
+this in a previous chat\" or otherwise assert continuity that isn't present in \
+the visible messages, and answer each new thread in full even when related \
+prior context appears here.\n\n";
 
 /// Renders the personality roster for the master agent's system prompt.
 ///
@@ -321,24 +359,50 @@ impl PromptSection for UserFilesSection {
             // Personality-specific MEMORY.md takes highest priority, then
             // the session-frozen curated-memory snapshot, then the
             // workspace file (pure prompt-unit tests and older call sites).
+            //
+            // Render into a scratch buffer first so the `MEMORY_MD_FRAMING`
+            // note is only emitted when the block actually carries content —
+            // the inject helpers silently skip empty/missing files, and a
+            // dangling frame pointing at nothing would be worse than none.
+            let mut mem = String::new();
             if let Some(ref memory_md) = ctx.personality_memory_md {
                 tracing::debug!(
                     "[user_files] personality MEMORY.md override active ({} chars)",
                     memory_md.len()
                 );
-                inject_inline_content(&mut out, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
+                inject_inline_content(&mut mem, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
             } else if let Some(snap) = &ctx.curated_snapshot {
-                inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
-                inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
+                inject_snapshot_content(&mut mem, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
+                inject_snapshot_content(&mut mem, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
             } else {
                 inject_workspace_file_capped(
-                    &mut out,
+                    &mut mem,
                     ctx.workspace_dir,
                     "MEMORY.md",
                     USER_FILE_MAX_CHARS,
                 );
             }
+            if !mem.trim().is_empty() {
+                out.push_str(MEMORY_MD_FRAMING);
+                out.push_str(&mem);
+            }
         }
+        Ok(out)
+    }
+}
+
+impl PromptSection for AgentsInstructionsSection {
+    fn name(&self) -> &str {
+        "agents_md"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        let mut out = String::new();
+        super::render_helpers::write_agents_md_blocks(
+            &mut out,
+            ctx.agents_md_global.as_deref(),
+            ctx.agents_md_local.as_deref(),
+        );
         Ok(out)
     }
 }

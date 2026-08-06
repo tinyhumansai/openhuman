@@ -51,7 +51,13 @@ const StatTile = ({ label, value, hint }: StatTileProps) => (
   </div>
 );
 
-const TokenUsagePanel = () => {
+interface TokenUsagePanelProps {
+  /** When true, render without the SettingsPanel chrome (used when embedded as
+   *  a tab inside the Usage & limits surface). */
+  embedded?: boolean;
+}
+
+const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
   const { t } = useT();
 
   const [settings, setSettings] = useState<TokenjuiceSettings | null>(null);
@@ -133,8 +139,8 @@ const TokenUsagePanel = () => {
 
   const total = savings?.total;
 
-  return (
-    <SettingsPanel description={t('settings.tokenUsage.menuDesc')}>
+  const body = (
+    <>
       {/* ── Savings statistics ─────────────────────────────────────────── */}
       <SettingsSection
         title={t('settings.tokenUsage.savingsTitle')}
@@ -322,8 +328,11 @@ const TokenUsagePanel = () => {
           />
         </div>
       </SettingsSection>
-    </SettingsPanel>
+    </>
   );
+
+  if (embedded) return body;
+  return <SettingsPanel description={t('settings.tokenUsage.menuDesc')}>{body}</SettingsPanel>;
 };
 
 export default TokenUsagePanel;

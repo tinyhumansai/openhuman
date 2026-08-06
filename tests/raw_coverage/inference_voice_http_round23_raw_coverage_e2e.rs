@@ -21,7 +21,7 @@ use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::inference::http;
@@ -289,7 +289,12 @@ async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries()
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "ready");
     assert_eq!(assets.embedding.state, "ready");
-    assert_eq!(assets.vision.state, "ondemand");
+    // Since #5253 (vision-capable routing), the configured "vision-ready" id
+    // passes `is_vision_capable` (name carries the vision marker) instead of
+    // being rejected by the old MVP allowlist — and the mock's /api/tags
+    // advertises it, so an Ondemand-mode vision model that is present reports
+    // "ready", not "ondemand".
+    assert_eq!(assets.vision.state, "ready");
     assert_eq!(assets.stt.state, "ready");
     assert_eq!(assets.tts.state, "ondemand");
 

@@ -5,6 +5,7 @@
  * This module is pure data — no JSX, no React imports.  Icons are owned by
  * BottomTabBar.tsx and mapped from tab.id.
  */
+import { BILLING_DASHBOARD_URL } from '../utils/links';
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -21,11 +22,11 @@ export interface NavTab {
 
 /**
  * Ordered list of sidebar nav entries:
- *   chat → human → brain → flows → orchestration → agent-world → connections
+ *   chat → human → brain → flows → agent-world → connections
  *
- * The Orchestration tab (TinyPlace multi-agent coordination) sits right after
- * Workflows; it was promoted out of the Brain sub-tab drawer into a first-class
- * destination at `/orchestration`.
+ * Orchestration (TinyPlace multi-agent coordination) is no longer a top-level
+ * tab — it was folded back under Brain as the `/brain?tab=orchestration`
+ * sub-tab, so the sidebar stays lean.
  *
  * Settings has no primary tab — it's reached via the gear icon in the sidebar
  * header. Chat is the default landing and the merged Home surface: its empty
@@ -41,12 +42,6 @@ export const NAV_TABS: NavTab[] = [
   { id: 'human', labelKey: 'nav.human', path: '/human', walkthroughAttr: 'tab-human' },
   { id: 'brain', labelKey: 'nav.brain', path: '/brain', walkthroughAttr: 'tab-brain' },
   { id: 'flows', labelKey: 'nav.flows', path: '/flows', walkthroughAttr: 'tab-flows' },
-  {
-    id: 'orchestration',
-    labelKey: 'nav.orchestration',
-    path: '/orchestration',
-    walkthroughAttr: 'tab-orchestration',
-  },
   {
     id: 'agent-world',
     labelKey: 'nav.agentWorld',
@@ -71,9 +66,9 @@ export const NAV_TABS: NavTab[] = [
  * - `navigate` — internal `react-router-dom` navigation to `target`.
  * - `openUrl`  — opens `target` in the system browser via `openUrl()`.
  */
-export type AvatarMenuItemKind = 'navigate' | 'openUrl';
+type AvatarMenuItemKind = 'navigate' | 'openUrl';
 
-export interface AvatarMenuItem {
+interface AvatarMenuItem {
   /** Stable identifier. */
   id: string;
   /** i18n key resolved by the consuming component. */
@@ -103,8 +98,7 @@ export const AVATAR_MENU_ITEMS: AvatarMenuItem[] = [
   {
     id: 'billing',
     labelKey: 'nav.avatarMenu.billing',
-    // Resolved at runtime via BILLING_DASHBOARD_URL; placeholder keeps typing clean.
-    target: 'https://tinyhumans.ai/dashboard',
+    target: BILLING_DASHBOARD_URL,
     kind: 'openUrl',
     cloudOnly: true,
   },

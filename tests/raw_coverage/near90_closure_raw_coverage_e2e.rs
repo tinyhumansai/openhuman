@@ -10,14 +10,14 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration as StdDuration;
 
 use chrono::Utc;
-use openhuman_core::openhuman::app_state::{
+use openhuman_core::openhuman::desktop::app_state::{
     snapshot, update_local_state, StoredAppStatePatch, StoredOnboardingTasks,
 };
 use openhuman_core::openhuman::config::rpc as config_rpc;
-use openhuman_core::openhuman::credentials::profiles::{
+use openhuman_core::openhuman::security::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore,
 };
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::memory::{
@@ -29,9 +29,9 @@ use openhuman_core::openhuman::memory::{
     PutDocParams, QueryNamespaceParams, QueryNamespaceRequest, ReadMemoryFileRequest,
     RecallContextRequest, RecallMemoriesRequest, RecallNamespaceParams, WriteMemoryFileRequest,
 };
-use openhuman_core::openhuman::memory_sources::readers::SourceReader;
-use openhuman_core::openhuman::memory_sources::sync::sync_source;
-use openhuman_core::openhuman::memory_sources::{ContentType, MemorySourceEntry, SourceKind};
+use openhuman_core::openhuman::memory::sources::readers::SourceReader;
+use openhuman_core::openhuman::memory::sources::sync::sync_source;
+use openhuman_core::openhuman::memory::sources::{ContentType, MemorySourceEntry, SourceKind};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::welcome_migration::migrate_welcome_agent_artifacts;
 use serde_json::{json, Value};
@@ -397,7 +397,7 @@ async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_netwo
     let harness = setup("http://127.0.0.1:9");
     let config = harness.config().await;
 
-    let rss = openhuman_core::openhuman::memory_sources::readers::rss::RssReader;
+    let rss = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
     let mut missing_url = source_entry("rss-missing-url", SourceKind::RssFeed);
     assert_eq!(
         rss.list_items(&missing_url, &config)
@@ -458,7 +458,7 @@ async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_netwo
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
-    let github = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
+    let github = openhuman_core::openhuman::memory::sources::readers::github::GithubReader;
     let mut entry = source_entry("github-round20", SourceKind::GithubRepo);
     entry.url = Some("git@github.com:tinyhumansai/openhuman.git".to_string());
     if !gh_available {

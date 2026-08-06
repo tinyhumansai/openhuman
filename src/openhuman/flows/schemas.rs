@@ -32,6 +32,15 @@ fn flow_output() -> FieldSchema {
     }
 }
 
+fn draft_output() -> FieldSchema {
+    FieldSchema {
+        name: "draft",
+        ty: TypeSchema::Json,
+        comment: "The draft: { id, flow_id?, name, graph, origin, created_at, updated_at }.",
+        required: true,
+    }
+}
+
 /// Output field for the suggestion-returning controllers (`discover`,
 /// `list_suggestions`). Kept in one place so the schema mirrors
 /// `flows::types::FlowSuggestion`.
@@ -167,6 +176,29 @@ fn require_approval_input() -> FieldSchema {
     }
 }
 
+fn expected_version_input() -> FieldSchema {
+    FieldSchema {
+        name: "expected_version",
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+        comment:
+            "Optimistic-concurrency token: the flow's `updated_at` as last observed. If the \
+                  flow has changed since, the write is refused with a structured version_conflict \
+                  error carrying the current flow, instead of clobbering. Omit for last-write-wins.",
+        required: false,
+    }
+}
+
+fn strict_input() -> FieldSchema {
+    FieldSchema {
+        name: "strict",
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment: "Run the same author hard-gates an agent save must pass (unresolvable bindings, \
+                  unreal tool slugs, unwired required args) before persisting, rejecting the \
+                  write if any fail. Defaults to `false` — the permissive human-canvas path.",
+        required: false,
+    }
+}
+
 fn run_output_fields() -> Vec<FieldSchema> {
     vec![
         FieldSchema {
@@ -185,6 +217,38 @@ fn run_output_fields() -> Vec<FieldSchema> {
             name: "thread_id",
             ty: TypeSchema::String,
             comment: "Durable checkpoint thread id for this run (needed to resume).",
+            required: true,
+        },
+    ]
+}
+
+fn run_detached_output_fields() -> Vec<FieldSchema> {
+    vec![
+        FieldSchema {
+            name: "run_id",
+            ty: TypeSchema::String,
+            comment: "Durable checkpoint thread id for this run (same identifier `flows_get_run` \
+                      / `flows_cancel_run` / `flows_resume` expect).",
+            required: true,
+        },
+        FieldSchema {
+            name: "flow_id",
+            ty: TypeSchema::String,
+            comment: "Identifier of the flow that was started.",
+            required: true,
+        },
+        FieldSchema {
+            name: "status",
+            ty: TypeSchema::String,
+            comment: "Always `\"running\"` at the moment this call returns; poll `flows_get_run` \
+                      or subscribe to `flow:run_progress` for the terminal state.",
+            required: true,
+        },
+        FieldSchema {
+            name: "detached",
+            ty: TypeSchema::Bool,
+            comment: "Always `true` — marks this response as the immediate, non-blocking shape, \
+                      distinct from `run`'s completed-run payload.",
             required: true,
         },
     ]
@@ -229,6 +293,16 @@ fn flow_connection_fields() -> Vec<FieldSchema> {
                       `bearer` | `basic` | `header`.",
             required: false,
         },
+        FieldSchema {
+            name: "platform_user_id",
+            ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+            comment: "Connected account's own platform user id (kind `composio` only), \
+                      e.g. Slack `U123ABC`. Non-secret identity metadata — lets the \
+                      workflow builder wire a self-targeted action (e.g. \"DM me\") to \
+                      the user's own account instead of guessing a public channel. \
+                      `None` when no identity has synced yet.",
+            required: false,
+        },
     ]
 }
 
@@ -245,16 +319,31 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete"),
         schemas("set_enabled"),
         schemas("run"),
+        schemas("run_detached"),
         schemas("resume"),
         schemas("cancel_run"),
         schemas("list_runs"),
+        schemas("list_all_runs"),
         schemas("get_run"),
         schemas("prune_runs"),
         schemas("build"),
+        schemas("build_cancel"),
         schemas("discover"),
         schemas("list_suggestions"),
         schemas("dismiss_suggestion"),
         schemas("mark_suggestion_built"),
+        schemas("draft_create"),
+        schemas("draft_get"),
+        schemas("draft_update"),
+        schemas("draft_list"),
+        schemas("draft_delete"),
+        schemas("draft_promote"),
+        schemas("get_history"),
+        schemas("rollback"),
+        schemas("search_tool_catalog"),
+        schemas("get_tool_contract"),
+        schemas("required_connections"),
+        schemas("approval_manifest"),
     ]
 }
 
@@ -305,6 +394,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_run,
         },
         RegisteredController {
+            schema: schemas("run_detached"),
+            handler: handle_run_detached,
+        },
+        RegisteredController {
             schema: schemas("resume"),
             handler: handle_resume,
         },
@@ -317,6 +410,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_list_runs,
         },
         RegisteredController {
+            schema: schemas("list_all_runs"),
+            handler: handle_list_all_runs,
+        },
+        RegisteredController {
             schema: schemas("get_run"),
             handler: handle_get_run,
         },
@@ -327,6 +424,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("build"),
             handler: handle_build,
+        },
+        RegisteredController {
+            schema: schemas("build_cancel"),
+            handler: handle_build_cancel,
         },
         RegisteredController {
             schema: schemas("discover"),
@@ -343,6 +444,54 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("mark_suggestion_built"),
             handler: handle_mark_suggestion_built,
+        },
+        RegisteredController {
+            schema: schemas("draft_create"),
+            handler: handle_draft_create,
+        },
+        RegisteredController {
+            schema: schemas("draft_get"),
+            handler: handle_draft_get,
+        },
+        RegisteredController {
+            schema: schemas("draft_update"),
+            handler: handle_draft_update,
+        },
+        RegisteredController {
+            schema: schemas("draft_list"),
+            handler: handle_draft_list,
+        },
+        RegisteredController {
+            schema: schemas("draft_delete"),
+            handler: handle_draft_delete,
+        },
+        RegisteredController {
+            schema: schemas("draft_promote"),
+            handler: handle_draft_promote,
+        },
+        RegisteredController {
+            schema: schemas("get_history"),
+            handler: handle_get_history,
+        },
+        RegisteredController {
+            schema: schemas("rollback"),
+            handler: handle_rollback,
+        },
+        RegisteredController {
+            schema: schemas("search_tool_catalog"),
+            handler: handle_search_tool_catalog,
+        },
+        RegisteredController {
+            schema: schemas("get_tool_contract"),
+            handler: handle_get_tool_contract,
+        },
+        RegisteredController {
+            schema: schemas("required_connections"),
+            handler: handle_required_connections,
+        },
+        RegisteredController {
+            schema: schemas("approval_manifest"),
+            handler: handle_approval_manifest,
         },
     ]
 }
@@ -368,6 +517,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 require_approval_input(),
+                strict_input(),
             ],
             outputs: vec![flow_output()],
         },
@@ -483,9 +633,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "list_connections",
             description: "List the connection sources a flow node's `connection_ref` can attach \
                           to: Composio connected accounts (kind `composio`) and stored HTTP \
-                          credentials (kind `http`). Returns ids + display labels + kind ONLY — \
-                          never any secret material (OAuth/bearer tokens, passwords, and API \
-                          keys stay server-side and are injected only at execution time).",
+                          credentials (kind `http`). Returns only non-secret metadata — ids, \
+                          display labels, kind, and (for Composio) the connected account's own \
+                          `platform_user_id` — never any secret material (OAuth/bearer tokens, \
+                          passwords, and API keys stay server-side and are injected only at \
+                          execution time).",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "connections",
@@ -516,6 +668,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
                 require_approval_input(),
+                strict_input(),
+                expected_version_input(),
             ],
             outputs: vec![flow_output()],
         },
@@ -574,6 +728,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Trigger payload seeded into the run; defaults to null.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "inputs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Values for the flow's declared workflow inputs, keyed by name \
+                              (read the flow's `graph.inputs` for the declarations). Missing \
+                              required values, wrong types, and undeclared names are rejected \
+                              before the run starts. Distinct from `input`, which is the \
+                              free-form trigger payload.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -581,6 +745,41 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     fields: run_output_fields(),
                 },
                 comment: "Run outcome payload.",
+                required: true,
+            }],
+        },
+        "run_detached" => ControllerSchema {
+            namespace: "flows",
+            function: "run_detached",
+            description: "Start a saved flow WITHOUT waiting for it to finish: validates + \
+                          compile-checks the flow, registers the run, inserts its `running` row, \
+                          and returns the run id immediately. Use this from any UI that wants to \
+                          show live per-node progress (`flow:run_progress`) or that must not block \
+                          on a run that can take minutes — poll `flows_get_run(run_id)` or the \
+                          progress event stream for completion. `run` remains available for callers \
+                          that genuinely want to await the final result.",
+            inputs: vec![
+                id_input("Identifier of the flow to run."),
+                FieldSchema {
+                    name: "input",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Trigger payload seeded into the run; defaults to null.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "inputs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Values for the flow's declared workflow inputs, keyed by name                               (read the flow's `graph.inputs` for the declarations). Validated                               synchronously, so a bad set is refused here rather than surfacing                               later as a failed background run. Distinct from `input`, which is                               the free-form trigger payload.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Object {
+                    fields: run_detached_output_fields(),
+                },
+                comment: "Immediate start-of-run payload — returned as soon as the run is \
+                          registered, without waiting for it to finish.",
                 required: true,
             }],
         },
@@ -685,6 +884,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "runs",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("FlowRun"))),
                 comment: "Persisted run records for this flow, newest first.",
+                required: true,
+            }],
+        },
+        "list_all_runs" => ControllerSchema {
+            namespace: "flows",
+            function: "list_all_runs",
+            description: "List the most recent runs across all flows, newest first.",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of runs to return; defaults to 100.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "runs",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("FlowRun"))),
+                comment: "Persisted run records across all flows, newest first.",
                 required: true,
             }],
         },
@@ -814,6 +1030,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "build_cancel" => ControllerSchema {
+            namespace: "flows",
+            function: "build_cancel",
+            description: "Cancel the in-flight `flows_build` (Workflow Copilot) turn streaming \
+                          into `thread_id` — the real cancellation behind the composer's Stop \
+                          button. When `request_id` is given, the cancel only fires if it \
+                          matches the turn currently registered on the thread (a stale Stop for \
+                          a superseded request can't kill a newer turn); omit it to cancel \
+                          whatever turn is on the thread. `cancelled: false` is not an error — it \
+                          just means nothing was in flight (already settled, or never started).",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "The copilot's dedicated chat thread id (the same `thread_id` \
+                              passed to `flows.build`'s streaming params).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "request_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Per-turn correlation id to scope the cancel to (matches the \
+                              `request_id` `flows.build` streamed with). Omit to cancel \
+                              unscoped.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Object {
+                    fields: vec![FieldSchema {
+                        name: "cancelled",
+                        ty: TypeSchema::Bool,
+                        comment: "True when an in-flight build turn was found and signalled to \
+                                  cancel.",
+                        required: true,
+                    }],
+                },
+                comment: "Cancellation result payload.",
+                required: true,
+            }],
+        },
         "discover" => ControllerSchema {
             namespace: "flows",
             function: "discover",
@@ -867,6 +1125,272 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "approval_manifest" => ControllerSchema {
+            namespace: "flows",
+            function: "approval_manifest",
+            description:
+                "Compute the approval manifest for a saved flow (by id) or a candidate graph: \
+                 every ApprovalGate permission a run will prompt for, joined against the flow's \
+                 existing flow_tool_trust grants — the data behind the consolidated save+enable \
+                 pre-authorization card. Entries carry kind approvable|blocked|dynamic|agent.",
+            inputs: vec![
+                FieldSchema {
+                    name: "id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Saved flow id. Provide this or 'graph'.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Candidate WorkflowGraph to inspect (no trust join without an id).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "entries",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                    comment:
+                        "One per relevant node/tool: {kind: approvable|blocked|dynamic|agent, \
+                         node_id, tool_name?, label, class?}.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "missing",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Approvable trust keys the flow does not yet hold.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "already_trusted",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Approvable trust keys already granted to this flow.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "gate_installed",
+                    ty: TypeSchema::Bool,
+                    comment:
+                        "False when the approval gate is disabled — nothing ever prompts, so \
+                         missing is empty by definition.",
+                    required: true,
+                },
+            ],
+        },
+        "required_connections" => ControllerSchema {
+            namespace: "flows",
+            function: "required_connections",
+            description: "Compute which Composio toolkits a candidate graph needs and whether each \
+                          is connected — the data behind the canvas/proposal \"Connect <toolkit>\" \
+                          CTAs. Native oh: tools and http_request nodes need no connection.",
+            inputs: vec![FieldSchema {
+                name: "graph",
+                ty: TypeSchema::Json,
+                comment: "The WorkflowGraph to inspect.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "required_connections",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "One per needed toolkit: { toolkit, status: connected|missing }.",
+                required: true,
+            }],
+        },
+        "search_tool_catalog" => ControllerSchema {
+            namespace: "flows",
+            function: "search_tool_catalog",
+            description: "Search the live Composio tool catalog (secret-free) for the in-canvas \
+                          tool browser — the same core as the agent's search_tool_catalog tool.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Keyword query matched against slug / toolkit / description.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Restrict to one toolkit slug (e.g. `gmail`); omit to search all.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (default 25).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "tools",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Matches: { slug, toolkit, description, required_args, output_fields, primary_array_path, featured }.",
+                required: true,
+            }],
+        },
+        "get_tool_contract" => ControllerSchema {
+            namespace: "flows",
+            function: "get_tool_contract",
+            description: "Fetch one Composio action's full contract (secret-free) for the canvas \
+                          tool browser — the same core as the agent's get_tool_contract tool.",
+            inputs: vec![FieldSchema {
+                name: "slug",
+                ty: TypeSchema::String,
+                comment: "The exact Composio action slug (e.g. `GMAIL_SEND_EMAIL`).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "contract",
+                ty: TypeSchema::Json,
+                comment: "The action contract: { slug, toolkit, description, required_args, input_schema, output_fields, output_schema, primary_array_path, is_curated }.",
+                required: true,
+            }],
+        },
+        "get_history" => ControllerSchema {
+            namespace: "flows",
+            function: "get_history",
+            description: "List a flow's revision history — prior graph snapshots captured on each \
+                          update (capped, newest first). The safety rail behind rollback.",
+            inputs: vec![
+                id_input("Identifier of the flow whose history to list."),
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max revisions to return (defaults to the retention cap).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "revisions",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Revision snapshots: { id, flow_id, graph, name, require_approval, created_at }.",
+                required: true,
+            }],
+        },
+        "rollback" => ControllerSchema {
+            namespace: "flows",
+            function: "rollback",
+            description: "Roll a flow back to a prior revision (restores that revision's graph \
+                          through the normal update path — itself snapshotted, so rollback is \
+                          undoable). Honours optimistic concurrency via expected_version.",
+            inputs: vec![
+                id_input("Identifier of the flow to roll back."),
+                FieldSchema {
+                    name: "revision_id",
+                    ty: TypeSchema::String,
+                    comment: "The revision (from get_history) to restore.",
+                    required: true,
+                },
+                expected_version_input(),
+            ],
+            outputs: vec![flow_output()],
+        },
+        "draft_create" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_create",
+            description: "Create a core-managed draft (a durable, non-live working copy of a graph) \
+                          shared by the agent tools and the canvas. Never persists a flow.",
+            inputs: vec![
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::String,
+                    comment: "Human-readable draft name (carried into the flow on promote).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Json,
+                    comment: "The (possibly incomplete) WorkflowGraph JSON to hold in the draft.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "flow_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "The saved flow this draft edits, if any (promote → update vs create).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "origin",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Where the draft came from: `chat` | `canvas` | `import`. Defaults to `canvas`.",
+                    required: false,
+                },
+            ],
+            outputs: vec![draft_output()],
+        },
+        "draft_get" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_get",
+            description: "Fetch a draft by id.",
+            inputs: vec![id_input("Identifier of the draft to fetch.")],
+            outputs: vec![draft_output()],
+        },
+        "draft_update" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_update",
+            description: "Patch a draft's name/graph/flow_id (any provided field) and bump its \
+                          updated_at. Never persists a flow.",
+            inputs: vec![
+                id_input("Identifier of the draft to update."),
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New name, if changing it.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "New graph JSON, if changing it.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "flow_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New linked flow id, if changing it.",
+                    required: false,
+                },
+            ],
+            outputs: vec![draft_output()],
+        },
+        "draft_list" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_list",
+            description: "List all drafts, newest-updated first.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "drafts",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "The drafts (each { id, flow_id?, name, graph, origin, created_at, updated_at }).",
+                required: true,
+            }],
+        },
+        "draft_delete" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_delete",
+            description: "Delete a draft by id (idempotent).",
+            inputs: vec![id_input("Identifier of the draft to delete.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "`{ id, deleted }` — `deleted` is false if the id was already absent.",
+                required: true,
+            }],
+        },
+        "draft_promote" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_promote",
+            description: "Promote a draft into a saved flow through the same create/update gates \
+                          (structural validation, forced require_approval floor, born-disabled for \
+                          automatic triggers), then delete the draft file. A draft with a flow_id \
+                          updates that flow; otherwise it creates a new one.",
+            inputs: vec![
+                id_input("Identifier of the draft to promote."),
+                require_approval_input(),
+            ],
+            outputs: vec![flow_output()],
+        },
         _other => ControllerSchema {
             namespace: "flows",
             function: "unknown",
@@ -896,6 +1420,16 @@ fn handle_create(params: Map<String, Value>) -> ControllerFuture {
             .get("require_approval")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        // Opt-in strict mode (F3): run the same author hard-gates an agent save
+        // must pass, before persisting. Default off — the human canvas save
+        // path stays permissive.
+        if params
+            .get("strict")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            ops::strict_gate(&config, &graph).await?;
+        }
         to_json(ops::flows_create(&config, name, graph, require_approval).await?)
     })
 }
@@ -964,7 +1498,33 @@ fn handle_update(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| format!("invalid 'name': {e}"))?;
         let graph = params.get("graph").filter(|v| !v.is_null()).cloned();
         let require_approval = params.get("require_approval").and_then(Value::as_bool);
-        to_json(ops::flows_update(&config, id.trim(), name, graph, require_approval).await?)
+        let expected_version = params
+            .get("expected_version")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        // Opt-in strict mode (F3): when a new graph is supplied, run the same
+        // author hard-gates an agent save must pass, before persisting.
+        if params
+            .get("strict")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            if let Some(graph_json) = graph.as_ref() {
+                ops::strict_gate(&config, graph_json).await?;
+            }
+        }
+        to_json(
+            ops::flows_update(
+                &config,
+                id.trim(),
+                name,
+                graph,
+                require_approval,
+                expected_version,
+            )
+            .await?,
+        )
     })
 }
 
@@ -993,16 +1553,61 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = read_required::<String>(&params, "id")?;
         let input = params.get("input").cloned().unwrap_or(Value::Null);
+        let inputs = read_declared_inputs(&params)?;
         to_json(
             ops::flows_run(
                 &config,
                 id.trim(),
                 input,
+                inputs,
                 crate::openhuman::flows::FlowRunTrigger::Rpc,
             )
             .await?,
         )
     })
+}
+
+fn handle_run_detached(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let input = params.get("input").cloned().unwrap_or(Value::Null);
+        let inputs = read_declared_inputs(&params)?;
+        to_json(
+            ops::flows_run_detached(
+                &config,
+                id.trim(),
+                input,
+                inputs,
+                crate::openhuman::flows::FlowRunTrigger::Rpc,
+            )
+            .await?,
+        )
+    })
+}
+
+/// Reads the optional `inputs` param — values for the flow's declared workflow
+/// inputs, keyed by name.
+///
+/// Absent or `null` means "supplied nothing", which is valid for a flow whose
+/// inputs are all optional or defaulted. A present-but-non-object value is a
+/// caller error rejected here, before it reaches `ops`, so the message names the
+/// parameter rather than surfacing as a confusing per-input complaint.
+fn read_declared_inputs(params: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+    match params.get("inputs") {
+        None | Some(Value::Null) => Ok(Map::new()),
+        Some(Value::Object(map)) => Ok(map.clone()),
+        Some(other) => Err(format!(
+            "param 'inputs' must be an object keyed by declared input name, got {}",
+            match other {
+                Value::Array(_) => "an array",
+                Value::String(_) => "a string",
+                Value::Number(_) => "a number",
+                Value::Bool(_) => "a boolean",
+                _ => "a non-object",
+            }
+        )),
+    }
 }
 
 fn handle_resume(params: Map<String, Value>) -> ControllerFuture {
@@ -1053,6 +1658,18 @@ fn handle_list_runs(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_list_all_runs(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(100);
+        to_json(ops::flows_list_all_runs(&config, limit).await?)
+    })
+}
+
 fn handle_get_run(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -1084,6 +1701,17 @@ fn handle_build(params: Map<String, Value>) -> ControllerFuture {
             serde_json::from_value(Value::Object(params))
                 .map_err(|e| format!("invalid flows.build params: {e}"))?;
         to_json(ops::flows_build(&config, req, stream).await?)
+    })
+}
+
+fn handle_build_cancel(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let thread_id = read_required::<String>(&params, "thread_id")?;
+        let request_id = params
+            .get("request_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        to_json(ops::flows_build_cancel(thread_id.trim(), request_id.as_deref()).await?)
     })
 }
 
@@ -1142,6 +1770,157 @@ fn handle_mark_suggestion_built(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn handle_required_connections(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let graph = read_required::<Value>(&params, "graph")?;
+        to_json(ops::flows_required_connections(&config, graph).await?)
+    })
+}
+
+fn handle_approval_manifest(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = params
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string);
+        let graph = params.get("graph").filter(|v| !v.is_null()).cloned();
+        to_json(ops::flows_approval_manifest(&config, id.as_deref(), graph).await?)
+    })
+}
+
+fn handle_search_tool_catalog(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let query = read_required::<String>(&params, "query")?;
+        let toolkit = params
+            .get("toolkit")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(25);
+        to_json(ops::flows_search_tool_catalog(&config, query.trim(), toolkit, limit).await?)
+    })
+}
+
+fn handle_get_tool_contract(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let slug = read_required::<String>(&params, "slug")?;
+        to_json(ops::flows_get_tool_contract(&config, slug.trim()).await?)
+    })
+}
+
+fn handle_get_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(20);
+        to_json(ops::flows_get_history(&config, id.trim(), limit)?)
+    })
+}
+
+fn handle_rollback(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let revision_id = read_required::<String>(&params, "revision_id")?;
+        let expected_version = params
+            .get("expected_version")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        to_json(
+            ops::flows_rollback(&config, id.trim(), revision_id.trim(), expected_version).await?,
+        )
+    })
+}
+
+fn handle_draft_create(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let name = read_required::<String>(&params, "name")?;
+        let graph = read_required::<Value>(&params, "graph")?;
+        let flow_id = params
+            .get("flow_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let origin = params
+            .get("origin")
+            .and_then(Value::as_str)
+            .and_then(|s| serde_json::from_value(Value::String(s.to_string())).ok())
+            .unwrap_or(crate::openhuman::flows::DraftOrigin::Canvas);
+        to_json(ops::flows_draft_create(
+            &config, flow_id, name, graph, origin,
+        )?)
+    })
+}
+
+fn handle_draft_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_draft_get(&config, id.trim())?)
+    })
+}
+
+fn handle_draft_update(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let name = params
+            .get("name")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("invalid 'name': {e}"))?;
+        let graph = params.get("graph").filter(|v| !v.is_null()).cloned();
+        // A present `flow_id` (even null) re-links the draft; absent leaves it.
+        let flow_id = parse_draft_update_flow_id(&params)?;
+        to_json(ops::flows_draft_update(
+            &config,
+            id.trim(),
+            name,
+            graph,
+            flow_id,
+        )?)
+    })
+}
+
+fn handle_draft_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::flows_draft_list(&config)?)
+    })
+}
+
+fn handle_draft_delete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_draft_delete(&config, id.trim())?)
+    })
+}
+
+fn handle_draft_promote(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let require_approval = params.get("require_approval").and_then(Value::as_bool);
+        to_json(ops::flows_draft_promote(&config, id.trim(), require_approval).await?)
+    })
+}
+
 fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) -> Result<T, String> {
     let value = params
         .get(key)
@@ -1154,9 +1933,87 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
     outcome.into_cli_compatible_json()
 }
 
+/// Parses `draft_update`'s `flow_id` param (R-m7). The outer `Option`
+/// mirrors `ops::flows_draft_update`'s "present vs absent" contract — absent
+/// leaves the draft's existing link untouched; the inner `Option` is the new
+/// link (`None` unlinks).
+///
+/// A present-but-non-string `flow_id` (a number, or an object from a buggy
+/// client) is REJECTED rather than silently coerced into `Some(None)` via
+/// `Value::as_str()` returning `None` on a type mismatch — that shape used
+/// to be indistinguishable from an explicit `flow_id: null` unlink, and
+/// `update_draft` treats `Some(None)` as exactly that: unlinking the draft
+/// from its flow. A later `draft_promote` then creates a brand-new flow
+/// instead of updating the one the caller actually meant.
+fn parse_draft_update_flow_id(
+    params: &Map<String, Value>,
+) -> Result<Option<Option<String>>, String> {
+    match params.get("flow_id") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(s)) => {
+            let s = s.trim();
+            Ok(Some(if s.is_empty() {
+                None
+            } else {
+                Some(s.to_string())
+            }))
+        }
+        Some(other) => Err(format!(
+            "invalid 'flow_id': expected a string or null, got {other}"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn run_schema_advertises_both_input_channels() {
+        let run = all_controller_schemas()
+            .into_iter()
+            .find(|s| s.function == "run")
+            .expect("the run controller is registered");
+        let names: Vec<_> = run.inputs.iter().map(|f| f.name).collect();
+        assert!(names.contains(&"input"), "trigger payload, got {names:?}");
+        assert!(names.contains(&"inputs"), "declared inputs, got {names:?}");
+
+        let declared = run.inputs.iter().find(|f| f.name == "inputs").unwrap();
+        assert!(
+            !declared.required,
+            "a flow with no declared inputs must still be runnable without the param"
+        );
+    }
+
+    #[test]
+    fn read_declared_inputs_accepts_absent_null_and_object() {
+        let mut params = Map::new();
+        assert!(read_declared_inputs(&params).unwrap().is_empty(), "absent");
+
+        params.insert("inputs".into(), Value::Null);
+        assert!(read_declared_inputs(&params).unwrap().is_empty(), "null");
+
+        params.insert("inputs".into(), json!({ "repo": "acme/api" }));
+        assert_eq!(
+            read_declared_inputs(&params).unwrap()["repo"],
+            json!("acme/api")
+        );
+    }
+
+    #[test]
+    fn read_declared_inputs_rejects_a_non_object_naming_the_param() {
+        // A caller sending an array or scalar has mis-shaped the call; say so
+        // here rather than letting it read as "you supplied no inputs".
+        for bad in [json!([1, 2]), json!("repo=acme"), json!(7), json!(true)] {
+            let mut params = Map::new();
+            params.insert("inputs".into(), bad.clone());
+            let err =
+                read_declared_inputs(&params).expect_err("a non-object `inputs` must be rejected");
+            assert!(err.contains("'inputs'"), "got: {err} (for {bad})");
+        }
+    }
 
     #[test]
     fn all_controller_schemas_covers_every_supported_function() {
@@ -1178,16 +2035,31 @@ mod tests {
                 "delete",
                 "set_enabled",
                 "run",
+                "run_detached",
                 "resume",
                 "cancel_run",
                 "list_runs",
+                "list_all_runs",
                 "get_run",
                 "prune_runs",
                 "build",
+                "build_cancel",
                 "discover",
                 "list_suggestions",
                 "dismiss_suggestion",
                 "mark_suggestion_built",
+                "draft_create",
+                "draft_get",
+                "draft_update",
+                "draft_list",
+                "draft_delete",
+                "draft_promote",
+                "get_history",
+                "rollback",
+                "search_tool_catalog",
+                "get_tool_contract",
+                "required_connections",
+                "approval_manifest",
             ]
         );
     }
@@ -1195,7 +2067,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 21);
+        assert_eq!(controllers.len(), 36);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
@@ -1211,16 +2083,31 @@ mod tests {
                 "delete",
                 "set_enabled",
                 "run",
+                "run_detached",
                 "resume",
                 "cancel_run",
                 "list_runs",
+                "list_all_runs",
                 "get_run",
                 "prune_runs",
                 "build",
+                "build_cancel",
                 "discover",
                 "list_suggestions",
                 "dismiss_suggestion",
                 "mark_suggestion_built",
+                "draft_create",
+                "draft_get",
+                "draft_update",
+                "draft_list",
+                "draft_delete",
+                "draft_promote",
+                "get_history",
+                "rollback",
+                "search_tool_catalog",
+                "get_tool_contract",
+                "required_connections",
+                "approval_manifest",
             ]
         );
     }
@@ -1256,7 +2143,14 @@ mod tests {
                 let names: Vec<_> = fields.iter().map(|f| f.name).collect();
                 assert_eq!(
                     names,
-                    vec!["connection_ref", "kind", "display", "toolkit", "scheme"]
+                    vec![
+                        "connection_ref",
+                        "kind",
+                        "display",
+                        "toolkit",
+                        "scheme",
+                        "platform_user_id"
+                    ]
                 );
                 for f in fields {
                     let n = f.name.to_ascii_lowercase();
@@ -1390,6 +2284,22 @@ mod tests {
     }
 
     #[test]
+    fn schemas_build_cancel_requires_thread_id_but_not_request_id() {
+        let s = schemas("build_cancel");
+        assert_eq!(s.namespace, "flows");
+        assert_eq!(s.function, "build_cancel");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["thread_id"]);
+        let request = s.inputs.iter().find(|f| f.name == "request_id").unwrap();
+        assert!(!request.required);
+    }
+
+    #[test]
     fn schemas_discover_exposes_optional_stream_params() {
         let s = schemas("discover");
         assert_eq!(s.namespace, "flows");
@@ -1443,5 +2353,56 @@ mod tests {
         let params = Map::new();
         let err = read_required::<String>(&params, "id").unwrap_err();
         assert!(err.contains("missing required param 'id'"));
+    }
+
+    // ── R-m7: parse_draft_update_flow_id ─────────────────────────────────────
+
+    #[test]
+    fn parse_draft_update_flow_id_absent_leaves_link_untouched() {
+        let params = Map::new();
+        assert_eq!(parse_draft_update_flow_id(&params).unwrap(), None);
+    }
+
+    #[test]
+    fn parse_draft_update_flow_id_null_is_an_explicit_unlink() {
+        let mut params = Map::new();
+        params.insert("flow_id".to_string(), Value::Null);
+        assert_eq!(parse_draft_update_flow_id(&params).unwrap(), Some(None));
+    }
+
+    #[test]
+    fn parse_draft_update_flow_id_string_links_to_that_flow() {
+        let mut params = Map::new();
+        params.insert("flow_id".to_string(), Value::String("flow-123".to_string()));
+        assert_eq!(
+            parse_draft_update_flow_id(&params).unwrap(),
+            Some(Some("flow-123".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_draft_update_flow_id_empty_string_is_an_explicit_unlink() {
+        let mut params = Map::new();
+        params.insert("flow_id".to_string(), Value::String("   ".to_string()));
+        assert_eq!(parse_draft_update_flow_id(&params).unwrap(), Some(None));
+    }
+
+    // Regression for R-m7: a number must be REJECTED, not silently coerced
+    // into `Some(None)` (an explicit unlink) the way `Value::as_str()`
+    // returning `None` on a type mismatch used to produce.
+    #[test]
+    fn parse_draft_update_flow_id_rejects_a_number() {
+        let mut params = Map::new();
+        params.insert("flow_id".to_string(), Value::from(42));
+        let err = parse_draft_update_flow_id(&params).unwrap_err();
+        assert!(err.contains("invalid 'flow_id'"), "{err}");
+    }
+
+    #[test]
+    fn parse_draft_update_flow_id_rejects_an_object() {
+        let mut params = Map::new();
+        params.insert("flow_id".to_string(), serde_json::json!({ "id": "flow-1" }));
+        let err = parse_draft_update_flow_id(&params).unwrap_err();
+        assert!(err.contains("invalid 'flow_id'"), "{err}");
     }
 }

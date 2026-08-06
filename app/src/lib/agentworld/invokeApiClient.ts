@@ -99,11 +99,12 @@ async function call<T>(
 // each `AgentQueryParams`, `AgentCard`, etc. with `import type { … } from
 // '@tinyhumansai/tinyplace'`.
 
-export interface AgentQueryParams {
+interface AgentQueryParams {
   q?: string;
   skill?: string;
   tag?: string;
   limit?: number;
+  offset?: number;
   cursor?: string;
   [key: string]: unknown;
 }
@@ -129,27 +130,27 @@ export interface ExplorerOverview {
   [key: string]: unknown;
 }
 
-export interface SearchResponse {
+interface SearchResponse {
   results?: unknown[];
   [key: string]: unknown;
 }
 
 // ── Directory extended types ──────────────────────────────────────────────────
 
-export interface ResolveResponse {
+interface ResolveResponse {
   identity?: unknown;
   agent?: AgentCard;
   [key: string]: unknown;
 }
 
-export interface ReverseResponse {
+interface ReverseResponse {
   cryptoId: string;
   identities: unknown[];
   agents?: AgentCard[];
   [key: string]: unknown;
 }
 
-export interface IdentityListingQueryParams {
+interface IdentityListingQueryParams {
   q?: string;
   tag?: string;
   category?: string;
@@ -168,13 +169,13 @@ export interface DirectoryIdentityListingsResponse {
   [key: string]: unknown;
 }
 
-export interface DirectorySkillsParams {
+interface DirectorySkillsParams {
   q?: string;
   limit?: number;
   cursor?: string;
 }
 
-export interface AgentSearchResponse {
+interface AgentSearchResponse {
   agents?: unknown[];
   cursor?: string;
   [key: string]: unknown;
@@ -182,7 +183,7 @@ export interface AgentSearchResponse {
 
 // ── Profiles types ────────────────────────────────────────────────────────────
 
-export interface AgentProfile {
+interface AgentProfile {
   username?: string;
   name?: string;
   description?: string;
@@ -191,47 +192,47 @@ export interface AgentProfile {
   [key: string]: unknown;
 }
 
-export interface ProfileActivity {
+interface ProfileActivity {
   [key: string]: unknown;
 }
 
-export interface ProfileGroupMembership {
+interface ProfileGroupMembership {
   groupId?: string;
   name?: string;
   [key: string]: unknown;
 }
 
-export interface ProfileGroupsResponse {
+interface ProfileGroupsResponse {
   groups: ProfileGroupMembership[];
   [key: string]: unknown;
 }
 
-export interface ProfileBroadcast {
+interface ProfileBroadcast {
   id?: string;
   content?: string;
   createdAt?: string;
   [key: string]: unknown;
 }
 
-export interface ProfileBroadcastsResponse {
+interface ProfileBroadcastsResponse {
   broadcasts: ProfileBroadcast[];
   [key: string]: unknown;
 }
 
-export interface ProfileAttestation {
+interface ProfileAttestation {
   id?: string;
   attester?: string;
   [key: string]: unknown;
 }
 
-export interface ProfileAttestationsResponse {
+interface ProfileAttestationsResponse {
   attestations: ProfileAttestation[];
   [key: string]: unknown;
 }
 
 // ── Users types ───────────────────────────────────────────────────────────────
 
-export interface User {
+interface User {
   cryptoId: string;
   actorType: string;
   displayName: string;
@@ -249,7 +250,7 @@ export interface User {
   [key: string]: unknown;
 }
 
-export interface UserProfileUpdate {
+interface UserProfileUpdate {
   displayName?: string;
   bio?: string;
   avatarEmail?: string;
@@ -261,19 +262,6 @@ export interface UserProfileUpdate {
   [key: string]: unknown;
 }
 
-// ── Users email verification types ──────────────────────────────────────────
-
-export interface UserEmailVerificationStartParams {
-  cryptoId: string;
-  email: string;
-}
-
-export interface UserEmailVerificationConfirmParams {
-  cryptoId: string;
-  email: string;
-  code: string;
-}
-
 export interface AvailabilityResponse {
   available: boolean;
   name: string;
@@ -283,7 +271,7 @@ export interface AvailabilityResponse {
 
 // ── Registry (x402 register) types ─────────────────────────────────────────────
 
-export interface RegisterParams {
+interface RegisterParams {
   username: string;
   /** false/omitted → challenge only (no spend); true → pay + register. */
   confirmed?: boolean;
@@ -321,7 +309,7 @@ export interface RegisteredIdentity {
  * - `{ challenge, walletBalance, walletAddress }` — unconfirmed; render confirm.
  * - `{ identity, payment }` — paid + registered.
  */
-export interface RegistrationResult {
+interface RegistrationResult {
   identity?: RegisteredIdentity;
   challenge?: RegistrationChallenge;
   walletBalance?: RegistryWalletBalance | null;
@@ -331,7 +319,13 @@ export interface RegistrationResult {
 }
 
 /** Result of `registry.assignPrimary` — the handle now flagged primary. */
-export interface AssignPrimaryResult {
+interface AssignPrimaryResult {
+  identity?: Identity;
+  [key: string]: unknown;
+}
+
+/** Result of a handle transfer: the Identity now owned by the recipient. */
+interface TransferHandleResult {
   identity?: Identity;
   [key: string]: unknown;
 }
@@ -417,19 +411,19 @@ export interface X402BuyResult {
  * signed authorizations — no on-chain transfer until acceptance — so the result
  * is `{ result, committed: true }` (no `payment.onChainTx`).
  */
-export interface X402CommitResult {
+interface X402CommitResult {
   result?: Record<string, unknown>;
   committed?: boolean;
   [key: string]: unknown;
 }
 
 /** Amount + (optional) asset + network for a bid/offer commitment. */
-export interface CommitPriceParams {
+interface CommitPriceParams {
   amount: string;
   asset?: string;
   network: string;
 }
-export interface BidsResponse {
+interface BidsResponse {
   bids: IdentityBid[];
   [key: string]: unknown;
 }
@@ -437,7 +431,7 @@ export interface IdentitiesResponse {
   identities: IdentityListing[];
   [key: string]: unknown;
 }
-export interface IdentityBid {
+interface IdentityBid {
   bidId?: string;
   listingId?: string;
   bidder?: string;
@@ -464,7 +458,7 @@ export interface IdentityListing {
   updatedAt: string;
   [key: string]: unknown;
 }
-export interface IdentityOffer {
+interface IdentityOffer {
   offerId: string;
   name?: string;
   buyer: string;
@@ -481,7 +475,7 @@ export interface IdentitySale {
   createdAt: string;
   [key: string]: unknown;
 }
-export interface IdentitySaleHistoryResponse {
+interface IdentitySaleHistoryResponse {
   history?: IdentitySale[];
   [key: string]: unknown;
 }
@@ -491,7 +485,7 @@ export interface MarketplacePrice {
   network?: string;
   [key: string]: unknown;
 }
-export interface OffersResponse {
+interface OffersResponse {
   offers: IdentityOffer[];
   [key: string]: unknown;
 }
@@ -524,7 +518,7 @@ export interface ArtifactListResult {
   artifacts: Artifact[];
   cursor?: string;
 }
-export interface ArtifactQueryParams {
+interface ArtifactQueryParams {
   role?: string;
   status?: string;
   referenceKind?: string;
@@ -533,7 +527,7 @@ export interface ArtifactQueryParams {
   cursor?: string;
   [key: string]: unknown;
 }
-export interface CategoriesResponse {
+interface CategoriesResponse {
   categories: MarketplaceCategory[];
   [key: string]: unknown;
 }
@@ -548,28 +542,28 @@ export interface EscrowListResponse {
   escrows: Escrow[];
   [key: string]: unknown;
 }
-export interface EscrowQueryParams {
+interface EscrowQueryParams {
   role?: string;
   status?: string;
   limit?: number;
   offset?: number;
   [key: string]: unknown;
 }
-export interface FeaturedResponse {
+interface FeaturedResponse {
   items: unknown[];
   [key: string]: unknown;
 }
-export interface JobListResponse {
+interface JobListResponse {
   jobs: JobPosting[];
   [key: string]: unknown;
 }
-export interface JobPosting {
+interface JobPosting {
   jobId: string;
   status: string;
   client: string;
   [key: string]: unknown;
 }
-export interface JobQueryParams {
+interface JobQueryParams {
   status?: string;
   skill?: string;
   q?: string;
@@ -577,10 +571,10 @@ export interface JobQueryParams {
   offset?: number;
   [key: string]: unknown;
 }
-export interface MarketplaceBrowseResponse {
+interface MarketplaceBrowseResponse {
   [key: string]: unknown;
 }
-export interface MarketplaceCategory {
+interface MarketplaceCategory {
   [key: string]: unknown;
 }
 export interface Product {
@@ -603,7 +597,7 @@ export interface Product {
   signerPublicKey?: string;
   [key: string]: unknown;
 }
-export interface ProductQueryParams {
+interface ProductQueryParams {
   q?: string;
   type?: string;
   category?: string;
@@ -616,7 +610,7 @@ export interface ProductQueryParams {
   offset?: number;
   [key: string]: unknown;
 }
-export interface ProductReview {
+interface ProductReview {
   reviewId?: string;
   productId?: string;
   buyer?: string;
@@ -624,7 +618,7 @@ export interface ProductReview {
   comment?: string;
   [key: string]: unknown;
 }
-export interface ProductReviewsResponse {
+interface ProductReviewsResponse {
   reviews: ProductReview[];
   [key: string]: unknown;
 }
@@ -633,57 +627,57 @@ export interface ProductsResponse {
   [key: string]: unknown;
 }
 
-export interface GqlAgentCardListResult {
+interface GqlAgentCardListResult {
   agents: AgentCard[];
   count?: number;
   [key: string]: unknown;
 }
 
-export interface GqlProduct extends Omit<Product, 'seller' | 'sellerCryptoId'> {
+interface GqlProduct extends Omit<Product, 'seller' | 'sellerCryptoId'> {
   seller: FeedAuthor;
   sellerCryptoId?: string;
 }
 
-export interface GqlProductListResult {
+interface GqlProductListResult {
   products: GqlProduct[];
   count?: number;
   [key: string]: unknown;
 }
 
-export interface GqlIdentityListing extends Omit<IdentityListing, 'seller' | 'sellerCryptoId'> {
+interface GqlIdentityListing extends Omit<IdentityListing, 'seller' | 'sellerCryptoId'> {
   seller?: FeedAuthor;
   sellerCryptoId?: string;
 }
 
-export interface GqlIdentityListingListResult {
+interface GqlIdentityListingListResult {
   identities?: GqlIdentityListing[];
   listings?: GqlIdentityListing[];
   count?: number;
   [key: string]: unknown;
 }
 
-export interface GqlIdentityBidListResult {
+interface GqlIdentityBidListResult {
   bids: IdentityBid[];
   count?: number;
   [key: string]: unknown;
 }
 
-export interface GqlIdentityOffer extends Omit<IdentityOffer, 'buyer'> {
+interface GqlIdentityOffer extends Omit<IdentityOffer, 'buyer'> {
   buyer: FeedAuthor;
 }
 
-export interface GqlIdentityOfferListResult {
+interface GqlIdentityOfferListResult {
   offers: GqlIdentityOffer[];
   count?: number;
   [key: string]: unknown;
 }
 
-export interface GqlIdentitySale extends Omit<IdentitySale, 'buyer' | 'seller'> {
+interface GqlIdentitySale extends Omit<IdentitySale, 'buyer' | 'seller'> {
   buyer: FeedAuthor;
   seller?: FeedAuthor;
 }
 
-export interface GqlIdentitySaleListResult {
+interface GqlIdentitySaleListResult {
   sales: GqlIdentitySale[];
   count?: number;
   [key: string]: unknown;
@@ -723,7 +717,7 @@ export interface Channel {
   updatedAt: string;
   [key: string]: unknown;
 }
-export interface ChannelListResponse {
+interface ChannelListResponse {
   channels: Channel[];
   [key: string]: unknown;
 }
@@ -790,7 +784,7 @@ export interface GroupInvite {
   [key: string]: unknown;
 }
 
-export interface GroupInviteCreateRequest {
+interface GroupInviteCreateRequest {
   ttlSeconds?: number;
   maxUses?: number;
 }
@@ -806,7 +800,7 @@ export interface GroupInvitePreview {
   [key: string]: unknown;
 }
 
-export interface InboxCounts {
+interface InboxCounts {
   unread: number;
   read: number;
   archived: number;
@@ -824,7 +818,7 @@ export interface InboxItem {
   from?: string;
   [key: string]: unknown;
 }
-export interface InboxListResult {
+interface InboxListResult {
   items: InboxItem[];
   cursor?: string;
   unreadCount: number;
@@ -862,7 +856,7 @@ export interface ContactView {
   contact: Contact;
   [key: string]: unknown;
 }
-export interface ContactListParams {
+interface ContactListParams {
   limit?: number;
   offset?: number;
 }
@@ -873,7 +867,7 @@ export interface ContactRequestsResponse {
   incoming: ContactView[];
   outgoing: ContactView[];
 }
-export interface ContactStatusResponse {
+interface ContactStatusResponse {
   agentId: string;
   status: ContactStatus | 'none';
   direction?: 'incoming' | 'outgoing';
@@ -899,14 +893,14 @@ export interface PairingSnapshot {
   requests: ContactRequestsResponse;
   stats: ContactStats | null;
 }
-export interface PairingActionResult {
+interface PairingActionResult {
   record?: PairingRecord | null;
   remote: unknown;
 }
 
 // ── Follows types ───────────────────────────────────────────────────────────
 
-export interface AgentFollow {
+interface AgentFollow {
   follower: string;
   followee: string;
   createdAt: string;
@@ -920,22 +914,22 @@ export interface FollowStats {
   [key: string]: unknown;
 }
 
-export interface FollowListParams {
+interface FollowListParams {
   limit?: number;
   offset?: number;
 }
 
-export interface FollowersResponse {
+interface FollowersResponse {
   followers: AgentFollow[];
   [key: string]: unknown;
 }
 
-export interface FollowingResponse {
+interface FollowingResponse {
   following: AgentFollow[];
   [key: string]: unknown;
 }
 
-export interface FeedListParams {
+interface FeedListParams {
   limit?: number;
   offset?: number;
   kind?: string;
@@ -944,7 +938,7 @@ export interface FeedListParams {
   includeSelf?: boolean;
 }
 
-export interface ActivityEvent {
+interface ActivityEvent {
   eventId: string;
   kind: string;
   category: string;
@@ -957,14 +951,14 @@ export interface ActivityEvent {
   [key: string]: unknown;
 }
 
-export interface ActivityStats {
+interface ActivityStats {
   total: number;
   byKind: Record<string, number>;
   byCategory: Record<string, number>;
   [key: string]: unknown;
 }
 
-export interface FeedResponse {
+interface FeedResponse {
   events: ActivityEvent[];
   following: AgentFollow[];
   stats: ActivityStats;
@@ -1004,24 +998,24 @@ export interface GqlComment {
   author: FeedAuthor;
 }
 
-export interface GqlPostLike {
+interface GqlPostLike {
   postId: string;
   feedId: string;
   actor: FeedAuthor;
   createdAt: string;
 }
 
-export interface GqlPostDetail extends GqlPost {
+interface GqlPostDetail extends GqlPost {
   comments: GqlComment[];
   likers: GqlPostLike[];
 }
 
-export interface GqlPostListResult {
+interface GqlPostListResult {
   posts: GqlPost[];
   count: number;
 }
 
-export interface GqlPostLikerListResult {
+interface GqlPostLikerListResult {
   likers: GqlPostLike[];
   count: number;
 }
@@ -1039,7 +1033,7 @@ export interface GqlHomeFeedResult {
 
 // ── Feeds REST types (write surface) ──────────────────────────────────────
 
-export interface FeedsPost {
+interface FeedsPost {
   postId: string;
   feedId: string;
   author: string;
@@ -1055,7 +1049,7 @@ export interface FeedsPost {
   moderationState?: string;
 }
 
-export interface FeedsComment {
+interface FeedsComment {
   commentId: string;
   postId: string;
   feedId: string;
@@ -1167,7 +1161,7 @@ export interface BountyCreateParams {
   durationDays?: number;
 }
 
-export interface BountyQueryParams {
+interface BountyQueryParams {
   creator?: string;
   status?: string;
   limit?: number;
@@ -1175,14 +1169,14 @@ export interface BountyQueryParams {
   [key: string]: unknown;
 }
 
-export interface BountySubmissionQueryParams {
+interface BountySubmissionQueryParams {
   status?: string;
   submitter?: string;
   limit?: number;
   [key: string]: unknown;
 }
 
-export interface BountyCommentQueryParams {
+interface BountyCommentQueryParams {
   limit?: number;
   offset?: number;
   [key: string]: unknown;
@@ -1193,24 +1187,15 @@ export interface BountyListResponse {
   [key: string]: unknown;
 }
 
-export interface BountySubmissionsResponse {
+interface BountySubmissionsResponse {
   submissions: BountySubmission[];
   [key: string]: unknown;
 }
 
-export interface BountyCommentsResponse {
+interface BountyCommentsResponse {
   comments: BountyComment[];
   [key: string]: unknown;
 }
-
-export type BountyStatus =
-  | 'draft'
-  | 'open'
-  | 'judging'
-  | 'review'
-  | 'awarded'
-  | 'refunded'
-  | 'cancelled';
 
 // ── GraphQL Ledger types ────────────────────────────────────────────────────
 
@@ -1239,12 +1224,12 @@ export interface GqlLedgerTransaction {
   [key: string]: unknown;
 }
 
-export interface GqlLedgerTransactionListResult {
+interface GqlLedgerTransactionListResult {
   transactions: GqlLedgerTransaction[];
   count: number;
 }
 
-export interface LedgerListParams {
+interface LedgerListParams {
   limit?: number;
   offset?: number;
   agent?: string;
@@ -1348,7 +1333,7 @@ export interface GqlBounty {
 }
 
 /** Filters for the GraphQL bounties query (all optional). */
-export interface GqlBountyQueryParams {
+interface GqlBountyQueryParams {
   status?: string;
   creator?: string;
   limit?: number;
@@ -1359,7 +1344,7 @@ export interface GqlBountyQueryParams {
  * Query params for the GraphQL jobs endpoint. Reuses the same shape as the
  * REST JobQueryParams but with explicit typing (no catch-all index signature).
  */
-export interface GqlJobQueryParams {
+interface GqlJobQueryParams {
   client?: string;
   status?: string;
   category?: string;
@@ -1406,20 +1391,20 @@ export interface Proposal {
 }
 
 /** Response from list_proposals. */
-export interface ProposalListResponse {
+interface ProposalListResponse {
   proposals: Proposal[];
   [key: string]: unknown;
 }
 
 /** Query params for listing proposals. */
-export interface ProposalQueryParams {
+interface ProposalQueryParams {
   status?: string;
   limit?: number;
   offset?: number;
 }
 
 /** Result of selecting a candidate (spawns escrow). */
-export interface SelectCandidateResult {
+interface SelectCandidateResult {
   job: JobPosting;
   contractEscrowId: string;
   [key: string]: unknown;
@@ -1472,7 +1457,7 @@ export interface GqlProfile {
 }
 
 /** GqlIdentity: Identity fields flattened + optional owner profile. */
-export interface GqlIdentity {
+interface GqlIdentity {
   username: string;
   cryptoId: string;
   publicKey: string;
@@ -1493,7 +1478,7 @@ export interface GqlIdentity {
 
 // ── Feedback types ──────────────────────────────────────────────────────────
 
-export interface FeedbackItem {
+interface FeedbackItem {
   feedbackId: string;
   author: string;
   title: string;
@@ -1515,34 +1500,34 @@ export interface FeedbackItem {
   [key: string]: unknown;
 }
 
-export interface FeedbackListParams {
+interface FeedbackListParams {
   status?: string;
   limit?: number;
   offset?: number;
 }
 
-export interface FeedbackListResponse {
+interface FeedbackListResponse {
   feedback: FeedbackItem[];
   [key: string]: unknown;
 }
 
 // ── Solana types ────────────────────────────────────────────────────────────
 
-export interface SolanaRpcInfo {
+interface SolanaRpcInfo {
   url: string;
   rateLimitPerMin: number;
   fallbacks: boolean;
   [key: string]: unknown;
 }
 
-export interface SupportedAsset {
+interface SupportedAsset {
   symbol: string;
   address?: string;
   decimals: number;
   [key: string]: unknown;
 }
 
-export interface SolanaChainInfo {
+interface SolanaChainInfo {
   network: string;
   name: string;
   kind: string;
@@ -1556,33 +1541,33 @@ export interface SolanaChainInfo {
 
 // ── Streams types ─────────────────────────────────────────────────────────────
 
-export interface StreamStartResult {
+interface StreamStartResult {
   streamId: string;
   [key: string]: unknown;
 }
 
-export interface StreamEntry {
+interface StreamEntry {
   streamId: string;
   kind: string;
   status: string;
   [key: string]: unknown;
 }
 
-export interface StreamListResult {
+interface StreamListResult {
   streams: StreamEntry[];
   [key: string]: unknown;
 }
 
 // ── Signal key management types ─────────────────────────────────────────────
 
-export interface SignedKey {
+interface SignedKey {
   keyId: string;
   publicKey: string;
   signature?: string;
   [key: string]: unknown;
 }
 
-export interface KeyBundle {
+interface KeyBundle {
   agentId: string;
   identityKey: string;
   signedPreKey: SignedKey;
@@ -1611,7 +1596,7 @@ export interface SignalKeyStatus {
   [key: string]: unknown;
 }
 
-export interface SignalMetadataEnvelope {
+interface SignalMetadataEnvelope {
   ephemeralKey?: string;
   signedPreKeyId?: string;
   oneTimePreKeyId?: string;
@@ -1627,7 +1612,7 @@ export interface SignalMetadataEnvelope {
   [key: string]: unknown;
 }
 
-export interface MessageEnvelope {
+interface MessageEnvelope {
   id: string;
   from: string;
   to: string;
@@ -1863,6 +1848,16 @@ export function createInvokeApiClient() {
        */
       assignPrimary: (name: string) =>
         call<AssignPrimaryResult>('openhuman.tinyplace_registry_assign_primary', { name }),
+      /**
+       * Transfer one of the wallet's handles to another tiny.place identity
+       * (#4929). DESTRUCTIVE + irreversible: on success the `recipient` handle's
+       * owner becomes the sole owner of `name`. The recipient is resolved from
+       * their @handle server-side; an unregistered recipient or an unconfirmed
+       * read-back fails closed. The owning wallet is proven by the
+       * signer-attached signature, not by params.
+       */
+      transfer: (name: string, recipient: string) =>
+        call<TransferHandleResult>('openhuman.tinyplace_registry_transfer', { name, recipient }),
     },
     directoryIdentities: {
       /** List identity listings from the directory. */
@@ -2394,5 +2389,3 @@ export function createInvokeApiClient() {
     },
   };
 }
-
-export type InvokeApiClient = ReturnType<typeof createInvokeApiClient>;

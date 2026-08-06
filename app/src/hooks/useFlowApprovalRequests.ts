@@ -58,7 +58,7 @@ function parsePayload(data: unknown): FlowApprovalRequest | null {
   };
 }
 
-export interface UseFlowApprovalRequestsResult {
+interface UseFlowApprovalRequestsResult {
   /** Live flow-approval requests awaiting a decision, oldest first. */
   requests: FlowApprovalRequest[];
   /** Drop a request off the list once it's been decided (or otherwise resolved). */
@@ -106,5 +106,3 @@ export function useFlowApprovalRequests(): UseFlowApprovalRequestsResult {
 
   return { requests, dismiss };
 }
-
-export default useFlowApprovalRequests;

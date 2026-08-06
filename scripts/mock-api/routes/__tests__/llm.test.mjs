@@ -347,7 +347,7 @@ test("records thread state for multi-turn mock LLM sessions", () => {
 // ── {{DYNAMIC_*}} placeholder substitution (#4517) ──────────────────
 //
 // Envelope shape matches awaiting_user_envelope() in
-// src/openhuman/agent_orchestration/tools/awaiting_user.rs — the parser
+// src/openhuman/agent/orchestration/tools/awaiting_user.rs — the parser
 // must handle the exact production format (JSON-encoded question,
 // `worker_thread_id: (none)`, trailing instruction block).
 function subagentAwaitingUserEnvelope({

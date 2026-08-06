@@ -8,7 +8,7 @@ Multi-platform messaging integration. Owns the `Channel` trait, per-provider con
 - `pub struct ChannelDefinition` / `pub enum ChannelAuthMode` — `controllers/definitions.rs` (re-exported `mod.rs:59`) — declarative provider metadata.
 - `pub fn start_channels` — `runtime/startup.rs` (re-exported `mod.rs:65`) — boot all enabled channels under the supervisor.
 - `pub fn doctor_channels` — `commands.rs` — diagnose connectivity for the doctor CLI.
-- `pub fn build_system_prompt` — re-exported from `crate::openhuman::context::channels_prompt`.
+- `pub fn build_system_prompt` — re-exported from `crate::openhuman::agent::context::channels_prompt`.
 - Per-provider channel structs: `pub struct CliChannel`, `DingTalkChannel`, `DiscordChannel`, `EmailChannel`, `IMessageChannel`, `IrcChannel`, `LarkChannel`, `LinqChannel`, `MattermostChannel`, `QQChannel`, `SignalChannel`, `SlackChannel`, `TelegramChannel`, `WhatsAppChannel` — `providers/<name>.rs`. Cargo-feature-gated: `WhatsAppWebChannel` (`whatsapp-web`).
 - Stable `pub use providers::<name>` paths for every provider — `mod.rs:18-36`.
 - RPC `channels.{list, describe, connect, disconnect, status, test, telegram_login_start, telegram_login_check, discord_link_start, discord_link_check, discord_list_guilds, discord_list_channels, discord_check_permissions, send_message, send_reaction, create_thread, update_thread, list_threads}` — `controllers/schemas.rs`.
@@ -16,11 +16,11 @@ Multi-platform messaging integration. Owns the `Channel` trait, per-provider con
 ## Calls into
 
 - `src/openhuman/agent/` — inbound messages spawn or resume agent runs through `runtime/dispatch.rs`.
-- `src/openhuman/credentials/` — per-channel auth tokens, refresh flow.
+- `src/openhuman/security/credentials/` — per-channel auth tokens, refresh flow.
 - `src/openhuman/config/schema/channels.rs` — runtime channel configuration.
 - `src/openhuman/threads/` — thread state for platforms with native threading (Slack `thread_ts`).
-- `src/openhuman/notifications/` — surface inbound deliveries to the UI.
-- `src/openhuman/encryption/` — at-rest secret protection.
+- `src/openhuman/desktop/notifications/` — surface inbound deliveries to the UI.
+- `src/openhuman/security/encryption/` — at-rest secret protection.
 - `src/core/event_bus/` — emits `DomainEvent::Channel(*)`; `channels/bus.rs` registers `ChannelInboundSubscriber`.
 
 ## Called by

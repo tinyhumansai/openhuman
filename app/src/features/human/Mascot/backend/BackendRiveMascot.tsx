@@ -14,7 +14,7 @@ import { isRiveMascotDetail } from './types';
 
 const log = debug('human:mascot:backend-rive');
 
-export interface BackendRiveMascotProps {
+interface BackendRiveMascotProps {
   mascotId: string;
   face?: MascotFace;
   size?: number | string;

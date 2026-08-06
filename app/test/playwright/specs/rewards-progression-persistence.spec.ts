@@ -25,7 +25,7 @@ async function resetMock(): Promise<void> {
 }
 
 async function gotoRewards(page: import('@playwright/test').Page, userId: string): Promise<void> {
-  await bootAuthenticatedPage(page, userId, '/rewards');
+  await bootAuthenticatedPage(page, userId, '/rewards?view=main');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByText('Your Progress')).toBeVisible();
@@ -76,7 +76,7 @@ test.describe('Rewards Progression Persistence', () => {
 
     await page.goto('/#/home');
     await waitForAppReady(page);
-    await page.goto('/#/rewards');
+    await page.goto('/#/rewards?view=main');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
     await expect(page.getByText('Your Progress')).toBeVisible();

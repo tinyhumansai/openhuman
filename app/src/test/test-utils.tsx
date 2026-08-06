@@ -19,6 +19,7 @@ import chatRuntimeReducer from '../store/chatRuntimeSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
+import githubStarReducer from '../store/githubStarSlice';
 import layoutReducer from '../store/layoutSlice';
 import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
@@ -48,6 +49,7 @@ const testRootReducer = combineReducers({
   companion: companionReducer,
   connectivity: connectivityReducer,
   coreMode: coreModeReducer,
+  githubStar: githubStarReducer,
   layout: layoutReducer,
   locale: localeReducer,
   mascot: mascotReducer,

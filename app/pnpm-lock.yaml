@@ -46,9 +46,6 @@ importers:
       debug:
         specifier: ^4.4.3
         version: 4.4.3(supports-color@8.1.1)
-      lottie-react:
-        specifier: ^2.4.1
-        version: 2.4.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       os-browserify:
         specifier: ^0.3.0
         version: 0.3.0
@@ -149,6 +146,9 @@ importers:
       '@wdio/cli':
         specifier: ^9.24.0
         version: 9.27.0(@types/node@25.6.0)(expect-webdriverio@5.6.5)
+      '@wdio/globals':
+        specifier: ^9.24.0
+        version: 9.27.0(expect-webdriverio@5.6.5)(webdriverio@9.27.0)
       '@wdio/local-runner':
         specifier: ^9.24.0
         version: 9.27.0(@wdio/globals@9.27.0)(webdriverio@9.27.0)
@@ -156,6 +156,9 @@ importers:
         specifier: ^9.24.0
         version: 9.27.0
       '@wdio/spec-reporter':
+        specifier: ^9.24.0
+        version: 9.27.0
+      '@wdio/types':
         specifier: ^9.24.0
         version: 9.27.0
       autoprefixer:
@@ -206,6 +209,9 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(jsdom@28.1.0(@noble/hashes@2.2.0))(vite@7.3.2(@types/node@25.6.0)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
+      webdriverio:
+        specifier: ^9.24.0
+        version: 9.27.0
 
 packages:
   '@acemir/cssom@0.9.31':
@@ -5747,21 +5753,6 @@ packages:
         integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==,
       }
     hasBin: true
-
-  lottie-react@2.4.1:
-    resolution:
-      {
-        integrity: sha512-LQrH7jlkigIIv++wIyrOYFLHSKQpEY4zehPicL9bQsrt1rnoKRYCYgpCUe5maqylNtacy58/sQDZTkwMcTRxZw==,
-      }
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
-  lottie-web@5.13.0:
-    resolution:
-      {
-        integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==,
-      }
 
   lru-cache@10.4.3:
     resolution:
@@ -12145,14 +12136,6 @@ snapshots:
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
-
-  lottie-react@2.4.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
-    dependencies:
-      lottie-web: 5.13.0
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-
-  lottie-web@5.13.0: {}
 
   lru-cache@10.4.3: {}
 

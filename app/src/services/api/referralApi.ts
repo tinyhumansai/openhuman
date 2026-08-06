@@ -8,7 +8,7 @@ import { getOrCreateDeviceFingerprint } from '../../utils/deviceFingerprint';
 import { callCoreCommand } from '../coreCommandClient';
 
 /** Shape thrown by {@link referralApi.getStats} / {@link referralApi.claimReferral} on RPC failure. */
-export type ReferralRpcFailure = { success: false; error: string };
+type ReferralRpcFailure = { success: false; error: string };
 
 function referralRpcErrorMessage(err: unknown): string {
   if (err && typeof err === 'object') {

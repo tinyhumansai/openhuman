@@ -9,72 +9,59 @@ use openhuman_core::openhuman::agent::harness::{
 };
 use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::ToolCallFormat;
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
-};
+use openhuman_core::openhuman::agent::context::prompt::ToolCallFormat;
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary};
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::SpawnSubagentTool;
 use openhuman_core::openhuman::tools::{Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
-struct ScriptedProvider {
-    responses: Mutex<Vec<ChatResponse>>,
-    requests: Mutex<Vec<Vec<ChatMessage>>>,
+struct ScriptedModel {
+    responses: Mutex<Vec<ModelResponse>>,
+    requests: Mutex<Vec<Vec<Message>>>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Self {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Self {
         Self {
             responses: Mutex::new(responses),
             requests: Mutex::new(Vec::new()),
         }
     }
 
-    fn requests(&self) -> Vec<Vec<ChatMessage>> {
+    fn requests(&self) -> Vec<Vec<Message>> {
         self.requests.lock().clone()
     }
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::OnceLock<ModelProfile> = std::sync::OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("coverage".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("direct: {message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        self.requests.lock().push(request.messages.to_vec());
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.requests.lock().push(request.messages);
         let mut responses = self.responses.lock();
         Ok(if responses.is_empty() {
-            ChatResponse {
-                text: Some("fallback final".to_string()),
-                tool_calls: vec![],
-                usage: Some(usage(7, 3)),
-                reasoning_content: None,
-            }
+            ModelResponse::assistant("fallback final").with_usage(usage(7, 3))
         } else {
             responses.remove(0)
         })
@@ -169,29 +156,18 @@ impl Tool for EchoTool {
     }
 }
 
-fn usage(input_tokens: u64, output_tokens: u64) -> UsageInfo {
+fn usage(input_tokens: u64, output_tokens: u64) -> Usage {
     usage_with_cached(input_tokens, output_tokens, input_tokens / 2)
 }
 
-fn usage_with_cached(input_tokens: u64, output_tokens: u64, cached_input_tokens: u64) -> UsageInfo {
-    UsageInfo {
-        input_tokens,
-        output_tokens,
-        context_window: 8_192,
-        cached_input_tokens,
-        cache_creation_tokens: 0,
-        reasoning_tokens: 0,
-        charged_amount_usd: 0.001,
-    }
+fn usage_with_cached(input_tokens: u64, output_tokens: u64, cached_input_tokens: u64) -> Usage {
+    let mut usage = Usage::new(input_tokens, output_tokens);
+    usage.cache_read_tokens = cached_input_tokens;
+    usage
 }
 
 fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: id.to_string(),
-        name: name.to_string(),
-        arguments: arguments.to_string(),
-        extra_content: None,
-    }
+    ToolCall::new(id, name, arguments)
 }
 
 fn response(
@@ -199,12 +175,22 @@ fn response(
     tool_calls: Vec<ToolCall>,
     input: u64,
     output: u64,
-) -> ChatResponse {
-    ChatResponse {
-        text: text.map(str::to_string),
-        tool_calls,
-        usage: Some(usage(input, output)),
-        reasoning_content: None,
+) -> ModelResponse {
+    let usage = usage(input, output);
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: text
+                .map(|text| vec![ContentBlock::Text(text.to_string())])
+                .unwrap_or_default(),
+            tool_calls,
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: None,
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -214,12 +200,22 @@ fn response_with_cached(
     input: u64,
     output: u64,
     cached: u64,
-) -> ChatResponse {
-    ChatResponse {
-        text: text.map(str::to_string),
-        tool_calls,
-        usage: Some(usage_with_cached(input, output, cached)),
-        reasoning_content: None,
+) -> ModelResponse {
+    let usage = usage_with_cached(input, output, cached);
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: text
+                .map(|text| vec![ContentBlock::Text(text.to_string())])
+                .unwrap_or_default(),
+            tool_calls,
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: None,
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -231,22 +227,18 @@ fn agent_config() -> AgentConfig {
     }
 }
 
-fn build_agent(
-    workspace: &Path,
-    provider: Arc<ScriptedProvider>,
-    agent_name: &str,
-) -> Result<Agent> {
+fn build_agent(workspace: &Path, provider: Arc<ScriptedModel>, agent_name: &str) -> Result<Agent> {
     build_agent_with_tools(workspace, provider, agent_name, vec![Box::new(EchoTool)])
 }
 
 fn build_agent_with_tools(
     workspace: &Path,
-    provider: Arc<ScriptedProvider>,
+    provider: Arc<ScriptedModel>,
     agent_name: &str,
     tools: Vec<Box<dyn Tool>>,
 ) -> Result<Agent> {
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(tools)
         .memory(Arc::new(StubMemory))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
@@ -265,7 +257,7 @@ fn build_agent_with_tools(
     Ok(agent)
 }
 
-fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -277,10 +269,13 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            provider,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "coverage-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
@@ -351,7 +346,7 @@ fn transcript_jsonl_files(workspace: &Path) -> Vec<PathBuf> {
 #[tokio::test]
 async fn agent_turn_executes_tools_persists_and_resumes_raw_transcript() -> Result<()> {
     let workspace = tempfile::tempdir()?;
-    let provider = Arc::new(ScriptedProvider::new(vec![
+    let provider = Arc::new(ScriptedModel::new(vec![
         response(
             Some("calling echo"),
             vec![tool_call("call-1", "echo", json!({"message": "alpha"}))],
@@ -378,7 +373,7 @@ async fn agent_turn_executes_tools_persists_and_resumes_raw_transcript() -> Resu
     assert!(transcript.contains("\"input_tokens\":252"));
     assert!(workspace.path().join("sessions").exists());
 
-    let resume_provider = Arc::new(ScriptedProvider::new(vec![response(
+    let resume_provider = Arc::new(ScriptedModel::new(vec![response(
         Some("resumed answer"),
         Vec::new(),
         64,
@@ -393,7 +388,8 @@ async fn agent_turn_executes_tools_persists_and_resumes_raw_transcript() -> Resu
     assert!(
         first_request
             .iter()
-            .any(|message| message.role == "assistant" && message.content == "final after echo"),
+            .any(|message| matches!(message, Message::Assistant(_))
+                && message.text() == "final after echo"),
         "resume request should include assistant message from prior transcript: {first_request:#?}"
     );
 
@@ -403,7 +399,7 @@ async fn agent_turn_executes_tools_persists_and_resumes_raw_transcript() -> Resu
 #[tokio::test]
 async fn run_subagent_filters_tools_runs_inner_loop_and_writes_child_transcript() -> Result<()> {
     let workspace = tempfile::tempdir()?;
-    let provider = Arc::new(ScriptedProvider::new(vec![
+    let provider = Arc::new(ScriptedModel::new(vec![
         response(
             Some("need a tool"),
             vec![tool_call("sub-call-1", "echo", json!({"message": "beta"}))],
@@ -442,9 +438,11 @@ async fn run_subagent_filters_tools_runs_inner_loop_and_writes_child_transcript(
     assert_eq!(requests.len(), 2);
     let first_request = requests.first().expect("subagent provider request");
     assert!(
-        first_request.iter().any(|message| message.role == "user"
-            && message.content.contains("parent memory context")
-            && message.content.contains("caller supplied context")),
+        first_request
+            .iter()
+            .any(|message| matches!(message, Message::User(_))
+                && message.text().contains("parent memory context")
+                && message.text().contains("caller supplied context")),
         "subagent user prompt should merge parent and caller context: {first_request:#?}"
     );
 
@@ -469,7 +467,7 @@ async fn run_subagent_filters_tools_runs_inner_loop_and_writes_child_transcript(
 async fn repeated_subagent_spawns_keep_cacheable_prefix_and_record_provider_cache_hit() -> Result<()>
 {
     let workspace = tempfile::tempdir()?;
-    let provider = Arc::new(ScriptedProvider::new(vec![
+    let provider = Arc::new(ScriptedModel::new(vec![
         response_with_cached(Some("first"), Vec::new(), 100, 5, 0),
         response_with_cached(Some("second"), Vec::new(), 100, 5, 88),
     ]));
@@ -506,14 +504,15 @@ async fn repeated_subagent_spawns_keep_cacheable_prefix_and_record_provider_cach
     assert_eq!(requests.len(), 2);
     let first_system = requests[0]
         .iter()
-        .find(|message| message.role == "system")
+        .find(|message| matches!(message, Message::System(_)))
         .expect("first subagent request should include a system prompt");
     let second_system = requests[1]
         .iter()
-        .find(|message| message.role == "system")
+        .find(|message| matches!(message, Message::System(_)))
         .expect("second subagent request should include a system prompt");
     assert_eq!(
-        first_system.content, second_system.content,
+        first_system.text(),
+        second_system.text(),
         "repeated subagent spawns of the same definition must preserve the byte-identical \
          system prefix the backend can cache"
     );
@@ -596,7 +595,7 @@ inline = "Answer the delegated cache probe directly."
 
     let child_answer = "child-cache-observation: prefix was reusable";
     let parent_final = "orchestrator final: child-cache-observation accepted";
-    let provider = Arc::new(ScriptedProvider::new(vec![
+    let provider = Arc::new(ScriptedModel::new(vec![
         response(
             Some("delegating to child"),
             vec![tool_call(
@@ -662,24 +661,30 @@ inline = "Answer the delegated cache probe directly."
     assert!(
         requests[0]
             .iter()
-            .any(|message| message.role == "user" && message.content.contains("Ask a child agent")),
+            .any(|message| matches!(message, Message::User(_))
+                && message.text().contains("Ask a child agent")),
         "first request should be the orchestrator turn: {:#?}",
         requests[0]
     );
     assert!(
-        requests[1].iter().any(|message| message.role == "system"
-            && message.content.contains("Sub-agent Role Contract"))
-            && requests[1].iter().any(|message| message.role == "user"
-                && message
-                    .content
-                    .contains("Parent observed request id cache-42")),
+        requests[1]
+            .iter()
+            .any(|message| matches!(message, Message::System(_))
+                && message.text().contains("Sub-agent Role Contract"))
+            && requests[1]
+                .iter()
+                .any(|message| matches!(message, Message::User(_))
+                    && message
+                        .text()
+                        .contains("Parent observed request id cache-42")),
         "second request should be the child subagent turn with parent-supplied context: {:#?}",
         requests[1]
     );
     assert!(
         requests[2]
             .iter()
-            .any(|message| message.role == "tool" && message.content.contains(child_answer)),
+            .any(|message| matches!(message, Message::Tool(_))
+                && message.text().contains(child_answer)),
         "third request should return the child result to the orchestrator as a tool result: {:#?}",
         requests[2]
     );

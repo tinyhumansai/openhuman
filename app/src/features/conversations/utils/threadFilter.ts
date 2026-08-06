@@ -3,9 +3,8 @@ import type { Thread } from '../../../types/thread';
 export const GENERAL_TAB_VALUE = 'general';
 export const SUBCONSCIOUS_TAB_VALUE = 'subconscious';
 export const TASKS_TAB_VALUE = 'tasks';
-export const LEGACY_GENERAL_LABEL = 'work';
-export const LEGACY_SUBCONSCIOUS_LABELS = ['from_reflection', 'subconscious_tick'];
-export const LEGACY_TASK_LABELS = ['agent-task', 'worker'];
+const LEGACY_SUBCONSCIOUS_LABELS = ['from_reflection', 'subconscious_tick'];
+const LEGACY_TASK_LABELS = ['agent-task', 'worker'];
 /** Labels that identify meeting transcript threads (now folded into Tasks). */
 const MEETINGS_LABELS = ['meetings', 'Meetings'];
 
@@ -17,7 +16,7 @@ function isSubconsciousThread(thread: Thread): boolean {
   return hasAnyLabel(thread, [SUBCONSCIOUS_TAB_VALUE, ...LEGACY_SUBCONSCIOUS_LABELS]);
 }
 
-export function isTaskThread(thread: Thread): boolean {
+function isTaskThread(thread: Thread): boolean {
   return Boolean(
     thread.parentThreadId ||
     hasAnyLabel(thread, [TASKS_TAB_VALUE, ...LEGACY_TASK_LABELS, ...MEETINGS_LABELS])

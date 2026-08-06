@@ -18,7 +18,7 @@ function makeSnapshot(overrides: Partial<CoreAppSnapshot> = {}): CoreAppSnapshot
       activeMode: 'os_keyring',
       backendName: 'os',
     },
-    runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+    runtime: { localAi: null, service: null },
     ...overrides,
   };
 }

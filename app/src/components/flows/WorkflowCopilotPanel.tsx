@@ -8,28 +8,37 @@
  * transcript, surfaces each proposal's node-level diff, and hands Accept/Reject
  * up to the host, which applies it to the local draft overlay.
  *
- * Chat UI parity: the copilot reuses the SHARED chat surface end-to-end — the
- * same {@link ChatComposer} the main chat windows use (mic/attachments off
- * here), turns render as bubbles via the shared {@link BubbleMarkdown}, and the
- * builder turn's live tool activity + streaming reply render through the shared
- * {@link ToolTimelineBlock} (fed from the runtime's `toolTimelineByThread` /
- * `streamingAssistantByThread`, streamed here by Phase B). So the copilot reads
- * like a real chat rather than a one-shot form.
+ * Chat UI parity: the copilot renders its transcript through the SAME
+ * {@link ChatThreadView} the home composer chat uses — message bubbles,
+ * past-turn insights, the shared tool timeline + sub-agent drawer, and the
+ * streaming / interrupted / parallel previews — driven by this copilot's
+ * DEDICATED thread. `flows_build` streams the `workflow_builder` turn onto
+ * that thread via the global `ChatRuntimeProvider` (Phase B), exactly as a
+ * normal chat turn streams, so the copilot reads like the real chat rather
+ * than a bespoke transcript. This panel keeps only the authoring concerns:
+ * the {@link ChatComposer} footer (mic/attachments off), the seed auto-sends,
+ * and the proposal-preview + capped cards pinned above the composer.
  *
- * Invariant: the copilot only PROPOSES. Accept applies to the UNSAVED local
- * draft (no `flows_update`); persistence stays behind the canvas's own Save.
+ * Invariant: the copilot only PROPOSES — the agent turn itself never
+ * persists. Accept applies the proposal to the local draft AND immediately
+ * saves it (review + save in one click) via the host's `onAccept`, which
+ * awaits the host's own persistence call; the panel shows a saving state
+ * meanwhile and, if the save fails, leaves the proposal visible for retry
+ * rather than silently discarding it. Reject remains local-only (revert the
+ * overlay, no persistence call).
  */
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { BubbleMarkdown } from '../../features/conversations/components/AgentMessageBubble';
-import { ToolTimelineBlock } from '../../features/conversations/components/ToolTimelineBlock';
+import { ChatThreadView } from '../../features/conversations/components/ChatThreadView';
 import { useWorkflowBuilderChat } from '../../hooks/useWorkflowBuilderChat';
 import { diffGraphs } from '../../lib/flows/graphDiff';
 import type { WorkflowGraph } from '../../lib/flows/types';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { WorkflowProposal } from '../../store/chatRuntimeSlice';
+import ApprovalRequestCard from '../chat/ApprovalRequestCard';
 import ChatComposer from '../chat/ChatComposer';
+import IntegrationConnectCard from '../chat/IntegrationConnectCard';
 import Button from '../ui/Button';
 
 const log = createDebug('app:flows:copilot-panel');
@@ -63,8 +72,19 @@ interface Props {
    * reflects it.
    */
   onProposal: (proposal: WorkflowProposal) => void;
-  /** Accept the pending proposal into the local draft (host commits it). */
-  onAccept: (proposal: WorkflowProposal) => void;
+  /**
+   * Accept the pending proposal (host applies it to the local draft AND
+   * persists it — "accept" is now review + save in one step). May return a
+   * promise the panel awaits to show a saving state; a rejected promise
+   * leaves the proposal visible so the user can retry.
+   *
+   * `opts.enable` (PR1 — "Save & enable") requests an immediate follow-up
+   * arm after the save succeeds, mirroring the main-chat
+   * `WorkflowProposalCard`'s one-click create+arm. Optional and backward
+   * compatible — a plain "Accept & save" click omits `opts` entirely, so it
+   * neither enables nor force-disables an already-enabled existing flow.
+   */
+  onAccept: (proposal: WorkflowProposal, opts?: { enable?: boolean }) => void | Promise<void>;
   /** Reject the pending proposal (host reverts the overlay). */
   onReject: () => void;
   /** Close the panel. */
@@ -89,12 +109,39 @@ interface Props {
    */
   onBuildSeedConsumed?: () => void;
   /**
+   * Optional prefill seed (from the Suggested Workflows "Build this" action)
+   * — populates the composer's input with the suggestion's `build_prompt`
+   * once on mount WITHOUT sending it; the user reviews/edits the text and
+   * presses Send themselves. Distinct from `buildSeed`, which auto-sends.
+   *
+   * `mode` carries the builder mode the FIRST Send after this prefill must
+   * use — `'build'` for a Suggested Workflows seed, matching the
+   * already-created blank flow's `BuildMode::Build` contract — instead of
+   * `submit`'s normal `'revise'` turn. Consumed (and reset to `'revise'`) as
+   * soon as that first Send fires; later Sends on the same mount are plain
+   * revise turns.
+   */
+  prefillSeed?: { text: string; mode?: 'build' | 'create' } | null;
+  /**
+   * Fires once the prefill seed has populated the input, so the host can
+   * clear the ephemeral route seed (`location.state.copilotPrefill`) — same
+   * rationale as `onBuildSeedConsumed`: a remount (close/reopen) must not
+   * re-populate the input a second time against a still-present route seed.
+   */
+  onPrefillSeedConsumed?: () => void;
+  /**
    * The workflow's persisted copilot thread id (from the per-flow cache), so
    * reopening the panel resumes the same conversation instead of starting fresh.
    */
   seedThreadId?: string | null;
   /** Reports the live thread id up so the host can persist it per workflow. */
   onThreadIdChange?: (threadId: string | null) => void;
+  /**
+   * Drop the panel's `max-w-sm` cap so it fills the available width. Used by
+   * the chat-first canvas open, where the copilot is the whole surface until
+   * the graph appears.
+   */
+  fullWidth?: boolean;
 }
 
 export default function WorkflowCopilotPanel({
@@ -107,21 +154,15 @@ export default function WorkflowCopilotPanel({
   repairSeed = null,
   buildSeed = null,
   onBuildSeedConsumed,
+  prefillSeed = null,
+  onPrefillSeedConsumed,
   seedThreadId = null,
   onThreadIdChange,
+  fullWidth = false,
 }: Props) {
   const { t } = useT();
-  const {
-    threadId,
-    sending,
-    proposal,
-    displayMessages,
-    toolTimeline,
-    liveResponse,
-    error,
-    send,
-    clearProposal,
-  } = useWorkflowBuilderChat(seedThreadId);
+  const { threadId, sending, proposal, pendingApproval, capped, error, send, stop, clearProposal } =
+    useWorkflowBuilderChat(seedThreadId);
   const [text, setText] = useState('');
 
   // Report the (lazily-created) thread id up so the host persists it per flow —
@@ -134,13 +175,26 @@ export default function WorkflowCopilotPanel({
   const textInputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingTextRef = useRef(false);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Set only when a "Save & enable" attempt's `onAccept` rejects — surfaced
+  // as a dedicated inline message (`flows.copilot.enableError`) distinct from
+  // a plain "Accept & save" failure, which stays silent-but-retryable as
+  // before (the button re-enabling is signal enough there). Declared early
+  // (ahead of the proposal-surfacing effect below, which also clears it) so
+  // both that effect and the accept/reject handlers further down can
+  // reference it without a temporal-dead-zone ordering issue.
+  const [enableError, setEnableError] = useState(false);
 
   // Surface each NEW proposal to the host exactly once (enter preview overlay).
   const lastSurfacedRef = useRef<WorkflowProposal | null>(null);
   useEffect(() => {
     if (proposal && proposal !== lastSurfacedRef.current) {
       lastSurfacedRef.current = proposal;
+      // A genuinely new proposal object replacing a prior one (e.g. a further
+      // revise turn) supersedes any stale "Save & enable" failure from the
+      // earlier proposal — clear it so the new card doesn't inherit an
+      // unrelated error message.
+      setEnableError(false);
       onProposal(proposal);
     }
   }, [proposal, onProposal]);
@@ -246,12 +300,34 @@ export default function WorkflowCopilotPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildSeed, send, updatePendingAsk]);
 
-  // Keep the transcript pinned to the newest message / streamed activity.
-  // `scrollTo` is optional-chained: jsdom (tests) doesn't implement it.
+  // Populate the composer's input once when opened with a Suggested Workflows
+  // prefill seed — deliberately NEVER calls `send`: the user reviews/edits the
+  // pre-filled `build_prompt` and presses Send themselves. Guarded the same
+  // way as `buildSentRef`/`repairSentRef` (once per mount) so a re-render
+  // doesn't re-fill (and clobber) text the user has already started editing.
+  const prefillSentRef = useRef(false);
+  // The builder mode the FIRST manual Send after this prefill must use (see
+  // `prefillSeed`'s doc comment) — read and cleared by `submit` below once
+  // that first Send actually fires, so later Sends fall back to `revise`.
+  const pendingPrefillModeRef = useRef<'build' | 'create' | null>(null);
   useEffect(() => {
-    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight });
-  }, [displayMessages, sending, proposal, toolTimeline, liveResponse]);
+    if (!prefillSeed || prefillSentRef.current) return;
+    prefillSentRef.current = true;
+    pendingPrefillModeRef.current = prefillSeed.mode ?? 'build';
+    log('prefill seed: populating composer input (unsent), pending mode=%s', prefillSeed.mode);
+    setText(prefillSeed.text);
+    textInputRef.current?.focus();
+    // Consumed synchronously (no async dispatch to await, unlike build/repair)
+    // so the host can strip the ephemeral route seed right away — a later
+    // remount (close/reopen the copilot) then has no seed left to re-apply.
+    onPrefillSeedConsumed?.();
+  }, [prefillSeed, onPrefillSeedConsumed]);
 
+  // Transcript rendering + scroll pinning (stick-to-bottom) are owned by the
+  // shared `ChatThreadView` below — the copilot no longer hand-rolls the
+  // transcript. This component keeps only the authoring concerns: the
+  // structured `flows_build` send path, the seed auto-sends, and the
+  // proposal / capped cards surfaced in the footer.
   const submit = useCallback(
     async (raw?: string) => {
       const trimmed = (raw ?? text).trim();
@@ -261,14 +337,51 @@ export default function WorkflowCopilotPanel({
       const instruction = priorAsk
         ? `${priorAsk}\n\n(This is my answer to your question above: ${trimmed})`
         : trimmed;
-      const { proposed } = await send({
-        displayText: trimmed,
-        request: { mode: 'revise', instruction, graph, flowId },
-      });
+      // The FIRST Send after a Suggested Workflows prefill seed must run the
+      // seed's builder mode (default `build`), not the usual `revise` — the
+      // seed's flow was just created blank, so this turn needs the `build`
+      // brief (build → dry-run → propose) rather than being treated as a
+      // revise of an existing draft. Consumed once: later Sends on this same
+      // mount fall back to plain `revise`. Requires a real `flowId` (always
+      // true for a prefill seed, which only ever seeds an existing flow's
+      // canvas) — falls back to `revise` defensively if it's somehow absent,
+      // mirroring `buildSeed`'s own fallback above.
+      const prefillMode = pendingPrefillModeRef.current;
+      pendingPrefillModeRef.current = null;
+      const request =
+        prefillMode && flowId
+          ? { mode: prefillMode, instruction, graph, flowId }
+          : { mode: 'revise' as const, instruction, graph, flowId };
+      const { proposed } = await send({ displayText: trimmed, request });
       updatePendingAsk(proposed, instruction);
     },
     [text, sending, send, graph, flowId, updatePendingAsk]
   );
+
+  // (B34) One-click resume for a turn that hit the agent's tool-call budget
+  // (`capped`, see `useWorkflowBuilderChat`'s doc) with no proposal yet.
+  // Routes through the SAME `submit` path a typed follow-up would — the
+  // `pendingAskRef` mechanism (set above, since a capped turn also has
+  // `proposed === false`) automatically carries the original ask forward, so
+  // the agent picks the build back up with full context, not just "continue"
+  // in isolation.
+  //
+  // What this actually does (Codex review on #4865): `flows_build` spins up a
+  // FRESH `workflow_builder` agent per RPC — there is no server-side
+  // session/tool-history checkpoint to reattach to, so this is not a literal
+  // mid-thought resume. What DOES carry forward, because `submit` always
+  // sends `mode: 'revise'` over the CURRENT `graph` + `flowId` (never a blank
+  // `create`): (1) the live draft graph — unchanged by a capped turn, since
+  // `revise_workflow`/`propose_workflow` never persist without a proposal
+  // reaching this panel; and (2) the full accumulated instruction text via
+  // `pendingAskRef`. A fresh agent re-reading the same draft plus the same
+  // ask, now under the B31 50-iteration budget and B32's no-probing brief,
+  // reliably converges — that combination is what the capped card's copy
+  // promises ("keep building from the current draft"), not seamless
+  // tool-history continuity.
+  const continueBuilding = useCallback(() => {
+    void submit(t('flows.copilot.continueBuilding'));
+  }, [submit, t]);
 
   const handleInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -283,29 +396,72 @@ export default function WorkflowCopilotPanel({
   const noopAttach = useCallback(async () => {}, []);
   const noop = useCallback(() => {}, []);
 
-  const accept = useCallback(() => {
-    if (!proposal) return;
-    onAccept(proposal);
-    clearProposal();
-    lastSurfacedRef.current = null;
-  }, [proposal, onAccept, clearProposal]);
+  // Accept now review-and-saves: `onAccept` (the host's `handleAcceptProposal`)
+  // applies the proposal to the draft AND persists it. Track a local
+  // `acceptState` union (rather than a plain boolean) so the two accept
+  // buttons ("Accept & save" / "Save & enable", PR1) can each show their own
+  // in-flight label while BOTH stay disabled — a save-in-flight click on the
+  // other button, or Reject, must not race the pending persist. If the
+  // host's save (or enable) throws, leave the proposal card visible (don't
+  // `clearProposal()`) so the user can retry — otherwise a failed autosave
+  // would silently vanish the only affordance to try again from the copilot
+  // itself (the header Save button is a fallback, but this keeps the
+  // copilot's own flow self-contained).
+  const [acceptState, setAcceptState] = useState<'idle' | 'saving' | 'enabling'>('idle');
+  const acceptBusy = acceptState !== 'idle';
+  const runAccept = useCallback(
+    async (opts?: { enable?: boolean }) => {
+      // Self-guard against re-entrance: the JSX `disabled={acceptBusy}` on
+      // both buttons prevents a normal double-click, but `acceptState` only
+      // flips after the FIRST call's `setAcceptState(...)` commits — a
+      // second invocation racing ahead of that render (e.g. programmatic
+      // re-fire) must not start a second concurrent save.
+      if (!proposal || acceptBusy) return;
+      const enable = Boolean(opts?.enable);
+      setAcceptState(enable ? 'enabling' : 'saving');
+      setEnableError(false);
+      log('accept: saving proposal via host onAccept enable=%s', enable);
+      try {
+        // Plain "Accept & save" calls `onAccept` with just the proposal (no
+        // second argument at all) — matching the pre-PR1 call signature
+        // exactly — so a host that doesn't care about `opts` (or a caller
+        // asserting on `onAccept`'s exact arguments) sees no behavioral
+        // change. Only "Save & enable" adds the `{ enable: true }` opts.
+        if (enable) {
+          await onAccept(proposal, opts);
+        } else {
+          await onAccept(proposal);
+        }
+        log('accept: save succeeded, clearing proposal');
+        clearProposal();
+        lastSurfacedRef.current = null;
+      } catch (err) {
+        log('accept: save (or enable) failed, leaving proposal visible for retry err=%o', err);
+        if (enable) setEnableError(true);
+      } finally {
+        setAcceptState('idle');
+      }
+    },
+    [proposal, acceptBusy, onAccept, clearProposal, setEnableError]
+  );
+  const accept = useCallback(() => runAccept(), [runAccept]);
+  const acceptAndEnable = useCallback(() => runAccept({ enable: true }), [runAccept]);
 
   const reject = useCallback(() => {
     onReject();
     clearProposal();
     lastSurfacedRef.current = null;
-  }, [onReject, clearProposal]);
+    setEnableError(false);
+  }, [onReject, clearProposal, setEnableError]);
 
   const diff = proposal ? diffGraphs(graph, proposal.graph as WorkflowGraph) : null;
-  const hasTimeline = toolTimeline.length > 0;
-  const hasLiveText = liveResponse.trim().length > 0;
-  const isEmpty =
-    displayMessages.length === 0 && !proposal && !sending && !error && !hasTimeline && !hasLiveText;
 
   return (
     <aside
       data-testid="workflow-copilot-panel"
-      className="flex h-full w-full max-w-sm flex-col border-l border-line bg-surface">
+      className={`flex h-full w-full flex-col border-l border-line bg-surface ${
+        fullWidth ? '' : 'max-w-sm'
+      }`}>
       <header className="flex items-start gap-2 border-b border-line px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-content">{t('flows.copilot.title')}</p>
@@ -321,67 +477,30 @@ export default function WorkflowCopilotPanel({
         </button>
       </header>
 
-      <div
-        ref={scrollRef}
-        className="flex-1 space-y-3 overflow-y-auto px-3 py-3"
-        data-testid="workflow-copilot-transcript">
-        {isEmpty && (
-          <p className="text-xs text-content-muted" data-testid="workflow-copilot-empty">
-            {t('flows.copilot.emptyState')}
-          </p>
-        )}
-
-        {/* Conversation transcript: user turns right-aligned, agent turns left.
-            Renders `displayMessages` (interim narration bubbles filtered out —
-            that narration already streams via the tool timeline / live text
-            below it double-renders it as a bubble too, see B4). */}
-        {displayMessages.map(message =>
-          message.sender === 'user' ? (
-            <div key={message.id} className="flex justify-end" data-testid="workflow-copilot-user">
-              <div className="max-w-[85%] rounded-2xl bg-primary-500 px-3 py-1.5 text-sm text-content-inverted">
-                {message.content}
-              </div>
-            </div>
-          ) : (
-            <div
-              key={message.id}
-              className="max-w-[92%] rounded-2xl bg-surface-subtle px-3 py-1.5"
-              data-testid="workflow-copilot-agent">
-              <BubbleMarkdown content={message.content} />
-            </div>
-          )
-        )}
-
-        {/* Live builder activity — the SHARED tool timeline (tool cards + the
-            streaming reply) the main chat uses, fed from the runtime's streamed
-            per-thread state. Renders nothing until the turn produces a tool
-            call. */}
-        {hasTimeline && (
-          <div data-testid="workflow-copilot-timeline">
-            <ToolTimelineBlock
-              entries={toolTimeline}
-              liveResponse={hasLiveText ? liveResponse : undefined}
-            />
+      {/* Full builder transcript — the SAME rich renderer the home composer
+          chat uses (message bubbles, past-turn insights, the shared tool
+          timeline + sub-agent drawer, streaming/interrupted/parallel previews),
+          driven by this copilot's DEDICATED thread. `flows_build` streams the
+          `workflow_builder` turn onto `threadId` via the global
+          `ChatRuntimeProvider`, exactly as a normal chat turn streams, so the
+          copilot now reads like the real chat instead of a bespoke transcript.
+          The empty hint, proposal preview, and capped card are the copilot's
+          own authoring affordances, kept in the footer below. */}
+      <ChatThreadView
+        threadId={threadId}
+        variant="sidebar"
+        scrollResetKey="workflow-copilot"
+        shareAgentName={t('flows.copilot.title')}
+        emptyContent={
+          <div className="flex h-full items-center justify-center px-3">
+            <p className="text-xs text-content-muted" data-testid="workflow-copilot-empty">
+              {t('flows.copilot.emptyState')}
+            </p>
           </div>
-        )}
+        }
+      />
 
-        {/* Pre-tool phase: the reply is streaming but no tool has run yet, so the
-            timeline is still empty — surface the live text as an agent bubble so
-            the copilot never looks frozen. */}
-        {hasLiveText && !hasTimeline && (
-          <div
-            className="max-w-[92%] rounded-2xl bg-surface-subtle px-3 py-1.5"
-            data-testid="workflow-copilot-streaming">
-            <BubbleMarkdown content={liveResponse} />
-          </div>
-        )}
-
-        {sending && !hasTimeline && !hasLiveText && (
-          <p className="text-xs text-content-muted" data-testid="workflow-copilot-thinking">
-            {t('flows.copilot.thinking')}
-          </p>
-        )}
-
+      <div className="space-y-3 border-t border-line px-3 py-2.5">
         {error && (
           <p className="text-xs text-coral" data-testid="workflow-copilot-error">
             {error === 'offline' ? t('flows.copilot.offline') : t('flows.copilot.error')}
@@ -417,29 +536,106 @@ export default function WorkflowCopilotPanel({
               )}
             </div>
 
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 variant="primary"
                 size="sm"
+                analyticsId="workflow-copilot-accept"
+                disabled={acceptBusy}
                 data-testid="workflow-copilot-accept"
-                onClick={accept}>
-                {t('flows.copilot.accept')}
+                onClick={() => void accept()}>
+                {acceptState === 'saving'
+                  ? t('flows.copilot.saving')
+                  : t('flows.copilot.acceptAndSave')}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                analyticsId="workflow-copilot-accept-and-enable"
+                disabled={acceptBusy}
+                data-testid="workflow-copilot-accept-and-enable"
+                onClick={() => void acceptAndEnable()}>
+                {acceptState === 'enabling'
+                  ? t('flows.copilot.enabling')
+                  : t('flows.copilot.saveAndEnable')}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
+                disabled={acceptBusy}
                 data-testid="workflow-copilot-reject"
                 onClick={reject}>
                 {t('flows.copilot.reject')}
               </Button>
             </div>
+            {acceptState === 'idle' && enableError && (
+              <p className="mt-2 text-xs text-coral" data-testid="workflow-copilot-enable-error">
+                {t('flows.copilot.enableError')}
+              </p>
+            )}
           </div>
         )}
-      </div>
 
-      <div className="border-t border-line px-3 py-2.5">
+        {/* (B34) The turn hit the agent's iteration limit with no proposal
+            yet — distinguish this from a voluntary clarifying question (which
+            renders as a plain agent bubble in the transcript, no card) with an
+            explicit "reached its iteration limit" signal and a one-click resume
+            that continues building from the current draft (see `continueBuilding`
+            above for why this is accurate rather than a seamless resume).
+            Never shown alongside `sending` (a fresh turn already cleared
+            `capped`) or a proposal (mutually exclusive server-side — see
+            `ops.rs`). */}
+        {capped && !sending && !proposal && (
+          <div
+            data-testid="workflow-copilot-capped"
+            className="rounded-xl border border-amber-300 bg-surface p-3 dark:border-amber-700">
+            <p className="text-xs text-content-secondary">{t('flows.copilot.cappedNotice')}</p>
+            <div className="mt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="workflow-copilot-continue"
+                onClick={continueBuilding}>
+                {t('flows.copilot.continueBuilding')}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Parked ApprovalGate request for the copilot's dedicated thread (PR3:
+            flows-copilot-live-run-approval). `flows_build` now runs under
+            `AgentTurnOrigin::WebChat` + `APPROVAL_CHAT_CONTEXT` when streaming,
+            so a `run_flow` / `resume_flow_run` call parks here instead of
+            auto-allowing or being hidden — surfaced via the SAME
+            `pendingApprovalByThread` slice / `approval_request` socket event
+            `Conversations.tsx` reads for the main chat, reusing the identical
+            cards (no new component, no new i18n keys). `composio_connect` parks
+            on the same gate but needs a Connect button + OAuth poll rather than
+            approve/deny, mirroring `Conversations.tsx`'s branch. Rendered above
+            the composer, outside the scrollable transcript, so it stays visible
+            regardless of scroll position. */}
+        {pendingApproval && threadId && (
+          <div data-testid="workflow-copilot-approval">
+            {pendingApproval.toolName === 'composio_connect' ? (
+              <IntegrationConnectCard
+                key={pendingApproval.requestId}
+                threadId={threadId}
+                approval={pendingApproval}
+              />
+            ) : (
+              <ApprovalRequestCard
+                key={pendingApproval.requestId}
+                threadId={threadId}
+                approval={pendingApproval}
+              />
+            )}
+          </div>
+        )}
+
         <ChatComposer
           inputValue={text}
           setInputValue={setText}
@@ -448,6 +644,7 @@ export default function WorkflowCopilotPanel({
           fileInputRef={fileInputRef}
           composerInteractionBlocked={sending}
           isSending={sending}
+          onStopGeneration={stop}
           attachments={[]}
           onAttachFiles={noopAttach}
           onRemoveAttachment={noop}

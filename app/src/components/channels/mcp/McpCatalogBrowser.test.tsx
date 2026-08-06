@@ -1,10 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Static import — follows project no-dynamic-import rule for test files.
 import McpCatalogBrowser from './McpCatalogBrowser';
 
 const mockRegistrySearch = vi.fn();
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
 
 vi.mock('../../../services/api/mcpClientsApi', () => ({
   mcpClientsApi: { registrySearch: (...args: unknown[]) => mockRegistrySearch(...args) },
@@ -23,33 +32,88 @@ describe('McpCatalogBrowser', () => {
   it('renders search input', async () => {
     mockRegistrySearch.mockResolvedValue({ servers: [], page: 1, total_pages: 1 });
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
-    expect(screen.getByPlaceholderText('Search MCP servers...')).toBeInTheDocument();
+    const search = screen.getByPlaceholderText('Search MCP servers...');
+    expect(search).toHaveAttribute('type', 'search');
+    expect(search).toHaveClass('h-9');
   });
 
-  it('fires debounced search on input change', async () => {
-    mockRegistrySearch.mockResolvedValue({ servers: [], page: 1, total_pages: 1 });
+  it('fetches only the latest debounced query and resets pagination', async () => {
+    mockRegistrySearch.mockImplementation(({ page }: { page: number }) =>
+      Promise.resolve({
+        servers: [{ qualified_name: `acme/page-${page}`, display_name: `Page ${page}` }],
+        page,
+        total_pages: 2,
+      })
+    );
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
-    const input = screen.getByPlaceholderText('Search MCP servers...');
-
-    // Advance past the initial debounce
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(mockRegistrySearch).toHaveBeenLastCalledWith({
+      query: undefined,
+      page: 2,
+      page_size: 20,
     });
     mockRegistrySearch.mockClear();
 
-    // Type in the search box
+    const input = screen.getByPlaceholderText('Search MCP servers...');
+    fireEvent.change(input, { target: { value: 'git' } });
+    act(() => vi.advanceTimersByTime(100));
     fireEvent.change(input, { target: { value: 'github' } });
 
     // Before debounce fires, no new call
+    act(() => vi.advanceTimersByTime(249));
     expect(mockRegistrySearch).not.toHaveBeenCalled();
 
-    // Advance past the 250ms debounce
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(1);
     });
 
+    expect(mockRegistrySearch).toHaveBeenCalledTimes(1);
     expect(mockRegistrySearch).toHaveBeenCalledWith({ query: 'github', page: 1, page_size: 20 });
+  });
+
+  it('coalesces StrictMode fetches for each stable debounced query', async () => {
+    const initialRequest = deferred<{ servers: never[]; page: number; total_pages: number }>();
+    const changedRequest = deferred<{ servers: never[]; page: number; total_pages: number }>();
+    mockRegistrySearch.mockImplementation(({ query }: { query?: string }) =>
+      query === 'github' ? changedRequest.promise : initialRequest.promise
+    );
+
+    render(
+      <StrictMode>
+        <McpCatalogBrowser onSelectInstall={() => {}} />
+      </StrictMode>
+    );
+
+    initialRequest.resolve({ servers: [], page: 1, total_pages: 1 });
+    await act(async () => {
+      await initialRequest.promise;
+    });
+    expect(mockRegistrySearch).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByPlaceholderText('Search MCP servers...'), {
+      target: { value: 'github' },
+    });
+    act(() => vi.advanceTimersByTime(249));
+    expect(mockRegistrySearch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mockRegistrySearch).toHaveBeenCalledTimes(2);
+    expect(mockRegistrySearch).toHaveBeenLastCalledWith({
+      query: 'github',
+      page: 1,
+      page_size: 20,
+    });
+
+    changedRequest.resolve({ servers: [], page: 1, total_pages: 1 });
+    await act(async () => {
+      await changedRequest.promise;
+    });
   });
 
   it('renders server cards from search results', async () => {
@@ -143,8 +207,10 @@ describe('McpCatalogBrowser', () => {
     expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument();
   });
 
-  it('shows error state when search fails', async () => {
-    mockRegistrySearch.mockRejectedValue(new Error('Network error'));
+  it('shows friendly guidance when search fails', async () => {
+    mockRegistrySearch.mockRejectedValue(
+      new Error('MCP official registry returned HTTP 500: {"detail":"upstream down"}')
+    );
     render(<McpCatalogBrowser onSelectInstall={() => {}} />);
 
     await act(async () => {
@@ -152,6 +218,8 @@ describe('McpCatalogBrowser', () => {
     });
     vi.useRealTimers();
 
-    await waitFor(() => screen.getByText('Network error'));
+    await waitFor(() => screen.getByText(/The MCP registry is unavailable right now/));
+    expect(screen.getByText(/browse available MCP servers/)).toBeInTheDocument();
+    expect(screen.queryByText(/"detail":"upstream down"/)).not.toBeInTheDocument();
   });
 });

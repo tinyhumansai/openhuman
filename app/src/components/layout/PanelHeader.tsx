@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export interface PanelHeaderProps {
+interface PanelHeaderProps {
   /**
    * Primary title rendered as an `h2` in the control row, left of `action`.
    * Optional — generic panels stay title-less; the settings template

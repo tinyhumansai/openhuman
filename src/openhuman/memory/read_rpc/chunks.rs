@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::{self as chunk_store, with_connection};
-use crate::openhuman::memory_store::content::read as content_read;
-use crate::openhuman::memory_tree::retrieval::types::NodeKind;
+use crate::openhuman::memory::store::chunks::store::{self as chunk_store, with_connection};
+use crate::openhuman::memory::store::content::read as content_read;
+use crate::openhuman::memory::tree::retrieval::types::NodeKind;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
@@ -297,7 +297,7 @@ pub async fn recall_rpc(
         limit
     );
 
-    let resp = crate::openhuman::memory_tree::retrieval::query_source(
+    let resp = crate::openhuman::memory::tree::retrieval::query_source(
         config,
         None,
         None,

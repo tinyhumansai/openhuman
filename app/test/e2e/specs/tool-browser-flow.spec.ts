@@ -29,11 +29,10 @@ const USER_ID = 'e2e-tool-browser';
  *    over JSON-RPC. Plus: the mock backend correctly records arbitrary HTTP
  *    requests (proving the side-channel browser-automation flows would emit
  *    against the mocked services is intact).
- *  - 7.1.2 — `BrowserTool::parameters_schema` enumerates the automation
- *    surface (open / snapshot / click / fill / type / get_text / etc.).
- *    Asserting that `tools_agent`'s tool scope is wildcard (which would
- *    surface `browser` to the LLM) ensures the schema-driven tool surface is
- *    intact for the agent path.
+ *  - 7.1.2 — the live built-in tool catalog contains `browser` and advertises
+ *    its DOM/accessibility `snapshot` action without the removed screenshot
+ *    action. The exact action-enum schema is pinned by the BrowserTool Rust
+ *    unit test.
  *
  * Future: when the harness gains a deterministic mock-LLM that emits
  * structured `tool_calls`, the `it.skip` block below can flip into a real
@@ -63,6 +62,15 @@ interface ListDefinitionsResult {
   definitions?: AgentDef[];
 }
 
+interface AgentToolInfo {
+  name?: string;
+  description?: string;
+}
+
+interface AvailableToolsResult {
+  tools?: AgentToolInfo[];
+}
+
 describe('System tools — Browser (open URL + automation registry)', () => {
   before(async function () {
     // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
@@ -71,6 +79,14 @@ describe('System tools — Browser (open URL + automation registry)', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
+    const browserSettings = await callOpenhumanRpc('openhuman.config_update_browser_settings', {
+      enabled: true,
+    });
+    expect(browserSettings.ok).toBe(true);
+    const toolPreferences = await callOpenhumanRpc('openhuman.app_state_update_local_state', {
+      onboardingTasks: { enabledTools: ['browser'] },
+    });
+    expect(toolPreferences.ok).toBe(true);
     clearRequestLog();
   });
 
@@ -137,30 +153,24 @@ describe('System tools — Browser (open URL + automation registry)', () => {
     expect(Array.isArray(log)).toBe(true);
   });
 
-  it('7.1.2 browser-automation registry surface is reachable via the agent registry', async () => {
-    // BrowserTool's parameters_schema enumerates 22 actions (open, snapshot,
-    // click, fill, type, get_text, screenshot, …). Asserting tools_agent's
-    // wildcard scope is present means the LLM-facing tool surface that
-    // would expose this schema to a model is intact. The schema content
-    // itself is unit-tested in `browser_tests.rs::browser_tool_schema_*`.
-    const list = await callOpenhumanRpc<ListDefinitionsResult>(
-      'openhuman.agent_list_definitions',
+  it('7.1.2 live BrowserTool catalog advertises DOM snapshots without screenshots', async () => {
+    // `agent_registry_available_tools` builds its response from the wildcard
+    // tools-catalog agent's live `tool_specs()`, so this checks the actual
+    // BrowserTool metadata exposed to agents rather than merely finding an
+    // agent definition that might be able to resolve it. The exact
+    // parameters-schema action enum is pinned by
+    // `browser_tests.rs::browser_tool_schema_has_required_action`.
+    const list = await callOpenhumanRpc<AvailableToolsResult>(
+      'openhuman.agent_registry_available_tools',
       {}
     );
     expect(list.ok).toBe(true);
-    const defs = list.result?.definitions ?? [];
-    // The integrations_agent and tools_agent both bring browser surfaces
-    // (the former via SaaS-specific scrapers, the latter via the generic
-    // `browser` automation tool). Confirm at least one is present.
-    const browserBearing = defs.filter(
-      d =>
-        d?.id === 'tools_agent' ||
-        d?.id === 'integrations_agent' ||
-        d?.id === 'researcher' ||
-        d?.id === 'planner'
-    );
-    stepLog('browser-bearing agent definitions', { ids: browserBearing.map(d => d.id) });
-    expect(browserBearing.length).toBeGreaterThan(0);
+    const tools = list.result?.tools ?? [];
+    const browserTool = tools.find(tool => tool?.name === 'browser');
+    stepLog('live browser tool metadata', browserTool);
+    expect(browserTool).toBeDefined();
+    expect(browserTool?.description).toContain("'snapshot'");
+    expect(browserTool?.description?.toLowerCase()).not.toContain('screenshot');
   });
 
   it.skip('(future #68) chat tool_calls drive `browser_open https://example.com` via mock LLM', () => {

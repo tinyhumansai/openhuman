@@ -36,7 +36,7 @@ function mapRiveColors(colors?: {
   return { primary_color: primary, secondary_color: secondary };
 }
 
-export type MeetJoinCallInput = {
+type MeetJoinCallInput = {
   meetUrl: string;
   /** Bot's display name in Meet's "Your name" prompt. */
   displayName: string;
@@ -58,7 +58,7 @@ export type MeetJoinCallInput = {
   secondaryVoiceId?: string;
 };
 
-export type MeetJoinCallResult = {
+type MeetJoinCallResult = {
   requestId: string;
   meetUrl: string;
   displayName: string;
@@ -148,7 +148,7 @@ export async function closeMeetCall(requestId: string): Promise<boolean> {
 /**
  * One completed Meet call as persisted by the core in the JSONL
  * recent-calls log (written by `handle_stop_session`). Same shape
- * as `MeetCallRecord` in `src/openhuman/meet_agent/store.rs` —
+ * as `MeetCallRecord` in `src/openhuman/meet/agent/store.rs` —
  * snake_case fields because the core surfaces them verbatim.
  */
 export interface MeetCallRecord {
@@ -195,7 +195,7 @@ export interface MeetCallSummary {
 
 /**
  * Transcript + summary for one completed call. Mirrors `MeetCallDetail` in
- * `src/openhuman/meet_agent/store.rs`. Lazy-loaded by the recent-calls panel
+ * `src/openhuman/meet/agent/store.rs`. Lazy-loaded by the recent-calls panel
  * when a row is expanded, so the list payload stays lean. `summary` is null
  * when summarisation failed or timed out at call-end.
  */
@@ -256,7 +256,7 @@ export async function getMeetCallDetail(requestId: string): Promise<MeetCallDeta
 // ---------------------------------------------------------------------------
 
 /** A transcript line with its parsed timestamp/speaker prefix stripped out. */
-export interface ParsedTranscriptLine {
+interface ParsedTranscriptLine {
   timestamp: string | null;
   speaker: string | null;
   text: string;
@@ -423,15 +423,15 @@ export async function sendHarnessResponse(result: string): Promise<void> {
  * core Socket.IO bridge so backend bot events can be handled locally too.
  */
 /** Alias of {@link MeetingPlatform} — kept for existing consumers. */
-export type MascotMeetPlatform = MeetingPlatform;
+type MascotMeetPlatform = MeetingPlatform;
 
-export interface MascotJoinMeetingInput {
+interface MascotJoinMeetingInput {
   platform: MascotMeetPlatform;
   meetUrl: string;
   displayName?: string;
 }
 
-export interface MascotJoinMeetingResult {
+interface MascotJoinMeetingResult {
   success: boolean;
   data?: unknown;
 }
@@ -482,7 +482,7 @@ function isApiErrorLike(value: unknown): value is { error?: unknown; message?: u
 
 /**
  * One upcoming calendar meeting returned by `openhuman.meet_list_upcoming`.
- * Mirrors `UpcomingMeeting` in `src/openhuman/agent_meetings/types.rs`.
+ * Mirrors `UpcomingMeeting` in `src/openhuman/meet/backend_bot/types.rs`.
  */
 export interface UpcomingMeeting {
   calendar_event_id: string;

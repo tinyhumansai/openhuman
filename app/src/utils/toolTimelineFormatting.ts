@@ -23,6 +23,12 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   http_request: 'Fetching',
   curl: 'Fetching',
   web_search: 'Searching the web',
+  // The name the core actually registers and streams for the canonical search
+  // slot, whichever engine owns it (`src/openhuman/search/registry.rs`).
+  // `web_search` above is the settings-family id, which never reaches a
+  // timeline row — without this entry a real search rendered as the
+  // humanized "Web Search Tool".
+  web_search_tool: 'Searching the web',
   gitbooks_search: 'Searching docs',
   file_read: 'Reading file',
   file_write: 'Writing file',
@@ -35,7 +41,6 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   git_operations: 'Git operation',
   browser: 'Browsing',
   browser_open: 'Opening browser',
-  screenshot: 'Taking screenshot',
   image_info: 'Analyzing image',
   install_tool: 'Installing tool',
   lsp: 'Code intelligence',
@@ -103,6 +108,7 @@ const CLIENT_KNOWN_TOOLS = new Set<string>([
   'http_request',
   'curl',
   'web_search',
+  'web_search_tool',
   'gitbooks_search',
   'file_read',
   'file_write',
@@ -115,7 +121,6 @@ const CLIENT_KNOWN_TOOLS = new Set<string>([
   'git_operations',
   'browser',
   'browser_open',
-  'screenshot',
   'image_info',
   'install_tool',
   'lsp',
@@ -189,7 +194,6 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   curl: 'fetch',
   browser: 'browse',
   browser_open: 'browse',
-  screenshot: 'browse',
 };
 
 /** Categorize a (possibly `subagent:`-prefixed) tool name for grouping/icons. */
@@ -316,7 +320,9 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
   }
 
   // ── Tool-specific formatting with args-derived detail ──────────────
-  const toolDetail = formatToolDetail(entry.name, parsedArgs);
+  // Pass the completed result text so args-aware formatters can surface
+  // details only known post-execution (e.g. the resolved search provider).
+  const toolDetail = formatToolDetail(entry.name, parsedArgs, entry.result);
   if (toolDetail) {
     return { title: toolDetail.title, detail: toolDetail.detail ?? entry.detail };
   }
@@ -333,7 +339,7 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
  * tool rows under a Hermes-style summary. {@link buildProcessingBlocks}
  * derives an ordered list of these from the interleaved transcript.
  */
-export type ProcessingBlock =
+type ProcessingBlock =
   | { kind: 'narration'; key: string; text: string }
   | { kind: 'thinking'; key: string; text: string }
   | { kind: 'toolGroup'; key: string; summary: string; entries: ToolTimelineEntry[] };
@@ -464,9 +470,35 @@ function shortenPath(filePath: string): string {
   return `…/${parts.slice(-2).join('/')}`;
 }
 
+/** Upper bound on a provider label, so a malformed marker can't blow up a row. */
+const MAX_SEARCH_PROVIDER_LENGTH = 32;
+
+/**
+ * Extract the resolved search provider from a completed web-search result.
+ * Every search engine tags its output with a `(via <Provider>)` marker on the
+ * heading line (managed resolves to "Exa" by default, or to whatever the
+ * backend reports; BYOK engines tag "Brave"/"Querit"/"Seltz"). Reading it back
+ * keeps the timeline attribution dynamic: it is driven by what actually ran,
+ * never by a hardcoded provider name (#5136).
+ *
+ * Only the first line is inspected, and only its *trailing* marker, so neither
+ * a `(via …)` string inside a result excerpt nor one inside the echoed query
+ * (`Search results for: login (via OAuth) (via Exa)`) can be mistaken for the
+ * provider. Returns `undefined` while the call is still running (no result
+ * yet) or if no marker is present.
+ */
+export function extractSearchProvider(result: string | undefined): string | undefined {
+  if (!result) return undefined;
+  const headingLine = result.split('\n', 1)[0];
+  const provider = headingLine?.match(/\(via ([^)]+)\)\s*$/i)?.[1]?.trim();
+  if (!provider || provider.length > MAX_SEARCH_PROVIDER_LENGTH) return undefined;
+  return provider;
+}
+
 function formatToolDetail(
   name: string,
-  args: ParsedToolArgs | null
+  args: ParsedToolArgs | null,
+  result?: string
 ): { title: string; detail?: string } | null {
   switch (name) {
     case 'shell':
@@ -487,8 +519,21 @@ function formatToolDetail(
       };
     }
 
-    case 'web_search': {
+    // `web_search_tool` is the name the core streams; `web_search` is kept for
+    // the settings-family id and older persisted rows.
+    case 'web_search':
+    case 'web_search_tool': {
       const query = args?.query?.trim();
+      // Once the call completes, attribute the search to the provider that
+      // actually served it ("Searched with Exa"); the query moves to the
+      // detail line so it stays visible.
+      const provider = extractSearchProvider(result);
+      if (provider) {
+        return {
+          title: `Searched with ${provider}`,
+          detail: query ? truncateDetail(query) : undefined,
+        };
+      }
       return { title: query ? `Searching: ${truncateDetail(query)}` : 'Searching the web' };
     }
 
@@ -545,9 +590,6 @@ function formatToolDetail(
       return { title: host ? `Browsing ${host}` : 'Browsing' };
     }
 
-    case 'screenshot':
-      return { title: 'Taking screenshot' };
-
     case 'image_info':
       return { title: 'Analyzing image' };
 
@@ -582,7 +624,7 @@ function formatToolDetail(
 const KNOWN_TOOLKIT_RE =
   /^(gmail|notion|github|slack|discord|linear|jira|google_calendar|google_drive|calendar)$/i;
 
-export function inferIntegrationName(input?: string): string | undefined {
+function inferIntegrationName(input?: string): string | undefined {
   if (!input) return undefined;
 
   const delegateMatch = input.match(/^delegate_(.+)$/);

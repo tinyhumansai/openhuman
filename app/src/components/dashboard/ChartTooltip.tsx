@@ -1,13 +1,13 @@
 import type { ReactNode } from 'react';
 
-export interface ChartTooltipRow {
+interface ChartTooltipRow {
   label: string;
   value: string;
   /** CSS colour for the legend swatch. */
   color?: string;
 }
 
-export interface ChartTooltipProps {
+interface ChartTooltipProps {
   title: string;
   rows: ChartTooltipRow[];
   footer?: ReactNode;

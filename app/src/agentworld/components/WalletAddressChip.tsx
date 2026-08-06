@@ -16,6 +16,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useClipboardFeedback } from '../../hooks/useClipboardFeedback';
 import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
 
@@ -98,8 +99,7 @@ type ChipState =
 export default function WalletAddressChip() {
   const { t } = useT();
   const [state, setState] = useState<ChipState>({ status: 'loading' });
-  const [copied, setCopied] = useState(false);
-  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clipboard = useClipboardFeedback();
   // Monotonic request id so a slow/aborted fetch can't clobber a newer one
   // (e.g. when the user taps "retry" while a prior request is still in flight).
   const latestRequestIdRef = useRef(0);
@@ -141,33 +141,6 @@ export default function WalletAddressChip() {
       latestRequestIdRef.current += 1;
     };
   }, [loadStatus]);
-
-  // Cleanup copy-reset timer on unmount.
-  useEffect(
-    () => () => {
-      if (copyResetTimerRef.current !== null) {
-        clearTimeout(copyResetTimerRef.current);
-        copyResetTimerRef.current = null;
-      }
-    },
-    []
-  );
-
-  const handleCopy = useCallback(async (address: string) => {
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      if (copyResetTimerRef.current !== null) {
-        clearTimeout(copyResetTimerRef.current);
-      }
-      copyResetTimerRef.current = setTimeout(() => {
-        setCopied(false);
-        copyResetTimerRef.current = null;
-      }, 2000);
-    } catch {
-      // Clipboard unavailable in this webview context; silently skip.
-    }
-  }, []);
 
   // ── Loading skeleton ─────────────────────────────────────────────────────
   if (state.status === 'loading') {
@@ -223,11 +196,19 @@ export default function WalletAddressChip() {
       </span>
       <button
         type="button"
-        aria-label={copied ? t('agentWorld.addressCopied') : t('agentWorld.copyAddress')}
-        title={copied ? t('agentWorld.addressCopied') : t('agentWorld.copyAddress')}
-        onClick={() => void handleCopy(address)}
+        aria-label={
+          clipboard.status === 'copied'
+            ? t('agentWorld.addressCopied')
+            : t('agentWorld.copyAddress')
+        }
+        title={
+          clipboard.status === 'copied'
+            ? t('agentWorld.addressCopied')
+            : t('agentWorld.copyAddress')
+        }
+        onClick={() => void clipboard.copy(address)}
         className="shrink-0 rounded p-0.5 text-content-faint transition-colors hover:text-content-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary-500">
-        {copied ? <CheckIcon /> : <CopyIcon />}
+        {clipboard.status === 'copied' ? <CheckIcon /> : <CopyIcon />}
       </button>
     </div>
   );

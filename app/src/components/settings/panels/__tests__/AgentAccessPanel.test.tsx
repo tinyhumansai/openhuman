@@ -35,6 +35,7 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   allow_tool_install: true,
   max_actions_per_hour: 0,
   auto_approve: [],
+  auto_approve_all: false,
   ...overrides,
 });
 
@@ -307,5 +308,67 @@ describe('AgentAccessPanel (advanced)', () => {
     renderWithProviders(<AgentAccessPanel />);
     await screen.findByText('Approval history');
     expect(screen.getByTestId('agent-access-approval-history-link')).toBeInTheDocument();
+  });
+
+  // ── auto-approve-all bypass (security-sensitive) ────────────────────────
+
+  it('renders the auto-approve-all toggle OFF by default', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const sw = await screen.findByRole('switch', { name: /auto-approve all actions/i });
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('toggling auto-approve-all ON persists auto_approve_all: true', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const sw = await screen.findByRole('switch', { name: /auto-approve all actions/i });
+    fireEvent.click(sw);
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ auto_approve_all: true }))
+    );
+  });
+
+  it('shows the warning description regardless of toggle state', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const sw = await screen.findByRole('switch', { name: /auto-approve all actions/i });
+
+    // Off state: warning is already visible.
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByTestId('auto-approve-all-warning')).toBeInTheDocument();
+    expect(screen.getByTestId('auto-approve-all-warning')).toHaveTextContent(
+      /credential and system directories/i
+    );
+
+    // On state: toggling it on keeps the same warning mounted, still visible.
+    fireEvent.click(sw);
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByTestId('auto-approve-all-warning')).toBeInTheDocument();
+  });
+
+  it('reverts the auto-approve-all toggle when the save fails', async () => {
+    mockUpdate.mockRejectedValueOnce(new Error('boom'));
+    renderWithProviders(<AgentAccessPanel />);
+    const sw = await screen.findByRole('switch', { name: /auto-approve all actions/i });
+    fireEvent.click(sw);
+    // The RPC must actually be attempted (and fail)…
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ auto_approve_all: true }))
+    );
+    // …then the optimistic flip reverts to off, so the switch never shows a
+    // falsely-safe "off" or falsely-enabled "on" state the server disagrees with.
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
+  });
+
+  it('does not resend auto_approve_all when an unrelated field is saved', async () => {
+    // auto_approve_all starts true; toggling an unrelated switch (workspace
+    // confinement) must omit auto_approve_all from the patch entirely so a
+    // stale/loaded panel value can never clobber it back down.
+    mockGet.mockResolvedValue({ result: autonomy({ auto_approve_all: true }), logs: [] });
+    renderWithProviders(<AgentAccessPanel />);
+    fireEvent.click(await screen.findByRole('switch', { name: /confine to workspace/i }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ workspace_only: true }))
+    );
+    const [[payload]] = mockUpdate.mock.calls;
+    expect(payload).not.toHaveProperty('auto_approve_all');
   });
 });

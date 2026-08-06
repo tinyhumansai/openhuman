@@ -113,6 +113,28 @@ async function resetEverything(label: string): Promise<void> {
   clearRequestLog();
 }
 
+async function invokeTauri<T = unknown>(
+  command: string,
+  payload: Record<string, unknown> = {}
+): Promise<{ __ok?: T; __error?: string }> {
+  return (await browser.executeAsync(
+    (cmd, args, done) => {
+      const invoke = (window as any).__TAURI_INTERNALS__?.invoke;
+      if (typeof invoke !== 'function') {
+        done({ __error: 'window.__TAURI_INTERNALS__.invoke not available' });
+        return;
+      }
+      invoke(cmd, args)
+        .then((result: unknown) => done({ __ok: result }))
+        .catch((err: unknown) =>
+          done({ __error: err instanceof Error ? err.message : String(err) })
+        );
+    },
+    command,
+    payload
+  )) as { __ok?: T; __error?: string };
+}
+
 describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   before(async function beforeSuite() {
     this.timeout(90_000);
@@ -409,57 +431,24 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Scenario 7 — WhatsApp read-only tool flow.
-  // Seeds the local store via the internal `whatsapp_data_ingest` RPC
-  // (reachable through the full JSON-RPC dispatcher, which includes the
-  // internal controller set), then reads back via the agent-facing
-  // `whatsapp_data_list_chats` and asserts the response shape.
-  // Note: there is no backend mock seed endpoint for WhatsApp — data lives
-  // entirely on the local SQLite store, so we write through the ingest path
-  // the Tauri scanner normally drives.
+  // Scenario 7 — WhatsApp native read flow.
+  // Storage and frontend reads now live in the Tauri shell, so verify the
+  // renderer-to-native command and its list-shaped response.
   // -------------------------------------------------------------------------
-  it('WhatsApp read-only: ingest then list_chats returns expected shape', async () => {
+  it('WhatsApp read-only: native list_chats returns expected shape', async () => {
     await resetEverything('after Scenario 6');
 
     await triggerDeepLink('openhuman://auth?token=mega-whatsapp-token');
     await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
-    // Seed two chats via the internal ingest path.
-    const ingest = await callOpenhumanRpc('openhuman.whatsapp_data_ingest', {
-      account_id: 'wa-e2e@test',
-      chats: { 'chat-jid-1@test': { name: 'E2E Chat Alpha' }, 'chat-jid-2@test': { name: null } },
-      messages: [
-        {
-          id: 'msg-1',
-          chat_id: 'chat-jid-1@test',
-          account_id: 'wa-e2e@test',
-          sender: 'sender-a',
-          body: 'hello',
-          timestamp: Math.floor(Date.now() / 1000),
-          is_from_me: false,
-        },
-      ],
-    });
-    // ingest is an internal path — it may succeed or return a method-not-found
-    // if the dispatcher only wires the agent-facing controllers in this build.
-    // We branch on outcome rather than failing hard.
-    if (ingest.ok) {
-      console.log(`${LOG} whatsapp ingest ok:`, JSON.stringify(ingest.result ?? ingest.value));
-    } else {
-      console.log(`${LOG} whatsapp ingest not available (internal path); skipping seed.`);
-    }
-
-    // list_chats is always agent-facing and must be reachable.
-    const list = await callOpenhumanRpc('openhuman.whatsapp_data_list_chats', {});
-    expect(list.ok).toBe(true);
-    // Result has a "chats" array — may be empty if ingest was unavailable.
-    const chats: unknown[] =
-      list.result?.result?.chats ?? list.result?.chats ?? list.value?.result?.chats ?? [];
+    // WhatsApp storage moved from core controllers to shell-native handlers.
+    // Exercise the renderer's production IPC boundary and assert the native
+    // list shape; an empty store is valid before a scanner has ingested data.
+    const list = await invokeTauri<unknown[]>('whatsapp_data_list_chats', { req: {} });
+    expect(list.__error).toBeUndefined();
+    const chats = list.__ok ?? [];
     expect(Array.isArray(chats)).toBe(true);
-    if (ingest.ok) {
-      expect(chats.length).toBeGreaterThan(0);
-    }
     console.log(`${LOG} whatsapp list_chats returned ${chats.length} chat(s)`);
 
     // Session must still be healthy.
@@ -476,14 +465,6 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   // test would require either a dedicated RPC method (e.g.
   // `openhuman.agent_run` with a `spawn_depth` field) or a mock LLM that
   // can reliably emit nested tool-call chains — neither is present.
-  // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // Scenario 9 — Accessibility permission flow.
-  // SKIPPED: No `openhuman.accessibility_*` RPC surface exists in the Rust
-  // controller registry.  The `accessibility` domain name appears only in
-  // directory listings; it has no `schemas.rs` with registered controllers.
-  // If a future PR adds accessibility controllers, add scenarios here.
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------

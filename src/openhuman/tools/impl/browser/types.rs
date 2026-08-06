@@ -130,13 +130,6 @@ pub enum BrowserAction {
     GetTitle,
     /// Get current URL
     GetUrl,
-    /// Take screenshot
-    Screenshot {
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        full_page: bool,
-    },
     /// Wait for element or time
     Wait {
         #[serde(default)]

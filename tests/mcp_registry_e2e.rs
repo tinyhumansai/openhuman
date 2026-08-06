@@ -7,10 +7,16 @@
 //! → `connections::disconnect` round-trips correctly through the unified
 //! `mcp_client::McpStdioClient` transport.
 
+// Exercises the gated `mcp_registry` / `mcp_client` surface, so the whole suite
+// is compiled only when the `mcp` feature is on. Without this gate the slim
+// build's `cargo test --no-default-features --features tokenjuice-treesitter
+// --tests` fails to compile against the removed APIs (#4799).
+#![cfg(feature = "mcp")]
+
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::mcp_registry::connections;
-use openhuman_core::openhuman::mcp_registry::store;
-use openhuman_core::openhuman::mcp_registry::types::{CommandKind, InstalledServer, Transport};
+use openhuman_core::openhuman::mcp::registry::connections;
+use openhuman_core::openhuman::mcp::registry::store;
+use openhuman_core::openhuman::mcp::registry::types::{CommandKind, InstalledServer, Transport};
 
 fn fresh_workspace_config() -> (tempfile::TempDir, Config) {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -207,7 +213,7 @@ async fn status_reflects_last_connect_error() {
 
 #[tokio::test]
 async fn boot_skips_disabled_servers_and_records_errors() {
-    use openhuman_core::openhuman::mcp_registry::boot;
+    use openhuman_core::openhuman::mcp::registry::boot;
 
     let (_tmp, cfg) = fresh_workspace_config();
 
@@ -258,7 +264,7 @@ async fn boot_skips_disabled_servers_and_records_errors() {
 
 #[tokio::test]
 async fn set_enabled_false_disconnects_running_server() {
-    use openhuman_core::openhuman::mcp_registry::ops;
+    use openhuman_core::openhuman::mcp::registry::ops;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let server = make_installed_server();
@@ -282,7 +288,7 @@ async fn set_enabled_false_disconnects_running_server() {
 
 #[tokio::test]
 async fn connect_refuses_disabled_server() {
-    use openhuman_core::openhuman::mcp_registry::ops;
+    use openhuman_core::openhuman::mcp::registry::ops;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let mut server = make_installed_server();
@@ -297,7 +303,7 @@ async fn connect_refuses_disabled_server() {
 
 #[tokio::test]
 async fn set_enabled_true_clears_disabled_status_but_does_not_auto_connect() {
-    use openhuman_core::openhuman::mcp_registry::ops;
+    use openhuman_core::openhuman::mcp::registry::ops;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let mut server = make_installed_server();
@@ -321,7 +327,7 @@ async fn set_enabled_true_clears_disabled_status_but_does_not_auto_connect() {
 
 #[tokio::test]
 async fn update_env_on_disabled_server_persists_but_does_not_reconnect() {
-    use openhuman_core::openhuman::mcp_registry::ops;
+    use openhuman_core::openhuman::mcp::registry::ops;
     use std::collections::HashMap;
 
     let (_tmp, cfg) = fresh_workspace_config();
@@ -354,7 +360,7 @@ async fn update_env_merges_partial_update_preserving_other_secrets() {
     // payload over the stored env, not replace-all. The connect modal can only
     // send the field the user just typed (it cannot display existing secrets),
     // so a replace-all would silently erase every other stored credential.
-    use openhuman_core::openhuman::mcp_registry::ops;
+    use openhuman_core::openhuman::mcp::registry::ops;
     use std::collections::HashMap;
 
     let (_tmp, cfg) = fresh_workspace_config();
@@ -416,7 +422,7 @@ async fn probe_alive_reflects_transport_liveness() {
 
 #[tokio::test]
 async fn supervisor_reconnects_a_dropped_server() {
-    use openhuman_core::openhuman::mcp_registry::supervisor;
+    use openhuman_core::openhuman::mcp::registry::supervisor;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let server = make_installed_server();
@@ -443,7 +449,7 @@ async fn supervisor_reconnects_a_dropped_server() {
 
 #[tokio::test]
 async fn supervisor_leaves_a_healthy_connection_intact() {
-    use openhuman_core::openhuman::mcp_registry::supervisor;
+    use openhuman_core::openhuman::mcp::registry::supervisor;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let server = make_installed_server();
@@ -460,7 +466,7 @@ async fn supervisor_leaves_a_healthy_connection_intact() {
 
 #[tokio::test]
 async fn supervisor_skips_a_disabled_server() {
-    use openhuman_core::openhuman::mcp_registry::supervisor;
+    use openhuman_core::openhuman::mcp::registry::supervisor;
 
     let (_tmp, cfg) = fresh_workspace_config();
     let mut server = make_installed_server();

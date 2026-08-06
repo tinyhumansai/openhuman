@@ -10,12 +10,7 @@ import { RootState } from './index';
  *                         app stays usable, we just show a soft banner.
  * - `ok`                : everything healthy.
  */
-export type BlockingState = 'internet-offline' | 'core-unreachable' | 'backend-only' | 'ok';
-
-export const selectInternet = (s: RootState) => s.connectivity.internet;
-export const selectCore = (s: RootState) => s.connectivity.core;
-export const selectBackend = (s: RootState) => s.connectivity.backend;
-export const selectConnectivityErrors = (s: RootState) => s.connectivity.lastError;
+type BlockingState = 'internet-offline' | 'core-unreachable' | 'backend-only' | 'ok';
 
 export const selectBlockingState = (s: RootState): BlockingState => {
   if (s.connectivity.internet === 'offline') return 'internet-offline';

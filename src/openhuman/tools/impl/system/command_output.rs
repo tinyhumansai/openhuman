@@ -15,7 +15,7 @@
 //!      sandbox restriction) from a generic `1`, so it could not recognise an
 //!      un-retryable wall and re-ran the identical command. The harness
 //!      repeated-failure circuit breaker (`RepeatedToolFailureMiddleware`, see
-//!      `src/openhuman/tinyagents/middleware.rs`) still bounds that loop, but
+//!      `src/openhuman/agent/tinyagents/middleware.rs`) still bounds that loop, but
 //!      only after a few wasted iterations and with a generic halt message,
 //!      because the root-cause signal had already been thrown away.
 //!

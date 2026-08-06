@@ -43,14 +43,14 @@ export interface VoiceInstallStatus {
   error_detail: string | null;
 }
 
-export interface InstallWhisperParams {
+interface InstallWhisperParams {
   /** Whisper model size — `tiny | base | small | medium | large-v3-turbo`. */
   modelSize?: string;
   /** When true, blow away the existing model and re-download. */
   force?: boolean;
 }
 
-export interface InstallPiperParams {
+interface InstallPiperParams {
   /** Piper voice id (e.g. `en_US-lessac-medium`). */
   voiceId?: string;
   /** When true, blow away the existing voice files and re-download. */

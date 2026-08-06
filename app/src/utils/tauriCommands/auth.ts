@@ -56,12 +56,19 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * Store session in secure storage
+ * Store session in secure storage.
+ *
+ * Options:
+ * - `allowPendingBackendValidation` -- skip backend `/auth/me` proof and persist
+ *   the session with a deferred-validation marker.
+ * - `timeoutMs` -- per-call timeout (default 30s, clamped [1s, 10min]).
+ *   Use a shorter value (e.g. 10s) when the caller will retry after a timeout
+ *   rather than hang for the full default.
  */
 export async function storeSession(
   token: string,
   user: object,
-  options?: { allowPendingBackendValidation?: boolean }
+  options?: { allowPendingBackendValidation?: boolean; timeoutMs?: number }
 ): Promise<void> {
   await callCoreRpc({
     method: 'openhuman.auth_store_session',
@@ -70,6 +77,7 @@ export async function storeSession(
       user,
       ...(options?.allowPendingBackendValidation ? { allowPendingBackendValidation: true } : {}),
     },
+    timeoutMs: options?.timeoutMs,
   });
 }
 

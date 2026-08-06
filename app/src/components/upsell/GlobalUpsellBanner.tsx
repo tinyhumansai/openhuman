@@ -1,6 +1,6 @@
 import { useUsageState } from '../../hooks/useUsageState';
 import { useT } from '../../lib/i18n/I18nContext';
-import { BILLING_DASHBOARD_URL } from '../../utils/links';
+import { PRICING_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 import UpsellBanner from './UpsellBanner';
 
@@ -20,7 +20,7 @@ export default function GlobalUpsellBanner() {
           ctaLabel={t('chat.upgrade')}
           rounded={false}
           onCtaClick={() => {
-            void openUrl(BILLING_DASHBOARD_URL);
+            void openUrl(PRICING_URL);
           }}
         />
       </div>
@@ -38,7 +38,7 @@ export default function GlobalUpsellBanner() {
           ctaLabel={t('chat.upgrade')}
           rounded={false}
           onCtaClick={() => {
-            void openUrl(BILLING_DASHBOARD_URL);
+            void openUrl(PRICING_URL);
           }}
         />
       </div>

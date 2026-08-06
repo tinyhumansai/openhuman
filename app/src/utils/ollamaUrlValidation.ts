@@ -1,4 +1,4 @@
-export interface OllamaUrlValidationResult {
+interface OllamaUrlValidationResult {
   valid: boolean;
   normalized?: string;
   error?: string;

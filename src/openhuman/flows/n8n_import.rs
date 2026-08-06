@@ -101,7 +101,32 @@ pub(crate) fn map_n8n_workflow(value: &Value) -> Result<N8nImportResult, String>
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| slug(&n8n_name));
-        name_to_id.insert(n8n_name.clone(), Value::String(id.clone()));
+        // n8n's `connections` map is keyed by node NAME (not id), and
+        // `map_connections` below rewires every edge that names this node
+        // through this lookup. A duplicate name is last-wins here, which
+        // silently mis-wires every connection naming it onto whichever node
+        // happened to be inserted last — R-m6. Every other approximation in
+        // this importer reports a warning; a duplicate name is the one
+        // silent mis-wiring, so warn on the collision the same way.
+        if let Some(previous_id) = name_to_id
+            .insert(n8n_name.clone(), Value::String(id.clone()))
+            .and_then(|v| v.as_str().map(str::to_string))
+        {
+            tracing::warn!(
+                target: "flows",
+                name = %n8n_name,
+                previous_id = %previous_id,
+                new_id = %id,
+                "[flows] n8n_import: duplicate node name collision — connections will mis-wire"
+            );
+            warnings.push(format!(
+                "Multiple n8n nodes are named '{n8n_name}' (ids '{previous_id}' and '{id}') — \
+                 n8n connections are keyed by node name, so every connection naming \
+                 '{n8n_name}' was rewired onto node '{id}' and may now point at the wrong \
+                 node. Rename the duplicates in the source n8n workflow and re-import, or fix \
+                 the affected edges by hand."
+            ));
+        }
 
         let n8n_type = raw.get("type").and_then(Value::as_str).unwrap_or("");
         let params = raw.get("parameters").cloned().unwrap_or(Value::Null);
@@ -130,6 +155,10 @@ pub(crate) fn map_n8n_workflow(value: &Value) -> Result<N8nImportResult, String>
         schema_version: tinyflows::model::CURRENT_SCHEMA_VERSION,
         id: None,
         name,
+        // n8n has no equivalent of a declared workflow input — its workflows are
+        // parameterized through trigger/node config — so an import declares
+        // none. The author adds them afterwards if the flow needs them.
+        inputs: Vec::new(),
         nodes,
         edges,
     };
@@ -303,7 +332,15 @@ fn translate_config(value: &Value, warnings: &mut Vec<String>, n8n_name: &str) -
 /// Translates a single n8n expression string. An n8n expression is a string
 /// beginning with `=` whose body is `{{ … }}`. The trivially-translatable case
 /// is a single `{{ $json.<path> }}` reference, which becomes tinyflows'
-/// `=.<path>` jq. Anything richer is returned unchanged with a warning.
+/// `=.item.<path>` jq. Anything richer is returned unchanged with a warning.
+///
+/// n8n's `$json` is the current input item's json — the tinyflows expression
+/// scope root is `{item, items, run, nodes}` (`vendor/tinyflows/src/nodes/mod.rs::expr_scope_for`),
+/// which binds exactly that under `item`. So `$json` must translate to
+/// `.item`, never the bare `.` root: `.` would resolve the WHOLE scope object
+/// (`item` + `items` + `run` + `nodes`), not the item, and `.<path>` without
+/// the `item` segment dereferences a key that does not exist at the scope
+/// root and is GUARANTEED to resolve `null` at runtime (R-C1).
 fn translate_expr(raw: &str, warnings: &mut Vec<String>, n8n_name: &str) -> String {
     // Only n8n expression strings start with `=`; plain values pass through.
     if !raw.starts_with('=') {
@@ -323,7 +360,21 @@ fn translate_expr(raw: &str, warnings: &mut Vec<String>, n8n_name: &str) -> Stri
     // Trivial single-reference case: `$json.foo.bar` (or `$json["foo"]`).
     if let Some(path) = inner.strip_prefix("$json") {
         if let Some(jq_path) = json_path_to_jq(path) {
-            return format!("={jq_path}");
+            // `json_path_to_jq` returns the tail path RELATIVE to `$json`
+            // (`.foo`, `.foo.bar`, or `""` when there's no tail at all — see
+            // its doc). Prefixing `.item` here binds it at the tinyflows
+            // scope's `item` key instead of the scope root (see this fn's
+            // doc, R-C1): the empty-tail case naturally becomes `.item` (not
+            // `.item.`) because the tail is `""`, with no special-casing
+            // needed here.
+            tracing::debug!(
+                target: "flows",
+                node = %n8n_name,
+                %raw,
+                translated = %format!("=.item{jq_path}"),
+                "[flows] n8n_import: translated $json expression"
+            );
+            return format!("=.item{jq_path}");
         }
     }
 
@@ -332,13 +383,16 @@ fn translate_expr(raw: &str, warnings: &mut Vec<String>, n8n_name: &str) -> Stri
 }
 
 /// Turns an n8n `$json` accessor tail (`.foo.bar`, `["foo"]`, or empty) into a
-/// jq path (`.foo.bar`, `.foo`, or `.`). Returns `None` for anything that
-/// isn't a plain dotted / bracketed-string path (arithmetic, function calls,
-/// bracket-index into arrays, etc.), so the caller falls back to raw + warn.
+/// jq path relative to `$json` itself (`.foo.bar`, `.foo`, or `""` for an
+/// empty tail — deliberately NOT `.`, so the caller can prepend `.item`
+/// without special-casing the empty case, see [`translate_expr`]). Returns
+/// `None` for anything that isn't a plain dotted / bracketed-string path
+/// (arithmetic, function calls, bracket-index into arrays, etc.), so the
+/// caller falls back to raw + warn.
 fn json_path_to_jq(tail: &str) -> Option<String> {
     let tail = tail.trim();
     if tail.is_empty() {
-        return Some(".".to_string());
+        return Some(String::new());
     }
     let mut jq = String::new();
     let mut rest = tail;
@@ -744,23 +798,75 @@ mod tests {
 
     #[test]
     fn translates_trivial_json_expression_to_jq() {
+        // R-C1: n8n's `$json` is the CURRENT INPUT ITEM, which the tinyflows
+        // scope binds under `item` (scope root is `{item, items, run,
+        // nodes}` — `vendor/tinyflows/src/nodes/mod.rs::expr_scope_for`).
+        // The translated jq path must therefore dereference `.item` first —
+        // `=.email` (the old, buggy output) dereferences a key that doesn't
+        // exist at the scope root and is GUARANTEED to resolve `null`.
         let mut warnings = Vec::new();
         assert_eq!(
             translate_expr("={{ $json.email }}", &mut warnings, "n"),
-            "=.email"
+            "=.item.email"
         );
         assert_eq!(
             translate_expr("={{ $json.user.name }}", &mut warnings, "n"),
-            "=.user.name"
+            "=.item.user.name"
         );
         // A bracket key with a space isn't a bare jq identifier — must come out
         // quoted (`."first name"`), not `.first name` (invalid jq).
         assert_eq!(
             translate_expr("={{ $json[\"first name\"] }}", &mut warnings, "n"),
-            "=.\"first name\""
+            "=.item.\"first name\""
         );
-        assert_eq!(translate_expr("={{ $json }}", &mut warnings, "n"), "=.");
+        // `{{ $json }}` (no tail) must become `.item`, NOT the bare `.` root —
+        // `.` would return the whole `{item, items, run, nodes}` scope object,
+        // not the item.
+        assert_eq!(translate_expr("={{ $json }}", &mut warnings, "n"), "=.item");
         assert!(warnings.is_empty());
+    }
+
+    /// R-C1 regression proof: actually evaluate the translated expression
+    /// against a scope shaped exactly like the tinyflows engine's real
+    /// `expr_scope_for` (`vendor/tinyflows/src/nodes/mod.rs`), and assert it
+    /// resolves the real field — NOT `null`. This is the check that would
+    /// have caught the original bug: the old `=.email` translation compiles
+    /// fine and passes structural validation, it just silently resolves
+    /// `null` at runtime because `email` isn't a key at the scope root.
+    #[test]
+    fn translated_json_expression_resolves_against_the_real_engine_scope() {
+        let mut warnings = Vec::new();
+        let translated = translate_expr("={{ $json.email }}", &mut warnings, "n");
+        assert!(warnings.is_empty());
+
+        let scope = json!({
+            "item": { "email": "person@example.com" },
+            "items": [{ "email": "person@example.com" }],
+            "run": {},
+            "nodes": {},
+        });
+        assert_eq!(
+            tinyflows::expr::evaluate(&json!(translated), &scope),
+            json!("person@example.com"),
+            "translated expression `{translated}` must resolve the real field, not null"
+        );
+
+        // The pre-fix translation (`=.email`) is left here as a negative
+        // control: it dereferences a key that does not exist at the scope
+        // root and is GUARANTEED to resolve null — exactly the bug R-C1
+        // describes.
+        assert_eq!(
+            tinyflows::expr::evaluate(&json!("=.email"), &scope),
+            Value::Null
+        );
+
+        // Bare `{{ $json }}` → `.item` must resolve the WHOLE item, not the
+        // whole scope (which would additionally carry `items`/`run`/`nodes`).
+        let translated_whole = translate_expr("={{ $json }}", &mut warnings, "n");
+        assert_eq!(
+            tinyflows::expr::evaluate(&json!(translated_whole), &scope),
+            json!({ "email": "person@example.com" })
+        );
     }
 
     #[test]
@@ -807,7 +913,7 @@ mod tests {
             &mut warnings,
             "HTTP",
         );
-        assert_eq!(cfg2["url"], json!("=.endpoint"));
+        assert_eq!(cfg2["url"], json!("=.item.endpoint"));
         assert_eq!(cfg2["method"], json!("GET"));
     }
 
@@ -848,5 +954,136 @@ mod tests {
         let result = map_n8n_workflow(&wf).expect("map");
         assert!(result.graph.edges.is_empty());
         assert!(result.warnings.iter().any(|w| w.contains("Ghost")));
+    }
+
+    // ── R-m6: duplicate n8n node names ──────────────────────────────────────
+
+    #[test]
+    fn duplicate_node_name_collision_emits_a_warning() {
+        // n8n's `connections` map is keyed by node NAME, not id. Two nodes
+        // sharing the name "HTTP" mean `name_to_id` last-wins onto id "b" —
+        // any connection naming "HTTP" (including the trigger's own edge)
+        // silently rewires onto "b" instead of "a" with no warning, unless
+        // this collision is reported (R-m6: every other approximation in
+        // this importer warns; this was the one silent mis-wiring).
+        let wf = json!({
+            "name": "dup-names",
+            "nodes": [
+                { "id": "t", "name": "Manual", "type": "n8n-nodes-base.manualTrigger" },
+                { "id": "a", "name": "HTTP", "type": "n8n-nodes-base.httpRequest",
+                  "parameters": { "url": "https://a.example.com" } },
+                { "id": "b", "name": "HTTP", "type": "n8n-nodes-base.httpRequest",
+                  "parameters": { "url": "https://b.example.com" } }
+            ],
+            "connections": {
+                "Manual": { "main": [[{ "node": "HTTP", "type": "main", "index": 0 }]] }
+            }
+        });
+        let result = map_n8n_workflow(&wf).expect("map");
+
+        // The collision itself is reported.
+        let collision_warning = result
+            .warnings
+            .iter()
+            .find(|w| w.contains("named 'HTTP'"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected a duplicate-name warning, got {:?}",
+                    result.warnings
+                )
+            });
+        assert!(collision_warning.contains('a'));
+        assert!(collision_warning.contains('b'));
+
+        // Both original nodes still exist under their own ids — nothing was
+        // dropped, only the *name*-keyed connection lookup collided.
+        assert!(result.graph.node("a").is_some());
+        assert!(result.graph.node("b").is_some());
+
+        // The connection resolves deterministically onto exactly one target
+        // (last-wins onto "b") rather than silently vanishing or duplicating
+        // — the fix is the warning, not a change to which id wins.
+        assert_eq!(result.graph.edges.len(), 1);
+        assert_eq!(result.graph.edges[0].to_node, "b");
+
+        tinyflows::validate::validate(&result.graph).expect("valid graph");
+    }
+
+    // ── R-C1 end-to-end: n8n `$json` import passes binding-resolvability ───
+
+    /// Imports a small n8n fixture that uses `$json` bindings end-to-end
+    /// through the exact same path `ops::flows_import` takes (map →
+    /// re-serialize → `validate_and_migrate_graph`), then runs the imported
+    /// graph through the domain's own binding-resolvability hard gate
+    /// (`ops::validate_binding_resolvability`, the same gate
+    /// `propose_workflow`/`revise_workflow`/`save_workflow` enforce before
+    /// accepting ANY graph — see `ops.rs`'s "Enforcing binding-resolvability
+    /// gate" section) and confirms it is accepted with zero errors, exactly
+    /// as `ops_tests.rs`'s `binding_to_agent_with_matching_schema_is_accepted`
+    /// exercises the gate for a hand-authored graph.
+    #[test]
+    fn imported_json_bindings_pass_binding_resolvability_and_resolve_the_real_item() {
+        use crate::openhuman::flows::ops::{
+            validate_and_migrate_graph, validate_binding_resolvability,
+        };
+
+        let wf = json!({
+            "name": "json-binding-import",
+            "nodes": [
+                { "id": "t", "name": "Webhook", "type": "n8n-nodes-base.webhook" },
+                { "id": "h", "name": "Notify", "type": "n8n-nodes-base.httpRequest",
+                  "parameters": {
+                      "url": "={{ $json.callback_url }}",
+                      "requestMethod": "POST"
+                  } }
+            ],
+            "connections": {
+                "Webhook": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] }
+            }
+        });
+
+        let mapped = map_n8n_workflow(&wf).expect("map");
+        // No warning for the `$json.callback_url` binding — it's the trivial
+        // translatable case.
+        assert!(
+            !mapped
+                .warnings
+                .iter()
+                .any(|w| w.contains("callback_url") || w.contains("not automatically translated")),
+            "{:?}",
+            mapped.warnings
+        );
+
+        let http_node = mapped.graph.node("h").expect("http node");
+        assert_eq!(http_node.config["url"], json!("=.item.callback_url"));
+
+        // Re-enter the same migrate + validate path `flows_import` uses.
+        let value = serde_json::to_value(&mapped.graph).expect("serialize graph");
+        let graph =
+            validate_and_migrate_graph(value).expect("imported graph is structurally valid");
+
+        // The domain's hard binding-resolvability gate accepts the imported
+        // graph — the same gate a hand-authored graph must clear before
+        // `propose_workflow`/`save_workflow` will accept it.
+        assert!(
+            validate_binding_resolvability(&graph).is_empty(),
+            "{:?}",
+            validate_binding_resolvability(&graph)
+        );
+
+        // The direct proof this whole importer exists to guarantee: the
+        // translated binding actually resolves the real upstream item field
+        // at runtime, evaluated against a scope shaped like the tinyflows
+        // engine's real `expr_scope_for` — NOT null, which is exactly what
+        // the pre-fix `=.callback_url` translation would have produced.
+        let http_node = graph.node("h").expect("http node");
+        let scope = json!({
+            "item": { "callback_url": "https://example.com/hook" },
+            "items": [{ "callback_url": "https://example.com/hook" }],
+            "run": {},
+            "nodes": {},
+        });
+        let resolved = tinyflows::expr::evaluate(&http_node.config["url"], &scope);
+        assert_eq!(resolved, json!("https://example.com/hook"));
     }
 }

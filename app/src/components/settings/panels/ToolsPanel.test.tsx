@@ -27,10 +27,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ breadcrumbs: [], navigateBack: vi.fn() }),
 }));
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
-
 function coreState(enabledTools: string[]) {
   return {
     snapshot: {

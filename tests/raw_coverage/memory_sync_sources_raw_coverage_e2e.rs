@@ -16,28 +16,28 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
-use openhuman_core::openhuman::memory_sources::readers::SourceReader;
-use openhuman_core::openhuman::memory_sources::{
+use openhuman_core::openhuman::memory::sources::readers::SourceReader;
+use openhuman_core::openhuman::memory::sources::{
     add_source, get_source, list_enabled_by_kind, list_sources,
     remove_composio_source_by_connection_id, remove_source, update_source, upsert_composio_source,
     MemorySourceEntry, MemorySourcePatch, SourceKind,
 };
-use openhuman_core::openhuman::memory_sync::composio::bus::{
+use openhuman_core::openhuman::memory::sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::clickup::ClickUpProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::github::GitHubProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::gmail::GmailProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
+use openhuman_core::openhuman::memory::sync::composio::providers::clickup::ClickUpProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::github::GitHubProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::gmail::GmailProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::slack::{
     run_backfill_via_search, SlackProvider,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::{
+use openhuman_core::openhuman::memory::sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
-use openhuman_core::openhuman::memory_sync::composio::{
+use openhuman_core::openhuman::memory::sync::composio::{
     all_composio_sync_providers, get_composio_sync_provider, init_default_composio_sync_providers,
 };
 
@@ -166,7 +166,7 @@ async fn memory_sources_registry_persists_crud_and_composio_upserts() {
         MemorySourcePatch {
             label: Some("Renamed notes".to_string()),
             enabled: Some(false),
-            glob: Some("*.txt".to_string()),
+            glob: Some(Some("*.txt".to_string())),
             ..MemorySourcePatch::default()
         },
     )
@@ -332,7 +332,7 @@ async fn rss_reader_lists_reads_and_reports_feed_errors_from_loopback() {
     );
     let (base, server) = loopback_router(router).await;
 
-    let reader = openhuman_core::openhuman::memory_sources::readers::rss::RssReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
     let mut entry = source(SourceKind::RssFeed, "rss-round15");
     entry.url = Some(format!("{base}/rss"));
     entry.max_items = Some(1);
@@ -348,7 +348,7 @@ async fn rss_reader_lists_reads_and_reports_feed_errors_from_loopback() {
     assert_eq!(content.id, "https://example.test/first");
     assert_eq!(
         content.content_type,
-        openhuman_core::openhuman::memory_sources::ContentType::Html
+        openhuman_core::openhuman::memory::sources::ContentType::Html
     );
     assert!(content.body.contains("HTML body"));
 
@@ -405,7 +405,7 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
-    let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::github::GithubReader;
     let mut entry = source(SourceKind::GithubRepo, "github-round15");
     entry.url = Some("https://github.com/tinyhumansai/openhuman.git".to_string());
     entry.max_commits = Some(30);

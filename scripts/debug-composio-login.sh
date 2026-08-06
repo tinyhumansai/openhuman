@@ -6,7 +6,7 @@
 # This is the Rust-side counterpart to
 #   backend-1/src/scripts/live-test-composio-gmail.ts
 # and it hits the exact same endpoints that the new
-# src/openhuman/composio/ module wraps in Rust.
+# src/openhuman/integrations/composio/ module wraps in Rust.
 #
 # Flow:
 #   1. GET  /agent-integrations/composio/toolkits

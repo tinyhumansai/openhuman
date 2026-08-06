@@ -7,7 +7,7 @@
 //! security-gate (matching the read-only memory tools).
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::health::async_run_doctor;
+use crate::openhuman::memory::tree::health::async_run_doctor;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -77,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_returns_a_report_for_a_misconfigured_workspace() {
-        let _g = crate::openhuman::memory_tree::health::test_guard();
+        let _g = crate::openhuman::memory::tree::health::test_guard();
         let (_tmp, cfg) = test_config();
         // No embeddings provider, local AI off → unhealthy with a typed cause.
         let tool = MemoryDoctorTool::new(cfg);

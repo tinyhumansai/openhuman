@@ -21,7 +21,7 @@ function workspaceRoot(): string {
   return path.join(home, '.openhuman');
 }
 
-export function configTomlPath(): string {
+function configTomlPath(): string {
   return path.join(workspaceRoot(), 'config.toml');
 }
 
@@ -57,7 +57,7 @@ export function topLevelValue(contents: string, key: string): string | null {
  * Extract a `key = value` line inside `[section]`. Works for any flat
  * `[a.b]`-style section name.
  */
-export function sectionValue(contents: string, section: string, key: string): string | null {
+function sectionValue(contents: string, section: string, key: string): string | null {
   const lines = contents.split(/\r?\n/);
   let inSection = false;
   const target = `[${section}]`;

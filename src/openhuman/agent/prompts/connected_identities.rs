@@ -7,6 +7,7 @@
 /// Render persisted provider identities (if available) as a compact
 /// `## Connected Identities` section.
 pub fn render_connected_identities() -> String {
-    let identities = crate::openhuman::composio::providers::profile::load_connected_identities();
-    crate::openhuman::composio::providers::profile::render_connected_identities_section(&identities)
+    let identities =
+        crate::openhuman::integrations::composio::providers::profile::load_connected_identities();
+    crate::openhuman::integrations::composio::providers::profile::render_connected_identities_section(&identities)
 }

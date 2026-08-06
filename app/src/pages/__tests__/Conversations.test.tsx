@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  deriveChatErrorBanner,
   formatThreadLoadError,
   isComposerInteractionBlocked,
   isImeCompositionKeyEvent,
@@ -76,5 +77,31 @@ describe('formatThreadLoadError', () => {
 
   it('ignores non-string message fields and falls back to String(err)', () => {
     expect(formatThreadLoadError({ message: 42 })).toBe('[object Object]');
+  });
+});
+
+describe('deriveChatErrorBanner (#5156)', () => {
+  const CREATE_FAILED = "Couldn't create a new thread. Please try again.";
+
+  it('surfaces a slice-recorded thread-create failure when there is no send error', () => {
+    const banner = deriveChatErrorBanner(
+      null,
+      'Core RPC openhuman.threads_create_new timed out after 30000ms',
+      CREATE_FAILED
+    );
+
+    // The RPC text stays in the log/Sentry breadcrumb; the strip shows the
+    // localized message, tagged with the existing analytics-stable code.
+    expect(banner).toEqual({ code: 'create_thread_failed', message: CREATE_FAILED });
+  });
+
+  it("prefers this turn's send error over an older create failure", () => {
+    const sendError = { code: 'cloud_send_failed', message: 'send blew up' } as const;
+
+    expect(deriveChatErrorBanner(sendError, 'stale create failure', CREATE_FAILED)).toBe(sendError);
+  });
+
+  it('renders nothing when neither failure is present', () => {
+    expect(deriveChatErrorBanner(null, null, CREATE_FAILED)).toBeNull();
   });
 });

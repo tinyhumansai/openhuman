@@ -64,4 +64,18 @@ pub trait TtsProvider: Send + Sync {
         text: &str,
         voice: Option<&str>,
     ) -> Result<RpcOutcome<ReplySpeechResult>, String>;
+
+    /// The voice this provider was constructed with, or `None` when it defers
+    /// to a downstream default (cloud omits `voice_id` so the backend picks).
+    ///
+    /// Test-only, and deliberately so: the factory hands back a
+    /// `Box<dyn TtsProvider>`, so the voice a provider actually carries is
+    /// otherwise unobservable without a live synthesis call. That blind spot is
+    /// how a Piper voice id reached the cloud proxy unnoticed (#5355) — the
+    /// pre-existing factory tests asserted only [`TtsProvider::name`], which
+    /// stayed green throughout.
+    #[cfg(test)]
+    fn configured_voice(&self) -> Option<&str> {
+        None
+    }
 }

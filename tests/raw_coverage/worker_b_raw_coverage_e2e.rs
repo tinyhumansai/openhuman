@@ -22,12 +22,12 @@ use tempfile::{tempdir, TempDir};
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
 use openhuman_core::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
-use openhuman_core::openhuman::approval::gate::{
+use openhuman_core::openhuman::security::approval::gate::{
     ApprovalChatContext, ApprovalGate, APPROVAL_CHAT_CONTEXT,
 };
-use openhuman_core::openhuman::approval::types::{ExecutionOutcome, GateOutcome};
+use openhuman_core::openhuman::security::approval::types::{ExecutionOutcome, GateOutcome};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 

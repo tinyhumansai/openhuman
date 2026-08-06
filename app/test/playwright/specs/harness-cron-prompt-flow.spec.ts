@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { agentMessageText } from '../helpers/chat-locators';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -142,8 +143,10 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'remind me every morning at 9am');
-    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/Done! I have set up a daily 9am morning reminder/i)).toBeVisible();
+    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(
+      agentMessageText(page, /Done! I have set up a daily 9am morning reminder/i)
+    ).toBeVisible();
     const log = await requests();
     const llmHits = log.filter(
       request => request.method === 'POST' && request.url.includes('/chat/completions')
@@ -164,7 +167,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'what are my scheduled tasks');
-    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
+    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/You have 2 scheduled tasks/i)).toBeVisible();
   });
 
@@ -192,8 +195,8 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'change my morning reminder to 8am');
-    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/changed your morning reminder to 8am/i)).toBeVisible();
+    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(agentMessageText(page, /changed your morning reminder to 8am/i)).toBeVisible();
   });
 
   test('delete flow yields a final reply', async ({ page }) => {
@@ -217,7 +220,7 @@ test.describe('Harness - Cron prompt-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'delete the morning reminder');
-    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/deleted the morning reminder/i).first()).toBeVisible();
+    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(agentMessageText(page, /deleted the morning reminder/i)).toBeVisible();
   });
 });

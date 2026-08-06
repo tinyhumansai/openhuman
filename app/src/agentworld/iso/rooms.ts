@@ -415,31 +415,31 @@ function outsideDefinition(): RoomDefinition {
 
 // ---- Concrete room subclasses ----------------------------------------------
 
-export class PokerTableRoom extends BaseRoom {
+class PokerTableRoom extends BaseRoom {
   public constructor(factory: TextureFactory) {
     super(pokerDefinition(), factory);
   }
 }
 
-export class CourtHouseRoom extends BaseRoom {
+class CourtHouseRoom extends BaseRoom {
   public constructor(factory: TextureFactory) {
     super(courtDefinition(), factory);
   }
 }
 
-export class OfficeRoom extends BaseRoom {
+class OfficeRoom extends BaseRoom {
   public constructor(factory: TextureFactory) {
     super(officeDefinition(), factory);
   }
 }
 
-export class HomeRoom extends BaseRoom {
+class HomeRoom extends BaseRoom {
   public constructor(factory: TextureFactory) {
     super(homeDefinition(), factory);
   }
 }
 
-export class OutsideWorldRoom extends BaseRoom {
+class OutsideWorldRoom extends BaseRoom {
   public constructor(factory: TextureFactory) {
     super(outsideDefinition(), factory);
   }

@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import type { FlowEdge } from '../../../../lib/flows/graphAdapter';
 import { useT } from '../../../../lib/i18n/I18nContext';
 
-export interface NodeConnectionsProps {
+interface NodeConnectionsProps {
   nodeId: string;
   edges: FlowEdge[];
   nodeLabelById: Record<string, string>;

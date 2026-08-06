@@ -1,6 +1,6 @@
 import Input from '../../ui/Input';
 
-export interface SettingsNumberFieldProps {
+interface SettingsNumberFieldProps {
   id: string;
   value: string;
   onChange: (v: string) => void;

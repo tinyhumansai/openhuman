@@ -11,7 +11,7 @@
  */
 import type { InstanceStatus } from '../../lib/orchestration/orchestrationClient';
 
-export interface InstanceStatusDotProps {
+interface InstanceStatusDotProps {
   status: InstanceStatus;
   /** Accessible label (already translated by the caller). */
   label?: string;

@@ -46,7 +46,7 @@ const log = debug('meetings:composer');
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
-export interface MeetComposerProps {
+interface MeetComposerProps {
   onToast?: (toast: Toast) => void;
   /** Ref owned by the parent (MeetingsPage) so the success toast can fire
    *  after the inline form unmounts on status → 'active'. */

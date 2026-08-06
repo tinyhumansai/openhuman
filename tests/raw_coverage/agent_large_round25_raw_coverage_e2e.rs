@@ -5,23 +5,23 @@ use openhuman_core::openhuman::agent::harness::{
     ParentExecutionContext, PromptSource, SandboxMode, SubagentRunOptions, ToolScope,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::{
+use openhuman_core::openhuman::agent::context::prompt::{
     ConnectedIntegration, ConnectedIntegrationTool, ToolCallFormat,
-};
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, UsageInfo,
 };
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
 struct EnvGuard {
     key: &'static str,
@@ -63,18 +63,18 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tools_sent: bool,
 }
 
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<ChatResponse>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<ModelResponse>>,
     requests: Mutex<Vec<CapturedRequest>>,
     extraction_prompts: Mutex<Vec<String>>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(VecDeque::from(responses)),
             requests: Mutex::new(Vec::new()),
@@ -92,61 +92,44 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: OnceLock<ModelProfile> = OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("round25".to_string()),
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        temperature: f64,
-    ) -> Result<String> {
-        self.extraction_prompts.lock().push(format!(
-            "system={}\nmodel={model}\ntemperature={temperature}\n{message}",
-            system_prompt.unwrap_or_default()
-        ));
-        Ok("round25 extracted: NEEDLE-42".to_string())
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        model: &str,
-        temperature: f64,
-    ) -> Result<ChatResponse> {
-        // The `extract_from_result` tool now runs its per-chunk extraction through
-        // the crate `ChatModel` (`build_summarizer().invoke()` → this `chat`),
-        // not the legacy `provider.chat_with_system`. Route those calls — identified
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        // Route extraction calls — identified
         // by the extraction system prompt — to the fixed extracted answer so they
         // do not consume the agent-turn response queue, and record them separately
-        // (the old `chat_with_system` extraction path is dead on this seam). The
-        // recorded shape mirrors the former `chat_with_system` capture so the
-        // `model=…` / `temperature=…` assertions below still hold.
-        let is_extraction = request
-            .messages
-            .iter()
-            .any(|m| m.role == "system" && m.content.contains("extraction assistant"));
+        // while preserving model/temperature assertions.
+        let is_extraction = request.messages.iter().any(|message| {
+            matches!(message, Message::System(_)) && message.text().contains("extraction assistant")
+        });
         if is_extraction {
             self.extraction_prompts.lock().push(format!(
-                "model={model}\ntemperature={temperature}\n{}",
+                "model={}\ntemperature={}\n{}",
+                request.model.as_deref().unwrap_or_default(),
+                request.temperature.unwrap_or_default(),
                 request
                     .messages
                     .iter()
-                    .map(|m| format!("{}:{}", m.role, m.content))
+                    .map(|message| message.text())
                     .collect::<Vec<_>>()
                     .join("\n")
             ));
             return Ok(text_response("round25 extracted: NEEDLE-42"));
         }
         self.requests.lock().push(CapturedRequest {
-            messages: request.messages.to_vec(),
-            tools_sent: request.tools.is_some(),
+            messages: request.messages,
+            tools_sent: !request.tools.is_empty(),
         });
         Ok(self
             .responses
@@ -269,31 +252,25 @@ impl Tool for LargePayloadTool {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
-        usage: Some(UsageInfo {
-            input_tokens: 11,
-            output_tokens: 7,
-            context_window: 32_000,
-            cached_input_tokens: 3,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.0002,
-        }),
-        reasoning_content: None,
-    }
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(11, 7);
+    usage.cache_read_tokens = 3;
+    ModelResponse::assistant(text).with_usage(usage)
 }
 
-fn xml_tool_response(name: &str, args: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!(
-            "round25 call <tool_call>{{\"name\":\"{name}\",\"arguments\":{args}}}</tool_call>"
-        )),
-        tool_calls: Vec::new(),
+fn tool_response(name: &str, args: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![ContentBlock::Text("round25 call".to_string())],
+            tool_calls: vec![ToolCall::new(format!("round25-{name}"), name, args)],
+            usage: None,
+        },
         usage: None,
-        reasoning_content: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -332,7 +309,7 @@ fn integrations_definition() -> AgentDefinition {
     }
 }
 
-fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(LargePayloadTool)];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -344,10 +321,13 @@ fn parent(workspace_dir: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExec
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            model,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round25-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir,
@@ -391,9 +371,9 @@ async fn integrations_text_mode_handoffs_oversized_result_and_extracts_from_cach
     // outside of test runs.
     let _handoff_thresh_guard = EnvGuard::set("OPENHUMAN_TEST_HANDOFF_THRESHOLD_TOKENS", "200");
     let _chunk_budget_guard = EnvGuard::set("OPENHUMAN_TEST_EXTRACT_CHUNK_BUDGET", "300");
-    let provider = ScriptedProvider::new(vec![
-        xml_tool_response("round25_large_payload", json!({"query": "find needle"})),
-        xml_tool_response(
+    let provider = ScriptedModel::new(vec![
+        tool_response("round25_large_payload", json!({"query": "find needle"})),
+        tool_response(
             "extract_from_result",
             json!({"result_id": "res_1", "query": "target fact only"}),
         ),
@@ -427,20 +407,20 @@ async fn integrations_text_mode_handoffs_oversized_result_and_extracts_from_cach
     let requests = provider.requests();
     assert_eq!(requests.len(), 3);
     assert!(
-        requests.iter().all(|request| !request.tools_sent),
-        "integrations_agent text mode should omit native tool schemas"
+        requests.iter().all(|request| request.tools_sent),
+        "the native model request keeps tool declarations available while the P-Format prompt controls text-mode calls"
     );
     assert!(
         requests[0].messages[0]
-            .content
+            .text()
             .contains("Tool calls use **P-Format**")
-            && requests[0].messages[0].content.contains("<tool_call>"),
+            && requests[0].messages[0].text().contains("<tool_call>"),
         "text-mode protocol should be injected into the system prompt"
     );
     let second_request = requests[1]
         .messages
         .iter()
-        .map(|message| message.content.as_str())
+        .map(Message::text)
         .collect::<Vec<_>>()
         .join("\n");
     assert!(second_request.contains("result_id=\"res_1\""));

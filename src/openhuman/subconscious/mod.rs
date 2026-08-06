@@ -2,6 +2,8 @@ pub mod agent;
 pub mod factory;
 pub mod heartbeat;
 pub mod instance;
+// Host-resource + signal monitors feeding the heartbeat planner.
+pub mod monitors;
 pub mod profile;
 pub mod profiles;
 pub mod provider;
@@ -10,6 +12,8 @@ mod schemas;
 pub mod session;
 pub mod source_chunk;
 pub mod store;
+// Event/condition triggers that can wake a subconscious tick.
+pub mod triggers;
 pub mod types;
 pub mod user_thread;
 

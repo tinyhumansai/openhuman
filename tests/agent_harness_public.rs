@@ -7,42 +7,10 @@ use openhuman_core::openhuman::agent::hooks::{
     fire_hooks, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider,
-};
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::sync::Notify;
-
-struct StubProvider;
-
-#[async_trait]
-impl Provider for StubProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("ok".into())
-    }
-
-    async fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        Ok(ChatResponse {
-            text: Some("ok".into()),
-            tool_calls: Vec::new(),
-            usage: None,
-            reasoning_content: None,
-        })
-    }
-}
 
 struct StubMemory;
 
@@ -129,12 +97,14 @@ fn stub_parent_context() -> ParentExecutionContext {
         allowed_subagent_ids: ["test".to_string(), "researcher".to_string()]
             .into_iter()
             .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(Arc::new(
-            StubProvider,
-        )),
+        turn_model_source:
+            openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                tinyagents::harness::testkit::ScriptedModel::replies(vec!["ok"]),
+            )),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "stub-model".into(),
         temperature: 0.4,
         workspace_dir: std::path::PathBuf::from("/tmp"),
@@ -146,7 +116,8 @@ fn stub_parent_context() -> ParentExecutionContext {
         session_id: "test-session".into(),
         channel: "test-channel".into(),
         connected_integrations: vec![],
-        tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::PFormat,
+        tool_call_format:
+            openhuman_core::openhuman::agent::context::prompt::ToolCallFormat::PFormat,
         session_key: "test-session".into(),
         session_parent_prefix: None,
         on_progress: None,

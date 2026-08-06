@@ -2,7 +2,7 @@
  * Memory subsystem commands.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { isTauri } from './common';
+import { isTauri, safeInvoke } from './common';
 
 export interface MemoryDebugDocument {
   documentId: string;
@@ -377,7 +377,13 @@ export interface WhatsAppMessage {
   source: string;
 }
 
-/** List WhatsApp chats from the local store (scanner-populated). */
+/**
+ * List WhatsApp chats from the local store (scanner-populated).
+ *
+ * The whatsapp_data store lives in the Tauri shell (relocated from the Rust
+ * core), so this reads it through the `whatsapp_data_list_chats` Tauri command
+ * rather than a core RPC. The command returns the row array directly.
+ */
 export async function whatsappListChats(params?: {
   account_id?: string;
   limit?: number;
@@ -386,15 +392,14 @@ export async function whatsappListChats(params?: {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  const resp = await callCoreRpc<{ result?: WhatsAppChat[]; logs?: string[] } | WhatsAppChat[]>({
-    method: 'openhuman.whatsapp_data_list_chats',
-    params: params ?? {},
-  });
-  if (Array.isArray(resp)) return resp;
-  return (resp as { result?: WhatsAppChat[] }).result ?? [];
+  const resp = await safeInvoke<WhatsAppChat[]>('whatsapp_data_list_chats', { req: params ?? {} });
+  return resp ?? [];
 }
 
-/** List messages for a chat from the local store. */
+/**
+ * List messages for a chat from the local shell-side store via the
+ * `whatsapp_data_list_messages` Tauri command.
+ */
 export async function whatsappListMessages(params: {
   chat_id: string;
   account_id?: string;
@@ -404,9 +409,6 @@ export async function whatsappListMessages(params: {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  const resp = await callCoreRpc<
-    { result?: WhatsAppMessage[]; logs?: string[] } | WhatsAppMessage[]
-  >({ method: 'openhuman.whatsapp_data_list_messages', params });
-  if (Array.isArray(resp)) return resp;
-  return (resp as { result?: WhatsAppMessage[] }).result ?? [];
+  const resp = await safeInvoke<WhatsAppMessage[]>('whatsapp_data_list_messages', { req: params });
+  return resp ?? [];
 }

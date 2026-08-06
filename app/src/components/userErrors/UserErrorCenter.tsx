@@ -28,12 +28,17 @@ import type { UserActionableError, UserErrorAction } from '../../types/userError
 const ACTION_ROUTE: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   open_billing: '/settings/billing',
   open_provider_settings: '/settings/llm',
+  // #5324: both memory-embedding remediations (local Ollama, BYO key) live on
+  // this one screen, so a single CTA covers them without the user needing to
+  // know which one applies.
+  open_embeddings_settings: '/connections?tab=embeddings',
 };
 
 /** i18n key for each primary action's button label. */
 const ACTION_LABEL_KEY: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   open_billing: 'userErrors.action.openBilling',
   open_provider_settings: 'userErrors.action.openProviderSettings',
+  open_embeddings_settings: 'userErrors.action.openEmbeddingsSettings',
 };
 
 // Wall-clock read for the resolve/dismiss timestamps. Defined at module scope
@@ -41,7 +46,7 @@ const ACTION_LABEL_KEY: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
 // (react-hooks/purity); the calls below run only from event handlers.
 const nowMs = (): number => Date.now();
 
-export function UserErrorCenter() {
+function UserErrorCenter() {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();

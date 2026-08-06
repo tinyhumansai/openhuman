@@ -23,7 +23,7 @@
 //! 1. **Cross-process transport.** OpenHuman spawns child `claude` processes that
 //!    re-enter the core over the loopback MCP HTTP hop; the crate's per-run-tree
 //!    recursion stack does not cross that boundary. `current_spawn_depth` feeds
-//!    `mcp_server::subagent_depth` which stamps/reads the depth on that hop.
+//!    `mcp::server::subagent_depth` which stamps/reads the depth on that hop.
 //! 2. **Synchronous pre-dispatch surface.** `subagent_runner` rejects an over-deep
 //!    spawn *before* building the TinyAgents run (so the caller gets the depth
 //!    error without a provider round-trip); tests assert this surface directly.

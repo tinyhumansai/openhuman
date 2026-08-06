@@ -134,6 +134,7 @@ describe('WalletAddressChip', () => {
       await screen.findByTitle(SOLANA_ADDRESS);
 
       const copyBtn = screen.getByRole('button', { name: /copy address/i });
+      expect(copyBtn).not.toHaveAttribute('data-analytics-id');
       await user.click(copyBtn);
 
       // After click the aria-label should flip to "Copied".
@@ -151,6 +152,21 @@ describe('WalletAddressChip', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test('copy failure preserves the existing copy label and does not show success feedback', async () => {
+    clipboardWriteText.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    mockFetchWalletStatus.mockResolvedValue(makeStatus());
+
+    render(<WalletAddressChip />);
+    await screen.findByTitle(SOLANA_ADDRESS);
+
+    const copyBtn = screen.getByRole('button', { name: /copy address/i });
+    await userEvent.click(copyBtn);
+
+    await waitFor(() => expect(clipboardWriteText).toHaveBeenCalledWith(SOLANA_ADDRESS));
+    expect(screen.getByRole('button', { name: /copy address/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^copied$/i })).not.toBeInTheDocument();
   });
 
   test('shows a retryable "Wallet unavailable" state when fetchWalletStatus rejects', async () => {

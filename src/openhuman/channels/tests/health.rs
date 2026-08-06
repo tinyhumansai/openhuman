@@ -43,7 +43,7 @@ async fn supervised_listener_marks_error_and_restarts_on_failures() {
     // runtime; keep a fresh subscriber alive for this test's runtime too.
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     let _health_handle = crate::core::event_bus::subscribe_global(Arc::new(
-        crate::openhuman::health::bus::HealthSubscriber,
+        crate::openhuman::platform::health::bus::HealthSubscriber,
     ))
     .expect("event bus should be initialized for channel health test");
     tokio::task::yield_now().await;
@@ -66,7 +66,7 @@ async fn supervised_listener_marks_error_and_restarts_on_failures() {
 async fn wait_for_component_error(component_name: &str) -> serde_json::Value {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        let snapshot = crate::openhuman::health::snapshot_json();
+        let snapshot = crate::openhuman::platform::health::snapshot_json();
         let component = snapshot["components"][component_name].clone();
         if component["status"] == "error" && component["restart_count"].as_u64().unwrap_or(0) >= 1 {
             return component;

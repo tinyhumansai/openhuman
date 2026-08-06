@@ -1,10 +1,11 @@
 # TinyAgents Port — Plan & Audit (inference / tools / agent_orchestration)
 
-**Status:** Phase 1 partial host cutover — TinyAgents `v1.7.1` is tagged and
-the host now pins it; `SchemaCleanr`, the generic model-context table, and the
-context-preserving `invoke_stream` path are crate-backed.
+**Status:** superseded on 2026-07-22 by
+[`tinyagents-migration-plan-2026-07-22.md`](tinyagents-migration-plan-2026-07-22.md).
+This document is retained as historical design detail; its version pins,
+phase status, and present-tense file inventory are not current.
 **Anchor precedent:** the TinyAgents harness migration (#4249 / #4399 / #4473) and the TinyCortex memory migration plan (`docs/tinycortex-memory-migration-plan.md`).
-**Target:** move the genuinely framework-shaped parts of `src/openhuman/inference/`, `src/openhuman/tools/`, and `src/openhuman/agent_orchestration/` down into the `tinyagents` crate (vendored git submodule at **`vendor/tinyagents`**, `https://github.com/tinyhumansai/tinyagents`), and delete the in-tree duplicates in favor of crate primitives.
+**Target:** move the genuinely framework-shaped parts of `src/openhuman/inference/`, `src/openhuman/tools/`, and `src/openhuman/agent/orchestration/` down into the `tinyagents` crate (vendored git submodule at **`vendor/tinyagents`**, `https://github.com/tinyhumansai/tinyagents`), and delete the in-tree duplicates in favor of crate primitives.
 
 ---
 
@@ -16,8 +17,8 @@ context-preserving `invoke_stream` path are crate-backed.
 | --- | --- | --- |
 | `src/openhuman/inference/` | ~53,000 (121 files) | Provider trait + OpenAI-compatible wire client, factory/routing, local runtime (Ollama/LM Studio/Whisper/Piper), voice, OAuth, RPC surface |
 | `src/openhuman/tools/` | ~38,500 | `Tool` trait + metadata model, schema cleaning, generated-tool admission, ~200-tool registry assembly, `impl/` families (filesystem, system, browser, computer, network, presentation), RPC surface |
-| `src/openhuman/agent_orchestration/` | ~25,800 | Product control plane over sub-agents: in-memory session, detached-run registry, workflow runs, agent teams, command center, worktree isolation, RPC/tools surface |
-| `src/openhuman/tinyagents/` (the seam) | ~15,200 (25 files) | Adapters implementing tinyagents traits over openhuman services — where all ported code plugs back in |
+| `src/openhuman/agent/orchestration/` | ~25,800 | Product control plane over sub-agents: in-memory session, detached-run registry, workflow runs, agent teams, command center, worktree isolation, RPC/tools surface |
+| `src/openhuman/agent/tinyagents/` (the seam) | ~15,200 (25 files) | Adapters implementing tinyagents traits over openhuman services — where all ported code plugs back in |
 
 **TinyAgents** (sibling repo, v1.7.1, edition 2024, GPL-3.0-only, published to crates.io) already provides: `harness/` (`ChatModel`, `Tool<State>`, agent loop, middleware, retry/fallback, usage/cost, cache, embeddings + vector store, summarization, steering, `SubAgent`/`SubAgentSession`/`SubAgentTool`, observability journals, `WorkspaceIsolation`, testkit), `graph/` (durable typed graphs, checkpointers incl. SQLite, recursion policy, `map_reduce`, `orchestration::TaskStore`/`SteeringRegistry`, topology export), `registry/`, and the `.rag`/`.ragsh` languages. ~30 public traits are the extension points.
 
@@ -93,7 +94,7 @@ Engine changes are made **inside `vendor/tinyagents`**, committed on a branch th
 - **Local runtime & voice** (~17k L): all of `inference/local/` (Ollama/LM Studio admin, Whisper/Piper install + engines), `voice/`, `device.rs`+`presets.rs`+`model_ids.rs`+`paths.rs` (device→tier product policy), `sentiment.rs`, `http/` (OpenAI-compat serving surface). tinyagents has no local-runtime provisioning and should not grow one now. (`device.rs` is technically portable — zero openhuman deps — but only valuable if tinyagents ever grows local provisioning; skip.)
 - **Tool product surface**: `tools/ops.rs` registry assembly (~200 registrations over ~50 domains), `user_filter.rs` (UI-toggle families), `orchestrator_tools.rs`, `local_cli.rs`, `impl/computer/` (macOS CGEvent/AX), `impl/presentation/`, network app integrations (polymarket, gitbooks, gmail_unsubscribe, mcp_setup).
 - **Orchestration product plane**: all `agent_orchestration/tools/*` (openhuman `Tool` impls re-pointed at crate primitives), `subagent_events.rs` + `run_ledger_finalize.rs` (event-bus bridges), `background_{completions,delivery}.rs` (chat idle-delivery UX), `pairing*` (tiny.place consent), `parent_context/` (DI bootstrap), `session_db::run_ledger` durability.
-- **The seam itself** (`src/openhuman/tinyagents/`) — it shrinks as duplication is deleted, but the `ChatModel`/`Tool`/middleware/journal adapters remain openhuman's integration layer.
+- **The seam itself** (`src/openhuman/agent/tinyagents/`) — it shrinks as duplication is deleted, but the `ChatModel`/`Tool`/middleware/journal adapters remain openhuman's integration layer.
 
 ---
 
@@ -215,7 +216,7 @@ Fix-in-place candidates (independent of the port; several become moot as phases 
 - Two parallel status enums (`AgentStatus` vs `OrchestrationTaskStatus`) — latent drift hazard (§2.5).
 - Process-wide `OnceLock<Mutex<…>>` singletons in `background_completions`/`background_delivery`/`running_subagents` serialized through `TEST_ENV_LOCK` in tests — the crate favors injected stores; Phase 4 removes most of them.
 
-**seam (`src/openhuman/tinyagents/`)**
+**seam (`src/openhuman/agent/tinyagents/`)**
 - `mod.rs:117-120` — retry pinned to 1 attempt (Workstream 11 debt; resolved in Phase 3).
 - `orchestration.rs:23-33` — bridge is re-export-only; live control path still on `RunQueue` (resolved in Phase 4).
 - `retriever.rs:14-27` — crate `Retriever`/`InMemoryVectorStore` built but unused on the live path (dead-until-swap; out of scope here, note for the memory migration).

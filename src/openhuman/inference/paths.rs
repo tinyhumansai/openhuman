@@ -1,6 +1,9 @@
 //! Workspace paths for Ollama, Whisper, Piper, and downloaded assets.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+use log::warn;
 
 use crate::openhuman::config::Config;
 
@@ -487,6 +490,106 @@ pub(crate) fn tts_model_target_path(config: &Config) -> PathBuf {
         .join(filename)
 }
 
+// ── Windows DLL-not-found detection + backoff ───────────────────────────
+
+/// Returns true when `exit_code` signals that the child process could not
+/// load a required DLL (Windows `STATUS_DLL_NOT_FOUND` / `0xC0000135`).
+/// Always returns false on non-Windows platforms.
+///
+/// The kernel maps a DLL-loader failure (e.g. missing Visual C++
+/// Redistributable) into this value as the process exit status when a
+/// console-subsystem binary loads but the OS loader cannot resolve a
+/// required import library.
+pub(crate) fn is_dll_not_found_exit(exit_code: Option<i32>) -> bool {
+    #[cfg(windows)]
+    {
+        // STATUS_DLL_NOT_FOUND (0xC0000135) as a signed i32.
+        // Windows NT status codes returned through GetExitCodeProcess are
+        // 32-bit unsigned; Rust's ExitStatus::code() reinterprets the
+        // bit pattern as i32, so 0xC0000135 → -1073741515.
+        exit_code == Some(-1073741515)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = exit_code;
+        false
+    }
+}
+
+/// Cooldown period for DLL-not-found error reports (5 minutes). Prevents
+/// 400+ Sentry events from a single missing system library.
+const DLL_NOT_FOUND_COOLDOWN_SECS: i64 = 300;
+
+/// Unix timestamp of the last DLL-not-found error that was fully reported.
+/// Used to throttle repeated errors so a single missing VC++ Redistributable
+/// does not generate a Sentry event per dictation attempt.
+static LAST_DLL_NOT_FOUND_REPORT: AtomicI64 = AtomicI64::new(0);
+
+/// Returns true when we are still inside the DLL-not-found cooldown window
+/// (a recent attempt already reported the full actionable message).
+pub(crate) fn is_dll_not_found_backoff_active() -> bool {
+    let now = unix_timestamp_secs();
+    let last = LAST_DLL_NOT_FOUND_REPORT.load(Ordering::Relaxed);
+    now - last < DLL_NOT_FOUND_COOLDOWN_SECS
+}
+
+/// Try to claim the DLL-not-found report slot. Returns true if this caller
+/// is the first to report a DLL error within the cooldown window — it should
+/// log the full actionable message. Returns false when the cooldown is active
+/// so the caller can silently degrade instead of duplicating the report.
+///
+/// Thread-safe: uses atomic compare-exchange so concurrent subprocess
+/// invocations do not race past the cooldown.
+pub(crate) fn try_claim_dll_not_found_report() -> bool {
+    let now = unix_timestamp_secs();
+    let last = LAST_DLL_NOT_FOUND_REPORT.load(Ordering::Relaxed);
+    if now - last < DLL_NOT_FOUND_COOLDOWN_SECS {
+        return false;
+    }
+    // CAS: if `last` hasn't changed since we read it, we win the slot.
+    LAST_DLL_NOT_FOUND_REPORT
+        .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+}
+
+/// Unix timestamp in seconds (monotonic-adjacent via SystemTime).
+fn unix_timestamp_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// Reset the DLL-not-found backoff state (test-only). Each test that calls
+/// `try_claim_dll_not_found_report` or `report_dll_not_found` must invoke this
+/// in its setup to avoid test-order-dependent cooldown carry-over.
+#[cfg(test)]
+pub(crate) fn reset_dll_not_found_backoff_for_test() {
+    LAST_DLL_NOT_FOUND_REPORT.store(0, Ordering::Relaxed);
+}
+
+/// Log a one-time DLL-not-found warning and return the actionable error
+/// string. Callers that detect `STATUS_DLL_NOT_FOUND` from a child process
+/// should use this instead of constructing their own message, so the warning
+/// log and the cooldown gate stay in one place.
+///
+/// Returns `None` when the backoff cooldown is active (the message was
+/// already reported recently) — the caller should return a short generic
+/// "whisper unavailable" error instead.
+pub(crate) fn report_dll_not_found(log_prefix: &str) -> Option<String> {
+    if !try_claim_dll_not_found_report() {
+        return None;
+    }
+    let msg = format!(
+        "{log_prefix} whisper-cli failed with STATUS_DLL_NOT_FOUND (0xC0000135): \
+         a required DLL is missing. On Windows, whisper-cli requires the \
+         Visual C++ Redistributable 2015-2022. \
+         Download from https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    );
+    warn!("{msg}");
+    Some(msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,5 +896,62 @@ mod tests {
             "workspace install must outrank standard-dir fallback"
         );
         let _ = std::fs::remove_dir_all(workspace_whisper_dir(&config));
+    }
+
+    // ── DLL-not-found tests ─────────────────────────────────────────
+
+    #[test]
+    fn dll_not_found_exit_false_on_non_windows() {
+        // On non-Windows, all exit codes return false.
+        assert!(!is_dll_not_found_exit(Some(-1073741515)));
+        assert!(!is_dll_not_found_exit(Some(1)));
+        assert!(!is_dll_not_found_exit(Some(0)));
+        assert!(!is_dll_not_found_exit(None));
+    }
+
+    #[test]
+    fn report_dll_not_found_claims_first_call() {
+        reset_dll_not_found_backoff_for_test();
+        // First call wins the slot and returns the message.
+        let msg = report_dll_not_found("[test]");
+        assert!(msg.is_some(), "first report must be Some");
+        assert!(msg.unwrap().contains("Visual C++"), "must mention VC++");
+    }
+
+    #[test]
+    fn report_dll_not_found_suppresses_duplicates() {
+        reset_dll_not_found_backoff_for_test();
+        // First call succeeds.
+        assert!(report_dll_not_found("[test]").is_some());
+        // Second call (within cooldown) is suppressed.
+        assert!(
+            report_dll_not_found("[test]").is_none(),
+            "duplicate within cooldown must be suppressed"
+        );
+    }
+
+    #[test]
+    fn try_claim_returns_true_once_then_false() {
+        reset_dll_not_found_backoff_for_test();
+        assert!(try_claim_dll_not_found_report(), "first claim must succeed");
+        // After the claim, subsequent attempts within the cooldown should fail.
+        assert!(
+            !try_claim_dll_not_found_report(),
+            "second claim within cooldown must fail"
+        );
+    }
+
+    #[test]
+    fn is_backoff_active_after_claim() {
+        reset_dll_not_found_backoff_for_test();
+        assert!(
+            !is_dll_not_found_backoff_active(),
+            "before claim, no backoff"
+        );
+        try_claim_dll_not_found_report();
+        assert!(
+            is_dll_not_found_backoff_active(),
+            "after claim, backoff must be active"
+        );
     }
 }

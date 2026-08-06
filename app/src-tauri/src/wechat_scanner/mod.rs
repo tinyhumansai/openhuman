@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use openhuman_core::openhuman::webview_accounts::{
+use openhuman_core::openhuman::channels::webview_accounts::{
     list_ingest_envelope, memory_doc_ingest_list_snapshot, memory_doc_ingest_peer_transcript,
     validate_scan, WechatMessageRow, WechatScanPayload,
 };

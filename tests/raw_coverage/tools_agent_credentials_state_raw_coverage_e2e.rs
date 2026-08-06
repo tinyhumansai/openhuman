@@ -22,33 +22,33 @@ use openhuman_core::openhuman::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, ParentExecutionContext, PromptSource,
     SandboxMode, SubagentRunOptions, ToolScope,
 };
-use openhuman_core::openhuman::app_state::{
+use openhuman_core::openhuman::desktop::app_state::{
     snapshot, update_local_state, StoredAppStatePatch, StoredOnboardingTasks,
 };
 use openhuman_core::openhuman::config::rpc as config_rpc;
 use openhuman_core::openhuman::config::{
     BrowserConfig, Config, HttpRequestConfig, McpAuthConfig, McpServerConfig,
 };
-use openhuman_core::openhuman::context::prompt::ToolCallFormat;
-use openhuman_core::openhuman::credentials::profiles::{
+use openhuman_core::openhuman::agent::context::prompt::ToolCallFormat;
+use openhuman_core::openhuman::security::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
-};
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
 };
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary};
 use openhuman_core::openhuman::security::{AuditLogger, SecurityPolicy};
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{
     all_tools, BrowserTool, ComputerUseConfig, SpawnSubagentTool, Tool, ToolResult,
 };
 use parking_lot::Mutex as ParkingMutex;
 use serde_json::{json, Value};
 use tempfile::{Builder, TempDir};
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
 static ROUND16_ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
@@ -105,50 +105,42 @@ impl Harness {
     }
 }
 
-struct ScriptedProvider {
-    responses: ParkingMutex<Vec<ChatResponse>>,
-    requests: ParkingMutex<Vec<Vec<ChatMessage>>>,
+struct ScriptedModel {
+    responses: ParkingMutex<Vec<ModelResponse>>,
+    requests: ParkingMutex<Vec<Vec<Message>>>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Self {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Self {
         Self {
             responses: ParkingMutex::new(responses),
             requests: ParkingMutex::new(Vec::new()),
         }
     }
 
-    fn requests(&self) -> Vec<Vec<ChatMessage>> {
+    fn requests(&self) -> Vec<Vec<Message>> {
         self.requests.lock().clone()
     }
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: OnceLock<ModelProfile> = OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("round16".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("extract:{message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        self.requests.lock().push(request.messages.to_vec());
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.requests.lock().push(request.messages);
         Ok(self.responses.lock().remove(0))
     }
 }
@@ -328,28 +320,32 @@ fn setup(api_url: &str) -> Harness {
     }
 }
 
-fn usage(input_tokens: u64, output_tokens: u64) -> UsageInfo {
-    UsageInfo {
-        input_tokens,
-        output_tokens,
-        context_window: 8_192,
-        cached_input_tokens: input_tokens / 2,
-        cache_creation_tokens: 0,
-        reasoning_tokens: 0,
-        charged_amount_usd: 0.001,
+fn usage(input_tokens: u64, output_tokens: u64) -> Usage {
+    let mut usage = Usage::new(input_tokens, output_tokens);
+    usage.cache_read_tokens = input_tokens / 2;
+    usage
+}
+
+fn response(text: Option<&str>, tool_calls: Vec<ToolCall>) -> ModelResponse {
+    let usage = usage(50, 7);
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: text
+                .map(|text| vec![ContentBlock::Text(text.to_string())])
+                .unwrap_or_default(),
+            tool_calls,
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: None,
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn response(text: Option<&str>, tool_calls: Vec<ToolCall>) -> ChatResponse {
-    ChatResponse {
-        text: text.map(str::to_string),
-        tool_calls,
-        usage: Some(usage(50, 7)),
-        reasoning_content: None,
-    }
-}
-
-fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -361,10 +357,13 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            provider,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round16-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
@@ -543,7 +542,7 @@ async fn round16_browser_computer_use_validation_and_sidecar_paths() {
     }
 
     let bad_endpoint = browser_tool("https://public.example.test/".into(), &harness.workspace)
-        .execute(json!({ "action": "screen_capture" }))
+        .execute(json!({ "action": "mouse_move", "x": 1, "y": 1 }))
         .await
         .expect("public endpoint is rejected as a tool result");
     assert!(bad_endpoint.is_error);
@@ -563,7 +562,6 @@ fn round16_all_tools_registry_branches_and_browser_allowlist() {
     };
     cfg.node.enabled = false;
     cfg.gitbooks.enabled = true;
-    cfg.computer_control.enabled = true;
     cfg.learning.enabled = true;
     cfg.learning.tool_tracking_enabled = true;
     cfg.browser.enabled = true;
@@ -633,8 +631,6 @@ fn round16_all_tools_registry_branches_and_browser_allowlist() {
         "mcp_list_servers",
         "mcp_list_tools",
         "mcp_call_tool",
-        "mouse",
-        "keyboard",
         "tool_stats",
         "delegate",
         "mcp_setup_search",
@@ -645,6 +641,8 @@ fn round16_all_tools_registry_branches_and_browser_allowlist() {
             "expected {expected} in {names:?}"
         );
     }
+    assert!(!names.iter().any(|name| name == "mouse"));
+    assert!(!names.iter().any(|name| name == "keyboard"));
     assert!(!names.iter().any(|name| name == "node_exec"));
     assert!(!names.iter().any(|name| name == "npm_exec"));
     assert!(
@@ -687,7 +685,7 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
         "error output should not be empty"
     );
 
-    let provider = Arc::new(ScriptedProvider::new(vec![response(
+    let provider = Arc::new(ScriptedModel::new(vec![response(
         Some("subagent final answer that will be clipped"),
         Vec::new(),
     )]));
@@ -710,9 +708,9 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
     assert_eq!(outcome.agent_id, "round16_worker");
     assert_eq!(outcome.output, "subagent final ans\n[...truncated]");
     assert!(provider.requests()[0].iter().any(|message| {
-        message.role == "user"
-            && message.content.contains("parent memory")
-            && message.content.contains("caller context")
+        matches!(message, Message::User(_))
+            && message.text().contains("parent memory")
+            && message.text().contains("caller context")
     }));
 
     let no_parent = run_subagent(&definition, "no parent", SubagentRunOptions::default())
@@ -726,20 +724,19 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
 async fn round16_agent_builder_turn_uses_public_harness_paths() {
     let _lock = env_lock();
     let harness = setup("http://127.0.0.1:9");
-    let provider = Arc::new(ScriptedProvider::new(vec![
+    let provider = Arc::new(ScriptedModel::new(vec![
         response(
             Some("need echo"),
-            vec![ToolCall {
-                id: "call-round16".into(),
-                name: "echo".into(),
-                arguments: json!({ "message": "builder" }).to_string(),
-                extra_content: None,
-            }],
+            vec![ToolCall::new(
+                "call-round16",
+                "echo",
+                json!({ "message": "builder" }),
+            )],
         ),
         response(Some("builder final"), Vec::new()),
     ]));
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![Box::new(EchoTool)])
         .memory(Arc::new(StubMemory))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
@@ -763,7 +760,7 @@ async fn round16_agent_builder_turn_uses_public_harness_paths() {
     assert_eq!(answer, "builder final");
     assert!(agent.history().iter().any(|message| matches!(
         message,
-        openhuman_core::openhuman::inference::provider::ConversationMessage::ToolResults(results)
+        openhuman_core::openhuman::agent::messages::ConversationMessage::ToolResults(results)
             if results.iter().any(|result| result.content.contains("echo:builder"))
     )));
 }

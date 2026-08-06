@@ -10,7 +10,7 @@
 //!   [`tinyplace::signal::crypto::ed25519_seed_to_x25519_keypair`]. Never written
 //!   to disk. If the wallet is locked the store cannot be built.
 //! - **Pre-keys and sessions**: serialised to JSON, encrypted with
-//!   [`crate::openhuman::keyring::SecretStore`] (ChaCha20-Poly1305, OS keychain
+//!   [`crate::openhuman::security::keyring::SecretStore`] (ChaCha20-Poly1305, OS keychain
 //!   master key), then written atomically. Raw private-key bytes never appear in
 //!   plaintext on disk.
 //! - **Agent-write protection**: `{workspace_dir}/tinyplace/` is listed in
@@ -46,7 +46,7 @@ use tinyplace::signal::crypto::{ed25519_seed_to_x25519_keypair, X25519KeyPair};
 use tinyplace::signal::keys::{PreKeyPair, SignedPreKeyPair};
 use tinyplace::signal::store::{SessionState, SessionStore};
 
-use crate::openhuman::keyring::SecretStore;
+use crate::openhuman::security::keyring::SecretStore;
 
 // ── Serde mirror types ────────────────────────────────────────────────────────
 //
@@ -604,7 +604,7 @@ async fn init_signal_store() -> std::result::Result<Arc<FileSessionStore>, Strin
 
     // 1. Derive the identity key from the wallet seed.
     //    The seed is never logged or persisted.
-    let seed = crate::openhuman::wallet::tinyplace_signer_seed().await?;
+    let seed = crate::openhuman::web3::wallet::tinyplace_signer_seed().await?;
     let identity = ed25519_seed_to_x25519_keypair(&seed);
     log::debug!("[signal_store] identity key derived (key not logged)");
 

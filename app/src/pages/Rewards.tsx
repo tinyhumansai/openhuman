@@ -4,6 +4,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
 import ChipTabs from '../components/layout/ChipTabs';
+import PageSectionHeader from '../components/layout/PageSectionHeader';
+import PageWelcome from '../components/layout/PageWelcome';
+import { usePageWelcomeView } from '../components/layout/usePageWelcomeView';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
@@ -116,10 +119,60 @@ const Rewards = () => {
     void loadRewards();
   }, [loadRewards]);
 
+  const { view, setView, nav } = usePageWelcomeView({
+    ariaLabel: t('rewards.title'),
+    welcomeLabel: t('rewards.welcome.nav'),
+    mainLabel: t('rewards.welcome.main'),
+    mainIconPath:
+      'M12 8v8m0-8l-3-3m3 3l3-3M8 14H6a2 2 0 01-2-2V7a2 2 0 012-2h2m8 9h2a2 2 0 002-2V7a2 2 0 00-2-2h-2M7 19h10',
+  });
+
+  if (view === 'welcome' && !isLocalSession) {
+    return (
+      <>
+        {nav}
+        <PageWelcome
+          testId="rewards-welcome"
+          accent="coral"
+          icon="🎁"
+          eyebrow={t('rewards.welcome.eyebrow')}
+          title={t('rewards.welcome.title')}
+          description={t('rewards.welcome.body')}
+          ctas={[
+            {
+              label: t('rewards.welcome.ctaView'),
+              icon: '🎁',
+              onClick: () => setView('main'),
+              testId: 'rewards-welcome-cta-view',
+            },
+          ]}
+          featuresHeading={t('rewards.welcome.featsLabel')}
+          features={[
+            {
+              icon: '⭐',
+              title: t('rewards.welcome.feat1Title'),
+              description: t('rewards.welcome.feat1Body'),
+            },
+            {
+              icon: '🔥',
+              title: t('rewards.welcome.feat2Title'),
+              description: t('rewards.welcome.feat2Body'),
+            },
+            {
+              icon: '🎟️',
+              title: t('rewards.welcome.feat3Title'),
+              description: t('rewards.welcome.feat3Body'),
+            },
+          ]}
+        />
+      </>
+    );
+  }
+
   if (isLocalSession) {
     return (
       <div className="min-h-full px-4 pt-6 pb-10">
-        <div className="mx-auto max-w-2xl space-y-4">
+        <div className="mx-auto max-w-3xl space-y-4">
           <EmptyStateCard
             className="shadow-soft"
             icon={
@@ -148,34 +201,43 @@ const Rewards = () => {
   }
 
   return (
-    <div className="min-h-full px-4 pt-6 pb-10">
-      <div className="mx-auto max-w-2xl space-y-4">
-        <ChipTabs<RewardsTab>
-          items={[
-            { id: 'referrals', label: t('rewards.referrals') },
-            { id: 'rewards', label: t('rewards.title') },
-            { id: 'redeem', label: t('rewards.coupons') },
-          ]}
-          value={selectedTab}
-          onChange={handleTabChange}
-          className="flex flex-wrap gap-2 pb-1"
-        />
-
-        {selectedTab === 'referrals' ? (
-          <RewardsReferralsTab />
-        ) : selectedTab === 'redeem' ? (
-          <RewardsRedeemTab />
-        ) : (
-          <RewardsCommunityTab
-            error={error}
-            isLoading={isLoading}
-            onRetry={handleRetry}
-            onSilentRefresh={handleSilentRefresh}
-            snapshot={rewardsSnapshot}
+    <>
+      {nav}
+      <div className="min-h-full px-4 pt-6 pb-10">
+        <div className="mx-auto max-w-3xl space-y-4">
+          <PageSectionHeader
+            title={t('rewards.title')}
+            description={t('rewards.header.desc')}
+            tabs={
+              <ChipTabs<RewardsTab>
+                items={[
+                  { id: 'referrals', label: t('rewards.referrals') },
+                  { id: 'rewards', label: t('rewards.title') },
+                  { id: 'redeem', label: t('rewards.coupons') },
+                ]}
+                value={selectedTab}
+                onChange={handleTabChange}
+                className="flex flex-wrap gap-1.5"
+              />
+            }
           />
-        )}
+
+          {selectedTab === 'referrals' ? (
+            <RewardsReferralsTab />
+          ) : selectedTab === 'redeem' ? (
+            <RewardsRedeemTab />
+          ) : (
+            <RewardsCommunityTab
+              error={error}
+              isLoading={isLoading}
+              onRetry={handleRetry}
+              onSilentRefresh={handleSilentRefresh}
+              snapshot={rewardsSnapshot}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

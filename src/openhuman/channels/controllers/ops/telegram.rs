@@ -6,7 +6,7 @@ use crate::api::config::{app_env_from_env, effective_backend_api_url, is_staging
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials;
+use crate::openhuman::security::credentials;
 use crate::rpc::RpcOutcome;
 
 use super::super::definitions::ChannelAuthMode;

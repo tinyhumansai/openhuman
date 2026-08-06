@@ -21,6 +21,7 @@ import {
   memoryTreeObsidianVaultStatus,
   memoryTreeRecall,
   memoryTreeResetTree,
+  memoryTreeRetryFailed,
   memoryTreeSearch,
   memoryTreeSetLlm,
   memoryTreeTopEntities,
@@ -460,5 +461,29 @@ describe('memorySyncStatusList', () => {
     mockCallCoreRpc.mockResolvedValueOnce({});
     const rows = await memorySyncStatusList();
     expect(rows).toEqual([]);
+  });
+});
+
+describe('memoryTreeRetryFailed', () => {
+  test('dispatches memory_tree_retry_failed with empty params and returns the count', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: { requeued: 5 }, logs: ['stub'] });
+
+    const out = await memoryTreeRetryFailed();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.memory_tree_retry_failed',
+      params: {},
+    });
+    expect(out).toEqual({ requeued: 5 });
+  });
+
+  test('passes through bare-shape responses (no envelope) unchanged', async () => {
+    // Defensive path: a handler that stops emitting logs returns the bare
+    // value, which flows through `unwrapResult` untouched.
+    mockCallCoreRpc.mockResolvedValueOnce({ requeued: 0 });
+
+    const out = await memoryTreeRetryFailed();
+
+    expect(out).toEqual({ requeued: 0 });
   });
 });

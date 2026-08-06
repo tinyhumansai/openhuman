@@ -25,15 +25,17 @@ use crate::core::event_bus::{
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ingest_pipeline::ingest_chat;
-use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
-use crate::openhuman::memory_queue::{self, count_total, drain_until_idle, JobStatus};
-use crate::openhuman::memory_store::chunks::store::{
+use crate::openhuman::memory::queue::{
+    self as memory_queue, count_total, drain_until_idle, JobStatus,
+};
+use crate::openhuman::memory::store::chunks::store::{
     count_chunks, count_chunks_by_lifecycle_status, CHUNK_STATUS_BUFFERED,
 };
-use crate::openhuman::memory_store::trees::{store as tree_store, types::TreeKind};
-use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::retrieval::{query_source, search_entities};
-use crate::openhuman::memory_tree::score::store::lookup_entity;
+use crate::openhuman::memory::store::trees::{store as tree_store, types::TreeKind};
+use crate::openhuman::memory::sync_events::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
+use crate::openhuman::memory::tree::retrieval::{query_source, search_entities};
+use crate::openhuman::memory::tree::score::store::lookup_entity;
+use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -272,13 +274,27 @@ async fn multi_batch_volume_builds_full_tree() {
     });
     assert!(canonicalized >= 20);
 
-    // Drain all jobs.
-    drain_until_idle(&cfg).await.unwrap();
+    // A parallel test can briefly hold the process-global LLM gate, causing
+    // the seal job to defer. Keep draining until that deferred work becomes
+    // claimable and the durable tree state reflects the completed seal.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let source_tree = loop {
+        drain_until_idle(&cfg).await.unwrap();
+        if let Some(tree) = tree_store::list_trees_by_kind(&cfg, TreeKind::Source)
+            .unwrap()
+            .into_iter()
+            .find(|tree| tree.scope == source_id && tree.max_level >= 1)
+        {
+            break tree;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "source tree did not seal before timeout"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
 
     // Source tree should have sealed to L1+.
-    let source_trees = tree_store::list_trees_by_kind(&cfg, TreeKind::Source).unwrap();
-    assert!(!source_trees.is_empty());
-    let source_tree = &source_trees[0];
     assert!(
         source_tree.max_level >= 1,
         "should seal to L1+, got max_level={}",

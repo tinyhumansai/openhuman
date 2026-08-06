@@ -1,6 +1,6 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 
-export type ProviderErrorPresentation = { summary: string; details: string };
+type ProviderErrorPresentation = { summary: string; details: string };
 
 function decodeJsonString(value: string): string {
   try {

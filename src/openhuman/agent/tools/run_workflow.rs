@@ -33,7 +33,9 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::openhuman::skill_runtime::{await_run_outcome, spawn_workflow_run_background};
+use crate::openhuman::skills::runtime::{
+    await_run_outcome, spawn_workflow_run_background_with_profile,
+};
 use crate::openhuman::skills::schemas::resolve_workspace_dir;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
@@ -208,9 +210,15 @@ fn outcome_to_result(
 /// `run_workflow` — orchestrator-callable spawn + inline await of another
 /// workflow.
 pub struct RunWorkflowTool {
+    /// Full active profile context inherited by the autonomous workflow agent.
+    active_profile: Option<crate::openhuman::agent::profiles::AgentProfile>,
     /// Per-profile allowlist of runnable workflow `dir_name` slugs. `None`
     /// (the default) means every installed workflow may be run.
     skill_allowlist: Option<std::collections::HashSet<String>>,
+    /// Active profile's private skills root
+    /// (`<workspace>/personalities/<id>/skills/`). Resolves + implicitly allows
+    /// the owner's profile-local skills. `None` = byte-identical to today.
+    profile_skills_root: Option<std::path::PathBuf>,
 }
 
 impl Default for RunWorkflowTool {
@@ -222,8 +230,18 @@ impl Default for RunWorkflowTool {
 impl RunWorkflowTool {
     pub fn new() -> Self {
         Self {
+            active_profile: None,
             skill_allowlist: None,
+            profile_skills_root: None,
         }
+    }
+
+    pub fn with_active_profile(
+        mut self,
+        profile: Option<crate::openhuman::agent::profiles::AgentProfile>,
+    ) -> Self {
+        self.active_profile = profile;
+        self
     }
 
     /// Restrict which workflows this tool may run to a per-profile allowlist.
@@ -232,6 +250,13 @@ impl RunWorkflowTool {
         allowlist: Option<std::collections::HashSet<String>>,
     ) -> Self {
         self.skill_allowlist = allowlist;
+        self
+    }
+
+    /// Resolve (and implicitly allow) the active profile's private skills so a
+    /// turn under profile P can run P's own skills.
+    pub fn with_profile_skills_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.profile_skills_root = root;
         self
     }
 }
@@ -308,7 +333,12 @@ impl Tool for RunWorkflowTool {
             }
         };
         if let Some(allow) = &self.skill_allowlist {
-            if !allow.contains(&workflow_id) {
+            // Profile-local skills are implicitly allowed for their owner (they
+            // bypass `allowed_skills`), mirroring `list_workflows`.
+            let profile_local = crate::openhuman::skills::profile_local_skill_ids(
+                self.profile_skills_root.as_deref(),
+            );
+            if !profile_local.contains(&workflow_id) && !allow.contains(&workflow_id) {
                 log::debug!("[profiles] run_workflow blocked by profile allowlist: {workflow_id}");
                 return Ok(ToolResult::error(format!(
                     "run_workflow: workflow `{workflow_id}` is not available to the active agent profile"
@@ -321,7 +351,14 @@ impl Tool for RunWorkflowTool {
         // Fire-and-forget: only the spawn backstop applies — no await, so no
         // re-entrancy/nesting slot to take.
         if wait_seconds == 0 {
-            return match spawn_workflow_run_background(workflow_id.clone(), inputs).await {
+            return match spawn_workflow_run_background_with_profile(
+                workflow_id.clone(),
+                inputs,
+                self.profile_skills_root.clone(),
+                self.active_profile.clone(),
+            )
+            .await
+            {
                 // Count only spawns that actually start against the backstop —
                 // unknown-workflow / bad-input rejections (the Err arm) must not
                 // burn the budget, or rejected calls accumulate and trip the
@@ -355,7 +392,14 @@ impl Tool for RunWorkflowTool {
             Err(e) => return Ok(ToolResult::error(format!("run_workflow: {e}"))),
         };
 
-        let started = match spawn_workflow_run_background(workflow_id.clone(), inputs).await {
+        let started = match spawn_workflow_run_background_with_profile(
+            workflow_id.clone(),
+            inputs,
+            self.profile_skills_root.clone(),
+            self.active_profile.clone(),
+        )
+        .await
+        {
             Ok(s) => {
                 if let Err(e) = guard::account_spawn() {
                     return Ok(ToolResult::error(format!("run_workflow: {e}")));
@@ -385,7 +429,11 @@ impl Tool for RunWorkflowTool {
 }
 
 /// `await_workflow` — re-attach to a detached run by `run_id` and wait.
-pub struct AwaitWorkflowTool;
+pub struct AwaitWorkflowTool {
+    active_profile_id: Option<String>,
+    skill_allowlist: Option<std::collections::HashSet<String>>,
+    profile_skills_root: Option<std::path::PathBuf>,
+}
 
 impl Default for AwaitWorkflowTool {
     fn default() -> Self {
@@ -395,8 +443,44 @@ impl Default for AwaitWorkflowTool {
 
 impl AwaitWorkflowTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            active_profile_id: None,
+            skill_allowlist: None,
+            profile_skills_root: None,
+        }
     }
+
+    pub fn with_active_profile(
+        mut self,
+        profile: Option<crate::openhuman::agent::profiles::AgentProfile>,
+    ) -> Self {
+        self.active_profile_id = profile.map(|profile| profile.id);
+        self
+    }
+
+    pub fn with_skill_allowlist(
+        mut self,
+        allowlist: Option<std::collections::HashSet<String>>,
+    ) -> Self {
+        self.skill_allowlist = allowlist;
+        self
+    }
+
+    pub fn with_profile_skills_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.profile_skills_root = root;
+        self
+    }
+}
+
+fn run_visible_to_profile(
+    run: &crate::openhuman::skills::run_log::ScannedRun,
+    active_profile_id: Option<&str>,
+    skill_allowlist: Option<&std::collections::HashSet<String>>,
+    profile_local_ids: &std::collections::HashSet<String>,
+) -> bool {
+    run.profile_id.as_deref() == active_profile_id
+        && (profile_local_ids.contains(&run.workflow_id)
+            || skill_allowlist.is_none_or(|allowlist| allowlist.contains(&run.workflow_id)))
 }
 
 #[async_trait]
@@ -447,16 +531,27 @@ impl Tool for AwaitWorkflowTool {
         let wait_seconds = parse_wait_seconds(&args);
 
         let workspace = resolve_workspace_dir().await;
-        let log_path =
-            match crate::openhuman::skills::run_log::find_run_log_path(&workspace, &run_id) {
-                Some(p) => p,
-                None => {
-                    return Ok(ToolResult::error(format!(
-                        "await_workflow: no run found for run_id `{run_id}` (it may not exist or \
-                         hasn't started writing its log yet)"
-                    )));
-                }
-            };
+        let profile_local_ids =
+            crate::openhuman::skills::profile_local_skill_ids(self.profile_skills_root.as_deref());
+        let visible_run =
+            crate::openhuman::skills::run_log::scan_runs(&workspace, None, usize::MAX)
+                .into_iter()
+                .find(|run| {
+                    run.run_id == run_id
+                        && run_visible_to_profile(
+                            run,
+                            self.active_profile_id.as_deref(),
+                            self.skill_allowlist.as_ref(),
+                            &profile_local_ids,
+                        )
+                });
+        let Some(visible_run) = visible_run else {
+            return Ok(ToolResult::error(format!(
+                "await_workflow: no run found for run_id `{run_id}` (it may not exist, is not \
+                 available to the active profile, or hasn't started writing its log yet)"
+            )));
+        };
+        let log_path = std::path::PathBuf::from(&visible_run.log_path);
 
         // Take an await slot so the LLM can't stack unbounded waits or
         // double-await the same run; keyed by run_id.
@@ -467,9 +562,12 @@ impl Tool for AwaitWorkflowTool {
 
         let outcome =
             await_run_outcome(&log_path, std::time::Duration::from_secs(wait_seconds)).await;
-        // workflow_id isn't carried on the handle here; the run_id is the
-        // stable key the caller holds, so echo that and leave workflow_id blank.
-        Ok(outcome_to_result(&run_id, "", &log_path, outcome))
+        Ok(outcome_to_result(
+            &run_id,
+            &visible_run.workflow_id,
+            &log_path,
+            outcome,
+        ))
     }
 }
 
@@ -521,6 +619,41 @@ mod tests {
         let res = t.execute(json!({})).await.expect("Ok(ToolResult)");
         assert!(res.is_error);
         assert!(res.output().contains("run_id"));
+    }
+
+    #[test]
+    fn detached_run_visibility_requires_profile_and_allowlist() {
+        let run = crate::openhuman::skills::run_log::ScannedRun {
+            run_id: "run-1".to_string(),
+            workflow_id: "private-flow".to_string(),
+            profile_id: Some("alice".to_string()),
+            started: String::new(),
+            status: "DONE".to_string(),
+            duration_ms: None,
+            finished: None,
+            log_path: "/tmp/run.log".to_string(),
+        };
+        let allowed = ["private-flow".to_string()].into_iter().collect();
+        let empty = std::collections::HashSet::new();
+
+        assert!(run_visible_to_profile(
+            &run,
+            Some("alice"),
+            Some(&allowed),
+            &empty
+        ));
+        assert!(!run_visible_to_profile(
+            &run,
+            Some("bob"),
+            Some(&allowed),
+            &empty
+        ));
+        assert!(!run_visible_to_profile(
+            &run,
+            Some("alice"),
+            Some(&empty),
+            &empty
+        ));
     }
 
     #[test]

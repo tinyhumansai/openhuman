@@ -16,7 +16,7 @@
 //! Callers register hooks via [`with_stop_hooks`] around their turn invocation.
 //! The `tinyagents` adapter snapshots them via [`current_stop_hooks`] and
 //! installs a `StopHookMiddleware`
-//! ([`crate::openhuman::tinyagents::stop_hooks`]) that fires each hook after
+//! ([`crate::openhuman::agent::tinyagents::stop_hooks`]) that fires each hook after
 //! every model call; a hook returning [`StopDecision::Stop`] pauses the run
 //! gracefully (via the steering handle) before the next provider call.
 //!

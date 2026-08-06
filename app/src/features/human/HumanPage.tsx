@@ -7,7 +7,9 @@ import {
   selectCustomPrimaryColor,
   selectCustomSecondaryColor,
   selectMascotColor,
+  selectVoiceMode,
 } from '../../store/mascotSlice';
+import { VOICE_MODE_FLAG_ENABLED } from '../../utils/config';
 import Conversations from '../conversations/Conversations';
 import {
   CustomGifMascot,
@@ -17,6 +19,7 @@ import {
   RiveMascot,
 } from './Mascot';
 import { useMascotManifest } from './Mascot/manifest/useMascotManifest';
+import RealtimeVoiceControls from './RealtimeVoiceControls';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
@@ -33,6 +36,8 @@ const HumanPage = () => {
   }, [speakReplies]);
 
   const { face, visemeCode } = useHumanMascot({ speakReplies });
+  const voiceMode = useAppSelector(selectVoiceMode);
+  const realtimeEnabled = VOICE_MODE_FLAG_ENABLED && voiceMode === 'realtime';
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimary = useAppSelector(selectCustomPrimaryColor);
   const customSecondary = useAppSelector(selectCustomSecondaryColor);
@@ -47,6 +52,18 @@ const HumanPage = () => {
   const secondaryColor = useMemo(
     () => hexToArgbInt(mascotColor === 'custom' ? customSecondary : palette.neckShadowColor),
     [mascotColor, customSecondary, palette]
+  );
+
+  // The mascot drives a ~60fps lipsync re-render while the agent is speaking
+  // (useHumanMascot forces a frame each rAF tick). Conversations is a heavy
+  // subtree, so co-rendering it here would reconcile the whole chat tree every
+  // frame and starve the main thread — which is what made tab switching feel
+  // locked during TTS playback (#5357). Its props are constant, so hold a stable
+  // element: React short-circuits reconciliation of an unchanged child, keeping
+  // the per-frame mascot re-render off the chat tree and the UI responsive.
+  const chatPanel = useMemo(
+    () => <Conversations variant="sidebar" composer="mic-cloud" projectThreadList />,
+    []
   );
 
   return (
@@ -85,6 +102,15 @@ const HumanPage = () => {
         </div>
       </div>
 
+      {/* Realtime voice-chat controls (#5399) — additive overlay shown only when
+          the flag + realtime mode are on; the classic push-to-talk path below
+          is untouched. */}
+      {realtimeEnabled && (
+        <div className="absolute bottom-8 left-0 right-[436px] z-10 flex justify-center">
+          <RealtimeVoiceControls />
+        </div>
+      )}
+
       <label className="absolute top-4 left-4 z-10 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface/80 backdrop-blur-sm border border-line-strong text-xs text-content-secondary shadow-soft cursor-pointer select-none">
         <input
           type="checkbox"
@@ -100,8 +126,10 @@ const HumanPage = () => {
       <div className="absolute right-4 top-4 bottom-4 z-10 flex items-center">
         <aside className="w-[420px] h-[min(760px,100%)] rounded-2xl border border-line-strong bg-surface shadow-soft flex flex-col overflow-hidden">
           {/* Right-rail chat, but its thread list is surfaced in the (otherwise
-              empty) root sidebar so the Human page shows the user's threads. */}
-          <Conversations variant="sidebar" composer="mic-cloud" projectThreadList />
+              empty) root sidebar so the Human page shows the user's threads.
+              Held as a stable element (chatPanel) so mascot lipsync re-renders
+              don't reconcile it — see #5357. */}
+          {chatPanel}
         </aside>
       </div>
     </div>

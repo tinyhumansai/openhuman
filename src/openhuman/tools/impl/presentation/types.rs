@@ -41,7 +41,7 @@ pub(super) const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 pub enum SlideImageSource {
     /// Bytes from a workspace artifact (e.g. a chart the agent produced
     /// earlier via another tool). Resolved through
-    /// [`crate::openhuman::artifacts::read_artifact_bytes`].
+    /// [`crate::openhuman::agent::artifacts::read_artifact_bytes`].
     Artifact { artifact_id: String },
     /// Bytes from a local filesystem path the agent already has read
     /// access to (e.g. a screenshot saved under the action dir).

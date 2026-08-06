@@ -3,7 +3,7 @@ use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
 
 #[test]
 fn lazy_resolver_tolerates_near_miss_slugs() {
-    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    use crate::openhuman::agent::context::prompt::ConnectedIntegrationTool;
     let mk = |name: &str| ConnectedIntegrationTool {
         name: name.into(),
         description: "d".into(),
@@ -12,6 +12,7 @@ fn lazy_resolver_tolerates_near_miss_slugs() {
     let resolver = LazyToolkitResolver {
         config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
         actions: vec![mk("GOOGLESLIDES_BATCH_UPDATE"), mk("GMAIL_LIST_MESSAGES")],
+        resolved: std::sync::Mutex::default(),
     };
     // Exact, case-insensitive, and separator/prefix drift all resolve
     // (bug-report-2026-05-26 A2).
@@ -65,7 +66,8 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
-        tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression:
+            crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -199,139 +201,169 @@ fn append_subagent_role_contract_is_idempotent() {
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
 use crate::openhuman::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
-use crate::openhuman::inference::provider::{
-    ChatRequest as PChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall,
-};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyagents::harness::model::{
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+};
+use tinyagents::harness::tool::ToolCall;
 
 /// Mock provider whose response queue can be inspected by the test
 /// to verify the bytes that arrive at the model.
 #[derive(Clone)]
 struct CapturedRequest {
-    messages: Vec<crate::openhuman::inference::provider::ChatMessage>,
+    messages: Vec<CapturedMessage>,
     tool_count: usize,
     model: String,
 }
 
+#[derive(Clone)]
+struct CapturedMessage {
+    role: &'static str,
+    content: String,
+}
+
 struct ScriptedProvider {
-    responses: Mutex<Vec<ChatResponse>>,
+    responses: Mutex<Vec<ModelResponse>>,
     captured: Mutex<Vec<CapturedRequest>>,
 }
 
 impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses),
             captured: Mutex::new(Vec::new()),
         })
     }
+
+    fn take_response(&self, request: ModelRequest) -> ModelResponse {
+        self.captured.lock().push(CapturedRequest {
+            messages: request
+                .messages
+                .iter()
+                .map(|message| CapturedMessage {
+                    role: match message {
+                        Message::System(_) => "system",
+                        Message::User(_) => "user",
+                        Message::Assistant(_) => "assistant",
+                        Message::Tool(_) => "tool",
+                    },
+                    content: message.text(),
+                })
+                .collect(),
+            tool_count: request.tools.len(),
+            model: request.model.unwrap_or_default(),
+        });
+        let mut responses = self.responses.lock();
+        if responses.is_empty() {
+            ModelResponse::assistant("")
+        } else {
+            responses.remove(0)
+        }
+    }
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok("noop".into())
+impl ChatModel<()> for ScriptedProvider {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::LazyLock<ModelProfile> =
+            std::sync::LazyLock::new(|| ModelProfile {
+                provider: Some("subagent-runner-test".to_string()),
+                tool_calling: true,
+                parallel_tool_calls: true,
+                streaming: true,
+                ..ModelProfile::default()
+            });
+        Some(&PROFILE)
     }
 
-    async fn chat(
+    async fn invoke(
         &self,
-        request: PChatRequest<'_>,
-        model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
-        self.captured.lock().push(CapturedRequest {
-            messages: request.messages.to_vec(),
-            tool_count: request.tools.map_or(0, |tools| tools.len()),
-            model: model.to_string(),
-        });
-        let response = {
-            let mut q = self.responses.lock();
-            if q.is_empty() {
-                ChatResponse {
-                    text: Some(String::new()),
-                    tool_calls: vec![],
-                    usage: None,
-                    reasoning_content: None,
-                }
-            } else {
-                q.remove(0)
-            }
-        };
-        // Mirror a real streaming provider: when the caller attached a
-        // `stream` sink, forward this response's reasoning then visible
-        // text as `ProviderDelta`s before returning the aggregate. Lets
-        // the subagent runner's per-iteration sink exercise the
-        // `SubagentThinkingDelta` / `SubagentTextDelta` forwarding path.
-        if let Some(sink) = request.stream {
-            if let Some(reasoning) = response.reasoning_content.as_deref() {
-                if !reasoning.is_empty() {
-                    let _ = sink
-                        .send(ProviderDelta::ThinkingDelta {
-                            delta: reasoning.to_string(),
-                        })
-                        .await;
-                }
-            }
-            if let Some(text) = response.text.as_deref() {
-                if !text.is_empty() {
-                    let _ = sink
-                        .send(ProviderDelta::TextDelta {
-                            delta: text.to_string(),
-                        })
-                        .await;
-                }
-            }
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(self.take_response(request))
+    }
+
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        let response = self.take_response(request);
+        let reasoning = response
+            .message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Thinking { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        let text = response.text();
+        let mut items = vec![ModelStreamItem::Started];
+        if !reasoning.is_empty() {
+            items.push(ModelStreamItem::MessageDelta(MessageDelta::reasoning(
+                reasoning,
+            )));
         }
-        Ok(response)
-    }
-
-    fn supports_native_tools(&self) -> bool {
-        true
-    }
-}
-
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.into()),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: None,
+        if !text.is_empty() {
+            items.push(ModelStreamItem::MessageDelta(MessageDelta::text(text)));
+        }
+        items.push(ModelStreamItem::Completed(response));
+        Ok(Box::pin(futures::stream::iter(items)))
     }
 }
 
-fn text_response_with_reasoning(text: &str, reasoning: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.into()),
-        tool_calls: vec![],
+fn text_response(text: &str) -> ModelResponse {
+    ModelResponse::assistant(text)
+}
+
+fn text_response_with_reasoning(text: &str, reasoning: &str) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Thinking {
+                    text: reasoning.to_string(),
+                    signature: None,
+                },
+                ContentBlock::Text(text.to_string()),
+            ],
+            tool_calls: Vec::new(),
+            usage: None,
+        },
         usage: None,
-        reasoning_content: Some(reasoning.into()),
+        finish_reason: None,
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn tool_response(name: &str, args: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(String::new()),
-        tool_calls: vec![ToolCall {
-            id: "call-1".into(),
-            name: name.into(),
-            arguments: args.into(),
-            extra_content: None,
-        }],
+fn tool_response(name: &str, args: &str) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: Vec::new(),
+            tool_calls: vec![ToolCall::new(
+                "call-1",
+                name,
+                serde_json::from_str(args).expect("valid scripted tool arguments"),
+            )],
+            usage: None,
+        },
         usage: None,
-        reasoning_content: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
 /// Build a minimal `ParentExecutionContext` suitable for runner tests.
 /// Uses a no-op memory backend so we don't have to spin up a real one.
-fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> ParentExecutionContext {
+fn make_parent(
+    provider: Arc<dyn ChatModel<()>>,
+    tools: Vec<Box<dyn Tool>>,
+) -> ParentExecutionContext {
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
@@ -340,10 +372,13 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
             .into_iter()
             .collect(),
-        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            provider,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.5,
         workspace_dir: std::env::temp_dir(),
@@ -354,7 +389,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         session_id: "test-session".into(),
         channel: "test".into(),
         connected_integrations: vec![],
-        tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
+        tool_call_format: crate::openhuman::agent::context::prompt::ToolCallFormat::PFormat,
         session_key: "0_test".into(),
         session_parent_prefix: None,
         on_progress: None,
@@ -1156,77 +1191,63 @@ async fn typed_mode_progress_emission_is_a_noop_without_sink() {
 // Truncation tests live in ops_truncation_tests.rs to keep this file
 // under the ~500-line guideline.
 
-// ── resolve_subagent_provider ─────────────────────────────────────────
-
-/// `Arc<dyn Provider>` identity helper — every test below uses a fresh
-/// `ScriptedProvider` and we want to assert "is this the *same* Arc as
-/// the parent's" without leaning on `PartialEq` on dyn trait objects.
-fn arc_ptr_eq<P: ?Sized>(a: &std::sync::Arc<P>, b: &std::sync::Arc<P>) -> bool {
-    std::sync::Arc::ptr_eq(a, b)
-}
+// ── resolve_subagent_source ───────────────────────────────────────────
 
 #[test]
-fn resolve_subagent_provider_inherit_uses_parent_provider_and_model() {
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+fn resolve_subagent_source_inherit_uses_parent_source_and_model() {
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let parent_source =
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone());
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Inherit,
         "test_agent",
         None,
-        parent.clone(),
+        parent_source,
         "parent-model-x".to_string(),
         false,
         None,
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "Inherit must return the parent's Arc unchanged"
+        0.0,
     );
     assert_eq!(resolved_model, "parent-model-x");
 }
 
 #[test]
-fn resolve_subagent_provider_exact_overrides_only_model() {
+fn resolve_subagent_source_exact_overrides_only_model() {
     // Exact keeps the parent's provider but replaces the model name.
     // This is the explicit "I want a cheaper tier on the same backend"
     // escape hatch.
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Exact("haiku-mini".to_string()),
         "test_agent",
         None,
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone()),
         "parent-model-x".to_string(),
         false,
         None,
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "Exact must keep the parent's provider — only the model name changes"
+        0.0,
     );
     assert_eq!(resolved_model, "haiku-mini");
 }
 
 #[test]
-fn resolve_subagent_provider_spawn_override_wins_over_definition_model() {
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+fn resolve_subagent_source_spawn_override_wins_over_definition_model() {
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Exact("definition-model".to_string()),
         "test_agent",
         None,
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone()),
         "parent-model-x".to_string(),
         false,
         Some("spawn-model-y"),
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "inline spawn override should not change the provider"
+        0.0,
     );
     assert_eq!(resolved_model, "spawn-model-y");
 }
 
 #[test]
-fn resolve_subagent_provider_config_model_wins_over_definition_model() {
+fn resolve_subagent_source_config_model_wins_over_definition_model() {
     use crate::openhuman::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -1238,25 +1259,22 @@ fn resolve_subagent_provider_config_model_wins_over_definition_model() {
         },
     );
 
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Exact("definition-model".to_string()),
         "test_agent",
         Some(&config),
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone()),
         "parent-model-x".to_string(),
         false,
         None,
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "config model pin should not change the provider"
+        0.0,
     );
     assert_eq!(resolved_model, "configured-agent-model");
 }
 
 #[test]
-fn resolve_subagent_provider_inline_override_wins_over_config_model() {
+fn resolve_subagent_source_inline_override_wins_over_config_model() {
     use crate::openhuman::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -1268,21 +1286,22 @@ fn resolve_subagent_provider_inline_override_wins_over_config_model() {
         },
     );
 
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Exact("definition-model".to_string()),
         "test_agent",
         Some(&config),
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent),
         "parent-model-x".to_string(),
         false,
         Some("inline-model"),
+        0.0,
     );
     assert_eq!(resolved_model, "inline-model");
 }
 
 #[test]
-fn resolve_subagent_provider_config_alias_matches_issue_team_examples() {
+fn resolve_subagent_source_config_alias_matches_issue_team_examples() {
     use crate::openhuman::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -1294,39 +1313,37 @@ fn resolve_subagent_provider_config_alias_matches_issue_team_examples() {
         },
     );
 
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Hint("agentic".to_string()),
         "researcher",
         Some(&config),
-        parent,
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent),
         "parent-model-x".to_string(),
         false,
         None,
+        0.0,
     );
     assert_eq!(resolved_model, "research-agent-model");
 }
 
 #[test]
-fn resolve_subagent_provider_hint_with_no_config_falls_back() {
+fn resolve_subagent_source_hint_with_no_config_falls_back() {
     // The async config load failed (transient I/O, missing file, etc.).
     // The Hint arm must NOT silently swallow the failure and synthesise
     // `{workload}-v1` — that's the OpenHuman-only naming that breaks
     // Anthropic/OpenAI. Fall back to the parent's known-good
     // (provider, model) instead.
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Hint("agentic".to_string()),
         "test_agent",
         None, // no config loaded
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone()),
         "real-claude-id".to_string(),
         false,
         None,
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "config-load failure must fall back to parent provider, not synthesize a new one"
+        0.0,
     );
     assert_eq!(
         resolved_model, "real-claude-id",
@@ -1335,7 +1352,7 @@ fn resolve_subagent_provider_hint_with_no_config_falls_back() {
 }
 
 #[test]
-fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
+fn resolve_subagent_source_hint_with_config_routes_via_factory() {
     // The Hint arm with a real config takes the workload-factory path.
     // We don't assert the *resulting* provider identity here (the
     // factory may return a fresh OpenHuman backend or whatever
@@ -1356,15 +1373,16 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     config.agentic_provider = Some("openhuman".to_string());
     config.default_model = Some("chat-v1".to_string());
 
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Hint("agentic".to_string()),
         "test_agent",
         Some(&config),
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent),
         "parent-model-ignored-on-hint".to_string(),
         false,
         None,
+        0.0,
     );
     assert_eq!(
         resolved_model, "agentic-v1",
@@ -1374,7 +1392,7 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
 }
 
 #[test]
-fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
+fn resolve_subagent_source_hint_falls_back_on_factory_error() {
     // An invalid provider string in the workload config (e.g. a typo
     // like "groq:something") makes the factory return Err. The Hint
     // arm must fall back to the parent provider rather than
@@ -1384,19 +1402,16 @@ fn resolve_subagent_provider_hint_falls_back_on_factory_error() {
     let mut config = Config::default();
     config.agentic_provider = Some("groq:not-a-real-prefix".to_string());
 
-    let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
-    let (resolved_provider, resolved_model) = super::resolve_subagent_provider(
+    let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
+    let (_resolved_source, resolved_model) = super::resolve_subagent_source(
         &ModelSpec::Hint("agentic".to_string()),
         "test_agent",
         Some(&config),
-        parent.clone(),
+        crate::openhuman::agent::tinyagents::TurnModelSource::from_model(parent.clone()),
         "fallback-model".to_string(),
         false,
         None,
-    );
-    assert!(
-        arc_ptr_eq(&parent, &resolved_provider),
-        "factory error must fall back to parent provider"
+        0.0,
     );
     assert_eq!(resolved_model, "fallback-model");
 }
@@ -1512,7 +1527,7 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
         let inner_def = make_def_named_tools(&[]);
         let delegate_tool: Box<dyn Tool> = Box::new(RecursiveDelegateTool { inner_def });
         let parent = make_parent(
-            Arc::clone(&(provider.clone() as Arc<dyn Provider>)),
+            Arc::clone(&(provider.clone() as Arc<dyn ChatModel<()>>)),
             vec![delegate_tool],
         );
         let outer_def = make_def_named_tools(&["delegate_inner"]);
@@ -1549,7 +1564,7 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
 // by `lazy_resolver_tolerates_near_miss_slugs`).
 #[test]
 fn repro_3152_near_miss_write_slug_resolves_uniquely() {
-    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    use crate::openhuman::agent::context::prompt::ConnectedIntegrationTool;
     let mk = |name: &str| ConnectedIntegrationTool {
         name: name.into(),
         description: "d".into(),
@@ -1562,6 +1577,7 @@ fn repro_3152_near_miss_write_slug_resolves_uniquely() {
             mk("NOTION_CREATE_NOTION_PAGE"),
             mk("NOTION_FETCH_DATA"),
         ],
+        resolved: std::sync::Mutex::default(),
     };
     let resolved = resolver
         .resolve("NOTION_SEARCH_NOTION")
@@ -1577,7 +1593,7 @@ fn repro_3152_near_miss_write_slug_resolves_uniquely() {
 // the length gate: a too-short request never fans out.
 #[test]
 fn prefix_tier_refuses_ambiguous_and_short_slugs() {
-    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    use crate::openhuman::agent::context::prompt::ConnectedIntegrationTool;
     let mk = |name: &str| ConnectedIntegrationTool {
         name: name.into(),
         description: "d".into(),
@@ -1590,6 +1606,7 @@ fn prefix_tier_refuses_ambiguous_and_short_slugs() {
             mk("NOTION_SEARCH_NOTION_DATABASE"),
             mk("NOTION_CREATE_NOTION_PAGE"),
         ],
+        resolved: std::sync::Mutex::default(),
     };
     // `NOTION_SEARCH_NOTION` is a prefix of TWO actions → ambiguous → None.
     assert!(

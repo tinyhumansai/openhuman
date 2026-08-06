@@ -23,3 +23,6 @@
 [submodule "vendor/tinyplace"]
 	path = vendor/tinyplace
 	url = https://github.com/tinyhumansai/tiny.place.git
+[submodule "vendor/tinyhumans-sdk"]
+	path = vendor/tinyhumans-sdk
+	url = https://github.com/tinyhumansai/sdk.git

@@ -1,13 +1,13 @@
-export type ComposerSendBlockReason =
+type ComposerSendBlockReason =
   | 'empty_input'
   | 'missing_thread'
   | 'composer_blocked'
   | 'usage_limit_reached'
   | 'socket_disconnected';
 
-export type SlashCommandDecision = { kind: 'new_or_clear' } | { kind: 'not_handled' };
+type SlashCommandDecision = { kind: 'new_or_clear' } | { kind: 'not_handled' };
 
-export interface ComposerSendDecisionArgs {
+interface ComposerSendDecisionArgs {
   rawText: string;
   selectedThreadId: string | null;
   composerInteractionBlocked: boolean;
@@ -15,17 +15,17 @@ export interface ComposerSendDecisionArgs {
   socketStatus: string;
 }
 
-export interface ComposerSendDecision {
+interface ComposerSendDecision {
   shouldSend: boolean;
   trimmedText: string;
   blockReason?: ComposerSendBlockReason;
 }
 
-export interface ComposerBlockedSendFeedback {
+interface ComposerBlockedSendFeedback {
   error: { code: 'usage_limit_reached' | 'socket_disconnected'; message: string };
 }
 
-export interface ComposerKeyDownEventLike {
+interface ComposerKeyDownEventLike {
   key: string;
   shiftKey?: boolean;
   isComposing?: boolean;
@@ -67,7 +67,7 @@ export const evaluateComposerSend = (args: ComposerSendDecisionArgs): ComposerSe
   return { shouldSend: true, trimmedText };
 };
 
-export const isComposerImeComposing = (
+const isComposerImeComposing = (
   event: ComposerKeyDownEventLike,
   compositionActive = false
 ): boolean =>

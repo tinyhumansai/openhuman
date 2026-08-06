@@ -20,7 +20,7 @@ import { useDeveloperMode } from '../../../hooks/useDeveloperMode';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { SETTINGS_SEARCH_ENTRIES, type SettingsSearchEntry } from './settingsSearchRegistry';
 
-export interface SettingsSearchResult {
+interface SettingsSearchResult {
   entry: SettingsSearchEntry;
   /** Localised title for rendering. */
   title: string;
@@ -31,7 +31,7 @@ export interface SettingsSearchResult {
 }
 
 /** Lower-case and strip diacritics so "Tóol" matches "tool". */
-export const normalize = (value: string): string =>
+const normalize = (value: string): string =>
   value
     .normalize('NFD')
     // Strip combining diacritical marks (U+0300–U+036F) so "Tóol" matches "tool".

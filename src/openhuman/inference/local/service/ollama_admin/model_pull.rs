@@ -19,6 +19,12 @@ impl LocalAiService {
         self.ensure_ollama_model_available(config, &chat_model, "chat")
             .await?;
 
+        // Held until every other preload has run. `ensure_ollama_model_available`
+        // writes `status.warning` for its own transient "Pulling …" progress, so
+        // publishing the vision reason here would let a later embedding/STT/TTS
+        // pull bury it and leave `vision_state = "missing"` with no explanation.
+        let mut vision_warning: Option<String> = None;
+
         match presets::vision_mode_for_config(&config.local_ai) {
             VisionMode::Disabled => {
                 self.status.lock().vision_state = "disabled".to_string();
@@ -26,12 +32,31 @@ impl LocalAiService {
             VisionMode::Ondemand => {
                 self.status.lock().vision_state = "idle".to_string();
             }
-            VisionMode::Bundled => {
-                let vision_model = model_ids::effective_vision_model_id(config);
-                self.ensure_ollama_model_available(config, &vision_model, "vision")
-                    .await?;
-                self.status.lock().vision_state = "ready".to_string();
-            }
+            VisionMode::Bundled => match model_ids::resolve_vision_model_id(config) {
+                Ok(vision_model) => {
+                    self.ensure_ollama_model_available(config, &vision_model, "vision")
+                        .await?;
+                    self.status.lock().vision_state = "ready".to_string();
+                }
+                Err(err) => {
+                    // A vision model the user misconfigured must not take the
+                    // whole local runtime down with it. `bootstrap()` returns
+                    // on the first `ensure_models_available` error, so
+                    // propagating here would leave the service `degraded` and
+                    // skip the embedding/STT/TTS preloads and the ready state —
+                    // punishing chat for a vision-only mistake. Record it and
+                    // carry on; `resolve_vision_model_id` raises the same
+                    // message again, actionably, at request time.
+                    tracing::warn!(
+                        vision_model_id = %config.local_ai.vision_model_id.trim(),
+                        vision_state = "missing",
+                        %err,
+                        "[local_ai] bundled vision model is unusable; continuing without vision"
+                    );
+                    self.status.lock().vision_state = "missing".to_string();
+                    vision_warning = Some(err);
+                }
+            },
         }
 
         let embedding_model = model_ids::effective_embedding_model_id(config);
@@ -49,6 +74,13 @@ impl LocalAiService {
             self.ensure_tts_asset_available(config).await?;
         }
 
+        // Last write wins, which is the point: whatever the preloads left behind
+        // is transient progress text, while this is a standing configuration
+        // problem the user has to act on.
+        if let Some(err) = vision_warning {
+            self.status.lock().warning = Some(err);
+        }
+
         Ok(())
     }
 
@@ -58,6 +90,22 @@ impl LocalAiService {
         model_id: &str,
         label: &str,
     ) -> Result<(), String> {
+        // #5146 P1: never pull a nameless model. `effective_*_model_id` returns
+        // an empty string when there is no usable model for a role, and several
+        // callers feed that straight in here. Without this guard that became a
+        // `POST /api/pull` with a blank name, retried three times, ending in an
+        // opaque error — and it is the same code path that silently pulled a
+        // ~1.7 GB vision substitute the user never chose. Fail immediately and
+        // say which role is unconfigured instead.
+        let model_id = model_id.trim();
+        if model_id.is_empty() {
+            return Err(format!(
+                "no {label} model is configured for the local runtime, so there is nothing to \
+                 download. Set the {label} model in Settings → Local AI (or pick a provider for \
+                 the {label} workload) before retrying."
+            ));
+        }
+
         let base_url = ollama_base_url_from_config(config);
         if self.has_model_at(&base_url, model_id).await? {
             return Ok(());

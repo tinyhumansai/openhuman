@@ -132,9 +132,9 @@ pub async fn recall_related_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::embeddings::NoopEmbedding;
+    use crate::openhuman::inference::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::store::UnifiedMemory;
     use crate::openhuman::memory::MemoryCategory;
-    use crate::openhuman::memory_store::UnifiedMemory;
     use tempfile::TempDir;
 
     #[tokio::test]

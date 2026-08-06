@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::openhuman::notifications::types::CoreNotificationCategory;
+use crate::openhuman::desktop::notifications::types::CoreNotificationCategory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HeartbeatCategory {

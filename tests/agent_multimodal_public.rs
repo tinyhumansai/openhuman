@@ -1,10 +1,10 @@
 use anyhow::Result;
+use openhuman_core::openhuman::agent::messages::ChatMessage;
 use openhuman_core::openhuman::agent::multimodal::{
     contains_image_markers, count_image_markers, extract_ollama_image_payload, parse_image_markers,
     prepare_messages_for_provider,
 };
 use openhuman_core::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
-use openhuman_core::openhuman::inference::provider::ChatMessage;
 
 #[test]
 fn marker_helpers_cover_mixed_content_and_payload_extraction() {
@@ -22,9 +22,13 @@ fn marker_helpers_cover_mixed_content_and_payload_extraction() {
         extract_ollama_image_payload("data:image/png;base64,abcd").as_deref(),
         Some("abcd")
     );
+    // #5146 P6 reversed this: a filesystem path used to be forwarded verbatim as
+    // if it were image bytes, and Ollama answered `illegal base64 data at input
+    // byte 19` — an error naming neither the parameter nor the path. Trimming
+    // still happens, but the trimmed value has to be base64 to be returned.
     assert_eq!(
         extract_ollama_image_payload(" /tmp/a.png ").as_deref(),
-        Some("/tmp/a.png")
+        None
     );
     let (cleaned_unclosed, refs_unclosed) = parse_image_markers("broken [IMAGE:/tmp/a.png");
     assert_eq!(cleaned_unclosed, "broken [IMAGE:/tmp/a.png");

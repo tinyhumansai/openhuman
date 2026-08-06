@@ -1,12 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { createRef } from 'react';
+import { createRef, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Attachment } from '../../../lib/attachments';
 import ChatComposer, { type ChatComposerProps } from '../ChatComposer';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
-vi.mock('../CycleUsagePill', () => ({ default: () => <div data-testid="cycle-usage-pill" /> }));
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(256)], { type: 'image/png' });
@@ -240,6 +239,135 @@ describe('ChatComposer', () => {
         clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] },
       });
       expect(onAttachFiles).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('render-loop detection guard', () => {
+    it('does not warn under normal rendering', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      renderComposer();
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+      // Normal rendering should not trigger the render-loop guard.
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Render-loop detected'));
+      warnSpy.mockRestore();
+    });
+
+    it('warns when render-loop threshold is exceeded', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const textInputRef = createRef<HTMLTextAreaElement | null>();
+      const fileInputRef = createRef<HTMLInputElement | null>();
+      const isComposingTextRef = { current: false };
+      // This test harness simulates a render loop by calling setState
+      // from a useEffect, exceeding the guard's 30-render threshold
+      // without triggering React's native "too many re-renders" error.
+      function LoopHarness() {
+        const [count, setCount] = useState(0);
+        const [text, setText] = useState('');
+
+        useEffect(() => {
+          if (count < 35) {
+            setCount(count + 1);
+          }
+        }, [count, setCount]);
+
+        return (
+          <ChatComposer
+            inputValue={text}
+            setInputValue={v => setText(typeof v === 'function' ? v('') : v)}
+            onSend={vi.fn().mockResolvedValue(undefined)}
+            textInputRef={textInputRef}
+            fileInputRef={fileInputRef}
+            composerInteractionBlocked={false}
+            isSending={false}
+            attachments={[]}
+            onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+            onRemoveAttachment={vi.fn()}
+            attachError={null}
+            onSwitchToMicCloud={vi.fn()}
+            handleInputKeyDown={vi.fn()}
+            inlineCompletionSuffix=""
+            isComposingTextRef={isComposingTextRef}
+            maxAttachments={5}
+            allowedMimeTypes={[]}
+            attachmentsEnabled={false}
+          />
+        );
+      }
+
+      render(<LoopHarness />);
+
+      const loopCalls = warnSpy.mock.calls.filter(
+        args => typeof args[0] === 'string' && args[0].includes('Render-loop detected')
+      );
+      expect(loopCalls.length).toBeGreaterThan(0);
+      expect(loopCalls[0][0]).toContain('ChatComposer');
+      warnSpy.mockRestore();
+    });
+
+    it('recovers from a temporary loop (counter resets between ticks)', async () => {
+      // After a render loop ends, the setTimeout(0) in the guard should reset
+      // the counter, so a subsequent normal render doesn't trigger a warning.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const textInputRef = createRef<HTMLTextAreaElement | null>();
+      const fileInputRef = createRef<HTMLInputElement | null>();
+      const isComposingTextRef = { current: false };
+
+      // First, render normally.
+      const { rerender } = render(
+        <ChatComposer
+          inputValue=""
+          setInputValue={vi.fn()}
+          onSend={vi.fn().mockResolvedValue(undefined)}
+          textInputRef={textInputRef}
+          fileInputRef={fileInputRef}
+          composerInteractionBlocked={false}
+          isSending={false}
+          attachments={[]}
+          onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+          onRemoveAttachment={vi.fn()}
+          attachError={null}
+          onSwitchToMicCloud={vi.fn()}
+          handleInputKeyDown={vi.fn()}
+          inlineCompletionSuffix=""
+          isComposingTextRef={isComposingTextRef}
+          maxAttachments={5}
+          allowedMimeTypes={[]}
+          attachmentsEnabled={false}
+        />
+      );
+
+      // Wait for the setTimeout(0) reset to fire.
+      await new Promise(r => setTimeout(r, 50));
+
+      // Then render again — should not warn because the counter was reset.
+      rerender(
+        <ChatComposer
+          inputValue="hello"
+          setInputValue={vi.fn()}
+          onSend={vi.fn().mockResolvedValue(undefined)}
+          textInputRef={textInputRef}
+          fileInputRef={fileInputRef}
+          composerInteractionBlocked={false}
+          isSending={false}
+          attachments={[]}
+          onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+          onRemoveAttachment={vi.fn()}
+          attachError={null}
+          onSwitchToMicCloud={vi.fn()}
+          handleInputKeyDown={vi.fn()}
+          inlineCompletionSuffix=""
+          isComposingTextRef={isComposingTextRef}
+          maxAttachments={5}
+          allowedMimeTypes={[]}
+          attachmentsEnabled={false}
+        />
+      );
+
+      const loopCalls = warnSpy.mock.calls.filter(
+        args => typeof args[0] === 'string' && args[0].includes('Render-loop detected')
+      );
+      expect(loopCalls).toHaveLength(0);
+      warnSpy.mockRestore();
     });
   });
 

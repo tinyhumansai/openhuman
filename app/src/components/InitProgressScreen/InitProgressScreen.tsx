@@ -57,7 +57,7 @@ function StepRow({ step }: { step: HarnessInitStep }) {
   );
 }
 
-export interface InitProgressScreenProps {
+interface InitProgressScreenProps {
   snapshot: HarnessInitSnapshot;
   onRetry: () => void;
   onContinue: () => void;

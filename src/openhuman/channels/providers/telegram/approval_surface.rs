@@ -29,11 +29,11 @@
 //! bypass state (no per-channel surface subscriber, no
 //! `ApprovalChatContext` scoping). Each will get its own follow-up PR.
 //!
-//! [`APPROVAL_CHAT_CONTEXT`]: crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
-//! [`ApprovalChatContext`]: crate::openhuman::approval::ApprovalChatContext
-//! [`ApprovalGate`]: crate::openhuman::approval::ApprovalGate
-//! [`ApprovalGate::decide`]: crate::openhuman::approval::ApprovalGate::decide
-//! [`parse_approval_reply`]: crate::openhuman::approval::parse_approval_reply
+//! [`APPROVAL_CHAT_CONTEXT`]: crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT
+//! [`ApprovalChatContext`]: crate::openhuman::security::approval::ApprovalChatContext
+//! [`ApprovalGate`]: crate::openhuman::security::approval::ApprovalGate
+//! [`ApprovalGate::decide`]: crate::openhuman::security::approval::ApprovalGate::decide
+//! [`parse_approval_reply`]: crate::openhuman::security::approval::parse_approval_reply
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
 use crate::openhuman::channels::traits::{ChannelSendExt, SendMessage};

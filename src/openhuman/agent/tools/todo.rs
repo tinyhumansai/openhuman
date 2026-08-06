@@ -3,13 +3,13 @@
 //! Dispatches on the `op` field so a single tool exposes
 //! `add` / `edit` / `update_status` / `remove` / `replace` / `clear` /
 //! `list`. The board is persisted to the active thread (when there is
-//! one) via [`crate::openhuman::todos::ops`]; without a thread context the
+//! one) via [`crate::openhuman::threads::todos::ops`]; without a thread context the
 //! tool falls back to a process-global scratch list. Returns a markdown
 //! rendering so transcripts read cleanly.
 
 use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard, TaskCardStatus};
-use crate::openhuman::inference::provider::thread_context;
-use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+use crate::openhuman::agent::tinyagents::thread_context;
+use crate::openhuman::threads::todos::ops::{self, BoardLocation, CardPatch};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -132,23 +132,23 @@ impl Tool for TodoTool {
                 if patch.approval_mode.is_none() {
                     patch.approval_mode = Some(default_task_approval_mode().await);
                 }
-                ops::add(&location, &content, patch)
+                ops::add(&location, &content, patch).await
             }
             "edit" => {
                 let id = required_string(&args, "id")?;
                 let mut patch = patch_from_args(&args)?;
                 patch.content = optional_string(&args, "content");
-                ops::edit(&location, &id, patch)
+                ops::edit(&location, &id, patch).await
             }
             "update_status" => {
                 let id = required_string(&args, "id")?;
                 let status = required_string(&args, "status")?;
                 let status = ops::parse_status(&status).map_err(anyhow::Error::msg)?;
-                ops::update_status(&location, &id, status)
+                ops::update_status(&location, &id, status).await
             }
             "remove" => {
                 let id = required_string(&args, "id")?;
-                ops::remove(&location, &id)
+                ops::remove(&location, &id).await
             }
             "replace" => {
                 let cards = args
@@ -156,10 +156,10 @@ impl Tool for TodoTool {
                     .ok_or_else(|| anyhow::anyhow!("missing `cards` for op=replace"))?;
                 let cards: Vec<TaskBoardCard> = serde_json::from_value(cards.clone())
                     .map_err(|e| anyhow::anyhow!("invalid `cards`: {e}"))?;
-                ops::replace(&location, cards)
+                ops::replace(&location, cards).await
             }
-            "clear" => ops::clear(&location),
-            "list" => ops::list(&location),
+            "clear" => ops::clear(&location).await,
+            "list" => ops::list(&location).await,
             other => {
                 return Ok(ToolResult::error(format!(
                 "unknown op '{other}' (expected add|edit|update_status|remove|replace|clear|list)"
@@ -307,24 +307,25 @@ fn optional_string_array(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::todos::global_scratch_store;
     use serde_json::Value;
 
     /// Serialize tests that share the process-global scratch store with
     /// `todos::ops` tests. Same lock — otherwise the two test modules race
     /// under `cargo test`'s thread pool.
     fn scratch_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::openhuman::todos::ops::scratch_test_lock()
+        crate::openhuman::threads::todos::ops::scratch_test_lock()
     }
 
-    fn reset_scratch() {
-        global_scratch_store().replace(Vec::new());
+    async fn reset_scratch() {
+        crate::openhuman::threads::todos::ops::clear(&BoardLocation::Scratch)
+            .await
+            .expect("clear scratch");
     }
 
     #[tokio::test]
     async fn add_then_list_round_trips_via_scratch() {
         let _guard = scratch_lock();
-        reset_scratch();
+        reset_scratch().await;
         let tool = TodoTool::new();
         let added = tool
             .execute(json!({ "op": "add", "content": "Write tests" }))
@@ -353,7 +354,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("[x] Write tests"));
-        reset_scratch();
+        reset_scratch().await;
     }
 
     #[tokio::test]
@@ -394,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn edit_rejects_unknown_id() {
         let _guard = scratch_lock();
-        reset_scratch();
+        reset_scratch().await;
         let tool = TodoTool::new();
         let result = tool
             .execute(json!({ "op": "edit", "id": "task-missing", "content": "x" }))
@@ -402,13 +403,13 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("not found"));
-        reset_scratch();
+        reset_scratch().await;
     }
 
     #[tokio::test]
     async fn replace_accepts_full_card_list() {
         let _guard = scratch_lock();
-        reset_scratch();
+        reset_scratch().await;
         let tool = TodoTool::new();
         let result = tool
             .execute(json!({
@@ -435,6 +436,6 @@ mod tests {
         assert!(!result.is_error, "{}", result.output());
         let payload: Value = serde_json::from_str(&result.output()).unwrap();
         assert_eq!(payload["cards"].as_array().unwrap().len(), 2);
-        reset_scratch();
+        reset_scratch().await;
     }
 }

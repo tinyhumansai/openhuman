@@ -146,6 +146,7 @@ pub(crate) fn resolve_openai_codex_routing(
     slug: &str,
     endpoint: &str,
     bearer_key: &str,
+    bearer_is_oauth: bool,
 ) -> Result<OpenAiCodexRouting, String> {
     if slug != "openai" {
         return Ok(OpenAiCodexRouting::standard(endpoint));
@@ -163,9 +164,18 @@ pub(crate) fn resolve_openai_codex_routing(
             Err(err) => return Err(format!("[chat-factory] openai oauth lookup failed: {err}")),
         };
 
-    let using_oauth = credentials
-        .as_ref()
-        .is_some_and(|credentials| credentials.access_token == bearer_key);
+    // Route to the Codex subscription backend when the resolved openai bearer is
+    // an OAuth (Codex-CLI) credential — decided by the effective profile's *kind*
+    // (`bearer_is_oauth`, from the credential store), not by string-comparing two
+    // independently resolved OAuth tokens. The old
+    // `credentials.access_token == bearer_key` check silently fell back to
+    // api.openai.com and failed with HTTP 400 "Stream must be set to true"
+    // (#5353): each read of the OAuth credential can trigger a refresh, OpenAI
+    // rotates the access token on every refresh, so the two reads diverged
+    // whenever they straddled a refresh — even though OAuth was the only cred.
+    // Still require resolved `credentials` so we have the account id / endpoint;
+    // if the metadata lookup failed we fall back to the standard path.
+    let using_oauth = bearer_is_oauth && credentials.is_some();
     let account_id = credentials
         .filter(|_| using_oauth)
         .and_then(|credentials| credentials.account_id)

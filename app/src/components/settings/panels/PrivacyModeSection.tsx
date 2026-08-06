@@ -9,7 +9,7 @@ import { SettingsSection, SettingsStatusLine } from '../controls';
 const log = debug('privacy-mode');
 
 /** Privacy Mode values as serialized by the Rust core (snake_case). */
-export type PrivacyMode = 'local_only' | 'standard' | 'sensitive';
+type PrivacyMode = 'local_only' | 'standard' | 'sensitive';
 
 interface PrivacyModeResult {
   mode: PrivacyMode;

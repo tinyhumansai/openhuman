@@ -15,7 +15,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import ChartTooltip from './ChartTooltip';
 import { dayOfMonth, formatCurrency, longDateLabel, shortDayLabel } from './formatCurrency';
 
-export interface CostBarChartProps {
+interface CostBarChartProps {
   days: CostDashboardDay[];
   currency: string;
   /** Monthly budget in USD; used to derive a daily target. */

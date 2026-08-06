@@ -50,7 +50,7 @@ export function useRootSidebar() {
   };
 }
 
-export interface RootShellLayoutProps {
+interface RootShellLayoutProps {
   /** Always-visible left pane (the app sidebar). */
   sidebar: ReactNode;
   /** Dynamic main content (the routed page area). */

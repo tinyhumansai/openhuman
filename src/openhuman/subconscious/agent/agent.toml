@@ -32,7 +32,16 @@ allowlist = [
 #                     replaced the old scratchpad.
 #   - goals_*       → evolve the user's long-term goals as their world shifts.
 #   - notify_user   → surface something time-sensitive to the user.
-#   - spawn_async_subagent → delegate deeper research / multi-step work.
+#   - spawn_subagent  → delegate deeper research / multi-step work.
+#
+# Delegation here is deliberately `spawn_subagent`, NOT `spawn_async_subagent`:
+# subconscious turns run headless (no chat thread is bound via
+# `thread_context::current_thread_id()` — see `session.rs::process`), and
+# thread-addressed async delivery has nowhere to land its result there. It used
+# to be silently discarded by `background_delivery` ("dropping headless batch");
+# since B40 `spawn_async_subagent` refuses outright in that condition.
+# `spawn_subagent` self-heals to blocking dispatch with no delivery thread, so
+# the sub-agent actually runs AND its output comes back inside this turn.
 named = [
     "memory_diff",
     "agent_prepare_context",
@@ -41,5 +50,5 @@ named = [
     "goals_list",
     "goals_add",
     "goals_edit",
-    "spawn_async_subagent",
+    "spawn_subagent",
 ]

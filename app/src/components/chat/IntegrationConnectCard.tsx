@@ -59,7 +59,7 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export const IntegrationConnectCard: React.FC<Props> = ({ threadId, approval }) => {
+const IntegrationConnectCard: React.FC<Props> = ({ threadId, approval }) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   // Canonicalize the slug the agent supplied (e.g. `google_drive` →

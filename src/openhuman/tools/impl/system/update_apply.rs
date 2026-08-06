@@ -1,7 +1,7 @@
 //! Tool: `update_apply` — orchestrated check → download → stage →
 //! restart of the OpenHuman core binary.
 //!
-//! Wraps [`crate::openhuman::update::rpc::update_run`] so the LLM can
+//! Wraps [`crate::openhuman::platform::update::rpc::update_run`] so the LLM can
 //! finish an "update me to the latest version" intent in chat. The
 //! underlying RPC already enforces:
 //!
@@ -24,9 +24,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::openhuman::platform::update;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
-use crate::openhuman::update;
 
 pub struct UpdateApplyTool {
     security: Arc<SecurityPolicy>,

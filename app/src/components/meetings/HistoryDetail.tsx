@@ -58,7 +58,7 @@ interface LoadedResult {
   detail: MeetCallDetail | null;
 }
 
-export function HistoryDetail({ record }: HistoryDetailProps) {
+function HistoryDetail({ record }: HistoryDetailProps) {
   const { t } = useT();
 
   // Keyed state: bundles status+detail with the request_id they belong to.

@@ -13,14 +13,3 @@ export interface OAuthProviderConfig {
   textColor: string;
   showOnWelcome?: boolean;
 }
-
-export interface OAuthLoginResponse {
-  success: boolean;
-  data: { jwtToken: string };
-}
-
-export interface OAuthError {
-  provider: OAuthProvider;
-  message: string;
-  code?: string;
-}

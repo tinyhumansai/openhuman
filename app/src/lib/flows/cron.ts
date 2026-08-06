@@ -11,6 +11,14 @@
  * weekdays. Any other cron string round-trips untouched through the advanced
  * text field; {@link parseCron} returns `null` for it (→ advanced mode) and
  * {@link describeCron} falls back to a generic label.
+ *
+ * `describeCron` / `describeEveryMs` / `describeSchedule` take `t` (and,
+ * where a weekday name is rendered, `locale`) as parameters rather than
+ * calling `useT()` themselves — mirroring `runStepSummary.ts` — so this stays
+ * a plain, dependency-light module that's trivially unit-testable. Weekday
+ * names come from `Intl.DateTimeFormat` against the active locale instead of
+ * a hand-translated array, so they're correctly ordered/named per locale
+ * without adding translation surface.
  */
 
 /** How often the schedule fires. */
@@ -29,10 +37,11 @@ export interface CronSpec {
   weekdays: number[];
 }
 
-/** Short weekday names indexed 0=Sun … 6=Sat. */
-export const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-/** Single-letter weekday initials for compact toggles (Sun-first). */
-export const WEEKDAY_INITIAL = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
+/** A `t` function from `useT()`, threaded in rather than imported here. */
+export type Translate = (key: string, fallback?: string) => string;
+
+/** Weekdays 0=Sun … 6=Sat, in that fixed order — for iterating UI controls. */
+export const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 
 export const DEFAULT_CRON_SPEC: CronSpec = {
   freq: 'daily',
@@ -79,10 +88,31 @@ function parseWeekdayField(field: string): number[] | null {
   const nums: number[] = [];
   for (const p of parts) {
     if (!/^\d+$/.test(p)) return null; // named days (MON) etc. → advanced
-    nums.push(Number(p));
+    const n = Number(p);
+    // Cron's valid day-of-week range is 0-7 (7 aliases Sunday). A value
+    // outside that — e.g. a hand-written `1,8` — would otherwise be silently
+    // dropped by normalizeWeekdays below rather than rejected outright,
+    // which is the same "narrow it and move on" data loss this function
+    // exists to avoid: the next unrelated ScheduleField edit recompiles
+    // through buildCron() and the out-of-range day quietly vanishes from the
+    // stored expression. Bail to null (→ advanced/opaque) instead.
+    if (n < 0 || n > 7) return null;
+    nums.push(n);
   }
   const norm = normalizeWeekdays(nums);
   return norm.length > 0 ? norm : null;
+}
+
+/** Parse a plain digit field, returning it only if it's within the range
+ * {@link buildCron} clamps that position to (`min` 0-59, `hour` 0-23).
+ * Returns `null` for non-digit fields (advanced named/step forms) and for
+ * in-range-looking values that actually fall outside the clamp — the latter
+ * is what makes an out-of-range `minute`/`hour` field unparseable rather than
+ * silently accepted and narrowed on the next unrelated edit. */
+function parseBoundedInt(field: string, max: number): number | null {
+  if (!/^\d+$/.test(field)) return null;
+  const n = Number(field);
+  return n <= max ? n : null;
 }
 
 /**
@@ -90,6 +120,19 @@ function parseWeekdayField(field: string): number[] | null {
  * the builder's covered shapes (→ the caller falls back to the advanced text
  * field). Only recognizes the exact forms {@link buildCron} emits: a `*`
  * day-of-month and month, with a stepped minute/hour and a numeric weekday list.
+ *
+ * Every field {@link buildCron} clamps must also fall inside the range it
+ * clamps to — step counts (1–59 minutes, 1–23 hours), the `minute` field
+ * (0–59) wherever it appears, the `hour` field (0–23), and each numeric
+ * weekday (0–7). A value outside its range (e.g. a hand-written "every 90
+ * minutes" star-slash-90 minute field, or an hourly expression with an
+ * out-of-range minute) is deliberately treated as unparseable rather than
+ * accepted and silently narrowed: accepting it here would let the visual
+ * editor's next unrelated `patch()` (e.g. toggling a weekday) recompile the
+ * spec through {@link buildCron}'s clamp and rewrite the stored expression
+ * to a clamped-down step or field value without the user ever touching it.
+ * Returning `null` instead routes it to the advanced text field, where it
+ * round-trips untouched like any other cron the builder doesn't model.
  */
 export function parseCron(expr: string): CronSpec | null {
   const fields = expr.trim().split(/\s+/);
@@ -102,31 +145,28 @@ export function parseCron(expr: string): CronSpec | null {
 
   // Every N minutes: `*/N * * * dow`
   const minStep = parseStep(min);
-  if (minStep && hour === '*') {
+  if (minStep && hour === '*' && minStep.step >= 1 && minStep.step <= 59) {
     return { ...DEFAULT_CRON_SPEC, freq: 'minutes', interval: minStep.step, weekdays };
   }
 
   // Every N hours: `M */N * * dow`
   const hourStep = parseStep(hour);
-  if (hourStep && /^\d+$/.test(min)) {
+  const hourlyMinute = parseBoundedInt(min, 59);
+  if (hourStep && hourlyMinute !== null && hourStep.step >= 1 && hourStep.step <= 23) {
     return {
       ...DEFAULT_CRON_SPEC,
       freq: 'hours',
       interval: hourStep.step,
-      minute: Number(min),
+      minute: hourlyMinute,
       weekdays,
     };
   }
 
   // Daily / weekly at a time: `M H * * dow`
-  if (/^\d+$/.test(min) && /^\d+$/.test(hour)) {
-    return {
-      ...DEFAULT_CRON_SPEC,
-      freq: 'daily',
-      hour: Number(hour),
-      minute: Number(min),
-      weekdays,
-    };
+  const dailyMinute = parseBoundedInt(min, 59);
+  const dailyHour = parseBoundedInt(hour, 23);
+  if (dailyMinute !== null && dailyHour !== null) {
+    return { ...DEFAULT_CRON_SPEC, freq: 'daily', hour: dailyHour, minute: dailyMinute, weekdays };
   }
 
   return null;
@@ -137,13 +177,40 @@ export function formatTime(hour: number, minute: number): string {
   return `${String(clamp(hour, 0, 23)).padStart(2, '0')}:${String(clamp(minute, 0, 59)).padStart(2, '0')}`;
 }
 
-/** Human phrase for a weekday set: "every day" / "weekdays" / "weekends" / "Mon, Wed". */
-function describeWeekdays(days: number[]): string {
+// 2023-01-01T00:00:00Z was a Sunday, so `WEEKDAYS[d]` maps onto UTC day `1 + d`
+// of that month — a fixed reference date lets us ask `Intl.DateTimeFormat` for
+// a locale-correct weekday name without maintaining a translated name table.
+const WEEKDAY_REFERENCE_YEAR = 2023;
+
+function weekdayName(day: number, locale: string, style: 'short' | 'narrow'): string {
+  const date = new Date(Date.UTC(WEEKDAY_REFERENCE_YEAR, 0, 1 + day));
+  const options: Intl.DateTimeFormatOptions = { weekday: style, timeZone: 'UTC' };
+  try {
+    return new Intl.DateTimeFormat(locale, options).format(date);
+  } catch {
+    // An unsupported/malformed locale tag falls back to English rather than
+    // throwing — the schedule field must still render.
+    return new Intl.DateTimeFormat('en', options).format(date);
+  }
+}
+
+/** Locale-aware short weekday label ("Wed"), for a11y labels / titles. */
+export function weekdayShortLabel(day: number, locale: string): string {
+  return weekdayName(day, locale, 'short');
+}
+
+/** Locale-aware single-glyph weekday label ("W"), for compact toggle buttons. */
+export function weekdayNarrowLabel(day: number, locale: string): string {
+  return weekdayName(day, locale, 'narrow');
+}
+
+/** Human phrase for a weekday set: "weekdays" / "weekends" / "Mon, Wed" — the
+ * caller handles the "every day" case itself (see {@link describeCron}). */
+function weekdaysPhrase(days: number[], t: Translate, locale: string): string {
   const norm = normalizeWeekdays(days);
-  if (norm.length === 0 || norm.length === 7) return 'every day';
-  if (norm.join(',') === '1,2,3,4,5') return 'weekdays';
-  if (norm.join(',') === '0,6') return 'weekends';
-  return norm.map(d => WEEKDAY_SHORT[d]).join(', ');
+  if (norm.join(',') === '1,2,3,4,5') return t('flows.cron.weekdays');
+  if (norm.join(',') === '0,6') return t('flows.cron.weekends');
+  return norm.map(d => weekdayShortLabel(d, locale)).join(', ');
 }
 
 /**
@@ -152,42 +219,48 @@ function describeWeekdays(days: number[]): string {
  * builder doesn't model, so an advanced user's custom cron still gets a
  * (non-misleading) description.
  */
-export function describeCron(expr: string): string {
+export function describeCron(expr: string, t: Translate, locale: string): string {
   const spec = parseCron(expr);
   if (!spec) {
-    return expr.trim() ? `Custom schedule (${expr.trim()})` : 'No schedule set';
+    return expr.trim()
+      ? t('flows.cron.customSchedule').replace('{expr}', expr.trim())
+      : t('flows.cron.noScheduleSet');
   }
-  const daysPhrase = describeWeekdays(spec.weekdays);
-  const onDays = daysPhrase === 'every day' ? '' : ` on ${daysPhrase}`;
+
+  const norm = normalizeWeekdays(spec.weekdays);
+  const everyDay = norm.length === 0 || norm.length === 7;
+  const days = everyDay ? '' : weekdaysPhrase(spec.weekdays, t, locale);
 
   if (spec.freq === 'minutes') {
-    const unit = spec.interval === 1 ? 'minute' : `${spec.interval} minutes`;
-    return `Every ${unit}${onDays}`;
+    if (spec.interval === 1) {
+      return everyDay
+        ? t('flows.cron.everyMinute')
+        : t('flows.cron.everyMinuteOnDays').replace('{days}', days);
+    }
+    return everyDay
+      ? t('flows.cron.everyNMinutes').replace('{n}', String(spec.interval))
+      : t('flows.cron.everyNMinutesOnDays')
+          .replace('{n}', String(spec.interval))
+          .replace('{days}', days);
   }
   if (spec.freq === 'hours') {
-    const unit = spec.interval === 1 ? 'hour' : `${spec.interval} hours`;
-    return `Every ${unit}${onDays}`;
+    if (spec.interval === 1) {
+      return everyDay
+        ? t('flows.cron.everyHour')
+        : t('flows.cron.everyHourOnDays').replace('{days}', days);
+    }
+    return everyDay
+      ? t('flows.cron.everyNHours').replace('{n}', String(spec.interval))
+      : t('flows.cron.everyNHoursOnDays')
+          .replace('{n}', String(spec.interval))
+          .replace('{days}', days);
   }
   // daily / weekly
   const time = formatTime(spec.hour, spec.minute);
-  return daysPhrase === 'every day' ? `Every day at ${time}` : `At ${time} on ${daysPhrase}`;
+  return everyDay
+    ? t('flows.cron.everyDayAtTime').replace('{time}', time)
+    : t('flows.cron.atTimeOnDays').replace('{time}', time).replace('{days}', days);
 }
-
-/**
- * The tagged shapes a trigger node's `config.schedule` can hold. The flows
- * engine's `crate::openhuman::cron::Schedule` (an internally-tagged enum,
- * `#[serde(tag = "kind")]`) is what `flows::tools` and the workflow-builder
- * agent actually write today — `{kind:"cron",expr,tz?,active_hours?}` /
- * `{kind:"at",at}` / `{kind:"every",every_ms}`. A bare cron string (what the
- * visual builder above compiles to, and what the bundled flow templates use)
- * is also accepted — the Rust side's custom `Deserialize` treats it as
- * shorthand for `Cron{expr}`.
- */
-export type ScheduleValue =
-  | string
-  | { kind?: string; expr?: string; tz?: string; at?: string; every_ms?: number }
-  | null
-  | undefined;
 
 /**
  * Pull the bare cron expression out of a schedule value, if it has one (a
@@ -212,48 +285,56 @@ const DAY_MS = 86_400_000;
  * millisecond count into minutes/hours/days, whichever divides evenly
  * ("Every 30m", "Every hour", "Daily (every 24h)"). Falls back to seconds for
  * anything finer-grained than a minute. */
-export function describeEveryMs(everyMs: number): string {
-  if (!Number.isFinite(everyMs) || everyMs <= 0) return 'Invalid interval';
+export function describeEveryMs(everyMs: number, t: Translate): string {
+  if (!Number.isFinite(everyMs) || everyMs <= 0) return t('flows.cron.invalidInterval');
   if (everyMs % DAY_MS === 0) {
     const days = everyMs / DAY_MS;
-    return days === 1 ? 'Daily (every 24h)' : `Every ${days} days`;
+    return days === 1
+      ? t('flows.cron.dailyEvery24h')
+      : t('flows.cron.everyNDays').replace('{n}', String(days));
   }
   if (everyMs % HOUR_MS === 0) {
     const hours = everyMs / HOUR_MS;
-    return hours === 1 ? 'Every hour' : `Every ${hours}h`;
+    return hours === 1
+      ? t('flows.cron.everyHour')
+      : t('flows.cron.everyNHoursShort').replace('{n}', String(hours));
   }
   if (everyMs % MINUTE_MS === 0) {
     const minutes = everyMs / MINUTE_MS;
-    return minutes === 1 ? 'Every minute' : `Every ${minutes}m`;
+    return minutes === 1
+      ? t('flows.cron.everyMinute')
+      : t('flows.cron.everyNMinutesShort').replace('{n}', String(minutes));
   }
   const seconds = Math.round(everyMs / 1000);
-  return seconds === 1 ? 'Every second' : `Every ${seconds}s`;
+  return seconds === 1
+    ? t('flows.cron.everySecond')
+    : t('flows.cron.everyNSeconds').replace('{n}', String(seconds));
 }
 
 /**
- * Plain-language summary of a trigger's `schedule` config value, across every
- * shape it can actually hold (see {@link ScheduleValue}). This is the single
- * place that decides "No schedule set" vs. a real summary — callers should
- * never re-derive it from just the cron string, or a valid `every`/`at`
+ * Plain-language summary of a trigger's `schedule` config value, across bare
+ * cron strings and the tagged `cron`, `at`, and `every` shapes. This is the
+ * single place that decides "No schedule set" vs. a real summary — callers
+ * should never re-derive it from just the cron string, or a valid `every`/`at`
  * schedule reads as unset (the canvas trigger-node bug this guards against).
  */
-export function describeSchedule(value: unknown): string {
-  if (typeof value === 'string') return describeCron(value);
+export function describeSchedule(value: unknown, t: Translate, locale: string): string {
+  if (typeof value === 'string') return describeCron(value, t, locale);
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
     const kind = typeof obj.kind === 'string' ? obj.kind : undefined;
 
     if (kind === 'every' && typeof obj.every_ms === 'number') {
-      return describeEveryMs(obj.every_ms);
+      return describeEveryMs(obj.every_ms, t);
     }
     if (kind === 'at' && typeof obj.at === 'string') {
       const date = new Date(obj.at);
       return Number.isNaN(date.getTime())
-        ? `Once at ${obj.at}`
-        : `Once at ${date.toLocaleString()}`;
+        ? t('flows.cron.onceAtRaw').replace('{at}', obj.at)
+        : t('flows.cron.onceAt').replace('{at}', date.toLocaleString(locale));
     }
     // `{kind:"cron", expr}` (or an untagged object that merely carries `expr`).
-    if (typeof obj.expr === 'string') return describeCron(obj.expr);
+    if (typeof obj.expr === 'string') return describeCron(obj.expr, t, locale);
   }
-  return describeCron(''); // 'No schedule set'
+  return describeCron('', t, locale); // 'No schedule set'
 }

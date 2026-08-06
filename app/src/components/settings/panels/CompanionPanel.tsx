@@ -1,7 +1,7 @@
+import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { callCoreRpc } from '../../../services/coreRpcClient';
 import type {
   CompanionConfig,
   CompanionSessionStatus,
@@ -9,6 +9,7 @@ import type {
   StopCompanionSessionResult,
 } from '../../../store/companionSlice';
 import { useAppSelector } from '../../../store/hooks';
+import { isTauri } from '../../../utils/tauriCommands/common';
 import Button from '../../ui/Button';
 import { SettingsRow, SettingsSection, SettingsStatusLine } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
@@ -25,10 +26,9 @@ const CompanionPanel = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
+    if (!isTauri()) return;
     try {
-      const result = await callCoreRpc<CompanionSessionStatus>({
-        method: 'openhuman.companion_status',
-      });
+      const result = await invoke<CompanionSessionStatus>('companion_status');
       setStatus(result);
       setError(null);
     } catch (err) {
@@ -37,10 +37,9 @@ const CompanionPanel = () => {
   }, []);
 
   const fetchConfig = useCallback(async () => {
+    if (!isTauri()) return;
     try {
-      const result = await callCoreRpc<CompanionConfig>({
-        method: 'openhuman.companion_config_get',
-      });
+      const result = await invoke<CompanionConfig>('companion_config_get');
       setConfig(result);
     } catch {
       // Config fetch is best-effort — defaults shown if unavailable.
@@ -66,12 +65,20 @@ const CompanionPanel = () => {
     setIsStarting(true);
     setError(null);
     try {
-      await callCoreRpc<StartCompanionSessionResult>({
-        method: 'openhuman.companion_start_session',
-        params: { consent: true, ttl_secs: config?.ttl_secs ?? 3600 },
-      });
+      await invoke<StartCompanionSessionResult>('companion_start_session', { consent: true });
+      try {
+        await invoke<void>('register_companion_hotkey', {
+          shortcut: config?.hotkey ?? 'ctrl+space',
+        });
+      } catch (registrationError) {
+        // A session without its advertised shortcut cannot be used. Roll it
+        // back so the panel never reports a live but unreachable companion.
+        await invoke<StopCompanionSessionResult>('companion_stop_session').catch(() => undefined);
+        throw registrationError;
+      }
       await fetchStatus();
     } catch (err) {
+      await fetchStatus();
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsStarting(false);
@@ -82,10 +89,7 @@ const CompanionPanel = () => {
     setIsStopping(true);
     setError(null);
     try {
-      await callCoreRpc<StopCompanionSessionResult>({
-        method: 'openhuman.companion_stop_session',
-        params: { reason: 'user_requested' },
-      });
+      await invoke<StopCompanionSessionResult>('companion_stop_session');
       await fetchStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -97,7 +101,7 @@ const CompanionPanel = () => {
   const sessionActive = status?.active ?? false;
 
   return (
-    <SettingsPanel description={t('pages.settings.features.desktopCompanionDesc')}>
+    <SettingsPanel description={t('settings.assistant.desktopCompanionDesc')}>
       {/* Session status + controls */}
       <SettingsSection>
         <SettingsRow
@@ -177,22 +181,6 @@ const CompanionPanel = () => {
           <SettingsRow
             label={t('settings.companion.sessionTtl')}
             control={<span className="text-xs text-content-muted">{config.ttl_secs}s</span>}
-          />
-          <SettingsRow
-            label={t('settings.companion.screenCapture')}
-            control={
-              <span className="text-xs text-content-muted">
-                {config.capture_screen ? t('common.enabled') : t('common.disabled')}
-              </span>
-            }
-          />
-          <SettingsRow
-            label={t('settings.companion.appContext')}
-            control={
-              <span className="text-xs text-content-muted">
-                {config.include_app_context ? t('common.enabled') : t('common.disabled')}
-              </span>
-            }
           />
         </SettingsSection>
       )}

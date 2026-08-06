@@ -4,12 +4,7 @@ use super::parse::{
     extract_json_values, parse_arguments_value, parse_glm_style_tool_calls, parse_tool_call_value,
     parse_tool_calls, parse_tool_calls_from_json_value, tools_to_openai_format,
 };
-use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, Provider};
-use crate::openhuman::tools::{self, Tool};
-use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::openhuman::tools;
 use std::sync::Arc;
 
 #[test]
@@ -29,74 +24,6 @@ fn test_scrub_credentials_json() {
     let scrubbed = scrub_credentials(input);
     assert!(scrubbed.contains("\"api_key\": \"sk-1*[REDACTED]\""));
     assert!(scrubbed.contains("public"));
-}
-
-struct NonVisionProvider {
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl Provider for NonVisionProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok("ok".to_string())
-    }
-}
-
-struct VisionProvider {
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl Provider for VisionProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: false,
-            vision: true,
-        }
-    }
-
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok("ok".to_string())
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let marker_count =
-            crate::openhuman::agent::multimodal::count_image_markers(request.messages);
-        if marker_count == 0 {
-            anyhow::bail!("expected image markers in request messages");
-        }
-
-        if request.tools.is_some() {
-            anyhow::bail!("no tools should be attached for this test");
-        }
-
-        Ok(ChatResponse {
-            text: Some("vision-ok".to_string()),
-            tool_calls: Vec::new(),
-            usage: None,
-            reasoning_content: None,
-        })
-    }
 }
 
 #[test]

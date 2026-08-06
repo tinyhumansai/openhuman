@@ -18,15 +18,6 @@ describe('rpcMethods catalog', () => {
       expect(normalizeRpcMethod('openhuman.auth.a.b.c')).toBe('openhuman.auth_a_b_c');
     });
 
-    test('transforms accessibility prefix to screen_intelligence prefix', () => {
-      expect(normalizeRpcMethod('openhuman.accessibility_status')).toBe(
-        'openhuman.screen_intelligence_status'
-      );
-      expect(normalizeRpcMethod('openhuman.accessibility_enable')).toBe(
-        'openhuman.screen_intelligence_enable'
-      );
-    });
-
     test('returns unmapped or unrecognized methods unchanged', () => {
       expect(normalizeRpcMethod('openhuman.threads_list')).toBe('openhuman.threads_list');
       expect(normalizeRpcMethod('openhuman.unknown_method')).toBe('openhuman.unknown_method');
@@ -37,8 +28,8 @@ describe('rpcMethods catalog', () => {
     test('trims whitespace and converts to lower case', () => {
       expect(normalizeRpcMethod('  OpenHuman.Auth.Login  ')).toBe('openhuman.auth_login');
       expect(normalizeRpcMethod('  OPENHUMAN.GET_CONFIG ')).toBe(CORE_RPC_METHODS.configGet);
-      expect(normalizeRpcMethod('OpenHuman.Accessibility_Status  ')).toBe(
-        'openhuman.screen_intelligence_status'
+      expect(normalizeRpcMethod('OpenHuman.Unrecognized_Status  ')).toBe(
+        'openhuman.unrecognized_status'
       );
       expect(normalizeRpcMethod('   some_RANDOM_method  ')).toBe('some_random_method');
     });
@@ -138,10 +129,6 @@ describe('rpcMethods catalog', () => {
         'utf8'
       ),
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/screen_intelligence/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
         path.resolve(__dirname, '../../../../src/openhuman/inference/provider/schemas.rs'),
         'utf8'
       ),
@@ -154,19 +141,19 @@ describe('rpcMethods catalog', () => {
         'utf8'
       ),
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/embeddings/schemas.rs'),
+        path.resolve(__dirname, '../../../../src/openhuman/inference/embeddings/schemas.rs'),
         'utf8'
       ),
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/mcp_registry/schemas.rs'),
+        path.resolve(__dirname, '../../../../src/openhuman/mcp/registry/schemas.rs'),
         'utf8'
       ),
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/tool_registry/schemas.rs'),
+        path.resolve(__dirname, '../../../../src/openhuman/tools/registry/schemas.rs'),
         'utf8'
       ),
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/health/schemas.rs'),
+        path.resolve(__dirname, '../../../../src/openhuman/platform/health/schemas.rs'),
         'utf8'
       ),
       fs.readFileSync(
@@ -188,23 +175,21 @@ describe('rpcMethods catalog', () => {
       // core.* methods (e.g. core.ping) are special dispatch methods, not in the schema catalog.
       if (!method.startsWith('openhuman.')) continue;
       const methodRoot = method.slice('openhuman.'.length);
-      const namespace = methodRoot.startsWith('screen_intelligence_')
-        ? 'screen_intelligence'
-        : methodRoot.startsWith('inference_')
-          ? 'inference'
-          : methodRoot.startsWith('embeddings_')
-            ? 'embeddings'
-            : methodRoot.startsWith('providers_')
-              ? 'providers'
-              : methodRoot.startsWith('mcp_clients_')
-                ? 'mcp_clients'
-                : methodRoot.startsWith('health_')
-                  ? 'health'
-                  : methodRoot.startsWith('channels_')
-                    ? 'channels'
-                    : methodRoot.startsWith('tool_registry_')
-                      ? 'tool_registry'
-                      : 'config';
+      const namespace = methodRoot.startsWith('inference_')
+        ? 'inference'
+        : methodRoot.startsWith('embeddings_')
+          ? 'embeddings'
+          : methodRoot.startsWith('providers_')
+            ? 'providers'
+            : methodRoot.startsWith('mcp_clients_')
+              ? 'mcp_clients'
+              : methodRoot.startsWith('health_')
+                ? 'health'
+                : methodRoot.startsWith('channels_')
+                  ? 'channels'
+                  : methodRoot.startsWith('tool_registry_')
+                    ? 'tool_registry'
+                    : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);

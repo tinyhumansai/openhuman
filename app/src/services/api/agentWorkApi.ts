@@ -58,10 +58,10 @@ export interface AgentWorkResponse {
  * Control verb applied to a single run via `openhuman.agent_work_control`.
  * Mirrors the Rust `ControlVerb`. `continue` / `followUp` require a message.
  */
-export type AgentWorkAction = 'stop' | 'retry' | 'continue' | 'follow_up';
+type AgentWorkAction = 'stop' | 'retry' | 'continue' | 'follow_up';
 
 /** Arguments for {@link agentWorkApi.control}. */
-export interface AgentWorkControlArgs {
+interface AgentWorkControlArgs {
   runId: string;
   action: AgentWorkAction;
   /** Required for `continue` and `follow_up`; ignored otherwise. */
@@ -71,7 +71,7 @@ export interface AgentWorkControlArgs {
 }
 
 /** Response from `openhuman.agent_work_control`: the re-projected row. */
-export interface AgentWorkControlResponse {
+interface AgentWorkControlResponse {
   row: AgentWorkRow;
 }
 

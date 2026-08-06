@@ -125,13 +125,15 @@ impl Default for WebSearchConfig {
 // which tools are registered: `disabled` → no search tools; `managed` →
 // backend-proxied `web_search`; `parallel` → direct Parallel API tools
 // (search/extract/chat/research/enrich/dataset); `brave` → direct Brave Search
-// tools (web/news/images/videos); `querit` → direct Querit web search.
+// tools (web/news/images/videos); `querit` → direct Querit web search;
+// `exa` → direct Exa neural search (search / find similar / contents).
 
 pub const SEARCH_ENGINE_DISABLED: &str = "disabled";
 pub const SEARCH_ENGINE_MANAGED: &str = "managed";
 pub const SEARCH_ENGINE_PARALLEL: &str = "parallel";
 pub const SEARCH_ENGINE_BRAVE: &str = "brave";
 pub const SEARCH_ENGINE_QUERIT: &str = "querit";
+pub const SEARCH_ENGINE_EXA: &str = "exa";
 
 fn default_search_engine() -> String {
     SEARCH_ENGINE_MANAGED.into()
@@ -179,13 +181,15 @@ impl SearchEngineCredentials {
 /// registration at a time. `disabled` suppresses all search tools; `managed` is
 /// the backend-proxied default and requires no key; `parallel`, `brave`, and
 /// `querit` are BYO and require their own API key in the matching sub-block.
+/// `exa` is BYO too and routes directly to the Exa API.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Active search engine. One of [`SEARCH_ENGINE_DISABLED`],
     /// [`SEARCH_ENGINE_MANAGED`], [`SEARCH_ENGINE_PARALLEL`],
-    /// [`SEARCH_ENGINE_BRAVE`], or [`SEARCH_ENGINE_QUERIT`]. Unknown values
-    /// fall back to managed at registration time.
+    /// [`SEARCH_ENGINE_BRAVE`], [`SEARCH_ENGINE_QUERIT`], or
+    /// [`SEARCH_ENGINE_EXA`]. Unknown values fall back to managed at
+    /// registration time.
     #[serde(default = "default_search_engine")]
     pub engine: String,
 
@@ -208,6 +212,11 @@ pub struct SearchConfig {
     /// Querit credentials (used when `engine = "querit"`).
     #[serde(default)]
     pub querit: SearchEngineCredentials,
+
+    /// Exa credentials (used when `engine = "exa"`). BYOK: search calls go
+    /// straight to `https://api.exa.ai`, never through the managed backend.
+    #[serde(default)]
+    pub exa: SearchEngineCredentials,
 }
 
 impl Default for SearchConfig {
@@ -219,6 +228,7 @@ impl Default for SearchConfig {
             parallel: SearchEngineCredentials::default(),
             brave: SearchEngineCredentials::default(),
             querit: SearchEngineCredentials::default(),
+            exa: SearchEngineCredentials::default(),
         }
     }
 }
@@ -233,6 +243,7 @@ pub enum SearchEngine {
     Parallel,
     Brave,
     Querit,
+    Exa,
 }
 
 impl SearchConfig {
@@ -246,6 +257,7 @@ impl SearchConfig {
             SEARCH_ENGINE_PARALLEL if self.parallel.has_key() => SearchEngine::Parallel,
             SEARCH_ENGINE_BRAVE if self.brave.has_key() => SearchEngine::Brave,
             SEARCH_ENGINE_QUERIT if self.querit.has_key() => SearchEngine::Querit,
+            SEARCH_ENGINE_EXA if self.exa.has_key() => SearchEngine::Exa,
             _ => SearchEngine::Managed,
         }
     }
@@ -313,6 +325,27 @@ mod search_config_tests {
         assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
         cfg.querit.api_key = Some("real".into());
         assert_eq!(cfg.effective_engine(), SearchEngine::Querit);
+    }
+
+    #[test]
+    fn exa_requires_key() {
+        let mut cfg = SearchConfig {
+            engine: SEARCH_ENGINE_EXA.into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.exa.api_key = Some("  ".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.exa.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Exa);
+    }
+
+    #[test]
+    fn exa_key_does_not_disturb_the_managed_default() {
+        // BYOK Exa must be opt-in: a stored key alone never flips the engine.
+        let mut cfg = SearchConfig::default();
+        cfg.exa.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
     }
 
     #[test]

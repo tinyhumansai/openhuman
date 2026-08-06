@@ -415,8 +415,8 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_graph_topologies(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
-        let reports = crate::openhuman::tinyagents::all_graph_topologies();
-        let agents = crate::openhuman::agent_registry::agents::load_builtins()
+        let reports = crate::openhuman::agent::tinyagents::all_graph_topologies();
+        let agents = crate::openhuman::agent::registry::agents::load_builtins()
             .map_err(|e| format!("loading built-in agent graph resolutions: {e}"))?
             .into_iter()
             .map(|def| {
@@ -490,7 +490,7 @@ fn handle_graph_topologies(_params: Map<String, Value>) -> ControllerFuture {
 /// (cloud/BYOK) rows are skipped — those are owned by the priced catalog layers.
 fn local_catalog_models_from_config(
     config: &crate::openhuman::config::Config,
-) -> Vec<crate::openhuman::cost::catalog::LocalCatalogModel> {
+) -> Vec<crate::openhuman::platform::cost::catalog::LocalCatalogModel> {
     use crate::openhuman::inference::local::profile::{
         profile_for_kind, LocalProviderKind, ToolSupport,
     };
@@ -506,20 +506,21 @@ fn local_catalog_models_from_config(
             } else {
                 profile.default_context_window
             };
-            Some(crate::openhuman::cost::catalog::LocalCatalogModel {
-                provider: entry.provider.clone(),
-                model_id: entry.id.clone(),
-                context_window,
-                tool_calling: matches!(profile.tool_support, ToolSupport::Native),
-                streaming: profile.supports_streaming,
-            })
+            Some(
+                crate::openhuman::platform::cost::catalog::LocalCatalogModel {
+                    provider: entry.provider.clone(),
+                    model_id: entry.id.clone(),
+                    context_window,
+                    tool_calling: matches!(profile.tool_support, ToolSupport::Native),
+                    streaming: profile.supports_streaming,
+                },
+            )
         })
         .collect()
 }
 
 fn handle_registry_snapshot(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
-        use crate::openhuman::tools::Tool as _;
         use tinyagents::registry::{ComponentKind, ComponentMetadata, RegistrySnapshot};
 
         let mut components: Vec<ComponentMetadata> = Vec::new();
@@ -539,7 +540,8 @@ fn handle_registry_snapshot(_params: Map<String, Value>) -> ControllerFuture {
                 Vec::new()
             }
         };
-        let catalog = crate::openhuman::cost::catalog::unified_model_catalog(&local_models);
+        let catalog =
+            crate::openhuman::platform::cost::catalog::unified_model_catalog(&local_models);
         let model_count = catalog.models.len();
         for entry in catalog.models {
             let mut meta = ComponentMetadata::new(entry.model_id.clone(), ComponentKind::Model)
@@ -562,7 +564,7 @@ fn handle_registry_snapshot(_params: Map<String, Value>) -> ControllerFuture {
         }
 
         // ── Graphs: structure-only topology reports ─────────────────────────
-        let reports = crate::openhuman::tinyagents::all_graph_topologies();
+        let reports = crate::openhuman::agent::tinyagents::all_graph_topologies();
         let graph_count = reports.len();
         for report in &reports {
             let mut meta = ComponentMetadata::new(report.name, ComponentKind::Graph)
@@ -574,7 +576,7 @@ fn handle_registry_snapshot(_params: Map<String, Value>) -> ControllerFuture {
         }
 
         // ── Agents: built-in archetypes ─────────────────────────────────────
-        let agent_defs = crate::openhuman::agent_registry::agents::load_builtins()
+        let agent_defs = crate::openhuman::agent::registry::agents::load_builtins()
             .map_err(|e| format!("loading built-in agents for registry snapshot: {e}"))?;
         let agent_count = agent_defs.len();
         for def in &agent_defs {

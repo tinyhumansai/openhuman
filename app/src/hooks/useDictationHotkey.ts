@@ -45,7 +45,7 @@ interface DictationSettings {
   streaming_interval_ms: number;
 }
 
-export interface DictationHotkeyState {
+interface DictationHotkeyState {
   /** Whether dictation is enabled in the core config. */
   dictationEnabled: boolean;
   /** Whether the core hotkey listener is active. */

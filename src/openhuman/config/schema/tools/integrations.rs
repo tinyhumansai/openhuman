@@ -52,7 +52,7 @@ pub struct ComposioConfig {
     ///
     /// The user-provided API key for direct mode is *not* stored in the
     /// TOML — it lives in the encrypted keychain via
-    /// [`crate::openhuman::credentials`] under the
+    /// [`crate::openhuman::security::credentials`] under the
     /// `composio-direct` provider slot. We only persist the mode here so
     /// the factory can pick the right client at construction time.
     #[serde(default = "default_composio_mode")]
@@ -95,23 +95,6 @@ impl Default for SecretsConfig {
             encrypt: defaults::default_true(),
         }
     }
-}
-
-// ── Native computer control (mouse + keyboard) ─────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(default)]
-pub struct ComputerControlConfig {
-    /// Master toggle for mouse and keyboard tools. Disabled by default —
-    /// the user must explicitly opt in.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Opt-in for the mutating `ax_interact` actions (`press` / `set_value`).
-    /// Disabled by default: the read-only `list` action is always available,
-    /// but actuating arbitrary app controls / typing into arbitrary fields
-    /// requires explicit user opt-in (mirrors `enabled` for mouse/keyboard).
-    #[serde(default)]
-    pub ax_interact_mutations: bool,
 }
 
 // ── Agent integration tools (backend-proxied) ───────────────────────

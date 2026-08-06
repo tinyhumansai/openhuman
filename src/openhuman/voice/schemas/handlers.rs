@@ -13,7 +13,7 @@ pub(super) use provider_server::{
     handle_voice_test_provider, handle_voice_update_provider_settings,
 };
 pub(super) use transcribe_tts::{
-    handle_voice_cloud_transcribe, handle_voice_reply_synthesize, handle_voice_status,
-    handle_voice_stt_dispatch, handle_voice_transcribe, handle_voice_transcribe_bytes,
-    handle_voice_tts, handle_voice_tts_dispatch,
+    handle_voice_agent_signed_url, handle_voice_cloud_transcribe, handle_voice_reply_synthesize,
+    handle_voice_status, handle_voice_stt_dispatch, handle_voice_transcribe,
+    handle_voice_transcribe_bytes, handle_voice_tts, handle_voice_tts_dispatch,
 };

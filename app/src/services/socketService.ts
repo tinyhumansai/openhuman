@@ -15,10 +15,10 @@ import {
   setBackendMeetTranscript,
 } from '../store/backendMeetSlice';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
-import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
+import type { UserErrorScope } from '../types/userError';
 import { IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
 import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
@@ -101,35 +101,6 @@ function normalizeChannelConnectionUpdatePayload(
     capabilities: Array.isArray(capabilities)
       ? capabilities.filter((item): item is string => typeof item === 'string')
       : undefined,
-  };
-}
-
-const COMPANION_STATES: ReadonlySet<string> = new Set([
-  'idle',
-  'listening',
-  'thinking',
-  'speaking',
-  'pointing',
-  'error',
-]);
-
-export function parseCompanionStateChangedEvent(value: unknown): CompanionStateChangedEvent | null {
-  if (!value || typeof value !== 'object') return null;
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.session_id !== 'string') return null;
-  if (typeof obj.state !== 'string' || !COMPANION_STATES.has(obj.state)) return null;
-
-  const previous =
-    typeof obj.previous_state === 'string' && COMPANION_STATES.has(obj.previous_state)
-      ? (obj.previous_state as CompanionStateChangedEvent['previous_state'])
-      : 'idle';
-  const message = typeof obj.message === 'string' ? obj.message : undefined;
-
-  return {
-    session_id: obj.session_id,
-    state: obj.state as CompanionStateChangedEvent['state'],
-    previous_state: previous,
-    message,
   };
 }
 
@@ -420,18 +391,6 @@ class SocketService {
       );
     });
 
-    // Companion state change events — dispatch into the companion Redux slice
-    // so settings panel and other UI can react to session lifecycle.
-    this.socket.on('companion:state_changed', (data: unknown) => {
-      const event = parseCompanionStateChangedEvent(data);
-      if (!event) {
-        socketWarn('companion:state_changed dropped — invalid payload shape');
-        return;
-      }
-      socketLog('companion:state_changed → %s', event.state);
-      store.dispatch(setCompanionState(event));
-    });
-
     // Permanent user-config / billing failures surfaced from background jobs
     // (e.g. cron) — core broadcasts these to the "system" room as a
     // metadata-only `user_error` event carrying a stable kind token in
@@ -450,17 +409,18 @@ class SocketService {
       const provider = typeof obj.error_provider === 'string' ? obj.error_provider : undefined;
       const sourceDomain = typeof obj.error_source === 'string' ? obj.error_source : 'cron';
       socketLog('user_error kind=%s source=%s', errorType ?? 'none', sourceDomain);
+      // Scope groups the entry in the panel and is part of its dedupe identity,
+      // so it must follow the producing domain. It was pinned to `cron` while
+      // the scheduler was the only producer; the memory embedder health gate
+      // (#5354) is the second. Unknown domains keep the historical `cron`
+      // default rather than widening the scope union from wire data.
+      const scope: UserErrorScope = sourceDomain === 'memory' ? 'memory' : 'cron';
       // Metadata-only ingest: forward the stable kind token + scope ONLY, never
       // a raw `message` body. The cron producer already omits it, but we drop
       // any `obj.message` here too so a future/buggy broadcast can't leak raw
       // provider text into the UI — classify() keys on `errorType` for this
       // path. Locks the no-leak contract FE-side (CodeRabbit #4169).
-      ingestRuntimeErrorSignal(store.dispatch, {
-        errorType,
-        scope: 'cron',
-        sourceDomain,
-        provider,
-      });
+      ingestRuntimeErrorSignal(store.dispatch, { errorType, scope, sourceDomain, provider });
     });
 
     // Backend Meet bot events — forwarded from core's DomainEvent bus

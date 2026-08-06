@@ -9,7 +9,7 @@ use thiserror::Error;
 use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 use crate::openhuman::agent::harness::definition::AgentTier;
-use crate::openhuman::inference::provider::ChatMessage;
+use crate::openhuman::agent::messages::ChatMessage;
 
 /// Per-spawn options that override or augment what the
 /// [`AgentDefinition`] specifies. Built by `SpawnSubagentTool::execute`
@@ -137,6 +137,16 @@ pub struct SubagentRunOutcome {
     /// the session totals (tokens + USD) and the global cost tracker. See
     /// [`SubagentUsage`].
     pub usage: SubagentUsage,
+    /// `action_dir`-relative paths of artifacts this run handed to its parent
+    /// (#3883). Populated from the `[artifact]` pointers present in `output`,
+    /// whether the harness offloaded an oversized result itself or the worker
+    /// followed the prompt contract and wrote the file on its own.
+    ///
+    /// This is what makes the handoff carry **paths** rather than payloads: the
+    /// parent can read any of these with `file_read` to recover full fidelity
+    /// long after the child's context is gone. Empty for the common case of a
+    /// small, fully inline result.
+    pub artifact_paths: Vec<String>,
 }
 
 /// Token + cost totals for a single sub-agent run.

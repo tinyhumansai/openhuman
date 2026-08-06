@@ -1,5 +1,5 @@
 use openhuman_core::openhuman::config::schema::{Config, StreamMode, TelegramConfig};
-use openhuman_core::openhuman::keyring;
+use openhuman_core::openhuman::security::keyring;
 use std::sync::{Mutex, OnceLock};
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {

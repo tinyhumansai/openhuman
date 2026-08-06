@@ -4,7 +4,7 @@
 //! Sibling to [`crate::openhuman::tools::impl::system::shell::ShellTool`]: same
 //! security gates, same env hygiene, but the command is pinned to the `node`
 //! binary resolved by
-//! [`crate::openhuman::javascript::NodeBootstrap`].
+//! [`crate::openhuman::runtime::javascript::NodeBootstrap`].
 //!
 //! Two input modes:
 //!
@@ -22,7 +22,7 @@
 //! `PATH`. Subsequent calls reuse the cached install.
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::javascript::NodeBootstrap;
+use crate::openhuman::runtime::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
@@ -73,6 +73,10 @@ pub struct NodeExecTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
     bootstrap: Arc<NodeBootstrap>,
+    /// Runtime-pool config + workspace, snapshotted at construction so the hot
+    /// inline path never re-reads config from disk (#5106 is a perf feature).
+    pool_cfg: crate::openhuman::config::RuntimePoolConfig,
+    workspace_dir: std::path::PathBuf,
 }
 
 impl NodeExecTool {
@@ -80,11 +84,15 @@ impl NodeExecTool {
         security: Arc<SecurityPolicy>,
         runtime: Arc<dyn RuntimeAdapter>,
         bootstrap: Arc<NodeBootstrap>,
+        pool_cfg: crate::openhuman::config::RuntimePoolConfig,
+        workspace_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             security,
             runtime,
             bootstrap,
+            pool_cfg,
+            workspace_dir,
         }
     }
 }
@@ -184,7 +192,7 @@ impl NodeExecTool {
 
         // No default deadline — only the caller-supplied `timeout_secs` (capped)
         // bounds the run. `None` ⇒ run to completion.
-        let explicit_timeout = crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+        let explicit_timeout = crate::openhuman::tools::timeout::explicit_call_timeout_duration(
             args.get("timeout_secs").and_then(|v| v.as_u64()),
             NODE_TIMEOUT_MAX_SECS,
         );
@@ -203,6 +211,21 @@ impl NodeExecTool {
             return Ok(ToolResult::error(
                 "[policy-blocked] Action blocked: the agent is in read-only mode and cannot execute code.",
             ));
+        }
+        let path_policy = super::security_for_tool_context(&self.security, context, "node_exec");
+        let guard_command = inline_code.clone().unwrap_or_else(|| {
+            std::iter::once(script_path.as_deref().unwrap_or_default())
+                .chain(extra_args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        if let Err(reason) = super::check_cross_profile_command(
+            &path_policy,
+            &guard_command,
+            &path_policy.action_dir,
+            "node_exec",
+        ) {
+            return Ok(ToolResult::error(reason));
         }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
@@ -231,8 +254,6 @@ impl NodeExecTool {
             node_bin = %resolved.node_bin.display(),
             "[node_exec] starting invocation"
         );
-
-        let path_policy = super::security_for_tool_context(&self.security, context, "node_exec");
 
         let command = if let Some(code) = inline_code.as_deref() {
             format!(
@@ -274,6 +295,20 @@ impl NodeExecTool {
             return Ok(self
                 .run_sandboxed(&path_policy, &command, &resolved.bin_dir, explicit_timeout)
                 .await);
+        }
+
+        // Route inline JS through the shared runtime pool when enabled (#5106):
+        // a warm, bounded set of `node` workers replaces one `node -e` child per
+        // call, so a fleet pays ~one interpreter instead of one per skill run.
+        // `script_path` and sandboxed runs keep the legacy per-call spawn; a
+        // pool infrastructure failure also transparently falls back below.
+        if let Some(code) = inline_code.as_deref() {
+            if let Some(result) = self
+                .try_pool_inline(code, &resolved, &path_policy.action_dir, explicit_timeout)
+                .await
+            {
+                return Ok(result);
+            }
         }
 
         let mut cmd = match self
@@ -358,6 +393,81 @@ impl NodeExecTool {
 }
 
 impl NodeExecTool {
+    /// Attempt to run inline JS on the shared runtime pool (#5106).
+    ///
+    /// Returns `Some(result)` when the pool handled the job — success, non-zero
+    /// exit, or timeout, all mapped to the same `ToolResult` shape as the legacy
+    /// path. Returns `None` when pooling is disabled or the pool infrastructure
+    /// failed, so the caller transparently falls back to a per-call spawn.
+    async fn try_pool_inline(
+        &self,
+        code: &str,
+        resolved: &crate::openhuman::runtime::node::ResolvedNode,
+        action_dir: &std::path::Path,
+        timeout: Option<Duration>,
+    ) -> Option<ToolResult> {
+        if !crate::openhuman::runtime::pool::node::enabled(&self.pool_cfg) {
+            return None;
+        }
+        // Node forbids process.chdir() inside worker_threads. Preserve the
+        // legacy `node -e` contract for any statically apparent chdir use
+        // instead of dispatching code that the pooled worker cannot execute.
+        // False positives are safe: they only give up the pooling optimisation.
+        if inline_requires_process_chdir_compat(code) {
+            tracing::debug!("[node_exec] pool: process.chdir-compatible code uses legacy spawn");
+            return None;
+        }
+        match crate::openhuman::runtime::pool::node::run_inline(
+            &self.workspace_dir,
+            &self.pool_cfg.node,
+            &resolved.node_bin,
+            &resolved.bin_dir,
+            code.to_string(),
+            Some(action_dir.to_path_buf()),
+            timeout,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tracing::info!(
+                    queue_wait_ms = outcome.queue_wait.as_millis() as u64,
+                    elapsed_ms = outcome.elapsed.as_millis() as u64,
+                    timed_out = outcome.timed_out,
+                    "[node_exec] pool: inline job completed on a warm worker"
+                );
+                Some(pool_outcome_to_result(outcome, timeout))
+            }
+            // Job never ran → safe to fall back to a per-call spawn.
+            Err(crate::openhuman::runtime::pool::PoolRunError::PreDispatch(error)) => {
+                tracing::warn!(
+                    error = %error,
+                    "[node_exec] pool: pre-dispatch failure; falling back to legacy spawn"
+                );
+                None
+            }
+            // Load-shed: do NOT spawn (that reintroduces the per-run RSS the pool
+            // caps). Surface a retryable busy error instead.
+            Err(crate::openhuman::runtime::pool::PoolRunError::Saturated) => {
+                tracing::warn!("[node_exec] pool: saturated; shedding load");
+                Some(ToolResult::error(
+                    "Node runtime pool is at capacity; retry shortly.",
+                ))
+            }
+            // The job may already have executed → terminal, never re-run it.
+            Err(crate::openhuman::runtime::pool::PoolRunError::PostDispatch(error)) => {
+                tracing::warn!(
+                    error = %error,
+                    "[node_exec] pool: post-dispatch failure; not retried to avoid duplicate execution"
+                );
+                Some(ToolResult::error(format!(
+                    "node_exec failed after the code was dispatched to a pooled worker; not retried to avoid running it twice: {error}"
+                )))
+            }
+        }
+    }
+}
+
+impl NodeExecTool {
     /// Execute a node command through the sandbox backend. Called from
     /// `execute()` when the agent's `SandboxMode` is `Sandboxed`.
     ///
@@ -381,7 +491,7 @@ impl NodeExecTool {
         // legitimately long script isn't killed while still bounding a wedged
         // sandbox process. The native (non-sandboxed) path runs truly unbounded.
         let effective = timeout.unwrap_or_else(|| {
-            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+            Duration::from_secs(crate::openhuman::tools::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
         });
 
         // Load the live `RuntimeConfig` so `resolve_sandbox_policy` derives
@@ -468,6 +578,50 @@ impl NodeExecTool {
     }
 }
 
+/// Map a runtime-pool outcome onto the same `ToolResult` shape the legacy
+/// `node -e` path produces: 1 MB stdout/stderr caps, exit-code surfacing on
+/// failure, and the identical timeout message. Keeps pooled and legacy runs
+/// indistinguishable to the agent.
+fn pool_outcome_to_result(
+    outcome: crate::openhuman::runtime::pool::PoolExecOutcome,
+    timeout: Option<Duration>,
+) -> ToolResult {
+    if outcome.timed_out {
+        return ToolResult::error(format!(
+            "node_exec timed out after {}s and was killed",
+            timeout.map(|d| d.as_secs()).unwrap_or(0)
+        ));
+    }
+
+    let mut stdout = outcome.stdout;
+    let mut stderr = outcome.stderr;
+    if stdout.len() > MAX_OUTPUT_BYTES {
+        stdout.truncate(crate::openhuman::util::floor_char_boundary(
+            &stdout,
+            MAX_OUTPUT_BYTES,
+        ));
+        stdout.push_str("\n... [stdout truncated at 1MB]");
+    }
+    if stderr.len() > MAX_OUTPUT_BYTES {
+        stderr.truncate(crate::openhuman::util::floor_char_boundary(
+            &stderr,
+            MAX_OUTPUT_BYTES,
+        ));
+        stderr.push_str("\n... [stderr truncated at 1MB]");
+    }
+
+    let success = matches!(outcome.exit_code, None | Some(0));
+    if success {
+        if stderr.is_empty() {
+            ToolResult::success(stdout)
+        } else {
+            ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}"))
+        }
+    } else {
+        super::command_output::command_failure(outcome.exit_code, &stdout, &stderr)
+    }
+}
+
 /// Resolve the wall-clock policy for a `node_exec` call from its args.
 ///
 /// No `timeout_secs` (or `0`) ⇒ run unbounded; a positive value ⇒ enforce it,
@@ -478,6 +632,17 @@ fn node_timeout_policy(args: &serde_json::Value) -> ToolTimeout {
         None | Some(0) => ToolTimeout::Unbounded,
         Some(secs) => ToolTimeout::Secs(secs.min(NODE_TIMEOUT_MAX_SECS)),
     }
+}
+
+/// Whether inline JavaScript needs the legacy main-thread process so
+/// `process.chdir()` remains available.
+///
+/// Matching the property name anywhere deliberately catches direct calls,
+/// aliases, destructuring, and bracket notation. Comments or string literals
+/// may route an otherwise pool-safe snippet through the legacy path, which is
+/// preferable to executing a cwd-mutating snippet with changed semantics.
+fn inline_requires_process_chdir_compat(code: &str) -> bool {
+    code.contains("chdir")
 }
 
 /// POSIX-safe single-quote escaping. Wraps `s` in `'…'`, turning any embedded
@@ -558,6 +723,24 @@ mod tests {
             node_timeout_policy(&json!({"timeout_secs": 99999})),
             ToolTimeout::Secs(NODE_TIMEOUT_MAX_SECS)
         );
+    }
+
+    #[test]
+    fn process_chdir_snippets_use_legacy_node_spawn() {
+        for code in [
+            "process.chdir('subdir'); console.log(process.cwd())",
+            "const move = process.chdir; move('subdir')",
+            "const { chdir } = process; chdir('subdir')",
+            "process['chdir']('subdir')",
+        ] {
+            assert!(
+                inline_requires_process_chdir_compat(code),
+                "expected legacy fallback for {code:?}"
+            );
+        }
+        assert!(!inline_requires_process_chdir_compat(
+            "console.log(process.cwd())"
+        ));
     }
 
     #[test]
@@ -655,5 +838,52 @@ mod tests {
             "resolved path leaked into workspace_dir; got {}",
             resolved.display()
         );
+    }
+
+    #[tokio::test]
+    async fn inline_code_cannot_write_to_sibling_profile() {
+        use crate::openhuman::agent::host_runtime::NativeRuntime;
+        use crate::openhuman::config::schema::NodeConfig;
+        use crate::openhuman::security::policy::ActiveProfileGuard;
+        use crate::openhuman::security::AutonomyLevel;
+
+        let temp = tempfile::tempdir().unwrap();
+        let action_root = temp.path().join("actions");
+        let alice = action_root.join("profiles/alice");
+        std::fs::create_dir_all(action_root.join("profiles/bob")).unwrap();
+        std::fs::create_dir_all(&alice).unwrap();
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            workspace_dir: temp.path().join("state"),
+            action_dir: alice,
+            workspace_only: false,
+            active_profile: Some(ActiveProfileGuard {
+                profile_id: "alice".into(),
+                action_dir: action_root,
+            }),
+            ..SecurityPolicy::default()
+        });
+        let bootstrap = Arc::new(NodeBootstrap::new(
+            NodeConfig::default(),
+            temp.path().to_path_buf(),
+            reqwest::Client::new(),
+        ));
+        let tool = NodeExecTool::new(
+            security,
+            Arc::new(NativeRuntime::new()),
+            bootstrap,
+            crate::openhuman::config::RuntimePoolConfig::default(),
+            temp.path().join("state"),
+        );
+
+        let result = tool
+            .execute(json!({
+                "inline_code": "require('fs').writeFileSync('../bob/loot.txt', 'x')"
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.text().contains("Cross-profile access blocked"));
     }
 }

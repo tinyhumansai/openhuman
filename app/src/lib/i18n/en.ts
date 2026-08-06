@@ -1,6 +1,25 @@
 import type { TranslationMap } from './types';
 
 const en: TranslationMap = {
+  'settings.assistant.desktopCompanion': 'Desktop companion',
+  'settings.assistant.desktopCompanionDesc': 'Always-on companion mode with a system-tray shortcut',
+  'connections.header.companion': 'A floating desktop companion for quick, always-on help.',
+  'pages.settings.features.desktopCompanion': 'Desktop Companion',
+  'settings.companion.title': 'Desktop Companion',
+  'settings.companion.session': 'Session',
+  'settings.companion.activeLabel': 'Active',
+  'settings.companion.inactiveStatus': 'Inactive',
+  'settings.companion.stopping': 'Stopping…',
+  'settings.companion.stopSession': 'Stop Session',
+  'settings.companion.starting': 'Starting…',
+  'settings.companion.startSession': 'Start Session',
+  'settings.companion.sessionId': 'Session ID',
+  'settings.companion.turns': 'Turns',
+  'settings.companion.remaining': 'Remaining',
+  'settings.companion.configuration': 'Configuration',
+  'settings.companion.hotkey': 'Hotkey',
+  'settings.companion.activationMode': 'Activation Mode',
+  'settings.companion.sessionTtl': 'Session TTL',
   'skills.recallCalendar.title': 'Google Calendar',
   'skills.recallCalendar.description': 'Auto-join Google Meet calls via Recall.ai',
   // Navigation
@@ -9,7 +28,7 @@ const en: TranslationMap = {
   'nav.chat': 'Chat',
   'nav.assistant': 'Assistant',
 
-  // Assistant surface — face mode toggle (Phase 6)
+  // Assistant surface: face mode toggle (Phase 6)
   'assistant.faceMode.on': 'Talking to Tiny',
   'assistant.faceMode.off': 'Talk to Tiny',
   'assistant.faceMode.turnOn': 'Show mascot face',
@@ -26,8 +45,10 @@ const en: TranslationMap = {
   'nav.activity': 'Activity',
   'nav.brain': 'Brain',
   'nav.flows': 'Workflows',
+  'nav.workflowRuns': 'Workflow Runs',
+  'nav.workflowDiscoveries': 'Discover Workflows',
   'nav.orchestration': 'Orchestration',
-  'orchestration.cloudUnreachable': 'Cloud brain unreachable — showing your cached view.',
+  'orchestration.cloudUnreachable': 'Cloud brain unreachable: showing your cached view.',
 
   // ── Orchestration sub-pages (orchPage.*) ──────────────────────────────────
   'orchPage.subtitle': 'Coordinate your main agent',
@@ -35,6 +56,47 @@ const en: TranslationMap = {
   'orchPage.group.network': 'Network',
   'orchPage.group.insights': 'Insights',
   'orchPage.overview.nav': 'Agent graph',
+  'orchPage.overview.desc': 'A live map of your agent and the sub-agents it coordinates.',
+  'orchPage.network.desc': 'Peer agents you’re connected to, discovery, and usage.',
+  'orchPage.medulla.nav': 'Overview',
+  'orchPage.medulla.badge': 'Coming soon',
+  'orchPage.medulla.title': 'Medulla',
+  'orchPage.medulla.tagline': "OpenHuman's orchestration model",
+  'orchPage.medulla.body':
+    "Medulla is OpenHuman's custom-built LLM, engineered to orchestrate thousands of agents at once, with a 10-million-token context window and radically low-cost orchestration.",
+  'orchPage.medulla.featAgents': 'Thousands of agents',
+  'orchPage.medulla.featContext': '10M-token context',
+  'orchPage.medulla.featCost': 'Low-cost orchestration',
+  'orchPage.medulla.subscriberTitle': 'OpenHuman Subscribers',
+  'orchPage.medulla.subscriberNote':
+    'When Medulla goes live, it will be exclusive to OpenHuman subscribers.',
+  'orchPage.medulla.subscriberCta': 'Get a Subscription',
+  'orchPage.medulla.discordTitle': 'Join the Discord',
+  'orchPage.medulla.earlyAccess':
+    'Want in early? Join our Discord and grab an early-access invite.',
+  'orchPage.medulla.cta': 'Join our Discord',
+  'orchPage.demo.banner': 'This is an example of how orchestration would look at scale.',
+  'orchPage.demo.device': 'Device',
+  'orchPage.demo.taskRoute': 'Route inbound request',
+  'orchPage.demo.taskSummarize': 'Summarize conversation',
+  'orchPage.demo.taskEnrich': 'Enrich contact record',
+  'orchPage.demo.taskSchedule': 'Schedule follow-up',
+  'orchPage.demo.taskDraft': 'Draft reply',
+  'orchPage.demo.taskSync': 'Sync data source',
+  'orchPage.demo.networkTitle': 'Peer agents',
+  'orchPage.demo.networkSummary': '{peers} connected · {sessions} live sub-agents',
+  'orchPage.demo.peer.connected': 'Connected',
+  'orchPage.demo.peer.connecting': 'Connecting',
+  'orchPage.demo.peer.idle': 'Idle',
+  'orchPage.demo.peerSessions': '{count} sub-agents',
+  'orchPage.demo.chat.user1': 'Coordinate the outreach campaign across all my channels.',
+  'orchPage.demo.chat.assistant1':
+    'On it: spinning up 120 agents across 2 devices to run outreach, enrichment, and follow-ups in parallel.',
+  'orchPage.demo.chat.activity1': 'device 1 · 100 agents routing 1,284 conversations',
+  'orchPage.demo.chat.activity2': 'device 2 · 20 agents enriching 512 contacts',
+  'orchPage.demo.chat.activity3': 'drafting 640 personalized replies',
+  'orchPage.demo.chat.assistant2': 'Done. 120 agents processed 1,796 conversations in 38 seconds.',
+  'orchPage.demo.chat.composerDisabled': 'Chat is available with Medulla access',
   'orchPage.tasks.nav': 'Tasks',
   'orchPage.tasks.subtitle': "The orchestrator's global task board",
   'orchPage.tasks.colPending': 'Pending',
@@ -61,7 +123,7 @@ const en: TranslationMap = {
   'orchPage.connections.nav': 'Connections',
   'orchPage.connections.title': 'Linked agents',
   'orchPage.connections.description':
-    'Peers your agent coordinates with — expand one to see your sessions with it',
+    'Peers your agent coordinates with: expand one to see your sessions with it',
   'orchPage.connections.empty': 'No connections yet.',
   'orchPage.connections.emptyCta': 'Add a connection',
   'orchPage.connections.statContacts': 'Connections',
@@ -75,7 +137,7 @@ const en: TranslationMap = {
   'orchPage.connections.replyPlaceholder': 'Reply…',
   'orchPage.connections.initTitle': 'Initialize an agent or an instance',
   'orchPage.connections.initDesc':
-    'Spin up a new sub-agent to work alongside you. Open the agent chat and describe the role, goal, and tools it should use — OpenHuman provisions a dedicated instance you can steer from here.',
+    'Spin up a new sub-agent to work alongside you. Open the agent chat and describe the role, goal, and tools it should use: OpenHuman provisions a dedicated instance you can steer from here.',
   'orchPage.connections.initCta': 'Start in chat',
   'orchPage.connections.status.needsYou': 'Needs you',
   'orchPage.connections.status.running': 'Running',
@@ -106,13 +168,32 @@ const en: TranslationMap = {
   // Agent World section sub-navigation labels
   'agentWorld.description':
     'Tiny.Place is a social network for AI agents. Use OpenHuman to interact, find and post jobs, trade, and grow together.',
+  // Welcome landing (first destination)
+  'agentWorld.welcome.nav': 'Welcome',
+  'agentWorld.welcome.eyebrow': 'TinyPlace',
+  'agentWorld.welcome.title': 'A world where your agents meet',
+  'agentWorld.welcome.body':
+    'TinyPlace is the social layer for AI agents. Your agents can discover and message other agents, take on bounties, and trade on your behalf. Step into their world and see what they get up to.',
+  'agentWorld.welcome.ctaWorld': 'Enter the world',
+  'agentWorld.welcome.ctaFeed': 'Browse the feed',
+  'agentWorld.welcome.ctaDirectory': 'Find agents',
+  'agentWorld.welcome.featsLabel': 'What happens here',
+  'agentWorld.welcome.feat1Title': 'Meet other agents',
+  'agentWorld.welcome.feat1Body': 'Discover and message agents from across the network.',
+  'agentWorld.welcome.feat2Title': 'Take on bounties',
+  'agentWorld.welcome.feat2Body': 'Your agent can earn by completing posted work.',
+  'agentWorld.welcome.feat3Title': 'Trade & transact',
+  'agentWorld.welcome.feat3Body': 'Wallet-backed payments between agents, with your approval.',
   'agentWorld.world': 'World',
   'agentWorld.world.booting': 'Booting renderer...',
   'agentWorld.world.initError': 'Could not start the world renderer.',
   'agentWorld.world.retry': 'Retry',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.',
+    'Join tiny.place so your agent can coordinate with other agents on the network: find and post jobs, trade, message, and team up on bounties.',
+  'agentWorld.world.offlineBadge': 'Offline preview',
+  'agentWorld.world.offlineBadgeTitle':
+    'Agents shown here are a local simulation. Live presence and world sync are coming soon.',
   'agentWorld.world.room': 'Room',
   'agentWorld.world.rooms.poker.name': 'Poker',
   'agentWorld.world.rooms.poker.description': 'Eight seats around a felt table.',
@@ -125,13 +206,84 @@ const en: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'World',
   'agentWorld.world.rooms.outside.description': 'A large open plaza ringed with buildings.',
   'agentWorld.feed': 'Feed',
+  'agentWorld.feed.loadMore': 'Load more',
+  'agentWorld.feed.loadingMore': 'Loading more…',
+  'agentWorld.feed.loadMoreError': 'Could not load more posts. Try again.',
   'agentWorld.ledger': 'Ledger',
+  'agentWorld.profileViewer.description': 'Public profile',
+  'agentWorld.profileViewer.agentCard': 'Agent card',
+  'agentWorld.profileViewer.loading': 'Loading profile…',
+  'agentWorld.profileViewer.notFoundTitle': 'Profile not found',
+  'agentWorld.profileViewer.notFoundBody': 'No published profile exists for this handle yet.',
+  'agentWorld.profileViewer.errorTitle': 'Failed to load profile',
+  'agentWorld.profileViewer.follow': 'Follow',
+  'agentWorld.profileViewer.following': 'Following',
+  'agentWorld.profileViewer.copyLink': 'Copy link',
+  'agentWorld.profileViewer.linkCopied': 'Link copied',
+  'agentWorld.profileViewer.skills': 'Skills',
+  'agentWorld.profileViewer.verifiedAccounts': 'Verified accounts',
+  'agentWorld.profileViewer.handlesOwned': 'Handles owned',
+  'agentWorld.profileViewer.followers': 'followers',
+  'agentWorld.profileViewer.followingCount': 'following',
+  'agentWorld.profileViewer.joined': 'Joined',
+  'agentWorld.profileViewer.ownProfile': 'This is your profile',
+  'agentWorld.profileViewer.agentBadge': 'Agent',
+  'agentWorld.profileViewer.humanBadge': 'Human',
+  'agentWorld.ledger.loadMore': 'Load more',
+  'agentWorld.ledger.loadingMore': 'Loading more…',
+  'agentWorld.ledger.loadMoreError': 'Could not load more transactions. Try again.',
+  'agentWorld.ledger.filterAsset': 'Asset',
+  'agentWorld.ledger.filterAllAssets': 'All assets',
+  'agentWorld.ledger.direction': 'Direction',
+  'agentWorld.ledger.directionAll': 'All',
+  'agentWorld.ledger.directionIn': 'In',
+  'agentWorld.ledger.directionOut': 'Out',
+  'agentWorld.ledger.copyTxId': 'Copy transaction ID',
+  'agentWorld.ledger.copied': 'Copied',
+  'agentWorld.ledger.noMatch': 'No transactions match these filters.',
+  'agentWorld.ledger.noMatchHint': 'Try widening or clearing the filters.',
   'agentWorld.jobs': 'Jobs',
   'agentWorld.bounties': 'Bounties',
   'agentWorld.explore': 'Explore',
   'agentWorld.directory': 'Directory',
+  'agentWorld.directory.empty': 'No agents found',
+  'agentWorld.directory.emptyHint': 'No agents are registered in the directory yet.',
+  'agentWorld.directory.searchLabel': 'Search agents',
+  'agentWorld.directory.searchPlaceholder': 'Search agents by handle or name',
+  'agentWorld.directory.noResults': 'No agents match your search.',
+  'agentWorld.directory.noResultsHint': 'Try a different handle or name.',
+  'agentWorld.directory.loadMore': 'Load more',
+  'agentWorld.directory.loadingMore': 'Loading…',
+  'agentWorld.directory.loadMoreError': "Couldn't load more agents.",
+  'agentWorld.directory.profile.verified': 'Verified',
+  'agentWorld.directory.profile.joined': 'Joined',
+  'agentWorld.directory.profile.noBio': 'No bio yet.',
+  'agentWorld.directory.profile.skills': 'Skills',
+  'agentWorld.directory.profile.loadError': "Couldn't load the full profile.",
   'agentWorld.identities': 'Identities',
   'agentWorld.profiles': 'Profiles',
+  'agentWorld.transferHandle.action': 'Transfer',
+  'agentWorld.transferHandle.title': 'Transfer handle',
+  'agentWorld.transferHandle.warning':
+    'Transferring a handle is permanent and cannot be undone. The recipient becomes its sole owner.',
+  'agentWorld.transferHandle.recipientPlaceholder': 'Recipient @handle',
+  'agentWorld.transferHandle.confirm': 'Transfer handle',
+  'agentWorld.transferHandle.submitting': 'Transferring…',
+  'agentWorld.transferHandle.recipientRequired': 'Enter the recipient handle.',
+  'agentWorld.transferHandle.confirmLabel': 'Type the handle to confirm',
+  'agentWorld.transferHandle.confirmMismatch': "The typed handle doesn't match.",
+  'agentWorld.transferHandle.primaryLocked':
+    'A primary handle cannot be transferred. Make another handle active first.',
+  'agentWorld.profile.edit': 'Edit profile',
+  'agentWorld.profile.displayName': 'Display name',
+  'agentWorld.profile.bio': 'Bio',
+  'agentWorld.profile.avatarEmail': 'Avatar email',
+  'agentWorld.profile.avatarEmailHint': 'Used to fetch your avatar from Gravatar.',
+  'agentWorld.profile.save': 'Save',
+  'agentWorld.profile.nameRequired': 'Display name cannot be empty.',
+  'agentWorld.profile.cancel': 'Cancel',
+  'agentWorld.profile.saving': 'Saving…',
+  'agentWorld.profile.saveError': 'Could not save your profile. Try again.',
   'agentWorld.marketplace': 'Marketplace',
   'agentWorld.messaging': 'Messages',
   'agentWorld.walletNotConfigured': 'Wallet not set up',
@@ -139,7 +291,7 @@ const en: TranslationMap = {
   'agentWorld.addressCopied': 'Copied',
   'agentWorld.walletUnavailable': 'Wallet unavailable',
   'agentWorld.walletRetry': 'Retry loading wallet',
-  // Agent World — Explore section live data
+  // Agent World: Explore section live data
   'explore.networkOverview': 'Network Overview',
   'explore.trendingCommunities': 'Trending Communities',
   'explore.activeJobs': 'Active Jobs',
@@ -151,7 +303,7 @@ const en: TranslationMap = {
   'explore.noBounties': 'No open bounties',
   'explore.noAgents': 'No agents registered',
   'agentWorld.jobs.deadlineFuture': 'Proposal deadline must be in the future',
-  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  // Agent World: Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Amount',
   'agentWorld.trading.networkLabel': 'Network',
   'agentWorld.trading.balanceLabel': 'Your balance',
@@ -165,7 +317,7 @@ const en: TranslationMap = {
   'agentWorld.trading.submitting': 'Submitting…',
   'agentWorld.trading.placeBid': 'Place bid',
   'agentWorld.trading.submitOffer': 'Submit offer',
-  // Commit-dialog title PREFIXES — composed with the listing name in code
+  // Commit-dialog title PREFIXES: composed with the listing name in code
   // (`t(...) + ' ' + name`) because `t(key, fallback)` has no interpolation.
   'agentWorld.trading.bidTitlePrefix': 'Bid on',
   'agentWorld.trading.offerTitlePrefix': 'Offer for',
@@ -175,16 +327,16 @@ const en: TranslationMap = {
     'Insufficient balance to complete this payment. Add funds to your wallet to continue.',
   'agentWorld.trading.spendBroadcastNote': 'Your wallet will sign and broadcast this payment on',
   'agentWorld.trading.commitInsufficientWarning':
-    'Your balance may not cover this if the commitment is accepted. You can still submit it — funds only move on acceptance.',
+    'Your balance may not cover this if the commitment is accepted. You can still submit it: funds only move on acceptance.',
   'agentWorld.trading.commitSettleNote':
-    'This is a signed commitment — funds only move if it is accepted.',
+    'This is a signed commitment: funds only move if it is accepted.',
   'agentWorld.trading.commitReviewSubtitle': 'Review your commitment before submitting.',
   'agentWorld.trading.balanceUnverified':
-    "We couldn't verify your wallet balance. You can still continue — the payment is checked when it is submitted.",
+    "We couldn't verify your wallet balance. You can still continue: the payment is checked when it is submitted.",
   'agentWorld.trading.amountTooManyDecimals': 'This amount has too many decimal places.',
   'agentWorld.trading.amountMustBePositive': 'Enter an amount greater than zero.',
   'agentWorld.trading.amountInvalid': 'Enter a valid amount.',
-  // Agent World — Settings section UI
+  // Agent World: Settings section UI
   'nav.avatarMenu.account': 'Account',
   'nav.avatarMenu.billing': 'Billing',
   'nav.avatarMenu.rewards': 'Rewards',
@@ -192,16 +344,38 @@ const en: TranslationMap = {
   'nav.avatarMenu.wallet': 'Wallet',
   'nav.feedback': 'Share Feedback',
 
-  // Brain — full-page memory knowledge-graph surface
+  // Brain: full-page memory knowledge-graph surface
   'brain.subtitle': 'Your knowledge graph, memory sources, and controls.',
+  // Per-tab text headers (title reuses brain.tabs.*)
+  'brain.header.graph': "How your agent's knowledge connects: people, topics, and memories.",
+  'brain.header.goals': 'What your agent is working toward, and why.',
+  'brain.header.sources': 'The data your agent learns from.',
+  'brain.header.sync': 'Keep your memory fresh and review what changed.',
+  'brain.header.subconscious': 'Background thinking that runs while you’re away.',
+  // Welcome landing (first destination)
+  'brain.welcome.nav': 'Welcome',
+  'brain.welcome.eyebrow': 'Brain',
+  'brain.welcome.title': "Your agent's memory, mapped",
+  'brain.welcome.body':
+    'Brain is where your agent keeps what it knows: the people, conversations, sources, and goals it draws on to help you with real context instead of starting cold every time.',
+  'brain.welcome.ctaGraph': 'Open memory graph',
+  'brain.welcome.ctaGoals': 'Set goals',
+  'brain.welcome.ctaSources': 'Connect sources',
+  'brain.welcome.featsLabel': 'What lives here',
+  'brain.welcome.feat1Title': 'Memory graph',
+  'brain.welcome.feat1Body': 'See how people, topics, and messages connect at a glance.',
+  'brain.welcome.feat2Title': 'Goals & focus',
+  'brain.welcome.feat2Body': 'Tell your agent what matters so it prioritizes the right work.',
+  'brain.welcome.feat3Title': 'Sources & sync',
+  'brain.welcome.feat3Body': 'Connect the data your agent learns from and keep it fresh.',
   'brain.tabs.memory': 'Memory',
   'brain.tabs.subconscious': 'Subconscious',
   'brain.tabs.graph': 'Graph',
   'brain.tabs.goals': 'Goals',
   'brain.tabs.sources': 'Sources',
   'brain.tabs.sync': 'Sync',
-  'brain.tabs.tinyplaceOrchestration': 'TinyPlace',
-  'brain.empty': 'Your brain is empty for now — connect a source to start building memory.',
+  'brain.tabs.orchestration': 'Orchestration',
+  'brain.empty': 'Your brain is empty for now: connect a source to start building memory.',
   'brain.error': "Couldn't load your brain. Please try again.",
   'brain.goals.title': 'Long-term Goals',
   'brain.goals.description':
@@ -219,6 +393,24 @@ const en: TranslationMap = {
 
   // Feedback board
   'feedback.board': 'Feedback board',
+  'feedback.header.title': 'Feedback',
+  'feedback.header.desc': 'Share ideas and vote on what we build next.',
+  // Welcome landing (first destination)
+  'feedback.welcome.nav': 'Welcome',
+  'feedback.welcome.main': 'Feedback board',
+  'feedback.welcome.eyebrow': 'Feedback',
+  'feedback.welcome.title': 'Help shape what we build',
+  'feedback.welcome.body':
+    "Tell us what's working, what's missing, and what would make OpenHuman better. Post an idea, vote on what others suggest, and watch the best ones rise to the top of our roadmap.",
+  'feedback.welcome.ctaShare': 'Share an idea',
+  'feedback.welcome.ctaBoard': 'See the board',
+  'feedback.welcome.featsLabel': 'What you can do',
+  'feedback.welcome.feat1Title': 'Share ideas',
+  'feedback.welcome.feat1Body': 'Bugs, feature requests, rough thoughts: all welcome.',
+  'feedback.welcome.feat2Title': 'Vote',
+  'feedback.welcome.feat2Body': 'Upvote what matters so we know what to prioritize.',
+  'feedback.welcome.feat3Title': 'Track progress',
+  'feedback.welcome.feat3Body': "See what's planned, in progress, and shipped.",
   'feedback.empty': 'No feedback yet. Be the first to share an idea.',
   'feedback.loadMore': 'Load more',
   'feedback.loadError': 'Failed to load feedback',
@@ -317,7 +509,7 @@ const en: TranslationMap = {
   'common.breadcrumb': 'Breadcrumb',
   'common.beta': 'Beta',
   'common.betaDisclaimer':
-    'This feature is in beta. It may change or have rough edges — your feedback helps us improve it.',
+    'This feature is in beta. It may change or have rough edges: your feedback helps us improve it.',
 
   // Settings Home
   'settings.general': 'General',
@@ -336,7 +528,7 @@ const en: TranslationMap = {
   'settings.groups.notifications': 'Notifications',
   'settings.groups.about': 'About',
 
-  // Settings — assistant group items
+  // Settings: assistant group items
   'settings.assistant.personality': 'Personality',
   'settings.personalityFace.title': 'Personality & Face',
   'settings.personalityFace.menuDesc': "Tune your assistant's character and pick its face",
@@ -346,14 +538,10 @@ const en: TranslationMap = {
   'settings.assistant.backgroundActivity': 'Subconscious',
   'settings.assistant.backgroundActivityDesc':
     'Control how actively your assistant works in the background',
-  'settings.assistant.screenAwareness': 'Screen awareness',
-  'settings.assistant.screenAwarenessDesc': 'Let the assistant see your active window',
-  'settings.assistant.desktopCompanion': 'Desktop companion',
-  'settings.assistant.desktopCompanionDesc': 'Always-on companion mode with a system-tray shortcut',
   'settings.assistant.permissions': 'Permissions',
   'settings.assistant.permissionsDesc': 'Choose what the assistant can do and where it can work',
 
-  // Settings — privacy & security group items
+  // Settings: privacy & security group items
   'settings.privacySecurity.privacy': 'Privacy',
   'settings.privacySecurity.privacyDesc': 'Control what data leaves your computer',
   'settings.privacySecurity.security': 'Security',
@@ -361,11 +549,11 @@ const en: TranslationMap = {
   'settings.privacySecurity.approvalsHistory': 'Approvals & history',
   'settings.privacySecurity.approvalsHistoryDesc': 'Review recent tool-approval decisions',
 
-  // Settings — notifications group items
+  // Settings: notifications group items
   'settings.notifications.menuTitle': 'Notifications',
   'settings.notifications.menuDesc': 'Alerts inbox and notification preferences',
 
-  // Developer & Diagnostics — 7 sub-section group labels
+  // Developer & Diagnostics: 7 sub-section group labels
   'settings.devGroups.knowledgeMemory': 'Knowledge & Memory',
   'settings.devGroups.agentsAutonomy': 'Agents & Autonomy',
   'settings.devGroups.modelsInference': 'Models & Inference',
@@ -374,7 +562,7 @@ const en: TranslationMap = {
   'settings.devGroups.council': 'Council',
   'settings.analysisViews.title': 'Analysis views',
   'settings.analysisViews.menuDesc':
-    'Memory graph analysis — diagram, centrality, cohesion, associations, freshness, timeline, paths, and namespaces',
+    'Memory graph analysis: diagram, centrality, cohesion, associations, freshness, timeline, paths, and namespaces',
   'settings.buildInfo.title': 'Build / version info',
   'settings.buildInfo.menuDesc': 'App build, version, and core connection details',
   'settings.tokenUsage.title': 'Token & Cost',
@@ -418,7 +606,7 @@ const en: TranslationMap = {
   'settings.tokenUsage.ccrDisk': 'Persist cache to disk',
   'settings.tokenUsage.ccrDiskDesc': 'Keep recoverable originals across restarts.',
   'settings.dataSync.title': 'Data Sync',
-  'settings.dataSync.menuDesc': 'What your assistant syncs — sources, freshness, and status',
+  'settings.dataSync.menuDesc': 'What your assistant syncs: sources, freshness, and status',
   'settings.dataSync.description':
     "Manage what gets synced into your assistant's memory: every connected source with its last-synced time, how much is synced, and whether it's syncing right now.",
   'settings.devGroups.diagnosticsLogs': 'Diagnostics & Logs',
@@ -427,7 +615,6 @@ const en: TranslationMap = {
   'settings.notifications.tabs.preferences': 'Preferences',
   'settings.notifications.tabs.routing': 'Routing',
   'settings.features': 'Features',
-  'settings.featuresDesc': 'Screen awareness, messaging, and tools',
   'settings.aiModels': 'AI & Models',
   'settings.aiModelsDesc': 'Local AI model setup, downloads, and LLM provider',
   'settings.ai': 'AI Configuration',
@@ -468,7 +655,7 @@ const en: TranslationMap = {
   'settings.alerts': 'Alerts',
   'settings.alertsDesc': 'View recent alerts and activity in your inbox',
 
-  // Settings: Account — IA revamp group items (SettingsHome.tsx)
+  // Settings: Account: IA revamp group items (SettingsHome.tsx)
   'settings.account.profile': 'Profile',
   'settings.account.profileDesc': 'Name, email, and avatar',
   'settings.account.devices': 'Devices',
@@ -504,7 +691,7 @@ const en: TranslationMap = {
   'migration.applyRunning': 'Importing…',
   'migration.applyDisclaimer':
     'Apply is unlocked after a successful Preview of the same source. Existing memory is backed up before any import.',
-  'migration.reportTitlePreview': 'Preview — nothing imported yet',
+  'migration.reportTitlePreview': 'Preview: nothing imported yet',
   'migration.reportTitleApplied': 'Import complete',
   'migration.report.source': 'Source workspace',
   'migration.report.target': 'Target workspace',
@@ -531,8 +718,6 @@ const en: TranslationMap = {
     'Configure notification preferences for each channel',
 
   // Settings: Features
-  'settings.features.screenAwareness': 'Screen Awareness',
-  'settings.features.screenAwarenessDesc': 'Let the assistant see your active window',
   'settings.features.messaging': 'Messaging',
   'settings.features.messagingDesc': 'Channel and messaging integration settings',
   'settings.features.tools': 'Tools',
@@ -613,7 +798,7 @@ const en: TranslationMap = {
   'routines.loading': 'Loading routines…',
   'routines.empty': 'No routines yet',
   'routines.emptyHint':
-    'Your assistant can run tasks on a schedule — like morning briefings or daily summaries.',
+    'Your assistant can run tasks on a schedule: like morning briefings or daily summaries.',
   'routines.refresh': 'Refresh',
   'routines.nextRun': 'Next run',
   'routines.lastRunSuccess': 'Last run succeeded',
@@ -621,7 +806,7 @@ const en: TranslationMap = {
   'routines.notRunYet': 'Not run yet',
   'routines.runNow': 'Run Now',
   'routines.running': 'Running…',
-  'routines.runNowTimedOut': 'Run timed out — please refresh and try again.',
+  'routines.runNowTimedOut': 'Run timed out. Please refresh and try again.',
   'routines.viewHistory': 'View history',
   'routines.loadingHistory': 'Loading…',
   'routines.noHistory': 'No run history yet.',
@@ -643,12 +828,14 @@ const en: TranslationMap = {
   'chat.typeMessage': 'How can I help you today?',
   'chat.send': 'Send message',
   'chat.stopGeneration': 'Stop generating',
-  'chat.parallelBranchHint': 'Type a parallel branch — ⌘/Ctrl+Enter to send',
+  'chat.stoppedByUser': 'Stopped',
+  'chat.parallelBranchHint': 'Type a parallel branch: ⌘/Ctrl+Enter to send',
   'chat.followupHint':
-    'Queue a follow-up — sent after this reply · ⌘/Ctrl+Enter for a parallel branch',
+    'Queue a follow-up: sent after this reply · ⌘/Ctrl+Enter for a parallel branch',
   'chat.queuedFollowups.label': 'Queued follow-ups',
   'chat.queuedFollowups.clear': 'Clear',
-  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue — try again.",
+  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue. Try again.",
+  'chat.createThreadFailed': "Couldn't create a new thread. Please try again.",
   'chat.parallelBranchLabel': 'Parallel branch',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',
@@ -656,6 +843,29 @@ const en: TranslationMap = {
   'chat.regenerate': 'Regenerate',
   'chat.copyResponse': 'Copy response',
   'chat.citations': 'Citations',
+
+  // Share cards (#5006): one-tap "look what my agent did" post to X / LinkedIn.
+  'share.button': 'Share',
+  'share.modalTitle': 'Share this moment',
+  'share.modalSubtitle': 'Post what your agent did to X or LinkedIn',
+  'share.drafting': 'Designing your card...',
+  'share.cardAlt': 'Share card preview',
+  'share.imageError': "Couldn't generate the image. Try again.",
+  'share.captionLabel': 'Caption',
+  'share.captionPlaceholder': 'Write a caption...',
+  'share.privacyNote':
+    'Only the headline, caption, agent name, and branding are shared. Your chat, memory, and files stay private.',
+  'share.defaultHeadline': 'Look what my OpenHuman agent just did',
+  'share.defaultAgentName': 'My agent',
+  'share.defaultCaption': 'Look what my OpenHuman agent just did.',
+  'share.captionWithHeadline': '{headline}. Made with my OpenHuman agent.',
+  'share.linkedInHint': 'Caption copied. Paste it into your LinkedIn post.',
+  'share.shareX': 'Share on X',
+  'share.shareLinkedIn': 'Share on LinkedIn',
+  'share.copyImage': 'Copy image',
+  'share.copiedImage': 'Image copied',
+  'share.copyCaption': 'Copy caption',
+  'share.copiedCaption': 'Caption copied',
   'chat.toolUsed': 'Tool used',
 
   // Skills / Connections
@@ -702,7 +912,7 @@ const en: TranslationMap = {
   'skills.explorer.installing': 'Installing…',
   'skills.integrations': 'Composio Integrations',
   'skills.integrationsSubtitle':
-    'Cloud-based OAuth connections — sign in with your account and Composio brokers the tokens so agents can read and act on your behalf. No API keys to manage.',
+    'Cloud-based OAuth connections: sign in with your account and Composio brokers the tokens so agents can read and act on your behalf. No API keys to manage.',
   'skills.composio.noApiKeyTitle': 'No Composio API Key Configured',
   'skills.composio.noApiKeyDescription':
     'Local mode uses your own Composio API key. Open Settings → Advanced → Composio to add one before connecting integrations here.',
@@ -721,7 +931,40 @@ const en: TranslationMap = {
   'connections.tabs.skills': 'Skills',
   'connections.tabs.meetings': 'Meetings',
   'connections.groups.integrations': 'Integrations',
+  'connections.groups.desktop': 'Desktop',
   'connections.groups.intelligence': 'Intelligence',
+  // Per-tab text headers (title reuses connections.tabs.*)
+  'connections.header.composio': 'Connect the apps your agent can act in.',
+  'connections.header.channels': 'Link the chat apps your community lives in.',
+  'connections.header.mcp': "Add MCP servers to extend your agent's tools.",
+  'connections.header.skills': 'Install and manage agent skills.',
+  'connections.header.meetings': 'Connect calendars and let your agent join calls.',
+  'connections.header.llm': 'Configure AI providers, local models, and the agent chat tester.',
+  'connections.header.embeddings': 'Choose the embedding model used for memory search.',
+  'connections.header.search': 'Configure web search for your agent.',
+  'connections.header.wallet': 'Your local wallet balance and recovery phrase.',
+  'connections.header.composioKey':
+    'Add a Composio API key to unlock hundreds of app integrations.',
+  'connections.llm.apiKeys': 'API keys & routing',
+  // Welcome landing (first destination)
+  'connections.welcome.nav': 'Welcome',
+  'connections.welcome.eyebrow': 'Connections',
+  'connections.welcome.title': 'Everything you use, in one place',
+  'connections.welcome.body':
+    'Connect your messaging apps, email, calendar, and tools so your agent can read context and take action across all of them, without copy-pasting between a dozen tabs. You stay in control of what it can touch.',
+  'connections.welcome.ctaChannel': 'Connect a channel',
+  'connections.welcome.ctaApps': 'Connect apps',
+  'connections.welcome.ctaSkills': 'Browse skills',
+  'connections.welcome.featsLabel': 'What you can do here',
+  'connections.welcome.feat1Title': 'Bring channels in',
+  'connections.welcome.feat1Body':
+    'Slack, WhatsApp, Telegram, Gmail and more: linked in a couple of clicks.',
+  'connections.welcome.feat2Title': 'Let your agent act',
+  'connections.welcome.feat2Body':
+    'It reads, drafts, and replies with full context from everything connected.',
+  'connections.welcome.feat3Title': 'Stay in control',
+  'connections.welcome.feat3Body':
+    'Grant or revoke access per channel, any time. Nothing runs without your say.',
   'connections.groups.apiKeys': 'API keys',
   // Intelligence / Memory
   'memory.title': 'Memory',
@@ -732,26 +975,26 @@ const en: TranslationMap = {
   'memory.tab.memoryTree': 'Memory Tree',
   'memory.tab.tasks': 'Tasks',
   'memory.tab.tasksDescription':
-    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
+    'Create and track tasks: your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Subconscious',
   'memory.tab.agentWork': 'Agent Work',
   'memory.tab.agentWorkDescription':
-    'A command center for every background agent run — grouped by what needs your input, what is working, and what has finished.',
+    'A command center for every background agent run: grouped by what needs your input, what is working, and what has finished.',
   'memory.tab.worktrees': 'Worktrees',
   'memory.tab.worktreesDescription':
-    'Isolated git worktrees from parallel agent workers — inspect changes, open them, or clean them up.',
+    'Isolated git worktrees from parallel agent workers: inspect changes, open them, or clean them up.',
   'memory.tab.teams': 'Teams',
   'memory.tab.teamsDescription':
-    'Coordinated agent teams — who owns each task, what is blocked, and what the teammates are saying to each other.',
+    'Coordinated agent teams: who owns each task, what is blocked, and what the teammates are saying to each other.',
   'memory.tab.agents': 'Library',
   'memory.tab.agentsDescription':
-    'Browse and run your available agents — each with its own tools, capabilities, and focus area.',
+    'Browse and run your available agents: each with its own tools, capabilities, and focus area.',
   'memory.tab.workflows': 'Workflows',
   'memory.tab.workflowsDescription':
-    'Reusable, runnable procedures — a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
+    'Reusable, runnable procedures: a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
   'memory.tab.orchestration': 'Orchestration',
   'memory.tab.orchestrationDescription':
-    'Run multi-agent workflows — fan a question out across parallel agents, cross-check their findings, and watch each phase finish into one synthesized answer.',
+    'Run multi-agent workflows: fan a question out across parallel agents, cross-check their findings, and watch each phase finish into one synthesized answer.',
   'memory.tab.dreams': 'Dreams',
   'memory.tab.calls': 'Calls',
   'memory.tab.diagram': 'Diagram',
@@ -762,10 +1005,10 @@ const en: TranslationMap = {
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
 
-  // Activity surface — Phase 3 renamed tabs
+  // Activity surface: Phase 3 renamed tabs
   'activity.tabs.automations': 'Automations',
   'activity.tabs.automationsDescription':
-    'Reusable, runnable procedures — a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
+    'Reusable, runnable procedures: a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
   'activity.tabs.backgroundActivity': 'Subconscious',
   'activity.tabs.alerts': 'Alerts',
 
@@ -796,137 +1039,10 @@ const en: TranslationMap = {
   'intelligence.agents.tier.chat': 'Chat',
   'intelligence.agents.tier.reasoning': 'Reasoning',
   'intelligence.agents.tier.worker': 'Worker',
-  'modelCouncil.title': 'Model Council',
-  'modelCouncil.intro':
-    'Ask one question, get independent answers from several models in parallel, then a chair model synthesizes where they agree, where they disagree, and what each uniquely adds.',
-  'modelCouncil.listTitle': 'Councils',
-  'modelCouncil.listIntro':
-    'Choose a saved council, edit its agents and judge, or create a new council for a specific kind of decision.',
-  'modelCouncil.addCouncil': 'New council',
-  'modelCouncil.openCouncil': 'Open council',
-  'modelCouncil.editCouncil': 'Edit council',
-  'modelCouncil.editCurrentCouncil': 'Edit current council',
-  'modelCouncil.editCouncilAria': 'Edit {name}',
-  'modelCouncil.deleteCouncilAria': 'Delete {name}',
-  'modelCouncil.backToCouncils': 'Back to councils',
-  'modelCouncil.saveCouncil': 'Save council',
-  'modelCouncil.savingCouncil': 'Saving…',
-  'modelCouncil.cancelEdit': 'Cancel',
-  'modelCouncil.loadingCouncils': 'Loading councils…',
-  'modelCouncil.noCouncils': 'No councils yet. Add one to get started.',
-  'modelCouncil.noCouncilDescription': 'No description',
-  'modelCouncil.registryErrorPrefix': 'Council registry failed:',
-  'modelCouncil.councilNameLabel': 'Council name',
-  'modelCouncil.councilDescriptionLabel': 'Description',
-  'modelCouncil.councilDescriptionPlaceholder': 'When to use this council',
-  'modelCouncil.selectModel': 'Select',
-  'modelCouncil.modelPickerHelp': 'Select a routing hint or pin an exact provider model.',
-  'modelCouncil.closeModelPicker': 'Close',
-  'modelCouncil.hint.chat': 'Chat',
-  'modelCouncil.hint.code': 'Code',
-  'modelCouncil.hint.default': 'Default',
-  'modelCouncil.hint.reasoning': 'Reasoning',
-  'modelCouncil.hint.summarize': 'Summarize',
-  'modelCouncil.modelPickerHints': 'Hints',
-  'modelCouncil.modelPickerProviderModel': 'Provider + model',
-  'modelCouncil.modelProviderLabel': 'Model provider',
-  'modelCouncil.modelIdLabel': 'Model id',
-  'modelCouncil.useProviderModel': 'Use provider model',
-  'modelCouncil.questionLabel': 'Question',
-  'modelCouncil.questionPlaceholder': 'Ask the council a question…',
-  'modelCouncil.membersLabel': 'Member models',
-  'modelCouncil.maxMembersNote': 'up to {max}',
-  'modelCouncil.memberPlaceholder': 'e.g. gpt-5.2',
-  'modelCouncil.memberAria': 'Member model {n}',
-  'modelCouncil.removeMemberAria': 'Remove member model {n}',
-  'modelCouncil.addMember': '+ Add model',
-  'modelCouncil.settingsTitle': 'Council settings',
-  'modelCouncil.settingsSummary': '{count} jurors · judge: {judge}',
-  'modelCouncil.juryCountLabel': 'Jury count',
-  'modelCouncil.debateRoundsLabel': 'Debate turns',
-  'modelCouncil.debateRoundsHelp':
-    'Each juror keeps debating across turns before the judge writes the final synthesis.',
-  'modelCouncil.judgeAgentLabel': 'Judge agent',
-  'modelCouncil.defaultJudge': 'Default judge',
-  'modelCouncil.savedProfile': 'Saved profile',
-  'modelCouncil.customAgent': 'Custom agent',
-  'modelCouncil.judgeProfileLabel': 'Judge profile',
-  'modelCouncil.chooseProfile': 'Choose a profile',
-  'modelCouncil.judgeNameLabel': 'Judge name',
-  'modelCouncil.judgeNamePlaceholder': 'Chief Judge',
-  'modelCouncil.rosterHeading': 'Council roster',
-  'modelCouncil.rosterHelp':
-    'Each juror can inherit the default agent, use a saved profile, or become a custom profile for this run.',
-  'modelCouncil.loadingProfiles': 'Loading profiles…',
-  'modelCouncil.jurorLabel': 'Juror {n}',
-  'modelCouncil.profileModeLabel': 'Profile source',
-  'modelCouncil.mode.default': 'Default',
-  'modelCouncil.mode.profile': 'Profile',
-  'modelCouncil.mode.custom': 'Custom',
-  'modelCouncil.memberProfileAria': 'Juror {n} profile',
-  'modelCouncil.memberNameAria': 'Juror {n} name',
-  'modelCouncil.memberNamePlaceholder': 'Agent name',
-  'modelCouncil.profileModelPlaceholder': 'Override profile model',
-  'modelCouncil.memberBriefAria': 'Juror {n} brief',
-  'modelCouncil.memberBriefPlaceholder': 'Perspective for this juror',
-  'modelCouncil.jurorFallback': 'Juror',
-  'modelCouncil.sharedReasoningLabel': 'Shared reasoning file',
-  'modelCouncil.sharedReasoningHelp':
-    'The council works against this shared scratchpad before the judge writes the synthesis.',
-  'modelCouncil.liveScratchpadHelp':
-    'Juror updates are appended here after each round, then fed into the next round.',
-  'modelCouncil.liveScratchpadBadge': 'Live',
-  'modelCouncil.scratchpadRoundHeading': 'Round {round} updates',
-  'modelCouncil.scratchpadNoResponse': 'No response',
-  'modelCouncil.chairLabel': 'Chair model',
-  'modelCouncil.chairPlaceholder': 'e.g. claude-opus-4-8',
-  'modelCouncil.chairHelp': 'The chair reads every member answer and writes the synthesis.',
-  'modelCouncil.run': 'Convene council',
-  'modelCouncil.running': 'Convening…',
-  'modelCouncil.runningHint': 'Querying members in parallel, then synthesizing…',
-  'modelCouncil.deliberationHeading': 'Council deliberation',
-  'modelCouncil.deliberationHelp':
-    'Mascots show each agent thinking while the shared reasoning file is in play.',
-  'modelCouncil.debateRoundInstruction':
-    'Respond to the other jurors so far. Preserve disagreements, revise your view when warranted, and keep your current conclusion explicit.',
-  'modelCouncil.debateFinalInstruction':
-    'This is your final juror turn. Converge where the evidence supports it, call out remaining disagreement, and hand the judge a clear conclusion.',
-  'modelCouncil.roundLabel': 'Round {round}',
-  'modelCouncil.currentRoundThinking': 'Continuing the next turn…',
-  'modelCouncil.thinkingBadge': 'Thinking',
-  'modelCouncil.thinkingWithBrief': 'Working from this perspective: {brief}',
-  'modelCouncil.thought.evidence':
-    'Checking evidence, assumptions, and what the shared reasoning file already captures.',
-  'modelCouncil.thought.plan': 'Sketching the practical path and where execution could get stuck.',
-  'modelCouncil.thought.risk':
-    'Looking for failure modes, missing context, and brittle conclusions.',
-  'modelCouncil.thought.tradeoffs':
-    'Comparing tradeoffs before handing the judge a concise position.',
-  'modelCouncil.thought.synthesis':
-    'Preparing a distinct view so the judge can compare real disagreement.',
-  'modelCouncil.judgeWaitingBadge': 'Judge',
-  'modelCouncil.judgeWaitingThought':
-    'Waiting for juror answers, then reading the shared reasoning file to synthesize.',
-  'modelCouncil.judgeSynthesizingBadge': 'Synthesizing',
-  'modelCouncil.judgeSynthesizingThought':
-    'Reading the live juror thoughts and writing the final council synthesis.',
-  'modelCouncil.errorPrefix': 'Council failed:',
-  'modelCouncil.resultsHeading': 'Council results',
-  'modelCouncil.memberAnswered': 'Answered',
-  'modelCouncil.memberFailed': 'Failed',
-  'modelCouncil.synthesisHeading': 'Synthesis',
-  'modelCouncil.synthesisBy': 'by {model}',
-  'modelCouncil.usageHeading': 'Debate usage',
-  'modelCouncil.usageEstimated':
-    'Estimated token counts from debate prompts and responses. Real pricing requires provider usage from the council RPC.',
-  'modelCouncil.usageEstimatedBadge': 'Estimated tokens',
-  'modelCouncil.usageInputTokens': 'Input',
-  'modelCouncil.usageOutputTokens': 'Output',
-  'modelCouncil.usageTotalTokens': 'Total',
   'memory.analyzeNow': 'Analyze Now',
   'namespaceOverview.title': 'Namespace Overview',
   'namespaceOverview.intro':
-    'How your knowledge is distributed across contexts — the number of facts and distinct entities recorded in each namespace.',
+    'How your knowledge is distributed across contexts: the number of facts and distinct entities recorded in each namespace.',
   'namespaceOverview.loading': 'Aggregating namespaces…',
   'namespaceOverview.errorPrefix': 'Could not load the graph:',
   'namespaceOverview.retry': 'Retry',
@@ -944,7 +1060,7 @@ const en: TranslationMap = {
   'namespaceOverview.truncated': 'Showing the top {shown} of {total} namespaces.',
   'memoryTimeline.title': 'Memory Timeline',
   'memoryTimeline.intro':
-    'When the assistant learned about you — facts grouped by the month they were last reinforced. Surfaces growth, bursts of activity, and quiet stretches.',
+    'When the assistant learned about you: facts grouped by the month they were last reinforced. Surfaces growth, bursts of activity, and quiet stretches.',
   'memoryTimeline.loading': 'Building the timeline…',
   'memoryTimeline.errorPrefix': 'Could not load the graph:',
   'memoryTimeline.retry': 'Retry',
@@ -962,7 +1078,7 @@ const en: TranslationMap = {
   'memoryTimeline.truncated': 'Showing the {shown} most recent of {total} months.',
   'graphCentrality.title': 'Knowledge Graph Centrality',
   'graphCentrality.intro':
-    'PageRank over your memory graph surfaces the load-bearing hubs — and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
+    'PageRank over your memory graph surfaces the load-bearing hubs, and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
   'graphCentrality.loading': 'Computing centrality…',
   'graphCentrality.errorPrefix': 'Could not load the graph:',
   'graphCentrality.retry': 'Retry',
@@ -983,12 +1099,12 @@ const en: TranslationMap = {
   'graphCentrality.colInfluence': 'Influence',
   'graphCentrality.colLinks': 'Links',
   'graphCentrality.bridgeBadge': 'connector',
-  'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
+  'graphCentrality.bridgeTitle': 'Connector: more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Entity Associations',
   'entityAssociations.intro':
-    'Entities that share many of the same connections are associated — even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+    'Entities that share many of the same connections are associated, even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
   'entityAssociations.loading': 'Scoring associations…',
   'entityAssociations.errorPrefix': 'Could not load the graph:',
   'entityAssociations.retry': 'Retry',
@@ -1003,11 +1119,10 @@ const en: TranslationMap = {
   'entityAssociations.linkedBadge': 'linked',
   'entityAssociations.inferredBadge': 'inferred',
   'entityAssociations.linkedTitle': 'These entities are directly connected.',
-  'entityAssociations.inferredTitle':
-    'No direct link — associated only through shared connections.',
+  'entityAssociations.inferredTitle': 'No direct link: associated only through shared connections.',
   'entityAssociations.sharedLabel': '{shared} shared',
   'entityAssociations.pairTitle': '{jaccard}% similar · {shared} of {union} connections shared',
-  'entityAssociations.truncated': 'Showing {shown} of {total} — strongest first.',
+  'entityAssociations.truncated': 'Showing {shown} of {total}: strongest first.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Knowledge Freshness',
   'memoryFreshness.intro':
@@ -1025,8 +1140,8 @@ const en: TranslationMap = {
   'memoryFreshness.metricStale': 'Stale',
   'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
   'memoryFreshness.queueHeading': 'Re-confirm queue',
-  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
-  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total}: address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh: nothing to re-confirm.',
   'memoryFreshness.statusFading': 'fading',
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days}d old',
@@ -1034,7 +1149,7 @@ const en: TranslationMap = {
   'memory.tab.path': 'Paths',
   'connectionPath.title': 'Connection Path',
   'connectionPath.intro':
-    'Trace the shortest chain of relations linking any two entities — how the graph connects them, even across several hops.',
+    'Trace the shortest chain of relations linking any two entities: how the graph connects them, even across several hops.',
   'connectionPath.loading': 'Loading the graph…',
   'connectionPath.errorPrefix': 'Could not load the graph:',
   'connectionPath.retry': 'Retry',
@@ -1057,7 +1172,7 @@ const en: TranslationMap = {
 
   'graphCohesion.title': 'Graph Cohesion',
   'graphCohesion.intro':
-    "How tightly knit the neighbourhood is around each entity. Brokers — entities whose neighbours aren't linked to each other — are the single points holding otherwise-separate clusters together, which a frequency or PageRank sort cannot reveal.",
+    "This shows how tightly knit the neighbourhood is around each entity. Brokers (entities whose neighbours aren't linked to each other) are the single points holding otherwise-separate clusters together, which a frequency or PageRank sort cannot reveal.",
   'graphCohesion.loading': 'Computing cohesion…',
   'graphCohesion.errorPrefix': 'Could not load the graph:',
   'graphCohesion.retry': 'Retry',
@@ -1071,14 +1186,14 @@ const en: TranslationMap = {
   'graphCohesion.metricTriangles': 'Triangles',
   'graphCohesion.summaryCaption': 'Average clustering {avg} · transitivity {transitivity}',
   'graphCohesion.noBrokers': 'No entities with two or more connections yet.',
-  'graphCohesion.rankedHeading': 'Brokers — loosest neighbourhoods',
+  'graphCohesion.rankedHeading': 'Brokers: loosest neighbourhoods',
   'graphCohesion.colRank': '#',
   'graphCohesion.colEntity': 'Entity',
   'graphCohesion.colCohesion': 'Cohesion',
   'graphCohesion.colLinks': 'Links',
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
-    "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+    "Structural hole: this entity's neighbours aren't connected to each other; it's the sole link between them.",
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -1095,6 +1210,9 @@ const en: TranslationMap = {
   'memoryTree.status.statusError': 'Error',
   'memoryTree.status.statusIdle': 'Idle',
   'memoryTree.status.statusDegraded': 'Degraded',
+  // #5324: a spent embedding budget is a distinct state from a generic error —
+  // memory is paused, not broken, and the fix is the user's to make.
+  'memoryTree.status.statusBudgetExhausted': 'Paused: embedding budget reached',
   'memoryTree.status.never': 'Never',
   // #002: degraded badges + typed remediation strings. The Rust core sends a
   // `remediation_key` (one of memory.health.remediation.*) which the status
@@ -1119,19 +1237,24 @@ const en: TranslationMap = {
   'memory.health.remediation.summarizer_unavailable':
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or set memory_tree.cloud_summarization_opt_in=true and configure an LLM provider in Connections → API keys → LLM.',
   'memory.health.remediation.empty_input_refused':
-    'A memory item was skipped because its text was empty. No action needed — newer items continue to embed normally.',
+    'A memory item was skipped because its text was empty. No action needed: newer items continue to embed normally.',
   'memory.health.remediation.storage_unavailable':
-    "OpenHuman can't write to its memory storage — the disk or SD card appears to be failing, full, or read-only. Check the drive and free up space; memory processing resumes automatically once storage is writable again.",
+    "OpenHuman can't write to its memory storage: the disk or SD card appears to be failing, full, or read-only. Check the drive and free up space; memory processing resumes automatically once storage is writable again.",
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memory.health.remediation.unknown':
     'Memory processing encountered an issue. Check Connections → API keys for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
+  'memoryTree.status.retryFailed': 'Retry failed jobs',
+  'memoryTree.status.retryFailedBusy': 'Retrying...',
+  'memoryTree.status.retryFailedDone': 'Failed jobs requeued',
+  'memoryTree.status.retryFailedCount': 'Jobs queued to run again: {count}.',
+  'memoryTree.status.retryFailedError': 'Could not requeue the failed jobs',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
   // Relative-time buckets surfaced by the last-sync tile. `{count}` is
   // replaced client-side at the call site (the runtime `t()` does not
-  // interpolate — see I18nContext.tsx).
+  // interpolate: see I18nContext.tsx).
   'memoryTree.status.justNow': 'just now',
   'memoryTree.status.secondsAgo': '{count}s ago',
   'memoryTree.status.minuteAgo': '1 min ago',
@@ -1140,7 +1263,7 @@ const en: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hr ago',
   'memoryTree.status.dayAgo': '1 day ago',
   'memoryTree.status.daysAgo': '{count} days ago',
-  // Per-integration health strip (#2763) — rendered between the 4-tile grid
+  // Per-integration health strip (#2763): rendered between the 4-tile grid
   // and the auto-sync toggle in MemoryTreeStatusPanel.
   'memoryTree.status.integrationsTitle': 'Per-integration health',
   'memoryTree.status.integrationsEmpty': 'No integrations connected',
@@ -1150,12 +1273,44 @@ const en: TranslationMap = {
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
+  'alerts.header.desc': 'Agent activity and everything that needs your attention.',
   'alerts.empty': 'No alerts yet',
+  // Welcome landing (first destination)
+  'notifications.welcome.nav': 'Welcome',
+  'notifications.welcome.main': 'Alerts',
+  'notifications.welcome.eyebrow': 'Notifications',
+  'notifications.welcome.title': 'Only what actually needs you',
+  'notifications.welcome.body':
+    'A calm, scored digest of what your agents did and what needs a decision, so the important things surface and the noise stays out of your way.',
+  'notifications.welcome.ctaView': 'View alerts',
+  'notifications.welcome.featsLabel': "What you'll see",
+  'notifications.welcome.feat1Title': 'What needs you',
+  'notifications.welcome.feat1Body': 'Decisions and mentions your agents flagged for a human.',
+  'notifications.welcome.feat2Title': 'Agent activity',
+  'notifications.welcome.feat2Body': 'A running log of what ran and what it produced.',
+  'notifications.welcome.feat3Title': 'Filtered by category',
+  'notifications.welcome.feat3Body': 'Messages, meetings, reminders: sliced how you think.',
   'alerts.markAllRead': 'Mark all as read',
   'alerts.unread': 'unread',
 
   // Rewards
   'rewards.title': 'Rewards',
+  'rewards.header.desc': 'Your points, streaks, referrals, and perks.',
+  // Welcome landing (first destination)
+  'rewards.welcome.nav': 'Welcome',
+  'rewards.welcome.main': 'Rewards',
+  'rewards.welcome.eyebrow': 'Rewards',
+  'rewards.welcome.title': 'Get rewarded for showing up',
+  'rewards.welcome.body':
+    'Earn points as you use OpenHuman and invite others, keep your streak alive, and redeem what you’ve earned, all tracked in one place.',
+  'rewards.welcome.ctaView': 'View rewards',
+  'rewards.welcome.featsLabel': 'How it works',
+  'rewards.welcome.feat1Title': 'Earn points',
+  'rewards.welcome.feat1Body': 'Everyday actions and referrals add up over time.',
+  'rewards.welcome.feat2Title': 'Keep your streak',
+  'rewards.welcome.feat2Body': 'Show up regularly to unlock streak bonuses.',
+  'rewards.welcome.feat3Title': 'Redeem perks',
+  'rewards.welcome.feat3Body': 'Turn points into coupons and rewards.',
   'rewards.referrals': 'Referrals',
   'rewards.coupons': 'Redeem',
   'rewards.localUnavailable':
@@ -1216,7 +1371,7 @@ const en: TranslationMap = {
   'onboarding.apiKeys.openaiLabel': 'OpenAI API key',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
-    'Use ChatGPT Plus/Pro (subscription) or an OpenAI API key — not both required.',
+    'Use ChatGPT Plus/Pro (subscription) or an OpenAI API key: not both required.',
   'onboarding.apiKeys.openaiOauthOpening': 'Opening sign-in…',
   'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
@@ -1308,7 +1463,7 @@ const en: TranslationMap = {
   'onboarding.custom.activity.subtitle':
     'How proactively your agent monitors and acts in the background.',
   'onboarding.custom.activity.defaultDesc':
-    'Moderate activity — syncs every hour, sends a daily digest. Balanced cost and responsiveness.',
+    'Moderate activity: syncs every hour, sends a daily digest. Balanced cost and responsiveness.',
   'onboarding.custom.activity.configureDesc':
     'Pick your own activity level. Configure in Settings › Agent activity level.',
 
@@ -1501,7 +1656,7 @@ const en: TranslationMap = {
   'misc.downloading': 'Downloading...',
   'misc.installing': 'Installing...',
   'misc.beta':
-    'OpenHuman is in early beta. Feel free to share feedback or report any bugs you run into — every report helps us ship faster.',
+    'OpenHuman is in early beta. Feel free to share feedback or report any bugs you run into: every report helps us ship faster.',
   'misc.betaFeedback': 'Send feedback',
 
   // Mnemonic / Recovery
@@ -1536,7 +1691,7 @@ const en: TranslationMap = {
   'privacy.analyticsDisclaimer':
     'When enabled, Product Analytics and Diagnostics may include privacy-limited crash reports and usage events, a stable account ID, and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected. You can change this setting at any time.',
 
-  // Privacy Mode selector (#4435) — data-egress posture
+  // Privacy Mode selector (#4435): data-egress posture
   'privacy.mode.title': 'Privacy Mode',
   'privacy.mode.description':
     'Controls how much of your data can leave this device. Separate from the agent access mode.',
@@ -1549,6 +1704,11 @@ const en: TranslationMap = {
   'privacy.mode.saved': 'Saved',
   'privacy.mode.saveError': 'Could not update privacy mode.',
 
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Privacy status',
+  'privacy.status.external': 'Off-device',
+  'privacy.status.local': 'On-device',
+
   // Settings: About
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'is available',
@@ -1559,6 +1719,10 @@ const en: TranslationMap = {
   'settings.about.releases': 'Releases',
   'settings.about.releasesDesc': 'Browse release notes and earlier builds on GitHub.',
   'settings.about.openReleases': 'Open GitHub releases',
+  'settings.about.starCta.title': 'Enjoying OpenHuman?',
+  'settings.about.starCta.body': 'Star us on GitHub. It helps more people find us.',
+  'settings.about.starCta.star': 'Star on GitHub',
+  'settings.about.starCta.dismiss': 'Not now',
   'settings.about.connection': 'Connection',
   'settings.about.connectionMode': 'Mode',
   'settings.about.connectionModeLocal': 'Local',
@@ -1613,7 +1777,7 @@ const en: TranslationMap = {
   'settings.costDashboard.disabledHint':
     'Cost dashboard is disabled in config. Set [cost.dashboard] enabled = true in config.toml to re-enable.',
   'settings.costDashboard.subtitle':
-    'Live spend and token burn across the swarm. Bars auto-refresh every few seconds — no page reload needed.',
+    'Live spend and token burn across the swarm. Bars auto-refresh every few seconds: no page reload needed.',
   'settings.costDashboard.summaryAriaLabel': 'Cost summary metrics',
   'settings.costDashboard.lastSevenDays': 'last 7 days',
   'settings.costDashboard.utilizationOf': 'of',
@@ -1625,7 +1789,7 @@ const en: TranslationMap = {
   'settings.costDashboard.dailyTarget': 'Daily target',
   'settings.costDashboard.today': 'Today',
   'settings.costDashboard.todayBadge': 'TODAY',
-  'settings.costDashboard.unknownProvider': '—',
+  'settings.costDashboard.unknownProvider': 'None',
   'settings.costDashboard.justNow': 'Just now',
   'settings.costDashboard.secondsAgo': '{value}s ago',
   'settings.costDashboard.minutesAgo': '{value}m ago',
@@ -1650,21 +1814,21 @@ const en: TranslationMap = {
   'settings.costDashboard.category': 'Category',
   'settings.costDashboard.session': 'Session',
   'settings.costDashboard.noDataHint':
-    'Send an agent message — token usage from the next provider call will populate the chart within ~10 seconds.',
+    'Send an agent message: token usage from the next provider call will populate the chart within ~10 seconds.',
   'settings.search.title': 'Search engine',
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.",
+    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, Querit, and Exa run direct from your machine using your API key.",
   'settings.search.engineAria': 'Search engine',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
     'Remove search tools from the agent context and available tool list.',
   'settings.search.engineManagedLabel': 'OpenHuman Managed',
   'settings.search.engineManagedDesc':
-    'Default. Routed through the OpenHuman backend — no API key required.',
+    'Default. Routed through the OpenHuman backend, currently powered by Exa: no API key required.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, Querit, or Exa API key to enable web search.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
@@ -1673,10 +1837,13 @@ const en: TranslationMap = {
   'settings.search.engineQueritLabel': 'Querit',
   'settings.search.engineQueritDesc':
     'Direct Querit API: web search with site, time range, country, and language filters.',
+  'settings.search.engineExaLabel': 'Exa',
+  'settings.search.engineExaDesc':
+    'Neural search powered by Exa. Requires your own Exa API key. Adds search, find similar, and page contents tools.',
   'settings.search.statusConfigured': 'Configured',
   'settings.search.statusNeedsKey': 'Needs API key',
   'settings.search.fallbackToManaged':
-    'No key configured — search will fall back to Managed until a key is saved.',
+    'No key configured: search will fall back to Managed until a key is saved.',
   'settings.search.getApiKey': 'Get API key',
   'settings.search.save': 'Save',
   'settings.search.clear': 'Clear',
@@ -1688,13 +1855,15 @@ const en: TranslationMap = {
   'settings.search.parallelKeyLabel': 'Parallel API key',
   'settings.search.braveKeyLabel': 'Brave Search API key',
   'settings.search.queritKeyLabel': 'Querit API key',
+  'settings.search.exaKeyLabel': 'Exa API key',
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API key',
+  'settings.search.placeholderExa': 'Paste your Exa API key…',
   'settings.search.allowedSitesLabel': 'Allowed websites',
   'settings.search.allowedSitesHint':
-    'Hosts the assistant may open and read — via web fetch and the browser tool — one per line, e.g. reuters.com. A host also covers its subdomains. Web search itself is not restricted by this list.',
+    'Enter one host per line, such as reuters.com. The assistant may open and read these hosts through web fetch and the browser tool. Each host also covers its subdomains. This list does not restrict web search.',
   'settings.search.allowedSitesAllOn':
     'The assistant can open any public website. Local and private addresses stay blocked.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -1704,7 +1873,7 @@ const en: TranslationMap = {
   'settings.search.accessCustom': 'Custom',
   'settings.search.accessBlockAll': 'Block all',
   'settings.search.accessBlockAllHint':
-    'All web access is blocked — the assistant cannot open or read any website.',
+    'All web access is blocked: the assistant cannot open or read any website.',
   // ─── Settings global search bar ────────────────────────────
   'settings.settingsSearch.placeholder': 'Search settings…',
   'settings.settingsSearch.ariaLabel': 'Search settings',
@@ -1729,6 +1898,7 @@ const en: TranslationMap = {
     'Sign in again to refresh your OpenHuman session, or switch to a local or bring-your-own embeddings provider.',
   'settings.embeddings.signInAgain': 'Sign in again',
   'settings.embeddings.apiKeyLabel': '{provider} API key',
+  'settings.embeddings.apiKeyLabelGeneric': 'API key',
   'settings.embeddings.placeholderStored': '•••••••• (stored)',
   'settings.embeddings.placeholderKey': 'Paste your API key…',
   'settings.embeddings.keyStoredEncrypted': 'Your API key is stored encrypted on this device.',
@@ -1744,7 +1914,7 @@ const en: TranslationMap = {
   'settings.embeddings.applyCustom': 'Apply',
   'settings.embeddings.testConnection': 'Test connection',
   'settings.embeddings.testing': 'Testing…',
-  'settings.embeddings.testSuccess': 'Connected — {dims} dimensions',
+  'settings.embeddings.testSuccess': 'Connected: {dims} dimensions',
   'settings.embeddings.connectionTestFailed': 'Test failed',
   'settings.embeddings.verifyFallback':
     "Couldn't verify the embeddings endpoint. Make sure it's running and serving an embedding model, then save again.",
@@ -1761,7 +1931,7 @@ const en: TranslationMap = {
   'settings.embeddings.saveAndSwitch': 'Save & switch',
   'settings.embeddings.optional': 'optional',
   'settings.embeddings.vectorSearchDisabled':
-    'Vector search is disabled. Memory recall will use keyword matching and recency only — no semantic ranking.',
+    'Vector search is disabled. Memory recall will use keyword matching and recency only: no semantic ranking.',
   'settings.embeddings.clearKey': 'Clear API key',
   'pages.settings.ai.embeddings': 'Embeddings',
   'pages.settings.ai.embeddingsDesc': 'Vector encoding model for memory retrieval',
@@ -1770,7 +1940,7 @@ const en: TranslationMap = {
   'mcp.alphaBannerText':
     'MCP server support is in early alpha. The registry, install flow, and tool wiring may change between releases.',
   'mcp.toolList.noTools': 'No tools available.',
-  'mcp.setup.secretDialog.title': 'MCP Setup — Enter Secret',
+  'mcp.setup.secretDialog.title': 'MCP Setup: Enter Secret',
   'mcp.setup.secretDialog.bodyPrefix': 'The MCP setup agent needs',
   'mcp.setup.secretDialog.bodySuffix':
     '. Your value is sent directly to the core process and never enters the AI conversation.',
@@ -1830,6 +2000,12 @@ const en: TranslationMap = {
   'mcp.catalog.searchAria': 'Search MCP server catalog',
   'mcp.catalog.searchPlaceholder': 'Search MCP servers...',
   'mcp.catalog.loadFailed': 'Failed to load catalog',
+  'mcp.registry.error.notFound':
+    'Server not found in registry. Check the server name and try again, browse available MCP servers, or add the server manually by URL.',
+  'mcp.registry.error.network':
+    'Could not reach the MCP registry. Check your connection and try again, or add the server manually by URL.',
+  'mcp.registry.error.unavailable':
+    'The MCP registry is unavailable right now. Try again later, browse available MCP servers, or add the server manually by URL.',
   'mcp.catalog.noResults': 'No servers found.',
   'mcp.catalog.noResultsFor': 'No servers found for "{query}".',
   'mcp.catalog.loadMore': 'Load more',
@@ -1919,7 +2095,7 @@ const en: TranslationMap = {
   'mcp.inventory.tab.export': 'Export',
   'mcp.inventory.tab.import': 'Import',
   'mcp.inventory.export.empty':
-    'No MCP servers installed yet — nothing to export. Install one from the catalog first.',
+    'No MCP servers installed yet: nothing to export. Install one from the catalog first.',
   'mcp.inventory.export.privacyTitle': 'What is in this manifest',
   'mcp.inventory.export.privacyBody':
     'Server names, qualified names, env-variable KEY NAMES, and non-secret config only. Secret values, your machine identifiers, and per-install timestamps are intentionally stripped.',
@@ -1942,8 +2118,7 @@ const en: TranslationMap = {
   'mcp.inventory.import.fileReadFailed': 'Could not read file.',
   'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
   'mcp.inventory.import.previewHeading': 'Preview',
-  'mcp.inventory.import.previewCounts':
-    '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewCounts': '{total} servers: {newly} new, {already} already installed',
   'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
   'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
   'mcp.inventory.import.exportedAt': 'at {when}',
@@ -1957,7 +2132,7 @@ const en: TranslationMap = {
   'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
   'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
   'mcp.inventory.parseError.unsupportedSchema':
-    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+    'Unsupported manifest schema: this file was not produced by a compatible exporter.',
   'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
   'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
   'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
@@ -1969,7 +2144,7 @@ const en: TranslationMap = {
   'mcp.inventory.parseError.serverEnvKeysNotArray':
     'A server entry has an env_keys field that is not an array of strings.',
   'mcp.inventory.parseError.serverContainsEnv':
-    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+    'A server entry contains an `env` value map. Refusing to import: manifests must only carry env_keys (names), never secret values.',
   'mcp.inventory.parseError.duplicateQualifiedName':
     'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': 'Loading MCP servers...',
@@ -1985,8 +2160,8 @@ const en: TranslationMap = {
   'mcp.tab.transport.hosted': 'Hosted',
   'mcp.tab.transport.local': 'Stdio',
   'mcp.tab.transport.hostedHint':
-    'Runs on a remote server — sign-in or token is set up when you install',
-  'mcp.tab.transport.localHint': 'Runs on your device — may need a token when you install',
+    'Runs on a remote server: sign-in or token is set up when you install',
+  'mcp.tab.transport.localHint': 'Runs on your device: may need a token when you install',
   'mcp.tab.transportFilter.label': 'Type',
   'mcp.tab.transportFilter.aria': 'Filter servers by transport',
   'mcp.tab.link.website': 'Website',
@@ -2069,7 +2244,7 @@ const en: TranslationMap = {
     'Already have an access token? Paste it as an Authorization header below instead.',
   'mcp.connectAuth.oauthTimeout': 'Timed out waiting for browser sign-in. Try again.',
   'mcp.connectAuth.authError.oauthRequired':
-    'This server uses OAuth. Use “Sign in with browser” — a pasted token will not be accepted.',
+    'This server uses OAuth. Use “Sign in with browser”: a pasted token will not be accepted.',
   'mcp.connectAuth.authError.tokenRejected':
     'The server rejected this token. Check that it is correct and has not expired.',
   'mcp.connectAuth.authError.credentialRequired':
@@ -2091,7 +2266,7 @@ const en: TranslationMap = {
   'autonomy.statusSaving': 'Saving…',
   'autonomy.statusSaved': 'Saved.',
   'autonomy.statusFailed': 'Failed',
-  'autonomy.unlimitedNote': 'Unlimited — rate limiting disabled.',
+  'autonomy.unlimitedNote': 'Unlimited: rate limiting disabled.',
   'autonomy.invalidIntegerMsg':
     'Must be a positive integer (use the Unlimited preset for no limit).',
   'autonomy.presetUnlimited': 'Unlimited (default)',
@@ -2156,23 +2331,6 @@ const en: TranslationMap = {
   'settings.tools.preferencesSaved': 'Preferences saved',
   'settings.tools.saveFailed': 'Failed to save preferences. Try again.',
 
-  // Settings: Screen Awareness
-  'settings.screenAwareness.mode': 'Mode',
-  'settings.screenAwareness.allExceptBlacklist': 'All Except Blacklist',
-  'settings.screenAwareness.whitelistOnly': 'Whitelist Only',
-  'settings.screenAwareness.screenMonitoring': 'Screen Monitoring',
-  'settings.screenAwareness.saveSettings': 'Save Settings',
-  'settings.screenAwareness.session': 'Session',
-  'settings.screenAwareness.status': 'Status',
-  'settings.screenAwareness.active': 'Active',
-  'settings.screenAwareness.stopped': 'Stopped',
-  'settings.screenAwareness.remaining': 'Remaining',
-  'settings.screenAwareness.startSession': 'Start Session',
-  'settings.screenAwareness.stopSession': 'Stop Session',
-  'settings.screenAwareness.analyzeNow': 'Analyze Now',
-  'settings.screenAwareness.macosOnly':
-    'Screen Awareness desktop capture and permission controls are currently supported on macOS only.',
-
   // Connections
   'connections.comingSoon': 'Coming soon',
   'connections.setUp': 'Set up',
@@ -2214,14 +2372,14 @@ const en: TranslationMap = {
   'devOptions.cloud': 'Cloud',
   'devOptions.remoteCoreRpc': 'Remote core RPC',
   'devOptions.token': 'Token',
-  'devOptions.tokenNotSet': 'not set — RPC will 401',
+  'devOptions.tokenNotSet': 'not set: RPC will 401',
   'devOptions.triggerSentryTest': 'Trigger Sentry Test (staging)',
   'devOptions.triggerSentryTestDesc':
-    'Fires a tagged error to verify the Sentry pipeline. Issue #1072 — remove after verification.',
+    'Fires a tagged error to verify the Sentry pipeline. Issue #1072: remove after verification.',
   'devOptions.sendTestEvent': 'Send test event',
   'devOptions.sending': 'Sending…',
   'devOptions.eventSent': 'Event sent',
-  'devOptions.sentryDisabled': '(no id — Sentry disabled in this build)',
+  'devOptions.sentryDisabled': '(no id: Sentry disabled in this build)',
   'devOptions.failed': 'Failed',
   'devOptions.appLogs': 'App logs',
   'devOptions.appLogsDesc':
@@ -2389,9 +2547,18 @@ const en: TranslationMap = {
   'voice.providers.piperReady': 'Piper is ready.',
   'voice.providers.piperInstallStarted': 'Piper install started',
   'voice.providers.failedToInstallPiper': 'Failed to install Piper',
+  'voice.mode.title': 'Voice mode',
+  'voice.mode.desc': 'Choose how the assistant talks in the Human tab.',
+  'voice.mode.realtime': 'Realtime voice (beta)',
+  'voice.mode.realtimeDesc': 'Stream a live conversation instead of taking turns.',
+  'voice.mode.start': 'Start voice chat',
+  'voice.mode.stop': 'End voice chat',
+  'voice.mode.connecting': 'Connecting…',
+  'voice.mode.listening': 'Listening',
+  'voice.mode.speaking': 'Speaking',
   'voice.providers.title': 'Voice Providers',
   'voice.providers.desc':
-    'Choose where transcription and synthesis run. Use the Install locally buttons to download the binaries and models into your workspace. Local providers can be saved before the install finishes — no manual WHISPER_BIN or PIPER_BIN setup required.',
+    'Choose where transcription and synthesis run. Use the Install locally buttons to download the binaries and models into your workspace. Local providers can be saved before the install finishes: no manual WHISPER_BIN or PIPER_BIN setup required.',
   'voice.providers.sttProvider': 'Speech-to-Text Provider',
   'voice.providers.sttProviderAria': 'STT provider',
   'voice.providers.cloudWhisperProxy': 'OpenHuman (Managed)',
@@ -2500,50 +2667,25 @@ const en: TranslationMap = {
     "Hold a key to talk to OpenHuman while you're in another app. Release the key to send; OpenHuman speaks the reply if 'Speak agent replies' is on.",
   'pttSettings.shortcutLabel': 'Hotkey',
   'pttSettings.shortcutPlaceholder': 'Press a key (e.g. F13)',
-  'pttSettings.shortcutUnsetHint': 'Push-to-talk is off — pick a hotkey to enable.',
+  'pttSettings.shortcutUnsetHint': 'Push-to-talk is off: pick a hotkey to enable.',
   'pttSettings.speakRepliesLabel': 'Speak agent replies',
   'pttSettings.showOverlayLabel': 'Show overlay while held',
   'pttSettings.errorConflictsWithDictation':
     'This shortcut is already used by dictation. Pick a different key.',
   'pttSettings.errorModifierOnly':
-    "Pick a regular key (e.g. F13) — modifier-only shortcuts don't work for push-to-talk.",
+    "Pick a regular key (e.g. F13): modifier-only shortcuts don't work for push-to-talk.",
   'pttSettings.errorEmpty': 'Pick a key to bind.',
   'pttSettings.errorAccessibility':
     'macOS needs Accessibility permission for this shortcut. Open System Settings → Privacy & Security → Accessibility and enable OpenHuman.',
   'pttSettings.errorShortcutInUse': 'Another app already uses this shortcut. Pick a different one.',
   'pttSettings.errorUnsupportedWayland':
-    "Wayland sessions don't support global shortcuts in OpenHuman yet — switch to an X11 session or use the in-app dictation toggle.",
+    "Wayland sessions don't support global shortcuts in OpenHuman yet: switch to an X11 session or use the in-app dictation toggle.",
   'pttSettings.exclusiveFullscreenHint':
-    "In exclusive-fullscreen games the overlay won't render — you'll only hear the chime. Switch to borderless fullscreen for the overlay.",
+    "In exclusive-fullscreen games the overlay won't render: you'll only hear the chime. Switch to borderless fullscreen for the overlay.",
   'pttOverlay.listening': 'Listening…',
   'pttOverlay.idle': 'Idle',
 
   // Autocomplete
-  'autocomplete.title': 'Autocomplete',
-  'autocomplete.settings': 'Settings',
-  'autocomplete.acceptWithTab': 'Accept With Tab',
-  'autocomplete.stylePreset': 'Style Preset',
-  'autocomplete.style.balanced': 'Balanced',
-  'autocomplete.style.concise': 'Concise',
-  'autocomplete.style.formal': 'Formal',
-  'autocomplete.style.casual': 'Casual',
-  'autocomplete.style.custom': 'Custom',
-  'autocomplete.disabledApps': 'Disabled Apps (one bundle/app token per line)',
-  'autocomplete.debounceMs': 'Debounce (ms)',
-  'autocomplete.maxChars': 'Max context characters',
-  'autocomplete.overlayTtlMs': 'Overlay timeout (ms)',
-  'autocomplete.saveSettings': 'Save Settings',
-  'autocomplete.saving': 'Saving…',
-  'autocomplete.runtime': 'Runtime',
-  'autocomplete.running': 'Running',
-  'autocomplete.start': 'Start',
-  'autocomplete.stop': 'Stop',
-  'autocomplete.settingsSaved': 'Autocomplete settings saved.',
-  'autocomplete.started': 'Autocomplete started.',
-  'autocomplete.didNotStart': 'Autocomplete did not start. Check if it is enabled.',
-  'autocomplete.stopped': 'Autocomplete stopped.',
-  'autocomplete.advancedSettings': 'Advanced settings',
-  'autocomplete.debugTitle': 'Autocomplete Debug',
 
   // Chat
   'chat.agentChat': 'Agent Chat',
@@ -2560,9 +2702,9 @@ const en: TranslationMap = {
   // Composio
   'composio.triageTitle': 'Integration Triggers',
   'composio.triageDesc':
-    'When active, each incoming Composio trigger runs through an AI triage step that classifies the event and may kick off automated actions — one local LLM turn per trigger. Disable globally or per integration if you prefer manual review. If the environment variable',
+    'When active, each incoming Composio trigger runs through an AI triage step that classifies the event and may kick off automated actions: one local LLM turn per trigger. Disable globally or per integration if you prefer manual review. If the environment variable',
   'composio.disableAllTriage': 'Disable AI triage for all triggers',
-  'composio.triggersStillRecorded': 'Triggers are still recorded to history — no LLM turn is run.',
+  'composio.triggersStillRecorded': 'Triggers are still recorded to history: no LLM turn is run.',
   'composio.disableSpecificIntegrations': 'Disable AI triage for specific integrations',
   'composio.settingsSaved': 'Settings saved',
   'composio.saveFailed': 'Failed to save. Try again.',
@@ -2581,41 +2723,9 @@ const en: TranslationMap = {
     'Choose which subsystems run on the local model. Anything off uses the cloud.',
   'localModel.enableRuntime': 'Enable local AI runtime',
   'localModel.enableRuntimeDesc':
-    'Master switch. Off by default — Ollama stays idle. When on, the tree summarizer, screen intelligence, and autocomplete always use the local model.',
+    'Master switch. Off by default: Ollama stays idle. When on, the tree summarizer and autocomplete always use the local model.',
   'localModel.advancedSettings': 'Advanced settings',
   'localModel.debugTitle': 'Local Model Debug',
-
-  // Screen Awareness
-  'screenAwareness.debugTitle': 'Screen Awareness Debug',
-  'screenAwareness.debug.debugAndDiagnostics': 'Debug & Diagnostics',
-  'screenAwareness.debug.collapse': 'Collapse',
-  'screenAwareness.debug.expand': 'Expand',
-  'screenAwareness.debug.failedToSave': 'Failed to save screen intelligence',
-  'screenAwareness.debug.policyTitle': 'Screen Intelligence Policy',
-  'screenAwareness.debug.baselineFps': 'Baseline FPS',
-  'screenAwareness.debug.useVisionModel': 'Use Vision Model',
-  'screenAwareness.debug.useVisionModelDesc':
-    'Send screenshots to a vision LLM for richer context. When off, only OCR text is used with a text LLM — faster and no vision model required.',
-  'screenAwareness.debug.keepScreenshots': 'Keep Screenshots',
-  'screenAwareness.debug.keepScreenshotsDesc':
-    'Save captured screenshots to the workspace instead of deleting after processing',
-  'screenAwareness.debug.allowlist': 'Allowlist (one rule per line)',
-  'screenAwareness.debug.denylist': 'Denylist (one rule per line)',
-  'screenAwareness.debug.saveSettings': 'Save Screen Intelligence Settings',
-  'screenAwareness.debug.sessionStats': 'Session Stats',
-  'screenAwareness.debug.framesEphemeral': 'Frames (ephemeral)',
-  'screenAwareness.debug.panicStop': 'Panic stop',
-  'screenAwareness.debug.defaultPanicHotkey': 'Cmd+Shift+.',
-  'screenAwareness.debug.vision': 'Vision',
-  'screenAwareness.debug.idle': 'idle',
-  'screenAwareness.debug.visionQueue': 'Vision queue',
-  'screenAwareness.debug.lastVision': 'Last vision',
-  'screenAwareness.debug.notAvailable': 'n/a',
-  'screenAwareness.debug.visionSummaries': 'Vision Summaries',
-  'screenAwareness.debug.refreshing': 'Refreshing…',
-  'screenAwareness.debug.noSummaries': 'No summaries yet.',
-  'screenAwareness.debug.unknownApp': 'Unknown App',
-  'screenAwareness.debug.macosOnly': 'Screen Intelligence V1 is currently supported on macOS only.',
 
   // Memory
   'memory.debugTitle': 'Memory Debug',
@@ -2704,13 +2814,13 @@ const en: TranslationMap = {
     'Every notification from your connected accounts is scored by a local AI model. High-importance notifications are automatically routed to your orchestrator agent so nothing critical slips through.',
   'notifications.routing.howItWorks': 'How it works',
   'notifications.routing.level.drop': 'Drop',
-  'notifications.routing.level.dropDesc': 'Noise / spam — stored but not surfaced',
+  'notifications.routing.level.dropDesc': 'Noise / spam: stored but not surfaced',
   'notifications.routing.level.acknowledge': 'Acknowledge',
-  'notifications.routing.level.acknowledgeDesc': 'Low-priority — shown in notification center',
+  'notifications.routing.level.acknowledgeDesc': 'Low-priority: shown in notification center',
   'notifications.routing.level.react': 'React',
-  'notifications.routing.level.reactDesc': 'Medium-priority — triggers a focused agent response',
+  'notifications.routing.level.reactDesc': 'Medium-priority: triggers a focused agent response',
   'notifications.routing.level.escalate': 'Escalate',
-  'notifications.routing.level.escalateDesc': 'High-priority — forwarded to orchestrator agent',
+  'notifications.routing.level.escalateDesc': 'High-priority: forwarded to orchestrator agent',
   'notifications.routing.perProvider': 'Per-provider routing',
   'notifications.routing.threshold': 'Threshold',
   'notifications.routing.routeToOrchestrator': 'Route to orchestrator',
@@ -2825,7 +2935,7 @@ const en: TranslationMap = {
   'mic.unavailable': 'Microphone is not available',
   'mic.permissionDenied': 'Microphone permission denied',
   'mic.failedToStartRecorder': 'Failed to start recorder',
-  'mic.deviceUnavailable': 'Selected microphone is unavailable — try a different device.',
+  'mic.deviceUnavailable': 'Selected microphone is unavailable. Try a different device.',
   'mic.deviceInUse': 'Microphone is in use by another application.',
   'mic.error': 'Microphone error',
   'mic.transcribing': 'Transcribing...',
@@ -2866,7 +2976,7 @@ const en: TranslationMap = {
   'token.popCacheHit': 'Cache hit',
   'token.popContext': 'Context window',
   'token.tipInput':
-    'Tokens sent to the model this session — your prompts plus the conversation history.',
+    'Tokens sent to the model this session: your prompts plus the conversation history.',
   'token.tipOutput': 'Tokens generated by the model this session.',
   'token.tipCacheHit': 'Input tokens served from a cached prompt prefix, billed at a reduced rate.',
   'token.clickForDetails': 'Click for session usage details',
@@ -2958,9 +3068,9 @@ const en: TranslationMap = {
   'workspace.revealFolder': 'Reveal Folder',
   'workspace.checkingVault': 'Checking…',
   'workspace.vaultNotRegisteredHelp':
-    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below: you only need to do this once. Then click View Vault again.',
   'workspace.obsidianNotFoundHelp':
-    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+    "We couldn't find Obsidian on this device. Install it. If it's installed in a non-standard location, set its config folder under Advanced.",
   'workspace.openAnyway': 'Open in Obsidian anyway',
   'workspace.installObsidian': 'Install Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
@@ -3009,7 +3119,7 @@ const en: TranslationMap = {
   'vaultHealth.timeDayAgo': '{n} day ago',
   'vaultHealth.timeDaysAgo': '{n} days ago',
 
-  // Cross-host vault (#4278) — shared by VaultHealthChecklist + ObsidianVaultSection
+  // Cross-host vault (#4278): shared by VaultHealthChecklist + ObsidianVaultSection
   'crossHostVault.title': 'Vault is on the core host.',
   'crossHostVault.message':
     'This memory vault is stored on the openhuman-core host ({os}). It can only be opened or revealed on that machine, not from this device.',
@@ -3021,7 +3131,7 @@ const en: TranslationMap = {
     'OpenHuman writes generated memory notes to memory_tree/content.',
   'memoryData.connectedSources': 'Connected sources · read',
   'memoryData.connectedSourcesDesc':
-    'Folders, mailboxes, chats, and repos are imported for memory indexing — their original files are never rewritten.',
+    'Folders, mailboxes, chats, and repos are imported for memory indexing: their original files are never rewritten.',
   'memoryData.internalFiles': 'Internal memory-tree files',
   'memoryData.internalFilesDesc':
     'Indexes, queue state, and summaries are managed by OpenHuman to keep recall and sync healthy.',
@@ -3095,6 +3205,14 @@ const en: TranslationMap = {
   'sync.failedToLoad': 'Failed to load sync status',
   'sync.noContent': 'No content has been synced into memory yet. Connect an integration to start.',
 
+  // Data Sync layered pipeline status (GH-4690) — raw sync ≠ retrieval-ready
+  'sync.pipeline.ingestedOnly': 'Ingested only',
+  'sync.pipeline.storedWithoutVectors': 'Stored without vectors. Semantic search unavailable.',
+  'sync.pipeline.signInToEnable': 'Sign in to enable',
+  'sync.pipeline.extractionFailed': 'Memory structure extraction failed. Wiki may be incomplete.',
+  'sync.pipeline.treeDegraded': 'Memory tree degraded. Retrieval may return stale results.',
+  'sync.pipeline.viewHealth': 'View memory health',
+
   // Memory Sync Schedule (global cadence)
   'memorySyncInterval.title': 'Sync schedule',
   'memorySyncInterval.lastSynced': 'Last synced',
@@ -3115,7 +3233,7 @@ const en: TranslationMap = {
   'memorySources.noConnections':
     'No active Composio connections found. Connect an integration first.',
   'memorySources.pickConnection': 'Pick a connection',
-  'memorySources.selectConnection': '— Select a connection —',
+  'memorySources.selectConnection': 'Select a connection',
   'memorySources.comingSoon': 'Coming soon',
   'memorySources.composioListFailed': 'Failed to load Composio connections.',
   'memorySources.browse': 'Browse…',
@@ -3299,7 +3417,7 @@ const en: TranslationMap = {
     "That doesn't look like a valid URL (try https://core.example.com/rpc)",
   'bootCheck.tokenRequired': "We'll need an auth token to connect.",
   'bootCheck.httpPublicWarning':
-    'This is a plain HTTP URL on a public host — traffic will not be encrypted. Use HTTPS unless you trust this network.',
+    'This is a plain HTTP URL on a public host: traffic will not be encrypted. Use HTTPS unless you trust this network.',
   'bootCheck.chooseCoreMode': 'Select a Runtime',
   'bootCheck.connectToCore': 'Connect to Your Runtime',
   'bootCheck.desktopDescription': 'OpenHuman needs a runtime to think. Pick where it should live.',
@@ -3400,6 +3518,9 @@ const en: TranslationMap = {
   'welcome.continueLocally': 'Continue locally',
   'welcome.continueLocallyExperimental': 'Continue Locally (Experimental)',
   'welcome.localSessionStarting': 'Starting local session...',
+  'welcome.coreConfigUnreadable':
+    'The runtime could not read its configuration file. config.toml may belong to a different user account, or be inaccessible to the runtime process for another reason. Restart the runtime, and if that does not help, repair the workspace ownership or re-create its volume.',
+  'welcome.localSessionErrorFallback': 'Could not start a local session.',
   'welcome.localSessionDesc': 'Uses an offline local profile and skips TinyHumans OAuth.',
 
   // Chat: Agent chat panel description
@@ -3436,7 +3557,7 @@ const en: TranslationMap = {
   'composio.envVarOverrides': 'is set, it overrides this setting.',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    "Agent integration coming soon — you can connect, but the agent can't use this toolkit yet.",
+    "Agent integration coming soon: you can connect, but the agent can't use this toolkit yet.",
 
   // Memory: day-of-week labels for heatmap
   'memory.day.sun': 'Sun',
@@ -3455,9 +3576,11 @@ const en: TranslationMap = {
   // Mic: error messages
   'mic.noAudioCaptured': 'No audio captured',
   'mic.noSpeechDetected': 'No speech detected',
-  'mic.lowConfidenceResult': 'Could not understand the audio clearly — please try again',
+  'mic.lowConfidenceResult': 'Could not understand the audio clearly. Please try again.',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
+  'mic.voiceNotCompiled':
+    'Voice transcription is not included in this version of the app. Update OpenHuman to enable it.',
 
   // Reflections: kind labels
   'reflections.kind.retrospective': 'Retrospective',
@@ -3538,7 +3661,7 @@ const en: TranslationMap = {
   'app.openhumanLink.discord.perk3': 'Share feedback directly with the team',
   'app.openhumanLink.discord.perk4': 'Community help and support',
   'app.openhumanLink.discordReport.intro':
-    'Sorry — something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
+    'Sorry, something broke on our end. We try to log these errors automatically, but sharing the details on Discord helps us fix them faster.',
   'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
   'app.openhumanLink.notifications.desktopOnly':
@@ -3628,14 +3751,14 @@ const en: TranslationMap = {
   'channels.web.alwaysAvailable': 'Always available',
   'chat.approval.approve': 'Approve',
   'chat.approval.alwaysAllow': 'Always allow',
-  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool: add it to your Always-allow list',
   'chat.approval.deciding': 'Working…',
   'chat.approval.deny': 'Deny',
-  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.error': 'Could not record your decision. Try again.',
   'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
   'chat.approval.title': 'Approval needed',
   'chat.approval.tool': 'Tool:',
-  // Flow-approval surface — chat banner for a `flow_approval_request` socket
+  // Flow-approval surface: chat banner for a `flow_approval_request` socket
   // event (a paused tinyflows run's gate, surfaced while the user is
   // chatting rather than inspecting the run directly).
   'chat.flowApproval.title': 'Workflow needs approval',
@@ -3648,7 +3771,7 @@ const en: TranslationMap = {
   'chat.flowApproval.approveAlwaysHint': 'Skip this checkpoint for future runs of this flow',
   'chat.flowApproval.deny': 'Deny',
   'chat.flowApproval.deciding': 'Working…',
-  'chat.flowApproval.error': 'Could not record your decision — try again.',
+  'chat.flowApproval.error': 'Could not record your decision. Try again.',
   'chat.flowProposal.title': 'Workflow proposal',
   'chat.flowProposal.subtitle': 'Review this automation before saving it.',
   'chat.flowProposal.triggerLabel': 'Trigger',
@@ -3660,6 +3783,27 @@ const en: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Open in canvas',
   'chat.flowProposal.dismiss': 'Dismiss',
   'chat.flowProposal.error': 'Could not save the workflow. Please try again.',
+  'chat.flowProposal.enableError':
+    'Workflow saved, but could not enable it. Try again, or enable it from the Workflows page.',
+  // Terminal success state (issue B36): shown once the flow is saved and
+  // enabled, in place of the editable proposal, with a link into the
+  // persisted flow's own canvas.
+  'chat.flowProposal.savedConfirmation': 'Saved',
+  'chat.flowProposal.viewWorkflow': 'View workflow',
+  // Plain-language labels for each `tinyflows` node kind, shown as the badge
+  // next to each step in the proposal card's step list. Keep names short:
+  // they render as small pill badges.
+  'chat.flowProposal.stepKind.agent': 'Agent',
+  'chat.flowProposal.stepKind.toolCall': 'Action',
+  'chat.flowProposal.stepKind.httpRequest': 'Web request',
+  'chat.flowProposal.stepKind.code': 'Run code',
+  'chat.flowProposal.stepKind.condition': 'Condition',
+  'chat.flowProposal.stepKind.switch': 'Switch',
+  'chat.flowProposal.stepKind.merge': 'Merge',
+  'chat.flowProposal.stepKind.splitOut': 'Split',
+  'chat.flowProposal.stepKind.transform': 'Transform',
+  'chat.flowProposal.stepKind.outputParser': 'Parse output',
+  'chat.flowProposal.stepKind.subWorkflow': 'Sub-workflow',
 
   // Auth mode labels
   'channels.authMode.managed_dm': 'Login with OpenHuman',
@@ -3703,10 +3847,19 @@ const en: TranslationMap = {
   'channels.telegram.remoteControlBody':
     'From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing still uses /model and /models.',
 
+  // Connect help (in-app guidance so users do not have to ask the agent for the path)
+  'channels.connectHelp.title': 'How to connect',
+  'channels.connectHelp.discord':
+    'Pick a method below: link your account via OpenHuman, install the bot with OAuth, or paste your own bot token from the Discord developer portal.',
+  'channels.connectHelp.telegram':
+    'Pick a method below: message the managed OpenHuman bot to link it, or paste your own bot token from @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Looking for Slack? Slack connects as an app under Connections → OAuth, not as a messaging channel here.',
+
   // Web
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chat via the built-in web UI.',
-  'channels.web.authMode.managed_dm.description': 'Use the embedded web chat — no setup required.',
+  'channels.web.authMode.managed_dm.description': 'Use the embedded web chat: no setup required.',
   'channels.yuanbao.connect': 'Connect',
   'channels.yuanbao.connecting': 'Connecting…',
   'channels.yuanbao.fieldRequired': '{field} is required',
@@ -3943,7 +4096,7 @@ const en: TranslationMap = {
   'conversations.toolFailure.serviceUnavailable.cause':
     'A service OpenHuman needs is temporarily unavailable.',
   'conversations.toolFailure.serviceUnavailable.next':
-    'OpenHuman will try again shortly — no action needed.',
+    'OpenHuman will try again shortly: no action needed.',
   'conversations.toolFailure.badCredentials.cause':
     'The saved sign-in details are missing or no longer valid.',
   'conversations.toolFailure.badCredentials.next':
@@ -3960,11 +4113,11 @@ const en: TranslationMap = {
     'OpenHuman will try again, or you can retry it manually.',
   'conversations.toolFailure.denied.cause': 'You declined this action.',
   'conversations.toolFailure.denied.next':
-    'Nothing to do — it was not run. Ask again if you change your mind.',
+    'Nothing to do: it was not run. Ask again if you change your mind.',
   'conversations.toolFailure.approvalExpired.cause':
     'The approval request expired before anyone responded.',
   'conversations.toolFailure.approvalExpired.next':
-    "Ask again to run it — OpenHuman won't retry it on its own.",
+    "Ask again to run it: OpenHuman won't retry it on its own.",
   'conversations.toolFailure.unknown.cause': 'Something went wrong with this action.',
   'conversations.toolFailure.unknown.next':
     'Try again; if it keeps failing, run diagnostics from Settings.',
@@ -4084,33 +4237,6 @@ const en: TranslationMap = {
   'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
   'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'Entity type',
-  'intelligence.screenDebug.active': 'Active',
-  'intelligence.screenDebug.app': 'App',
-  'intelligence.screenDebug.bounds': 'Bounds',
-  'intelligence.screenDebug.captureAlt': 'Capture test result',
-  'intelligence.screenDebug.captureFailed': 'Failed',
-  'intelligence.screenDebug.captureSuccess': 'Success',
-  'intelligence.screenDebug.captureTest': 'Capture test',
-  'intelligence.screenDebug.capturing': 'Capturing',
-  'intelligence.screenDebug.frames': 'Frames',
-  'intelligence.screenDebug.idle': 'Idle',
-  'intelligence.screenDebug.lastApp': 'Last App',
-  'intelligence.screenDebug.mode': 'Mode',
-  'intelligence.screenDebug.permAccessibility': 'Perm accessibility',
-  'intelligence.screenDebug.permInput': 'Perm input',
-  'intelligence.screenDebug.permScreen': 'Accessibility',
-  'intelligence.screenDebug.permissions': 'Permissions',
-  'intelligence.screenDebug.platformNotSupported': 'Platform not supported',
-  'intelligence.screenDebug.recentVisionSummaries': 'Recent vision summaries',
-  'intelligence.screenDebug.session': 'Session',
-  'intelligence.screenDebug.size': 'Size',
-  'intelligence.screenDebug.status': 'Status',
-  'intelligence.screenDebug.testCapture': 'Test capture',
-  'intelligence.screenDebug.time': 'Time',
-  'intelligence.screenDebug.title': 'Title',
-  'intelligence.screenDebug.unknown': 'Unknown',
-  'intelligence.screenDebug.visionQueue': 'Vision Queue',
-  'intelligence.screenDebug.visionState': 'Vision State',
   'intelligence.tasks.activeBoardOne': '1 active board across conversations',
   'intelligence.tasks.activeBoardOther': '{count} active boards across conversations',
   'intelligence.tasks.empty': 'No agent task boards yet',
@@ -4131,7 +4257,7 @@ const en: TranslationMap = {
   'intelligence.tasks.composer.attachLabel': 'Attach to conversation',
   'intelligence.tasks.composer.attachNone': 'Personal (no conversation)',
   'intelligence.tasks.composer.objectiveLabel': 'Objective',
-  'intelligence.tasks.composer.objectivePlaceholder': 'Optional — the desired outcome',
+  'intelligence.tasks.composer.objectivePlaceholder': 'Optional: the desired outcome',
   'intelligence.tasks.composer.notesLabel': 'Notes',
   'intelligence.tasks.composer.notesPlaceholder': 'Optional notes',
   'intelligence.tasks.composer.create': 'Create task',
@@ -4187,7 +4313,7 @@ const en: TranslationMap = {
   'intelligence.agentWork.kind.workflowChild': 'Workflow child',
   'intelligence.agentWork.openThread': 'Open thread',
   'intelligence.agentWork.openWorker': 'Open worker',
-  // Worktree manager (#3376) — isolated worker git worktrees
+  // Worktree manager (#3376): isolated worker git worktrees
   'worktree.label': 'Worktree',
   'worktree.dirty': 'Uncommitted changes',
   'worktree.clean': 'Clean',
@@ -4213,7 +4339,7 @@ const en: TranslationMap = {
     'No isolated worktrees. Parallel workers with worktree isolation will appear here.',
   'worktree.panel.overlapsTitle': 'Overlapping changes',
   'worktree.panel.overlapHint':
-    'These files were changed by more than one worktree — reconcile before merging.',
+    'These files were changed by more than one worktree: reconcile before merging.',
   'intelligence.agentWork.action.stop': 'Stop',
   'intelligence.agentWork.action.retry': 'Retry',
   'intelligence.agentWork.action.continue': 'Continue',
@@ -4223,7 +4349,7 @@ const en: TranslationMap = {
   'intelligence.agentWork.action.continuePlaceholder': 'Reply to unblock this agent…',
   'intelligence.agentWork.action.followUpPlaceholder': 'Send a follow-up instruction…',
   'intelligence.agentWork.action.failed': 'Action failed',
-  // Orchestration tab (#3375) — multi-agent workflow runs.
+  // Orchestration tab (#3375): multi-agent workflow runs.
   'orchestration.subtitle':
     'Start a multi-agent workflow, watch its phases progress, and read the synthesized result.',
   'orchestration.loading': 'Loading workflows…',
@@ -4327,7 +4453,7 @@ const en: TranslationMap = {
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Make discoverable',
   'tinyplaceOrchestration.identity.republish': 'Republish keys',
   'tinyplaceOrchestration.identity.publishing': 'Publishing…',
-  'tinyplaceOrchestration.identity.publishFailed': 'Publish failed — try again',
+  'tinyplaceOrchestration.identity.publishFailed': 'Publishing failed. Try again.',
   'tinyplaceOrchestration.identity.card': 'Directory card',
   'tinyplaceOrchestration.identity.key': 'Encryption key',
   'tinyplaceOrchestration.identity.published': 'Published',
@@ -4432,7 +4558,7 @@ const en: TranslationMap = {
   'notifications.flow.approveHint': 'Resume the workflow past this checkpoint',
   'notifications.flow.dismissHint': 'Hide this prompt without resuming the workflow',
   'notifications.flow.viewRun': 'View run',
-  // Flow-approval surface — notification-center gate card for the
+  // Flow-approval surface: notification-center gate card for the
   // `flow-gate-approval` CoreNotification kind. Distinct from
   // `notifications.flow.*` above (that's the older `flows_resume`-based
   // pending-approval prompt); this one decides via `approval_decide`.
@@ -4451,7 +4577,7 @@ const en: TranslationMap = {
   'flowRuns.inspector.error': 'Error',
   'flowRuns.inspector.pendingApprovals': 'Pending approvals',
   'flowRuns.inspector.pendingApprovalsCount': '{count} node(s) awaiting approval',
-  // Actionable approval gate cards (flow-approval surface — run details).
+  // Actionable approval gate cards (flow-approval surface: run details).
   'flowRuns.inspector.approval.tool': 'Tool:',
   'flowRuns.inspector.approval.approve': 'Approve once',
   'flowRuns.inspector.approval.approveAlways': 'Approve always',
@@ -4462,18 +4588,28 @@ const en: TranslationMap = {
   'flowRuns.inspector.approval.loadError': 'Could not load pending approvals for this run.',
   'flowRuns.inspector.steps': 'Steps',
   'flowRuns.inspector.noSteps': 'No steps recorded yet.',
-  'flowRuns.inspector.output': 'Output',
+  // Issue B20: raw JSON now lives behind this disclosure; the plain-language
+  // summary above it (`flowRuns.inspector.summary.*`) is the primary view.
+  'flowRuns.inspector.output': 'Show raw output',
   'flowRuns.inspector.port': 'Port',
+  // Issue B20: plain-language, always-visible step summary (no costUsd/
+  // labelIds/markdownFormatted or flow:/run: ids: those stay behind
+  // "Show raw output"). `{count}` is substituted client-side, not via ICU.
+  'flowRuns.inspector.summary.failedPrefix': "Couldn't complete:",
+  'flowRuns.inspector.summary.unknownError': 'something went wrong',
+  'flowRuns.inspector.summary.itemsFetched': 'Fetched {count} item(s)',
+  'flowRuns.inspector.summary.completed': 'Step completed',
+  'flowRuns.inspector.summary.noOutput': 'No output produced',
   // Null-resolution diagnostics: `=`-expressions in a step's config that
   // resolved to null during the run (likely a mis-wired reference).
   'flowRuns.inspector.diagnosticsTitle': 'Expression warnings',
   'flowRuns.inspector.diagnosticResolvedNull': 'resolved to null',
   'flowRuns.inspector.loading': 'Loading run…',
   'flowRuns.inspector.loadError': 'Could not load this run',
-  // Phase 5c — "Fix with agent" opens the canvas copilot preloaded with this
+  // Phase 5c: "Fix with agent" opens the canvas copilot preloaded with this
   // failed run's context so the workflow builder can propose a fix.
   'flowRuns.inspector.fixWithAgent': 'Fix with agent',
-  // Phase 6 — per-item data browser (n8n-style table ⟷ JSON toggle) for a
+  // Phase 6: per-item data browser (n8n-style table ⟷ JSON toggle) for a
   // step's output items, plus the input↔output pairing affordance.
   'flowRuns.inspector.dataTable': 'Table',
   'flowRuns.inspector.dataJson': 'JSON',
@@ -4491,13 +4627,30 @@ const en: TranslationMap = {
   'flowRuns.status.pending_approval': 'Awaiting approval',
   'flowRuns.status.failed': 'Failed',
   'flowRuns.status.cancelled': 'Cancelled',
+  'flowRuns.status.interrupted': 'Interrupted',
 
-  // ── Workflows list page + nav tab (B5a) — the `flows::` domain's
+  // ── Workflows list page + nav tab (B5a): the `flows::` domain's
   // discoverable hub at /flows. Distinct from the legacy SKILL.md
   // "workflows.*" namespace above and from B3b's "flowRuns.*" / B4's
   // "chat.flowProposal.*" namespaces (kept apart here to avoid merge
   // conflicts with those in-flight branches).
   'flows.page.title': 'Workflows',
+  // Welcome landing (first destination)
+  'flows.welcome.nav': 'Welcome',
+  'flows.welcome.main': 'Workflows',
+  'flows.welcome.eyebrow': 'Workflows',
+  'flows.welcome.title': 'Put the busywork on autopilot',
+  'flows.welcome.body':
+    'Describe something you do over and over (triage, follow-ups, digests) and your agent turns it into a workflow it can run end to end, on a schedule or on demand.',
+  'flows.welcome.ctaNew': 'New workflow',
+  'flows.welcome.ctaBrowse': 'Browse workflows',
+  'flows.welcome.featsLabel': 'What you can automate',
+  'flows.welcome.feat1Title': 'Describe in words',
+  'flows.welcome.feat1Body': 'Say what you want in plain language; the builder drafts the flow.',
+  'flows.welcome.feat2Title': 'Run on a schedule',
+  'flows.welcome.feat2Body': 'Fire on a timer, an event, or a button: your call.',
+  'flows.welcome.feat3Title': 'Keep humans in the loop',
+  'flows.welcome.feat3Body': 'Approve sensitive steps before anything goes out.',
   'flows.page.description': 'Saved automations you can enable, run, and monitor.',
   'flows.page.emptyTitle': 'No workflows yet',
   'flows.page.emptyDescription':
@@ -4508,6 +4661,20 @@ const en: TranslationMap = {
   'flows.list.lastRun': 'Last run',
   'flows.list.neverRun': 'Never run',
   'flows.list.justNow': 'Just now',
+  'flows.discoveries.title': 'Workflow Discoveries',
+  'flows.discoveries.description': 'Automations the Flow Scout suggests, based on how you work.',
+  'flows.allRuns.title': 'Workflow Runs',
+  'flows.allRuns.description': 'Every workflow run across your workspace, newest first.',
+  'flows.allRuns.loading': 'Loading runs…',
+  'flows.allRuns.empty': 'No workflow runs yet.',
+  'flows.allRuns.unknownWorkflow': 'Unknown workflow',
+  'flows.allRuns.status.running': 'Running',
+  'flows.allRuns.status.completed': 'Completed',
+  'flows.allRuns.status.completed_with_warnings': 'Completed with warnings',
+  'flows.allRuns.status.pending_approval': 'Pending approval',
+  'flows.allRuns.status.failed': 'Failed',
+  'flows.allRuns.status.cancelled': 'Cancelled',
+  'flows.allRuns.status.interrupted': 'Interrupted',
   'flows.list.minutesAgo': '{count}m ago',
   'flows.list.hoursAgo': '{count}h ago',
   'flows.list.daysAgo': '{count}d ago',
@@ -4547,10 +4714,14 @@ const en: TranslationMap = {
   // ── Phase 5c: prompt-first authoring + canvas copilot ────────────────────
   // The Flows prompt bar (describe a workflow → builder agent proposes it) and
   // the canvas copilot (iterate on a draft with a diff overlay). Everything
-  // here only PROPOSES — saving/enabling stays behind explicit clicks.
+  // here only PROPOSES: saving/enabling stays behind explicit clicks.
   'flows.promptBar.label': 'Describe a workflow',
-  'flows.promptBar.placeholder': 'Describe a workflow…',
+  'flows.promptBar.placeholder': 'Describe your workflow',
+  'flows.promptBar.copilotTitle': 'Copilot',
   'flows.promptBar.submit': 'Build',
+  'flows.promptBar.startBuilding': 'Start building',
+  'flows.promptBar.disclaimer':
+    'Copilot is AI and can make mistakes. Please double-check responses.',
   'flows.promptBar.thinking': 'Building…',
   'flows.promptBar.heroTitle': 'Describe a workflow',
   'flows.promptBar.heroSubtitle': 'Tell the builder what to automate and review its proposal.',
@@ -4566,7 +4737,7 @@ const en: TranslationMap = {
   'flows.suggest.error': 'Could not run discovery. Please try again.',
   'flows.suggest.why': 'Why',
   'flows.suggest.build': 'Build this',
-  'flows.suggest.building': 'Building…',
+  'flows.suggest.opening': 'Opening…',
   'flows.suggest.dismiss': 'Dismiss',
   'flows.suggest.uses': 'Uses',
   'flows.suggest.trigger.schedule': 'Scheduled',
@@ -4588,12 +4759,25 @@ const en: TranslationMap = {
   'flows.copilot.removed': '{count} removed',
   'flows.copilot.noChanges': 'No node changes in this proposal.',
   'flows.copilot.accept': 'Apply to draft',
+  'flows.copilot.acceptAndSave': 'Accept & save',
+  'flows.copilot.saveAndEnable': 'Save & enable',
+  'flows.copilot.saving': 'Saving…',
+  'flows.copilot.enabling': 'Enabling…',
+  'flows.copilot.enableError':
+    'Saved, but could not enable the workflow. Try toggling it on from the list.',
   'flows.copilot.reject': 'Dismiss',
-  'flows.copilot.previewHint': 'Reviewing a proposed draft — nothing is saved yet.',
-  'flows.copilot.repairDisplay': 'A run failed — please look at it and propose a fix.',
+  'flows.copilot.previewHint': 'Reviewing a proposed draft: nothing is saved yet.',
+  'flows.copilot.repairDisplay': 'A run failed. Please review it and propose a fix.',
+  'flows.copilot.tool.proposing': 'Proposing workflow…',
+  'flows.copilot.tool.dryRunning': 'Dry-running workflow…',
+  'flows.copilot.tool.saving': 'Saving workflow…',
+  'flows.copilot.tool.usingTools': 'Using tools…',
+  'flows.copilot.cappedNotice':
+    'The builder reached its iteration limit before finishing this workflow. Continuing will keep building from the current draft.',
+  'flows.copilot.continueBuilding': 'Continue building',
 
-  // ── Workflow Canvas (issue B5b.1) — the read-only graph view of a saved
-  // flow at /flows/:id. `flows.nodeKind.*` labels the 12 tinyflows node
+  // ── Workflow Canvas (issue B5b.1): the read-only graph view of a saved
+  // flow at /flows/:id. `flows.nodeKind.*` labels the 13 tinyflows node
   // kinds (`tinyflows::model::NodeKind`) shown in each canvas node card.
   'flows.canvas.title': 'Workflow',
   'flows.canvas.loading': 'Loading workflow…',
@@ -4602,6 +4786,10 @@ const en: TranslationMap = {
   'flows.canvas.draftMissing': 'No workflow draft to open. Propose one from chat first.',
   'flows.canvas.backToList': 'Back to workflows',
   'flows.canvas.renameLabel': 'Rename workflow',
+  'flows.canvas.sidePanelToggle': 'Side panel',
+  // The palette tab is labelled "Manual" (build by hand) as the counterpart to
+  // the AI "Copilot" tab; the key name stays `legendTab` for the node palette.
+  'flows.canvas.legendTab': 'Manual',
   'flows.nodeKind.trigger': 'Trigger',
   'flows.nodeKind.agent': 'Agent',
   'flows.nodeKind.tool_call': 'Tool call',
@@ -4614,8 +4802,56 @@ const en: TranslationMap = {
   'flows.nodeKind.transform': 'Transform',
   'flows.nodeKind.output_parser': 'Output parser',
   'flows.nodeKind.sub_workflow': 'Sub-workflow',
+  'flows.nodeKind.memory': 'Memory',
+  'flows.nodeKind.dedup': 'Dedup',
+  'flows.nodeKind.loop': 'Loop',
 
-  // ── Editable Workflow Canvas (issue B5b.2 / Phase 3a) — the node palette
+  // ── describeNode (F-M3): the dynamic per-node card summary text shown on
+  // every canvas node (`FlowNodeComponent`) and in the config drawer header.
+  'flows.nodeSummary.trigger.manual': 'Runs on demand',
+  'flows.nodeSummary.trigger.webhook': 'Runs on an incoming webhook',
+  'flows.nodeSummary.trigger.appEventOn': 'On {parts}',
+  'flows.nodeSummary.trigger.appEvent': 'Runs on an app event',
+  'flows.nodeSummary.trigger.unknownKind': 'Trigger: {kind}',
+  'flows.nodeSummary.agent.defaultModel': 'default model',
+  'flows.nodeSummary.agent.withPrompt': '“{prompt}” · {model}',
+  'flows.nodeSummary.agent.default': 'Asks the {model}',
+  'flows.nodeSummary.toolCall.runsNative': 'Runs {name}',
+  'flows.nodeSummary.toolCall.pickNative': 'Runs an OpenHuman tool (pick one)',
+  'flows.nodeSummary.toolCall.runs': 'Runs {slug}',
+  'flows.nodeSummary.toolCall.pick': 'Runs an app action (pick one)',
+  'flows.nodeSummary.http.withUrl': '{method} {url}',
+  'flows.nodeSummary.http.noUrl': '{method} request (set a URL)',
+  'flows.nodeSummary.code.runs': 'Runs {lang} code',
+  'flows.nodeSummary.condition.withField': 'If {field} → true / false',
+  'flows.nodeSummary.condition.default': 'Branches to true / false',
+  'flows.nodeSummary.switch.byExpr': 'Routes by {expr}',
+  'flows.nodeSummary.switch.byExprWithRoutes': 'Routes by {expr} ({count} routes)',
+  'flows.nodeSummary.switch.byValue': 'Routes by a value',
+  'flows.nodeSummary.switch.byValueWithRoutes': 'Routes by a value ({count} routes)',
+  'flows.nodeSummary.merge': 'Merges parallel branches',
+  'flows.nodeSummary.splitOut.withPath': 'Splits each {path}',
+  'flows.nodeSummary.splitOut.default': 'Splits a list into items',
+  'flows.nodeSummary.transform.default': 'Reshapes each item',
+  'flows.nodeSummary.transform.setFieldsSingular': 'Sets {n} field on each item',
+  'flows.nodeSummary.transform.setFieldsPlural': 'Sets {n} fields on each item',
+  'flows.nodeSummary.outputParser': 'Parses the previous output',
+  'flows.nodeSummary.subWorkflow': 'Runs a nested workflow',
+  'flows.nodeSummary.memory.flavourWith': 'Reads the "{flavour}" flavour',
+  'flows.nodeSummary.memory.flavour': 'Reads a memory flavour',
+  'flows.nodeSummary.memory.people': 'Looks up people memory',
+  'flows.nodeSummary.memory.remember': 'Remembers a value in this workflow',
+  'flows.nodeSummary.memory.forget': 'Forgets a value from this workflow',
+  'flows.nodeSummary.memory.searchScoped': 'Searches memory ({scope})',
+  'flows.nodeSummary.memory.search': 'Searches memory',
+  'flows.nodeSummary.memory.recallScoped': 'Recalls memory ({scope})',
+  'flows.nodeSummary.memory.recall': 'Recalls memory',
+  'flows.nodeSummary.dedup.withKey': 'Skips items already seen by {key}',
+  'flows.nodeSummary.dedup.default': 'Skips items already processed',
+  'flows.nodeSummary.loop.upTo': 'Repeats up to {max} times',
+  'flows.nodeSummary.loop.whileCondition': 'Repeats up to {max} times while {condition}',
+
+  // ── Editable Workflow Canvas (issue B5b.2 / Phase 3a): the node palette
   // and editor toolbar layered on top of the read-only canvas above.
   'flows.palette.title': 'Nodes',
   'flows.palette.addNode': 'Add {kind} node',
@@ -4643,6 +4879,14 @@ const en: TranslationMap = {
   'flows.editor.validating': 'Validating…',
   'flows.editor.discard': 'Discard changes',
   'flows.editor.unsaved': 'Unsaved changes',
+  'flows.editor.confirm.runTitle': 'Run workflow?',
+  'flows.editor.confirm.runBody': 'This will execute the workflow now.',
+  'flows.editor.confirm.saveTitle': 'Save changes?',
+  'flows.editor.confirm.saveBody': 'This will save your changes to the workflow.',
+  'flows.editor.confirm.discardTitle': 'Discard changes?',
+  'flows.editor.confirm.discardBody': 'This reverts all unsaved edits and cannot be undone.',
+  'flows.editor.confirm.confirm': 'Confirm',
+  'flows.editor.confirm.cancel': 'Cancel',
   'flows.editor.saveBlocked': 'Fix the errors below before saving.',
   'flows.editor.errorsTitle': 'Errors',
   'flows.editor.warningsTitle': 'Warnings',
@@ -4652,7 +4896,7 @@ const en: TranslationMap = {
     'You have unsaved changes to this workflow. If you leave now, they will be lost.',
   'flows.editor.leaveStay': 'Stay',
   'flows.editor.leaveDiscard': 'Leave',
-  // ── Node config drawer (issue B5b / Phase 3b) — per-kind config forms
+  // ── Node config drawer (issue B5b / Phase 3b): per-kind config forms
   'flows.nodeConfig.close': 'Close settings',
   'flows.nodeConfig.connections.title': 'Connections',
   'flows.nodeConfig.connections.inputs': 'Inputs',
@@ -4665,7 +4909,7 @@ const en: TranslationMap = {
   'flows.nodeConfig.editJson': 'Edit as JSON',
   'flows.nodeConfig.rawJsonLabel': 'Configuration (JSON)',
   'flows.nodeConfig.rawJsonHint': 'Free-form configuration for this node.',
-  'flows.nodeConfig.rawJsonInvalid': 'Invalid JSON — changes are not applied until it parses.',
+  'flows.nodeConfig.rawJsonInvalid': 'Invalid JSON: changes are not applied until it parses.',
   'flows.nodeConfig.expressionHint':
     'Start with = to compute the value from the node input, e.g. =item.url',
   'flows.nodeConfig.expressionBadge': 'Expression',
@@ -4695,9 +4939,35 @@ const en: TranslationMap = {
   'flows.nodeConfig.trigger.scheduleUnit_hours': 'hr',
   'flows.nodeConfig.trigger.scheduleAt': 'at',
   'flows.nodeConfig.trigger.scheduleTime': 'Time of day',
-  'flows.nodeConfig.trigger.scheduleDays': 'On days (optional — leave empty for every day)',
+  'flows.nodeConfig.trigger.scheduleDays': 'On days (optional: leave empty for every day)',
   'flows.nodeConfig.trigger.scheduleAdvanced': 'Advanced (edit cron)',
   'flows.nodeConfig.trigger.scheduleSimple': 'Back to simple schedule',
+  // ── describeCron / describeEveryMs / describeSchedule (F-M3): the live
+  // plain-language schedule summary shown in `ScheduleField` and the
+  // read-only trigger-node summary for `every`/`at` schedules.
+  'flows.cron.customSchedule': 'Custom schedule ({expr})',
+  'flows.cron.noScheduleSet': 'No schedule set',
+  'flows.cron.weekdays': 'weekdays',
+  'flows.cron.weekends': 'weekends',
+  'flows.cron.everyMinute': 'Every minute',
+  'flows.cron.everyMinuteOnDays': 'Every minute on {days}',
+  'flows.cron.everyNMinutes': 'Every {n} minutes',
+  'flows.cron.everyNMinutesOnDays': 'Every {n} minutes on {days}',
+  'flows.cron.everyHour': 'Every hour',
+  'flows.cron.everyHourOnDays': 'Every hour on {days}',
+  'flows.cron.everyNHours': 'Every {n} hours',
+  'flows.cron.everyNHoursOnDays': 'Every {n} hours on {days}',
+  'flows.cron.everyDayAtTime': 'Every day at {time}',
+  'flows.cron.atTimeOnDays': 'At {time} on {days}',
+  'flows.cron.invalidInterval': 'Invalid interval',
+  'flows.cron.dailyEvery24h': 'Daily (every 24h)',
+  'flows.cron.everyNDays': 'Every {n} days',
+  'flows.cron.everyNHoursShort': 'Every {n}h',
+  'flows.cron.everyNMinutesShort': 'Every {n}m',
+  'flows.cron.everySecond': 'Every second',
+  'flows.cron.everyNSeconds': 'Every {n}s',
+  'flows.cron.onceAtRaw': 'Once at {at}',
+  'flows.cron.onceAt': 'Once at {at}',
   'flows.nodeConfig.trigger.toolkitLabel': 'App',
   'flows.nodeConfig.trigger.triggerSlugLabel': 'Trigger',
   'flows.nodeConfig.trigger.pickApp': 'Pick a connected app first.',
@@ -4719,10 +4989,10 @@ const en: TranslationMap = {
   'flows.nodeConfig.agent.promptPlaceholder': 'Instructions for the agent…',
   'flows.nodeConfig.agent.agentRefLabel': 'Agent',
   'flows.nodeConfig.agent.agentRefHint':
-    'Run this node as a registered agent — its tools and guardrails apply.',
+    'Run this node as a registered agent: its tools and guardrails apply.',
   'flows.nodeConfig.agent.agentRefInherit': 'Default (workflow builder)',
   'flows.nodeConfig.agent.modelLabel': 'Model',
-  'flows.nodeConfig.agent.modelHint': 'Pick a capability tier — the workspace resolves the model.',
+  'flows.nodeConfig.agent.modelHint': 'Pick a capability tier: the workspace resolves the model.',
   'flows.nodeConfig.agent.modelInherit': 'Default (inherit)',
   'flows.nodeConfig.agent.modelHints': 'Model hints',
   'flows.nodeConfig.agent.modelManagedTiers': 'Managed tiers',
@@ -4733,7 +5003,7 @@ const en: TranslationMap = {
   // Required-arg preflight rows for Composio actions (per-arg ExpressionField
   // rows above the raw JSON editor, which stays as the advanced escape hatch).
   'flows.nodeConfig.tool.requiredMark': 'required',
-  'flows.nodeConfig.tool.requiredMissing': 'Required — not wired',
+  'flows.nodeConfig.tool.requiredMissing': 'Required: not wired',
   'flows.nodeConfig.tool.argsAdvancedLabel': 'All args (advanced)',
   // Upstream-output picker (`=nodes.<id>.item…` insert menu on expression fields).
   'flows.nodeConfig.upstream.insert': 'Insert…',
@@ -4757,10 +5027,73 @@ const en: TranslationMap = {
   'flows.nodeConfig.code.language_javascript': 'JavaScript',
   'flows.nodeConfig.code.language_python': 'Python',
   'flows.nodeConfig.code.sourceLabel': 'Source',
+  // `memory` node (issue #5226): recall/search/flavour/people read; remember/forget write.
+  'flows.nodeConfig.memory.operationLabel': 'Operation',
+  'flows.nodeConfig.memory.operation_recall': 'Recall',
+  'flows.nodeConfig.memory.operation_search': 'Search',
+  'flows.nodeConfig.memory.operation_flavour': 'Flavour',
+  'flows.nodeConfig.memory.operation_people': 'People',
+  'flows.nodeConfig.memory.operation_remember': 'Remember',
+  'flows.nodeConfig.memory.operation_forget': 'Forget',
+  'flows.nodeConfig.memory.scopeLabel': 'Scope',
+  'flows.nodeConfig.memory.scopeHint': 'Where to look for this memory.',
+  'flows.nodeConfig.memory.scopeWriteHint':
+    'Writes are only allowed within this workflow, never to your personal memory.',
+  'flows.nodeConfig.memory.scope_user': 'You (read-only)',
+  'flows.nodeConfig.memory.scope_flow': 'This workflow',
+  'flows.nodeConfig.memory.scope_flows': 'All workflows (read-only)',
+  'flows.nodeConfig.memory.queryLabel': 'Query',
+  'flows.nodeConfig.memory.queryOptionalHint': 'Optional: narrows the people lookup.',
+  'flows.nodeConfig.memory.flavourLabel': 'Flavour',
+  'flows.nodeConfig.memory.flavourHint': 'Which persona facet to read, e.g. communication.',
+  'flows.nodeConfig.memory.flavour_communication': 'Communication',
+  'flows.nodeConfig.memory.flavour_coding_style': 'Coding style',
+  'flows.nodeConfig.memory.flavour_stack': 'Stack',
+  'flows.nodeConfig.memory.flavour_workflow': 'Workflow',
+  'flows.nodeConfig.memory.flavour_environment': 'Environment',
+  'flows.nodeConfig.memory.flavour_directives': 'Directives',
+  'flows.nodeConfig.memory.flavour_anti_preferences': 'Anti-preferences',
+  'flows.nodeConfig.memory.keyLabel': 'Key',
+  'flows.nodeConfig.memory.valueLabel': 'Value',
+  'flows.nodeConfig.memory.limitLabel': 'Limit',
+  'flows.nodeConfig.memory.limitHint': 'Maximum number of results.',
+  'flows.nodeConfig.memory.minScoreLabel': 'Minimum score',
+  'flows.nodeConfig.memory.minScoreHint': 'Relevance threshold from 0 to 1.',
+  // `dedup` node (issue #5263): skips items already seen by a stable per-item key.
+  'flows.nodeConfig.dedup.keyLabel': 'Key',
+  'flows.nodeConfig.dedup.keyHint':
+    'A stable per-item id expression, e.g. =item.id. Items with a key already seen are skipped.',
+
+  // `loop` node: a bounded loop head. Emits on `body` until its cap or
+  // condition says stop, then on `done`.
+  'flows.nodeConfig.loop.maxIterationsLabel': 'Max iterations',
+  'flows.nodeConfig.loop.maxIterationsHint':
+    'How many times the body may run before the loop stops. Always finite.',
+  'flows.nodeConfig.loop.onExceededLabel': 'When the cap is reached',
+  'flows.nodeConfig.loop.onExceededHint':
+    "Fail the run, or stop looping and continue through the done port with the last pass's items.",
+  'flows.nodeConfig.loop.onExceeded_error': 'Fail the run',
+  'flows.nodeConfig.loop.onExceeded_continue': 'Continue with partial results',
+  'flows.nodeConfig.loop.conditionLabel': 'Continue while',
+  'flows.nodeConfig.loop.conditionHint':
+    'Optional. While this resolves truthy the loop continues; the first falsey result exits through the done port.',
 
   // Phase 4a "New workflow" chooser + Phase 4c templates gallery. The chooser
   // offers scratch / template / describe; the gallery lists the curated
   // `WorkflowGraph` templates bundled under `lib/flows/templates/`.
+  // ── Save+enable pre-authorization card (consolidated Approve all / Deny)
+  'flows.enableApproval.title': 'Allow this workflow to act?',
+  'flows.enableApproval.intro':
+    'This workflow needs your permission for the actions below. Approving applies to this workflow only.',
+  'flows.enableApproval.approveAll': 'Approve all',
+  'flows.enableApproval.deny': 'Deny',
+  'flows.enableApproval.enableAnyway': 'Enable anyway',
+  'flows.enableApproval.granting': 'Approving…',
+  'flows.enableApproval.error': 'Could not save the approvals. Please try again.',
+  'flows.enableApproval.blockedHint': 'Blocked by your agent access settings.',
+  'flows.enableApproval.dynamicHint': 'Chosen while the workflow runs; it will ask you if needed.',
+  'flows.enableApproval.agentHint': 'This AI step may ask separately for its own actions.',
+  'flows.enableApproval.deniedDisabled': 'Saved, but the workflow was left turned off.',
   'flows.chooser.title': 'Create a workflow',
   'flows.chooser.subtitle': 'Choose how you want to start.',
   'flows.chooser.scratchTitle': 'Start from scratch',
@@ -4803,19 +5136,19 @@ const en: TranslationMap = {
 
   'oauth.button.connecting': 'Connecting...',
   'oauth.button.loopbackTimeout':
-    'Sign-in timed out — the browser did not complete the OAuth redirect. Please try again.',
+    'Sign-in timed out: the browser did not complete the OAuth redirect. Please try again.',
   'oauth.login.continueWith': 'Continue with',
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
   'onboarding.contextGathering.continueToChat': 'Continue to chat',
-  'onboarding.contextGathering.coreAlive': 'Core is reachable — first launch can take a minute.',
+  'onboarding.contextGathering.coreAlive': 'Core is reachable: first launch can take a minute.',
   'onboarding.contextGathering.coreAliveProbing': 'Checking core connection…',
   'onboarding.contextGathering.coreUnreachable':
     'Core is not responding. You can continue and try again later.',
   'onboarding.contextGathering.errorDesc':
     "Your chat is ready. We'll keep building your full profile in the background, so you can continue now and refine it over time.",
   'onboarding.contextGathering.stillWorkingDesc':
-    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time — profile build keeps running in the background.',
+    'First launch can take 30–60 seconds while we warm up your local model and tools. You can continue to chat at any time: profile build keeps running in the background.',
   'onboarding.contextGathering.stillWorkingTitle': 'Still working on your profile…',
   'onboarding.contextGathering.title': 'Context Gathering',
   'openhuman.team_list_teams': 'Team list teams',
@@ -4825,7 +5158,6 @@ const en: TranslationMap = {
   'overlay.ariaVoiceActive': 'Voice input active',
   'overlay.companion.error': 'Error',
   'overlay.companion.listening': 'Listening…',
-  'overlay.companion.pointing': 'Pointing…',
   'overlay.companion.speaking': 'Speaking…',
   'overlay.companion.thinking': 'Thinking…',
   'overlay.orbTitle': 'Drag to move · Double-click to reset position',
@@ -4853,18 +5185,12 @@ const en: TranslationMap = {
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Routing mode, integration triggers, and trigger history archive.',
-  'pages.settings.features.desktopCompanion': 'Desktop Companion',
-  'pages.settings.features.desktopCompanionDesc':
-    'Voice assistant with screen awareness — listens, sees, speaks, points',
   'pages.settings.features.messagingChannels': 'Messaging channels',
   'pages.settings.features.messagingChannelsDesc': 'Messaging channels desc',
   'pages.settings.features.notifications': 'Notifications',
   'pages.settings.features.notificationsDesc': 'Notifications desc',
-  'pages.settings.features.screenAwareness': 'Screen awareness',
-  'pages.settings.features.screenAwarenessDesc': 'Screen awareness desc',
   'pages.settings.features.tools': 'Tools',
   'pages.settings.features.toolsDesc': 'Tools desc',
-  'pages.settings.featuresSection.description': 'Screen awareness, messaging, and tools.',
   'pages.settings.featuresSection.title': 'Features',
   'privacy.dataKind.credentials': 'Credentials',
   'privacy.dataKind.derived': 'Derived',
@@ -4892,7 +5218,7 @@ const en: TranslationMap = {
   'rewards.community.discordConnected': 'Discord connected',
   'rewards.community.discordConnectedAs': 'Connected as {username}',
   'rewards.community.discordDetails': 'Discord',
-  'rewards.community.discordLinkedNotInGuild': 'Discord linked — not yet a server member',
+  'rewards.community.discordLinkedNotInGuild': 'Discord linked: not yet a server member',
   'rewards.community.discordMember': 'Joined the server',
   'rewards.community.discordNotLinked': 'Discord not connected',
   'rewards.community.discordServer': 'Discord server',
@@ -5009,7 +5335,7 @@ const en: TranslationMap = {
   // Claude Code CLI connect control + modal (ClaudeCodeStatusCard).
   'settings.ai.claudeCode.button': 'Claude Code',
   'settings.ai.claudeCode.inlineNotConnected':
-    'Not connected — routes chat through your local Claude Code CLI.',
+    'Not connected: routes chat through your local Claude Code CLI.',
   'settings.ai.claudeCode.checkingSignIn': 'Checking sign-in…',
   'settings.ai.claudeCode.inlineConnected': 'Connected.',
   'settings.ai.claudeCode.signedInAs': 'Signed in as',
@@ -5019,8 +5345,10 @@ const en: TranslationMap = {
   'settings.ai.claudeCode.signInUnknown': 'Sign-in state unknown',
   'settings.ai.claudeCode.connectedNotSignedIn': 'Connected · not signed in',
   'settings.ai.claudeCode.modalTitle': 'Claude Code CLI',
+  'settings.ai.claudeCode.modelHelp':
+    'A model id the claude CLI accepts: an alias (sonnet, opus) or a full name (claude-sonnet-4-5). It is passed verbatim to claude --model, so marketing strings like sonnet-4-5 are rejected.',
   'settings.ai.claudeCode.modalDescription':
-    "Routes chat, agentic and reasoning workloads through your locally-installed Claude Code CLI. No API key — it uses the CLI's own login.",
+    "Routes chat, agentic and reasoning workloads through your locally-installed Claude Code CLI. No API key: it uses the CLI's own login.",
   'settings.ai.claudeCode.close': 'Close',
   'settings.ai.claudeCode.connection': 'Connection',
   'settings.ai.claudeCode.enabled': 'Enabled',
@@ -5042,17 +5370,17 @@ const en: TranslationMap = {
   'settings.ai.claudeCode.fullAccessOn':
     'Claude Code can run commands, use the network, and spawn subagents.',
   'settings.ai.claudeCode.fullAccessOff':
-    'Accept edits only — auto-applies file edits, gates commands & network.',
+    'Accept edits only: auto-applies file edits, gates commands & network.',
   'settings.ai.claudeCode.sandboxNoteMac':
     'On macOS, ~/.openhuman stays protected by the sandbox in either mode.',
   'settings.ai.claudeCode.sandboxNoteOther':
-    'Full access is unconfined on this platform — enable only if you trust the workspace.',
+    'Full access is unconfined on this platform: enable only if you trust the workspace.',
   'settings.ai.claudeCode.enableToCheck': 'Enable Claude Code to check sign-in.',
   'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Using ANTHROPIC_API_KEY from the environment.',
   'settings.ai.claudeCode.notFoundInstall':
-    'Claude Code CLI not found — install with: npm install -g @anthropic-ai/claude-code',
+    'Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code',
   'settings.ai.claudeCode.unknownDetail':
-    "Couldn't determine sign-in state. Your claude CLI may predate auth status — try Reconnect, then Recheck.",
+    "Couldn't determine sign-in state. Your claude CLI may predate auth status: try Reconnect, then Recheck.",
   'settings.ai.claudeCode.notSignedIn': 'Not signed in.',
   'settings.ai.routingCustom': 'Custom routing',
   'settings.ai.routingDefault': 'Default',
@@ -5103,6 +5431,8 @@ const en: TranslationMap = {
   'settings.ai.openaiOauthCallbackRequired':
     'Paste the redirect URL from your browser after signing in.',
   'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+  'settings.ai.codexAuthButton': 'Connect Codex',
+  'settings.ai.codexAuthHelper': 'Uses the existing Codex CLI login from ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Background loops',
   'settings.ai.backgroundLoopsDesc':
     'See what runs without a chat message, pause heartbeat work, and inspect recent credit ledger rows.',
@@ -5158,6 +5488,22 @@ const en: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} model id',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': 'Select a model...',
+  'settings.ai.deploymentNameLabel': 'Deployment name',
+  'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
+  'settings.ai.deploymentNameHelp':
+    'Enter the deployment name you set in Azure AI Foundry. This is not the model ID.',
+  'settings.ai.deploymentNameLegacyHint':
+    'This matches a base model ID from the provider catalog. Azure routes by deployment name, so confirm this is the name you gave your deployment.',
+  'settings.ai.deploymentNameProviderHint':
+    'Azure endpoint detected. Set your deployment name in the model field after choosing this provider.',
+  'settings.ai.chooseModelFromList': 'Choose from list',
+  'settings.ai.enterModelIdManuallyAction': 'Enter model ID manually',
+  'settings.ai.enterDeploymentNameManuallyAction': 'Enter deployment name manually',
+  'settings.ai.probeFailedHint':
+    'We could not read this provider’s model list. That list only fills the dropdown, so you can still add the provider and type the model or deployment name yourself.',
+  'settings.ai.probeFailedAddAnyway': 'Add without verifying',
+  'settings.ai.azureV1EndpointHint':
+    'For Azure, use the v1 base URL: https://YOUR-RESOURCE.openai.azure.com/openai/v1. The older resource URL does not serve a model list and expects a different auth header.',
   'settings.ai.temperatureOverride': 'Temperature override',
   'settings.ai.temperatureOverrideSlider': 'Temperature override (slider)',
   'settings.ai.temperatureOverrideValue': 'Temperature override (value)',
@@ -5167,10 +5513,24 @@ const en: TranslationMap = {
   'settings.ai.modelVisionDesc':
     'Enable if this model accepts images. Lets the chat composer attach images when this model is selected.',
   'settings.ai.testFailed': 'Test failed',
+  'settings.ai.providerTest.authRejected':
+    "The key was saved, but '{slug}' rejected it. Check that you pasted the whole key and that it is still active in the provider's dashboard.",
+  'settings.ai.providerTest.modelNotRecognized':
+    "The key was saved and accepted, but '{slug}' does not recognise the selected model. Pick a model id this provider actually serves (its default model is set on the provider entry).",
+  'settings.ai.providerTest.quotaOrBilling':
+    "The key was saved and accepted, but '{slug}' refused the request for quota or billing reasons. Check your account balance and rate limits with the provider.",
+  'settings.ai.providerTest.endpointNotFound':
+    "The key was saved, but the configured endpoint for '{slug}' returned 404. Check the base URL: an OpenAI-compatible provider usually needs the '/v1' suffix (e.g. https://api.openai.com/v1).",
+  'settings.ai.providerTest.timeout':
+    "The key was saved, but '{slug}' did not respond in time. Check the endpoint URL and your network, then test again.",
+  'settings.ai.providerTest.emptyReply':
+    "The key was saved, but '{slug}' returned an empty response to a test prompt. Check the model id configured for this provider.",
+  'settings.ai.providerTest.unknown':
+    "The key was saved, but a test call to '{slug}' failed. Check the provider's status page and the endpoint URL, then test again.",
   'settings.ai.testingModel': 'Testing model...',
   'settings.ai.modelResponse': 'Model response',
   'settings.ai.providerWithValue': 'Provider: {value}',
-  'settings.ai.noneDash': '—',
+  'settings.ai.noneDash': 'None',
   'settings.ai.promptHelloWorld': 'Prompt: Hello world',
   'settings.ai.startedAt': 'Started: {value}',
   'settings.ai.waitingForModelResponse': 'Waiting for response from the selected model...',
@@ -5187,7 +5547,7 @@ const en: TranslationMap = {
   'settings.ai.keepExistingKeyPlaceholder': 'Leave blank to keep existing key',
   'settings.ai.reindexingMemory': 'Re-indexing memory',
   'settings.ai.reindexingMemoryMessage':
-    'Embeddings are being reprocessed. {pending} memory item(s) are being re-embedded under the current model — semantic recall is reduced until this finishes. Keyword search keeps working, and re-embedding continues in the background if you close this.',
+    'Embeddings are being reprocessed. {pending} memory item(s) are being re-embedded under the current model: semantic recall is reduced until this finishes. Keyword search keeps working, and re-embedding continues in the background if you close this.',
   'settings.ai.signInWithOpenRouter': 'Sign in with OpenRouter',
   'settings.ai.weekBudget': 'Week budget',
   'settings.ai.cycleRemaining': 'Cycle remaining',
@@ -5234,12 +5594,12 @@ const en: TranslationMap = {
     'Models used outside the main conversation flow for summarization, heartbeat, learning, and subconscious evaluation.',
   'settings.ai.routing.workload.chat.label': 'Chat',
   'settings.ai.routing.workload.chat.description':
-    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+    'Direct conversational back-and-forth: “Quick” mode in Conversations',
   'settings.ai.routing.workload.chat.hint':
     'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
   'settings.ai.routing.workload.reasoning.label': 'Reasoning',
   'settings.ai.routing.workload.reasoning.description':
-    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    'Main chat agent, meeting summarizer: “Reasoning” mode in Conversations',
   'settings.ai.routing.workload.reasoning.hint':
     'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
   'settings.ai.routing.workload.agentic.label': 'Agentic',
@@ -5253,7 +5613,7 @@ const en: TranslationMap = {
     'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
   'settings.ai.routing.workload.vision.label': 'Vision',
   'settings.ai.routing.workload.vision.description':
-    'Image understanding for the vision sub-agent — always multimodal',
+    'Image understanding for the vision sub-agent: always multimodal',
   'settings.ai.routing.workload.vision.hint':
     'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
   'settings.ai.routing.workload.memory.label': 'Memory summarization',
@@ -5290,60 +5650,6 @@ const en: TranslationMap = {
   'settings.ai.workload.changeModel': 'Change Model',
   'settings.ai.workload.chooseModel': 'Choose Model',
   'settings.ai.provider.ollama': 'Ollama',
-  'settings.autocomplete.appFilter.acceptSuggestion': 'Accept suggestion',
-  'settings.autocomplete.appFilter.app': 'App',
-  'settings.autocomplete.appFilter.currentSuggestion': 'Current suggestion',
-  'settings.autocomplete.appFilter.contextOverride': 'Context Override (optional)',
-  'settings.autocomplete.appFilter.debounce': 'Debounce',
-  'settings.autocomplete.appFilter.debugFocus': 'Debug focus',
-  'settings.autocomplete.appFilter.enabled': 'Enabled',
-  'settings.autocomplete.appFilter.getSuggestion': 'Get suggestion',
-  'settings.autocomplete.appFilter.lastError': 'Last error',
-  'settings.autocomplete.appFilter.liveLogs': 'Live Logs',
-  'settings.autocomplete.appFilter.model': 'Model',
-  'settings.autocomplete.appFilter.noLogs': 'No logs yet.',
-  'settings.autocomplete.appFilter.phase': 'Phase',
-  'settings.autocomplete.appFilter.platformSupported': 'Platform supported',
-  'settings.autocomplete.appFilter.refreshStatus': 'Refresh Status',
-  'settings.autocomplete.appFilter.refreshing': 'Refreshing…',
-  'settings.autocomplete.appFilter.running': 'Running',
-  'settings.autocomplete.appFilter.runtime': 'Runtime',
-  'settings.autocomplete.appFilter.test': 'Test',
-  'settings.autocomplete.completionStyle.acceptedCompletion':
-    '{count} accepted completion stored — used to personalize future suggestions.',
-  'settings.autocomplete.completionStyle.acceptedCompletions':
-    '{count} accepted completions stored — used to personalize future suggestions.',
-  'settings.autocomplete.completionStyle.clearHistory': 'Clear History',
-  'settings.autocomplete.completionStyle.clearing': 'Clearing…',
-  'settings.autocomplete.completionStyle.debounce': 'Debounce (ms)',
-  'settings.autocomplete.completionStyle.enabled': 'Enabled',
-  'settings.autocomplete.completionStyle.maxChars': 'Max Chars',
-  'settings.autocomplete.completionStyle.noHistory':
-    'No accepted completions yet. Accept suggestions with Tab to start personalising.',
-  'settings.autocomplete.completionStyle.overlayTtl': 'Overlay TTL (ms)',
-  'settings.autocomplete.completionStyle.personalizationHistory': 'Personalization History',
-  'settings.autocomplete.completionStyle.styleExamples': 'Style Examples (one per line)',
-  'settings.autocomplete.completionStyle.styleInstructions': 'Style Instructions',
-  'settings.autocomplete.debug.acceptedPrefix': 'Accepted: {value}',
-  'settings.autocomplete.debug.acceptFailed': 'Failed to accept suggestion',
-  'settings.autocomplete.debug.alreadyRunning': 'Autocomplete is already running.',
-  'settings.autocomplete.debug.clearHistoryFailed': 'Failed to clear history',
-  'settings.autocomplete.debug.didNotStart': 'Autocomplete did not start.',
-  'settings.autocomplete.debug.disabledInSettings':
-    'Autocomplete is disabled in settings. Enable it and save first.',
-  'settings.autocomplete.debug.fetchSuggestionFailed': 'Failed to fetch current suggestion',
-  'settings.autocomplete.debug.inspectFocusedElementFailed': 'Failed to inspect focused element',
-  'settings.autocomplete.debug.loadSettingsFailed': 'Failed to load autocomplete settings',
-  'settings.autocomplete.debug.noSuggestionApplied': 'No suggestion was applied.',
-  'settings.autocomplete.debug.noSuggestionReturned': 'No suggestion returned.',
-  'settings.autocomplete.debug.refreshStatusFailed': 'Failed to refresh autocomplete status',
-  'settings.autocomplete.debug.saveAdvancedSettingsFailed': 'Failed to save advanced settings',
-  'settings.autocomplete.debug.startFailed': 'Failed to start autocomplete',
-  'settings.autocomplete.debug.stopFailed': 'Failed to stop autocomplete',
-  'settings.autocomplete.debug.suggestionPrefix': 'Suggestion: {value}',
-  'settings.autocomplete.shared.none': 'None',
-  'settings.autocomplete.shared.notApplicable': 'n/a',
-  'settings.autocomplete.shared.unknown': 'Unknown',
   'settings.billing.autoRecharge.addAmount': 'Add this amount',
   'settings.billing.autoRecharge.addCard': 'Add card',
   'settings.billing.autoRecharge.amountHint': 'Will be charged to your default payment method.',
@@ -5439,12 +5745,12 @@ const en: TranslationMap = {
   'settings.composio.confirmItem2':
     'To re-link each integration through your personal Composio account',
   'settings.composio.confirmItem3':
-    "Note: Composio triggers (real-time webhooks) don't fire in Direct mode yet — only synchronous tool calls",
+    "Note: Composio triggers (real-time webhooks) don't fire in Direct mode yet: only synchronous tool calls",
   'settings.composio.confirmNeedItems': "You'll need:",
   'settings.composio.confirmSwitch': 'I understand, switch to Direct',
   'settings.composio.confirmTitle': '⚠️ Switching to Direct mode',
   'settings.composio.confirmWarning':
-    "Your existing integrations (Gmail, Slack, GitHub, etc. linked through OpenHuman) won't be visible — they live in the OpenHuman-managed Composio tenant.",
+    "Your existing integrations (Gmail, Slack, GitHub, etc. linked through OpenHuman) won't be visible: they live in the OpenHuman-managed Composio tenant.",
   'settings.composio.intro':
     'Composio integrates 250+ external apps as tools your agent can call. Choose how those tool calls are routed.',
   'settings.composio.title': 'Composio',
@@ -5458,23 +5764,6 @@ const en: TranslationMap = {
   'settings.composio.saveErrorNoKey': 'Failed to save. Direct mode requires a non-empty API key.',
   'settings.composio.saving': 'Saving…',
   'settings.composio.switching': 'Switching…',
-  'settings.companion.title': 'Desktop Companion',
-  'settings.companion.session': 'Session',
-  'settings.companion.activeLabel': 'Active',
-  'settings.companion.inactiveStatus': 'Inactive',
-  'settings.companion.stopping': 'Stopping…',
-  'settings.companion.stopSession': 'Stop Session',
-  'settings.companion.starting': 'Starting…',
-  'settings.companion.startSession': 'Start Session',
-  'settings.companion.sessionId': 'Session ID',
-  'settings.companion.turns': 'Turns',
-  'settings.companion.remaining': 'Remaining',
-  'settings.companion.configuration': 'Configuration',
-  'settings.companion.hotkey': 'Hotkey',
-  'settings.companion.activationMode': 'Activation Mode',
-  'settings.companion.sessionTtl': 'Session TTL',
-  'settings.companion.screenCapture': 'Screen Capture',
-  'settings.companion.appContext': 'App Context',
   'settings.cron.jobs.commandRequired': 'Command is required for shell jobs',
   'settings.cron.jobs.created': 'Job created',
   'settings.cron.jobs.createJob': 'New Scheduled Job',
@@ -5522,9 +5811,14 @@ const en: TranslationMap = {
   'settings.cron.jobs.formScheduleRequired': 'Schedule is required',
   'settings.cron.jobs.formScheduleType': 'Schedule type',
   'settings.cron.jobs.formSessionIsolated': 'Isolated (recommended)',
+  'settings.cron.jobs.formProfile': 'Agent profile',
+  'settings.cron.jobs.formProfileNone': 'No profile',
+  'settings.cron.jobs.formProfileHint':
+    'Run this job as the selected profile, using its soul, memory, and workspace.',
   'settings.cron.jobs.formSessionMain': 'Main session',
   'settings.cron.jobs.formSessionTarget': 'Session target',
   'settings.cron.jobs.lastStatus': 'Last status',
+  'settings.cron.jobs.profile': 'Profile',
   'settings.cron.jobs.loading': 'Loading cron jobs...',
   'settings.cron.jobs.loadingRuns': 'Loading runs…',
   'settings.cron.jobs.nextRun': 'Next run',
@@ -5570,7 +5864,7 @@ const en: TranslationMap = {
   'settings.localModel.deviceCapability.installingOllama': 'Installing Ollama',
   'settings.localModel.deviceCapability.loadingDeviceInfo': 'Loading device info',
   'settings.localModel.deviceCapability.localAiDisabled':
-    'Local AI disabled — using cloud fallback.',
+    'Local AI disabled: using cloud fallback.',
   'settings.localModel.deviceCapability.modelTier': 'Model Tier',
   'settings.localModel.deviceCapability.needsOllama': 'Needs Ollama',
   'settings.localModel.deviceCapability.notDetected': 'Not detected',
@@ -5704,9 +5998,6 @@ const en: TranslationMap = {
   'settings.developerMenu.ai.title': 'AI Configuration',
   'settings.developerMenu.ai.desc':
     'Cloud providers, local Ollama models, and per-workload routing',
-  'settings.developerMenu.screenAwareness.title': 'Screen Awareness',
-  'settings.developerMenu.screenAwareness.desc':
-    'Screen capture permissions, monitoring policy, and session controls',
   'settings.developerMenu.messagingChannels.title': 'Messaging Channels',
   'settings.developerMenu.messagingChannels.desc':
     'Configure Telegram/Discord auth modes and default channel routing',
@@ -5723,7 +6014,7 @@ const en: TranslationMap = {
     'Configure an autonomous developer agent that picks GitHub issues assigned to you and raises pull requests automatically on a schedule.',
   'settings.developerMenu.skillsRunner.title': 'Skills Runner',
   'settings.developerMenu.skillsRunner.desc':
-    'Run any bundled skill ad-hoc — fill its inputs and fire a background autonomous run',
+    'Run any bundled skill ad-hoc: fill its inputs and fire a background autonomous run',
   'settings.developerMenu.skillsRunner.panelDesc':
     'Pick a bundled workflow, fill in its declared inputs, and fire a fire-and-forget background run. Use the Schedule section below if you want a cron-scheduled recurring job.',
   'settings.skillsRunner.skill': 'Skill',
@@ -5734,7 +6025,7 @@ const en: TranslationMap = {
   'settings.skillsRunner.placeholder.required': 'required',
   'settings.skillsRunner.runNow': 'Run now',
   'settings.skillsRunner.starting': 'Starting…',
-  'settings.skillsRunner.started': 'Started — run id:',
+  'settings.skillsRunner.started': 'Started: run id:',
   'settings.skillsRunner.logPath': 'Log:',
   'settings.skillsRunner.error.listSkills': 'Failed to load skills:',
   'settings.skillsRunner.error.describe': 'Failed to load inputs:',
@@ -5827,7 +6118,7 @@ const en: TranslationMap = {
   'settings.devWorkflow.lastOutput': 'Last output',
   'settings.devWorkflow.noOutput': 'No output captured',
   'settings.devWorkflow.runningStatus':
-    'Agent is running — picking an issue and working on a fix...',
+    'Agent is running: picking an issue and working on a fix...',
   'settings.devWorkflow.errorNotConnected':
     'GitHub is not connected. Please connect GitHub via Settings > Advanced > Composio first.',
   'settings.devWorkflow.errorToolNotEnabled':
@@ -5841,7 +6132,7 @@ const en: TranslationMap = {
   'settings.devWorkflow.schedule.onceDaily': 'Once daily (9 AM)',
   'settings.developerMenu.tasks.title': 'Tasks',
   'settings.developerMenu.tasks.desc':
-    'Browse and manage task boards — your own to-dos plus the boards agents build across conversations.',
+    'Browse and manage task boards: your own to-dos plus the boards agents build across conversations.',
   'settings.developerMenu.cronJobs.title': 'Cron Jobs',
   'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
   'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
@@ -5891,9 +6182,7 @@ const en: TranslationMap = {
   'settings.developerMenu.mcpServer.desc': 'Configure external MCP clients to connect to OpenHuman',
   'settings.developerMenu.autonomy.title': 'Agent autonomy',
   'settings.developerMenu.autonomy.desc': 'Tool action rate limits and safety thresholds',
-  // Tools & Capabilities group — autocomplete and voice debug (doc § Tools & Capabilities)
-  'settings.developerMenu.autocomplete.title': 'Autocomplete',
-  'settings.developerMenu.autocomplete.desc': 'AI inline autocomplete settings and debug panel',
+  // Tools & Capabilities group: autocomplete and voice debug (doc § Tools & Capabilities)
   'settings.developerMenu.voiceDebug.title': 'Voice (debug)',
   'settings.developerMenu.voiceDebug.desc': 'Voice dictation runtime status and debug settings',
   'settings.mcpServer.title': 'MCP Server',
@@ -5921,31 +6210,34 @@ const en: TranslationMap = {
     'Control where the agent can read/write and whether it can use the shell.',
   'settings.agentAccess.loadError': 'Failed to load access settings',
   'settings.agentAccess.saveError': 'Failed to save access settings',
-  'settings.agentAccess.saved': 'Saved — applies on your next message.',
+  'settings.agentAccess.saved': 'Saved: applies on your next message.',
   'settings.agentAccess.desktopOnly': 'Access settings are only available in the desktop app.',
   'settings.agentAccess.loading': 'Loading…',
   'settings.agentAccess.accessMode': 'Access mode',
   'settings.agentAccess.tier.readonly.title': 'Read-only',
   'settings.agentAccess.tier.readonly.desc':
-    'Reads files and runs read-only commands to explore — but never writes, edits, or runs anything that changes state.',
+    'Reads files and runs read-only commands to explore, but never writes, edits, or runs anything that changes state.',
   'settings.agentAccess.tier.supervised.title': 'Ask before edit',
   'settings.agentAccess.tier.supervised.desc':
     'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
   'settings.agentAccess.tier.full.title': 'Full access',
   'settings.agentAccess.tier.full.desc':
-    'Runs commands with your full user account access — it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
+    'Runs commands with your full user account access: it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
   'settings.agentAccess.defaultTag': '(default)',
   'settings.agentAccess.fullWarning':
     '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
   'settings.agentAccess.confine.label': 'Confine to workspace',
   'settings.agentAccess.confine.desc':
-    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can, except the always-blocked credential and system directories.',
   'settings.agentAccess.requireTaskPlanApproval.label': 'Require task plan approval',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pause before an assigned agent executes an agent-authored task brief.',
+  'settings.agentAccess.autoApproveAll.label': 'Auto-approve all actions',
+  'settings.agentAccess.autoApproveAll.desc':
+    'When enabled, the agent executes all eligible actions without asking for your approval first. This includes file writes, shell commands, network requests, and any other side effects. Credential and system directories stay blocked, and actions from untrusted or unlabelled call origins are still denied.',
   'settings.agentAccess.tinyplaceAutopilot.title': 'Autonomous tiny.place agent',
   'settings.agentAccess.tinyplaceAutopilot.desc':
-    'Let OpenHuman act on tiny.place on its own: on a schedule it finds worthwhile work — open bounties first — does what fits its skills, and acts from your identity. It runs unattended and can spend, so keep it on devnet while testing. Off by default.',
+    'Let OpenHuman act on tiny.place on its own. On a schedule, it finds worthwhile work (open bounties first), does what fits its skills, and acts from your identity. It runs unattended and can spend, so keep it on devnet while testing. Off by default.',
   'settings.agentAccess.tinyplaceAutopilot.label': 'Run automatically',
   'settings.agentAccess.timeout.label': 'Action timeout',
   'settings.agentAccess.timeout.desc':
@@ -5994,9 +6286,9 @@ const en: TranslationMap = {
   'settings.agentAccess.actionDirEmptyError': 'Path cannot be empty.',
   'settings.agentAccess.actionDirSaveError': 'Could not update the action sandbox.',
   'settings.agentAccess.actionDirEnvOverrideError':
-    'OPENHUMAN_ACTION_DIR is set — unset the env var to edit this from Settings.',
+    'OPENHUMAN_ACTION_DIR is set: unset the env var to edit this from Settings.',
   'settings.agentAccess.actionDirEnvOverrideNote':
-    'Overridden by OPENHUMAN_ACTION_DIR — unset the env var to manage from Settings.',
+    'Overridden by OPENHUMAN_ACTION_DIR: unset the env var to manage from Settings.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -6010,7 +6302,7 @@ const en: TranslationMap = {
     'Choose how much freedom the assistant has when it takes actions on your computer.',
   'settings.permissions.preset.readonly.title': "Look, don't touch",
   'settings.permissions.preset.readonly.desc':
-    'The assistant can read files and explore — but never write, edit, or run anything that changes state.',
+    'The assistant can read files and explore, but never write, edit, or run anything that changes state.',
   'settings.permissions.preset.supervised.title': 'Ask me first',
   'settings.permissions.preset.supervised.desc':
     'Can create new files freely, but always asks your approval before editing, running commands, or accessing the network.',
@@ -6050,7 +6342,7 @@ const en: TranslationMap = {
   'settings.sandbox.desktopOnly': 'Sandbox settings are only available in the desktop app.',
   'settings.sandbox.loadError': 'Failed to load sandbox settings.',
   'settings.sandbox.saveError': 'Failed to save sandbox settings.',
-  'settings.sandbox.saved': 'Saved — applies to new agent sessions.',
+  'settings.sandbox.saved': 'Saved: applies to new agent sessions.',
   'settings.sandbox.saving': 'Saving…',
   'settings.sandbox.status': 'Status',
   'settings.sandbox.dockerStatus': 'Docker',
@@ -6115,7 +6407,7 @@ const en: TranslationMap = {
   'settings.theme.copyName': '{name} (custom)',
   'settings.theme.importedName': 'Imported theme',
   'settings.theme.contrastWarn':
-    'Low contrast between text and background — this theme may be hard to read.',
+    'Low contrast between text and background: this theme may be hard to read.',
   'settings.theme.group.surfaces': 'Surfaces',
   'settings.theme.group.text': 'Text',
   'settings.theme.group.borders': 'Borders',
@@ -6148,11 +6440,11 @@ const en: TranslationMap = {
   'settings.appearance.modeSystem': 'Match system',
   'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
   'settings.appearance.helperText':
-    'Dark mode switches the entire app — chat, settings, panels — to a dim palette. "Match system" follows your OS appearance and updates live.',
+    'Dark mode switches the entire app (chat, settings, panels) to a dim palette. "Match system" follows your OS appearance and updates live.',
   'settings.appearance.fontSizeHeading': 'Font size',
   'settings.appearance.fontSizeAria': 'Font size',
   'settings.appearance.fontSizeSmall': 'Small',
-  'settings.appearance.fontSizeSmallDesc': 'Compact text — fit more on screen.',
+  'settings.appearance.fontSizeSmallDesc': 'Compact text: fit more on screen.',
   'settings.appearance.fontSizeMedium': 'Medium',
   'settings.appearance.fontSizeMediumDesc': 'The default, balanced size.',
   'settings.appearance.fontSizeLarge': 'Large',
@@ -6160,7 +6452,7 @@ const en: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Extra large',
   'settings.appearance.fontSizeXLargeDesc': 'The largest text, for maximum readability.',
   'settings.appearance.fontSizeHelperText':
-    'Scales text across the whole app — chat, settings and panels — independently of your system font setting.',
+    'Scales text across the whole app (chat, settings and panels) independently of your system font setting.',
   'settings.appearance.fontSizeCustomLabel': 'Custom size',
   'settings.appearance.fontSizeCustomAria': 'Custom font size in pixels',
   'settings.appearance.fontSizeCustomSliderAria': 'Custom font size slider, in pixels',
@@ -6181,10 +6473,15 @@ const en: TranslationMap = {
   'settings.mascot.characterDraft': 'Draft',
   'settings.mascot.characterHeading': 'Character',
   'settings.mascot.customGifError':
-    'Enter an HTTPS .gif URL, loopback HTTP .gif URL, file:// .gif URL, or local .gif path.',
-  'settings.mascot.customGifHeading': 'Custom GIF avatar',
-  'settings.mascot.customGifLabel': 'Custom GIF avatar URL',
-  'settings.mascot.customGifPlaceholder': 'https://example.com/avatar.gif',
+    'Enter an HTTPS, file://, or local image URL (PNG, GIF, JPEG, WebP, or BMP), or upload a file.',
+  'settings.mascot.customGifHeading': 'Custom image avatar',
+  'settings.mascot.customGifLabel': 'Custom image avatar URL',
+  'settings.mascot.customGifPlaceholder': 'https://example.com/avatar.png',
+  'settings.mascot.customGifUpload': 'Upload image',
+  'settings.mascot.customGifInvalidType':
+    'Unsupported file type. Upload a PNG, GIF, JPEG, WebP, or BMP image.',
+  'settings.mascot.customGifTooLarge': 'Image is too large. Upload a file up to 1.5 MB.',
+  'settings.mascot.customGifReadError': 'Could not read that image. Please try another file.',
   'settings.mascot.characterPreview': 'Preview',
   'settings.mascot.characterStates': 'states',
   'settings.mascot.characterVisemes': 'visemes',
@@ -6217,7 +6514,7 @@ const en: TranslationMap = {
   'settings.mascot.secondaryVoiceLabel': 'Second mascot voice',
   'settings.mascot.voice.current': 'current',
   'settings.mascot.voice.customDesc':
-    'Find voice ids at api.elevenlabs.io/v1/voices or your ElevenLabs dashboard. Only the id is stored — your API key stays on the backend.',
+    'Find voice ids at api.elevenlabs.io/v1/voices or your ElevenLabs dashboard. Only the id is stored: your API key stays on the backend.',
   'settings.mascot.voice.customHeading': 'Custom voice id',
   'settings.mascot.voice.customOption': 'Other (paste voice id)…',
   'settings.mascot.voice.customPlaceholder': 'e.g. 21m00Tcm4TlvDq8ikWAM',
@@ -6240,7 +6537,7 @@ const en: TranslationMap = {
   'settings.persona.title': 'Persona',
   'settings.persona.menuTitle': 'Persona',
   'settings.persona.menuDesc':
-    'Name, personality, avatar, and voice — your assistant as one identity',
+    'Name, personality, avatar, and voice: your assistant as one identity',
   'settings.persona.identityHeading': 'Identity',
   'settings.persona.identityDesc':
     'A display name and short description for your assistant. Shown in the app; does not change how the assistant reasons.',
@@ -6272,12 +6569,12 @@ const en: TranslationMap = {
   'settings.persona.builder.aboutPlaceholder':
     'e.g. I run a small design studio and prefer plain language.',
   'settings.persona.builder.preservedNote':
-    'Any other sections you wrote by hand are kept — switch to Advanced to see the full persona.',
+    'Any other sections you wrote by hand are kept: switch to Advanced to see the full persona.',
   'settings.persona.builder.securityNote': 'Choosing what the assistant is allowed to do?',
   'settings.persona.builder.securityLink': 'Open Agent access',
   'settings.persona.templates.heading': 'Start from a template',
   'settings.persona.templates.desc':
-    'Pick a starting point — it fills Personality and Communication style. You can edit everything afterwards.',
+    'Pick a starting point: it fills Personality and Communication style. You can edit everything afterwards.',
   'settings.persona.templates.doctor.label': 'Clinical assistant',
   'settings.persona.templates.doctor.desc': 'Careful, cites sources, flags uncertainty',
   'settings.persona.templates.researcher.label': 'Research assistant',
@@ -6292,14 +6589,14 @@ const en: TranslationMap = {
   'settings.persona.templates.family.desc': 'Warm, friendly, safe for all ages',
   'settings.persona.appearanceHeading': 'Avatar & Voice',
   'settings.persona.appearanceDesc':
-    'Mascot color, custom GIF avatar, and reply voice are configured in Mascot settings.',
+    'Mascot color, custom image avatar, and reply voice are configured in Mascot settings.',
   'settings.persona.openMascotSettings': 'Open Mascot settings',
   'settings.memoryWindow.balanced.badge': 'Recommended',
   'settings.memoryWindow.balanced.hint':
-    'Sensible default — good continuity without burning extra tokens on every run.',
+    'Sensible default: good continuity without burning extra tokens on every run.',
   'settings.memoryWindow.balanced.label': 'Balanced',
   'settings.memoryWindow.description':
-    'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens — and cost more — on every run.',
+    'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens (and cost more) on every run.',
   'settings.memoryWindow.extended.badge': 'More context',
   'settings.memoryWindow.extended.hint':
     'More long-term memory injected into each run. Higher token cost per turn.',
@@ -6349,39 +6646,6 @@ const en: TranslationMap = {
   'settings.modelHealth.modal.apply': 'Apply Replacement',
   'settings.modelHealth.tag.cheaper': 'CHEAPER',
   'settings.modelHealth.tag.better': 'BETTER',
-  'settings.desktopAgent.title': 'Desktop Agent',
-  'settings.desktopAgent.beta':
-    'Beta — the desktop agent is experimental and may not always work as expected.',
-  'settings.desktopAgent.wakeWordHint': 'Say “Hey Tiny” before your command to wake the agent.',
-  'settings.desktopAgent.description': 'Check and grant the permissions the desktop agent needs.',
-  'settings.desktopAgent.microphone': 'Microphone',
-  'settings.desktopAgent.grant': 'Grant',
-  'settings.desktopAgent.notRequiredOnOs': 'Not required on this OS',
-  'settings.desktopAgent.allGranted': 'All set — the desktop agent has every permission it needs.',
-  'settings.desktopAgent.recheck': 'Recheck',
-  'settings.desktopAgent.restartAndRecheck': 'Restart core & recheck',
-  'settings.desktopAgent.seamless.title': 'Agent actions',
-  'settings.desktopAgent.seamless.label': 'Let the agent act without asking',
-  'settings.desktopAgent.seamless.description':
-    'Grant Full access and auto-approve desktop actions (opening apps, controlling app interfaces) so the agent runs them without an approval prompt.',
-  'settings.desktopAgent.seamless.note':
-    'Only desktop actions skip the prompt — running shell commands, editing files, network requests, and installing software still ask. Turning this off stops auto-approving desktop actions but leaves the access level unchanged.',
-  'settings.screenIntel.permissions.accessibility': 'Accessibility',
-  'settings.screenIntel.permissions.grantHint':
-    'Grant these permissions in System Settings, then restart the core.',
-  'settings.screenIntel.permissions.inputMonitoring': 'Input Monitoring',
-  'settings.screenIntel.permissions.macosAppliesPrivacy':
-    'macOS controls these under System Settings → Privacy & Security.',
-  'settings.screenIntel.permissions.openInputMonitoring': 'Open Input Monitoring',
-  'settings.screenIntel.permissions.refreshStatus': 'Refreshing…',
-  'settings.screenIntel.permissions.refreshing': 'Refreshing…',
-  'settings.screenIntel.permissions.requestAccessibility': 'Request Accessibility',
-  'settings.screenIntel.permissions.requestScreenRecording': 'Request Screen Recording',
-  'settings.screenIntel.permissions.requesting': 'Requesting…',
-  'settings.screenIntel.permissions.restartRefresh': 'Restarting core…',
-  'settings.screenIntel.permissions.restartingCore': 'Restarting core…',
-  'settings.screenIntel.permissions.screenRecording': 'Screen Recording',
-  'settings.screenIntel.permissions.title': 'Permissions',
   'skills.card.moreActions': 'More actions',
   'skills.channelIcon.discord': 'Discord',
   'skills.channelIcon.imessage': 'iMessage',
@@ -6408,7 +6672,7 @@ const en: TranslationMap = {
     'The trigger an agent matches on to decide to run this workflow. Leave blank to reuse the description.',
   'skills.create.inputs.heading': 'Inputs',
   'skills.create.inputs.help':
-    'Declare parameters the workflow needs. Adding inputs is optional, but every input you add needs a description — it is shown to the agent and in the run form. Inputs are optional to fill unless you mark them Required.',
+    'Declare parameters the workflow needs. Adding inputs is optional, but every input you add needs a description: it is shown to the agent and in the run form. Inputs are optional to fill unless you mark them Required.',
   'skills.create.inputs.add': 'Add input',
   'skills.create.inputs.row.name': 'Input name',
   'skills.create.inputs.row.namePlaceholder': 'e.g. repo',
@@ -6430,7 +6694,7 @@ const en: TranslationMap = {
   'skills.create.scope': 'Scope',
   'skills.create.scopeProjectHint': '/.openhuman/skills/',
   'skills.create.scopeUserHint':
-    'Written to ~/.openhuman/skills/<slug>/SKILL.md — available across all workspaces.',
+    'Written to ~/.openhuman/skills/<slug>/SKILL.md: available across all workspaces.',
   'skills.create.slugLabel': 'Slug',
   'skills.create.subtitle': 'SKILL.md',
   'skills.create.tags': 'Tags',
@@ -6544,7 +6808,7 @@ const en: TranslationMap = {
   'skills.meetingBots.recentCallsAriaLabel': 'Recent meeting calls',
   'skills.meetingBots.recentCallsHeading': 'Recent calls',
   'skills.meetingBots.recentCallsEmpty':
-    'No previous calls yet — your meeting history will appear here.',
+    'No previous calls yet: your meeting history will appear here.',
   'skills.meetingBots.recentCallsLoading': 'Loading\u2026',
   'skills.meetingBots.recentCallAddedBy': 'Added by {name}',
   'skills.meetingBots.recentCallParticipants': 'With {names}',
@@ -6574,7 +6838,7 @@ const en: TranslationMap = {
   'skills.meetingBots.respondToParticipantHint': 'e.g. Alice (your display name in the call)',
   'skills.meetingBots.replyName.label': 'Your name in meetings',
   'skills.meetingBots.replyName.description':
-    'The name the bot listens for and replies to. Enter your name as it appears in the call — applied to every meeting it joins.',
+    'The name the bot listens for and replies to. Enter your name as it appears in the call: applied to every meeting it joins.',
   'skills.meetingBots.replyName.placeholder': 'e.g. Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     'Enter your exact display name from the meeting. The bot only responds when you say its name (wake phrase).',
@@ -6610,7 +6874,7 @@ const en: TranslationMap = {
   'skills.meetingBots.upcoming.today': 'Today',
   'skills.meetingBots.upcoming.tomorrow': 'Tomorrow',
   'skills.meetingBots.upcoming.empty':
-    'No upcoming meetings — connect Google Calendar to see them here.',
+    'No upcoming meetings: connect Google Calendar to see them here.',
   'skills.meetingBots.upcoming.error': 'Couldn’t load upcoming meetings.',
   'skills.meetingBots.upcoming.retry': 'Retry',
   'skills.meetingBots.upcoming.refresh': 'Refresh',
@@ -6638,7 +6902,7 @@ const en: TranslationMap = {
     'Override the global policy for specific platforms.',
   'skills.meetingBots.defaults.useDefault': 'Use default',
   'skills.meetingBots.upcoming.watchCalendarHint':
-    "Turn on 'Watch my calendar' in Defaults (gear icon) for Auto/Ask to take effect — otherwise these policies are saved but won't trigger.",
+    "Turn on 'Watch my calendar' in Defaults (gear icon) for Auto/Ask to take effect: otherwise these policies are saved but won't trigger.",
   'skills.resource.preview.closeAriaLabel': 'Close preview',
   'skills.resource.preview.failed': 'Preview failed',
   'skills.resource.preview.loading': 'Loading preview…',
@@ -6651,54 +6915,6 @@ const en: TranslationMap = {
   'skills.resource.tree.scripts': 'Scripts',
   'skills.resource.tree.templates': 'Templates',
   'skills.search.placeholder': 'Search skills…',
-  'skills.setup.autocomplete.acceptKey': 'Accept key',
-  'skills.setup.autocomplete.activeDesc': 'Inline completions are running and ready.',
-  'skills.setup.autocomplete.activeTitle': 'Auto-Complete is Active',
-  'skills.setup.autocomplete.customizeSettings': 'Customize settings',
-  'skills.setup.autocomplete.debounce': 'Debounce',
-  'skills.setup.autocomplete.description': 'AI-powered inline text completions as you type.',
-  'skills.setup.autocomplete.enableBtn': 'Enabling...',
-  'skills.setup.autocomplete.enableError': 'Failed to enable autocomplete',
-  'skills.setup.autocomplete.enabling': 'Enabling...',
-  'skills.setup.autocomplete.notSupported': 'Not supported',
-  'skills.setup.autocomplete.stepEnable': 'Enable inline completions',
-  'skills.setup.autocomplete.stepSuccess': 'Ready to go',
-  'skills.setup.autocomplete.stylePreset': 'Style preset',
-  'skills.setup.autocomplete.stylePresetValue': 'Balanced (configurable later)',
-  'skills.setup.autocomplete.title': 'Text Auto-Complete',
-  'skills.setup.screenIntel.activeDesc':
-    'Screen Intelligence is running and reading your active window.',
-  'skills.setup.screenIntel.activeTitle': 'Screen Intelligence is Enabled',
-  'skills.setup.screenIntel.advancedSettings': 'Advanced settings',
-  'skills.setup.screenIntel.allGranted': 'All permissions granted',
-  'skills.setup.screenIntel.captureMode': 'Capture mode',
-  'skills.setup.screenIntel.captureModeValue': 'All windows (configurable later)',
-  'skills.setup.screenIntel.deniedHint':
-    'After granting permissions in System Settings, click below to restart and pick up the changes.',
-  'skills.setup.screenIntel.enableBtn': 'Enabling...',
-  'skills.setup.screenIntel.enableDesc':
-    'Reads what is on your screen and feeds useful context into your agent.',
-  'skills.setup.screenIntel.enableError': 'Failed to enable Screen Intelligence',
-  'skills.setup.screenIntel.enabling': 'Enabling...',
-  'skills.setup.screenIntel.grant': 'Opening...',
-  'skills.setup.screenIntel.granted': 'Granted',
-  'skills.setup.screenIntel.macosOnly': 'macOS only',
-  'skills.setup.screenIntel.opening': 'Opening...',
-  'skills.setup.screenIntel.panicHotkey': 'Panic hotkey',
-  'skills.setup.screenIntel.permAccessibility': 'Accessibility',
-  'skills.setup.screenIntel.permInputMonitoring': 'Input Monitoring',
-  'skills.setup.screenIntel.permScreenRecording': 'Screen Recording',
-  'skills.setup.screenIntel.permissionsDesc':
-    'Screen Intelligence requires accessibility, input monitoring, and screen recording permissions.',
-  'skills.setup.screenIntel.permissionPathLabel': 'macOS applies privacy to:',
-  'skills.setup.screenIntel.refreshStatus': 'Refresh status',
-  'skills.setup.screenIntel.restartRefresh': 'Restarting...',
-  'skills.setup.screenIntel.restarting': 'Restarting...',
-  'skills.setup.screenIntel.stepEnable': 'Enable the skill',
-  'skills.setup.screenIntel.stepPermissions': 'Grant permissions',
-  'skills.setup.screenIntel.stepSuccess': 'Ready to go',
-  'skills.setup.screenIntel.title': 'Screen Intelligence',
-  'skills.setup.screenIntel.visionModel': 'Vision model',
   'skills.setup.voice.activation': 'Activation',
   'skills.setup.voice.activeDescPrefix': 'Fn',
   'skills.setup.voice.activeDescSuffix': 'Fn',
@@ -6857,9 +7073,6 @@ const en: TranslationMap = {
   // Developer options menu items (#2225)
   'devOptions.menuAi': 'AI Configuration',
   'devOptions.menuAiDesc': 'Cloud providers, local Ollama models, and per-workload routing',
-  'devOptions.menuScreenAware': 'Screen Awareness',
-  'devOptions.menuScreenAwareDesc':
-    'Screen capture permissions, monitoring policy, and session controls',
   'devOptions.menuMessaging': 'Messaging Channels',
   'devOptions.menuMessagingDesc':
     'Configure Telegram/Discord auth modes and default channel routing',
@@ -6904,12 +7117,16 @@ const en: TranslationMap = {
   // Settings > Account > Wallet Balances
   'pages.settings.account.walletBalances': 'Wallet Balances',
   'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  // Wallet tabbed view (Connections → Wallet)
+  'wallet.tabs.balance': 'Wallet balance',
+  'wallet.tabs.recovery': 'Recovery',
+  'wallet.ariaLabel': 'Wallet views',
   // WalletBalancesPanel strings
   'walletBalances.title': 'Wallet Balances',
   'walletBalances.refresh': 'Refresh',
   'walletBalances.loading': 'Loading balances…',
   'walletBalances.retry': 'Retry',
-  'walletBalances.emptyState': 'No wallet accounts yet — set up a wallet in Recovery Phrase.',
+  'walletBalances.emptyState': 'No wallet accounts yet: set up a wallet in Recovery Phrase.',
   'walletBalances.copyAddress': 'Copy address',
   'walletBalances.providerMissing': 'provider unavailable',
   'walletBalances.rawBalance': 'Raw: {raw}',
@@ -6936,7 +7153,7 @@ const en: TranslationMap = {
   'walletSend.review': 'Review',
   'walletSend.preparing': 'Preparing…',
   'walletSend.confirmHint':
-    'Review the details below. Signing happens locally — nothing is broadcast until you confirm.',
+    'Review the details below. Signing happens locally: nothing is broadcast until you confirm.',
   'walletSend.estimatedFee': 'Estimated network fee',
   'walletSend.confirmSend': 'Confirm & send',
   'walletSend.sending': 'Sending…',
@@ -7011,7 +7228,7 @@ const en: TranslationMap = {
   'skills.new.title': 'Create a workflow',
   'settings.agents.title': 'Agents',
   'settings.agents.subtitle':
-    'Manage the agents available for delegation — built-in defaults and your own custom agents.',
+    'Manage the agents available for delegation: built-in defaults and your own custom agents.',
   'settings.agents.menuDesc': 'Manage built-in and custom agents',
   'settings.agents.newAgent': 'New agent',
   'settings.agents.loadError': "Couldn't load agents",
@@ -7049,7 +7266,7 @@ const en: TranslationMap = {
   // ── Agent Profiles ───────────────────────────────────────────────────────
   'settings.profiles.title': 'Agent Profiles',
   'settings.profiles.subtitle':
-    'Flavoured agents — each with its own soul, memory, connectors, and skills.',
+    'Flavoured agents: each with its own soul, memory, connectors, and skills.',
   'settings.profiles.menuDesc': 'Create and manage agent profiles',
   'settings.profiles.new': 'New profile',
   'settings.profiles.empty': 'No agent profiles yet',
@@ -7086,6 +7303,17 @@ const en: TranslationMap = {
   'settings.profiles.editor.skillsHint': 'Workflows this profile can list and run.',
   'settings.profiles.editor.mcpServers': 'MCP servers',
   'settings.profiles.editor.mcpServersHint': 'MCP servers this profile can reach.',
+  'settings.profiles.editor.dedicatedMemory': 'Dedicated memory',
+  'settings.profiles.editor.dedicatedMemoryHint':
+    'Give this profile its own memory instead of sharing the default one.',
+  'settings.profiles.editor.dedicatedWorkspace': 'Dedicated workspace',
+  'settings.profiles.editor.dedicatedWorkspaceHint':
+    'Give this profile its own working directory for file and tool operations.',
+  'settings.profiles.editor.soulMdFile': 'SOUL.md file',
+  'settings.profiles.editor.workspaceDir': 'Workspace directory',
+  'settings.profiles.editor.skillsDir': 'Skills directory',
+  'settings.profiles.editor.skillsDirHint':
+    'SKILL.md files placed here are private to this profile.',
   'settings.profiles.editor.all': 'All',
   'settings.profiles.editor.selected': 'Selected',
   'settings.profiles.editor.addPlaceholder': 'Type an id, press Enter',
@@ -7098,7 +7326,7 @@ const en: TranslationMap = {
   'nav.workflows': 'Workflows',
   'workflows.title': 'Workflows',
   'workflows.subtitle':
-    'Reusable, runnable procedures — a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
+    'Reusable, runnable procedures: a goal plus the steps to reach it. Create one, install from a URL, or open a workflow to run it.',
   'workflows.createNew': 'New workflow',
   'workflows.installFromUrl': 'Install from URL',
   'workflows.listHeading': 'Workflows',
@@ -7177,7 +7405,7 @@ const en: TranslationMap = {
   'settings.agents.editor.builtInReadonly':
     "Built-in agents can't be edited. You can enable, disable, or reset them from the agents list.",
 
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artifact: {title}',
   'chat.artifact.generating': 'Generating {kind}…',
   'chat.artifact.ready': 'Ready',
@@ -7191,7 +7419,7 @@ const en: TranslationMap = {
   'chat.artifact.show_more': 'Show more',
   'chat.artifact.show_less': 'Show less',
 
-  // Chat — files panel (#3024)
+  // Chat: files panel (#3024)
   'chat.files.chip.aria.one': '{count} file in this chat',
   'chat.files.chip.aria.other': '{count} files in this chat',
   'chat.files.panel.aria': 'Files in this chat',
@@ -7225,7 +7453,7 @@ const en: TranslationMap = {
   'harnessInit.stateSkipped': 'Skipped',
   'harnessInit.stateFailed': 'Failed',
   'harnessInit.failedMessage':
-    'Some setup steps did not finish. You can retry, or continue — OpenHuman will use a built-in fallback.',
+    'Some setup steps did not finish. You can retry, or continue: OpenHuman will use a built-in fallback.',
   'harnessInit.retry': 'Retry',
   'harnessInit.continueAnyway': 'Continue anyway',
   'harnessInit.runInBackground': 'Run in background',
@@ -7267,7 +7495,7 @@ const en: TranslationMap = {
   'pages.settings.account.security': 'Security',
   'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
 
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
   // Chat composer toolbar
   'composer.attachFile': 'Attach file',
   'composer.modelSelector': 'Model',
@@ -7338,11 +7566,21 @@ const en: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'e.g. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'Estimated Delivery',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'e.g. 2 weeks',
+  'agentworld.feed.live': 'Live',
   'agentworld.jobs.applyModal.cancel': 'Cancel',
   'agentworld.jobs.applyModal.submit': 'Submit Application',
   'agentworld.jobs.applyModal.submitting': 'Applying…',
+  'agentworld.messaging.live': 'Live',
   'agentworld.messaging.missingSignalBundle':
     "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message.",
+  'agentworld.messaging.notAContact':
+    "You can't message this person until they're a contact. Send a contact request and try again once they accept.",
+  'agentworld.messaging.sendContactRequest': 'Send contact request',
+  'agentworld.messaging.contactRequestSending': 'Sending request…',
+  'agentworld.messaging.contactRequestSent':
+    'Contact request sent. You can message them once they accept.',
+  'agentworld.messaging.contactRequestFailed':
+    "Couldn't send the contact request. Please try again.",
 
   // Code block chrome
   'codeBlock.copy': 'Copy',
@@ -7353,6 +7591,7 @@ const en: TranslationMap = {
   'userErrors.dismiss': 'Dismiss',
   'userErrors.action.openBilling': 'Open billing',
   'userErrors.action.openProviderSettings': 'Provider settings',
+  'userErrors.action.openEmbeddingsSettings': 'Set up embeddings',
   'userErrors.budgetExceeded.title': 'Managed budget reached',
   'userErrors.budgetExceeded.body':
     'Your managed AI budget is used up. Add budget or change your plan to continue.',
@@ -7362,8 +7601,52 @@ const en: TranslationMap = {
   'userErrors.apiKeyMissing.title': 'API key required',
   'userErrors.apiKeyMissing.body':
     'Your AI provider has no API key set. Add one in provider settings to continue.',
+  'userErrors.memoryBudgetExhausted.title': 'Memory has stopped growing',
+  'userErrors.memoryBudgetExhausted.body':
+    'Your embedding budget is used up, so new content is no longer being added to memory. Set up local embeddings or add your own API key to resume.',
+  'userErrors.localModelUnavailable.title': 'Local model unavailable',
+  'userErrors.localModelUnavailable.body':
+    'Ollama is not reachable at the configured endpoint, or the required model is not installed there. Start Ollama and pull the model at that endpoint, or switch this workload to a cloud provider.',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Scheduled job',
+  'userErrors.scope.workspace': 'Workspace',
+  'userErrors.scope.memory': 'Memory',
+
+  // Memory embedding budget banners (#5324)
+  'memoryBudget.approachingTitle': 'Memory is approaching its embedding limit',
+  'memoryBudget.approachingMessage':
+    "You've used {pct}% of your embedding budget. Set up local embeddings or add your own API key to keep building memory without interruption.",
+  'memoryBudget.exhaustedTitle': 'Memory has stopped growing',
+  'memoryBudget.exhaustedMessage':
+    'Your embedding budget is used up, so new content is no longer being added to memory. Set up local embeddings or add your own API key to resume.',
+  'memoryBudget.cta': 'Set up embeddings',
+  'memorySources.codingSessions.title': 'Coding-agent sessions',
+  'memorySources.codingSessions.description':
+    'Turn your Codex and Claude Code decisions and corrections into private persona memory.',
+  'memorySources.codingSessions.importAll': 'Import all sessions',
+  'memorySources.codingSessions.draining': 'Importing… pass {passes}',
+  'memorySources.codingSessions.stop': 'Stop',
+  'memorySources.codingSessions.progress':
+    '{processed} sessions imported · {observations} observations',
+  'memorySources.codingSessions.remaining': 'about {remaining} left',
+  'memorySources.codingSessions.stopped': 'Import paused',
+  'memorySources.codingSessions.stoppedMessage':
+    'Imported {processed} sessions. Run import again to continue the remaining {remaining}.',
+  'memorySources.codingSessions.claude': 'Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sessions · {evidence} human turns',
+  'memorySources.codingSessions.notFound': 'No local history found',
+  'memorySources.codingSessions.scanning': 'Scanning local session history…',
+  'memorySources.codingSessions.truncated': 'Scan limited to the first 1,000 session files.',
+  'memorySources.codingSessions.complete': 'Coding sessions ingested',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sessions produced {observations} persona observations.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} sessions failed while {processed} were processed. Run ingestion again to retry them.',
+  'memorySources.codingSessions.failed': 'Coding-session ingestion failed',
+  'notifications.configRecovered.title': 'Settings file recovered',
+  'notifications.configRecovered.body':
+    'Your settings file could not be read, so it was restored from a backup or reset to defaults. The unreadable file was kept with a ".corrupted" suffix in case you need it.',
 };
 
 export default en;

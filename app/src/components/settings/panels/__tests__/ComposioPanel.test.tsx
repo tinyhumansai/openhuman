@@ -28,8 +28,10 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
+// ComposioPanel now embeds the trigger-triage config; stub it so these tests
+// stay focused on the API-key / routing-mode logic ComposioPanel owns.
+vi.mock('../ComposioTriagePanel', () => ({
+  default: () => <div data-testid="stub-composio-triage" />,
 }));
 
 async function importPanel() {

@@ -84,7 +84,3 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     showOnWelcome: false,
   },
 ];
-
-export const getProviderConfig = (provider: string): OAuthProviderConfig | undefined => {
-  return oauthProviderConfigs.find(config => config.id === provider);
-};

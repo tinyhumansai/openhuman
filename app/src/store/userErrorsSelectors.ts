@@ -14,7 +14,7 @@ import type { UserErrorsState } from './userErrorsSlice';
 const selectSlice = (state: RootState): UserErrorsState => state.userErrors;
 
 /** All entries in insertion order (including resolved). */
-export const selectAllUserErrors = createSelector(selectSlice, slice =>
+const selectAllUserErrors = createSelector(selectSlice, slice =>
   slice.order.map(id => slice.byId[id]).filter((e): e is UserActionableError => Boolean(e))
 );
 

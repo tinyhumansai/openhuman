@@ -72,8 +72,8 @@ pub enum AgentProgress {
         /// Present when `success` is false: a user-facing classification of the
         /// failure (class, category, plain-language cause + next action) that
         /// the chat "View processing" timeline renders. `None` on success and
-        /// on legacy snapshots. See `crate::openhuman::tool_status`.
-        failure: Option<crate::openhuman::tool_status::ClassifiedFailure>,
+        /// on legacy snapshots. See `crate::openhuman::tools::status`.
+        failure: Option<crate::openhuman::tools::status::ClassifiedFailure>,
     },
 
     /// A sub-agent was spawned during tool execution.
@@ -219,7 +219,7 @@ pub enum AgentProgress {
         /// child tool failure, mirroring [`Self::ToolCallCompleted::failure`] so
         /// a failed sub-agent row carries the same "why + what to do next" copy
         /// instead of discarding the already-computed classification (#4459).
-        failure: Option<crate::openhuman::tool_status::ClassifiedFailure>,
+        failure: Option<crate::openhuman::tools::status::ClassifiedFailure>,
     },
 
     /// A chunk of a sub-agent's visible assistant text arrived from the

@@ -12,8 +12,8 @@
  */
 import { memo } from 'react';
 
+import { NodeKindTile } from '../../../lib/flows/nodeKindIcons';
 import {
-  COLOR_CLASSES,
   NODE_GROUP_ORDER,
   PALETTE_ENTRIES_BY_GROUP,
   type PaletteEntry,
@@ -23,7 +23,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 /** dataTransfer MIME key for a palette drag — read by the canvas `onDrop`. */
 export const PALETTE_DND_MIME = 'application/tinyflows-node';
 
-export interface NodePaletteProps {
+interface NodePaletteProps {
   /** Add a node from the given palette entry at the canvas's default position. */
   onAdd: (entry: PaletteEntry) => void;
 }
@@ -33,7 +33,7 @@ function NodePalette({ onAdd }: NodePaletteProps) {
 
   return (
     <aside
-      className="pointer-events-auto absolute left-3 top-3 z-10 flex max-h-[calc(100%-1.5rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-sm backdrop-blur"
+      className="pointer-events-auto absolute right-3 top-14 z-10 flex max-h-[calc(100%-4rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-sm backdrop-blur"
       data-testid="flow-node-palette"
       aria-label={t('flows.palette.title')}>
       <div className="flex flex-col gap-2 overflow-y-auto p-2">
@@ -43,7 +43,6 @@ function NodePalette({ onAdd }: NodePaletteProps) {
               {t(`flows.palette.group.${group}`)}
             </div>
             {PALETTE_ENTRIES_BY_GROUP[group].map(entry => {
-              const colors = COLOR_CLASSES[entry.color];
               const label = t(entry.labelKey, entry.kind);
               return (
                 <button
@@ -58,10 +57,10 @@ function NodePalette({ onAdd }: NodePaletteProps) {
                     event.dataTransfer.effectAllowed = 'copy';
                   }}
                   title={t('flows.palette.addNode').replace('{kind}', label)}
-                  className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-xs text-content transition-colors hover:bg-surface-hover ${colors.tint} ${colors.border}`}>
-                  <span className="text-base leading-none" aria-hidden="true">
-                    {entry.emoji}
-                  </span>
+                  className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5 text-left text-xs text-content transition-colors hover:border-primary-500/40 hover:bg-surface-hover">
+                  {/* Same tile as the canvas card, scaled down — the swatch the
+                      user picks here is the swatch that lands on the graph. */}
+                  <NodeKindTile kind={entry.kind} size="sm" />
                   <span className="truncate">{label}</span>
                 </button>
               );

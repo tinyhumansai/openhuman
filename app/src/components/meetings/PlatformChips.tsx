@@ -16,7 +16,7 @@ import { MEETING_PLATFORMS, platformLabel, platformLogoUrl } from './meetingUtil
 
 const log = debug('meetings:platform-chips');
 
-export interface PlatformChipsProps {
+interface PlatformChipsProps {
   selected: MeetingPlatform;
   onSelect: (platform: MeetingPlatform) => void;
   disabled?: boolean;

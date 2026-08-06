@@ -1,12 +1,10 @@
 import type { User } from '../types/api';
 import type { TeamInvite, TeamMember, TeamWithRole } from '../types/team';
-import type { AccessibilityStatus } from '../utils/tauriCommands/accessibility';
-import type { AutocompleteStatus } from '../utils/tauriCommands/autocomplete';
 import type { LocalAiStatus } from '../utils/tauriCommands/localAi';
 import type { ServiceStatus } from '../utils/tauriCommands/service';
 import { callCoreRpc } from './coreRpcClient';
 
-export interface OnboardingTasks {
+interface OnboardingTasks {
   accessibilityPermissionGranted: boolean;
   localModelConsentGiven: boolean;
   localModelDownloadStarted: boolean;
@@ -27,7 +25,7 @@ export interface KeyringStatus {
   backendName: string;
 }
 
-export interface UpdateCoreLocalStateParams {
+interface UpdateCoreLocalStateParams {
   encryptionKey?: string | null;
   onboardingTasks?: OnboardingTasks | null;
   keyringConsent?: KeyringConsentPreference | null;
@@ -58,12 +56,42 @@ interface AppStateSnapshotResult {
     keyringConsent?: KeyringConsentPreference | null;
   };
   keyringStatus?: KeyringStatus;
-  runtime: {
-    screenIntelligence: AccessibilityStatus;
-    localAi: LocalAiStatus;
-    autocomplete: AutocompleteStatus;
-    service: ServiceStatus;
-  };
+  runtime: { localAi: LocalAiStatus; service: ServiceStatus };
+  /**
+   * Process + component health, folded into this snapshot (#daemon-poll-fold)
+   * so the daemon-health store hydrates from the same poll instead of a second
+   * `health_snapshot` poller. Fields are snake_case on the wire (the core type
+   * has no camelCase rename). Optional so older cores that omit it degrade
+   * gracefully — the daemon store simply isn't refreshed from those.
+   */
+  health?: RawHealthSnapshot;
+  /**
+   * `true` when the core recovered a corrupted `config.toml` this session — the
+   * on-disk settings were unreadable/unparseable, so the file was renamed to
+   * `.corrupted.<ts>` and reset to defaults (#5167). Latched at boot so it stays
+   * reported after the file is healed. Optional so older cores that omit it
+   * degrade to "no recovery". `CoreStateProvider` raises a one-shot notice.
+   */
+  configRecovered?: boolean;
+}
+
+/** Raw (snake_case) health payload embedded in the app-state snapshot. */
+interface RawHealthSnapshot {
+  pid: number;
+  updated_at: string;
+  uptime_seconds: number;
+  components: Record<
+    string,
+    {
+      status: string;
+      updated_at: string;
+      // Rust serializes absent `Option<String>` as `null` (no skip attribute),
+      // so match `src/openhuman/platform/health/core.rs` — not `string | undefined`.
+      last_ok?: string | null;
+      last_error?: string | null;
+      restart_count: number;
+    }
+  >;
 }
 
 /**

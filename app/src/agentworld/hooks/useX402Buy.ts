@@ -17,7 +17,7 @@ import {
   type X402BuyResult,
 } from '../../lib/agentworld/invokeApiClient';
 
-export type X402BuyState =
+type X402BuyState =
   | { phase: 'idle' }
   | { phase: 'challenge_loading' }
   | {
@@ -35,7 +35,7 @@ export type X402BuyState =
   | { phase: 'success'; result: Record<string, unknown>; onChainTx?: string; network?: string }
   | { phase: 'error'; message: string; onChainTx?: string };
 
-export type X402BuyFn = (id: string, opts: { confirmed: boolean }) => Promise<X402BuyResult>;
+type X402BuyFn = (id: string, opts: { confirmed: boolean }) => Promise<X402BuyResult>;
 
 /** Devnet/mainnet Solana explorer link for a settled payment tx. */
 export function explorerTxUrl(tx: string, network?: string): string {
@@ -49,7 +49,7 @@ export function extractOnChainTx(message: string): string | undefined {
   return match?.[1];
 }
 
-export interface UseX402Buy {
+interface UseX402Buy {
   state: X402BuyState;
   reset: () => void;
   begin: (id: string) => void;

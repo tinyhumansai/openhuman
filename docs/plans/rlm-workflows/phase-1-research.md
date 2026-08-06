@@ -89,13 +89,13 @@ async worker deadlocks a current-thread runtime.
   `Box::new(...)` line in `all_tools_with_runtime`
   (`src/openhuman/tools/ops.rs`).
 - **Tool→tinyagents bridge already exists**: `ToolAdapter`
-  (`src/openhuman/tinyagents/tools.rs:78`) wraps `Arc<dyn openhuman Tool>`
+  (`src/openhuman/agent/tinyagents/tools.rs:78`) wraps `Arc<dyn openhuman Tool>`
   and implements `tinyagents::Tool<()>` — we reuse it to project openhuman
   tools into the REPL's `CapabilityRegistry`.
 - **Model bridge already exists**: `ProviderModel`
-  (`src/openhuman/tinyagents/model.rs`) implements the tinyagents model
+  (`src/openhuman/agent/tinyagents/model.rs`) implements the tinyagents model
   trait over openhuman's `Provider`; `assemble_turn_harness`
-  (`src/openhuman/tinyagents/mod.rs:1122`) already builds a
+  (`src/openhuman/agent/tinyagents/mod.rs:1122`) already builds a
   `CapabilityRegistry<()>` per turn with models registered.
 - **Subagents**: `run_subagent(definition, prompt, options)`
   (`src/openhuman/agent/harness/subagent_runner/`) + parent allowlist
@@ -113,7 +113,7 @@ async worker deadlocks a current-thread runtime.
   `Workflow*` events).
 - **Prompt surfacing**: tool `description()` + `parameters_schema()` ride in
   the native tool-call API request; the orchestrator's narrative guide is
-  `src/openhuman/agent_registry/agents/orchestrator/prompt.md` + `agent.toml`.
+  `src/openhuman/agent/registry/agents/orchestrator/prompt.md` + `agent.toml`.
 - **No existing rhai/RLM surface** in `src/` — this is net-new, but it sits
   beside `workflows/`, `flows/`, `tinyflows/`, `agent_orchestration/`.
 

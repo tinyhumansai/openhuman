@@ -36,6 +36,8 @@ pub(crate) const MAX_CONCURRENT_STREAMS: usize = 5;
 pub(crate) enum StreamKind {
     Inbox,
     Conversation,
+    /// A single feed's live post/comment/like stream, keyed by feed handle.
+    Feed,
 }
 
 /// Metadata for an active stream (returned to the renderer).
@@ -84,6 +86,7 @@ pub(crate) fn stream_id_for(kind: StreamKind, target_id: Option<&str>) -> String
     match kind {
         StreamKind::Inbox => "inbox".to_string(),
         StreamKind::Conversation => format!("conversation:{}", target_id.unwrap_or("")),
+        StreamKind::Feed => format!("feed:{}", target_id.unwrap_or("")),
     }
 }
 
@@ -137,6 +140,10 @@ impl StreamManager {
             StreamKind::Conversation => {
                 let conv_id = target_id.as_deref().unwrap_or("");
                 client.conversations.stream(conv_id, None, None)
+            }
+            StreamKind::Feed => {
+                let handle = target_id.as_deref().unwrap_or("");
+                client.feeds.stream(handle, None)
             }
         };
 
@@ -238,6 +245,7 @@ fn kind_to_str(kind: &StreamKind) -> &'static str {
     match kind {
         StreamKind::Inbox => "inbox",
         StreamKind::Conversation => "conversation",
+        StreamKind::Feed => "feed",
     }
 }
 
@@ -324,6 +332,9 @@ mod tests {
             stream_id_for(StreamKind::Conversation, Some("abc123")),
             "conversation:abc123"
         );
+        // Feed streams are keyed by feed handle (#4926).
+        assert_eq!(stream_id_for(StreamKind::Feed, Some("alice")), "feed:alice");
+        assert_eq!(stream_id_for(StreamKind::Feed, None), "feed:");
     }
 
     #[tokio::test]

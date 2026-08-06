@@ -13,7 +13,7 @@
  *  - **delete** — Backspace/Delete removes the selection (React Flow default),
  *    plus an explicit "Delete selected" toolbar button as a discoverable
  *    affordance; deleting a node also drops its incident edges.
- *  - **add** — a {@link NodePalette} inserts any of the 12 node kinds by click
+ *  - **add** — a {@link NodePalette} inserts any of the 15 node kinds by click
  *    (default cascade position) or drag-drop (under the cursor).
  *  - **save** — a "Save" button serializes the live canvas back to a
  *    `WorkflowGraph` via {@link xyflowToWorkflowGraph} and hands it to `onSave`.
@@ -25,24 +25,36 @@ import {
   BackgroundVariant,
   type Connection,
   Controls,
-  MiniMap,
   ReactFlow,
   type ReactFlowInstance,
   useEdgesState,
   useNodesState,
+  type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import createDebug from 'debug';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ForwardedRef,
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { FLOW_RUN_NODE_STATUS_CLASS, useFlowRunProgress } from '../../../hooks/useFlowRunProgress';
 import { erroredNodeIds } from '../../../lib/flows/flowValidation';
 import {
+  connectionEdgeId,
   createFlowNode,
   FLOW_NODE_TYPE,
   type FlowEdge,
   type FlowNode,
   isValidFlowConnection,
+  stepNumbersForFlow,
   type WorkflowGraphMeta,
   xyflowToWorkflowGraph,
 } from '../../../lib/flows/graphAdapter';
@@ -57,6 +69,7 @@ import FlowNodeComponent from './FlowNodeComponent';
 import FlowValidationBanner from './FlowValidationBanner';
 import NodeConfigDrawer, { type NodeConfigPatch } from './nodeConfig/NodeConfigDrawer';
 import NodePalette, { PALETTE_DND_MIME } from './NodePalette';
+import { StepNumberContext } from './stepNumbers';
 import { useFlowValidation } from './useFlowValidation';
 
 const log = createDebug('app:flows:canvas:edit');
@@ -107,7 +120,7 @@ const CLICK_ADD_ORIGIN = { x: 80, y: 80 };
 /** Per-click cascade so repeated palette clicks don't stack on one spot. */
 const CLICK_ADD_STEP = 32;
 
-export interface EditableFlowCanvasProps {
+interface EditableFlowCanvasProps {
   nodes: FlowNode[];
   edges: FlowEdge[];
   /** Graph-level metadata xyflow doesn't carry, needed to re-serialize on save. */
@@ -170,28 +183,100 @@ export interface EditableFlowCanvasProps {
    * remount.
    */
   initialDirty?: boolean;
+  /** Show the drag-and-drop node palette ("Legend"). Defaults to `true`. */
+  showPalette?: boolean;
+  /**
+   * Reports Save-button state up so the host can render Save/Discard in its own
+   * header (the canvas keeps only undo/redo). Fires whenever any field changes.
+   */
+  onSaveMetaChange?: (meta: EditorSaveMeta) => void;
+  /**
+   * The viewport (pan/zoom) to restore on mount, captured from a previous
+   * mount of this same logical canvas via `onViewportChange` (F4/F5 fix). The
+   * host (`FlowCanvasPage`) keeps this in a ref that survives the `canvasVersion`
+   * remounts Save/Accept/Reject trigger, so a remount can restore the user's
+   * pan/zoom instead of `fitView` silently resetting it. `null`/absent means no
+   * prior viewport is known (first-ever mount) — `fitView` runs normally.
+   */
+  savedViewport?: Viewport | null;
+  /**
+   * Fired on every viewport change (pan/zoom) so the host can capture the
+   * latest value for `savedViewport` on the next remount (F4/F5 fix).
+   */
+  onViewportChange?: (viewport: Viewport) => void;
+}
+
+/** Save/Discard state the host header needs to render + gate its own buttons. */
+export interface EditorSaveMeta {
+  dirty: boolean;
+  hasErrors: boolean;
+  saving: boolean;
+}
+
+/** Imperative handle so the host header's Save/Discard buttons drive the canvas. */
+export interface EditableFlowCanvasHandle {
+  save: () => void;
+  discard: () => void;
+  /**
+   * Clear the forced-dirty flag and advance the baseline to the CURRENT live
+   * graph, without going through `save()` / `onSave` (the host has already
+   * persisted the graph itself — see `handleAcceptProposal` in
+   * `FlowCanvasPage.tsx`). Needed for the Accept path: it calls the page's
+   * `handleSave` directly (bypassing this canvas's own `save()`, whose ref is
+   * stale mid-remount) and only remounts a SECOND time when the server
+   * actually normalized the graph. When it doesn't (the common "echoed back
+   * unchanged" case), this already-mounted instance's `forcedDirty` — seeded
+   * `true` by Accept's own remount, before the persist resolved — would
+   * otherwise never clear, since only this canvas's own `save()`/`discard()`
+   * do that. Call this after such an out-of-band persist succeeds to sync it.
+   */
+  clearForcedDirty: () => void;
 }
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set();
 
-function EditableFlowCanvas({
-  nodes: initialNodes,
-  edges: initialEdges,
-  meta,
-  onSave,
-  onInvalidConnection,
-  onDirtyChange,
-  activeRunId = null,
-  onGraphChange,
-  addedNodeIds = EMPTY_ID_SET,
-  removedNodeIds = EMPTY_ID_SET,
-  saveDisabled = false,
-  initialDirty = false,
-}: EditableFlowCanvasProps) {
+function EditableFlowCanvas(
+  {
+    nodes: initialNodes,
+    edges: initialEdges,
+    meta,
+    onSave,
+    onInvalidConnection,
+    onDirtyChange,
+    activeRunId = null,
+    onGraphChange,
+    addedNodeIds = EMPTY_ID_SET,
+    removedNodeIds = EMPTY_ID_SET,
+    saveDisabled = false,
+    initialDirty = false,
+    showPalette = true,
+    onSaveMetaChange,
+    savedViewport = null,
+    onViewportChange,
+  }: EditableFlowCanvasProps,
+  ref: ForwardedRef<EditableFlowCanvasHandle>
+) {
   const { t } = useT();
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>(initialEdges);
   const rfRef = useRef<ReactFlowInstance<FlowNode, FlowEdge> | null>(null);
+
+  // F4/F5 fix diagnostic: log once per mount whether this instance restores a
+  // caller-supplied viewport (`savedViewport`, threaded through from
+  // `FlowCanvasPage`'s `viewportRef`) or falls back to React Flow's own
+  // `fitView` (first-ever mount, or a host that doesn't track viewport).
+  useEffect(() => {
+    log(
+      'mount: viewport %s x=%s y=%s zoom=%s',
+      savedViewport ? 'restored' : 'fitView-fallback',
+      savedViewport?.x,
+      savedViewport?.y,
+      savedViewport?.zoom
+    );
+    // Mount-only — a later `savedViewport` prop change (from panning) must
+    // not re-log; only a fresh mount (new instance) should.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Undo / redo history ───────────────────────────────────────────────────
   // A bounded past/future stack of {nodes, edges} snapshots so structural edits
@@ -420,7 +505,10 @@ function EditableFlowCanvas({
       }
       log('onConnect: accepted %o', connection);
       pushHistory('structural');
-      setEdges(current => addEdge(connection, current));
+      // Use the adapter's collision-free id (matches what a reload would
+      // assign via workflowGraphToXyflow → edgeId), not React Flow's default
+      // concatenated id — see connectionEdgeId's doc.
+      setEdges(current => addEdge({ ...connection, id: connectionEdgeId(connection) }, current));
     },
     [nodes, edges, setEdges, onInvalidConnection, pushHistory]
   );
@@ -551,6 +639,33 @@ function EditableFlowCanvas({
     setForcedDirty(false);
   }, [baseline, setNodes, setEdges, pushHistory]);
 
+  // Expose Save/Discard so the host header can drive them (the canvas now shows
+  // only undo/redo). Guarded internally by the same dirty/error/saving gates.
+  useImperativeHandle(
+    ref,
+    () => ({
+      save: () => {
+        if (!dirty || hasErrors || saving || saveDisabled) return;
+        void handleSave();
+      },
+      discard: () => {
+        if (!dirty || saving) return;
+        handleDiscard();
+      },
+      clearForcedDirty: () => {
+        log('clearForcedDirty: host persisted externally — syncing baseline');
+        setBaseline({ nodes, edges });
+        setForcedDirty(false);
+      },
+    }),
+    [dirty, hasErrors, saving, saveDisabled, handleSave, handleDiscard, nodes, edges]
+  );
+
+  // Mirror the Save-button state up so the header can render + gate its buttons.
+  useEffect(() => {
+    onSaveMetaChange?.({ dirty, hasErrors, saving });
+  }, [dirty, hasErrors, saving, onSaveMetaChange]);
+
   // Canvas actions surfaced on the selected node card (delete this node /
   // validate the graph) — see `canvasActions.ts`. Memoised so the context
   // value is stable across renders that don't change validation state.
@@ -648,143 +763,124 @@ function EditableFlowCanvas({
     );
   }, [setNodes]);
 
+  // Execution-order numbers, derived from the LIVE nodes/edges rather than
+  // baked into node `data` at adapt time. `workflowGraphToXyflow` runs once at
+  // mount; every edit after that goes through `setNodes`/`setEdges`, so an
+  // adapt-time number would be missing on any node added mid-edit and stale on
+  // the rest as soon as a connection changed.
+  const stepNumberMap = useMemo(() => stepNumbersForFlow(nodes, edges), [nodes, edges]);
+
   const configNode = configNodeId ? (nodes.find(n => n.id === configNodeId) ?? null) : null;
 
   return (
     <CanvasActionsContext.Provider value={canvasActions}>
-      <div
-        className="flow-canvas relative h-full w-full"
-        data-testid="flow-canvas"
-        data-editable="true"
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onKeyDown={handleCanvasKeyDown}>
-        <NodePalette onAdd={handlePaletteAdd} />
+      <StepNumberContext.Provider value={stepNumberMap}>
+        <div
+          className="flow-canvas relative h-full w-full"
+          data-testid="flow-canvas"
+          data-editable="true"
+          data-viewport-restored={savedViewport ? 'true' : 'false'}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onKeyDown={handleCanvasKeyDown}>
+          {showPalette && <NodePalette onAdd={handlePaletteAdd} />}
 
-        {/* Undo/redo on the left, then the draft-state cluster (unsaved badge →
-          Discard → Save). Per-node Validate/Delete now live on the selected node
-          card (see FlowNodeComponent), so they're no longer in this toolbar. */}
-        <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2">
-          <div className="pointer-events-auto flex items-center gap-1">
-            <Button
-              type="button"
-              variant="tertiary"
-              size="xs"
-              iconOnly
-              data-testid="flow-editor-undo"
-              aria-label={t('flows.editor.undo')}
-              title={t('flows.editor.undo')}
-              disabled={!canUndo}
-              onClick={undo}>
-              <UndoIcon />
-            </Button>
-            <Button
-              type="button"
-              variant="tertiary"
-              size="xs"
-              iconOnly
-              data-testid="flow-editor-redo"
-              aria-label={t('flows.editor.redo')}
-              title={t('flows.editor.redo')}
-              disabled={!canRedo}
-              onClick={redo}>
-              <RedoIcon />
-            </Button>
-          </div>
-          <div className="pointer-events-auto flex items-center gap-2 border-l border-line pl-2">
-            {dirty && (
-              <span
-                className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                data-testid="flow-editor-dirty">
-                {t('flows.editor.unsaved')}
-              </span>
-            )}
-            <Button
-              type="button"
-              variant="tertiary"
-              size="xs"
-              data-testid="flow-editor-discard"
-              disabled={!dirty || saving}
-              onClick={handleDiscard}>
-              {t('flows.editor.discard')}
-            </Button>
-            {onSave && (
+          {/* Undo/redo stay on the canvas (top-right). Save/Discard + the unsaved
+        badge now live in the page header (driven via the imperative handle).
+        Per-node Validate/Delete live on the selected node card. */}
+          <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2">
+            <div className="pointer-events-auto flex items-center gap-1">
               <Button
                 type="button"
-                variant="primary"
+                variant="tertiary"
                 size="xs"
-                data-testid="flow-editor-save"
-                title={hasErrors ? t('flows.editor.saveBlocked') : undefined}
-                disabled={!dirty || hasErrors || saving || saveDisabled}
-                onClick={handleSave}>
-                {saving ? t('flows.editor.saving') : t('flows.editor.save')}
+                iconOnly
+                data-testid="flow-editor-undo"
+                aria-label={t('flows.editor.undo')}
+                title={t('flows.editor.undo')}
+                disabled={!canUndo}
+                onClick={undo}>
+                <UndoIcon />
               </Button>
-            )}
-          </div>
-        </div>
-
-        {/* First-run hint: a near-empty canvas (a fresh scratch flow opens with
-          just its trigger) gets a non-blocking nudge toward the palette. Hides
-          itself as soon as a second node lands. */}
-        {showOnboarding && (
-          <div
-            className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center px-6"
-            data-testid="flow-editor-onboarding">
-            <div className="max-w-xs rounded-2xl border border-dashed border-line bg-surface/70 px-5 py-4 text-center backdrop-blur-sm">
-              <p className="text-sm font-semibold text-content">
-                {t('flows.editor.onboardingTitle')}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-content-muted">
-                {t('flows.editor.onboardingBody')}
-              </p>
+              <Button
+                type="button"
+                variant="tertiary"
+                size="xs"
+                iconOnly
+                data-testid="flow-editor-redo"
+                aria-label={t('flows.editor.redo')}
+                title={t('flows.editor.redo')}
+                disabled={!canRedo}
+                onClick={redo}>
+                <RedoIcon />
+              </Button>
             </div>
           </div>
-        )}
 
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex justify-center">
-          <div className="pointer-events-auto w-full max-w-md">
-            <FlowValidationBanner validation={validation} saveError={saveError} />
+          {/* First-run hint: a near-empty canvas (a fresh scratch flow opens with
+        just its trigger) gets a non-blocking nudge toward the palette. Hides
+        itself as soon as a second node lands. */}
+          {showOnboarding && (
+            <div
+              className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center px-6"
+              data-testid="flow-editor-onboarding">
+              <div className="max-w-xs rounded-2xl border border-dashed border-line bg-surface/70 px-5 py-4 text-center backdrop-blur-sm">
+                <p className="text-sm font-semibold text-content">
+                  {t('flows.editor.onboardingTitle')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-content-muted">
+                  {t('flows.editor.onboardingBody')}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex justify-center">
+            <div className="pointer-events-auto w-full max-w-md">
+              <FlowValidationBanner validation={validation} saveError={saveError} />
+            </div>
           </div>
+
+          <ReactFlow
+            nodes={displayNodes}
+            edges={edges}
+            nodeTypes={NODE_TYPES}
+            onInit={instance => {
+              rfRef.current = instance;
+            }}
+            onNodesChange={handleNodesChange}
+            onEdgesChange={handleEdgesChange}
+            onConnect={onConnect}
+            isValidConnection={isValidConnection}
+            onNodeClick={onNodeClick}
+            onSelectionChange={onSelectionChange}
+            deleteKeyCode={DELETE_KEYS}
+            nodesDraggable
+            nodesConnectable
+            elementsSelectable
+            fitView={!savedViewport}
+            defaultViewport={savedViewport ?? undefined}
+            onViewportChange={onViewportChange}
+            panOnScroll
+            zoomOnScroll>
+            <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+
+          <NodeConfigDrawer
+            node={configNode}
+            onClose={handleCloseConfig}
+            onChange={updateNode}
+            connections={connections}
+            nodes={nodes}
+            edges={edges}
+            nodeLabelById={nodeLabelById}
+            onRemoveEdge={removeEdge}
+          />
         </div>
-
-        <ReactFlow
-          nodes={displayNodes}
-          edges={edges}
-          nodeTypes={NODE_TYPES}
-          onInit={instance => {
-            rfRef.current = instance;
-          }}
-          onNodesChange={handleNodesChange}
-          onEdgesChange={handleEdgesChange}
-          onConnect={onConnect}
-          isValidConnection={isValidConnection}
-          onNodeClick={onNodeClick}
-          onSelectionChange={onSelectionChange}
-          deleteKeyCode={DELETE_KEYS}
-          nodesDraggable
-          nodesConnectable
-          elementsSelectable
-          fitView
-          panOnScroll
-          zoomOnScroll>
-          <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-          <MiniMap pannable zoomable />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-
-        <NodeConfigDrawer
-          node={configNode}
-          onClose={handleCloseConfig}
-          onChange={updateNode}
-          connections={connections}
-          nodes={nodes}
-          edges={edges}
-          nodeLabelById={nodeLabelById}
-          onRemoveEdge={removeEdge}
-        />
-      </div>
+      </StepNumberContext.Provider>
     </CanvasActionsContext.Provider>
   );
 }
 
-export default memo(EditableFlowCanvas);
+export default memo(forwardRef(EditableFlowCanvas));

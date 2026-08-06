@@ -1,27 +1,21 @@
 //! Session JWT load and `Authorization` helpers for the TinyHumans API.
+//!
+//! Parsing and header formatting live in the vendored SDK
+//! (`tinyhumans_sdk::jwt`) — they are properties of the backend's token, not of
+//! this client, and every host needs them. Re-exported here so existing call
+//! sites keep one import path.
+//!
+//! What stays OpenHuman-specific is *where the token lives*: the credentials
+//! store, keyring, and auth-profile names below.
 
-use base64::Engine;
 use chrono::{DateTime, Utc};
 
-pub use crate::openhuman::credentials::session_support::get_session_token;
-pub use crate::openhuman::credentials::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+pub use tinyhumans_sdk::jwt::{bearer_authorization_value, decode_jwt_payload};
 
-/// Value for `Authorization: Bearer …` (matches backend expectations).
-pub fn bearer_authorization_value(token: &str) -> String {
-    format!("Bearer {}", token.trim())
-}
-
-/// Best-effort decode of a JWT payload without verifying the signature.
-pub fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
-    // JWT = header.payload.signature (base64url, no padding). Only the payload
-    // segment is needed.
-    let payload_b64 = token.trim().split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_b64))
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
+pub use crate::openhuman::security::credentials::session_support::get_session_token;
+pub use crate::openhuman::security::credentials::{
+    APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+};
 
 /// Best-effort decode of a JWT's `exp` (expiry) claim into a UTC timestamp.
 ///
@@ -37,49 +31,25 @@ pub fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 /// still 401s, caught by the `flatten_authed_error` net). Returns `None` for any
 /// non-JWT / malformed / `exp`-less token, in which case expiry tracking
 /// degrades to the previous behaviour (no local precheck).
+///
+/// The SDK returns Unix seconds so it needs no datetime dependency; this wraps
+/// that in the `chrono` type the credentials store already uses.
 pub fn decode_jwt_exp(token: &str) -> Option<DateTime<Utc>> {
-    let claims = decode_jwt_payload(token)?;
-    // `exp` is a NumericDate (seconds since epoch); accept int or float shapes.
-    let exp = claims
-        .get("exp")
-        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))?;
-    DateTime::<Utc>::from_timestamp(exp, 0)
+    DateTime::<Utc>::from_timestamp(tinyhumans_sdk::jwt::decode_jwt_exp_unix(token)?, 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_bearer_authorization_value() {
-        // Standard token
-        assert_eq!(bearer_authorization_value("my_token"), "Bearer my_token");
-
-        // Token with leading/trailing spaces
-        assert_eq!(
-            bearer_authorization_value("  spaced_token  "),
-            "Bearer spaced_token"
-        );
-
-        // Empty string
-        assert_eq!(bearer_authorization_value(""), "Bearer ");
-
-        // Whitespace only string
-        assert_eq!(bearer_authorization_value("   "), "Bearer ");
-
-        // Token with internal spaces (should not be trimmed)
-        assert_eq!(
-            bearer_authorization_value("token with spaces"),
-            "Bearer token with spaces"
-        );
-    }
-
     fn jwt_with_payload(payload_json: &str) -> String {
+        use base64::Engine;
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_json);
-        // header + signature are irrelevant to `decode_jwt_exp` (no verification).
         format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
     }
 
+    // The SDK owns the parsing rules and tests them directly. What matters here
+    // is that the `chrono` conversion this crate depends on stays correct.
     #[test]
     fn decode_jwt_exp_reads_integer_exp() {
         let token = jwt_with_payload(r#"{"sub":"u1","exp":1700000000}"#);
@@ -108,8 +78,8 @@ mod tests {
     fn decode_jwt_exp_none_for_non_jwt_or_garbage() {
         assert_eq!(decode_jwt_exp("not-a-jwt"), None);
         assert_eq!(decode_jwt_exp(""), None);
-        assert_eq!(decode_jwt_exp("a.b"), None); // payload "b" isn't valid base64 JSON
-                                                 // local offline session sentinel (not a JWT) must not panic / must be None
+        assert_eq!(decode_jwt_exp("a.b"), None);
+        // Local offline session sentinel (not a JWT) must not panic.
         assert_eq!(decode_jwt_exp("local-session-xyz"), None);
     }
 }

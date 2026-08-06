@@ -26,9 +26,9 @@ use tinyagents::harness::observability::{AgentObservation, LangfuseClient, Langf
 
 use crate::api::config::effective_backend_api_url;
 use crate::api::jwt::bearer_authorization_value;
+use crate::openhuman::agent::session_db::run_ledger::RunTelemetry;
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::session_support::require_live_session_token;
-use crate::openhuman::session_db::run_ledger::RunTelemetry;
+use crate::openhuman::security::credentials::session_support::require_live_session_token;
 
 use super::{SpanStatus, TraceContext, TraceSpan};
 

@@ -5,7 +5,7 @@ Authoritative TOML-backed configuration layer. Owns the `Config` schema (every d
 ## Public surface
 
 - `pub struct Config` — `schema/types.rs` (re-exported `mod.rs:28`) — top-level user settings.
-- Per-domain config structs (re-exported `mod.rs:28-39`): `AgentConfig`, `AuditConfig`, `AutocompleteConfig`, `AutonomyConfig`, `BrowserComputerUseConfig`, `BrowserConfig`, `CapabilityProviderConfig`, `ChannelsConfig`, `ComposioConfig`, `ContextConfig`, `CostConfig`, `CronConfig`, `CurlConfig`, `DelegateAgentConfig`, `DictationConfig`, `DiscordConfig`, `DockerRuntimeConfig`, `EmbeddingRouteConfig`, `GitbooksConfig`, `HeartbeatConfig`, `HttpRequestConfig`, `IMessageConfig`, `IntegrationsConfig`, `LarkConfig`, `LearningConfig`, `LocalAiConfig`, `MatrixConfig`, `MemoryConfig`, `ModelRouteConfig`, `MultimodalConfig`, `ObservabilityConfig`, `ProxyConfig`, `ReliabilityConfig`, `ResourceLimitsConfig`, `RuntimeConfig`, `SandboxConfig`, `SchedulerConfig`, `ScreenIntelligenceConfig`, `SecretsConfig`, `SecurityConfig`, `SlackConfig`, `StorageConfig`, `TelegramConfig`, `UpdateConfig`, `VoiceServerConfig`, `WebSearchConfig`, `WebhookConfig`.
+- Per-domain config structs (re-exported `mod.rs:28-39`): `AgentConfig`, `AuditConfig`, `AutocompleteConfig`, `AutonomyConfig`, `BrowserComputerUseConfig`, `BrowserConfig`, `CapabilityProviderConfig`, `ChannelsConfig`, `ComposioConfig`, `ContextConfig`, `CostConfig`, `CronConfig`, `CurlConfig`, `DelegateAgentConfig`, `DictationConfig`, `DiscordConfig`, `DockerRuntimeConfig`, `EmbeddingRouteConfig`, `GitbooksConfig`, `HeartbeatConfig`, `HttpRequestConfig`, `IMessageConfig`, `IntegrationsConfig`, `LarkConfig`, `LearningConfig`, `LocalAiConfig`, `MatrixConfig`, `MemoryConfig`, `ModelRouteConfig`, `MultimodalConfig`, `ObservabilityConfig`, `ProxyConfig`, `ReliabilityConfig`, `ResourceLimitsConfig`, `RuntimeConfig`, `SandboxConfig`, `SchedulerConfig`, `SecretsConfig`, `SecurityConfig`, `SlackConfig`, `StorageConfig`, `TelegramConfig`, `UpdateConfig`, `VoiceServerConfig`, `WebSearchConfig`, `WebhookConfig`.
 - Enums: `CapabilityProviderTrustState`, `DictationActivationMode`, `IntegrationToggle`, `ProxyScope`, `ReflectionSource`, `SandboxBackend`, `StorageProviderConfig`, `StorageProviderSection`, `StreamMode`, `VoiceActivationMode`.
 - Model constants: `DEFAULT_MODEL`, `MODEL_AGENTIC_V1`, `MODEL_CODING_V1`, `MODEL_REASONING_V1`.
 - `pub struct DaemonConfig` — `daemon.rs` — sidecar lifecycle / port descriptor.
@@ -13,18 +13,18 @@ Authoritative TOML-backed configuration layer. Owns the `Config` schema (every d
 - Workspace identity helpers: `pub fn clear_active_user`, `default_root_openhuman_dir`, `pre_login_user_dir`, `read_active_user_id`, `user_openhuman_dir`, `write_active_user_id`, `PRE_LOGIN_USER_ID` — `schema/identity_cost.rs`.
 - `pub mod ops` (re-exported as `rpc`) — `ops.rs` — RPC handlers and settings mutation.
 - `pub mod settings_cli` — `settings_cli.rs` — `openhuman settings ...` CLI surface.
-- RPC `config.{get_config, update_model_settings, update_memory_settings, update_screen_intelligence_settings, update_runtime_settings, update_browser_settings, resolve_api_url, get_runtime_flags, set_browser_allow_all, workspace_onboarding_flag_exists, workspace_onboarding_flag_set, update_analytics_settings, get_analytics_settings, update_meet_settings, get_meet_settings, agent_server_status, reset_local_data, get_onboarding_completed, get_dictation_settings, update_dictation_settings, get_voice_server_settings, update_voice_server_settings, set_onboarding_completed}` — `schemas.rs`.
+- RPC `config.{get_config, update_model_settings, update_memory_settings, update_runtime_settings, update_browser_settings, resolve_api_url, get_runtime_flags, set_browser_allow_all, workspace_onboarding_flag_exists, workspace_onboarding_flag_set, update_analytics_settings, get_analytics_settings, update_meet_settings, get_meet_settings, agent_server_status, reset_local_data, get_onboarding_completed, get_dictation_settings, update_dictation_settings, get_voice_server_settings, update_voice_server_settings, set_onboarding_completed}` — `schemas.rs`.
 
 ## Calls into
 
 - Std + serde TOML for serialization.
-- `src/openhuman/encryption/` indirectly when secrets sections need at-rest crypto (read direction only).
+- `src/openhuman/security/encryption/` indirectly when secrets sections need at-rest crypto (read direction only).
 - Filesystem under `~/.openhuman/<user-id>/` via `schema/identity_cost.rs`.
 
 ## Called by
 
 - ~177 sites across the workspace — every domain pulls `Config` for its slice.
-- Hot consumers: `src/openhuman/agent/` (model + autonomy), `src/openhuman/channels/` (provider tokens), `src/openhuman/memory/` (storage paths), `src/openhuman/cron/` (scheduler poll), `src/openhuman/inference/local/` (Ollama / device routing), `src/openhuman/security/` (sandbox backend), `src/openhuman/voice/`, `src/openhuman/notifications/`, `src/openhuman/tools/`, `src/openhuman/encryption/`, `src/openhuman/tree_summarizer/`, `src/openhuman/referral/`.
+- Hot consumers: `src/openhuman/agent/` (model + autonomy), `src/openhuman/channels/` (provider tokens), `src/openhuman/memory/` (storage paths), `src/openhuman/cron/` (scheduler poll), `src/openhuman/inference/local/` (Ollama / device routing), `src/openhuman/security/` (sandbox backend), `src/openhuman/voice/`, `src/openhuman/desktop/notifications/`, `src/openhuman/tools/`, `src/openhuman/security/encryption/`, `src/openhuman/tree_summarizer/`, `src/openhuman/hosted/referral/`.
 - `src/core/all.rs` — registers `all_config_*`.
 
 ## Tests

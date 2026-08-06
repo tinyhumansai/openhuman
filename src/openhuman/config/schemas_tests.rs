@@ -31,7 +31,6 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "get_config",
         "update_model_settings",
         "update_memory_settings",
-        "update_screen_intelligence_settings",
         "update_runtime_settings",
         "update_browser_settings",
         "update_local_ai_settings",

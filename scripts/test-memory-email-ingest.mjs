@@ -4,7 +4,7 @@
 //
 // Inputs:
 //   - A JSON file with the slim post-processed shape produced by
-//     `src/openhuman/composio/providers/gmail/post_process.rs`. Each entry
+//     `src/openhuman/memory/sync/composio/providers/gmail/post_process.rs`. Each entry
 //     under `messages[]` looks like:
 //       { id, threadId, subject, from, to, date, labels, markdown, attachments }
 //     Default fixture: tests/fixtures/memory/composio_gmail_inbox.json

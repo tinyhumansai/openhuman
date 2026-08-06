@@ -13,10 +13,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
-}));
-
 const fetchStatsMock = vi.fn();
 const getSettingsMock = vi.fn();
 const setSettingsMock = vi.fn();

@@ -64,8 +64,8 @@ impl SeltzSearchTool {
         timeout_secs: u64,
     ) -> Self {
         let timeout = timeout_secs.max(1);
-        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
-        let http_client = crate::openhuman::tls::tls_client_builder()
+        // Platform-appropriate TLS backend — see [`crate::openhuman::util::tls`].
+        let http_client = crate::openhuman::util::tls::tls_client_builder()
             .http1_only()
             .timeout(Duration::from_secs(timeout))
             .connect_timeout(Duration::from_secs(10))
@@ -118,10 +118,13 @@ impl SeltzSearchTool {
 
     fn render_results_markdown(&self, docs: &[SeltzDocument], query: &str) -> String {
         if docs.is_empty() {
-            return format!("_No results for `{query}`._");
+            return format!("_No results for `{query}`_ (via Seltz)");
         }
 
-        let mut out = format!("# Search results — `{query}`\n");
+        // Carry the shared `(via <Provider>)` attribution marker the plain-text
+        // renderer already emits, so the tool timeline can label the row
+        // (#5136). Production shows the markdown rendering.
+        let mut out = format!("# Search results — `{query}` (via Seltz)\n");
         for doc in docs.iter().take(self.max_results) {
             let title = doc
                 .title
@@ -423,6 +426,9 @@ mod tests {
     fn test_render_markdown_empty() {
         let result = tool().render_results_markdown(&[], "test");
         assert!(result.contains("No results"));
+        // A completed empty search still carries attribution, so the timeline
+        // labels the row instead of leaving it as in-progress (#5136).
+        assert!(result.trim_end().ends_with("(via Seltz)"));
     }
 
     #[test]
@@ -434,6 +440,9 @@ mod tests {
             published_date: Some("2026-01-01".into()),
         }];
         let result = tool().render_results_markdown(&docs, "test");
+        // The markdown renderer is what production shows, so it must carry the
+        // shared `(via <Provider>)` marker on its heading line (#5136).
+        assert!(result.lines().next().unwrap().ends_with("(via Seltz)"));
         assert!(result.contains("[Example](https://example.com)"));
         assert!(result.contains("Published: 2026-01-01"));
         assert!(result.contains("> Some content."));

@@ -7,13 +7,13 @@ description: >-
 icon: plug
 ---
 
-# MCP Registry (`src/openhuman/mcp_registry/`)
+# MCP Registry (`src/openhuman/mcp/registry/`)
 
-`src/openhuman/mcp_registry/` is the **dynamic, user-facing** half of OpenHuman's Model Context Protocol client support. It lets a user browse the supported upstream registries (Smithery and the official modelcontextprotocol registry), install a chosen server, persist that choice to SQLite, and (for servers launched as local subprocesses or HTTP-remote endpoints) supervise the connection lifecycle. Installed servers' tools are surfaced to agents via the unified tool registry (`crate::openhuman::tool_registry`).
+`src/openhuman/mcp/registry/` is the **dynamic, user-facing** half of OpenHuman's Model Context Protocol client support. It lets a user browse the supported upstream registries (Smithery and the official modelcontextprotocol registry), install a chosen server, persist that choice to SQLite, and (for servers launched as local subprocesses or HTTP-remote endpoints) supervise the connection lifecycle. Installed servers' tools are surfaced to agents via the unified tool registry (`crate::openhuman::tools::registry`).
 
 > **Naming note**: the Rust module path is `mcp_registry`, but the RPC namespace and on-disk SQLite filename are still `mcp_clients` for backward compatibility with existing frontend code and stored user state. Grep both names when chasing call sites.
 
-This module is paired with `src/openhuman/mcp_client/`: the **transport library** (HTTP + stdio primitives) plus the _static, config-declared_ server set read from `[[mcp_client.servers]]` in `config.toml`. Agents reach that static set through generic bridge tools. The static set is intentionally separate from this dynamic registry; both kinds will eventually share the transport primitives from `mcp_client`.
+This module is paired with `src/openhuman/mcp/config_servers/` + `src/openhuman/mcp/http_client/`: the **transport library** (HTTP + stdio primitives) plus the _static, config-declared_ server set read from `[[mcp_client.servers]]` in `config.toml`. Agents reach that static set through generic bridge tools. The static set is intentionally separate from this dynamic registry; both kinds will eventually share the transport primitives from `mcp::http_client`.
 
 ```text
                  ┌───────────────────────────────────────────────┐
@@ -38,7 +38,7 @@ This module is paired with `src/openhuman/mcp_client/`: the **transport library*
                                      │ for each local-spawn
                                      ▼
                           ┌──────────────────────┐
-                          │   connections.rs     │  wraps mcp_client::
+                          │   connections.rs     │  wraps http_client::
                           │  (global registry)   │  McpStdioClient
                           └──────────┬───────────┘
                                      │ surfaces tools to
@@ -51,7 +51,7 @@ This module is paired with `src/openhuman/mcp_client/`: the **transport library*
 An `InstalledServer` carries a `transport: Transport` discriminator (`types.rs`) with two variants:
 
 - **`Stdio`**: a local subprocess launched by `npx`, `uvx`, or a direct binary (see `types::CommandKind`), speaking **stdio JSON-RPC**.
-- **`HttpRemote { url }`**: a hosted server (the majority of what Smithery lists), dialled over streamable HTTP by `mcp_client::McpHttpClient`.
+- **`HttpRemote { url }`**: a hosted server (the majority of what Smithery lists), dialled over streamable HTTP by `mcp::http_client::McpHttpClient`.
 
 `connections.rs` dispatches on the transport. Both the manual install dialog (`mcp_clients_install`) and the setup-agent path (`mcp_setup_install_and_connect`) pick the best connection via `setup_ops::pick_connection` (published stdio → any stdio → published http_remote → any http_remote) and build the transport with `setup_ops::build_install_transport`, so the two paths behave identically.
 
@@ -66,8 +66,8 @@ An `InstalledServer` carries a `transport: Transport` discriminator (`types.rs`)
 | `types.rs`                  | Data structures: `InstalledServer`, `McpTool`, `ConnStatus`, Smithery DTOs, etc.                                                                       |
 | `store.rs`                  | SQLite persistence: `mcp_clients.db`, CRUD over `InstalledServer` rows.                                                                               |
 | `registry.rs`               | Smithery HTTP client with a 10-minute SQLite cache so re-browsing doesn't hammer the upstream registry.                                                |
-| `registries/`               | Adapters for the upstream registries this code can browse: Smithery (`smithery.rs`) + the official modelcontextprotocol registry (`mcp_official.rs`). Each reads optional auth config-first with an env-var fallback (`mcp_client.registry_auth`). |
-| `connections.rs`            | Global in-process connection registry. Wraps `crate::openhuman::mcp_client::McpStdioClient` (there is no separate stdio client implementation here).   |
+| `registries/`               | Adapters for the upstream registries this code can browse: Smithery (`smithery.rs`) + the official modelcontextprotocol registry (`mcp_official.rs`). Each reads optional auth config-first with an env-var fallback (`mcp_client.registry_auth` in TOML). |
+| `connections.rs`            | Global in-process connection registry. Wraps `crate::openhuman::mcp::config_servers::McpStdioClient` (there is no separate stdio client implementation here).   |
 | `boot.rs`                   | Boot-time spawn (`spawn_installed_servers`) called from `bootstrap_core_runtime`.                                                                      |
 | `setup.rs` / `setup_ops.rs` | "Setup agent" support: the small agent that walks a user through configuring a freshly installed server (env vars, secrets, first connect).           |
 | `ops.rs`                    | RPC handler implementations (install, uninstall, list, browse, enable / disable, etc.).                                                                |
@@ -92,8 +92,8 @@ Everything else (`boot`, `bus`, `connections`, `store`, `setup`, `setup_ops`) is
 
 ## Calls into
 
-- `crate::openhuman::mcp_client::McpStdioClient`: the actual stdio transport.
-- `crate::openhuman::tool_registry`: installed servers' tools land here so agents see them alongside native tools.
+- `crate::openhuman::mcp::config_servers::McpStdioClient`: the actual stdio transport.
+- `crate::openhuman::tools::registry`: installed servers' tools land here so agents see them alongside native tools.
 - `memory_store` / workspace SQLite, for `mcp_clients.db` persistence.
 - Smithery.ai HTTP, for registry browsing.
 
@@ -109,7 +109,7 @@ Unit tests are co-located inline under `#[cfg(test)]` blocks in `store.rs`, `con
 
 ## Related
 
-- [`mcp_registry/mod.rs`](https://github.com/tinyhumansai/openhuman/blob/main/src/openhuman/mcp_registry/mod.rs): the authoritative rustdoc this page mirrors.
-- `src/openhuman/mcp_client/`: the transport library + static config-declared server set.
+- [`mcp/registry/mod.rs`](https://github.com/tinyhumansai/openhuman/blob/main/src/openhuman/mcp/registry/mod.rs): the authoritative rustdoc this page mirrors.
+- `src/openhuman/mcp/config_servers/` + `src/openhuman/mcp/http_client/`: the transport library + static config-declared server set.
 - [Agent Harness](agent-harness.md): how the agent ends up calling MCP tools through `tool_registry`.
 - [Architecture overview](../architecture.md): where this fits in the wider system.

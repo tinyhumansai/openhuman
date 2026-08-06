@@ -34,8 +34,8 @@ use tinyplace::x402::{
 };
 use tinyplace::PaymentChallenge;
 
-use crate::openhuman::wallet::rpc::with_tinyplace_solana_endpoints;
-use crate::openhuman::wallet::{
+use crate::openhuman::web3::wallet::rpc::with_tinyplace_solana_endpoints;
+use crate::openhuman::web3::wallet::{
     execute_prepared, prepare_transfer, solana_cluster, tinyplace_solana_rpc_endpoints,
     ExecutePreparedParams, PrepareTransferParams, SolanaCluster, WalletChain,
 };

@@ -40,11 +40,14 @@ const TOAST_ICONS = {
   ),
 };
 
+// Use the theme-aware `surface` token, not the fixed-white `neutral-0`: with
+// `text-content` (near-white in dark mode) a hard-white background rendered as
+// white-on-white in dark mode.
 const TOAST_STYLES = {
-  success: 'bg-neutral-0 border-sage-500 text-content',
-  error: 'bg-neutral-0 border-coral-500 text-content',
-  warning: 'bg-neutral-0 border-amber-500 text-content',
-  info: 'bg-neutral-0 border-primary-500 text-content',
+  success: 'bg-surface border-sage-500 text-content',
+  error: 'bg-surface border-coral-500 text-content',
+  warning: 'bg-surface border-amber-500 text-content',
+  info: 'bg-surface border-primary-500 text-content',
 };
 
 const TOAST_ICON_STYLES = {
@@ -54,7 +57,7 @@ const TOAST_ICON_STYLES = {
   info: 'text-primary-500',
 };
 
-export function Toast({ notification, onRemove }: ToastProps) {
+function Toast({ notification, onRemove }: ToastProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
 

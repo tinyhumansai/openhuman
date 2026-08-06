@@ -4,7 +4,7 @@
 //! [`AgentObservation`] journal (the crate `AgentEvent` record) and folds it
 //! through the existing [`SpanCollector`], so trace spans no longer require the
 //! *live* in-run `AgentProgress` side-observer
-//! (`channels/providers/web/progress_bridge.rs`). A UI/supervisor can attach
+//! (`web_chat/progress_bridge.rs`). A UI/supervisor can attach
 //! after a run, read the journal, and rebuild identical spans.
 //!
 //! This is deliberately built on `SpanCollector` (not a re-derivation) so span
@@ -27,7 +27,7 @@ use tinyagents::harness::observability::AgentObservation;
 
 use super::{SpanCollector, TraceContext, TraceSpan};
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::tool_status::classify;
+use crate::openhuman::tools::status::classify;
 
 /// Mutable state threaded across a single run's observations while replaying.
 #[derive(Default)]

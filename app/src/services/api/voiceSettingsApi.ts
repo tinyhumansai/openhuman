@@ -18,7 +18,7 @@ import { callCoreRpc } from '../coreRpcClient';
 
 // ---- Domain types ----
 
-export type VoiceWorkloadId = 'stt' | 'tts';
+type VoiceWorkloadId = 'stt' | 'tts';
 
 /**
  * Structured reference to a voice provider. Parsed from wire-format strings.
@@ -53,12 +53,7 @@ export interface VoiceProviderView extends VoiceProviderCreds {
   has_api_key: boolean;
 }
 
-export interface VoiceModelInfo {
-  id: string;
-  label?: string | null;
-}
-
-export interface VoiceTestResult {
+interface VoiceTestResult {
   ok: boolean;
   detail: string;
   latency_ms?: number;
@@ -223,19 +218,6 @@ export async function saveVoiceSettings(prev: VoiceSettings, next: VoiceSettings
 function stripHasKey(p: VoiceProviderView): VoiceProviderCreds {
   const { has_api_key: _, ...rest } = p;
   return rest;
-}
-
-// ---- Model listing ----
-
-export async function listVoiceModels(
-  providerId: string,
-  capability?: VoiceWorkloadId
-): Promise<VoiceModelInfo[]> {
-  const result = await callCoreRpc<{ models: VoiceModelInfo[] }>({
-    method: 'openhuman.voice_list_models',
-    params: { provider_id: providerId, capability },
-  });
-  return result.models ?? [];
 }
 
 // ---- Provider testing ----

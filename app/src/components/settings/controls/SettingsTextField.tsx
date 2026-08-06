@@ -2,7 +2,7 @@ import { forwardRef } from 'react';
 
 import Input, { type InputProps } from '../../ui/Input';
 
-export interface SettingsTextFieldProps extends InputProps {
+interface SettingsTextFieldProps extends InputProps {
   mono?: boolean;
 }
 

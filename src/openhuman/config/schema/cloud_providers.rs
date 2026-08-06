@@ -348,7 +348,7 @@ impl AuthStyle {
 /// Endpoint config for one cloud LLM provider.
 ///
 /// **Note on secrets**: API keys are NOT stored on this struct. They live in
-/// `auth-profiles.json` via [`crate::openhuman::credentials::AuthService`],
+/// `auth-profiles.json` via [`crate::openhuman::security::credentials::AuthService`],
 /// keyed by `provider:<slug>` (falling back to bare `<slug>` for legacy
 /// entries). The factory looks up the token at call time via
 /// [`crate::openhuman::inference::provider::factory::auth_key_for_slug`].

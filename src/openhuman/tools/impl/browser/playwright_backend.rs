@@ -354,9 +354,6 @@ fn action_to_args(action: BrowserAction, url_policy: Option<BrowserUrlPolicy>) -
         }
         BrowserAction::GetTitle => json!({ "action": "get_title" }),
         BrowserAction::GetUrl => json!({ "action": "get_url" }),
-        BrowserAction::Screenshot { path, full_page } => {
-            json!({ "action": "screenshot", "path": path, "full_page": full_page })
-        }
         BrowserAction::Wait { selector, ms, text } => {
             json!({ "action": "wait", "selector": selector, "ms": ms, "text": text })
         }

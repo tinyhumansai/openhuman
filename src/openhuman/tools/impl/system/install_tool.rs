@@ -119,7 +119,7 @@ impl Tool for InstallToolTool {
         // the web-chat path); background / triage / cron turns bypass the gate
         // entirely. Fail closed there — a doomed retry is short-circuited by the
         // `[policy-denied]` marker.
-        if crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+        if crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT
             .try_with(|_| ())
             .is_err()
         {
@@ -246,7 +246,7 @@ impl Tool for InstallToolTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+    use crate::openhuman::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
     use crate::openhuman::security::AutonomyLevel;
 
     fn policy(allow_install: bool, autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {

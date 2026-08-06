@@ -47,7 +47,8 @@ describe('fetchAndHydrateTurnHistory', () => {
     requestId: string,
     lifecycle: string,
     startedAt: string,
-    tools: number
+    tools: number,
+    transcript?: Array<Record<string, unknown>>
   ) => ({
     threadId: 'thread-hist',
     requestId,
@@ -62,6 +63,7 @@ describe('fetchAndHydrateTurnHistory', () => {
       round: 0,
       status: 'success' as const,
     })),
+    ...(transcript ? { transcript } : {}),
     startedAt,
     updatedAt: startedAt,
   });
@@ -87,10 +89,43 @@ describe('fetchAndHydrateTurnHistory', () => {
     expect(timelines['req-0']).toBeUndefined();
   });
 
+  it("keeps each past turn's reasoning/narration transcript (fix 1), ordered by seq (fix 5)", async () => {
+    const store = configureStore({ reducer });
+    mockThreadApi.getTurnStateHistory.mockResolvedValueOnce([
+      // req-latest is skipped (index 0).
+      persistedTurn('req-latest', 'completed', '2026-06-04T13:00:00Z', 1),
+      // req-a: has tools AND a transcript, deliberately out of seq order.
+      persistedTurn('req-a', 'completed', '2026-06-04T12:00:00Z', 1, [
+        { kind: 'narration', round: 0, seq: 1, text: 'second' },
+        { kind: 'thinking', round: 0, seq: 0, text: 'first' },
+      ]),
+      // req-b: a tool-LESS turn that only thought/narrated — must still be kept
+      // for its transcript rather than dropped.
+      persistedTurn('req-b', 'completed', '2026-06-04T11:00:00Z', 0, [
+        { kind: 'thinking', round: 0, seq: 0, text: 'only thinking, no tools' },
+      ]),
+    ]);
+
+    await store.dispatch(fetchAndHydrateTurnHistory('thread-hist'));
+
+    const transcripts = store.getState().turnTranscriptsByThread['thread-hist'];
+    expect(Object.keys(transcripts).sort()).toEqual(['req-a', 'req-b']);
+    // Ordered by persisted `seq`, not wire order.
+    expect(transcripts['req-a'].map(i => ('text' in i ? i.text : undefined))).toEqual([
+      'first',
+      'second',
+    ]);
+    // The tool-less turn is retained purely for its transcript.
+    const timelines = store.getState().turnTimelinesByThread['thread-hist'];
+    expect(timelines['req-b']).toBeUndefined();
+    expect(transcripts['req-b']).toHaveLength(1);
+  });
+
   it('swallows transport failures without throwing', async () => {
     const store = configureStore({ reducer });
     mockThreadApi.getTurnStateHistory.mockRejectedValueOnce(new Error('boom'));
     await expect(store.dispatch(fetchAndHydrateTurnHistory('t'))).resolves.toBeDefined();
     expect(store.getState().turnTimelinesByThread['t']).toBeUndefined();
+    expect(store.getState().turnTranscriptsByThread['t']).toBeUndefined();
   });
 });

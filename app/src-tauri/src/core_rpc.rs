@@ -81,22 +81,35 @@ pub(crate) async fn relay_http_rpc(
     token: Option<String>,
     body: String,
 ) -> Result<RelayHttpResponse, String> {
+    post_json_rpc(&url, token.as_deref(), body).await
+}
+
+/// Transport core of [`relay_http_rpc`]: POST a JSON body to `url` with an
+/// optional bearer, returning the upstream status + body verbatim. Factored out
+/// so in-process shell callers (e.g. the desktop companion pipeline) can reach
+/// the local core over the same path the renderer's relay uses, without going
+/// through the Tauri command boundary.
+pub(crate) async fn post_json_rpc(
+    url: &str,
+    token: Option<&str>,
+    body: String,
+) -> Result<RelayHttpResponse, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
     let mut builder = client
-        .post(&url)
+        .post(url)
         .header("Content-Type", "application/json")
         .body(body);
 
-    let bearer = relay_bearer_header(token.as_deref());
+    let bearer = relay_bearer_header(token);
     if let Some(value) = bearer.as_deref() {
         builder = builder.header("Authorization", value);
     }
 
-    let safe_url = redact_url_for_log(&url);
+    let safe_url = redact_url_for_log(url);
     log::debug!(
         "[core_rpc][relay] POST {safe_url} (auth={})",
         bearer.is_some()
@@ -116,6 +129,58 @@ pub(crate) async fn relay_http_rpc(
         text.len()
     );
     Ok(RelayHttpResponse { status, body: text })
+}
+
+/// Invoke a core JSON-RPC method against the embedded local core, returning the
+/// inner result value. Handles building the JSON-RPC envelope, applying the
+/// per-launch bearer, and unwrapping the `{ "result": <v>, "logs": [...] }`
+/// `RpcOutcome` envelope some core handlers emit.
+pub(crate) async fn call_core_rpc(
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let url = core_rpc_url_value();
+    let token = crate::core_process::current_rpc_token();
+    let envelope = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+    let resp = post_json_rpc(&url, token.as_deref(), envelope.to_string()).await?;
+    if !(200..300).contains(&resp.status) {
+        return Err(format!("core rpc {method} returned status {}", resp.status));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&resp.body)
+        .map_err(|e| format!("core rpc {method}: invalid JSON response: {e}"))?;
+    if let Some(err) = parsed.get("error") {
+        if !err.is_null() {
+            return Err(format!("core rpc {method} error: {err}"));
+        }
+    }
+    let result = parsed
+        .get("result")
+        .cloned()
+        .ok_or_else(|| format!("core rpc {method}: response has no result field"))?;
+    Ok(unwrap_rpc_outcome(result))
+}
+
+/// Unwrap the `{ "result": <value>, "logs": [...] }` `RpcOutcome` envelope that
+/// logged core handlers wrap their payload in; passes bare values through
+/// unchanged.
+fn unwrap_rpc_outcome(value: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = value.as_object() {
+        if obj.len() == 2
+            && obj.contains_key("result")
+            && obj.get("logs").map(|l| l.is_array()).unwrap_or(false)
+        {
+            return obj
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+        }
+    }
+    value
 }
 
 #[cfg(test)]

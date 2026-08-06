@@ -31,7 +31,7 @@ export const RATE_LIMIT_CONFIG = {
 // Tool classification
 // ---------------------------------------------------------------------------
 
-export type ToolTier = 'state_only' | 'api_read' | 'api_write';
+type ToolTier = 'state_only' | 'api_read' | 'api_write';
 
 /**
  * Tools that ONLY read from cached Redux state — zero Telegram API calls.
@@ -206,9 +206,6 @@ export function isStateOnlyTool(toolName: string): boolean {
 export function isHeavyTool(toolName: string): boolean {
   return API_WRITE_TOOLS.has(toolName);
 }
-
-/** @deprecated Use isStateOnlyTool instead */
-export const isReadOnlyTool = isStateOnlyTool;
 
 /**
  * Reset the per-request call counter. Call at the start of each new

@@ -1,6 +1,6 @@
 /**
  * Imperative RPC wrapper for the Recall.ai Calendar domain — typed counterpart
- * to `src/openhuman/recall_calendar/*` on the Rust side.
+ * to `src/openhuman/integrations/recall_calendar/*` on the Rust side.
  *
  * Every function calls the core via JSON-RPC. The core proxies to the
  * openhuman backend's `/agent-integrations/recall-calendar/*` routes, so the
@@ -34,11 +34,11 @@ export interface RecallCalendarStatus {
   email?: string;
 }
 
-export interface RecallCalendarConnect {
+interface RecallCalendarConnect {
   connectUrl: string;
 }
 
-export interface RecallCalendarDisconnect {
+interface RecallCalendarDisconnect {
   disconnected: boolean;
 }
 

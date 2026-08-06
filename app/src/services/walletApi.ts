@@ -6,7 +6,7 @@ export type WalletSetupSource = 'generated' | 'imported';
 /**
  * A single balance row returned by wallet.balances.
  * Field names match the camelCase serde output of BalanceInfo in
- * src/openhuman/wallet/execution.rs.
+ * src/openhuman/web3/wallet/execution.rs.
  */
 export interface BalanceInfo {
   chain: WalletChain;
@@ -40,7 +40,7 @@ export interface WalletStatus {
   updatedAtMs: number | null;
 }
 
-export interface SetupWalletParams {
+interface SetupWalletParams {
   consentGranted: boolean;
   source: WalletSetupSource;
   mnemonicWordCount: number;
@@ -95,7 +95,7 @@ export const fetchWalletBalances = async (): Promise<BalanceInfo[]> => {
 // returns a quote (with the simulated fee) that must then be confirmed via
 // `executePrepared`, which signs locally and broadcasts. Signing never leaves
 // the core. Field names mirror the camelCase serde output in
-// src/openhuman/wallet/execution.rs.
+// src/openhuman/web3/wallet/execution.rs.
 // ---------------------------------------------------------------------------
 
 /** EVM network selector accepted by prepare_transfer / tx queries. */
@@ -137,7 +137,7 @@ export interface ExecutionResult {
   transaction: PreparedTransaction;
 }
 
-export interface PrepareTransferParams {
+interface PrepareTransferParams {
   chain: WalletChain;
   toAddress: string;
   /** Amount in the asset's smallest unit (wei / sat / lamport / sun). */
@@ -175,7 +175,7 @@ export const executePrepared = async (quoteId: string): Promise<ExecutionResult>
   return response.result;
 };
 
-export interface RevealRecoveryPhraseResult {
+interface RevealRecoveryPhraseResult {
   phrase: string;
   wordCount: number;
 }

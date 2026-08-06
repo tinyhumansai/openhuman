@@ -58,7 +58,11 @@ async function defaultMessagingChannelFromStore(): Promise<string | null> {
   });
 }
 
-describe('Settings - Feature Preferences', () => {
+describe('Settings - Feature Preferences', function () {
+  // WebdriverIO wraps hooks before entering their bodies, so a hook-local
+  // timeout cannot extend the wrapper's default 30-second budget.
+  this.timeout(90_000);
+
   before(async () => {
     await startMockServer();
     await waitForApp();
@@ -69,16 +73,25 @@ describe('Settings - Feature Preferences', () => {
     await stopMockServer();
   });
 
-  it('renders the screen-awareness settings route', async () => {
-    // The combined "Features" hub was retired: screen-awareness, notifications,
-    // and tools are now independent sidebar entries. The legacy /settings/features
-    // slug redirects to /settings/screen-intelligence (see Settings.tsx), which
-    // renders the Screen Awareness panel.
-    await navigateViaHash('/settings/features');
+  it('falls through removed feature routes to settings home', async () => {
+    for (const route of [
+      '/settings/features',
+      '/settings/screen-intelligence',
+      '/settings/screen-awareness-debug',
+    ]) {
+      await navigateViaHash(route);
+      await browser.waitUntil(
+        async () => {
+          const hash = await browser.execute(() => window.location.hash);
+          return hash === '#/settings' || hash === '#/settings/account';
+        },
+        { timeout: 15_000, timeoutMsg: `${route} did not normalize to the settings index` }
+      );
 
-    // ScreenIntelligencePanel renders SettingsSection title
-    // t('settings.features.screenAwareness') = 'Screen awareness'.
-    await waitForText('Screen awareness', 15_000);
+      const bodyText = await browser.$('body').getText();
+      expect(bodyText).not.toContain('Screen Intelligence');
+      expect(bodyText).not.toContain('Screen Awareness Debug');
+    }
   });
 
   it('persists the default messaging channel through redux state', async () => {

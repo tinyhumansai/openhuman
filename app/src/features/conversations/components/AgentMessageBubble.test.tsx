@@ -41,6 +41,18 @@ describe('AgentMessageBubble markdown links', () => {
     expect(mocks.openWorkspacePath).not.toHaveBeenCalled();
   });
 
+  test('wraps a long auto-linked URL so it cannot overflow the bubble', () => {
+    // A bare URL is auto-linked by GFM; without an overflow-wrap rule the long
+    // unbreakable token expands past the bubble edge and gets clipped.
+    render(
+      <BubbleMarkdown content="https://github.com/tinyhumansai/openhuman/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc" />
+    );
+
+    const link = screen.getByRole('link');
+    expect(link.className).toContain('[overflow-wrap:anywhere]');
+    expect(link.className).toContain('break-words');
+  });
+
   test('opens workspace links through the Tauri workspace path command', async () => {
     render(<BubbleMarkdown content="[summary](workspace:memory_tree/content/summary.md)" />);
 

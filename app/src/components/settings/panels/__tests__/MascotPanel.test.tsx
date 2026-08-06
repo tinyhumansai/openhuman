@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { REHYDRATE } from 'redux-persist';
@@ -15,15 +15,24 @@ import mascotReducer, {
 } from '../../../../store/mascotSlice';
 import MascotPanel from '../MascotPanel';
 
-const { mockNavigateBack, useMascotManifestMock, mockSynthesizeSpeech } = vi.hoisted(() => ({
-  mockNavigateBack: vi.fn(),
-  useMascotManifestMock: vi.fn(),
-  mockSynthesizeSpeech: vi.fn(),
-}));
+const { mockNavigateBack, useMascotManifestMock, mockSynthesizeSpeech, mockFileToDataUri } =
+  vi.hoisted(() => ({
+    mockNavigateBack: vi.fn(),
+    useMascotManifestMock: vi.fn(),
+    mockSynthesizeSpeech: vi.fn(),
+    mockFileToDataUri: vi.fn(),
+  }));
 
 vi.mock('../../../../features/human/Mascot/manifest/useMascotManifest', () => ({
   useMascotManifest: () => useMascotManifestMock(),
 }));
+
+// Keep the real MIME/size guards (`isAllowedMimeType`, the byte cap); only the
+// FileReader-backed data-URL read is stubbed so the upload path is assertable.
+vi.mock('../../../../lib/attachments', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../../lib/attachments')>();
+  return { ...actual, fileToDataUri: (...args: unknown[]) => mockFileToDataUri(...args) };
+});
 
 vi.mock('../../../../features/human/voice/ttsClient', () => ({
   synthesizeSpeech: (...args: unknown[]) => mockSynthesizeSpeech(...args),
@@ -283,7 +292,21 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
       );
     });
 
-    it('rejects non-GIF avatar sources in the panel', () => {
+    it('accepts a PNG avatar URL in the panel (issue #5360)', () => {
+      const { store } = renderPanel();
+      fireEvent.change(screen.getByTestId('mascot-custom-gif-input'), {
+        target: { value: 'https://example.com/avatar.png' },
+      });
+      fireEvent.click(screen.getByTestId('mascot-custom-gif-save'));
+
+      expect(store.getState().mascot.customMascotGifUrl).toBe('https://example.com/avatar.png');
+      expect(screen.getByTestId('custom-gif-mascot')).toHaveAttribute(
+        'src',
+        'https://example.com/avatar.png'
+      );
+    });
+
+    it('rejects unsafe avatar sources in the panel', () => {
       const { store } = renderPanel();
       fireEvent.change(screen.getByTestId('mascot-custom-gif-input'), {
         target: { value: 'https://example.com/avatar.svg' },
@@ -291,7 +314,105 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
       fireEvent.click(screen.getByTestId('mascot-custom-gif-save'));
 
       expect(store.getState().mascot.customMascotGifUrl).toBeNull();
-      expect(screen.getByTestId('mascot-custom-gif-error')).toHaveTextContent('HTTPS .gif');
+      expect(screen.getByTestId('mascot-custom-gif-error')).toHaveTextContent(/image URL/i);
+    });
+
+    it('uploads a local image file as a data-URL avatar (issue #5360)', async () => {
+      mockFileToDataUri.mockResolvedValue('data:image/png;base64,AAAA');
+      const { store } = renderPanel();
+      const file = new File(['x'], 'avatar.png', { type: 'image/png' });
+      fireEvent.change(screen.getByTestId('mascot-custom-image-input'), {
+        target: { files: [file] },
+      });
+
+      const preview = await screen.findByTestId('custom-gif-mascot');
+      expect(store.getState().mascot.customMascotGifUrl).toBe('data:image/png;base64,AAAA');
+      expect(preview).toHaveAttribute('src', 'data:image/png;base64,AAAA');
+      expect(mockFileToDataUri).toHaveBeenCalledTimes(1);
+    });
+
+    it('uploads a BMP file as a data-URL avatar (issue #5360)', async () => {
+      mockFileToDataUri.mockResolvedValue('data:image/bmp;base64,AAAA');
+      const { store } = renderPanel();
+      const file = new File(['x'], 'avatar.bmp', { type: 'image/bmp' });
+      fireEvent.change(screen.getByTestId('mascot-custom-image-input'), {
+        target: { files: [file] },
+      });
+
+      const preview = await screen.findByTestId('custom-gif-mascot');
+      expect(store.getState().mascot.customMascotGifUrl).toBe('data:image/bmp;base64,AAAA');
+      expect(preview).toHaveAttribute('src', 'data:image/bmp;base64,AAAA');
+    });
+
+    it('discards an upload superseded by Reset while the file was still reading', async () => {
+      // Hold the read open so Reset lands between the pick and the resolve —
+      // the slower read must not resurrect the avatar the user just cleared.
+      let resolveRead: (uri: string) => void = () => {};
+      mockFileToDataUri.mockReturnValue(
+        new Promise<string>(resolve => {
+          resolveRead = resolve;
+        })
+      );
+      const store = buildStore();
+      store.dispatch(setCustomMascotGifUrl('https://example.com/old.gif'));
+      renderPanel(store);
+
+      const file = new File(['x'], 'avatar.png', { type: 'image/png' });
+      fireEvent.change(screen.getByTestId('mascot-custom-image-input'), {
+        target: { files: [file] },
+      });
+      fireEvent.click(screen.getByTestId('mascot-custom-gif-reset'));
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
+
+      await act(async () => {
+        resolveRead('data:image/png;base64,AAAA');
+      });
+
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
+    });
+
+    it('rejects an oversize upload without reading it', async () => {
+      const { store } = renderPanel();
+      const big = new File(['x'], 'big.png', { type: 'image/png' });
+      // 1.5 MB cap + 1 byte — override size rather than allocating the bytes.
+      Object.defineProperty(big, 'size', { value: 1.5 * 1024 * 1024 + 1 });
+      fireEvent.change(screen.getByTestId('mascot-custom-image-input'), {
+        target: { files: [big] },
+      });
+
+      await screen.findByTestId('mascot-custom-gif-error');
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
+      expect(mockFileToDataUri).not.toHaveBeenCalled();
+    });
+
+    it('rejects an upload with an unsupported type without reading it', async () => {
+      const { store } = renderPanel();
+      const svg = new File(['<svg/>'], 'a.svg', { type: 'image/svg+xml' });
+      fireEvent.change(screen.getByTestId('mascot-custom-image-input'), {
+        target: { files: [svg] },
+      });
+
+      await screen.findByTestId('mascot-custom-gif-error');
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
+      expect(mockFileToDataUri).not.toHaveBeenCalled();
+    });
+
+    it('keeps the URL box blank for an uploaded data-URL avatar on mount (issue #5360)', () => {
+      const store = buildStore();
+      store.dispatch(setCustomMascotGifUrl('data:image/png;base64,AAAA'));
+      renderPanel(store);
+
+      // The ~2 MB base64 is not dumped into the URL box, but the avatar previews.
+      expect(screen.getByTestId('mascot-custom-gif-input')).toHaveValue('');
+      expect(screen.getByTestId('custom-gif-mascot')).toHaveAttribute(
+        'src',
+        'data:image/png;base64,AAAA'
+      );
+      // Empty box means "no URL change", so Save stays disabled (no accidental
+      // clear); Reset is the way to drop an uploaded avatar.
+      expect(screen.getByTestId('mascot-custom-gif-save')).toBeDisabled();
+      fireEvent.click(screen.getByTestId('mascot-custom-gif-reset'));
+      expect(store.getState().mascot.customMascotGifUrl).toBeNull();
     });
 
     it('selecting a mascot clears the custom GIF avatar', () => {

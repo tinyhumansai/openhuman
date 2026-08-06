@@ -108,7 +108,7 @@ function statusStyle(status: ToolTimelineEntryStatus): {
   }
 }
 
-export interface BackgroundProcessesPanelProps {
+interface BackgroundProcessesPanelProps {
   open: boolean;
   processes: BackgroundProcess[];
   onClose: () => void;

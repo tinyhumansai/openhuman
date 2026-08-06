@@ -7,7 +7,7 @@
 use serde_json::{json, Value};
 
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::wallet::{self, EvmNetwork, WalletChain};
+use crate::openhuman::web3::wallet::{self, EvmNetwork, WalletChain};
 use crate::rpc::RpcOutcome;
 
 use super::client::CryptoClient;

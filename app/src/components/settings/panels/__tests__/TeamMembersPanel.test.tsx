@@ -60,7 +60,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({ default: () => null }));
 vi.mock('../../components/SettingsBackButton', () => ({ default: () => null }));
 
 vi.mock('react-router-dom', () => ({
@@ -112,6 +111,14 @@ function setupState(
     teamMembersById: { 'team-1': members },
     refreshTeamMembers: refreshMembers,
   } as never);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(res => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -174,8 +181,42 @@ describe('TeamMembersPanel — role change modal (lines 214, 312, 329, 340)', ()
 
     // Change-role modal opens
     await waitFor(() => {
-      expect(screen.getByText('Change Role')).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'Change Role' })).toBeInTheDocument();
     });
+  });
+
+  it('closes the role-change dialog with Escape while idle', async () => {
+    setupState({ members: [makeMember()] });
+    render(<TeamMembersPanel />);
+
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Role selector' }), {
+      target: { value: 'ADMIN' },
+    });
+    await screen.findByRole('dialog', { name: 'Change Role' });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Change Role' })).not.toBeInTheDocument();
+  });
+
+  it('cannot close or double-submit the role-change dialog while busy', async () => {
+    const request = deferred<object>();
+    mockChangeRole.mockReturnValue(request.promise);
+    setupState({ members: [makeMember()] });
+    render(<TeamMembersPanel />);
+
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Role selector' }), {
+      target: { value: 'ADMIN' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByRole('button', { name: 'Changing...' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Changing...' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('dialog').parentElement!);
+
+    expect(mockChangeRole).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Change Role' })).toBeInTheDocument();
+    request.resolve({});
   });
 
   it('shows admin-grant warning when promoting to ADMIN (line 329)', async () => {
@@ -272,10 +313,40 @@ describe('TeamMembersPanel — remove member modal (lines 259, 283)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Remove Test User/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('Remove member')).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'Remove member' })).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText('Cancel'));
     expect(screen.queryByText('Remove member')).not.toBeInTheDocument();
+  });
+
+  it('closes the remove-member dialog with Escape while idle', async () => {
+    setupState({ members: [makeMember()] });
+    render(<TeamMembersPanel />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Remove Test User/ }));
+    await screen.findByRole('dialog', { name: 'Remove member' });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Remove member' })).not.toBeInTheDocument();
+  });
+
+  it('cannot close or double-submit the remove-member dialog while busy', async () => {
+    const request = deferred<object>();
+    mockRemoveMember.mockReturnValue(request.promise);
+    setupState({ members: [makeMember()] });
+    render(<TeamMembersPanel />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Remove Test User/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    expect(await screen.findByRole('button', { name: 'Removing...' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removing...' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('dialog').parentElement!);
+
+    expect(mockRemoveMember).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Remove member' })).toBeInTheDocument();
+    request.resolve({});
   });
 
   it('shows error banner inside remove modal on API failure (line 259)', async () => {

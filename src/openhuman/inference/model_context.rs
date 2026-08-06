@@ -64,7 +64,7 @@ pub fn context_window_for_model(model: &str) -> Option<u64> {
         return Some(window);
     }
 
-    if let Some(price) = crate::openhuman::cost::catalog::lookup(normalized) {
+    if let Some(price) = crate::openhuman::platform::cost::catalog::lookup(normalized) {
         tracing::debug!(
             model = normalized,
             catalog_model = price.model_id,

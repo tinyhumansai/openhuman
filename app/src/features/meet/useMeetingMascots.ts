@@ -38,14 +38,14 @@ export type MeetingPhase = 'greeting' | 'active' | 'signoff';
 /** Which slot is producing the audio the call currently hears. */
 export type ActiveMascotSlot = 0 | 1;
 
-export interface MeetingMascotSlotRender {
+interface MeetingMascotSlotRender {
   /** Manifest mascot id, or `null` for the primary on the default mascot. */
   mascotId: string | null;
   /** MascotFace to render this tick. */
   face: MascotFace;
 }
 
-export interface MeetingMascotsRenderState {
+interface MeetingMascotsRenderState {
   /** True when a distinct second mascot is enabled (drives dual composite). */
   dualEnabled: boolean;
   primary: MeetingMascotSlotRender;
@@ -94,7 +94,7 @@ function dualSlotFace(slot: ActiveMascotSlot, input: UseMeetingMascotsInput): Ma
  * the face table can be exercised directly (the hook is a thin redux wrapper
  * over it).
  */
-export function computeMeetingMascotsRenderState(
+function computeMeetingMascotsRenderState(
   dualEnabled: boolean,
   primaryMascotId: string | null,
   secondaryMascotId: string | null,

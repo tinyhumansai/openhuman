@@ -19,20 +19,14 @@ use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::inference::local::LocalAiService;
-use openhuman_core::openhuman::inference::provider::compatible::{
-    AuthStyle as CompatibleAuthStyle, OpenAiCompatibleProvider,
-};
 use openhuman_core::openhuman::inference::provider::factory::{
-    auth_key_for_slug, create_chat_provider_from_string, provider_for_role,
+    auth_key_for_slug, create_chat_model_from_string_with_model_id, provider_for_role,
 };
-use openhuman_core::openhuman::inference::provider::{
-    list_configured_models, sanitize_api_error, ChatMessage, ChatRequest, Provider, ProviderDelta,
-};
-use openhuman_core::openhuman::tools::ToolSpec;
+use openhuman_core::openhuman::inference::provider::{list_configured_models, sanitize_api_error};
 
 #[derive(Clone, Default)]
 struct MockState {
@@ -79,127 +73,7 @@ fn __shared_env_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[tokio::test]
-async fn compatible_provider_covers_chat_responses_streaming_tools_and_errors() {
-    let _env_lock = __shared_env_lock();
-    let (base, state) = serve_mock().await;
-    let provider = OpenAiCompatibleProvider::new_with_user_agent(
-        "custom_openai",
-        &format!("{base}/v1"),
-        Some("sk-test-secret"),
-        CompatibleAuthStyle::Bearer,
-        "round15-agent",
-    )
-    .with_temperature_unsupported_models(vec!["cold-*".to_string()])
-    .with_temperature_override(Some(0.7));
-
-    let simple = provider
-        .chat_with_system(Some("system"), "hello", "demo-chat", 0.2)
-        .await
-        .expect("chat_with_system");
-    assert_eq!(simple, "chat:demo-chat");
-
-    let history = provider
-        .chat_with_history(
-            &[ChatMessage::system("rules"), ChatMessage::user("history")],
-            "responses-only",
-            0.3,
-        )
-        .await
-        .expect("responses fallback");
-    assert_eq!(history, "responses fallback text");
-
-    let tools = vec![ToolSpec {
-        name: "lookup".to_string(),
-        description: "lookup a thing".to_string(),
-        parameters: json!({
-            "type": "object",
-            "properties": { "query": { "type": "string" } },
-            "required": ["query"]
-        }),
-    }];
-    let native = provider
-        .chat(
-            ChatRequest {
-                messages: &[ChatMessage::user("use a tool")],
-                tools: Some(&tools),
-                stream: None,
-                max_tokens: None,
-            },
-            "tool-model",
-            0.1,
-        )
-        .await
-        .expect("native tools");
-    assert_eq!(native.text.as_deref(), Some("tool response"));
-    assert_eq!(native.tool_calls.len(), 1);
-    assert_eq!(native.tool_calls[0].name, "lookup");
-    assert_eq!(native.tool_calls[0].arguments, r#"{"query":"openhuman"}"#);
-    let usage = native.usage.expect("usage");
-    assert_eq!(usage.input_tokens, 11);
-    assert_eq!(usage.output_tokens, 7);
-    assert_eq!(usage.cached_input_tokens, 3);
-    assert!((usage.charged_amount_usd - 0.0042).abs() < f64::EPSILON);
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(16);
-    let streamed = provider
-        .chat(
-            ChatRequest {
-                messages: &[ChatMessage::user("stream it")],
-                tools: Some(&tools),
-                stream: Some(&tx),
-                max_tokens: None,
-            },
-            "stream-model",
-            0.1,
-        )
-        .await
-        .expect("streaming native chat");
-    drop(tx);
-    assert_eq!(streamed.text.as_deref(), Some("hello world"));
-    assert_eq!(streamed.reasoning_content.as_deref(), Some("thinking"));
-    assert_eq!(streamed.tool_calls.len(), 1);
-
-    let deltas = collect_deltas(&mut rx).await;
-    assert!(deltas
-        .iter()
-        .any(|d| matches!(d, ProviderDelta::TextDelta { delta } if delta == "hello ")));
-    assert!(deltas
-        .iter()
-        .any(|d| matches!(d, ProviderDelta::ThinkingDelta { delta } if delta == "thinking")));
-    assert!(deltas.iter().any(
-        |d| matches!(d, ProviderDelta::ToolCallStart { tool_name, .. } if tool_name == "lookup")
-    ));
-
-    let err = provider
-        .chat_with_system(None, "boom", "budget-model", 0.2)
-        .await
-        .expect_err("budget error");
-    assert!(err.to_string().contains("budget exhausted"));
-    assert_eq!(
-        sanitize_api_error("leaked sk-abcdef ghp_secret-token"),
-        "leaked [REDACTED] [REDACTED]"
-    );
-
-    let cold = provider
-        .chat_with_system(None, "no temperature", "cold-no-temp", 0.2)
-        .await
-        .expect("temperature omitted");
-    assert_eq!(cold, "chat:cold-no-temp");
-
-    let seen = state.requests.lock().expect("requests");
-    assert!(seen.iter().any(|(path, auth, _)| {
-        path == "/v1/chat/completions" && auth.as_deref() == Some("Bearer sk-test-secret")
-    }));
-    assert!(seen
-        .iter()
-        .any(|(path, _, body)| path == "/v1/responses" && body["instructions"] == "rules"));
-    assert!(seen.iter().any(|(_, _, body)| {
-        body.get("temperature").is_none() && body["model"] == "cold-no-temp"
-    }));
-}
-
-#[tokio::test]
+ #[tokio::test]
 async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes() {
     let _env_lock = __shared_env_lock();
     let (base, _state) = serve_mock().await;
@@ -297,16 +171,23 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
     );
 
     let (_provider, model) =
-        create_chat_provider_from_string("chat", "custom:demo-chat@0.4", &config)
-            .expect("cloud provider");
+        create_chat_model_from_string_with_model_id("chat", "custom:demo-chat@0.4", &config, 0.7)
+            .expect("cloud model");
     assert_eq!(model, "demo-chat");
 
     let (_local_provider, local_model) =
-        create_chat_provider_from_string("chat", "ollama:gemma3:1b-it-qat@0.1", &config)
-            .expect("ollama provider");
+        create_chat_model_from_string_with_model_id(
+            "chat",
+            "ollama:gemma3:1b-it-qat@0.1",
+            &config,
+            0.7,
+        )
+        .expect("ollama model");
     assert_eq!(local_model, "gemma3:1b-it-qat");
 
-    let empty_model = match create_chat_provider_from_string("chat", "ollama:", &config) {
+    let empty_model = match create_chat_model_from_string_with_model_id(
+        "chat", "ollama:", &config, 0.7,
+    ) {
         Ok(_) => panic!("expected empty model error"),
         Err(err) => err,
     };
@@ -378,13 +259,13 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
         .prompt(&config, "Say hi", Some(8), true)
         .await
         .expect("prompt");
-    assert_eq!(prompt, "generated final");
+    assert_eq!(prompt, "chat:gemma3:1b-it-qat");
 
     let summarized = service
         .summarize(&config, "one two three", Some(16))
         .await
         .expect("summarize");
-    assert_eq!(summarized, "generated final");
+    assert_eq!(summarized, "chat:gemma3:1b-it-qat");
 
     let completion = service
         .inline_complete_interactive(
@@ -397,7 +278,7 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
         )
         .await
         .expect("inline");
-    assert_eq!(completion, "generated final");
+    assert_eq!(completion, "chat:gemma3:1b-it-qat");
 
     let assets = service.assets_status(&config).await.expect("assets");
     assert!(assets.ollama_available);
@@ -433,14 +314,6 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
 
     service.shutdown_owned_ollama(&config).await;
     assert!(!service.has_owned_ollama());
-}
-
-async fn collect_deltas(rx: &mut tokio::sync::mpsc::Receiver<ProviderDelta>) -> Vec<ProviderDelta> {
-    let mut out = Vec::new();
-    while let Some(delta) = rx.recv().await {
-        out.push(delta);
-    }
-    out
 }
 
 fn temp_config(tmp: &TempDir) -> Config {

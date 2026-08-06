@@ -43,7 +43,7 @@ export interface MemorySyncSummary {
   providers: MemorySyncStatusRow[];
 }
 
-export interface BackgroundActivity {
+interface BackgroundActivity {
   cronJobs: CoreCronJob[];
   subconscious: SubconsciousSummary | null;
   memory: MemorySyncSummary;

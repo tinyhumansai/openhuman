@@ -1,6 +1,6 @@
 use super::*;
-use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use crate::openhuman::inference::openai_oauth::{OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
+use crate::openhuman::security::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use axum::{routing::post, Json, Router};
 use chrono::{Duration, Utc};
 use tempfile::tempdir;

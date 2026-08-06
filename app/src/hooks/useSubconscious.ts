@@ -22,7 +22,7 @@ import type {
 
 export type TriggerKind = SubconsciousKind | 'all';
 
-export interface UseSubconsciousResult {
+interface UseSubconsciousResult {
   status: SubconsciousStatus | null;
   /** One row per registered world, tolerant of an older core (falls back to
    * the top-level memory fields when `instances` is absent). */
@@ -51,7 +51,15 @@ function deriveInstances(status: SubconsciousStatus | null): SubconsciousInstanc
   return [{ ...row, instance: row.instance ?? 'memory' }];
 }
 
-export function useSubconscious(): UseSubconsciousResult {
+/**
+ * @param enabled When `false`, the hook skips its initial fetch and the 5s
+ *   status poll (the imperative actions — `refresh`, `triggerTick`, `setMode`,
+ *   `setIntervalMinutes` — still work if called). Callers that only render the
+ *   subconscious surface on a specific tab pass `enabled` so opening an
+ *   unrelated view (e.g. Brain's Orchestration sub-tab) doesn't keep unrelated
+ *   heartbeat/subconscious RPCs polling. Defaults to `true` for back-compat.
+ */
+export function useSubconscious(enabled: boolean = true): UseSubconsciousResult {
   const [status, setStatus] = useState<SubconsciousStatus | null>(null);
   const [mode, setModeState] = useState<SubconsciousMode>('off');
   const [intervalMinutes, setIntervalState] = useState(30);
@@ -149,13 +157,14 @@ export function useSubconscious(): UseSubconsciousResult {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     refresh();
     const interval = setInterval(refresh, 5000);
     return () => {
       clearInterval(interval);
       fetchingRef.current = false;
     };
-  }, [refresh]);
+  }, [refresh, enabled]);
 
   const isTriggering = useCallback(
     (kind: TriggerKind) => triggeringKinds.has(kind),

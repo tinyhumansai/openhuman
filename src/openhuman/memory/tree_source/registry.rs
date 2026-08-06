@@ -1,5 +1,5 @@
 //! Source-tree registry — thin wrapper around the generic
-//! [`crate::openhuman::memory_tree::tree::registry::get_or_create_tree`]
+//! [`crate::openhuman::memory::tree::tree::registry::get_or_create_tree`]
 //! that adds the source-specific `_source.md` on-disk mirror write after
 //! every get-or-create call.
 
@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use super::file;
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::trees::types::Tree;
-use crate::openhuman::memory_tree::tree::TreeFactory;
+use crate::openhuman::memory::store::trees::types::Tree;
+use crate::openhuman::memory::tree::tree::TreeFactory;
 
 /// Look up the source tree for `scope`, or create a new one.
 ///
@@ -37,7 +37,7 @@ pub fn get_or_create_source_tree(config: &Config, scope: &str) -> Result<Tree> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_store::trees::types::TreeKind;
+    use crate::openhuman::memory::store::trees::types::TreeKind;
     use tempfile::TempDir;
 
     fn test_config() -> (TempDir, Config) {

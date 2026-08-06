@@ -5,32 +5,35 @@ use openhuman_core::openhuman::agent::bus::{
 };
 use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ProviderDelta, UsageInfo,
-};
+use openhuman_core::openhuman::agent::messages::ChatMessage;
 use openhuman_core::openhuman::security::POLICY_BLOCKED_MARKER;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolContent, ToolResult, ToolScope};
 use serde_json::json;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyagents::harness::model::{
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
     streamed: bool,
 }
 
 #[derive(Default)]
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<CapturedRequest>>,
-    stream_events: Vec<ProviderDelta>,
+    stream_events: Vec<ModelStreamItem>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             ..Self::default()
@@ -43,48 +46,52 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: OnceLock<ModelProfile> = OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("round22".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(message.to_string())
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.capture(&request, false);
+        self.pop_response()
     }
 
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        self.capture(&request, true);
+        let response = self.pop_response()?;
+        let mut items = vec![ModelStreamItem::Started];
+        items.extend(self.stream_events.iter().cloned());
+        items.push(ModelStreamItem::Completed(response));
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+impl ScriptedModel {
+    fn capture(&self, request: &ModelRequest, streamed: bool) {
         self.requests.lock().unwrap().push(CapturedRequest {
-            messages: request.messages.to_vec(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
-            streamed: request.stream.is_some(),
+            messages: request.messages.clone(),
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+            streamed,
         });
-        if let Some(stream) = request.stream {
-            for event in &self.stream_events {
-                stream.send(event.clone()).await.ok();
-            }
-        }
+    }
+
+    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("script exhausted fallback")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -159,45 +166,34 @@ impl Tool for Round22Tool {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: vec![],
-        usage: Some(UsageInfo {
-            input_tokens: 3,
-            output_tokens: 2,
-            context_window: 16_000,
-            cached_input_tokens: 1,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.00001,
-        }),
-        reasoning_content: None,
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(3, 2);
+    usage.cache_read_tokens = 1;
+    ModelResponse::assistant(text).with_usage(usage)
+}
+
+fn tool_response(name: &str, args: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![ContentBlock::Text("before".to_string())],
+            tool_calls: vec![ToolCall::new(format!("call-{name}"), name, args)],
+            usage: None,
+        },
+        usage: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn xml_tool_response(name: &str, args: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!(
-            "before <tool_call>{{\"name\":\"{name}\",\"arguments\":{args}}}</tool_call>"
-        )),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: None,
-    }
-}
-
-fn glm_response(line: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(line.to_string()),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: None,
-    }
+fn browser_open_response(url: &str) -> ModelResponse {
+    tool_response("shell", json!({ "command": format!("curl -s '{url}'") }))
 }
 
 async fn run_turn(
-    provider: Arc<dyn Provider>,
+    model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
@@ -208,8 +204,8 @@ async fn run_turn(
     request_native_global::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         AgentTurnRequest {
-            turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
-                provider,
+            turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+                model,
             ),
             history: vec![
                 ChatMessage::system("round22 system"),
@@ -238,13 +234,13 @@ async fn run_turn(
 
 #[tokio::test]
 async fn no_progress_guard_uses_default_iteration_fallback_when_zero() {
-    let provider = ScriptedProvider::new(vec![
-        xml_tool_response("fail", json!({ "value": "one" })),
-        xml_tool_response("fail", json!({ "value": "two" })),
-        xml_tool_response("fail", json!({ "value": "three" })),
-        xml_tool_response("fail", json!({ "value": "four" })),
-        xml_tool_response("fail", json!({ "value": "five" })),
-        xml_tool_response("fail", json!({ "value": "six" })),
+    let provider = ScriptedModel::new(vec![
+        tool_response("fail", json!({ "value": "one" })),
+        tool_response("fail", json!({ "value": "two" })),
+        tool_response("fail", json!({ "value": "three" })),
+        tool_response("fail", json!({ "value": "four" })),
+        tool_response("fail", json!({ "value": "five" })),
+        tool_response("fail", json!({ "value": "six" })),
     ]);
 
     let response = run_turn(
@@ -268,9 +264,9 @@ async fn no_progress_guard_uses_default_iteration_fallback_when_zero() {
 
 #[tokio::test]
 async fn hard_policy_block_repeat_halts_on_second_identical_call() {
-    let provider = ScriptedProvider::new(vec![
-        xml_tool_response("blocked", json!({ "value": "same" })),
-        xml_tool_response("blocked", json!({ "value": "same" })),
+    let provider = ScriptedModel::new(vec![
+        tool_response("blocked", json!({ "value": "same" })),
+        tool_response("blocked", json!({ "value": "same" })),
     ]);
     let output = format!("{POLICY_BLOCKED_MARKER} read-only policy blocked this write");
 
@@ -294,10 +290,10 @@ async fn hard_policy_block_repeat_halts_on_second_identical_call() {
 
 #[tokio::test]
 async fn glm_style_tool_call_executes_then_final_streams_in_chunks_and_progress() {
-    let provider = Arc::new(ScriptedProvider {
+    let provider = Arc::new(ScriptedModel {
         responses: Mutex::new(
             vec![
-                Ok(glm_response("browser_open/url>https://example.com/data")),
+                Ok(browser_open_response("https://example.com/data")),
                 Ok(text_response(
                     "This is a deliberately long final response from the scripted provider so the on_delta path emits more than one deterministic chunk for channel draft updates.",
                 )),
@@ -305,9 +301,9 @@ async fn glm_style_tool_call_executes_then_final_streams_in_chunks_and_progress(
             .into(),
         ),
         requests: Mutex::new(Vec::new()),
-        stream_events: vec![ProviderDelta::TextDelta {
-            delta: "draft from provider".to_string(),
-        }],
+        stream_events: vec![ModelStreamItem::MessageDelta(MessageDelta::text(
+            "draft from provider",
+        ))],
     });
     let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel(8);
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(16);
@@ -373,7 +369,7 @@ async fn glm_style_tool_call_executes_then_final_streams_in_chunks_and_progress(
     let second_request_text = requests[1]
         .messages
         .iter()
-        .map(|message| message.content.as_str())
+        .map(Message::text)
         .collect::<Vec<_>>()
         .join("\n");
     assert!(second_request_text.contains("curl -s 'https://example.com/data'"));

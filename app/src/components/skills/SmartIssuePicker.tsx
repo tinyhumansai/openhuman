@@ -48,7 +48,7 @@ interface GhBranch {
   name: string;
 }
 
-export interface SmartIssuePickerProps {
+interface SmartIssuePickerProps {
   /** Current resolved input values (the four dev-workflow fields). */
   values: { repo?: string; upstream?: string; target_branch?: string; fork_owner?: string };
   /** Patch the parent's form-values map with the picker's resolutions. */

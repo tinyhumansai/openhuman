@@ -3,7 +3,7 @@
 //! An [`AgentDefinition`] fully specifies a sub-agent: its core prompt, model,
 //! allowed tool set, runtime limits, and which sections of the parent system
 //! prompt to omit. Built-in definitions live in
-//! [`crate::openhuman::agent_registry::agents`] — one subfolder per agent, each
+//! [`crate::openhuman::agent::registry::agents`] — one subfolder per agent, each
 //! holding an `agent.toml` (metadata) and `prompt.md` (system prompt). A
 //! thin wrapper in [`super::builtin_definitions`] loads them and appends
 //! the synthetic `fork` definition. Users can ship custom definitions as
@@ -25,7 +25,7 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
-use crate::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 
 /// Iteration ceiling for an [`IterationPolicy::Extended`] agent — the higher
 /// bound a long-running agent (orchestrator, deep research) is allowed to reach
@@ -131,7 +131,7 @@ pub struct AgentDefinition {
     /// mid-session do not retroactively update the in-flight prompt —
     /// they are picked up on the next session. This matches the
     /// byte-stability invariant documented on
-    /// [`crate::openhuman::context::prompt::render_subagent_system_prompt`].
+    /// [`crate::openhuman::agent::context::prompt::render_subagent_system_prompt`].
     #[serde(default = "defaults::true_")]
     pub omit_memory_md: bool,
 
@@ -238,8 +238,8 @@ pub struct AgentDefinition {
     /// so that reading a TOML makes the distinction obvious: `tools` is
     /// "what I execute directly", `subagents` is "what I can delegate to".
     ///
-    /// [`ArchetypeDelegationTool`]: crate::openhuman::agent_orchestration::tools::ArchetypeDelegationTool
-    /// [`SkillDelegationTool`]: crate::openhuman::agent_orchestration::tools::SkillDelegationTool
+    /// [`ArchetypeDelegationTool`]: crate::openhuman::agent::orchestration::tools::ArchetypeDelegationTool
+    /// [`SkillDelegationTool`]: crate::openhuman::agent::orchestration::tools::SkillDelegationTool
     #[serde(default, deserialize_with = "deserialize_subagent_entries")]
     pub subagents: Vec<SubagentEntry>,
 
@@ -372,7 +372,7 @@ impl std::fmt::Display for AgentTier {
 ///
 /// This is the static authoring rule the loader walks over declared `subagents`
 /// pairs at boot (see
-/// [`crate::openhuman::agent_registry::agents::validate_tier_hierarchy`]). The
+/// [`crate::openhuman::agent::registry::agents::validate_tier_hierarchy`]). The
 /// runtime spawn gate (`run_subagent`) reuses it as defense-in-depth, but
 /// deliberately exempts worker *parents* — at runtime a worker only reaches the
 /// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
@@ -500,14 +500,14 @@ impl AgentDefinition {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Builder function signature for [`PromptSource::Dynamic`]. Takes the
-/// full runtime [`crate::openhuman::context::prompt::PromptContext`]
+/// full runtime [`crate::openhuman::agent::context::prompt::PromptContext`]
 /// (tools, skills, memory, connected integrations, dispatcher, model,
 /// …) and returns the final system prompt body — typically assembled
 /// by calling the `render_*` section helpers in
-/// [`crate::openhuman::context::prompt`] in the order the builder
+/// [`crate::openhuman::agent::context::prompt`] in the order the builder
 /// wants.
 pub type PromptBuilder =
-    fn(&crate::openhuman::context::prompt::PromptContext<'_>) -> anyhow::Result<String>;
+    fn(&crate::openhuman::agent::context::prompt::PromptContext<'_>) -> anyhow::Result<String>;
 
 /// Where the sub-agent's core system prompt comes from.
 #[derive(Clone)]
@@ -657,11 +657,19 @@ pub enum SandboxMode {
 #[serde(tag = "kind", content = "path")]
 pub enum DefinitionSource {
     /// Built-in definition shipped as part of the binary (loaded from
-    /// [`crate::openhuman::agent_registry::agents`]).
+    /// [`crate::openhuman::agent::registry::agents`]).
     #[default]
     Builtin,
     /// Loaded from a TOML file at the given absolute path.
     File(PathBuf),
+    /// Synthesized at lookup time from a user-authored
+    /// [`AgentRegistryEntry`](crate::openhuman::agent::registry::AgentRegistryEntry)
+    /// (`AgentRegistrySource::Custom`) by `agent_registry::defaults::definition_from_registry_entry`.
+    /// Never persisted in the [`AgentDefinitionRegistry`] — built fresh per
+    /// factory call so config edits take effect immediately (closes the gap
+    /// where custom agents ran persona-only instead of with their real tool
+    /// belt).
+    CustomRegistry,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -748,9 +756,9 @@ impl AgentDefinitionRegistry {
         // merged in — a workspace TOML can legally replace a built-in
         // (same id) and is held to the same spawn-hierarchy contract
         // as the bundled set. See
-        // [`crate::openhuman::agent_registry::agents::loader::validate_tier_hierarchy`].
+        // [`crate::openhuman::agent::registry::agents::loader::validate_tier_hierarchy`].
         let snapshot: Vec<AgentDefinition> = reg.list().into_iter().cloned().collect();
-        crate::openhuman::agent_registry::agents::validate_tier_hierarchy(&snapshot).map_err(
+        crate::openhuman::agent::registry::agents::validate_tier_hierarchy(&snapshot).map_err(
             |e| {
                 anyhow::anyhow!(
                     "agent registry rejected after merging workspace overrides from {}: {}",

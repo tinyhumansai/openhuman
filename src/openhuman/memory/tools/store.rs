@@ -1,5 +1,5 @@
+use crate::openhuman::memory::store::safety;
 use crate::openhuman::memory::{Memory, MemoryCategory};
-use crate::openhuman::memory_store::safety;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
@@ -80,7 +80,16 @@ impl Tool for MemoryStoreTool {
             Some("core") | None => MemoryCategory::Core,
             Some("daily") => MemoryCategory::Daily,
             Some("conversation") => MemoryCategory::Conversation,
-            Some(other) => MemoryCategory::Custom(other.to_string()),
+            // Route custom categories through `FromStr` so a `custom:<name>`
+            // wire value — the form `memory_recall`/`Display` now emit — resolves
+            // back to `Custom("<name>")` instead of `Custom("custom:<name>")`
+            // (which would `Display` as `custom:custom:<name>` and stop matching
+            // the original category on recall/filter). Legacy bare names still
+            // parse to the same `Custom(name)`; an unparseable value falls back
+            // to the raw string. (review: prefixed-custom round-trip)
+            Some(other) => other
+                .parse()
+                .unwrap_or_else(|_| MemoryCategory::Custom(other.to_string())),
         };
 
         if let Err(error) = self
@@ -126,8 +135,8 @@ impl Tool for MemoryStoreTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory_store::UnifiedMemory;
+    use crate::openhuman::inference::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::store::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 
@@ -202,6 +211,33 @@ mod tests {
         let entry = mem.get("global", "proj_note").await.unwrap().unwrap();
         assert_eq!(entry.content, "Uses async runtime");
         assert_eq!(entry.category, MemoryCategory::Custom("project".into()));
+    }
+
+    /// Regression: a `custom:<name>` wire value (the form `memory_recall` and
+    /// `Display` now emit) must store as `Custom("<name>")`, not the
+    /// double-prefixed `Custom("custom:<name>")` — otherwise it would `Display`
+    /// as `custom:custom:<name>` and stop matching the original category.
+    #[tokio::test]
+    async fn store_strips_custom_prefix_from_wire_category() {
+        let (_tmp, mem) = test_mem();
+        let tool = MemoryStoreTool::new(mem.clone(), test_security());
+        let result = tool
+            .execute(json!({
+                "namespace": "global",
+                "key": "proj_note",
+                "content": "Uses async runtime",
+                "category": "custom:project"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+
+        let entry = mem.get("global", "proj_note").await.unwrap().unwrap();
+        assert_eq!(
+            entry.category,
+            MemoryCategory::Custom("project".into()),
+            "the `custom:` wire prefix must be stripped, not double-stored"
+        );
     }
 
     #[tokio::test]

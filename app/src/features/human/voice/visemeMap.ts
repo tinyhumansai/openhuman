@@ -58,7 +58,7 @@ export function oculusVisemeToShape(viseme: string): VisemeShape {
   return TABLE[viseme.toLowerCase()] ?? VISEMES.REST;
 }
 
-export interface TimedFrame {
+interface TimedFrame {
   viseme: string;
   start_ms: number;
   end_ms: number;

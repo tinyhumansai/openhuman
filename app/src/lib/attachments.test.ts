@@ -4,8 +4,8 @@ import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   type Attachment,
   ATTACHMENT_MAX_FILE_SIZE_BYTES,
+  ATTACHMENT_MAX_IMAGE_SIZE_BYTES,
   ATTACHMENT_MAX_IMAGES,
-  ATTACHMENT_MAX_SIZE_BYTES,
   ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
   attachmentKindForMime,
   buildMessageWithAttachments,
@@ -140,7 +140,7 @@ describe('validateAndReadFile', () => {
   });
 
   it('rejects files that exceed the size limit', async () => {
-    const oversizedFile = makeFile('big.png', 'image/png', ATTACHMENT_MAX_SIZE_BYTES + 1);
+    const oversizedFile = makeFile('big.png', 'image/png', ATTACHMENT_MAX_IMAGE_SIZE_BYTES + 1);
     const result = await validateAndReadFile(oversizedFile, 0);
     expect('error' in result).toBe(true);
     if ('error' in result) {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { callCoreRpc } from '../services/coreRpcClient';
 
-export interface MemoryIngestionStatus {
+interface MemoryIngestionStatus {
   running: boolean;
   currentDocumentId?: string;
   currentTitle?: string;

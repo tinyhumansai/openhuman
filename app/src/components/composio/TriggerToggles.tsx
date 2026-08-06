@@ -40,7 +40,7 @@ export function activeTriggerSignature(t: ComposioActiveTrigger): string {
   return t.slug.toUpperCase();
 }
 
-export interface TriggerTogglesProps {
+interface TriggerTogglesProps {
   toolkitSlug: string;
   toolkitName: string;
   connectionId: string;

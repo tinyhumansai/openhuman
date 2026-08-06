@@ -496,6 +496,13 @@ mod tests {
     const TEST_SLOT_ENGINE_A: &str = "__test_slot_engine_a__";
     const TEST_SLOT_ENGINE_B: &str = "__test_slot_engine_b__";
 
+    fn slot_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Best-effort drain of a test slot so the global set is clean across
     /// runs. Tests that leave a slot held (e.g. by forgetting it) would
     /// pollute subsequent runs in the same `cargo test` invocation.
@@ -507,6 +514,7 @@ mod tests {
 
     #[test]
     fn try_acquire_install_slot_grants_then_blocks_then_releases() {
+        let _test_guard = slot_test_lock();
         drain_test_slot(TEST_SLOT_ENGINE_A);
 
         // First caller gets the slot.
@@ -534,6 +542,7 @@ mod tests {
 
     #[test]
     fn install_slot_keys_are_independent_per_engine() {
+        let _test_guard = slot_test_lock();
         drain_test_slot(TEST_SLOT_ENGINE_A);
         drain_test_slot(TEST_SLOT_ENGINE_B);
 
@@ -561,7 +570,8 @@ mod tests {
     /// same time and both spawn install tasks" — the bug CodeRabbit
     /// flagged on PR #1755.
     #[tokio::test]
-    async fn concurrent_acquire_grants_exactly_one_slot() {
+    async fn concurrent_install_slot_acquire_grants_exactly_one() {
+        let _test_guard = slot_test_lock();
         drain_test_slot(TEST_SLOT_ENGINE_A);
 
         // 32 concurrent acquirers — high enough to make a non-atomic

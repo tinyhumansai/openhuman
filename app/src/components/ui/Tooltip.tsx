@@ -15,9 +15,9 @@ import { createPortal } from 'react-dom';
 const log = debug('ui:tooltip');
 
 /** Which edge of the trigger the tooltip floats from. Sidebar icons use `right`. */
-export type TooltipSide = 'right' | 'top' | 'bottom' | 'left';
+type TooltipSide = 'right' | 'top' | 'bottom' | 'left';
 
-export interface TooltipProps {
+interface TooltipProps {
   /** Short, minimal label — e.g. "Wallet", "Settings". */
   label: string;
   /** Single focusable trigger (a button/anchor). Its hover/focus drives the tip. */

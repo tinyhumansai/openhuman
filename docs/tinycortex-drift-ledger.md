@@ -25,7 +25,9 @@ touched an engine-mapping memory module after the port line, and classifies each
 | Host audit SHA | `7850cf363559bcbb7ba688cbc4fccdb6bd9ce754` (`main`, 2026-07-04) |
 | TinyCortex submodule | `vendor/tinycortex` → `tinyhumansai/tinycortex` |
 | TinyCortex audit SHA | `d1a8c7be2babc8fff7a72ed93861f459f3d6fa58` |
-| **TinyCortex pinned SHA (current)** | `a8e10f7dd8ebdb9b0905e1380fefcc6bf5a65207` — audit SHA **+ #59** (native-dep alignment, §0.4) **+ #63/#64** (D2/D1 drift ports) merged; this is the live gitlink |
+| TinyCortex historical cutover SHA | `a8e10f7dd8ebdb9b0905e1380fefcc6bf5a65207` — audit SHA **+ #59** (native-dep alignment, §0.4) **+ #63/#64** (D2/D1 drift ports) merged |
+| **TinyCortex reviewed gitlink (2026-07-22)** | `daaaf6ba5f02635c08deae2b2b2ed7fcc8c06b6a` — includes OpenHuman #4794/#4820/#4863-era crate work; upstream currently has no tags |
+| **TinyCortex migration branch (current)** | `7b4b115` — TinyAgents 2.1 dependency alignment, standalone patch configuration, and corrected sync ownership docs |
 | TinyCortex crate version | `0.1.1` |
 | **Port line (derived)** | **after 2026-06-25, before 2026-06-28** (see below) |
 
@@ -37,6 +39,11 @@ touched an engine-mapping memory module after the port line, and classifies each
 > (tinycortex#63, #64)`). With every drift row closed, **W4** (queue) and **W7**
 > (conversations) are now unblocked per the gate rule. D4 (memory_sync corpus,
 > W-SYNC) remains its own separate track.
+
+> **Consolidation status (2026-07-22): D1–D4 CLOSED.** D1–D3 remain closed.
+> D4 was re-audited against the crate sync implementation and the live host
+> dispatch path. The host schedulers, credentials, RPC, source-scope/redaction
+> policy, product task normalizers, and event-bus adapters remain host-owned.
 
 ### How the port line was located
 
@@ -60,7 +67,7 @@ was verified against crate content individually below.
 
 ## Drift candidates (verified individually against crate content)
 
-Scan: `git log --since=2026-06-20 -- src/openhuman/memory_store memory_tree memory_queue memory_diff
+Scan: `git log --since=2026-06-20 -- src/openhuman/memory/store memory_tree memory_queue memory_diff
 memory_goals memory_entities memory_graph memory_archivist memory_conversations memory_sources`,
 then per-commit file lists intersected with engine-mapping modules, then content-diffed against
 `vendor/tinycortex`.
@@ -132,26 +139,23 @@ its `tools/` stay host (agent tools), its `vector`/`scoring` are engine (W5) —
 
 ## D4 — memory_sync corpus (2026-07-09 reclassification, W-SYNC)
 
-The plan's §8 amendment moves the sync engine into the crate, so the blanket **HOST-OWNED
-"live sync"** classification above is superseded for engine-mapping sync code. Unlike D1–D3 there
-is **no existing crate port to diff against** — the entire `memory_sync/` engine (plus the
-`memory_sources` dispatcher/reconcile parts) is port scope. The port baseline for W-SYNC is taken
-**fresh from host `main` at W-SYNC.1 branch time**, so ordinary drift cannot accumulate; this entry
-exists to (a) record the reclassification and (b) pin the post-port-line commits that already
-touched the corpus, so the W-SYNC.1 port provably includes them:
+The plan's §8 amendment moved the generic sync engine into the crate, so the
+blanket **HOST-OWNED "live sync"** classification above is superseded for
+engine-mapping sync code. The crate port landed in `0333d10` and is the path
+called by `memory_sync::composio::run_connection_sync` and the default
+`ComposioProvider::sync` implementation.
 
 | # | Host commit | Files in corpus | Note |
 | --- | --- | --- | --- |
-| D4.1 | `c43f79641` (07-03) | `composio/providers/{sync_state,traits}.rs` | TinyAgents-cutover import churn |
-| D4.2 | `27b00b539` (07-05) | `sources/rebuild.rs` | test-parity cleanup (1 line) |
-| D4.3 | `653e6e143` (07-06) | `memory_sources/sync.rs` (+312) | self-heal drifted content-sha tokens + prune vanished folder items |
-| D4.4 | `e456b7799` (07-07) | `memory_sources/{rpc,sync}.rs`, `canonicalize/email.rs`, `composio/providers/{gmail/post_process,notion/source,orchestrator}.rs`, `sources/github.rs` | orchestration-fixes wave |
+| D4.1 | `c43f79641` (07-03) | `composio/providers/{sync_state,traits}.rs` | ✅ **CLOSED.** Import churn only; persistence and provider dispatch are implemented by the `SyncStateStore` seam and crate dispatcher. |
+| D4.2 | `27b00b539` (07-05) | `sources/rebuild.rs` | ✅ **CLOSED.** Test-only parity cleanup; no engine semantic delta. |
+| D4.3 | `653e6e143` (07-06) | `memory_sources/sync.rs` (+312) | ✅ **CLOSED.** Crate `sync/workspace.rs` updates changed items and prunes vanished items through `LocalDocumentSink::delete`; covered by workspace sync tests. |
+| D4.4 | `e456b7799` (07-07) | `memory_sources/{rpc,sync}.rs`, `canonicalize/email.rs`, `composio/providers/{gmail/post_process,notion/source,orchestrator}.rs`, `sources/github.rs` | ✅ **CLOSED.** Generic provider fetch/pagination/canonical memory records are in the crate port; orchestration, product task normalization, action-result presentation, and RPC fixes are host policy by design. |
 
-**Gate:** W-SYNC.1 (crate scaffolding PR) requires this enumeration current as of its branch point
-(re-run the scan: `git log --since=2026-06-25 --oneline -- src/openhuman/memory_sync
-src/openhuman/memory_sources`); the W-SYNC.3 host flip requires D4 **CLOSED** — every listed commit
-(and any accrued since) verifiably contained in the crate port or explicitly waived. Host-retained
-parts (schedulers, bus subscribers, RPC wrappers, keychain/OAuth) remain HOST-OWNED as before.
+**Gate result:** D4 is **CLOSED**. Gmail's Composio 413 mitigation is additionally
+present in crate commit `ba9e12e` (25-message fetch pages). Host-retained parts
+(schedulers, bus subscribers, RPC wrappers, keychain/OAuth, action tools and
+product task/profile projections) remain HOST-OWNED.
 
 ## Closing the ledger (procedure)
 

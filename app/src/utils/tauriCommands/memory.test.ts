@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { isTauri } from './common';
+import { isTauri, safeInvoke } from './common';
 import {
   aiListMemoryFiles,
   memoryLearnAll,
@@ -15,10 +15,11 @@ import {
 } from './memory';
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
-vi.mock('./common', () => ({ isTauri: vi.fn(() => true) }));
+vi.mock('./common', () => ({ isTauri: vi.fn(() => true), safeInvoke: vi.fn() }));
 
 const mockCallCoreRpc = callCoreRpc as Mock;
 const mockIsTauri = isTauri as Mock;
+const mockSafeInvoke = safeInvoke as Mock;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -162,43 +163,30 @@ describe('whatsappListChats', () => {
   test('throws when not in Tauri', async () => {
     mockIsTauri.mockReturnValue(false);
     await expect(whatsappListChats()).rejects.toThrow('Not running in Tauri');
-    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    expect(mockSafeInvoke).not.toHaveBeenCalled();
   });
 
-  test('calls correct RPC method with provided params', async () => {
-    mockCallCoreRpc.mockResolvedValueOnce([]);
+  test('invokes the shell command with provided params wrapped in req', async () => {
+    mockSafeInvoke.mockResolvedValueOnce([]);
     await whatsappListChats({ limit: 10 });
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.whatsapp_data_list_chats',
-      params: { limit: 10 },
-    });
+    expect(mockSafeInvoke).toHaveBeenCalledWith('whatsapp_data_list_chats', { req: { limit: 10 } });
   });
 
-  test('uses empty params object when none provided', async () => {
-    mockCallCoreRpc.mockResolvedValueOnce([]);
+  test('uses empty req object when no params provided', async () => {
+    mockSafeInvoke.mockResolvedValueOnce([]);
     await whatsappListChats();
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.whatsapp_data_list_chats',
-      params: {},
-    });
+    expect(mockSafeInvoke).toHaveBeenCalledWith('whatsapp_data_list_chats', { req: {} });
   });
 
-  test('returns array directly when response is already an array', async () => {
+  test('returns the chat array from the command', async () => {
     const chats = [{ chat_id: 'c1', display_name: 'Direct' }];
-    mockCallCoreRpc.mockResolvedValueOnce(chats);
+    mockSafeInvoke.mockResolvedValueOnce(chats);
     const result = await whatsappListChats();
     expect(result).toBe(chats);
   });
 
-  test('extracts result field from wrapped response envelope', async () => {
-    const chats = [{ chat_id: 'c2', display_name: 'Wrapped' }];
-    mockCallCoreRpc.mockResolvedValueOnce({ result: chats, logs: [] });
-    const result = await whatsappListChats();
-    expect(result).toEqual(chats);
-  });
-
-  test('returns empty array when wrapped response has no result field', async () => {
-    mockCallCoreRpc.mockResolvedValueOnce({ logs: [] });
+  test('returns empty array when the command yields a nullish result', async () => {
+    mockSafeInvoke.mockResolvedValueOnce(undefined);
     const result = await whatsappListChats();
     expect(result).toEqual([]);
   });
@@ -208,34 +196,26 @@ describe('whatsappListMessages', () => {
   test('throws when not in Tauri', async () => {
     mockIsTauri.mockReturnValue(false);
     await expect(whatsappListMessages({ chat_id: 'c1' })).rejects.toThrow('Not running in Tauri');
-    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    expect(mockSafeInvoke).not.toHaveBeenCalled();
   });
 
-  test('calls correct RPC method with required chat_id param', async () => {
-    mockCallCoreRpc.mockResolvedValueOnce([]);
+  test('invokes the shell command with required chat_id in req', async () => {
+    mockSafeInvoke.mockResolvedValueOnce([]);
     await whatsappListMessages({ chat_id: 'c1', limit: 50 });
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.whatsapp_data_list_messages',
-      params: { chat_id: 'c1', limit: 50 },
+    expect(mockSafeInvoke).toHaveBeenCalledWith('whatsapp_data_list_messages', {
+      req: { chat_id: 'c1', limit: 50 },
     });
   });
 
-  test('returns array directly when response is already an array', async () => {
+  test('returns the message array from the command', async () => {
     const msgs = [{ message_id: 'm1', body: 'hello' }];
-    mockCallCoreRpc.mockResolvedValueOnce(msgs);
+    mockSafeInvoke.mockResolvedValueOnce(msgs);
     const result = await whatsappListMessages({ chat_id: 'c1' });
     expect(result).toBe(msgs);
   });
 
-  test('extracts result field from wrapped response envelope', async () => {
-    const msgs = [{ message_id: 'm2', body: 'world' }];
-    mockCallCoreRpc.mockResolvedValueOnce({ result: msgs, logs: [] });
-    const result = await whatsappListMessages({ chat_id: 'c1' });
-    expect(result).toEqual(msgs);
-  });
-
-  test('returns empty array when wrapped response has no result field', async () => {
-    mockCallCoreRpc.mockResolvedValueOnce({ logs: [] });
+  test('returns empty array when the command yields a nullish result', async () => {
+    mockSafeInvoke.mockResolvedValueOnce(undefined);
     const result = await whatsappListMessages({ chat_id: 'c1' });
     expect(result).toEqual([]);
   });

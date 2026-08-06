@@ -350,8 +350,8 @@ impl CoreProcessHandle {
                                     .to_string())
                             }
                             Ok(Err(err)) => {
-                                if let Some(openhuman_core::openhuman::connectivity::rpc::PickListenPortError::WouldTakeOver { preferred, .. }) = err
-                                    .downcast_ref::<openhuman_core::openhuman::connectivity::rpc::PickListenPortError>()
+                                if let Some(openhuman_core::openhuman::platform::connectivity::rpc::PickListenPortError::WouldTakeOver { preferred, .. }) = err
+                                    .downcast_ref::<openhuman_core::openhuman::platform::connectivity::rpc::PickListenPortError>()
                                 {
                                     if startup_attempt == 0 {
                                         log::warn!(

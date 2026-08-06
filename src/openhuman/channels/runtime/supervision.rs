@@ -17,7 +17,7 @@ pub(crate) fn spawn_supervised_listener(
     // This helper is used directly in tests and isolated runtime paths, so make
     // sure channel health events always have a live bus + subscriber target.
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
-    crate::openhuman::health::bus::register_health_subscriber();
+    crate::openhuman::platform::health::bus::register_health_subscriber();
 
     tokio::spawn(async move {
         let component = format!("channel:{}", ch.name());

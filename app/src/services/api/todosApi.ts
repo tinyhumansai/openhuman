@@ -37,12 +37,6 @@ export const USER_TASKS_THREAD_ID = 'user-tasks';
  */
 export const ORCHESTRATOR_TASKS_THREAD_ID = 'orchestrator-tasks';
 
-/**
- * Reserved board id used by the task source ingestion flow. Source-backed
- * tasks land here before they are pulled into an agent workstream.
- */
-export const TASK_SOURCES_THREAD_ID = 'task-sources';
-
 /** Wire shape returned by every `todos_*` handler (`TodosSnapshot`). */
 interface TodosSnapshotWire {
   threadId?: string | null;
@@ -51,7 +45,7 @@ interface TodosSnapshotWire {
 }
 
 /** Fields accepted when creating a card. */
-export interface AddTodoInput {
+interface AddTodoInput {
   threadId: string;
   content: string;
   status?: TaskBoardCardStatus;
@@ -65,7 +59,7 @@ export interface AddTodoInput {
 }
 
 /** Fields accepted when editing a card. Omitted fields are left unchanged. */
-export interface EditTodoInput {
+interface EditTodoInput {
   threadId: string;
   id: string;
   content?: string;

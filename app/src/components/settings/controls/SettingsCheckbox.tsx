@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export interface SettingsCheckboxProps {
+interface SettingsCheckboxProps {
   id: string;
   checked: boolean;
   onCheckedChange: (next: boolean) => void;

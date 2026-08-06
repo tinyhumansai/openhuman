@@ -29,8 +29,6 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
 
-use crate::cdp::CdpConn;
-
 mod dom_snapshot;
 #[cfg(test)]
 mod dom_snapshot_tests;
@@ -1052,11 +1050,12 @@ async fn post_whatsapp_data_ingest(
         })
         .unwrap_or_default();
 
-    // Split messages into chunks to stay well under the HTTP body size limit.
-    // Chats are sent only with the first batch (upserts are idempotent).
+    // Split messages into chunks, preserving the historical batching/dedup
+    // behavior: chats are sent only with the first batch (upserts are
+    // idempotent), and the store's 90-day prune runs per ingest call. The
+    // store now lives in the shell, so each batch dispatches over the
+    // in-process native request bus instead of an HTTP JSON-RPC POST.
     const BATCH_SIZE: usize = 500;
-    let empty_chats = Value::Object(serde_json::Map::new());
-    let url = crate::core_rpc::core_rpc_url_value();
 
     // Build at least one batch even when messages is empty (chats-only upsert).
     let chunks: Vec<&[Value]> = if messages.is_empty() {
@@ -1079,65 +1078,33 @@ async fn post_whatsapp_data_ingest(
         let batch_chats = if batch_idx == 0 {
             Value::Object(chats_param.clone())
         } else {
-            empty_chats.clone()
+            Value::Object(serde_json::Map::new())
         };
         let params = json!({
             "account_id": account_id,
             "chats": batch_chats,
             "messages": chunk,
         });
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "openhuman.whatsapp_data_ingest",
-            "params": params,
-        });
-
-        let mut last_err = String::new();
-        let mut succeeded = false;
-        for attempt in 1u8..=2 {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .map_err(|e| format!("http client: {e}"))?;
-            let req = crate::core_rpc::apply_auth(client.post(&url))
-                .map_err(|e| format!("prepare {url}: {e}"))?;
-            let send_result = req.json(&body).send().await;
-            match send_result {
-                Err(e) if e.is_connect() || e.is_timeout() => {
-                    last_err = format!("POST {url}: {e}");
-                    if attempt < 2 {
-                        log::debug!(
-                            "[wa][{}] whatsapp_data_ingest connect error batch={}/{} attempt {}: {}",
-                            account_id,
-                            batch_idx + 1,
-                            total_batches,
-                            attempt,
-                            last_err
-                        );
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                    }
-                    continue;
-                }
-                Err(e) => return Err(format!("POST {url}: {e}")),
-                Ok(resp) => {
-                    let status = resp.status();
-                    if !status.is_success() {
-                        let body_text = resp.text().await.unwrap_or_default();
-                        return Err(format!("{status}: {body_text}"));
-                    }
-                    let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
-                    if let Some(err) = v.get("error") {
-                        return Err(format!("rpc error: {err}"));
-                    }
-                    succeeded = true;
-                    break;
-                }
-            }
-        }
-        if !succeeded {
-            return Err(last_err);
-        }
+        // Deserialize into the shared core DTO and dispatch to the shell store's
+        // native handler registered in `whatsapp_data::register_native_handlers`.
+        let req: openhuman_core::openhuman::channels::whatsapp_data::types::IngestRequest =
+            serde_json::from_value(params)
+                .map_err(|e| format!("build ingest request (batch {}): {e}", batch_idx + 1))?;
+        openhuman_core::core::event_bus::request_native_global::<
+            openhuman_core::openhuman::channels::whatsapp_data::types::IngestRequest,
+            openhuman_core::openhuman::channels::whatsapp_data::types::IngestResult,
+        >(
+            openhuman_core::openhuman::channels::whatsapp_data::methods::INGEST,
+            req,
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "whatsapp_data ingest batch {}/{}: {e}",
+                batch_idx + 1,
+                total_batches
+            )
+        })?;
     }
 
     log::debug!(
@@ -1209,7 +1176,7 @@ fn merge_dom_into_snapshot(
             continue;
         }
         if let Some(mid) = mid_opt {
-            let bare_mid = mid.rsplitn(2, '_').next().map(str::to_string);
+            let bare_mid = mid.rsplit('_').next().map(str::to_string);
             let lookup = by_msg_id
                 .get(&mid)
                 .cloned()

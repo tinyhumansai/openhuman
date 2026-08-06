@@ -10,7 +10,9 @@
 
 // ── Signer round-trip ─────────────────────────────────────────────────────────
 
-#[cfg(test)]
+// Derives a key from a BIP-39 mnemonic, so it needs `coins-bip39` — which now
+// belongs to the `web3` gate.
+#[cfg(all(test, feature = "web3"))]
 mod signer_round_trip {
     use coins_bip39::{English, Mnemonic};
     use ed25519_dalek::SigningKey;

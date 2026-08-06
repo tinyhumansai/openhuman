@@ -13,10 +13,10 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 
 /** Word count for newly generated recovery phrases (128-bit entropy, BIP39). */
 export const MNEMONIC_GENERATE_WORD_COUNT = 12;
-export type WalletChain = 'evm' | 'btc' | 'solana' | 'tron';
+type WalletChain = 'evm' | 'btc' | 'solana' | 'tron';
 export type WalletSetupSource = 'generated' | 'imported';
 
-export interface WalletAccountIdentity {
+interface WalletAccountIdentity {
   chain: WalletChain;
   address: string;
   derivationPath: string;

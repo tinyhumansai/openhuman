@@ -17,8 +17,10 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AISettings as ApiAISettings,
   type ProviderRef as ApiProviderRef,
+  classifyProviderVerificationFailure,
   clearCloudProviderKey,
   type CloudProviderView,
+  describeProviderVerificationFailure,
   flushCloudProviders,
   importOpenAiCodexCliAuth,
   listProviderModels,
@@ -64,7 +66,9 @@ import { SettingsSelect, SettingsStatusLine, SettingsSwitch, SettingsTextField }
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import OpenAiOAuthConnect from '../oauth/OpenAiOAuthConnect';
 import { ClaudeCodeConnect } from './ai/ClaudeCodeStatusCard';
+import { ModelEntryField, useModelEntryMode } from './ai/ModelEntryField';
 import { routingWithProviderRemoved, toSelectableChatModels } from './aiRouting';
+import { isAzureFoundryEndpoint, isAzureV1BaseUrl } from './azureDeployment';
 import {
   authStyleForBuiltinCloudProvider,
   BUILTIN_CLOUD_PROVIDER_META,
@@ -301,6 +305,24 @@ const EMPTY_SETTINGS: AISettings = {
 
 function maskKeyLabel(hasKey: boolean): string {
   return hasKey ? '•••• configured' : 'Not configured';
+}
+
+/**
+ * The live `/models` verification rejected. Distinguished from every other
+ * submit failure (bad slug, key write failure, …) so the editor can offer to
+ * add the provider without verifying: a provider that does not serve an
+ * OpenAI-shaped `{base}/models` listing — Azure's classic `api-version`
+ * surface, a chat-only gateway — is still usable for inference, and blocking
+ * creation on the probe left those users with no way to reach the model /
+ * deployment-name field at all (#5213).
+ */
+class ProviderProbeError extends Error {
+  readonly probeFailed = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderProbeError';
+  }
 }
 
 function slugifyCustomProviderName(name: string): string {
@@ -1095,14 +1117,14 @@ const FormulaRow = ({ label, value, detail }: { label: string; value: string; de
   </div>
 );
 
-export type BackgroundLoopControlsView = 'all' | 'heartbeat' | 'ledger';
+type BackgroundLoopControlsView = 'all' | 'heartbeat' | 'ledger';
 
 /** Minimal cloud-provider shape consumed by the loop map's `describeProvider`
  *  helper — only slug/label/id are read. Accepting this narrower shape lets
  *  external panels (UsagePanel) feed in the API view
  *  (`CloudProviderView`) without copying the AIPanel-internal extras
  *  (`authStyle`, `maskedKey`). */
-export type BackgroundLoopProviderView = { id: string; slug: string; label: string };
+type BackgroundLoopProviderView = { id: string; slug: string; label: string };
 
 export const BackgroundLoopControls = ({
   routing,
@@ -2070,6 +2092,14 @@ const CustomRoutingDialog = ({
 
   const selectedCloud =
     source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
+  // Azure routes inference by deployment name, so the model field is relabelled
+  // and defaults to free text for these connections (#5213). Shared with the
+  // global "Use Your Own Models" card so the two pickers cannot drift.
+  const modelEntry = useModelEntryMode({
+    endpoint: selectedCloud?.endpoint,
+    model,
+    catalogIds: cloudModels.map(m => m.id),
+  });
 
   // Fetch available models whenever the selected cloud provider changes.
   const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
@@ -2171,7 +2201,17 @@ const CustomRoutingDialog = ({
       setTestReply(result.reply);
     } catch (err) {
       if (testRequestIdRef.current !== requestId) return;
-      setTestError(err instanceof Error ? err.message : String(err));
+      // #5146 §2.4: a raw upstream string ("401", "model_not_found", a bare
+      // 404) tells the user nothing about what to change. Map the common
+      // shapes onto a concrete next step; unrecognised errors pass through.
+      const raw = err instanceof Error ? err.message : String(err);
+      // The banner copy is deliberately generic (a provider error can echo
+      // request material), so keep the raw text on the console where it is
+      // still reachable for diagnosis.
+      console.error(`[ai-settings][test] provider test failed workload=${workload.id}`, raw);
+      // The bare slug, not `currentProviderString` — that is the composite
+      // `provider:model[@temp]` and would read as "'openai:gpt-4o' rejected it".
+      setTestError(describeProviderVerificationFailure(registrySlug ?? '', raw, t));
     } finally {
       if (testRequestIdRef.current === requestId) {
         setTestBusy(false);
@@ -2243,12 +2283,17 @@ const CustomRoutingDialog = ({
                   if (kind === 'local') {
                     setSource({ kind: 'local' });
                     setModel(localModels[0]?.id ?? '');
+                    modelEntry.syncToEndpoint(undefined);
                   } else if (kind === 'cloud') {
                     setSource({ kind: 'cloud', providerSlug: slug });
                     setModel('');
+                    // Azure connections need a deployment name, which the
+                    // catalog never lists — start on free text (#5213).
+                    modelEntry.syncToEndpoint(customCloud.find(c => c.slug === slug)?.endpoint);
                   } else if (kind === 'claude-code') {
                     setSource({ kind: 'claude-code' });
                     setModel(CLAUDE_CODE_DEFAULT_MODEL);
+                    modelEntry.syncToEndpoint(undefined);
                   }
                 }}
                 className="w-full">
@@ -2267,11 +2312,11 @@ const CustomRoutingDialog = ({
               </SettingsSelect>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-content-secondary">
-                {t('settings.ai.modelLabel')}
-              </label>
-              {source?.kind === 'local' ? (
+            {source?.kind === 'local' ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-content-secondary">
+                  {t('settings.ai.modelLabel')}
+                </label>
                 <SettingsSelect
                   value={model}
                   onChange={e => {
@@ -2285,98 +2330,47 @@ const CustomRoutingDialog = ({
                     </option>
                   ))}
                 </SettingsSelect>
-              ) : source?.kind === 'claude-code' ? (
-                <div className="space-y-1.5">
-                  <SettingsTextField
-                    type="text"
-                    mono
-                    value={model}
-                    onChange={e => setModel(e.target.value)}
-                    placeholder="sonnet"
-                  />
-                  <p className="text-[11px] text-content-muted">
-                    A model id the <code>claude</code> CLI accepts — an alias (<code>sonnet</code>,{' '}
-                    <code>opus</code>) or full name (<code>claude-sonnet-4-5</code>). Passed
-                    verbatim to <code>claude --model</code>; marketing strings like{' '}
-                    <code>sonnet-4-5</code> are rejected.
-                  </p>
-                </div>
-              ) : cloudModelsLoading ? (
-                <SettingsSelect disabled className="w-full opacity-60 cursor-wait">
-                  <option>{t('settings.ai.loadingModels')}</option>
-                </SettingsSelect>
-              ) : cloudModelsError ? (
-                <div className="space-y-1.5">
-                  <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 font-mono break-all">
-                    {cloudModelsError}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      size="xs"
-                      onClick={() => setModelsKey(k => k + 1)}>
-                      {t('common.retry')}
-                    </Button>
-                    <span className="text-xs text-content-faint">
-                      {t('settings.ai.enterModelIdManually')}
-                    </span>
-                  </div>
-                  <SettingsTextField
-                    type="text"
-                    mono
-                    value={model}
-                    onChange={e => {
-                      resetTestState();
-                      setModel(e.target.value);
-                    }}
-                    placeholder={
-                      selectedCloud
-                        ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
-                            slug: selectedCloud.slug,
-                          })
-                        : t('settings.ai.modelIdPlaceholder')
-                    }
-                  />
-                </div>
-              ) : cloudModels.length > 0 ? (
-                <SettingsSelect
-                  value={model}
-                  onChange={e => {
-                    resetTestState();
-                    setModel(e.target.value);
-                  }}
-                  className="w-full">
-                  {!model && <option value="">{t('settings.ai.selectModel')}</option>}
-                  {/* Keep existing value selectable even if the provider no longer lists it */}
-                  {model && !cloudModels.some(m => m.id === model) && (
-                    <option value={model}>{model}</option>
-                  )}
-                  {cloudModels.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {humanizeModelId(m.id)} — {m.id}
-                    </option>
-                  ))}
-                </SettingsSelect>
-              ) : (
+              </div>
+            ) : source?.kind === 'claude-code' ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-content-secondary">
+                  {t('settings.ai.modelLabel')}
+                </label>
                 <SettingsTextField
                   type="text"
                   mono
                   value={model}
-                  onChange={e => {
-                    resetTestState();
-                    setModel(e.target.value);
-                  }}
-                  placeholder={
-                    selectedCloud
-                      ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
-                          slug: selectedCloud.slug,
-                        })
-                      : t('settings.ai.modelIdPlaceholder')
-                  }
+                  onChange={e => setModel(e.target.value)}
+                  placeholder="sonnet"
                 />
-              )}
-            </div>
+                <p className="text-[11px] text-content-muted">
+                  {t('settings.ai.claudeCode.modelHelp')}
+                </p>
+              </div>
+            ) : (
+              <ModelEntryField
+                mode={modelEntry}
+                model={model}
+                onModelChange={next => {
+                  resetTestState();
+                  setModel(next);
+                }}
+                catalog={cloudModels}
+                catalogLoading={cloudModelsLoading}
+                catalogError={cloudModelsError}
+                onRetry={() => setModelsKey(k => k + 1)}
+                label={t('settings.ai.modelLabel')}
+                placeholder={
+                  selectedCloud
+                    ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
+                        slug: selectedCloud.slug,
+                      })
+                    : t('settings.ai.modelIdPlaceholder')
+                }
+                analyticsId="ai-model-entry-mode-toggle"
+                optionLabel={m => `${humanizeModelId(m.id)} — ${m.id}`}
+              />
+            )}
 
             {/* Temperature override (optional). When unchecked, the workload
                 inherits the provider/global default temperature. */}
@@ -2664,6 +2658,15 @@ const GlobalOwnModelSelector = ({
   const [saving, setSaving] = useState(false);
 
   const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
+  const selectedCloud = customCloud.find(c => c.slug === selectedSlug);
+  // Azure deployment names are never in the probed catalog, so free text is the
+  // only way to reach them (#5213). Same hook as CustomRoutingDialog — the two
+  // pickers deliberately share one implementation.
+  const modelEntry = useModelEntryMode({
+    endpoint: selectedCloud?.endpoint,
+    model,
+    catalogIds: cloudModels.map(m => m.id),
+  });
 
   useEffect(() => {
     if (!selectedSlug) {
@@ -2686,7 +2689,10 @@ const GlobalOwnModelSelector = ({
         if (!active) return;
         setCloudModels(ms);
         setCloudModelsLoading(false);
-        if (!model.trim() && ms[0]?.id) {
+        // Never auto-pick for Azure: the catalog holds base model ids, and
+        // silently seeding one is exactly what produced "Model not found"
+        // (#5213). Leave the field empty so the user supplies the deployment.
+        if (!model.trim() && ms[0]?.id && !isAzureFoundryEndpoint(provider.endpoint)) {
           setModel(ms[0].id);
         }
       })
@@ -2775,13 +2781,16 @@ const GlobalOwnModelSelector = ({
                     const nextModel = localModels[0]?.id ?? '';
                     setSource(nextSource);
                     setModel(nextModel);
+                    modelEntry.syncToEndpoint(undefined);
                   } else if (kind === 'claude-code') {
                     setSource({ kind: 'claude-code' });
                     setModel(CLAUDE_CODE_DEFAULT_MODEL);
+                    modelEntry.syncToEndpoint(undefined);
                   } else {
                     const nextSource = { kind: 'cloud', providerSlug: slug } as const;
                     setSource(nextSource);
                     setModel('');
+                    modelEntry.syncToEndpoint(customCloud.find(c => c.slug === slug)?.endpoint);
                   }
                 }}
                 className="w-full">
@@ -2799,11 +2808,11 @@ const GlobalOwnModelSelector = ({
               </SettingsSelect>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-content-secondary">
-                {t('settings.ai.globalModel.model')}
-              </label>
-              {source?.kind === 'local' ? (
+            {source?.kind === 'local' ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-content-secondary">
+                  {t('settings.ai.globalModel.model')}
+                </label>
                 <SettingsSelect
                   value={model}
                   onChange={e => setModel(e.target.value)}
@@ -2814,32 +2823,20 @@ const GlobalOwnModelSelector = ({
                     </option>
                   ))}
                 </SettingsSelect>
-              ) : cloudModels.length > 0 ? (
-                <SettingsSelect
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="w-full">
-                  {cloudModels.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                </SettingsSelect>
-              ) : (
-                <SettingsTextField
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  placeholder={
-                    cloudModelsLoading
-                      ? t('settings.ai.globalModel.loadingModels')
-                      : t('settings.ai.globalModel.enterModelId')
-                  }
-                />
-              )}
-              {cloudModelsError ? (
-                <div className="text-xs text-coral-700 dark:text-coral-300">{cloudModelsError}</div>
-              ) : null}
-            </div>
+              </div>
+            ) : (
+              <ModelEntryField
+                mode={modelEntry}
+                model={model}
+                onModelChange={setModel}
+                catalog={cloudModels}
+                catalogLoading={cloudModelsLoading}
+                catalogError={cloudModelsError}
+                label={t('settings.ai.globalModel.model')}
+                placeholder={t('settings.ai.globalModel.enterModelId')}
+                analyticsId="ai-global-model-entry-mode-toggle"
+              />
+            )}
           </div>
           {registrySlug && model.trim().length > 0 && (
             <label className="flex items-start gap-2 text-xs font-medium text-content-secondary">
@@ -2922,6 +2919,19 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   // an error on its own. Re-fetched whenever settings reload (a key
   // save/remove clears the matching entry core-side).
   const [providerAuthErrors, setProviderAuthErrors] = useState<ProviderAuthError[]>([]);
+  // #5339: non-fatal "the key was saved, but the provider was unreachable"
+  // advisory. Set when an add-time reachability probe fails for a *non-auth*
+  // reason (timeout / unreachable / unknown): the key is plausibly valid, so it
+  // is kept and the provider saved rather than rolled back. Distinct from
+  // `providerAuthErrors` (runtime 401/403) and from a hard save error.
+  //
+  // Keyed by slug (#5341) so it is cleared only for the provider it belongs to —
+  // removing or reconnecting a *different* provider must not wipe it, and
+  // removing *this* provider must.
+  const [providerSaveNotice, setProviderSaveNotice] = useState<{
+    slug: string;
+    message: string;
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
     void loadProviderAuthErrors()
@@ -2979,6 +2989,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       // `claude` CLI. Mirrors the Codex skip, but also skips model listing.
       const isCliLogin = credentialMode === 'cli_login';
       setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
+      // A fresh attempt on THIS provider clears only its own prior advisory —
+      // an advisory about a different provider must survive (#5341).
+      setProviderSaveNotice(prev => (prev?.slug === slug ? null : prev));
 
       try {
         const trimmed = value.trim();
@@ -3064,12 +3077,52 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             try {
               await listProviderModels(slug);
             } catch (probeErr) {
-              await flushCloudProviders(priorWireProviders).catch(() => {});
-              if (!isLocalRuntime && slug !== 'openhuman') {
-                await clearCloudProviderKey(slug).catch(() => {});
-              }
               const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-              throw new Error(`Could not reach ${upserted.label}: ${msg}`);
+              const reason = classifyProviderVerificationFailure(msg);
+              // Only a cloud KEY provider (a key written to auth-profiles.json at
+              // `setCloudProviderKey` above) gets the non-fatal treatment. Local
+              // runtimes (ollama/lmstudio/omlx) keep the original reject-on-probe
+              // behaviour: an unreachable local runtime is a genuine setup error
+              // the user should fix, not route chat to a dead host.
+              //
+              // NOTE: OMLX (`endpoint_key`) IS a local runtime that *does* write a
+              // key — into `local_ai.api_key` via `openhumanUpdateLocalAiSettings`,
+              // not auth-profiles.json. That `local_ai` write is NOT rolled back
+              // here (pre-existing behaviour, unchanged by this branch); restoring
+              // it on a failed local probe is tracked as a separate follow-up.
+              const isKeyProvider = !isLocalRuntime && slug !== 'openhuman';
+              if (isKeyProvider && reason !== 'auth') {
+                // #5339: transient / unreachable / unknown — the key is plausibly
+                // valid, so do NOT discard it or block the save. Keep the key +
+                // provider entry, record a non-fatal advisory, and fall through to
+                // persist. Prevents a valid key being lost/orphaned over a momentary
+                // `/models` hiccup (the built-in key dialog has no "add anyway"
+                // escape hatch the custom-provider editor got in #5213).
+                console.warn(
+                  `[ai-settings] provider=${slug} add-time probe non-fatal reason=${reason}`
+                );
+                setProviderSaveNotice({
+                  slug,
+                  message: describeProviderVerificationFailure(slug, msg, t),
+                });
+              } else {
+                // Auth failure (wrong key), or a local runtime that isn't up:
+                // roll both stores back and reject so the user fixes it. Rollback
+                // failures are LOGGED, never swallowed — a silently failed
+                // key-clear is exactly what orphans a key on disk (#5339).
+                await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
+                  console.warn(`[ai-settings] rollback flush failed slug=${slug}`, rollbackErr)
+                );
+                if (isKeyProvider) {
+                  await clearCloudProviderKey(slug).catch(rollbackErr =>
+                    console.warn(
+                      `[ai-settings] rollback clearCloudProviderKey failed slug=${slug}`,
+                      rollbackErr
+                    )
+                  );
+                }
+                throw new Error(`Could not reach ${upserted.label}: ${msg}`);
+              }
             }
           }
         }
@@ -3091,7 +3144,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         setBusyAction(null);
       }
     },
-    [draft, persist, saved.cloudProviders]
+    [draft, persist, saved.cloudProviders, t]
   );
 
   const connectOpenAiViaCodexAuth = useCallback(async () => {
@@ -3226,6 +3279,24 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             </div>
           )}
 
+          {/* #5339: non-fatal "key saved, but provider unreachable" advisory.
+              Amber (not coral): the save succeeded, only reachability is in
+              question. */}
+          {providerSaveNotice && (
+            <div
+              role="status"
+              className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span className="flex-1">{providerSaveNotice.message}</span>
+              <button
+                type="button"
+                className="shrink-0 font-medium underline-offset-2 hover:underline"
+                onClick={() => setProviderSaveNotice(null)}>
+                {t('common.dismiss')}
+              </button>
+            </div>
+          )}
+
           {/* ─── Provider chip-toggle list ────────────────────────────────── */}
           <section className="space-y-3">
             {loading && <div className="text-xs text-content-muted">{t('common.loading')}</div>}
@@ -3258,7 +3329,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     onToggle={async () => {
                       if (enabled && existing) {
                         // Toggle OFF: remove the provider + scrub any
-                        // routing entries that pin to it.
+                        // routing entries that pin to it. Drop its advisory too,
+                        // so a stale notice can't name a provider that is gone
+                        // (#5341) — but only if the advisory is about THIS one.
+                        setProviderSaveNotice(prev => (prev?.slug === existing.slug ? null : prev));
                         const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
                         const nextRouting = routingWithProviderRemoved(
                           draft.routing,
@@ -3290,6 +3364,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     enabled
                     busy={busyAction === `toggle-${existing.slug}`}
                     onToggle={async () => {
+                      // Removing this provider clears only its own advisory (#5341).
+                      setProviderSaveNotice(prev => (prev?.slug === existing.slug ? null : prev));
                       const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
                       const nextRouting = routingWithProviderRemoved(
                         draft.routing,
@@ -3378,7 +3454,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                   disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}>
                   {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
                     ? t('settings.ai.connecting')
-                    : t('settings.ai.codexAuthButton', 'Codex 인증')}
+                    : t('settings.ai.codexAuthButton', 'Connect Codex')}
                 </Button>
                 <span className="text-xs text-content-muted">
                   {t(
@@ -3616,7 +3692,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             .filter(p => p.id !== (editing === 'new' ? '' : editing.id))
             .map(p => p.slug)}
           onClose={() => setEditing(null)}
-          onSubmit={async (next, apiKey) => {
+          onSubmit={async (next, apiKey, opts) => {
             setBusyAction('save-provider');
             try {
               const id =
@@ -3664,15 +3740,40 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     auth_style: p.authStyle,
                   }));
                 await flushCloudProviders(nextWireProviders);
-                try {
-                  await listProviderModels(upserted.slug);
-                } catch (probeErr) {
-                  await flushCloudProviders(priorWireProviders).catch(() => {});
-                  if (apiKey) {
-                    await clearCloudProviderKey(upserted.slug).catch(() => {});
+                // `skipProbe` is the user's explicit "add it anyway" after a
+                // failed verification. A provider whose `/models` listing is
+                // absent or auth-shaped differently (Azure's classic
+                // `api-version` surface is both) is still perfectly usable for
+                // inference — gating creation on the probe made the deployment
+                // name field unreachable for exactly those users (#5213).
+                if (!opts?.skipProbe) {
+                  try {
+                    await listProviderModels(upserted.slug);
+                  } catch (probeErr) {
+                    // Roll back both stores. Failures are LOGGED, never swallowed:
+                    // a silently failed key-clear orphans the key on disk (#5339).
+                    // The user can still "add anyway" (`skipProbe`) to keep it.
+                    await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
+                      console.warn(
+                        `[ai-settings] rollback flush failed slug=${upserted.slug}`,
+                        rollbackErr
+                      )
+                    );
+                    if (apiKey) {
+                      await clearCloudProviderKey(upserted.slug).catch(rollbackErr =>
+                        console.warn(
+                          `[ai-settings] rollback clearCloudProviderKey failed slug=${upserted.slug}`,
+                          rollbackErr
+                        )
+                      );
+                    }
+                    const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+                    console.warn('[ai-settings] provider /models probe failed', {
+                      slug: upserted.slug,
+                      summary: presentProviderSetupError(msg, t).summary,
+                    });
+                    throw new ProviderProbeError(`Could not reach ${upserted.label}: ${msg}`);
                   }
-                  const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-                  throw new Error(`Could not reach ${upserted.label}: ${msg}`);
                 }
               }
 
@@ -3687,6 +3788,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             }
           }}
           onClearKey={async slug => {
+            // Clearing this provider's key drops its own advisory (#5341).
+            setProviderSaveNotice(prev => (prev?.slug === slug ? null : prev));
             try {
               await clearCloudProviderKey(slug);
               await reload();
@@ -3822,7 +3925,11 @@ const CloudProviderEditor = ({
   initial: CloudProvider | null;
   existingSlugs: string[];
   onClose: () => void;
-  onSubmit: (next: CloudProvider, apiKey: string) => Promise<void> | void;
+  onSubmit: (
+    next: CloudProvider,
+    apiKey: string,
+    opts?: { skipProbe?: boolean }
+  ) => Promise<void> | void;
   onClearKey: (slug: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
@@ -3831,6 +3938,10 @@ const CloudProviderEditor = ({
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Set once the live `/models` verification has rejected, which unlocks the
+  // "add without verifying" path. Only a probe failure earns it — a bad slug or
+  // a failed key write must still block (#5213).
+  const [probeFailed, setProbeFailed] = useState(false);
   const slug = initial?.slug ?? slugifyCustomProviderName(label);
   const hasReservedSlugCollision = !initial && BUILTIN_RESERVED_SLUGS.includes(slug);
   const slugError = !slug
@@ -3841,6 +3952,57 @@ const CloudProviderEditor = ({
         ? t('settings.ai.slugReservedError')
         : null;
   const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
+  // Skipping verification is a bet that the provider works despite an
+  // unreadable listing. For an Azure host that is not the `/openai/v1` base
+  // that bet is already lost: `{base}/chat/completions` is not a route Azure
+  // serves there and the stored bearer auth is the wrong header, so the entry
+  // would be dead on arrival. Withhold the bypass and let the inline nudge do
+  // its job instead of manufacturing a broken provider (#5213).
+  const knownUnusableEndpoint =
+    isAzureFoundryEndpoint(endpoint) && !isAzureV1BaseUrl(endpoint.trim());
+
+  const submitProvider = async (opts?: { skipProbe?: boolean }) => {
+    setSaving(true);
+    setSubmitError(null);
+    // Cleared alongside the error: a later attempt that fails for an unrelated
+    // reason (slug collision, key write) must not still offer to skip
+    // verification, which is the distinction `ProviderProbeError` exists for.
+    setProbeFailed(false);
+    try {
+      if (slugError) {
+        throw new Error(slugError);
+      }
+      await onSubmit(
+        {
+          id: initial?.id ?? '',
+          slug,
+          label: label.trim() || slug,
+          endpoint: endpoint.trim(),
+          authStyle: initial?.authStyle ?? 'bearer',
+          maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
+        },
+        apiKey.trim(),
+        opts
+      );
+    } catch (err) {
+      // Surface the failure inline and keep the dialog open so the user can fix
+      // the key/URL and retry. A rejected `/models` probe additionally unlocks
+      // the "add without verifying" button — the listing is a convenience for
+      // the model dropdown, not a precondition for inference.
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[ai-settings] cloud provider editor submit failed', {
+        slug,
+        probeFailure: err instanceof ProviderProbeError,
+        summary: presentProviderSetupError(message, t).summary,
+      });
+      setSubmitError(message);
+      if (err instanceof ProviderProbeError) {
+        setProbeFailed(true);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/30 p-4">
@@ -3894,6 +4056,24 @@ const CloudProviderEditor = ({
               className="mt-1"
               placeholder={t('settings.ai.openAiUrlPlaceholder')}
             />
+            {/* Azure routes by deployment name, which is set on the model
+                field rather than here — point the user at it (#5213). */}
+            {isAzureFoundryEndpoint(endpoint) && (
+              <div className="mt-1 text-[11px] text-content-muted">
+                {t('settings.ai.deploymentNameProviderHint')}
+              </div>
+            )}
+            {/* Only Azure's `/openai/v1` base is OpenAI-shaped: it serves a
+                `/models` listing and accepts the resource key as a bearer
+                token, which is the auth style every custom provider is stored
+                with. The older `api-version` surface wants an `api-key` header
+                and no `/models`, so a user who pastes the portal's bare
+                resource URL fails both the probe and inference (#5213). */}
+            {knownUnusableEndpoint && (
+              <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                {t('settings.ai.azureV1EndpointHint')}
+              </div>
+            )}
           </div>
           <div>
             <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-content-muted">
@@ -3927,47 +4107,34 @@ const CloudProviderEditor = ({
             />
           </div>
           {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
+          {/* A failed verification is not a failed provider. Explain what the
+              probe does and does not prove, then let the user proceed (#5213).
+              Withheld for an endpoint we already know cannot serve inference. */}
+          {probeFailed && !knownUnusableEndpoint ? (
+            <p className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+              {t('settings.ai.probeFailedHint')}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
           <Button variant="secondary" size="xs" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
+          {probeFailed && !knownUnusableEndpoint ? (
+            <Button
+              variant="secondary"
+              size="xs"
+              analyticsId="ai-provider-add-without-verifying"
+              disabled={saving || !endpoint.trim() || Boolean(slugError)}
+              onClick={() => void submitProvider({ skipProbe: true })}>
+              {t('settings.ai.probeFailedAddAnyway')}
+            </Button>
+          ) : null}
           <Button
             variant="primary"
             size="xs"
             disabled={saving || !endpoint.trim() || Boolean(slugError)}
-            onClick={async () => {
-              setSaving(true);
-              setSubmitError(null);
-              try {
-                if (slugError) {
-                  throw new Error(slugError);
-                }
-                await onSubmit(
-                  {
-                    id: initial?.id ?? '',
-                    slug,
-                    label: label.trim() || slug,
-                    endpoint: endpoint.trim(),
-                    authStyle: initial?.authStyle ?? 'bearer',
-                    maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
-                  },
-                  apiKey.trim()
-                );
-              } catch (err) {
-                // Caller throws when the live /models probe rejects — surface
-                // the failure inline and keep the dialog open so the user can
-                // fix the key/URL and retry.
-                const message = err instanceof Error ? err.message : String(err);
-                console.warn('[ai-settings] cloud provider editor submit failed', {
-                  slug,
-                  summary: presentProviderSetupError(message, t).summary,
-                });
-                setSubmitError(message);
-              } finally {
-                setSaving(false);
-              }
-            }}>
+            onClick={() => void submitProvider()}>
             {saving
               ? t('settings.ai.saving')
               : initial

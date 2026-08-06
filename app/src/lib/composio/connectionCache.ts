@@ -38,7 +38,7 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 
 const ACTIVE_USER_KEY = 'OPENHUMAN_ACTIVE_USER_ID';
 
-export interface CachedConnectionState {
+interface CachedConnectionState {
   fetchedAt: number;
   connections: ComposioConnection[];
   toolkits: string[];

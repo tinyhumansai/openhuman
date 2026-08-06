@@ -16,27 +16,20 @@ use tempfile::tempdir;
 use openhuman_core::openhuman::agent::task_board::{
     board_for_thread, TaskApprovalMode, TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
 };
-use openhuman_core::openhuman::composio::ComposioClient;
+use openhuman_core::openhuman::integrations::composio::ComposioClient;
 use openhuman_core::openhuman::config::{
     CapabilityProviderConfig, CapabilityProviderTrustState, Config, McpServerConfig,
 };
-use openhuman_core::openhuman::inference::provider::compatible::{
-    AuthStyle, OpenAiCompatibleProvider,
-};
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, Provider, ProviderDelta,
-};
 use openhuman_core::openhuman::integrations::IntegrationClient;
-use openhuman_core::openhuman::tool_registry::{
+use openhuman_core::openhuman::tools::registry::{
     all_tool_registry_controller_schemas, all_tool_registry_registered_controllers,
     capability_provider_by_id, capability_provider_diagnostics, get_tool,
     is_capability_provider_trusted_enabled, list_capability_providers, list_tools,
     normalize_capability_provider_id,
 };
-use openhuman_core::openhuman::tool_registry::{
+use openhuman_core::openhuman::tools::registry::{
     denials as tool_registry_denials, ops as tool_registry_ops,
 };
-use openhuman_core::openhuman::tools::ToolSpec;
 
 static OWNED_DOMAIN_ENV_LOCK: &std::sync::OnceLock<std::sync::Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
@@ -338,140 +331,7 @@ fn owned_domain_config(workspace_root: &std::path::Path) -> Config {
     config
 }
 
-#[tokio::test]
-async fn openai_compatible_provider_covers_auth_temperature_tool_fallback_and_responses() {
-    let (base_url, state) = serve_provider_mock().await;
-    let provider = OpenAiCompatibleProvider::new_with_user_agent(
-        "owned-mock",
-        &base_url,
-        Some("secret-token"),
-        AuthStyle::Bearer,
-        "OpenHumanOwnedCoverage/1.0",
-    )
-    .with_temperature_unsupported_models(vec!["gpt-5*".to_string()]);
-
-    let tool = ToolSpec {
-        name: "lookup".to_string(),
-        description: "Lookup a record".to_string(),
-        parameters: json!({ "type": "object" }),
-    };
-    let messages = vec![ChatMessage::system("system"), ChatMessage::user("hello")];
-    let fallback_response = provider
-        .chat(
-            ChatRequest {
-                messages: &messages,
-                tools: Some(&[tool.clone(), tool]),
-                stream: None,
-                max_tokens: None,
-            },
-            "gpt-5-mini",
-            0.6,
-        )
-        .await
-        .expect("provider chat with tool fallback");
-    assert!(
-        fallback_response
-            .text
-            .as_deref()
-            .is_some_and(|text| text.contains("\"tool_calls\"")),
-        "tool-schema fallback should return the history-path text payload"
-    );
-    assert!(fallback_response.tool_calls.is_empty());
-
-    let response = provider
-        .chat(
-            ChatRequest {
-                messages: &messages,
-                tools: None,
-                stream: None,
-                max_tokens: None,
-            },
-            "gpt-5-mini",
-            0.6,
-        )
-        .await
-        .expect("provider native chat");
-    assert_eq!(response.text.as_deref(), Some("visible answer"));
-    assert_eq!(response.tool_calls.len(), 1);
-    assert_eq!(response.tool_calls[0].name, "lookup");
-    assert_eq!(response.tool_calls[0].arguments, r#"{"query":"openhuman"}"#);
-    let usage = response.usage.expect("usage");
-    assert_eq!(usage.input_tokens, 11);
-    assert_eq!(usage.output_tokens, 13);
-    assert_eq!(usage.cached_input_tokens, 5);
-    assert_eq!(usage.charged_amount_usd, 0.0123);
-
-    let chat_requests = state.chat_requests.lock().expect("chat requests").clone();
-    assert!(
-        chat_requests.len() >= 2,
-        "tool rejection should force a retry without native tools"
-    );
-    assert_eq!(
-        chat_requests[0].pointer("/tools/0/function/name"),
-        Some(&json!("lookup"))
-    );
-    assert!(chat_requests[0].get("temperature").is_none());
-    assert!(chat_requests[1].get("tools").is_none());
-
-    let auth_headers = state.auth_headers.lock().expect("auth headers").clone();
-    assert!(
-        auth_headers
-            .iter()
-            .any(|header| header.as_deref() == Some("Bearer secret-token")),
-        "bearer auth should be sent"
-    );
-    let user_agents = state.user_agents.lock().expect("user agents").clone();
-    assert!(
-        user_agents
-            .iter()
-            .any(|header| header.as_deref() == Some("OpenHumanOwnedCoverage/1.0")),
-        "custom user-agent should be sent"
-    );
-
-    let fallback_text = provider
-        .chat_with_history(&[ChatMessage::user("fallback please")], "missing-chat", 0.4)
-        .await
-        .expect("responses fallback");
-    assert_eq!(fallback_text, "responses fallback answer");
-    assert_eq!(
-        state.response_requests.lock().expect("response requests")[0].pointer("/input/0/content"),
-        Some(&json!([{"text": "fallback please", "type": "input_text"}]))
-    );
-}
-
-#[tokio::test]
-async fn openai_compatible_provider_streaming_json_fallback_aggregates_response() {
-    let (base_url, _state) = serve_provider_mock().await;
-    let provider = OpenAiCompatibleProvider::new("owned-mock", &base_url, None, AuthStyle::None);
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(4);
-    let messages = vec![ChatMessage::user("stream please")];
-
-    let response = provider
-        .chat(
-            ChatRequest {
-                messages: &messages,
-                tools: None,
-                stream: Some(&tx),
-                max_tokens: None,
-            },
-            "stream-model",
-            0.7,
-        )
-        .await
-        .expect("streaming JSON fallback");
-
-    assert_eq!(response.text.as_deref(), Some("stream fallback body"));
-    assert_eq!(
-        response.reasoning_content.as_deref(),
-        Some("stream thinking")
-    );
-    assert!(
-        rx.try_recv().is_err(),
-        "non-SSE fallback should not emit deltas"
-    );
-}
-
-#[tokio::test]
+ #[tokio::test]
 async fn composio_client_round_trips_backend_paths_and_payload_normalization() {
     let (base_url, state) = serve_composio_mock().await;
     let client = ComposioClient::new(Arc::new(IntegrationClient::new(
@@ -558,9 +418,10 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
 
     assert_eq!(TaskCardStatus::InProgress.as_str(), "in_progress");
     assert_eq!(TaskApprovalMode::NotRequired.as_str(), "not_required");
-    assert!(store.get(" missing ").expect("get missing").is_none());
+    assert!(store.get(" missing ").await.expect("get missing").is_none());
     assert!(store
         .get("   ")
+        .await
         .expect_err("blank id")
         .contains("thread_id"));
 
@@ -611,6 +472,7 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
             ],
             updated_at: String::new(),
         })
+        .await
         .expect("put task board");
 
     assert_eq!(saved.thread_id, "thread-owned");
@@ -627,6 +489,7 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
     assert_eq!(saved.cards[0].order, 0);
 
     let loaded = board_for_thread(dir.path(), " thread-owned ")
+        .await
         .expect("board_for_thread")
         .cards;
     assert_eq!(loaded[0].approval_mode, Some(TaskApprovalMode::Required));
@@ -636,10 +499,12 @@ async fn agent_task_board_store_normalizes_persists_and_surfaces_errors() {
         Some("task-sess-owned")
     );
 
-    assert!(store.delete("thread-owned").expect("delete present"));
-    assert!(!store.delete("thread-owned").expect("delete missing"));
+    assert!(store.delete("thread-owned").await.expect("delete present"));
+    assert!(!store.delete("thread-owned").await.expect("delete missing"));
 
-    let missing = board_for_thread(dir.path(), "thread-owned").expect("missing board");
+    let missing = board_for_thread(dir.path(), "thread-owned")
+        .await
+        .expect("missing board");
     assert!(missing.cards.is_empty());
 }
 

@@ -7,8 +7,8 @@ import { selectEffectiveMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
 import {
+  isAudioStopped,
   type PlaybackHandle,
-  type PlaybackOptions,
   playBase64Audio,
   swallowAudioStop,
 } from './voice/audioPlayer';
@@ -18,8 +18,8 @@ import {
   proceduralVisemes,
   synthesizeSpeech,
   type VisemeFrame,
-  visemesFromAlignment,
 } from './voice/ttsClient';
+import { selectVisemeSource, splitIntoSentences } from './voice/ttsQueue';
 import { findActiveFrame, oculusVisemeToShape } from './voice/visemeMap';
 
 const mascotLog = debug('human:mascot');
@@ -41,20 +41,6 @@ function estimateTtsPlaybackMs(text: string, frames: VisemeFrame[]): number {
   const frameEnd = frames.at(-1)?.end_ms ?? 0;
   if (frameEnd > 0 && hasUsableStarts(frames)) return frameEnd;
   return Math.max(TTS_MIN_ESTIMATED_PLAYBACK_MS, text.trim().length * TTS_ESTIMATED_MS_PER_CHAR);
-}
-
-/**
- * Heuristic — does this timeline contain at least one frame whose code maps
- * to a non-REST mouth shape? Used to detect the "backend shipped frames in
- * an unknown vocabulary" regression where the mouth visibly stops moving
- * because every viseme falls back to REST.
- */
-function framesProduceMotion(frames: VisemeFrame[]): boolean {
-  for (const f of frames) {
-    const shape = oculusVisemeToShape(f.viseme);
-    if (shape !== VISEMES.REST) return true;
-  }
-  return false;
 }
 
 /**
@@ -254,14 +240,10 @@ function toolToActivityFace(toolName: string): MascotFace | null {
     return 'reading';
   }
 
-  if (name.includes('screen') || name.includes('screenshot') || name.includes('capture')) {
-    return 'recording';
-  }
-
   return null;
 }
 
-export interface UseHumanMascotOptions {
+interface UseHumanMascotOptions {
   /** When true, post-stream replies are sent to ElevenLabs and the mouth
    *  follows the returned viseme timeline while the audio plays. */
   speakReplies?: boolean;
@@ -270,11 +252,21 @@ export interface UseHumanMascotOptions {
   listening?: boolean;
 }
 
-export interface UseHumanMascotResult {
+interface UseHumanMascotResult {
   face: MascotFace;
   viseme: VisemeShape;
   /** Raw Oculus 15-set viseme code for Rive's `mouthVisemeCode` input. */
   visemeCode: string;
+}
+
+/** Result of a chunk's speech synthesis — `ok:false` on failure so the pump
+ *  can skip a bad sentence without aborting the whole reply. */
+type ChunkSynth = { ok: true; tts: Awaited<ReturnType<typeof synthesizeSpeech>> } | { ok: false };
+
+/** One queued sentence: its spoken text plus the eagerly-fired synth promise. */
+interface TtsChunk {
+  text: string;
+  synth: Promise<ChunkSynth>;
 }
 
 /**
@@ -284,7 +276,7 @@ export interface UseHumanMascotResult {
  *
  * - `inference_start` → `thinking`
  * - `iteration_start` round > 1 or `tool_call` → activity pose based on tool
- *   name (writing/reading/recording) or `confused` as fallback
+ *   name (writing/reading) or `confused` as fallback
  * - `tool_result success=false` → `concerned` (held briefly)
  * - `text_delta` → `speaking`, pseudo-lipsync from the trailing letter
  * - `chat_done` (no TTS) → message-aware ack face (held briefly), then `idle`
@@ -330,6 +322,29 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   // Throttle marker for the lipsync diagnostic log (last logged ms).
   const lastLipsyncLogRef = useRef(0);
 
+  // ── Streaming, sentence-chunked TTS state (#5358) ──────────────────────────
+  // The reply is spoken sentence-by-sentence as it streams instead of waiting
+  // for the whole response, so the first audio starts within a sentence's
+  // synth latency rather than after the entire reply + one big round trip.
+  //
+  // `turnSeqRef` mirrors the `playbackSeqRef` value captured when the current
+  // TTS turn began — every async synth/play continuation re-checks it so a
+  // superseded or cancelled turn drops its work instead of speaking over the
+  // next one. A chunk holds the raw sentence text plus the in-flight synthesis
+  // promise (fired eagerly at enqueue so sentence N+1 synthesizes while sentence
+  // N plays); the pump plays them strictly in enqueue order, single-flight, so
+  // only one `<audio>` element is ever live and there are no orphan blob URLs.
+  const streamActiveRef = useRef(false);
+  const turnSeqRef = useRef(0);
+  const sawDeltaThisTurnRef = useRef(false);
+  const sentenceBufferRef = useRef('');
+  const chunkQueueRef = useRef<TtsChunk[]>([]);
+  const queueClosedRef = useRef(false);
+  const queuePumpingRef = useRef(false);
+  const queueAckRef = useRef<ConversationAckFace>('happy');
+  const chunkAttemptedRef = useRef(false);
+  const chunkPlayedRef = useRef(false);
+
   const [, force] = useState(0);
 
   function clearAckTimer() {
@@ -354,6 +369,10 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         clearAckTimer();
         toolSucceededRef.current = false;
         subagentSucceededRef.current = false;
+        // A new agent turn supersedes any reply still being spoken — stop the
+        // previous turn's audio and drop its queue so the next turn's deltas
+        // start a fresh stream instead of appending onto stale state.
+        cancelTtsPlayback();
         mascotLog('voice-session transition → thinking (inference_start)');
         setFace('thinking');
       },
@@ -401,14 +420,17 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
           mascotLog('voice-session text_delta suppressed — listening is active');
           return;
         }
-        // When TTS is enabled the mouth is driven by the synthesized audio's
-        // viseme timeline (see startTtsPlayback), locked to the audio clock.
-        // The text-delta pseudo-lipsync exists only for the no-audio path — if
-        // we let it run while replies are spoken, the mouth flaps along with
-        // the streaming text *before and faster than* the voice. Stay at rest
-        // during streaming so the only mouth motion is in sync with the audio.
+        // In speak mode we stream the reply sentence-by-sentence: buffer the
+        // deltas and enqueue each complete sentence for synthesis + playback the
+        // moment it lands, so the first audio starts within one sentence's
+        // synth latency instead of after the whole reply + one big round trip
+        // (#5358). The text-delta pseudo-lipsync below is the no-audio path
+        // only — letting it run while replies are spoken would flap the mouth
+        // ahead of the voice.
         if (speakRef.current) {
-          mascotLog('voice-session text_delta lipsync suppressed — TTS will drive the mouth');
+          ensureTtsTurn();
+          sawDeltaThisTurnRef.current = true;
+          enqueueSpeech(e.delta, turnSeqRef.current, false);
           return;
         }
         if (playbackRef.current) return;
@@ -441,40 +463,25 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
           holdThenIdle(ackFace);
           return;
         }
-        void startTtsPlayback(e.full_response, ackFace).catch(() => {});
+        finalizeTtsTurn(e.full_response, ackFace);
       },
       onError: () => {
         mascotLog('voice-session transition → concerned (chat_error), cancelling in-flight TTS');
-        playbackSeqRef.current++;
-        const orphan = playbackRef.current;
-        playbackRef.current = null;
-        playbackStartedAtRef.current = 0;
-        if (orphan) {
-          orphan.stop();
-          orphan.ended.catch(swallowAudioStop);
-        }
-        visemeFramesRef.current = [];
+        cancelTtsPlayback();
         holdThenIdle('concerned');
       },
     });
     return () => {
       unsub();
       clearAckTimer();
-      playbackSeqRef.current++;
-      const orphan = playbackRef.current;
-      playbackRef.current = null;
-      playbackStartedAtRef.current = 0;
-      if (orphan) {
-        orphan.stop();
-        orphan.ended.catch(swallowAudioStop);
-      }
+      cancelTtsPlayback();
     };
   }, []);
 
   useEffect(() => {
     if (!listening) return;
     clearAckTimer();
-    const ttsWasInFlight = playbackRef.current != null;
+    const ttsWasInFlight = playbackRef.current != null || streamActiveRef.current;
     mascotLog(
       'voice-session listening-active tts-in-flight=%s — %s',
       ttsWasInFlight,
@@ -482,7 +489,78 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         ? 'user started recording while TTS was playing (interrupted)'
         : 'mic activated, no TTS to cancel'
     );
+    // Barge-in: drain the whole streaming queue (active clip + any pending
+    // sentences), not just the current handle, so a mid-reply interruption
+    // stops everything at once.
+    cancelTtsPlayback();
+    targetRef.current = VISEMES.REST;
+    lastDeltaAtRef.current = 0;
+    setFace('idle');
+  }, [listening]);
+
+  function isTurnCurrent(seq: number): boolean {
+    return playbackSeqRef.current === seq;
+  }
+
+  /**
+   * Reset all playback + queue state and begin a fresh TTS turn. Cancels any
+   * clip still playing from a prior turn and bumps the seq token so its
+   * in-flight synth/play continuations no-op. Returns the new turn's seq.
+   */
+  function beginTtsTurn(): number {
+    const orphan = playbackRef.current;
+    playbackRef.current = null;
+    playbackStartedAtRef.current = 0;
+    if (orphan) {
+      orphan.stop();
+      orphan.ended.catch(swallowAudioStop);
+    }
+    const seq = ++playbackSeqRef.current;
+    turnSeqRef.current = seq;
+    streamActiveRef.current = true;
+    sawDeltaThisTurnRef.current = false;
+    sentenceBufferRef.current = '';
+    chunkQueueRef.current = [];
+    queueClosedRef.current = false;
+    queuePumpingRef.current = false;
+    chunkAttemptedRef.current = false;
+    chunkPlayedRef.current = false;
+    queueAckRef.current = 'happy';
+    visemeFramesRef.current = [];
+    visemeCursorRef.current = 0;
+    visemeCodeRef.current = 'sil';
+    lastLipsyncLogRef.current = -1_000;
+    clearAckTimer();
+    setFace('thinking');
+    mascotLog('tts turn %d started', seq);
+    return seq;
+  }
+
+  /**
+   * Start a streaming turn on the first delta of a spoken reply. No-op if one
+   * is already open (subsequent deltas of the same reply).
+   */
+  function ensureTtsTurn(): void {
+    // Reuse the open turn only while it is still accepting sentences. Once
+    // `chat_done` has closed it (queueClosedRef), a delta belongs to a NEW turn
+    // — start fresh so it never appends onto the previous reply's queue/ack.
+    if (streamActiveRef.current && !queueClosedRef.current) return;
+    beginTtsTurn();
+  }
+
+  /**
+   * Cancel everything: the active clip, any queued sentences, and the buffer.
+   * Bumps the seq so pending synth/play continuations drop their work; leaves
+   * the face for the caller to set. Idempotent.
+   */
+  function cancelTtsPlayback(): void {
     playbackSeqRef.current++;
+    streamActiveRef.current = false;
+    queueClosedRef.current = false;
+    queuePumpingRef.current = false;
+    sawDeltaThisTurnRef.current = false;
+    sentenceBufferRef.current = '';
+    chunkQueueRef.current = [];
     const orphan = playbackRef.current;
     playbackRef.current = null;
     playbackStartedAtRef.current = 0;
@@ -492,156 +570,209 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     }
     visemeFramesRef.current = [];
     visemeCursorRef.current = 0;
-    targetRef.current = VISEMES.REST;
     visemeCodeRef.current = 'sil';
-    lastDeltaAtRef.current = 0;
-    setFace('idle');
-  }, [listening]);
+  }
 
-  async function startTtsPlayback(
-    text: string,
-    ackFace: ConversationAckFace = 'happy'
-  ): Promise<void> {
-    const prev = playbackRef.current;
-    playbackRef.current = null;
-    playbackStartedAtRef.current = 0;
-    if (prev) {
-      prev.stop();
-      prev.ended.catch(swallowAudioStop);
+  /**
+   * Buffer streamed text, carve out complete sentences, and enqueue each for
+   * synthesis. `flush` also enqueues the trailing partial sentence (used at
+   * end-of-turn).
+   */
+  function enqueueSpeech(text: string, seq: number, flush: boolean): void {
+    if (!isTurnCurrent(seq)) return;
+    sentenceBufferRef.current += text;
+    const { sentences, rest } = splitIntoSentences(sentenceBufferRef.current);
+    sentenceBufferRef.current = rest;
+    for (const sentence of sentences) enqueueSentence(sentence, seq);
+    if (flush) {
+      const tail = sentenceBufferRef.current.trim();
+      sentenceBufferRef.current = '';
+      if (tail) enqueueSentence(tail, seq);
     }
-    visemeFramesRef.current = [];
-    visemeCursorRef.current = 0;
-    clearAckTimer();
-    const seq = ++playbackSeqRef.current;
-    const isStillCurrent = () => playbackSeqRef.current === seq;
-    let degraded = false;
+  }
 
+  /** Fire a sentence's synthesis eagerly and queue it for in-order playback. */
+  function enqueueSentence(sentence: string, seq: number): void {
+    const spoken = sentence.trim();
+    if (!spoken) return;
+    chunkAttemptedRef.current = true;
+    const synth: Promise<ChunkSynth> = synthesizeSpeech(spoken, {
+      voiceId: mascotVoiceIdRef.current,
+    })
+      .then(tts => ({ ok: true, tts }) as ChunkSynth)
+      .catch(() => ({ ok: false }) as ChunkSynth);
+    chunkQueueRef.current.push({ text: spoken, synth });
+    mascotLog(
+      'tts enqueued sentence chars=%d queue=%d',
+      spoken.length,
+      chunkQueueRef.current.length
+    );
+    void pumpQueue(seq);
+  }
+
+  /**
+   * Finalize the turn on `chat_done`. If the reply streamed as deltas, flush
+   * the trailing fragment and close the queue; otherwise (no deltas were seen)
+   * speak the whole response as a fresh turn.
+   */
+  function finalizeTtsTurn(fullResponse: string, ackFace: ConversationAckFace): void {
+    if (sawDeltaThisTurnRef.current && streamActiveRef.current) {
+      queueAckRef.current = ackFace;
+      const seq = turnSeqRef.current;
+      enqueueSpeech('', seq, true);
+      queueClosedRef.current = true;
+      void pumpQueue(seq);
+      return;
+    }
+    // No deltas arrived (some backends only emit the final message) — start a
+    // fresh turn and speak the whole response, still chunked into sentences.
+    const seq = beginTtsTurn();
+    queueAckRef.current = ackFace;
+    enqueueSpeech(fullResponse, seq, true);
+    queueClosedRef.current = true;
+    void pumpQueue(seq);
+  }
+
+  /**
+   * Play queued chunks strictly in order, one at a time. Runs until the queue
+   * drains; a later enqueue restarts it. Finishes the turn once the queue is
+   * drained and closed.
+   */
+  async function pumpQueue(seq: number): Promise<void> {
+    if (queuePumpingRef.current) return;
+    if (!isTurnCurrent(seq)) return;
+    queuePumpingRef.current = true;
     try {
-      setFace('thinking');
-      let tts;
-      try {
-        tts = await synthesizeSpeech(text, { voiceId: mascotVoiceIdRef.current });
-      } catch (err) {
-        if (isStillCurrent()) degraded = true;
-        throw err;
+      while (chunkQueueRef.current.length > 0) {
+        if (!isTurnCurrent(seq)) return;
+        const chunk = chunkQueueRef.current.shift()!;
+        const result = await chunk.synth;
+        if (!isTurnCurrent(seq)) return;
+        if (!result.ok) {
+          mascotLog('tts chunk synth failed — skipping');
+          continue;
+        }
+        await playChunk(result.tts, chunk.text, seq);
       }
-      if (!isStillCurrent()) return;
-      let frames: VisemeFrame[] = tts.visemes ?? [];
-      let source: 'visemes' | 'alignment' | 'procedural' = 'visemes';
-      if (frames.length > 0 && !framesProduceMotion(frames)) {
-        mascotLog('tts visemes produced no motion — dropping and falling through');
-        frames = [];
+    } finally {
+      // Only act if this pump still owns the turn — a superseding turn resets
+      // state explicitly, so a stale pump must not touch it. Finalizing here in
+      // the `finally` guarantees the turn always ends (mouth rests, ack fires)
+      // even if a chunk unexpectedly throws, instead of stranding it speaking.
+      if (isTurnCurrent(seq)) {
+        queuePumpingRef.current = false;
+        maybeFinishTurn(seq);
       }
-      // The cloud path's viseme *timestamps* are frequently degenerate (all-zero
-      // starts or a constant end), which loses the gaps between words/sentences.
-      // The char-level alignment carries real timing — including those pauses —
-      // so prefer it whenever the viseme starts don't form a usable timeline.
-      const visemeStartsUsable = hasUsableStarts(frames);
-      const haveAlignment = !!tts.alignment && tts.alignment.length > 0;
-      if ((frames.length === 0 || !visemeStartsUsable) && haveAlignment) {
-        frames = visemesFromAlignment(tts.alignment!);
-        source = 'alignment';
-        mascotLog('tts derived %d viseme frames from alignment', frames.length);
-      }
-      mascotLog(
-        'tts synth visemes=%d alignment=%d startsUsable=%s → source=%s',
-        tts.visemes?.length ?? 0,
-        tts.alignment?.length ?? 0,
-        visemeStartsUsable,
-        source
-      );
-      const ttsOptions: PlaybackOptions = { maxDurationMs: TTS_MAX_PLAYBACK_MS };
-      const handle = await playBase64Audio(
-        tts.audio_base64,
-        tts.audio_mime ?? 'audio/mpeg',
-        ttsOptions
-      );
-      if (!isStillCurrent()) {
+    }
+  }
+
+  /**
+   * Play one chunk: derive its own viseme timeline, play the audio, drive the
+   * mouth off it, and resolve when it ends. Keeps `face='speaking'` across
+   * chunk boundaries so the RAF loop never tears down between sentences.
+   */
+  async function playChunk(
+    tts: Awaited<ReturnType<typeof synthesizeSpeech>>,
+    text: string,
+    seq: number
+  ): Promise<void> {
+    let { frames, source } = selectVisemeSource(tts);
+    let handle: PlaybackHandle;
+    try {
+      handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg', {
+        maxDurationMs: TTS_MAX_PLAYBACK_MS,
+      });
+    } catch (err) {
+      // A decode/autoplay failure degrades this chunk; the turn ends concerned
+      // only if no chunk ever played (see maybeFinishTurn).
+      mascotLog('tts chunk playback could not start: %s', String(err));
+      return;
+    }
+    if (!isTurnCurrent(seq)) {
+      handle.stop();
+      handle.ended.catch(swallowAudioStop);
+      return;
+    }
+
+    // Start lipsync as soon as play() succeeds; metadata can lag by the 500ms
+    // decoder fallback, so estimate first and refine once it resolves.
+    let audioMs = handle.durationMs();
+    const waitingForMetadata = audioMs <= 0;
+    if (waitingForMetadata) audioMs = estimateTtsPlaybackMs(text, frames);
+    if (frames.length === 0) {
+      frames = proceduralVisemes(text, audioMs);
+      source = 'procedural';
+    }
+    frames = normalizeVisemeTimeline(frames, audioMs);
+
+    visemeFramesRef.current = frames;
+    visemeCursorRef.current = 0;
+    playbackRef.current = handle;
+    playbackStartedAtRef.current = window.performance.now();
+    lastLipsyncLogRef.current = -1_000;
+    chunkPlayedRef.current = true;
+    setFace('speaking');
+    mascotLog('tts chunk playback started (%s) frames=%d', source, frames.length);
+
+    if (waitingForMetadata) {
+      await handle.metadataReady;
+      if (!isTurnCurrent(seq)) {
         handle.stop();
         handle.ended.catch(swallowAudioStop);
         return;
       }
-      // Start lipsync as soon as audio.play() succeeds. Metadata can lag by the
-      // 500ms decoder fallback in blob/MP3 cases; keeping playbackRef empty
-      // until then makes short replies play while the mascot is still thinking.
-      let audioMs = handle.durationMs();
-      const waitingForMetadata = audioMs <= 0;
-      if (waitingForMetadata) {
-        audioMs = estimateTtsPlaybackMs(text, frames);
-        mascotLog(
-          'tts duration pending — starting lipsync with %dms estimate',
-          Math.round(audioMs)
-        );
-      }
-      if (frames.length === 0) {
-        frames = proceduralVisemes(text, audioMs);
-        source = 'procedural';
-        mascotLog('tts derived %d procedural viseme frames over %dms', frames.length, audioMs);
-      }
-      // Rebuild per-frame end times from the next frame's start. The backend can
-      // ship a constant `end_ms` (= whole-utterance length) for every frame,
-      // which freezes findActiveFrame on frame 0; this restores a walkable
-      // cue timeline and stretches the last frame to the measured audio length.
-      frames = normalizeVisemeTimeline(frames, audioMs);
-      mascotLog(
-        'tts normalized %d viseme frames (%s) over %dms',
-        frames.length,
-        source,
-        Math.round(audioMs)
-      );
-      visemeFramesRef.current = frames;
-      visemeCursorRef.current = 0;
-      playbackRef.current = handle;
-      playbackStartedAtRef.current = window.performance.now();
-      lastLipsyncLogRef.current = -1_000;
-      setFace('speaking');
-      mascotLog(
-        'tts playback started (%s) — driving lipsync from %d frames',
-        source,
-        frames.length
-      );
-      if (waitingForMetadata) {
-        await handle.metadataReady;
-        if (!isStillCurrent()) {
-          handle.stop();
-          handle.ended.catch(swallowAudioStop);
-          return;
-        }
-        const measuredAudioMs = handle.durationMs();
-        if (measuredAudioMs > 0 && playbackRef.current === handle) {
-          const measuredFrames =
-            source === 'procedural'
-              ? proceduralVisemes(text, measuredAudioMs)
-              : normalizeVisemeTimeline(visemeFramesRef.current, measuredAudioMs);
-          visemeFramesRef.current =
-            source === 'procedural'
-              ? normalizeVisemeTimeline(measuredFrames, measuredAudioMs)
-              : measuredFrames;
-          visemeCursorRef.current = 0;
-          mascotLog('tts metadata duration ready — refined lipsync to %dms', measuredAudioMs);
-        }
-      }
-      try {
-        await handle.ended;
-      } catch (err) {
-        swallowAudioStop(err);
-      }
-    } catch (err) {
-      if (isStillCurrent()) degraded = true;
-      throw err;
-    } finally {
-      if (isStillCurrent()) {
-        playbackRef.current = null;
-        playbackStartedAtRef.current = 0;
-        visemeFramesRef.current = [];
-        visemeCodeRef.current = 'sil';
-        if (degraded) {
-          holdThenIdle('concerned');
-        } else {
-          holdThenIdle(ackFace);
-        }
+      const measuredAudioMs = handle.durationMs();
+      if (measuredAudioMs > 0 && playbackRef.current === handle) {
+        const measuredFrames =
+          source === 'procedural'
+            ? proceduralVisemes(text, measuredAudioMs)
+            : normalizeVisemeTimeline(visemeFramesRef.current, measuredAudioMs);
+        visemeFramesRef.current =
+          source === 'procedural'
+            ? normalizeVisemeTimeline(measuredFrames, measuredAudioMs)
+            : measuredFrames;
+        visemeCursorRef.current = 0;
       }
     }
+
+    try {
+      await handle.ended;
+    } catch (err) {
+      // A real decoder/playback error (not the stop sentinel) degrades this
+      // chunk. Do NOT rethrow — that would escape the pump, skip the cleanup
+      // below, and strand the mascot in the speaking state. Log and fall
+      // through so the handle is released and the queue finishes normally.
+      if (!isAudioStopped(err)) {
+        mascotLog('tts chunk ended with a playback error: %s', String(err));
+      }
+    }
+    // Release the finished clip so the between-chunk gap rests the mouth. The
+    // face stays 'speaking'; the next chunk or the finish transition follows.
+    if (isTurnCurrent(seq) && playbackRef.current === handle) {
+      playbackRef.current = null;
+      playbackStartedAtRef.current = 0;
+    }
+  }
+
+  /**
+   * Once the queue is drained and closed, end the turn: rest the mouth and play
+   * the acknowledgement beat — or a concerned beat if a sentence was attempted
+   * but nothing ever spoke (total synth/playback failure).
+   */
+  function maybeFinishTurn(seq: number): void {
+    if (!isTurnCurrent(seq)) return;
+    if (!streamActiveRef.current) return;
+    if (!queueClosedRef.current) return;
+    if (chunkQueueRef.current.length > 0) return;
+    if (queuePumpingRef.current) return;
+    streamActiveRef.current = false;
+    playbackRef.current = null;
+    playbackStartedAtRef.current = 0;
+    visemeFramesRef.current = [];
+    visemeCodeRef.current = 'sil';
+    const degraded = chunkAttemptedRef.current && !chunkPlayedRef.current;
+    mascotLog('tts turn %d finished degraded=%s', seq, degraded);
+    holdThenIdle(degraded ? 'concerned' : queueAckRef.current);
   }
 
   useEffect(() => {

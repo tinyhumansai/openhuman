@@ -29,7 +29,7 @@ import {
 } from '../utils/tauriCommands';
 
 /** Phases driven by `app-update:status`, plus locally-derived ones. */
-export type AppUpdatePhase =
+type AppUpdatePhase =
   | 'idle'
   | 'checking'
   | 'available'
@@ -40,14 +40,14 @@ export type AppUpdatePhase =
   | 'up_to_date'
   | 'error';
 
-export interface AppUpdateProgress {
+interface AppUpdateProgress {
   /** Bytes received in the latest chunk callback. */
   chunk: number;
   /** Total bytes (null when the manifest didn't advertise a content-length). */
   total: number | null;
 }
 
-export interface UseAppUpdateOptions {
+interface UseAppUpdateOptions {
   /**
    * Run an automatic check shortly after the hook mounts.
    * Default: true. Skipped when `isTauri()` is false.
@@ -68,7 +68,7 @@ export interface UseAppUpdateOptions {
   autoDownload?: boolean;
 }
 
-export interface UseAppUpdateResult {
+interface UseAppUpdateResult {
   phase: AppUpdatePhase;
   /** Last successful check result (current/available versions, body). */
   info: AppUpdateInfo | null;

@@ -1,9 +1,11 @@
 import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import { extractWorkflowProposalFromMessages } from '../lib/workflows/workflowProposal';
 import { threadApi } from '../services/api/threadApi';
 import { isThreadNotFoundCoreRpcError } from '../services/coreRpcClient';
 import type { Thread, ThreadMessage } from '../types/thread';
 import { IS_DEV } from '../utils/config';
+import { setWorkflowProposalForThread } from './chatRuntimeSlice';
 import { resetUserScopedState } from './resetActions';
 
 export const THREAD_NOT_FOUND_MESSAGE = 'This thread is no longer available.';
@@ -30,6 +32,29 @@ interface ThreadState {
   isLoadingThreads: boolean;
   isLoadingMessages: boolean;
   messagesError: string | null;
+  /**
+   * Why the last `createNewThread` failed, or `null` when the last attempt
+   * succeeded (or none has run). Recorded centrally so a failed create is never
+   * invisible: before #5156 nothing in the store observed
+   * `createNewThread.rejected`, so every call site had to remember its own
+   * `.catch` — one that forgot produced `UnhandledRejection: Core RPC
+   * openhuman.threads_create_new timed out after 30000ms` (Sentry
+   * TAURI-REACT-10) and one that caught-and-ignored left the user staring at a
+   * dead "New chat" button. The chat surface renders this.
+   */
+  createThreadError: string | null;
+  /**
+   * `requestId` of the most recently *started* `createNewThread`, so a
+   * completion from a superseded attempt can be ignored.
+   *
+   * Two creates can overlap — the user hits New Chat again while the first RPC
+   * is still hung on its 30 s budget. Without this, the newer request could
+   * succeed and clear the banner, and then the older one would time out and set
+   * `createThreadError` again, showing "Couldn't create a new thread" on a chat
+   * that was in fact created. Only the latest attempt is allowed to write this
+   * slice's create-error state.
+   */
+  createThreadRequestId: string | null;
 }
 
 const initialState: ThreadState = {
@@ -42,6 +67,8 @@ const initialState: ThreadState = {
   isLoadingThreads: false,
   isLoadingMessages: false,
   messagesError: null,
+  createThreadError: null,
+  createThreadRequestId: null,
 };
 
 function appendMessageToCache(
@@ -75,6 +102,30 @@ export const loadThreads = createAsyncThunk(
   }
 );
 
+/**
+ * Normalise whatever `dispatch(createNewThread()).unwrap()` throws into a
+ * displayable string.
+ *
+ * `createAsyncThunk` throws the `rejectWithValue` payload (a bare string) or, if
+ * the thunk threw, Redux's `SerializedError` — a plain object, not an `Error`.
+ * Neither carries a stack, which is why the original report surfaced as
+ * "Non-Error promise rejection captured with value: …" (#5156). Mirrors
+ * `formatThreadLoadError` in `features/conversations/Conversations.tsx`.
+ */
+export function formatThreadCreateError(error: unknown): string {
+  if (typeof error === 'string' && error.trim().length > 0) return error;
+  // `new Error()` carries an empty `message`. Returning it would store a falsy
+  // `createThreadError`, which `deriveChatErrorBanner` treats as "no failure" —
+  // the user would get a dead New Chat button and no banner, the exact outcome
+  // #5156 exists to prevent. Fall through to the generic fallback instead.
+  if (error instanceof Error && error.message.trim().length > 0) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim().length > 0) return message;
+  }
+  return 'Failed to create thread';
+}
+
 export const createNewThread = createAsyncThunk(
   'thread/createNewThread',
   async (labels: string[] | undefined, { dispatch, rejectWithValue }) => {
@@ -83,7 +134,10 @@ export const createNewThread = createAsyncThunk(
       await dispatch(loadThreads()).unwrap();
       return thread;
     } catch (error) {
-      return rejectWithValue(error instanceof Error ? error.message : 'Failed to create thread');
+      // Keep the payload a plain string (redux-serializable) but normalise every
+      // throw shape, including the `SerializedError` a nested `.unwrap()` raises
+      // when `loadThreads` is what actually failed (#5156).
+      return rejectWithValue(formatThreadCreateError(error));
     }
   }
 );
@@ -115,6 +169,16 @@ export const loadThreadMessages = createAsyncThunk(
   async (threadId: string, { dispatch, rejectWithValue }) => {
     try {
       const response = await threadApi.getThreadMessages(threadId);
+      // Durable workflow-proposal rehydration: the Rust core persists a
+      // proposal produced by an async workflow_builder run as a thread
+      // message (extraMetadata.scope === 'workflow_proposal'). Restoring it
+      // here means the proposal card survives reloads, reconnects, and
+      // dropped socket events — the live `tool_result` events remain the
+      // fast path and simply overwrite this with the same payload.
+      const persistedProposal = extractWorkflowProposalFromMessages(response.messages);
+      if (persistedProposal) {
+        dispatch(setWorkflowProposalForThread({ threadId, proposal: persistedProposal }));
+      }
       return { threadId, messages: response.messages };
     } catch (error) {
       // A cached/seeded thread id (e.g. the Flows copilot's persisted
@@ -299,21 +363,6 @@ export const persistReaction = createAsyncThunk(
   }
 );
 
-export const updateThreadLabels = createAsyncThunk(
-  'thread/updateThreadLabels',
-  async (payload: { threadId: string; labels: string[] }, { dispatch, rejectWithValue }) => {
-    try {
-      const thread = await threadApi.updateLabels(payload.threadId, payload.labels);
-      await dispatch(loadThreads()).unwrap();
-      return thread;
-    } catch (error) {
-      return rejectWithValue(
-        error instanceof Error ? error.message : 'Failed to update thread labels'
-      );
-    }
-  }
-);
-
 export const updateThreadTitle = createAsyncThunk(
   'thread/updateThreadTitle',
   async (payload: { threadId: string; title: string }, { rejectWithValue }) => {
@@ -327,25 +376,19 @@ export const updateThreadTitle = createAsyncThunk(
   }
 );
 
-export const purgeThreads = createAsyncThunk(
-  'thread/purgeThreads',
-  async (_, { dispatch, rejectWithValue }) => {
-    try {
-      const result = await threadApi.purge();
-      dispatch(clearAllThreads());
-      return result;
-    } catch (error) {
-      return rejectWithValue(error instanceof Error ? error.message : 'Failed to purge threads');
-    }
-  }
-);
-
 // ── Slice ─────────────────────────────────────────────────────────
 
 const threadSlice = createSlice({
   name: 'thread',
   initialState,
   reducers: {
+    /**
+     * Dismiss the "couldn't start a new chat" surface (#5156) — the user has
+     * seen it and moved on (typed into the composer, navigated away).
+     */
+    clearCreateThreadError: state => {
+      state.createThreadError = null;
+    },
     setSelectedThread: (state, action: { payload: string }) => {
       state.selectedThreadId = action.payload;
       state.messages = state.messagesByThreadId[action.payload] ?? [];
@@ -443,6 +486,24 @@ const threadSlice = createSlice({
       .addCase(loadThreads.rejected, state => {
         state.isLoadingThreads = false;
       })
+      // A create in flight supersedes the previous attempt's failure, so the
+      // banner clears the moment the user retries rather than lingering. The
+      // starting request also becomes the only one allowed to write the error
+      // state — see `createThreadRequestId`.
+      .addCase(createNewThread.pending, (state, action) => {
+        state.createThreadRequestId = action.meta.requestId;
+        state.createThreadError = null;
+      })
+      .addCase(createNewThread.fulfilled, (state, action) => {
+        if (action.meta.requestId !== state.createThreadRequestId) return;
+        state.createThreadError = null;
+      })
+      .addCase(createNewThread.rejected, (state, action) => {
+        // A superseded attempt failing late must not repaint the banner over a
+        // newer create that already succeeded.
+        if (action.meta.requestId !== state.createThreadRequestId) return;
+        state.createThreadError = formatThreadCreateError(action.payload ?? action.error?.message);
+      })
       .addCase(loadThreadMessages.pending, state => {
         state.isLoadingMessages = true;
         state.messagesError = null;
@@ -514,6 +575,7 @@ const threadSlice = createSlice({
 });
 
 export const {
+  clearCreateThreadError,
   setSelectedThread,
   clearSelectedThread,
   setActiveThread,

@@ -30,6 +30,7 @@ pub fn build_search_tools(root_config: &Config) -> Vec<Box<dyn Tool>> {
         SearchEngine::Parallel => engines::parallel::build(root_config, params),
         SearchEngine::Brave => engines::brave::build(root_config, params),
         SearchEngine::Querit => engines::querit::build(root_config, params),
+        SearchEngine::Exa => engines::exa::build(root_config, params),
     };
 
     if engine != SearchEngine::Disabled {
@@ -82,6 +83,37 @@ mod tests {
     fn managed_engine_registers_unified_web_search_tool() {
         let mut cfg = Config::default();
         cfg.search.engine = "managed".to_string();
+
+        let tools = super::build_search_tools(&cfg);
+        let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["web_search_tool"]);
+    }
+
+    #[test]
+    fn exa_engine_registers_the_byok_exa_family() {
+        let mut cfg = Config::default();
+        cfg.search.engine = "exa".to_string();
+        cfg.search.exa.api_key = Some("test-key".to_string());
+
+        let tools = super::build_search_tools(&cfg);
+        let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "web_search_tool",
+                "exa_search",
+                "exa_find_similar",
+                "exa_get_contents"
+            ]
+        );
+    }
+
+    #[test]
+    fn exa_without_a_key_falls_back_to_the_managed_surface() {
+        let mut cfg = Config::default();
+        cfg.search.engine = "exa".to_string();
 
         let tools = super::build_search_tools(&cfg);
         let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();

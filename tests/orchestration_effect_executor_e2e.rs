@@ -4,7 +4,7 @@
 //! (links the compiled lib) because the root cfg(test) build is blocked by
 //! unrelated stale test modules at this checkout.
 
-use openhuman_core::openhuman::orchestration::effect_executor::{
+use openhuman_core::openhuman::hosted::orchestration::effect_executor::{
     device_tool_manifest, dispatch_device_tool, effect_result_frame, handle_tool_call,
     is_duplicate_call, parse_send_dm, parse_tool_call, tool_result_frame,
 };

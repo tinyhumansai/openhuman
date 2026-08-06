@@ -1,17 +1,17 @@
 //! Summarization and rolling recap logic for `ArchivistHook`.
 
 use super::types::ArchivistHook;
-use crate::openhuman::memory_store::fts5::{self, EpisodicEntry};
-use crate::openhuman::memory_store::segments;
-use crate::openhuman::memory_store::trees::types::TreeKind;
-use crate::openhuman::memory_tree::summarise::{summarise, SummaryContext, SummaryInput};
+use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+use crate::openhuman::memory::store::segments;
+use crate::openhuman::memory::store::trees::types::TreeKind;
+use crate::openhuman::memory::tree::summarise::{summarise, SummaryContext, SummaryInput};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::sync::Arc;
 
 impl ArchivistHook {
     /// Read every entry recorded for `session_id`, preferring the
-    /// md-backed `memory_archivist::store` when `self.config` is set and
+    /// crate-owned md-backed archivist store when `self.config` is set and
     /// falling back to the legacy FTS5 episodic table otherwise.
     ///
     /// Returns `EpisodicEntry` so the existing call sites (segment
@@ -23,7 +23,12 @@ impl ArchivistHook {
         session_id: &str,
     ) -> Vec<EpisodicEntry> {
         if let Some(cfg) = self.config.as_ref() {
-            match crate::openhuman::memory_archivist::store::session_entries(cfg, session_id) {
+            let engine_config = crate::openhuman::memory::tinycortex::memory_config_from(
+                cfg,
+                cfg.workspace_dir.clone(),
+            );
+            match tinycortex::memory::archivist::store::session_entries(&engine_config, session_id)
+            {
                 Ok(turns) => {
                     return turns
                         .into_iter()
@@ -64,6 +69,7 @@ impl ArchivistHook {
     /// - NEVER mutates DB state (no `segment_set_summary`, no embedding).
     /// - NEVER closes a segment.
     /// - Safe to call on both open and closed segments.
+    ///
     /// Summarize a set of episodic entries into a recap string.
     ///
     /// Returns `(text, produced_by_llm)`. `produced_by_llm == false` means the
@@ -94,7 +100,7 @@ impl ArchivistHook {
             .iter()
             .filter(|e| !e.content.trim().is_empty())
             .map(|e| {
-                use crate::openhuman::memory_store::chunks::types::approx_token_count;
+                use crate::openhuman::memory::store::chunks::types::approx_token_count;
                 let content = e.content.clone();
                 let token_count = approx_token_count(&content);
                 let ts = chrono::DateTime::from_timestamp(e.timestamp as i64, 0)
@@ -117,6 +123,9 @@ impl ArchivistHook {
             tree_kind: TreeKind::Source,
             target_level: 0,
             token_budget: 2_000,
+            input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+            overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+            ask: None,
         };
 
         let first = entries.first().map(|e| e.content.as_str()).unwrap_or("");
@@ -214,7 +223,7 @@ impl ArchivistHook {
         let conn = self.conn.as_ref()?;
 
         // Find the currently-open segment for this session.
-        let open_segment = match crate::openhuman::memory_store::segments::open_segment_for_session(
+        let open_segment = match crate::openhuman::memory::store::segments::open_segment_for_session(
             conn, session_id,
         ) {
             Ok(Some(seg)) => seg,

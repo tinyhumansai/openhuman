@@ -74,7 +74,7 @@ function StatusDot({ state }: { state: ConnState }) {
   );
 }
 
-export interface ActiveSubagentsRailProps {
+interface ActiveSubagentsRailProps {
   /** Sessions grouped by contact (`agentId`) — the instances. */
   byContact: Map<string, SessionSummary[]>;
   /** Currently open session id (highlighted when on the agent tab). */

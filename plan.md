@@ -14,7 +14,7 @@ nobody deletes them later). A final completeness critic audited the audit itself
 2. The two **highest-risk untested surfaces in the codebase**:
    `src/openhuman/security/policy/command_checks.rs` + `path_checks.rs` (the documented
    autonomy-enforcement core: `classify_command`, `gate_decision`, `is_workspace_internal_path`)
-   and `src/openhuman/encryption/core.rs` (Argon2id + AES-256-GCM primitives) have **zero unit
+   and `src/openhuman/security/encryption/core.rs` (Argon2id + AES-256-GCM primitives) have **zero unit
    tests**.
 3. A meaningful chunk of the suite **never runs in CI**: the mock server's own socket-auth tests,
    most of `scripts/__tests__/`, and the Pester Windows-install test are invoked by no workflow.

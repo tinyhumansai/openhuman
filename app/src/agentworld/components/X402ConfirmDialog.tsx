@@ -64,9 +64,9 @@ export interface X402WalletBalance {
  * - `commit` — signed bid/offer commitment. Insufficient balance SOFT-warns but
  *   still allows Confirm (funds move only on acceptance).
  */
-export type X402ConfirmMode = 'spend' | 'commit';
+type X402ConfirmMode = 'spend' | 'commit';
 
-export interface X402ConfirmDialogProps {
+interface X402ConfirmDialogProps {
   /** Title shown in the modal header (e.g. "Register @handle"). */
   title: string;
   /** Optional subtitle / context line. */
@@ -107,7 +107,7 @@ export interface X402ConfirmDialogProps {
  * "unknown" case into "sufficient", silently bypassing the gate. Callers that
  * only need the provable-shortfall signal can use `isInsufficient` below.
  */
-export type BalanceStatus = 'unknown' | 'insufficient' | 'sufficient';
+type BalanceStatus = 'unknown' | 'insufficient' | 'sufficient';
 
 export function balanceStatus(balance: X402WalletBalance | null, amount: string): BalanceStatus {
   if (!balance) return 'unknown';

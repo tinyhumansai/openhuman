@@ -5,9 +5,12 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
+import Input from '../../ui/Input';
+import { mcpRegistryErrorMessage } from './mcpRegistryErrorMessage';
 import McpServerCard from './McpServerCard';
 import type { SmitheryServer } from './types';
 
@@ -27,7 +30,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS);
   // Monotonically-increasing counter used to discard stale registrySearch
   // responses when a newer request has already been issued.
   const requestSeqRef = useRef(0);
@@ -57,7 +60,7 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
         log('loaded %d servers (append=%s)', incoming.length, append);
       } catch (err) {
         if (seq !== requestSeqRef.current) return;
-        const msg = err instanceof Error ? err.message : t('mcp.catalog.loadFailed');
+        const msg = mcpRegistryErrorMessage(err, t, 'mcp.catalog.loadFailed');
         log('catalog fetch error: %s', msg);
         setError(msg);
       } finally {
@@ -68,32 +71,32 @@ const McpCatalogBrowser = ({ onSelectInstall }: McpCatalogBrowserProps) => {
     },
     [t]
   );
+  const lastEffectFetchRef = useRef<{ query: string; fetchPage: typeof fetchPage } | null>(null);
 
-  // Debounce the query and reset to page 1 whenever it changes.
+  // Reset to page 1 whenever the debounced query changes.
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void fetchPage(query, 1, false);
-    }, DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [query, fetchPage]);
+    const lastFetch = lastEffectFetchRef.current;
+    if (lastFetch?.query === debouncedQuery && lastFetch.fetchPage === fetchPage) {
+      return;
+    }
+    lastEffectFetchRef.current = { query: debouncedQuery, fetchPage };
+    void fetchPage(debouncedQuery, 1, false);
+  }, [debouncedQuery, fetchPage]);
 
   const handleLoadMore = () => {
-    void fetchPage(query, page + 1, true);
+    void fetchPage(debouncedQuery, page + 1, true);
   };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <input
+        <Input
           type="search"
           aria-label={t('mcp.catalog.searchAria')}
           placeholder={t('mcp.catalog.searchPlaceholder')}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+          className="flex-1"
         />
       </div>
 

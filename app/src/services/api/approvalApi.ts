@@ -86,9 +86,6 @@ export const unwrapRows = <T>(raw: unknown): T[] => {
   return [];
 };
 
-/** Default page size matching the core's `list_recent_decisions` default. */
-export const DEFAULT_APPROVAL_HISTORY_LIMIT = 50;
-
 /**
  * Fetch recently decided approval rows for the audit/history surface.
  * `limit` is clamped core-side; omit to use the core default (50).
@@ -125,9 +122,43 @@ export const decideApproval = async (
   });
 };
 
+/** Result of `openhuman.approval_preauthorize_flow` (mirrors Rust `FlowPreauthorizationResult`). */
+export interface FlowPreauthorizationResult {
+  flow_id: string;
+  /** Trust keys newly granted by this call. */
+  granted: string[];
+  /** Trust keys that already held flow trust before this call. */
+  already_trusted: string[];
+  /** False when the approval gate is disabled — nothing was persisted, treat as success. */
+  gate_installed: boolean;
+}
+
+/**
+ * Batch-grant "approve always for this flow" trust at save+enable time — the
+ * backend of the consolidated pre-authorization card ("Approve all"). Each
+ * grant is written to the durable approval audit trail. Idempotent: already-
+ * trusted tools are reported back, not re-granted.
+ */
+export const preauthorizeFlow = async (
+  flowId: string,
+  toolNames: string[]
+): Promise<FlowPreauthorizationResult> => {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.approval_preauthorize_flow',
+    params: { flow_id: flowId, tool_names: toolNames },
+  });
+  const result = unwrapValue<FlowPreauthorizationResult>(raw);
+  return {
+    flow_id: result?.flow_id ?? flowId,
+    granted: result?.granted ?? [],
+    already_trusted: result?.already_trusted ?? [],
+    gate_installed: result?.gate_installed ?? true,
+  };
+};
+
 /**
  * Snapshot of the host-aware approval-gate boot decision. Mirrors the Rust
- * `ApprovalGateBootState` struct in `src/openhuman/approval/gate.rs`.
+ * `ApprovalGateBootState` struct in `src/openhuman/security/approval/gate.rs`.
  *
  * - `installed` — gate was installed at boot and `external_effect` tool calls
  *   will be intercepted.

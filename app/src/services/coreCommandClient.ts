@@ -1,6 +1,6 @@
 import { callCoreRpc } from './coreRpcClient';
 
-export interface CoreCommandResponse<T> {
+interface CoreCommandResponse<T> {
   result: T;
   logs: string[];
 }

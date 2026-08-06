@@ -1,6 +1,6 @@
 //! Tool that lets the agent query its own tool effectiveness data.
 
-use crate::openhuman::learning::tool_tracker::ToolStats;
+use crate::openhuman::agent::learning::tool_tracker::ToolStats;
 use crate::openhuman::memory::{Memory, MemoryCategory};
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -236,7 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_stats_for_stored_entry() {
-        use crate::openhuman::learning::tool_tracker::ToolStats;
+        use crate::openhuman::agent::learning::tool_tracker::ToolStats;
         let mem = Arc::new(MockMemory::default());
         let stats = ToolStats {
             total_calls: 5,
@@ -264,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn filter_by_tool_name_returns_no_data_when_missing() {
-        use crate::openhuman::learning::tool_tracker::ToolStats;
+        use crate::openhuman::agent::learning::tool_tracker::ToolStats;
         let mem = Arc::new(MockMemory::default());
         let stats = ToolStats {
             total_calls: 1,

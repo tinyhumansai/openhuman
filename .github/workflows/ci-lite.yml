@@ -61,6 +61,9 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
+      # The vendored engine owns migrated memory tests; Cargo does not run
+      # dependency tests as part of the OpenHuman crate suite.
+      tinycortex: ${{ steps.filter.outputs.tinycortex }}
       # Shell-quoted list of changed src/ + tests/ files, consumed by
       # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
       rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
@@ -145,8 +148,11 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - 'scripts/ci-cancel-aware.sh'
+              - 'scripts/check-linux-tls-dependencies.sh'
               - 'scripts/test-rust-e2e.sh'
               - 'scripts/test-rust-with-mock.sh'
+              - 'vendor/motosan-ai-oauth/**'
+              - 'vendor/tinychannels'
             # Changes here invalidate per-module test scoping → full suite.
             rust-core-full:
               - '.github/workflows/ci-lite.yml'
@@ -157,9 +163,18 @@ jobs:
               - '.cargo/config.toml'
               - 'rust-toolchain.toml'
               - 'scripts/ci-cancel-aware.sh'
+              - 'scripts/check-linux-tls-dependencies.sh'
+              - 'vendor/motosan-ai-oauth/**'
+              - 'vendor/tinychannels'
             rust-core-src:
               - 'src/**'
               - 'tests/**'
+            tinycortex:
+              - '.github/workflows/ci-lite.yml'
+              - '.github/workflows/test-reusable.yml'
+              - '.gitmodules'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'vendor/tinycortex'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -287,7 +302,12 @@ jobs:
         env:
           NODE_ENV: test
           FULL: ${{ needs.changes.outputs['frontend-full'] }}
-          CHANGED_FILES: ${{ needs.changes.outputs['frontend-src-files'] }}
+          # Same argument-limit guard as the rust-core lane below. The condition is
+          # inverted so the file list sits on the `&&` (truthy) side: GitHub's
+          # `a && b || c` ternary falls through to `c` whenever `b` is falsy, so
+          # `... == 'true' && '' || <files>` would hand back the full list in
+          # exactly the full-suite case this is meant to blank.
+          CHANGED_FILES: ${{ needs.changes.outputs['frontend-full'] != 'true' && needs.changes.outputs['frontend-src-files'] || '' }}
 
       - name: Normalize lcov source paths to repo root
         if: needs.changes.outputs.frontend == 'true'
@@ -329,6 +349,7 @@ jobs:
         with:
           workspaces: |
             . -> target
+            app/src-tauri -> target
           cache-on-failure: true
           # shared-key (not key) so the cache name is stable and not suffixed
           # with the job id. Swatinem caches the full target/, which is why we
@@ -339,8 +360,214 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Enforce Linux TLS dependency policy
+        if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+        run: bash scripts/check-linux-tls-dependencies.sh
+
       - name: Run clippy (core crate)
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
+        if: needs.changes.outputs['rust-core'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman -- -D warnings
+
+      - name: Cache CEF binary distribution
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-x86_64-unknown-linux-gnu-v2-
+
+      - name: Run clippy (Tauri shell)
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+
+  # Feature-gate smoke: proves the core still compiles with a domain gate turned
+  # OFF. The disabled build is the ONLY thing that catches stub-facade signature
+  # drift (see AGENTS.md "Compile-time domain gates"), so it must run in CI, not
+  # just locally. Pathfinder lane for #4803 (voice); the explicit --features
+  # list (only tokenjuice-treesitter) turns every default gate OFF, so it also
+  # covers #4804 (media) and each sibling gate as it lands — no edit needed
+  # unless a new gate must stay ON here.
+  rust-feature-gate-smoke:
+    name: Rust Feature-Gate Smoke (gates off)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    runs-on: ubuntu-22.04
+    # Was 25; raised because the lane now links (--all-targets) and runs a test
+    # binary, not just `cargo check`.
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Deep-async-stack belt (same as the coverage lanes) — virtual reservation,
+      # zero cost. Keeps a gate-contract test with a deep stack from tripping.
+      RUST_MIN_STACK: "67108864"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-feature-gate-smoke
+
+      - name: Check core builds with the default domain gates disabled
+        # Lib-scoped on purpose. `--all-targets` would additionally compile the
+        # `tests/` integration crates, which today name gated symbols
+        # (voice::reply_speech::test_seam, mcp::registry::store, web3::x402::tools) without
+        # a #[cfg] and so do not compile with the gates off. That cleanup is tracked
+        # in #5021 alongside running the full gates-off suite; until it lands, this
+        # lane checks the lib and RUNS the gate-contract lib tests below.
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
+
+      - name: Run the gate-contract tests with the default domain gates disabled
+        # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
+        # is asserted WITHOUT a matching #[cfg] compiles fine and only fails at
+        # runtime — exactly how the two ungated `voice` asserts sat red on main
+        # (#5022). This step executes the gate-contract test modules so that class of
+        # regression fails CI, not just a local pre-push.
+        #
+        # Scope is deliberate: the full gates-off `--lib` run aborts on a pre-existing
+        # task_local stack overflow (`agent::harness::session::tests::
+        # turn_dispatches_spawn_subagent_through_full_path`) that reproduces in the
+        # gates-ON build too, and also OOMs unscoped. These filters route AROUND that
+        # test by scope, not by skip. Running the full suite is tracked in #5021.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features tokenjuice-treesitter --lib -- \
+            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: core::runtime:: agent::registry::agents::loader:: memory::people::address_book::tests:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features tokenjuice-treesitter,mcp --lib -- \
+            mcp::server::resources::
+
+      - name: Guard — the kernel dependency floor may not grow
+        # The `--no-default-features --features flows` profile is the surface a
+        # second host would embed, and left unmeasured it grows: seven heavy
+        # dependencies (git2/vendored-libgit2, rusqlite/bundled, enigo, arboard,
+        # ethers-*, tokio-tungstenite) are unconditional today, and none of them
+        # would likely have landed that way had a number moved in CI when they
+        # did. This lane is that number.
+        #
+        # The ratchet is bidirectional on purpose: it fails on growth AND on a
+        # shed that was not written back into scripts/kernel-floor.limits, since
+        # an unratcheted improvement silently grows back. Lower the limit in the
+        # same PR that sheds the crates.
+        run: bash scripts/check-kernel-floor.sh --verbose
+
+      - name: Guard — the removal simulator still agrees with cargo
+        # scripts/dep-sim.py projects the effect of cutting a dependency cohort,
+        # and every gating decision in the kernelization program is sized with
+        # it. It parses `cargo tree` precisely so it cannot drift from cargo's
+        # own feature resolution — an earlier version walked `cargo metadata`'s
+        # resolve graph instead and over-reported by 36 crates, counting
+        # dev-dependencies and unenabled target-specific edges.
+        #
+        # This asserts the calibration still holds. If it fails, every
+        # projection built on the simulator is suspect until it is fixed.
+        run: python3 scripts/dep-sim.py --cut-nothing --expect-names 285
+
+      - name: Guard — new feature-gated test modules must be acknowledged
+        # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
+        # a domain feature must equal the allowlist below. When a new gate (or a new
+        # test in an existing gate's domain) adds a gated test file, this fails — the
+        # author then adds it here AND, if it can hold an ungated-assert regression of
+        # the #5022 class, extends the scoped `cargo test` filter above. Prevents the
+        # smoke lane from silently under-covering as the gate surface grows.
+        run: |
+          set -euo pipefail
+          EXPECTED=$(cat <<'EOF'
+          core/all_tests.rs
+          core/cli_tests.rs
+          core/dispatch.rs
+          core/jsonrpc_tests.rs
+          core/legacy_aliases.rs
+          core/runtime/services.rs
+          openhuman/agent/harness/builtin_definitions.rs
+          openhuman/agent/harness/definition_tests.rs
+          openhuman/agent/harness/session/tests.rs
+          openhuman/agent/harness/subagent_runner/tool_prep.rs
+          openhuman/agent/registry/agents/loader.rs
+          openhuman/inference/local/mod.rs
+          openhuman/memory/people/address_book.rs
+          openhuman/mcp/server/resources.rs
+          openhuman/platform/socket/event_handlers.rs
+          openhuman/platform/socket/ops.rs
+          openhuman/tinyplace/manifest.rs
+          openhuman/tools/registry/ops_tests.rs
+          openhuman/tools/registry/schemas.rs
+          openhuman/tools/ops_tests.rs
+          openhuman/tools/schemas.rs
+          openhuman/voice/compile_status.rs
+          openhuman/web3/stub.rs
+          openhuman/web3/wallet/stub.rs
+          openhuman/web3/x402/stub.rs
+          EOF
+          )
+          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows|channels|prediction-markets|contacts)"|#\[cfg\((not\()?all\([^]]*feature = "contacts"' src --include='*.rs' \
+            | xargs grep -lE '#\[test\]|#\[tokio::test\]|fn .*_test' 2>/dev/null | sed 's|^src/||' | sort -u)
+          if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
+            echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
+            exit 1
+          fi
+          echo "gate-contract test coverage allowlist is current"
+
+  # Report-only (#5046). Measures steady-state RSS of an embedded openhuman_core
+  # agent roster and uploads the raw samples + a human summary. Deliberately NOT
+  # in `pr-ci-gate.needs`, so it can never fail a PR — it exists to accrue a
+  # baseline and its runner variance before the 30 MiB gate is flipped to
+  # blocking in a follow-up (add this job to pr-ci-gate + a threshold step then).
+  rust-rss-bench:
+    name: Rust RSS Benchmark (report-only)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-rss-bench
+
+      # Fixture-contract signal: the gated bin's unit tests (build_roster,
+      # warm-up turn) never enter the default coverage lane, so run them here.
+      - name: Run rss-bench fixture tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --features rss-bench --bin rss-bench
+
+      - name: Build stripped-release rss-bench
+        run: bash scripts/ci-cancel-aware.sh cargo build --release --features rss-bench --bin rss-bench
+
+      - name: Measure embedded RSS (5 fresh procs x {1,8} agents)
+        run: ./target/release/rss-bench --out bench-rss.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw RSS samples
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rss-bench-report
+          path: bench-rss.json
 
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
@@ -415,7 +642,14 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
           FULL: ${{ needs.changes.outputs['rust-core-full'] }}
-          CHANGED_FILES: ${{ needs.changes.outputs['rust-core-src-files'] }}
+          # Suppressed in full-suite mode. The list is ignored when FULL=true, but a
+          # large refactor can push it past the container job's argument/env limit,
+          # and `docker exec` then fails to START the step —
+          # "Argument list too long" — before the script can apply its own
+          # MAX_CHANGED_FILES fallback. Blanking it here keeps the step launchable.
+          # Condition inverted so the file list is on the `&&` side — `a && '' || b`
+          # always falls through to `b` because `''` is falsy.
+          CHANGED_FILES: ${{ needs.changes.outputs['rust-core-full'] != 'true' && needs.changes.outputs['rust-core-src-files'] || '' }}
           OUT: lcov-core.info
           # The tinyagents harness is the agent engine on every build now
           # (issue #4249); the suite exercises it by default. The legacy engine
@@ -603,6 +837,30 @@ jobs:
       - name: Run orchestration IP gate
         run: bash scripts/ci/orch-ip-gate.sh
 
+  feature-forwarding-gate:
+    name: Feature Forwarding Gate (shell forwards core defaults)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The shell sets `default-features = false` on `openhuman_core`, so it does
+      # NOT inherit the core's default gates — each must be forwarded by hand.
+      # When that list drifts, the domain is compiled out of the shipped app with
+      # no build error and no failing test: that is how #4901 (voice — 56 users,
+      # ~93k Sentry events) and #4918 (tokenjuice-treesitter — silent) shipped.
+      #
+      # Deliberately NOT filtered on `changes`: drift can be introduced by
+      # editing either manifest, so a path filter watching one would miss it, and
+      # a skipped job counts as a pass in the gate below. The check is a few
+      # seconds of pure Node with no dependencies.
+      - name: Verify the desktop shell forwards every default-ON core gate
+        run: node scripts/ci/check-feature-forwarding.mjs
+
   pester-install:
     name: PowerShell Install Test (Pester)
     needs: [changes]
@@ -624,6 +882,38 @@ jobs:
       - name: Run install.ps1 unit tests
         run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
 
+  tinycortex-tests:
+    name: TinyCortex Memory Tests
+    needs: [changes]
+    if: needs.changes.outputs.tinycortex == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex submodule
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --recursive vendor/tinycortex
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
+
   pr-ci-gate:
     name: PR CI Gate
     needs:
@@ -635,7 +925,9 @@ jobs:
       - scripts-tests
       - test-inventory
       - pester-install
+      - tinycortex-tests
       - orch-ip-gate
+      - feature-forwarding-gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -652,7 +944,9 @@ jobs:
             ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+            ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
             ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
+            ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
           )
 
           failed=0

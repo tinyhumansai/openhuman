@@ -194,19 +194,3 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
             || looks_like_openhuman_provider_endpoint(&entry.endpoint)
     }
 }
-
-pub(super) fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
-    let mut normalized: Vec<String> = config
-        .autocomplete
-        .disabled_apps
-        .iter()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .collect();
-    normalized.sort();
-    normalized.dedup();
-
-    if normalized == ["code".to_string(), "terminal".to_string()] {
-        config.autocomplete.disabled_apps = vec!["code".to_string()];
-    }
-}

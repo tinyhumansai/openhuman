@@ -14,8 +14,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
 // which is needed by existing tests that assert on actual English text (e.g. 'Test Connection',
 // 'Reachable', 'http://localhost:11434' placeholder). New tests must also use real strings.
 
-vi.mock('../components/SettingsHeader', () => ({ default: () => null }));
-
 const mockGetConfig = vi.fn();
 vi.mock('../../../../utils/tauriCommands/config', () => ({
   openhumanGetConfig: (...args: unknown[]) => mockGetConfig(...args),

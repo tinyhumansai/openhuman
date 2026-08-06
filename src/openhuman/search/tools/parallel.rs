@@ -43,6 +43,18 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultItem>,
     #[serde(rename = "costUsd")]
     pub cost_usd: f64,
+    /// Upstream provider the managed backend resolved this search to
+    /// (e.g. "Exa"). Optional: older backends omit it, so this stays
+    /// `None` and callers fall back to the managed default. Surfaced to
+    /// the UI as the search attribution ("Searched with Exa", #5136).
+    /// Aliased so a rename on the backend side keeps deserializing.
+    #[serde(
+        default,
+        alias = "resolvedProvider",
+        alias = "searchProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]

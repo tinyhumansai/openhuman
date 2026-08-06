@@ -187,6 +187,42 @@ describe('JobStatusBadge colors', () => {
 // ── Inline expand ─────────────────────────────────────────────────────────────
 
 describe('Inline expand', () => {
+  test('stacks the timestamp above the shared disclosure chevron', async () => {
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob], count: 1 });
+    render(<JobsSection />);
+
+    const toggle = await screen.findByRole('button', { name: /build a dashboard widget/i });
+    const timestamp = toggle.querySelector('.whitespace-nowrap.text-xs.text-content-faint');
+    const metaColumn = timestamp?.parentElement;
+
+    expect(metaColumn).toHaveClass('flex', 'shrink-0', 'flex-col', 'items-end', 'gap-2');
+    expect(metaColumn?.lastElementChild).toBe(toggle.querySelector('svg[aria-hidden="true"]'));
+  });
+
+  test('uses unique disclosure IDs and supports keyboard activation', async () => {
+    const user = userEvent.setup();
+    const secondJob = { ...sampleJob, jobId: 'job-002', title: 'Build another dashboard widget' };
+    vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob, secondJob], count: 2 });
+    render(<JobsSection />);
+
+    const firstToggle = await screen.findByRole('button', { name: /build a dashboard widget/i });
+    const secondToggle = screen.getByRole('button', { name: /build another dashboard widget/i });
+    expect(firstToggle).toHaveAttribute('id', 'job-job-001-toggle');
+    expect(firstToggle).toHaveAttribute('aria-controls', 'job-job-001-details');
+    expect(secondToggle).toHaveAttribute('id', 'job-job-002-toggle');
+    expect(secondToggle).toHaveAttribute('aria-controls', 'job-job-002-details');
+
+    firstToggle.focus();
+    await user.keyboard('{Enter}');
+    expect(firstToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region')).toHaveAttribute('id', 'job-job-001-details');
+
+    secondToggle.focus();
+    await user.keyboard(' ');
+    expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region')).toHaveAttribute('id', 'job-job-002-details');
+  });
+
   test('click expands job to show full description', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.graphql.jobs).mockResolvedValue({ jobs: [sampleJob], count: 1 });
@@ -381,9 +417,12 @@ describe('Jobs write actions', () => {
 
     // Fill the form
     const titleInput = screen.getByPlaceholderText(/build a solana/i);
+    expect(titleInput).toHaveAttribute('id', 'post-job-title');
+    expect(screen.getByLabelText('Title *')).toBe(titleInput);
     await user.type(titleInput, 'My New Job');
 
     const budgetInput = screen.getByPlaceholderText('500');
+    expect(budgetInput).toHaveAttribute('id', 'post-job-budget-amount');
     await user.type(budgetInput, '200');
 
     await user.click(screen.getByRole('button', { name: /post job/i }));
@@ -459,6 +498,7 @@ describe('Jobs write actions', () => {
 
     // Fill cover letter
     const coverLetterArea = screen.getByPlaceholderText(/describe your experience/i);
+    expect(coverLetterArea).toHaveAttribute('id', 'apply-cover-letter');
     await user.type(coverLetterArea, 'I am experienced in React');
 
     await user.click(screen.getByRole('button', { name: /submit application/i }));

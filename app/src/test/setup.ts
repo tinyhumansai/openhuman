@@ -202,6 +202,7 @@ vi.mock('../utils/config', () => ({
   E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
   CHAT_ATTACHMENTS_ENABLED: true,
+  DERIVED_TRANSCRIPT_ENABLED: true,
   SKILLS_GITHUB_REPO: 'test/skills',
   GA_MEASUREMENT_ID: undefined,
   OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
@@ -212,6 +213,7 @@ vi.mock('../utils/config', () => ({
   BACKEND_URL: mockApiUrl,
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
+  OPENHUMAN_GITHUB_REPO_URL: 'https://github.com/tinyhumansai/openhuman',
   APP_VERSION: '0.0.0-test',
   APP_BINARY_VERSION: '0.0.0-test',
   APP_ENVIRONMENT: 'test',
@@ -223,6 +225,7 @@ vi.mock('../utils/config', () => ({
   MASCOT_VOICE_MODEL_ID: 'eleven_multilingual_v2',
   MASCOT_MANIFEST_URL:
     'https://raw.githubusercontent.com/tinyhumansai/mascots/main/dist/mascots.json',
+  VOICE_MODE_FLAG_ENABLED: false,
 }));
 
 vi.mock('../services/backendUrl', () => ({

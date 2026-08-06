@@ -5,7 +5,7 @@ import { StreamingTailItem } from './items/StreamingTailItem';
 import { UserMessageItem } from './items/UserMessageItem';
 import type { TimelineItem } from './types';
 
-export interface ConversationTimelineHandlers {
+interface ConversationTimelineHandlers {
   /** Opens the full-transcript drawer for a subagent row. */
   onOpenSubagent?: (subagent: SubagentActivity) => void;
   /** Opens the whole-run "Agent Process Source" panel. */
@@ -84,10 +84,6 @@ export function ConversationTimeline({
             branch={item.branch}
           />
         );
-        break;
-      case 'reasoning':
-        // Reasoning is rendered inside the process/streaming affordances today;
-        // no standalone element yet.
         break;
       default:
         break;

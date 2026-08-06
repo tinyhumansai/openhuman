@@ -73,7 +73,7 @@ interface OAuthErrorDetail {
   message?: string;
 }
 
-export interface UseOAuthConnectionListenerOptions {
+interface UseOAuthConnectionListenerOptions {
   /** Channel that owns the OAuth flow (e.g. 'discord', 'telegram'). */
   channel: ChannelType;
   /** Auth mode that the OAuth deep-link should resolve to. */

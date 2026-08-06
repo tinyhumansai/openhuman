@@ -22,7 +22,7 @@ function makeSnapshotResult(overrides: Record<string, unknown> = {}) {
       activeMode: 'os_keyring',
       backendName: 'os',
     },
-    runtime: { screenIntelligence: {}, localAi: {}, autocomplete: {}, service: {} },
+    runtime: { localAi: {}, service: {} },
     ...overrides,
   };
 }

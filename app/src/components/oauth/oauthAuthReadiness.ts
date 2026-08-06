@@ -17,9 +17,9 @@ const warnLog = debug('oauth:auth-readiness:warn');
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const POLL_MS = 200;
 
-export type OAuthAuthReadinessFailure = 'core_mode_unset' | 'core_unreachable';
+type OAuthAuthReadinessFailure = 'core_mode_unset' | 'core_unreachable';
 
-export type OAuthAuthReadinessResult =
+type OAuthAuthReadinessResult =
   | { ready: true }
   | { ready: false; reason: OAuthAuthReadinessFailure };
 

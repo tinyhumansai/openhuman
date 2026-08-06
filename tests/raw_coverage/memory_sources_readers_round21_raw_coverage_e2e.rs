@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory_sources::readers::SourceReader;
-use openhuman_core::openhuman::memory_sources::{ContentType, MemorySourceEntry, SourceKind};
+use openhuman_core::openhuman::memory::sources::readers::SourceReader;
+use openhuman_core::openhuman::memory::sources::{ContentType, MemorySourceEntry, SourceKind};
 use tempfile::{Builder, TempDir};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -118,7 +118,7 @@ async fn round21_rss_reader_covers_http_body_guards_and_invalid_utf8() {
     let _lock = env_lock();
     let tmp = tempdir();
     let config = config(&tmp);
-    let reader = openhuman_core::openhuman::memory_sources::readers::rss::RssReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
 
     let (status_url, status_server) =
         one_response_server("503 Service Unavailable", "", b"down".to_vec()).await;
@@ -187,7 +187,7 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set_path("PATH", Path::new(&format!("{}:{old_path}", bin.display())));
 
-    let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::github::GithubReader;
     let entry = MemorySourceEntry {
         url: Some("https://github.com/tinyhumansai/openhuman".to_string()),
         ..source_entry("github-round21", SourceKind::GithubRepo)

@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 
-export interface SettingsRowProps {
+interface SettingsRowProps {
   htmlFor?: string;
   label?: string;
   description?: string;

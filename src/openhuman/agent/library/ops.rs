@@ -59,7 +59,9 @@ pub fn metadata_from_definition(def: &AgentDefinition) -> AgentDefinitionDisplay
         write_capable: is_write_capable(def),
         source: match &def.source {
             DefinitionSource::Builtin => AgentDefinitionSource::Builtin,
-            DefinitionSource::File(_) => AgentDefinitionSource::Custom,
+            DefinitionSource::File(_) | DefinitionSource::CustomRegistry => {
+                AgentDefinitionSource::Custom
+            }
         },
     }
 }
@@ -148,7 +150,8 @@ mod tests {
             sandbox_mode: SandboxMode::ReadOnly,
             background: false,
             trigger_memory_agent: Default::default(),
-            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+            tokenjuice_compression:
+                crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
             subagents: vec![
                 SubagentEntry::AgentId("critic".to_string()),
                 SubagentEntry::Skills(SkillsWildcard {

@@ -21,7 +21,7 @@ const POSITIONS = [
   { left: '50%', top: '10%' },
 ] as const;
 
-export interface SubMascotModel {
+interface SubMascotModel {
   id: string;
   agentId: string;
   label: string;
@@ -32,7 +32,7 @@ export interface SubMascotModel {
   position: (typeof POSITIONS)[number];
 }
 
-export interface SubMascotLayerProps {
+interface SubMascotLayerProps {
   entries: ToolTimelineEntry[];
 }
 

@@ -1,5 +1,5 @@
 use super::sanitize::sanitize_api_error;
-use crate::openhuman::inference::provider::openhuman_backend;
+use crate::openhuman::inference::provider::openhuman_backend_model;
 
 /// Whether a non-2xx provider response is worth reporting to Sentry.
 ///
@@ -144,7 +144,7 @@ pub fn log_custom_openai_upstream_bad_request_http_400(
 /// Whether this provider response carries a managed-backend `errorCode` (#870)
 /// that the backend already owns — so the FE must not double-report (F2/F4).
 ///
-/// Gated on `provider == `[`openhuman_backend::PROVIDER_LABEL`]: an `errorCode`
+/// Gated on `provider == `[`openhuman_backend_model::PROVIDER_LABEL`]: an `errorCode`
 /// is only trustworthy on the **managed backend**. A BYO / direct-provider body
 /// that merely contains an `errorCode`-shaped field must NOT be treated as
 /// backend-owned (CodeRabbit) — those keep reaching Sentry via the status gate.
@@ -156,7 +156,7 @@ pub fn log_custom_openai_upstream_bad_request_http_400(
 /// so the provider layer, the higher-layer re-report classifier, and the
 /// Sentry `before_send` filter can't drift.
 pub fn is_backend_error_code_owned(provider: &str, body: &str) -> bool {
-    provider == openhuman_backend::PROVIDER_LABEL
+    provider == openhuman_backend_model::PROVIDER_LABEL
         && crate::openhuman::inference::provider::backend_error_code_skips_sentry(body)
 }
 
@@ -515,7 +515,7 @@ pub fn is_provider_config_rejection_http(
     // TAURI-RUST-4XK. The general `is_backend_auth_failure` polarity guard
     // still fires first (backend 401/403 → SessionExpired), so this branch
     // is only reachable for non-backend providers. The phrase-level polarity
-    // guard below (`provider != openhuman_backend::PROVIDER_LABEL`) provides
+    // guard below (`provider != openhuman_backend_model::PROVIDER_LABEL`) provides
     // a second layer of defence for the non-OpenAI-compat shapes.
     if !matches!(status.as_u16(), 400 | 403 | 404 | 422) {
         return false;
@@ -535,7 +535,7 @@ pub fn is_provider_config_rejection_http(
     // are intrinsically scoped to third-party providers — keep the
     // polarity guard so a regression where our own backend emits one of
     // those still reaches Sentry.
-    provider != openhuman_backend::PROVIDER_LABEL
+    provider != openhuman_backend_model::PROVIDER_LABEL
 }
 
 pub fn log_provider_config_rejection(
@@ -707,11 +707,11 @@ pub fn is_provider_rate_cap_exceeded_message(body: &str) -> bool {
 /// the app session JWT (`401`/`403`). This is expected user-session state
 /// (token expired / revoked / rotated server-side), not a product bug — the
 /// auth domain owns recovery, so the predicate is provider-scoped to
-/// [`openhuman_backend::PROVIDER_LABEL`]. A `401`/`403` from **other** providers
+/// [`openhuman_backend_model::PROVIDER_LABEL`]. A `401`/`403` from **other** providers
 /// with an auth-key envelope (missing/invalid BYO key) is demoted separately by
 /// [`is_byo_provider_auth_failure_http`]; anything else still reaches Sentry.
 pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 401 | 403) && provider == openhuman_backend::PROVIDER_LABEL
+    matches!(status.as_u16(), 401 | 403) && provider == openhuman_backend_model::PROVIDER_LABEL
 }
 
 /// Whether a non-backend provider's `401`/`403` carries an OpenAI-style
@@ -730,7 +730,7 @@ pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> b
 /// - The OpenHuman **backend** keeps its [`is_backend_auth_failure`] →
 ///   [`publish_backend_session_expired`] branch (a backend `401`/`403` is
 ///   app-session expiry, not a BYO key), so this predicate excludes
-///   [`openhuman_backend::PROVIDER_LABEL`].
+///   [`openhuman_backend_model::PROVIDER_LABEL`].
 /// - A `401`/`403` whose body does **not** look like an auth-key envelope
 ///   (e.g. a gateway returning `401` on quota / geo-block) still reaches Sentry
 ///   — the gate keys on the body, not the bare status.
@@ -751,7 +751,7 @@ pub fn is_byo_provider_auth_failure_http(
         );
         return false;
     }
-    if provider == openhuman_backend::PROVIDER_LABEL {
+    if provider == openhuman_backend_model::PROVIDER_LABEL {
         tracing::debug!(
             domain = "llm_provider",
             operation = "http_error_classifier",
@@ -836,15 +836,14 @@ pub fn log_byo_provider_auth_failure(
     // TAURI-RUST-4RC), so the registry latch is what keeps this from
     // re-flooding the notification center the way the raw error flooded Sentry.
     let status_code = status.as_u16();
-    if crate::openhuman::inference::provider::auth_error_registry::record(provider, status_code) {
+    if crate::openhuman::inference::auth_error_registry::record(provider, status_code) {
         crate::core::event_bus::publish_global(
             crate::core::event_bus::DomainEvent::ProviderApiKeyRejected {
                 provider: provider.to_string(),
-                message:
-                    crate::openhuman::inference::provider::auth_error_registry::auth_error_message(
-                        provider,
-                        status_code,
-                    ),
+                message: crate::openhuman::inference::auth_error_registry::auth_error_message(
+                    provider,
+                    status_code,
+                ),
             },
         );
     }
@@ -888,7 +887,7 @@ pub fn is_openai_oauth_session_expired_http(
         );
         return false;
     }
-    if provider == openhuman_backend::PROVIDER_LABEL {
+    if provider == openhuman_backend_model::PROVIDER_LABEL {
         tracing::debug!(
             domain = "llm_provider",
             operation = "http_error_classifier",
@@ -972,11 +971,8 @@ pub fn log_openai_oauth_session_expired(
 /// subscriber clears the session and flips the scheduler-gate signed-out
 /// override (halting downstream LLM work — see OPENHUMAN-TAURI-1T), and skip
 /// the Sentry report. Mirrors the `is_auth_failure && is_backend` arm in
-/// [`api_error`], factored out for the hand-rolled provider HTTP-error chains
-/// in [`super::compatible::OpenAiCompatibleProvider`] which consume the
-/// response body inline and so can't delegate to `api_error`. The
-/// `chat_completions` chain lacked this branch and reported the backend
-/// `401 Invalid token` to Sentry — that drift was TAURI-RUST-N.
+/// [`api_error`], factored out for adapter error paths that already consumed
+/// the response body and cannot delegate to `api_error`.
 ///
 /// `message` is the already-formatted `"{provider} API error ({status}): …"`
 /// string; it embeds the sanitized body, but the prefix and caller-controlled
@@ -1036,7 +1032,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     let message = format!("{provider} API error ({status}): {sanitized}");
 
     let is_auth_failure = matches!(status.as_u16(), 401 | 403);
-    let is_backend = provider == openhuman_backend::PROVIDER_LABEL;
+    let is_backend = provider == openhuman_backend_model::PROVIDER_LABEL;
     let is_budget_exhausted_user_state = is_budget_exhausted_http_400(status, &body);
     // Local inference server (LM Studio etc.) running with no model loaded —
     // pure local user-state, nothing we sent is malformed. Demote and replace
@@ -1575,7 +1571,7 @@ mod tests {
         // `publish_backend_session_expired`; this provider-OAuth gate must not
         // claim a backend 401.
         assert!(!is_openai_oauth_session_expired_http(
-            openhuman_backend::PROVIDER_LABEL,
+            openhuman_backend_model::PROVIDER_LABEL,
             StatusCode::UNAUTHORIZED,
             OAUTH_EXPIRED_8FQ_BODY
         ));
@@ -1619,7 +1615,7 @@ mod tests {
         // `publish_backend_session_expired`), never a BYO key — even if the
         // body happens to carry the same prose.
         assert!(!is_byo_provider_auth_failure_http(
-            openhuman_backend::PROVIDER_LABEL,
+            openhuman_backend_model::PROVIDER_LABEL,
             StatusCode::UNAUTHORIZED,
             OPENROUTER_USER_NOT_FOUND_4RC_BODY
         ));

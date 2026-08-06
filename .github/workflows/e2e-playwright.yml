@@ -26,7 +26,10 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 30
+    # The complete serial web suite currently takes about 45 minutes on the
+    # shared runner; keep the standalone diagnostic workflow aligned with the
+    # 90-minute budget used by CI Full.
+    timeout-minutes: 90
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -73,12 +76,20 @@ jobs:
           mkdir -p "$OPENHUMAN_WORKSPACE"
           bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh
 
+      - name: Pack Playwright E2E failure artifacts
+        if: failure()
+        run: |
+          mkdir -p .ci/artifacts
+          tar -czf .ci/artifacts/openhuman-playwright-failure-logs.tar.gz \
+            -C "$OPENHUMAN_WORKSPACE" .
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+
       - name: Upload Playwright E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-playwright-failure-logs-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/openhuman-playwright-workspace/**
+          path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
           retention-days: 7
           if-no-files-found: ignore

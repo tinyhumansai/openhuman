@@ -78,42 +78,40 @@ export async function chatMounted(): Promise<boolean> {
 /** Type into the chat composer through WebDriver so React's controlled
  *  input state and the DOM stay in sync. */
 export async function typeIntoComposer(text: string): Promise<void> {
-  const composer = await browser.$(COMPOSER_SELECTOR);
-  await composer.waitForDisplayed({ timeout: 10_000 });
-  await composer.waitForEnabled({ timeout: 10_000 });
+  let actual = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // Creating a thread can replace the controlled textarea after the selected
+    // thread id changes. Resolve it afresh on every attempt so a late React
+    // commit cannot leave WebDriver typing into a detached element.
+    const composer = await browser.$(COMPOSER_SELECTOR);
+    await composer.waitForDisplayed({ timeout: 10_000 });
+    await composer.waitForEnabled({ timeout: 10_000 });
 
-  // Step 1: Focus via JS — avoids the coordinate-based click that gets
-  // intercepted by AppUpdatePrompt (z-[9998], fixed bottom-4 right-4).
-  // We also select-all any existing text so the subsequent delete clears it.
-  const focused = await browser.execute((sel: string) => {
-    const el = document.querySelector(sel) as HTMLTextAreaElement | null;
-    if (!el) return false;
-    el.focus();
-    el.select();
-    return true;
-  }, COMPOSER_SELECTOR);
-  if (!focused) {
-    throw new Error('typeIntoComposer: textarea not found');
+    // Focus via JS — avoids the coordinate-based click that gets intercepted
+    // by AppUpdatePrompt. Select any partial value before deleting it.
+    const focused = await browser.execute((sel: string) => {
+      const el = document.querySelector(sel) as HTMLTextAreaElement | null;
+      if (!el) return false;
+      el.focus();
+      el.select();
+      return true;
+    }, COMPOSER_SELECTOR);
+    if (!focused) continue;
+
+    await browser.pause(80);
+    await browser.keys('Delete');
+    await browser.pause(80);
+
+    // Real keyboard events keep React's controlled state and the DOM in sync.
+    await browser.keys(text.split(''));
+    await browser.pause(200);
+    actual = String(await composer.getValue());
+    if (actual === text) return;
   }
 
-  // Step 2: Clear existing content.  el.select() inside browser.execute already
-  // selected all text; browser.keys('Delete') now removes the selection so
-  // React's controlled state sees an empty value before we start typing.
-  await browser.pause(80);
-  await browser.keys('Delete');
-  await browser.pause(80);
-
-  // Step 3: Type the text using real OS-level keyboard events (browser.keys).
-  // Unlike synthetic DOM events dispatched via browser.execute(), these go
-  // through Chromium's normal input pipeline, triggering React's onChange
-  // on the controlled textarea and correctly updating `inputValue` state so
-  // the send button becomes enabled.
-  await browser.keys(text.split(''));
-
-  await browser.waitUntil(async () => (await composer.getValue()) === text, {
-    timeout: 5_000,
-    timeoutMsg: 'chat composer did not receive typed text',
-  });
+  throw new Error(
+    `chat composer did not receive typed text after 3 attempts (actual length ${actual.length}, expected ${text.length})`
+  );
 }
 
 /** Click the chat composer's send button. Returns `false` if the

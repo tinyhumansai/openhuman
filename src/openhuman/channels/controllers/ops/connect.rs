@@ -6,9 +6,9 @@ use crate::openhuman::channels::email_channel::{EmailChannel, EmailConfig};
 use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
 use crate::openhuman::channels::traits::Channel;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
-use crate::openhuman::credentials;
-use crate::openhuman::memory_store::chunks::store as memory_tree_store;
-use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory::store::chunks::store as memory_tree_store;
+use crate::openhuman::memory::store::chunks::types::SourceKind;
+use crate::openhuman::security::credentials;
 use crate::rpc::RpcOutcome;
 
 use super::super::definitions::{
@@ -688,7 +688,7 @@ pub async fn channel_status(
     // Snapshot live listener health once so every entry reflects the same
     // moment. The supervisor keeps `channel:<id>` components current via
     // `ChannelConnected`/`ChannelDisconnected` (issue #3712).
-    let health = crate::openhuman::health::snapshot();
+    let health = crate::openhuman::platform::health::snapshot();
 
     let mut entries = Vec::new();
     for def in &defs {

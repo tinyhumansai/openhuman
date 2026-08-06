@@ -31,7 +31,7 @@ const LOG_PREFIX = '[TelegramChannel]';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface TelegramConnectOptions {
+interface TelegramConnectOptions {
   /** Bot token issued by BotFather. */
   botToken: string;
   /**
@@ -47,7 +47,7 @@ export interface TelegramConnectOptions {
   mentionOnly?: boolean;
 }
 
-export interface TelegramConnectResult {
+interface TelegramConnectResult {
   ok: boolean;
   status?: string;
   restartRequired?: boolean;
@@ -55,14 +55,14 @@ export interface TelegramConnectResult {
   error?: string;
 }
 
-export interface TelegramStatusEntry {
+interface TelegramStatusEntry {
   channelId: string;
   authMode: string;
   connected: boolean;
   hasCredentials: boolean;
 }
 
-export interface TelegramUpdate {
+interface TelegramUpdate {
   update_id: number;
   message: {
     message_id: number;
@@ -79,7 +79,7 @@ export interface TelegramUpdate {
   };
 }
 
-export interface SentMessage {
+interface SentMessage {
   method: string;
   chat_id: string | number;
   text?: string;

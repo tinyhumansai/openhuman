@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use rusqlite::params;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::{
+use crate::openhuman::memory::store::chunks::store::{
     delete_chunks_by_source, delete_orphaned_source_tree, with_connection,
 };
-use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory::store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
@@ -111,13 +111,13 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
 }
 
 pub(crate) fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
-    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
+    use crate::openhuman::memory::tinycortex::HOST_SYNC_STATE_NAMESPACE;
     let conn = rusqlite::Connection::open(db_path)
         .with_context(|| format!("open unified memory db {}", db_path.display()))?;
     let n = conn
         .execute(
             "DELETE FROM kv_namespace WHERE namespace = ?1",
-            params![KV_NAMESPACE],
+            params![HOST_SYNC_STATE_NAMESPACE],
         )
         .context("delete composio-sync-state rows")?;
     Ok(n as u64)
@@ -126,8 +126,8 @@ pub(crate) fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64
 // ── reset_tree ───────────────────────────────────────────────────────────
 
 pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
-    use crate::openhuman::memory_queue::store as jobs_store;
-    use crate::openhuman::memory_queue::types::{ExtractChunkPayload, NewJob};
+    use crate::openhuman::memory::queue::store as jobs_store;
+    use crate::openhuman::memory::queue::types::{ExtractChunkPayload, NewJob};
 
     let cfg = config.clone();
     let (tree_rows_deleted, chunks_requeued, jobs_enqueued) =
@@ -223,7 +223,7 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
         }
     }
 
-    crate::openhuman::memory_queue::wake_workers();
+    crate::openhuman::memory::queue::wake_workers();
 
     let resp = ResetTreeResponse {
         tree_rows_deleted,
@@ -246,8 +246,8 @@ pub async fn flush_source_tree_rpc(
 ) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
     use crate::openhuman::memory::tree_source::get_or_create_source_tree;
 
-    use crate::openhuman::memory_tree::tree::flush::force_flush_tree;
-    use crate::openhuman::memory_tree::tree::TreeFactory;
+    use crate::openhuman::memory::tree::tree::flush::force_flush_tree;
+    use crate::openhuman::memory::tree::tree::TreeFactory;
     use std::collections::HashSet;
     use std::sync::Mutex;
 
@@ -315,9 +315,9 @@ pub async fn flush_source_tree_rpc(
 // ── flush_now ─────────────────────────────────────────────────────────────
 
 pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
-    use crate::openhuman::memory_queue::store as jobs_store;
-    use crate::openhuman::memory_queue::types::{FlushStalePayload, NewJob};
-    use crate::openhuman::memory_tree::tree::store as tree_store;
+    use crate::openhuman::memory::queue::store as jobs_store;
+    use crate::openhuman::memory::queue::types::{FlushStalePayload, NewJob};
+    use crate::openhuman::memory::tree::tree::store as tree_store;
 
     let cfg = config.clone();
     let resp = tokio::task::spawn_blocking(move || -> Result<FlushNowResponse> {

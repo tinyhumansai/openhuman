@@ -178,8 +178,8 @@ pub struct CoreApprovalGate;
 
 impl ApprovalGate for CoreApprovalGate {
     fn parse_reply(&self, message: &str) -> Option<ApprovalDecision> {
-        crate::openhuman::approval::parse_approval_reply(message).map(|decision| {
-            use crate::openhuman::approval::ApprovalDecision as Core;
+        crate::openhuman::security::approval::parse_approval_reply(message).map(|decision| {
+            use crate::openhuman::security::approval::ApprovalDecision as Core;
             match decision {
                 Core::ApproveOnce => ApprovalDecision::Approve,
                 Core::ApproveAlwaysForTool => {
@@ -216,7 +216,7 @@ impl ConversationStore for ConversationHistoryStore {
         session_key: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<ConversationMessage>> {
-        let messages = crate::openhuman::memory_conversations::get_messages(
+        let messages = crate::openhuman::memory::conversations::get_messages(
             self.workspace_dir.clone(),
             session_key,
         )
@@ -235,9 +235,9 @@ impl ConversationStore for ConversationHistoryStore {
     async fn append(&self, session_key: &str, message: ConversationMessage) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         // `append_message` requires the thread to exist; create-or-noop first.
-        crate::openhuman::memory_conversations::ensure_thread(
+        crate::openhuman::memory::conversations::ensure_thread(
             self.workspace_dir.clone(),
-            crate::openhuman::memory_conversations::CreateConversationThread {
+            crate::openhuman::memory::conversations::CreateConversationThread {
                 id: session_key.to_string(),
                 title: session_key.to_string(),
                 created_at: now.clone(),
@@ -247,7 +247,7 @@ impl ConversationStore for ConversationHistoryStore {
             },
         )
         .map_err(|e| anyhow::anyhow!(e))?;
-        let stored = crate::openhuman::memory_conversations::ConversationMessage {
+        let stored = crate::openhuman::memory::conversations::ConversationMessage {
             id: uuid::Uuid::new_v4().to_string(),
             content: message.content,
             message_type: message.role.clone(),
@@ -255,7 +255,7 @@ impl ConversationStore for ConversationHistoryStore {
             sender: message.role,
             created_at: now,
         };
-        crate::openhuman::memory_conversations::append_message(
+        crate::openhuman::memory::conversations::append_message(
             self.workspace_dir.clone(),
             session_key,
             stored,
@@ -352,7 +352,7 @@ impl EventSink for OpenHumanEventSink {
                             "{LOG_PREFIX} web event payload not a WebChannelEvent ({kind}): {e}"
                         )
                     })?;
-                crate::openhuman::channels::providers::web::publish_web_channel_event(event);
+                crate::openhuman::web_chat::publish_web_channel_event(event);
             }
             "channel" => {
                 use crate::core::event_bus::{publish_global, DomainEvent};

@@ -4,7 +4,7 @@
 //! co-located files as identified by a coverage gap analysis:
 //!
 //! 1. Full user→LLM→tool→result→final turn cycle — now covered by the
-//!    tinyagents route's tests (`src/openhuman/tinyagents/tests.rs`), which
+//!    tinyagents route's tests (`src/openhuman/agent/tinyagents/tests.rs`), which
 //!    exercise `run_turn_via_tinyagents_shared` end to end.
 //! 2. `MaxIterationsExceeded` downcasts to the typed `AgentError` variant.
 //! 3. `visible_tool_names` whitelist: tools outside the set are treated as unknown.
@@ -23,93 +23,7 @@
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;
 //!   only the tag body (JSON) is used.
 
-use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::Provider;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
-use crate::openhuman::tool_timeout::parse_tool_timeout_secs;
-use crate::openhuman::tools::{Tool, ToolResult};
-use async_trait::async_trait;
-use parking_lot::Mutex;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared test doubles
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct ScriptedProvider {
-    responses: Mutex<Vec<anyhow::Result<ChatResponse>>>,
-}
-
-#[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok("fallback".into())
-    }
-
-    async fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
-        let mut guard = self.responses.lock();
-        guard.remove(0)
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::default()
-    }
-}
-
-struct EchoTool;
-
-#[async_trait]
-impl Tool for EchoTool {
-    fn name(&self) -> &str {
-        "echo"
-    }
-    fn description(&self) -> &str {
-        "echo"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult::success("echo-out"))
-    }
-}
-
-struct PingTool;
-
-#[async_trait]
-impl Tool for PingTool {
-    fn name(&self) -> &str {
-        "ping"
-    }
-    fn description(&self) -> &str {
-        "ping"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
-    }
-    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult::success("pong"))
-    }
-}
-
-fn multimodal_cfg() -> crate::openhuman::config::MultimodalConfig {
-    crate::openhuman::config::MultimodalConfig::default()
-}
-
-fn multimodal_file_cfg() -> crate::openhuman::config::MultimodalFileConfig {
-    crate::openhuman::config::MultimodalFileConfig::default()
-}
+use crate::openhuman::tools::timeout::parse_tool_timeout_secs;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Item 1 — Full turn cycle: user → LLM emits tool call → tool executes →

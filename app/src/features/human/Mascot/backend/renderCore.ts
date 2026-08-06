@@ -92,7 +92,7 @@ export function injectViseme(svg: string, mascot: VisemeCarrier, label: string |
 }
 
 /** Generic single-attribute string set on the element with the given id. */
-export function setAttrOnId(svg: string, id: string, name: string, value: string): string {
+function setAttrOnId(svg: string, id: string, name: string, value: string): string {
   // Lazy `[^>]*?` + greedy `\/?>` ordering avoids swallowing the `/` of
   // self-closing tags (`<path .../>`) and emitting malformed
   // `attr"/ transform="...">` output.

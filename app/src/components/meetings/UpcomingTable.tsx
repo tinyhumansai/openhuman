@@ -330,7 +330,7 @@ function SkeletonRow() {
 // Main component
 // ---------------------------------------------------------------------------
 
-export interface UpcomingTableProps {
+interface UpcomingTableProps {
   lookaheadMinutes?: number;
   limit?: number;
   /**

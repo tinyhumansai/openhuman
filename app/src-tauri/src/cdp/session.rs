@@ -24,8 +24,8 @@ use tokio::task::JoinHandle;
 // elapsed check honours `tokio::time::pause()` / `advance()` in unit tests.
 use tokio::time::{sleep, Instant};
 
+use super::find_page_target_where;
 use super::target::conn_for_account;
-use super::{find_page_target_where, CdpConn};
 use crate::webview_accounts::{emit_load_finished, redact_url_for_log, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
@@ -517,7 +517,7 @@ async fn run_session_cycle<R: Runtime>(
     // page reaches the CEF helper's notify-IPC, which posts back to
     // `forward_native_notification` in `webview_accounts`. Without it,
     // the constructor silently no-ops and no toast ever fires (#1016).
-    if let Some(origin) = origin_of(&real_url) {
+    if let Some(origin) = origin_of(real_url) {
         // Default permission set every embedded provider needs. Origin-scoped
         // so we don't leak grants across providers running in the same CEF
         // browser process.
@@ -531,13 +531,6 @@ async fn run_session_cycle<R: Runtime>(
         // Without these, Meet sits on the consent dialog forever and cam/mic
         // never enumerate (verified during #1022 smoke).
         //
-        // displayCapture is intentionally NOT in this set. Pre-granting it
-        // via `Browser.grantPermissions` bypasses the transient-activation
-        // requirement Chromium enforces on `getDisplayMedia`, which would
-        // let the page initiate a desktop capture without any user gesture.
-        // Without the pre-grant the page's screen-share button triggers
-        // Chrome's native screen-picker on click — same UX, but the gesture
-        // gate stays in place.
         if origin_host_is(&origin, "meet.google.com") {
             perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }
@@ -554,11 +547,6 @@ async fn run_session_cycle<R: Runtime>(
         // tracking issue — granting these perms now means once the paint
         // bug clears, the huddle is functional immediately rather than
         // requiring a follow-up perms wire-up.
-        //
-        // displayCapture deliberately omitted for the same reason as Meet:
-        // pre-granting bypasses Chromium's gesture gate on
-        // `getDisplayMedia`; screen-share inside a huddle still works via
-        // the native screen-picker on user click.
         if origin_host_is(&origin, "app.slack.com") {
             perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }

@@ -14,7 +14,7 @@
  * because that flow uses raw XChaCha20Poly1305 outside the post-pairing
  * `TunnelCipher` — it's the bootstrap, not the session.
  *
- * Mirrors src/openhuman/devices/crypto.rs — keep in sync.
+ * Mirrors src/openhuman/security/devices/crypto.rs — keep in sync.
  */
 import { xchacha20poly1305 } from '@noble/ciphers/chacha';
 import { randomBytes } from '@noble/ciphers/webcrypto';
@@ -103,14 +103,14 @@ export function deriveSharedSecret(myPriv: Uint8Array, theirPub: Uint8Array): Ui
  * emits cannot decrypt under the server's own opener — guards against
  * cross-direction reflection.
  */
-export interface SessionKeys {
+interface SessionKeys {
   c2s: Uint8Array;
   s2c: Uint8Array;
 }
 
 /**
  * Derive `(c2s, s2c)` directional subkeys from the static + ephemeral DH
- * pair. Mirrors `derive_session_keys` in src/openhuman/devices/crypto.rs:
+ * pair. Mirrors `derive_session_keys` in src/openhuman/security/devices/crypto.rs:
  *
  *     ikm  = static_dh || eph_dh
  *     salt = client_eph_pub || server_eph_pub
@@ -149,7 +149,7 @@ export function deriveSessionKeys(
 }
 
 /** Which side of the tunnel is operating the cipher. */
-export type TunnelRole = 'client' | 'server';
+type TunnelRole = 'client' | 'server';
 
 /**
  * Stateful directional cipher mirroring Rust `TunnelCipher::for_role`. Holds

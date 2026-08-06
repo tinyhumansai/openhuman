@@ -26,7 +26,6 @@ import { visemePath, VISEMES, type VisemeShape } from './visemes';
  * - `celebrating` — success animation after meaningful work.
  * - `writing` — agent is editing/creating files.
  * - `reading` — agent is browsing or reading content.
- * - `recording` — agent is capturing screen or recording.
  * - `waving` — greeting or hello gesture.
  * - `dancing` — celebratory/playful animation.
  * - `drinking_coffee` — agent is processing / long-running task.
@@ -50,14 +49,13 @@ export type MascotFace =
   | 'celebrating'
   | 'writing'
   | 'reading'
-  | 'recording'
   | 'waving'
   | 'dancing'
   | 'drinking_coffee'
   | 'drinking_boba'
   | 'normal';
 
-export interface GhostyProps {
+interface GhostyProps {
   bodyColor?: string;
   blushColor?: string;
   arm?: 'wave' | 'none';
@@ -215,14 +213,6 @@ const FACE_PRESETS: Record<Exclude<MascotFace, 'normal'>, FacePreset> = {
     browDy: -4,
     showBrows: true,
     blushOpacity: 0.75,
-  },
-  recording: {
-    eyeScaleY: 1,
-    eyeScaleX: 1,
-    browTilt: 0,
-    browDy: 0,
-    showBrows: false,
-    blushOpacity: 0.9,
   },
   waving: {
     eyeScaleY: 0.5,
@@ -489,8 +479,6 @@ function restMouthPath(face: MascotFace): string {
     case 'writing':
     case 'reading':
       return 'M488,585 Q520,595 552,585 Q520,592 488,585 Z';
-    case 'recording':
-      return 'M495,580 Q520,600 545,580 Q520,615 495,580 Z';
     case 'drinking_coffee':
     case 'drinking_boba':
       return 'M500,578 Q520,598 540,578 Q520,610 500,578 Z';

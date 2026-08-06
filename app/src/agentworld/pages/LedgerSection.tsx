@@ -8,35 +8,54 @@
  *
  * Pattern mirrors FeedSection: useState + useEffect fetch, PanelScaffold
  * wrapper, StatusBlock for loading/error/empty states.
+ *
+ * Pagination: the backend/SDK `ledgerTransactions` call accepts `limit`/`offset`
+ * (LedgerListParams) and returns a `count`, so the list is fetched a page at a
+ * time and extended via an offset-based "Load more" control. A page shorter than
+ * {@link LEDGER_PAGE_SIZE} means the ledger is exhausted (`hasMore=false`).
  */
-import { useEffect, useState } from 'react';
+import debug from 'debug';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
+import Button from '../../components/ui/Button';
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
+import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import StatusBlock from '../components/StatusBlock';
 import { formatUnits, friendlyNetwork } from '../components/X402ConfirmDialog';
 import { explorerTxUrl } from '../hooks/useX402Buy';
+import { relativeTime } from './relativeTime';
+
+const log = debug('agentworld:ledger');
+
+/** Ledger rows fetched per page (also the initial page size). */
+export const LEDGER_PAGE_SIZE = 50;
 
 // ── State types ───────────────────────────────────────────────────────────────
 
 type LedgerState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; transactions: GqlLedgerTransaction[] };
+  | {
+      status: 'ok';
+      transactions: GqlLedgerTransaction[];
+      // Server-side cursor, in request units: how many rows to skip on the next
+      // page. Advances by LEDGER_PAGE_SIZE per fetch, decoupled from the client
+      // row count so dedupe never desyncs the offset.
+      nextOffset: number;
+      // A full page came back, so more rows may exist.
+      hasMore: boolean;
+      // A "Load more" fetch is in flight.
+      loadingMore: boolean;
+      // Non-null when the most recent "Load more" fetch failed (existing rows
+      // stay visible; the user can retry).
+      moreError: string | null;
+    };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 export function abbreviateAddress(addr: string | undefined): string {
   if (!addr) return '—';
@@ -74,16 +93,6 @@ export function formatLedgerAmount(amount: string | undefined, asset: string | u
   const decimals = decimalsForAsset(asset);
   const display = decimals > 0 ? formatUnits(amount, decimals) : amount;
   return formatAmount(display);
-}
-
-/** Centered status message for loading / error / info states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
-  return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-      <p className={`text-base font-medium ${tone}`}>{title}</p>
-      {body && <p className="max-w-md text-sm text-content-muted">{body}</p>}
-    </div>
-  );
 }
 
 // ── StatusBadge ───────────────────────────────────────────────────────────────
@@ -159,8 +168,29 @@ function TransactionRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useT();
+  const [copied, setCopied] = useState(false);
+
+  // Copy the ledger Tx ID to the clipboard. Degrades silently when the
+  // clipboard API is unavailable (e.g. insecure context / older webview).
+  const handleCopy = useCallback(() => {
+    const clip = navigator.clipboard;
+    if (!clip?.writeText) {
+      log('copy tx id: clipboard API unavailable');
+      return;
+    }
+    void clip
+      .writeText(tx.txId)
+      .then(() => {
+        log('copied ledger tx id');
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch((err: unknown) => log('copy tx id failed', { error: String(err) }));
+  }, [tx.txId]);
+
   return (
-    <div className="border-b border-line-subtle last:border-0">
+    <div data-testid="ledger-row" className="border-b border-line-subtle last:border-0">
       {/* Summary row — leading icon · stacked content · fixed meta column */}
       <button
         type="button"
@@ -237,9 +267,30 @@ function TransactionRow({
       {expanded && (
         <div className="border-t border-line-subtle bg-surface-muted px-4 py-3">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-            {/* Ledger TX ID */}
+            {/* Ledger TX ID + copy */}
             <dt className="font-medium text-content-muted">Tx ID</dt>
-            <dd className="break-all font-mono text-content">{tx.txId}</dd>
+            <dd className="flex items-center gap-2">
+              <span className="break-all font-mono text-content">{tx.txId}</span>
+              <button
+                type="button"
+                onClick={handleCopy}
+                aria-label={t('agentWorld.ledger.copyTxId')}
+                className="shrink-0 rounded p-1 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
+              {copied && (
+                <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                  {t('agentWorld.ledger.copied')}
+                </span>
+              )}
+            </dd>
 
             {/* Visibility */}
             <dt className="font-medium text-content-muted">Visibility</dt>
@@ -308,24 +359,75 @@ function TransactionRow({
 // ── LedgerSection (main export) ───────────────────────────────────────────────
 
 export default function LedgerSection() {
+  const { t } = useT();
   const [ledgerState, setLedgerState] = useState<LedgerState>({ status: 'loading' });
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
+  // Client-side filters over the loaded rows. `assetFilter` is a resolved symbol
+  // (or 'all'); `directionFilter` is viewer-relative and needs `myAddr`.
+  const [assetFilter, setAssetFilter] = useState<string>('all');
+  const [directionFilter, setDirectionFilter] = useState<'all' | 'in' | 'out'>('all');
+  const [myAddr, setMyAddr] = useState<string | null>(null);
 
-  // ── Fetch ledger transactions ──────────────────────────────────────────────
+  // Guards async setState after unmount (the initial useEffect uses its own
+  // `cancelled` flag; "Load more" fetches outlive no single effect, so they read
+  // this ref instead).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Resolve the viewer's wallet address so the direction filter can classify
+  // rows as incoming/outgoing. Absent when the wallet is locked → the control
+  // stays hidden (a public ledger has no viewer-relative direction without it).
+  useEffect(() => {
+    let cancelled = false;
+    void fetchWalletStatus()
+      .then(status => {
+        if (cancelled) return;
+        const accounts = Array.isArray(status?.accounts) ? status.accounts : [];
+        // Tiny Place identity is the Solana address (same as FeedSection /
+        // ProfilesSection). Fall back to nothing for EVM/BTC-only wallets rather
+        // than classifying direction against an unrelated address.
+        const acct = accounts.find(a => a.chain === 'solana');
+        if (acct?.address) {
+          log('wallet address resolved for direction filter');
+          setMyAddr(acct.address);
+        }
+      })
+      .catch((err: unknown) => log('wallet status failed', { error: String(err) }));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Fetch first page of ledger transactions ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setLedgerState({ status: 'loading' });
+    log('loading first ledger page', { limit: LEDGER_PAGE_SIZE });
 
-    // TODO(phase-2-follow-up): implement pagination with offset or cursor.
     void apiClient.graphql
-      .ledgerTransactions({ limit: 50 })
+      .ledgerTransactions({ limit: LEDGER_PAGE_SIZE, offset: 0 })
       .then(result => {
         if (cancelled) return;
         const transactions = Array.isArray(result?.transactions) ? result.transactions : [];
-        setLedgerState({ status: 'ok', transactions });
+        const hasMore = transactions.length >= LEDGER_PAGE_SIZE;
+        log('loaded first ledger page', { received: transactions.length, hasMore });
+        setLedgerState({
+          status: 'ok',
+          transactions,
+          nextOffset: LEDGER_PAGE_SIZE,
+          hasMore,
+          loadingMore: false,
+          moreError: null,
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        log('first ledger page failed', { error: String(err) });
         setLedgerState({ status: 'error', message: String(err) });
       });
 
@@ -333,6 +435,79 @@ export default function LedgerSection() {
       cancelled = true;
     };
   }, []);
+
+  // ── Fetch the next page and append it ──────────────────────────────────────
+  // `offset` is passed in from the rendered 'ok' state so the cursor stays a
+  // pure function of pages requested. Reentry is prevented by disabling the
+  // button while `loadingMore` is set.
+  const loadMore = useCallback((offset: number) => {
+    log('loading more ledger rows', { offset, limit: LEDGER_PAGE_SIZE });
+    setLedgerState(prev =>
+      prev.status === 'ok' ? { ...prev, loadingMore: true, moreError: null } : prev
+    );
+
+    void apiClient.graphql
+      .ledgerTransactions({ limit: LEDGER_PAGE_SIZE, offset })
+      .then(result => {
+        if (!mountedRef.current) return;
+        const page = Array.isArray(result?.transactions) ? result.transactions : [];
+        const hasMore = page.length >= LEDGER_PAGE_SIZE;
+        setLedgerState(prev => {
+          if (prev.status !== 'ok') return prev;
+          // Dedupe by txId: if rows shifted between page fetches the overlap must
+          // not produce duplicate React keys or double-counted entries.
+          const seen = new Set(prev.transactions.map(tx => tx.txId));
+          const fresh = page.filter(tx => !seen.has(tx.txId));
+          log('appended ledger rows', {
+            received: page.length,
+            fresh: fresh.length,
+            total: prev.transactions.length + fresh.length,
+            hasMore,
+          });
+          return {
+            status: 'ok',
+            transactions: [...prev.transactions, ...fresh],
+            nextOffset: offset + LEDGER_PAGE_SIZE,
+            hasMore,
+            loadingMore: false,
+            moreError: null,
+          };
+        });
+      })
+      .catch((err: unknown) => {
+        if (!mountedRef.current) return;
+        log('load more failed', { error: String(err) });
+        setLedgerState(prev =>
+          prev.status === 'ok' ? { ...prev, loadingMore: false, moreError: String(err) } : prev
+        );
+      });
+  }, []);
+
+  // ── Derived filter state ───────────────────────────────────────────────────
+  // Stable identity so the filter memos below don't recompute every render.
+  const transactions = useMemo(
+    () => (ledgerState.status === 'ok' ? ledgerState.transactions : []),
+    [ledgerState]
+  );
+  // Distinct asset symbols present in the loaded rows, for the asset dropdown.
+  const assetOptions = useMemo(() => {
+    const seen = new Set<string>();
+    // Skip rows with no asset — `resolveAssetSymbol(undefined)` is '' and would
+    // add a blank, unlabeled <option>.
+    for (const tx of transactions) if (tx.asset) seen.add(resolveAssetSymbol(tx.asset));
+    return Array.from(seen).sort();
+  }, [transactions]);
+  // Apply both filters over the loaded rows.
+  const filtered = useMemo(
+    () =>
+      transactions.filter(tx => {
+        if (assetFilter !== 'all' && resolveAssetSymbol(tx.asset) !== assetFilter) return false;
+        if (directionFilter === 'in' && tx.to !== myAddr) return false;
+        if (directionFilter === 'out' && tx.from !== myAddr) return false;
+        return true;
+      }),
+    [transactions, assetFilter, directionFilter, myAddr]
+  );
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -345,33 +520,108 @@ export default function LedgerSection() {
       </div>
     );
   } else if (ledgerState.status === 'error') {
-    body = (
-      <StatusBlock
-        tone="text-red-600 dark:text-red-400"
-        title="Failed to load ledger"
-        body={ledgerState.message}
-      />
-    );
+    body = <StatusBlock tone="danger" title="Failed to load ledger" body={ledgerState.message} />;
   } else if (ledgerState.transactions.length === 0) {
     body = (
       <StatusBlock
-        tone="text-content-muted"
+        tone="neutral"
         title="No transactions found"
         body="The ledger is empty or no transactions match the current filter."
       />
     );
   } else {
+    const { hasMore, loadingMore, moreError, nextOffset } = ledgerState;
     body = (
-      <div className="rounded-lg border border-line bg-surface">
-        {ledgerState.transactions.map(tx => (
-          <TransactionRow
-            key={tx.txId}
-            tx={tx}
-            expanded={expandedTxId === tx.txId}
-            onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
+      <>
+        {/* Filter bar: asset dropdown + (wallet-gated) direction toggle */}
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-content-muted">
+            <span>{t('agentWorld.ledger.filterAsset')}</span>
+            <select
+              aria-label={t('agentWorld.ledger.filterAsset')}
+              value={assetFilter}
+              onChange={e => {
+                log('asset filter changed', { asset: e.target.value });
+                setAssetFilter(e.target.value);
+              }}
+              className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-content focus:border-primary-500 focus:outline-none">
+              <option value="all">{t('agentWorld.ledger.filterAllAssets')}</option>
+              {assetOptions.map(a => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {myAddr && (
+            <div
+              className="flex items-center gap-1"
+              role="group"
+              aria-label={t('agentWorld.ledger.direction')}>
+              {(['all', 'in', 'out'] as const).map(dir => (
+                <button
+                  key={dir}
+                  type="button"
+                  aria-pressed={directionFilter === dir}
+                  onClick={() => {
+                    log('direction filter changed', { direction: dir });
+                    setDirectionFilter(dir);
+                  }}
+                  className={[
+                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                    directionFilter === dir
+                      ? 'bg-primary-600 text-content-inverted'
+                      : 'bg-surface text-content-muted hover:text-content',
+                  ].join(' ')}>
+                  {dir === 'all'
+                    ? t('agentWorld.ledger.directionAll')
+                    : dir === 'in'
+                      ? t('agentWorld.ledger.directionIn')
+                      : t('agentWorld.ledger.directionOut')}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {filtered.length === 0 ? (
+          <StatusBlock
+            tone="neutral"
+            title={t('agentWorld.ledger.noMatch')}
+            body={t('agentWorld.ledger.noMatchHint')}
           />
-        ))}
-      </div>
+        ) : (
+          <div className="rounded-lg border border-line bg-surface">
+            {filtered.map(tx => (
+              <TransactionRow
+                key={tx.txId}
+                tx={tx}
+                expanded={expandedTxId === tx.txId}
+                onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
+              />
+            ))}
+          </div>
+        )}
+
+        {moreError && (
+          <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">
+            {t('agentWorld.ledger.loadMoreError')}
+          </p>
+        )}
+
+        {hasMore && (
+          <div className="mt-3 flex justify-center">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => loadMore(nextOffset)}>
+              {loadingMore ? t('agentWorld.ledger.loadingMore') : t('agentWorld.ledger.loadMore')}
+            </Button>
+          </div>
+        )}
+      </>
     );
   }
 

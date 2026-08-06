@@ -81,6 +81,8 @@ vi.mock('./voice/audioPlayer', () => ({
       return;
     throw err;
   },
+  isAudioStopped: (err: unknown) =>
+    typeof err === 'object' && err !== null && (err as { stopped?: unknown }).stopped === true,
 }));
 
 function makeFakePlayback(durationMs = 100) {
@@ -105,6 +107,12 @@ function makeFakePlayback(durationMs = 100) {
     finishNaturally: () => {
       stopped = true;
       resolveEnded();
+    },
+    // Reject `ended` with a real (non-stop) decoder/playback fault — distinct
+    // from the stop sentinel `stop()` raises.
+    failWith: (err: Error) => {
+      stopped = true;
+      rejectEnded(err);
     },
     durationMs,
   };
@@ -331,6 +339,17 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onInferenceStart?.(fakeEvent({}));
       capturedListeners?.onToolCall?.(
         fakeEvent({ tool_name: 'custom_tool', skill_id: 's', args: {}, round: 1 })
+      );
+    });
+    expect(result.current.face).toBe('thinking');
+  });
+
+  it('does not expose a capture-specific activity face', () => {
+    const { result } = renderHook(() => useHumanMascot());
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onToolCall?.(
+        fakeEvent({ tool_name: 'memory_capture', skill_id: 's', args: {}, round: 1 })
       );
     });
     expect(result.current.face).toBe('thinking');
@@ -750,6 +769,40 @@ describe('useHumanMascot TTS playback', () => {
     expect(result.current.face).toBe('idle');
   });
 
+  it('finishes the turn when a clip ends with a real decoder error (no rethrow, not stranded)', async () => {
+    const fake = makeFakePlayback();
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('sure thing'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('speaking');
+
+    // The clip started fine but `ended` rejects with a genuine playback fault.
+    // The pump must swallow it (not rethrow), release the handle, and still end
+    // the turn on the ack face rather than stranding the mascot in 'speaking'.
+    await act(async () => {
+      fake.failWith(new Error('decoder blew up'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('happy');
+
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    expect(result.current.face).toBe('idle');
+  });
+
   it('falls back to alignment-derived visemes when backend ships no cues', async () => {
     const fake = makeFakePlayback();
     (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -1061,5 +1114,156 @@ describe('useHumanMascot TTS playback', () => {
       // no-regression contract for users who never opened the picker.
       expect(synthesizeSpeech).toHaveBeenCalledWith('hello', { voiceId: 'JBFqnCBsd6RMkjVDRZzb' });
     });
+  });
+});
+
+describe('useHumanMascot streaming TTS (#5358)', () => {
+  beforeEach(() => {
+    capturedListeners = null;
+    mockMascotVoiceId = null;
+    vi.useFakeTimers();
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockReset();
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function delta(text: string) {
+    return { thread_id: 't', request_id: 'r', round: 1, delta: text };
+  }
+  function fakeDone(text: string) {
+    return {
+      thread_id: 't',
+      request_id: 'r',
+      full_response: text,
+      rounds_used: 1,
+      total_input_tokens: 1,
+      total_output_tokens: 1,
+    };
+  }
+  function mockSequentialPlaybacks(): ReturnType<typeof makeFakePlayback>[] {
+    const fakes: ReturnType<typeof makeFakePlayback>[] = [];
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValue({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      const f = makeFakePlayback();
+      fakes.push(f);
+      return Promise.resolve(f.handle);
+    });
+    return fakes;
+  }
+
+  it('speaks a streamed reply sentence-by-sentence, in order', async () => {
+    const fakes = mockSequentialPlaybacks();
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+
+    await act(async () => {
+      capturedListeners?.onTextDelta?.(delta('Hello world. '));
+      capturedListeners?.onTextDelta?.(delta('How are you? '));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Both complete sentences synthesize eagerly; only the first is playing.
+    expect(synthesizeSpeech).toHaveBeenCalledWith('Hello world.', {
+      voiceId: 'JBFqnCBsd6RMkjVDRZzb',
+    });
+    expect(synthesizeSpeech).toHaveBeenCalledWith('How are you?', {
+      voiceId: 'JBFqnCBsd6RMkjVDRZzb',
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
+    expect(result.current.face).toBe('speaking');
+
+    // First clip ends → the queued second sentence plays.
+    await act(async () => {
+      fakes[0].finishNaturally();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(2);
+    expect(result.current.face).toBe('speaking');
+
+    // chat_done with the whole reply closes the queue; last clip ends → ack.
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('Hello world. How are you?'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fakes[1].finishNaturally();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // "Hello…" trips the greeting cue, so the ack beat is 'waving' — proving the
+    // chat_done ack face propagates through the streaming-queue completion.
+    expect(result.current.face).toBe('waving');
+  });
+
+  it('chunks a multi-sentence reply even when it arrives only at chat_done', async () => {
+    const fakes = mockSequentialPlaybacks();
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('First sentence. Second sentence.'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(synthesizeSpeech).toHaveBeenCalledWith('First sentence.', expect.anything());
+    expect(synthesizeSpeech).toHaveBeenCalledWith('Second sentence.', expect.anything());
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fakes[0].finishNaturally();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      fakes[1].finishNaturally();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('happy');
+  });
+
+  it('barge-in mid-reply stops the active clip and drops queued sentences', async () => {
+    const fakes = mockSequentialPlaybacks();
+    const { result, rerender } = renderHook(
+      ({ listening }: { listening: boolean }) => useHumanMascot({ speakReplies: true, listening }),
+      { initialProps: { listening: false } }
+    );
+
+    await act(async () => {
+      capturedListeners?.onTextDelta?.(delta('Hello world. '));
+      capturedListeners?.onTextDelta?.(delta('How are you? '));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
+    expect(result.current.face).toBe('speaking');
+
+    const stopSpy = vi.spyOn(fakes[0].handle, 'stop');
+    act(() => {
+      rerender({ listening: true });
+    });
+    expect(result.current.face).toBe('listening');
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+
+    // The queued second sentence must never reach playback after the barge-in.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
   });
 });

@@ -41,7 +41,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { CoreCronJob } from '../../utils/tauriCommands/cron';
 import { formatSchedule } from './scheduledCronFormat';
 
-export interface ScheduledCronCardProps {
+interface ScheduledCronCardProps {
   /** The cron job this card represents (drives schedule + enable state). */
   job: CoreCronJob;
   /** Visible heading. Defaults to `job.name ?? job.id`. */

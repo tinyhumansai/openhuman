@@ -21,7 +21,7 @@ export { PaymentRequiredError };
 export type OrchestrationChatKind = 'master' | 'subconscious' | 'session';
 
 /** External agent harness that emits a session (drives the roster grouping). */
-export type HarnessType = 'claude' | 'codex' | 'gemini';
+export type HarnessType = 'claude' | 'codex' | 'gemini' | 'cursor' | 'windsurf';
 
 /**
  * Coarse instance status for the roster dot. Peer instances carry no true
@@ -116,24 +116,24 @@ export interface OrchestrationStatus {
   cloudReachable?: boolean;
 }
 
-export interface SessionsListResponse {
+interface SessionsListResponse {
   sessions: SessionSummary[];
 }
 
-export interface SessionCreateResponse {
+interface SessionCreateResponse {
   session: SessionSummary;
 }
 
-export interface MessagesListResponse {
+interface MessagesListResponse {
   messages: OrchestrationMessage[];
 }
 
-export interface SendMasterMessageResponse {
+interface SendMasterMessageResponse {
   ok: true;
   messageId: string;
 }
 
-export interface MarkReadResponse {
+interface MarkReadResponse {
   ok: true;
 }
 
@@ -313,5 +313,3 @@ export const orchestrationClient = {
   /** The relay endpoint + network label the core is talking to (RelayBadge). */
   relayInfo: () => call<RelayInfo>('openhuman.orchestration_relay_info', {}),
 };
-
-export type OrchestrationClient = typeof orchestrationClient;

@@ -11,7 +11,7 @@ import type { TaskBoardCard } from '../../types/turnState';
 
 const debug = debugFactory('conversations:taskPlan');
 
-export interface RunDecidePlanArgs {
+interface RunDecidePlanArgs {
   /** Active thread; a no-op when null (nothing to decide against). */
   threadId: string | null;
   card: TaskBoardCard;

@@ -5,9 +5,6 @@
 //! - Setting up secret scrubbing for outgoing error reports.
 //! - Dispatching command-line arguments to the core logic in `openhuman_core`.
 
-use once_cell::sync::Lazy;
-use regex::Regex;
-
 /// Main application entry point.
 ///
 /// It initializes the Sentry SDK for error monitoring, ensuring that sensitive
@@ -33,6 +30,10 @@ fn main() {
     //      the GH org-level variable can be renamed)
     //   3. Each of the same names baked at compile time via `option_env!`
     // If none resolve to a non-empty value, `sentry::init` returns a no-op guard.
+    //
+    // The whole init (guard + secret-scrubbing `before_send`) is gated on the
+    // `crash-reporting` feature; a slim build compiles it out entirely.
+    #[cfg(feature = "crash-reporting")]
     let _sentry_guard = sentry::init(sentry::ClientOptions {
         dsn: std::env::var("OPENHUMAN_CORE_SENTRY_DSN")
             .ok()
@@ -115,11 +116,26 @@ fn main() {
             if openhuman_core::core::observability::is_ollama_cloud_internal_500_event(&event) {
                 return None;
             }
+            // Defense-in-depth: drop Windows `ERROR_FILE_SYSTEM_LIMITATION`
+            // (os error 665) — a persistent host-filesystem condition with
+            // zero local lever and no Sentry remediation path. The primary
+            // suppression lives at the emit site via `expected_error_kind` →
+            // `ExpectedErrorKind::WindowsFileSystemLimitation`; this catches
+            // any call site that uses `report_error` directly instead of
+            // `report_error_or_expected` (TAURI-RUST-QT0: 6,050 events / 1 user).
+            if openhuman_core::core::observability::is_windows_file_system_limitation_event(&event)
+            {
+                log::debug!(
+                    "[sentry-fs-limitation-filter] dropping Windows file-system-limitation event (os error 665) event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,
             // `channels::runtime::dispatch`, and
-            // `channels::providers::web::run_chat_task`. The cap is a
+            // `web_chat::run_chat_task`. The cap is a
             // deterministic agent-state outcome surfaced to the user via
             // the chat-rendered "Error: …" message — Sentry is the wrong
             // surface for it (OPENHUMAN-TAURI-99 / -98).
@@ -174,6 +190,44 @@ fn main() {
                 );
                 return None;
             }
+            // Defense-in-depth: drop user-config provider errors that
+            // slipped past the call-site classifiers — 4xx client errors,
+            // subscription/payment issues, embedding API authorization
+            // failures. These are user misconfigurations, not application
+            // bugs (targets ~22 Sentry issues / ~26k events from the issue
+            // audit). Primary suppression lives at individual emit sites;
+            // this catch-all net catches any future new path that bypasses
+            // those gates.
+            if openhuman_core::core::observability::is_user_config_provider_event(&event) {
+                log::debug!(
+                    "[sentry-user-config-filter] dropping user-config provider event event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
+            // Defense-in-depth: drop connectivity / network flakiness events
+            // that escaped the call-site classifiers — "Failed to fetch",
+            // connection refused, gateway 502/504, HTTP 401 from frontend
+            // connectivity. These are transient self-resolving conditions,
+            // not actionable code defects (targets ~8 Sentry issues).
+            if openhuman_core::core::observability::is_connectivity_event(&event) {
+                log::debug!(
+                    "[sentry-connectivity-filter] dropping connectivity event event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
+            // Drop events from stale releases (clients running versions
+            // more than 6 minor versions behind the current build). Errors
+            // from ancient code are not actionable against the current
+            // codebase (targets ~4 Sentry issues).
+            if openhuman_core::core::observability::is_stale_release_event(&event) {
+                log::debug!(
+                    "[sentry-stale-release-filter] dropping stale release event event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             if openhuman_core::core::observability::is_session_expired_event(&event) {
                 // Metadata-only log shape — `event.message` carries the raw
                 // backend response body (often a JSON envelope with the
@@ -204,7 +258,7 @@ fn main() {
             // the cache is empty (root cause of the original userCount=0).
             if event.user.is_none() {
                 event.user =
-                    openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                    openhuman_core::openhuman::desktop::app_state::peek_cached_current_user_identity()
                         .and_then(|identity| identity.id)
                         .map(|id| sentry::User {
                             id: Some(id),
@@ -223,6 +277,9 @@ fn main() {
             Some(event)
         })),
         sample_rate: 1.0,
+        transport: Some(std::sync::Arc::new(
+            openhuman_core::core::sentry_transport::factory,
+        )),
         ..sentry::ClientOptions::default()
     });
 
@@ -259,6 +316,7 @@ fn restore_default_sigpipe() {}
 /// `app/src/utils/config.ts`) so events from every surface group under
 /// the same release in the Sentry dashboard and benefit from the same
 /// source-map upload.
+#[cfg(feature = "crash-reporting")]
 fn build_release_tag() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
@@ -275,6 +333,7 @@ fn build_release_tag() -> String {
 /// Honors `OPENHUMAN_APP_ENV` at runtime (`staging` / `production`) so the
 /// same binary could in principle be redeployed between environments; falls
 /// back to debug/release detection when unset.
+#[cfg(feature = "crash-reporting")]
 fn resolve_environment() -> String {
     if let Ok(value) = std::env::var("OPENHUMAN_APP_ENV") {
         let trimmed = value.trim().to_ascii_lowercase();
@@ -293,53 +352,16 @@ fn resolve_environment() -> String {
 // Secret scrubbing
 // ---------------------------------------------------------------------------
 
-/// Ordered most-specific → least-specific. Keep in sync with
-/// `src/openhuman/memory/safety/mod.rs`.
-static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
-    vec![
-        // Matches "Bearer <token>" and redacts the token.
-        (Regex::new(r"(?i)(bearer\s+)\S+").unwrap(), "${1}[REDACTED]"),
-        // Matches "api-key: <key>" or "api_key=<key>" and redacts the key.
-        (
-            Regex::new(r"(?i)(api[_-]?key[=:\s]+)\S+").unwrap(),
-            "${1}[REDACTED]",
-        ),
-        // \b anchor prevents matching `cancellation_token=` etc.
-        (
-            Regex::new(r"(?i)\b(token[=:\s]+)\S+").unwrap(),
-            "${1}[REDACTED]",
-        ),
-        // Anthropic keys (sk-ant-api03-...) contain hyphens the generic
-        // sk- pattern below won't match.
-        (
-            Regex::new(r"sk-ant-[A-Za-z0-9\-_]{16,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // OpenAI admin keys (sk-admin-...).
-        (
-            Regex::new(r"sk-admin-[A-Za-z0-9\-_]{12,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // OpenAI project-scoped and org-scoped keys (sk-proj-... / sk-org-...).
-        (
-            Regex::new(r"sk-(?:proj|org)-[A-Za-z0-9\-_]{12,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // Generic catch-all for any sk- format not covered above.
-        (Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(), "[REDACTED]"),
-    ]
-});
-
-/// Replaces patterns that look like secrets with `[REDACTED]`.
+/// Sentry `before_send` secret scrubbing. Delegates to the shared, always-on
+/// [`openhuman_core::core::log_redaction::scrub_secrets`] so the redaction
+/// patterns stay a single source of truth (the same pass also runs on the
+/// always-on diagnostic logs in `core::observability`).
+#[cfg(feature = "crash-reporting")]
 fn scrub_secrets(input: &str) -> String {
-    let mut result = input.to_string();
-    for (re, replacement) in SECRET_PATTERNS.iter() {
-        result = re.replace_all(&result, *replacement).into_owned();
-    }
-    result
+    openhuman_core::core::log_redaction::scrub_secrets(input)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "crash-reporting"))]
 mod tests {
     use super::*;
 

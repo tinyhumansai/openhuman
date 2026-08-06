@@ -34,7 +34,7 @@ import {
   toTimelineToolStatus,
 } from './types';
 
-export interface BuildThreadTimelineInput {
+interface BuildThreadTimelineInput {
   threadId: string;
   messages: ThreadMessage[];
   toolTimeline: ToolTimelineEntry[];

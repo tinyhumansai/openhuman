@@ -123,9 +123,101 @@ async fn prepare_messages_rejects_oversized_local_image() {
 
 #[test]
 fn extract_ollama_image_payload_supports_data_uris() {
-    let payload = extract_ollama_image_payload("data:image/png;base64,abcd==")
+    // `YWJjZA==` is base64 for "abcd". The fixture used to be `abcd==`, which
+    // is not decodable base64 at all (6 chars); it only passed because the
+    // payload was returned verbatim without validation (#5146 P6).
+    let payload = extract_ollama_image_payload("data:image/png;base64,YWJjZA==")
         .expect("payload should be extracted");
-    assert_eq!(payload, "abcd==");
+    assert_eq!(payload, "YWJjZA==");
+}
+
+// ── #5146 P6: a reference that is not base64 must not reach Ollama ──────────
+
+#[test]
+fn extract_ollama_image_payload_rejects_a_filesystem_path() {
+    // The bug: a path was forwarded verbatim as if it were image bytes, and
+    // Ollama answered `illegal base64 data at input byte 19` — an error that
+    // names neither the parameter nor the path.
+    assert!(extract_ollama_image_payload("/tmp/vision-test.png").is_none());
+    assert!(extract_ollama_image_payload("./relative/img.jpg").is_none());
+    assert!(extract_ollama_image_payload("~/Pictures/shot.png").is_none());
+}
+
+/// The fixtures above are rejected by the base64 alphabet (`.`, `-`, `~`), so
+/// they never exercised the path check. An absolute path built only from
+/// alphabet characters decodes cleanly and used to be forwarded as image bytes.
+#[test]
+fn extract_ollama_image_payload_rejects_a_path_that_is_also_valid_base64() {
+    // `/tmp/foo` is 8 alphabet characters: valid unpadded base64 for 6 bytes.
+    assert!(base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode("/tmp/foo")
+        .is_ok());
+    assert!(extract_ollama_image_payload("/tmp/foo").is_none());
+    assert!(extract_ollama_image_payload("/Users/alice/tmp/foo").is_none());
+}
+
+/// The counterweight to the check above: base64 for a JPEG starts `/9j/`, so
+/// rejecting every leading `/` would break real payloads. Length decides.
+#[test]
+fn extract_ollama_image_payload_still_accepts_a_bare_jpeg_payload() {
+    let jpeg = format!("/9j/4AAQSkZJRgABAQ{}", "A".repeat(64));
+    assert!(jpeg.len() >= 64, "fixture must clear the path-shape bound");
+    assert_eq!(
+        extract_ollama_image_payload(&jpeg).as_deref(),
+        Some(jpeg.as_str())
+    );
+}
+
+/// Documents the residual ambiguity rather than pretending it is closed: a
+/// relative path of pure base64 characters, of a length base64 permits, cannot
+/// be told apart from a short payload, so it is still accepted. See
+/// `looks_like_absolute_path`.
+#[test]
+fn extract_ollama_image_payload_cannot_reject_a_base64_shaped_relative_path() {
+    // 12 characters — a whole number of 4-character groups, so it decodes and
+    // is trivially canonical.
+    assert_eq!(
+        extract_ollama_image_payload("photos/cats1").as_deref(),
+        Some("photos/cats1")
+    );
+
+    // Most relative paths are NOT ambiguous, for two reasons that are easy to
+    // mistake for the check above doing the work:
+    //   - `len % 4 == 1` is a length base64 never produces;
+    //   - a partial trailing group must have its discarded low bits zero, and
+    //     an arbitrary word almost never does. `photos/catpics` decodes as far
+    //     as the alphabet is concerned, but its final `s` carries non-zero
+    //     spare bits, so the decoder rejects it as non-canonical.
+    assert!(extract_ollama_image_payload("photos/catpic").is_none());
+    assert!(extract_ollama_image_payload("photos/catpics").is_none());
+}
+
+#[test]
+fn extract_ollama_image_payload_rejects_a_non_base64_data_uri_payload() {
+    assert!(extract_ollama_image_payload("data:image/png;base64,/tmp/not-base64.png").is_none());
+}
+
+#[test]
+fn extract_ollama_image_payload_accepts_bare_base64_padded_and_unpadded() {
+    // Bare base64 stays supported — this path is how the agent hands an
+    // already-encoded image straight through.
+    assert_eq!(
+        extract_ollama_image_payload("YWJjZA==").as_deref(),
+        Some("YWJjZA==")
+    );
+    // Some producers omit padding; rejecting those would be a new regression.
+    assert_eq!(
+        extract_ollama_image_payload("YWJjZA").as_deref(),
+        Some("YWJjZA")
+    );
+}
+
+#[test]
+fn extract_ollama_image_payload_trims_before_validating() {
+    assert_eq!(
+        extract_ollama_image_payload("  YWJjZA==  ").as_deref(),
+        Some("YWJjZA==")
+    );
 }
 
 #[test]
@@ -136,10 +228,9 @@ fn helpers_cover_marker_count_payload_and_message_composition() {
     ];
     assert_eq!(count_image_markers(&messages), 2);
     assert!(contains_image_markers(&messages));
-    assert_eq!(
-        extract_ollama_image_payload(" local-ref ").as_deref(),
-        Some("local-ref")
-    );
+    // `local-ref` is not base64 (`-` is outside the standard alphabet), so it
+    // is no longer passed through as an image payload (#5146 P6).
+    assert!(extract_ollama_image_payload(" local-ref ").is_none());
     assert!(extract_ollama_image_payload("data:image/png;base64,   ").is_none());
 
     let composed =

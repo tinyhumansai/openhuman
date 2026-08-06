@@ -16,7 +16,7 @@ import { type FC } from 'react';
 import { Ghosty } from './Ghosty';
 import { getMascotPalette, type MascotColor } from './mascotPalette';
 
-export interface MascotChipAvatarProps {
+interface MascotChipAvatarProps {
   /** The user's selected mascot colour theme. */
   color: MascotColor;
   /** Custom primary body colour, used only when `color === 'custom'`. */
@@ -65,5 +65,3 @@ export const MascotChipAvatar: FC<MascotChipAvatarProps> = ({
     </span>
   );
 };
-
-export default MascotChipAvatar;

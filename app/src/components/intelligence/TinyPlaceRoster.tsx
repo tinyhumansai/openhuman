@@ -11,7 +11,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { HarnessType, SessionSummary } from '../../lib/orchestration/orchestrationClient';
 import InstanceCard from './InstanceCard';
 
-export interface TinyPlaceRosterProps {
+interface TinyPlaceRosterProps {
   sessions: SessionSummary[];
   selectedId?: string;
   onSelect?: (sessionId: string) => void;
@@ -24,6 +24,8 @@ const HARNESS_GROUPS: Array<{ key: HarnessType; label: string }> = [
   { key: 'claude', label: 'Claude' },
   { key: 'codex', label: 'Codex' },
   { key: 'gemini', label: 'Gemini' },
+  { key: 'cursor', label: 'Cursor' },
+  { key: 'windsurf', label: 'Windsurf' },
 ];
 
 export default function TinyPlaceRoster({

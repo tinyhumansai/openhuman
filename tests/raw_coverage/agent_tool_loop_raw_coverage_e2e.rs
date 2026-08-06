@@ -7,11 +7,8 @@ use openhuman_core::openhuman::agent::debug::{dump_agent_prompt, DumpPromptOptio
 use openhuman_core::openhuman::agent::dispatcher::XmlToolDispatcher;
 use openhuman_core::openhuman::agent::{Agent, AgentBuilder};
 use openhuman_core::openhuman::config::{AgentConfig, MultimodalConfig, MultimodalFileConfig};
-use openhuman_core::openhuman::context::prompt::LearnedContextData;
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall, UsageInfo,
-};
+use openhuman_core::openhuman::agent::context::prompt::LearnedContextData;
+use openhuman_core::openhuman::agent::messages::ChatMessage;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
@@ -20,25 +17,41 @@ use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyagents::harness::model::{
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+};
+use tinyagents::harness::tool::{ToolCall, ToolDelta};
+use tinyagents::harness::usage::Usage;
 
 #[derive(Clone, Debug)]
 struct CapturedTurn {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
 }
 
-#[derive(Default)]
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     turns: Mutex<Vec<CapturedTurn>>,
-    native_tools: bool,
-    vision: bool,
-    stream_events: Vec<ProviderDelta>,
+    profile: ModelProfile,
+    stream_events: Vec<ModelStreamItem>,
     always_fail: Option<String>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl Default for ScriptedModel {
+    fn default() -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::new()),
+            turns: Mutex::new(Vec::new()),
+            profile: ModelProfile::default(),
+            stream_events: Vec::new(),
+            always_fail: None,
+        }
+    }
+}
+
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             ..Self::default()
@@ -58,53 +71,48 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: self.native_tools,
-            vision: self.vision,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        if let Some(message) = &self.always_fail {
-            anyhow::bail!(message.clone());
-        }
-        Ok(message.to_string())
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.capture(request);
+        self.pop_response()
     }
 
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        self.capture(request);
+        let response = self.pop_response()?;
+        let mut items = vec![ModelStreamItem::Started];
+        items.extend(self.stream_events.iter().cloned());
+        items.push(ModelStreamItem::Completed(response));
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+impl ScriptedModel {
+    fn capture(&self, request: ModelRequest) {
         self.turns.lock().unwrap().push(CapturedTurn {
-            messages: request.messages.to_vec(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
+            messages: request.messages,
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
         });
-        if let Some(stream) = request.stream {
-            for event in &self.stream_events {
-                stream.send(event.clone()).await.ok();
-            }
-        }
+    }
+
+    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
         if let Some(message) = &self.always_fail {
-            anyhow::bail!(message.clone());
+            return Err(tinyagents::TinyAgentsError::Model(message.clone()));
         }
         self.responses
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| Ok(ChatResponse::default()))
+            .unwrap_or_else(|| Ok(ModelResponse::assistant("")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -313,58 +321,35 @@ impl Memory for NoopMemory {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: vec![],
-        usage: Some(UsageInfo {
-            input_tokens: 11,
-            output_tokens: 7,
-            context_window: 16_000,
-            cached_input_tokens: 3,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.0001,
-        }),
-        reasoning_content: None,
-    }
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(11, 7);
+    usage.cache_read_tokens = 3;
+    ModelResponse::assistant(text).with_usage(usage)
 }
 
-fn native_tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some("using native tool".to_string()),
-        tool_calls: vec![ToolCall {
-            id: format!("call-{name}"),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
-        usage: Some(UsageInfo {
-            input_tokens: 13,
-            output_tokens: 5,
-            context_window: 16_000,
-            cached_input_tokens: 2,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.0002,
-        }),
-        reasoning_content: Some("private scratchpad".to_string()),
-    }
-}
-
-fn xml_tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!(
-            "prelude <tool_call>{{\"name\":\"{name}\",\"arguments\":{arguments}}}</tool_call>"
-        )),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: None,
+fn tool_response(name: &str, arguments: serde_json::Value) -> ModelResponse {
+    let mut usage = Usage::new(13, 5);
+    usage.cache_read_tokens = 2;
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("using native tool".to_string()),
+                ContentBlock::thinking("private scratchpad"),
+            ],
+            tool_calls: vec![ToolCall::new(format!("call-{name}"), name, arguments)],
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
 async fn run_bus_turn(
-    provider: Arc<dyn Provider>,
+    model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     max_tool_iterations: usize,
     visible_tool_names: Option<HashSet<String>>,
@@ -374,7 +359,9 @@ async fn run_bus_turn(
     request_native_global::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         AgentTurnRequest {
-            turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+            turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+                model,
+            ),
             history: vec![ChatMessage::system("system"), ChatMessage::user("run")],
             tools_registry: Arc::new(tools),
             provider_name: "round15".to_string(),
@@ -399,33 +386,37 @@ async fn run_bus_turn(
 
 #[tokio::test]
 async fn bus_turn_native_tools_dedups_streams_and_records_tool_messages() {
-    let provider = Arc::new(ScriptedProvider {
+    let provider = Arc::new(ScriptedModel {
         responses: Mutex::new(
             vec![
-                Ok(native_tool_response("echo", json!({ "value": "alpha" }))),
+                Ok(tool_response("echo", json!({ "value": "alpha" }))),
                 Ok(text_response("final native answer")),
             ]
             .into(),
         ),
         turns: Mutex::new(Vec::new()),
-        native_tools: true,
-        vision: false,
+        profile: ModelProfile {
+            provider: Some("round15".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            streaming: true,
+            streaming_tool_chunks: true,
+            ..ModelProfile::default()
+        },
         always_fail: None,
         stream_events: vec![
-            ProviderDelta::TextDelta {
-                delta: "draft ".to_string(),
-            },
-            ProviderDelta::ThinkingDelta {
-                delta: "thinking".to_string(),
-            },
-            ProviderDelta::ToolCallStart {
+            ModelStreamItem::MessageDelta(MessageDelta::text("draft ")),
+            ModelStreamItem::MessageDelta(MessageDelta::reasoning("thinking")),
+            ModelStreamItem::ToolCallDelta(ToolDelta {
                 call_id: "call-echo".to_string(),
-                tool_name: "echo".to_string(),
-            },
-            ProviderDelta::ToolCallArgsDelta {
+                tool_name: Some("echo".to_string()),
+                content: String::new(),
+            }),
+            ModelStreamItem::ToolCallDelta(ToolDelta {
                 call_id: "call-echo".to_string(),
-                delta: "{\"value\"".to_string(),
-            },
+                tool_name: None,
+                content: "{\"value\":\"alpha\"}".to_string(),
+            }),
         ],
     });
     let response = run_bus_turn(
@@ -448,7 +439,7 @@ async fn bus_turn_native_tools_dedups_streams_and_records_tool_messages() {
         turns[1]
             .messages
             .iter()
-            .any(|msg| msg.role == "tool" && msg.content.contains("first:alpha")),
+            .any(|msg| matches!(msg, Message::Tool(_)) && msg.text().contains("first:alpha")),
         "second native request should carry a role=tool result message"
     );
 }
@@ -457,8 +448,8 @@ async fn bus_turn_native_tools_dedups_streams_and_records_tool_messages() {
 async fn bus_turn_prompt_mode_covers_invisible_cli_only_and_unknown_tools() {
     let mut visible = HashSet::new();
     visible.insert("allowed".to_string());
-    let invisible_provider = ScriptedProvider::new(vec![
-        xml_tool_response("hidden", json!({ "value": "x" })),
+    let invisible_provider = ScriptedModel::new(vec![
+        tool_response("hidden", json!({ "value": "x" })),
         text_response("after invisible"),
     ]);
     let invisible_response = run_bus_turn(
@@ -471,9 +462,9 @@ async fn bus_turn_prompt_mode_covers_invisible_cli_only_and_unknown_tools() {
     .unwrap();
     assert_eq!(invisible_response.text, "after invisible");
 
-    let provider = ScriptedProvider::new(vec![
-        xml_tool_response("cli_only", json!({ "value": "x" })),
-        xml_tool_response("missing", json!({ "value": "x" })),
+    let provider = ScriptedModel::new(vec![
+        tool_response("cli_only", json!({ "value": "x" })),
+        tool_response("missing", json!({ "value": "x" })),
         text_response("recovered"),
     ]);
 
@@ -494,14 +485,14 @@ async fn bus_turn_prompt_mode_covers_invisible_cli_only_and_unknown_tools() {
         .turns()
         .into_iter()
         .flat_map(|turn| turn.messages)
-        .map(|msg| msg.content)
+        .map(|msg| msg.text().to_string())
         .collect::<Vec<_>>()
         .join("\n");
     let invisible_joined = invisible_provider
         .turns()
         .into_iter()
         .flat_map(|turn| turn.messages)
-        .map(|msg| msg.content)
+        .map(|msg| msg.text().to_string())
         .collect::<Vec<_>>()
         .join("\n");
     // Unknown-tool recovery now flows through the tinyagents
@@ -521,11 +512,11 @@ async fn bus_turn_prompt_mode_covers_invisible_cli_only_and_unknown_tools() {
 
 #[tokio::test]
 async fn bus_turn_halts_on_repeated_tool_error_and_truncates_capped_result() {
-    let provider = ScriptedProvider::new(vec![
-        xml_tool_response("capper", json!({ "value": "" })),
-        xml_tool_response("fail", json!({ "value": "same" })),
-        xml_tool_response("fail", json!({ "value": "same" })),
-        xml_tool_response("fail", json!({ "value": "same" })),
+    let provider = ScriptedModel::new(vec![
+        tool_response("capper", json!({ "value": "" })),
+        tool_response("fail", json!({ "value": "same" })),
+        tool_response("fail", json!({ "value": "same" })),
+        tool_response("fail", json!({ "value": "same" })),
     ]);
 
     let response = run_bus_turn(
@@ -546,7 +537,7 @@ async fn bus_turn_halts_on_repeated_tool_error_and_truncates_capped_result() {
         .turns()
         .into_iter()
         .flat_map(|turn| turn.messages)
-        .map(|msg| msg.content)
+        .map(|msg| msg.text().to_string())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("[truncated by tool cap: 21 more chars not shown]"));
@@ -555,7 +546,7 @@ async fn bus_turn_halts_on_repeated_tool_error_and_truncates_capped_result() {
 #[tokio::test]
 async fn bus_turn_surfaces_provider_error_and_iteration_cap() {
     let provider_error = run_bus_turn(
-        ScriptedProvider::failing("provider unavailable"),
+        ScriptedModel::failing("provider unavailable"),
         vec![StaticTool::ok("echo", "ok")],
         2,
         None,
@@ -566,7 +557,7 @@ async fn bus_turn_surfaces_provider_error_and_iteration_cap() {
     assert!(provider_error.contains("provider unavailable"));
 
     let capped = run_bus_turn(
-        ScriptedProvider::new(vec![xml_tool_response("missing", json!({ "value": "x" }))]),
+        ScriptedModel::new(vec![tool_response("missing", json!({ "value": "x" }))]),
         vec![StaticTool::ok("echo", "ok")],
         1,
         None,
@@ -584,13 +575,13 @@ async fn agent_builder_prompt_and_debug_dump_cover_public_session_paths() {
     std::fs::write(workspace.join("PROFILE.md"), "Round15 profile").unwrap();
     std::fs::write(workspace.join("MEMORY.md"), "Round15 memory").unwrap();
 
-    let provider = ScriptedProvider::new(vec![text_response("unused")]);
+    let provider = ScriptedModel::new(vec![text_response("unused")]);
     let mut config = AgentConfig::default();
     config.max_tool_iterations = 2;
     config.max_history_messages = 4;
 
     let agent = AgentBuilder::new()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![StaticTool::ok("echo", "ok")])
         .memory(Arc::new(NoopMemory::default()))
         .tool_dispatcher(Box::new(XmlToolDispatcher))
@@ -628,9 +619,9 @@ async fn agent_builder_prompt_and_debug_dump_cover_public_session_paths() {
 async fn agent_turn_blank_final_response_is_typed_error() {
     let workspace = round15_workspace("blank-final");
     std::fs::create_dir_all(&workspace).unwrap();
-    let provider = ScriptedProvider::new(vec![ChatResponse::default()]);
+    let provider = ScriptedModel::new(vec![ModelResponse::assistant("")]);
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![])
         .memory(Arc::new(NoopMemory::default()))
         .tool_dispatcher(Box::new(XmlToolDispatcher))

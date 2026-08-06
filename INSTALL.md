@@ -6,11 +6,10 @@ Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhum
 
 These paths use native installer surfaces. Homebrew and MSI provide their normal signing/integrity checks; Debian/Ubuntu uses `apt-get` to install the release `.deb` and resolve system dependencies.
 
-**macOS (Homebrew tap):**
+**macOS (Homebrew Cask):**
 
 ```bash
-brew tap tinyhumansai/core
-brew install openhuman
+brew install --cask openhuman
 ```
 
 **Linux (Debian/Ubuntu, release `.deb`):**

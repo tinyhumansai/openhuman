@@ -1,4 +1,4 @@
-# TinyAgents Drift Ledger (Phase 0)
+# TinyAgents Drift Ledger
 
 **Purpose.** The TinyAgents migration spans `inference`, `tools`, and
 `agent_orchestration`, while the OpenHuman host will keep evolving. This ledger
@@ -22,12 +22,12 @@ be upstreamed, retained, or deleted before each phase cuts over.
 | Thing | Value |
 | --- | --- |
 | Host repo | `tinyhumansai/openhuman` |
-| Host branch | `docs/tinyagents-port-plan` |
-| Host audit base | `42ce5c0e9` (`origin/main`, 2026-07-04) |
-| Plan commit | `24f200e49` (`docs: TinyAgents port plan`) |
+| Host branch | `feat/tinyagents-provider-cleanup` |
+| Host audit base | `5b8a9f269` (`upstream/main`, 2026-07-22) |
+| Active plan | `docs/tinyagents-migration-plan-2026-07-22.md` |
 | TinyAgents submodule | `vendor/tinyagents` -> `tinyhumansai/tinyagents` |
 | Phase 0 target | `v1.6.0` / `e72036d847b589044aa9a4add1b34544b92a293d` |
-| Current host pin | `v1.8.0-1-g7c6e81a` ([tinyagents#49](https://github.com/tinyhumansai/tinyagents/pull/49) **merged** onto v1.8.0 main) |
+| Current host pin | `v2.1.0` / `2583fcc` (vendored tag; root requirement `2.1`) |
 | Verification PR | [openhuman#4769](https://github.com/tinyhumansai/openhuman/pull/4769) — Motion A + Motion B checkpoint. **CI fully green** (`PR CI Gate` + `Rust Core Coverage` + fmt/clippy); 14,437 Rust tests pass. First full CI verification of this branch. |
 
 ## Baseline Snapshot
@@ -39,18 +39,18 @@ work started. Counts include Rust files only.
 | --- | ---: | ---: | ---: | --- |
 | `src/openhuman/inference/` | 116 | 53,023 | 1,101 | Provider consolidation and small generic ports |
 | `src/openhuman/tools/` | 94 | 38,553 | 877 | Tool model reconciliation, then builtin family ports |
-| `src/openhuman/agent_orchestration/` | 64 | 25,769 | 262 | Sub-agent lifecycle consolidation onto TinyAgents graph/orchestration |
-| `src/openhuman/tinyagents/` | 25 | 15,219 | 101 | Host seam; shrinks but remains OpenHuman-owned |
+| `src/openhuman/agent/orchestration/` | 64 | 25,769 | 262 | Sub-agent lifecycle consolidation onto TinyAgents graph/orchestration |
+| `src/openhuman/agent/tinyagents/` | 25 | 15,219 | 101 | Host seam; shrinks but remains OpenHuman-owned |
 
 ## Phase 0 Drift Rows
 
 | # | Area | Status | Evidence / action |
 | --- | --- | --- | --- |
 | P0-1 | Version skew: host required `tinyagents = 1.5.0` while the intended engine baseline was `v1.6.0` | **CLOSED** | Phase 0 first aligned the host to `v1.6.0`; the current Phase 1 host pin is now `v1.7.1` in root `Cargo.toml`, both lockfiles, and `vendor/tinyagents` (`3e81e493`). |
-| P0-2 | `ToolCompleted` outcome was reconstructed through OpenHuman's `ToolFailureMap` side channel | **CLOSED** | `src/openhuman/tinyagents/observability.rs` consumes TinyAgents 1.6 `duration_ms`, `output_bytes`, and `error`; `ToolFailureMap` now only preserves OpenHuman's richer classified failure and legacy fallback fields. |
-| P0-3 | TinyAgents 1.6 event constructor shape changed for local observability tests | **CLOSED** | Local constructors in `src/openhuman/tinyagents/observability.rs` include `ModelCompleted.started_at_ms` and the expanded `ToolCompleted` fields. |
-| P0-4 | `invoke_stream` adoption in `src/openhuman/tinyagents/mod.rs` | **CLOSED** | TinyAgents PR [tinyagents#21](https://github.com/tinyhumansai/tinyagents/pull/21) shipped context-preserving `invoke_stream_in_context` in `v1.7.0`; follow-up PR [tinyagents#28](https://github.com/tinyhumansai/tinyagents/pull/28) made that stream `Send` and shipped in `v1.7.1`. `OpenHumanTinyAgentModel::invoke` now drives `invoke_stream_in_context` when progress streaming is enabled, consuming terminal `AgentStreamItem`s while the existing `EventSink` bridge continues to mirror progress. Local validation for #28 in the submodule: `cargo fmt --check`; `timeout 180s cargo clippy --all-targets -- -D warnings`; `timeout 120s cargo test invoke_stream_in_context_stream_is_send`; `timeout 120s cargo test invoke_stream_in_context_unsubscribes_channel_listener`. GitHub release run `28729225952` passed TinyAgents format, clippy, tests, package, tag, and crates.io publish for `v1.7.1`. |
-| P0-5 | SHA-256 prompt fingerprint / prompt-cache drift guard | **CLOSED** | `src/openhuman/tinyagents/middleware.rs` now stamps `PromptCacheSegmentMiddleware` segment ids and `ModelRequest::prompt_fingerprint` with SHA-256 over canonical JSON. Tool-cache identity includes the full serialized `ToolSchema` list, not just tool names, matching TinyAgents 1.6 `PromptBuilder::fingerprint` expectations. Added `prompt_cache_segments_fingerprint_full_tool_schema` as the local regression guard. |
+| P0-2 | `ToolCompleted` outcome was reconstructed through OpenHuman's `ToolFailureMap` side channel | **CLOSED** | `src/openhuman/agent/tinyagents/observability.rs` consumes TinyAgents 1.6 `duration_ms`, `output_bytes`, and `error`; `ToolFailureMap` now only preserves OpenHuman's richer classified failure and legacy fallback fields. |
+| P0-3 | TinyAgents 1.6 event constructor shape changed for local observability tests | **CLOSED** | Local constructors in `src/openhuman/agent/tinyagents/observability.rs` include `ModelCompleted.started_at_ms` and the expanded `ToolCompleted` fields. |
+| P0-4 | `invoke_stream` adoption in `src/openhuman/agent/tinyagents/mod.rs` | **CLOSED** | TinyAgents PR [tinyagents#21](https://github.com/tinyhumansai/tinyagents/pull/21) shipped context-preserving `invoke_stream_in_context` in `v1.7.0`; follow-up PR [tinyagents#28](https://github.com/tinyhumansai/tinyagents/pull/28) made that stream `Send` and shipped in `v1.7.1`. `OpenHumanTinyAgentModel::invoke` now drives `invoke_stream_in_context` when progress streaming is enabled, consuming terminal `AgentStreamItem`s while the existing `EventSink` bridge continues to mirror progress. Local validation for #28 in the submodule: `cargo fmt --check`; `timeout 180s cargo clippy --all-targets -- -D warnings`; `timeout 120s cargo test invoke_stream_in_context_stream_is_send`; `timeout 120s cargo test invoke_stream_in_context_unsubscribes_channel_listener`. GitHub release run `28729225952` passed TinyAgents format, clippy, tests, package, tag, and crates.io publish for `v1.7.1`. |
+| P0-5 | SHA-256 prompt fingerprint / prompt-cache drift guard | **CLOSED** | `src/openhuman/agent/tinyagents/middleware.rs` now stamps `PromptCacheSegmentMiddleware` segment ids and `ModelRequest::prompt_fingerprint` with SHA-256 over canonical JSON. Tool-cache identity includes the full serialized `ToolSchema` list, not just tool names, matching TinyAgents 1.6 `PromptBuilder::fingerprint` expectations. Added `prompt_cache_segments_fingerprint_full_tool_schema` as the local regression guard. |
 | P0-6 | Idempotent redaction middleware vs `journal.rs` double-redaction | **CLOSED** | Audit found no OpenHuman install of TinyAgents `RedactionMiddleware`. Model-facing tool output is scrubbed once by `CredentialScrubMiddleware`; durable event persistence is separately wrapped by `journal.rs` `RedactingSink` over `openhuman_redaction_secrets()`. These protect different surfaces, so there is no crate/host double-redaction seam to collapse in Phase 0. |
 
 ## Phase 1 Drift Rows
@@ -68,6 +68,71 @@ work started. Counts include Rust files only.
 | P1-9 | Harness turn path (`Agent`/`AgentTurnRequest`) carries `Arc<dyn Provider>`, not a crate `ChatModel` | **BLOCKED ON DESIGN — one coupled refactor** | Investigation finding: the plan's Buckets 2–4 (routing/channels, agent harness, subagent runner) are **not independently landable** — `Provider` flows end-to-end: producers (`channels/runtime/dispatch/processor.rs` → `AgentTurnRequest.provider`; `agent/harness/session/builder/factory.rs` → `Agent.provider`; `subagent_runner/ops/provider.rs`) → `agent/bus.rs` / `harness/graph.rs::run_channel_turn_via_graph` → seam `build_turn_models(provider: Arc<dyn Provider>, …)` (`tinyagents/mod.rs:1139`). The channel graph reads Provider-trait capability methods before building the model: `supports_native_tools`, `supports_vision`, `effective_context_window` (**async**), `telemetry_provider_id`. `ProviderModel::profile()` already carries tool_calling / image_in / streaming / context-window, so a `ChatModel`-accepting `build_turn_models` is feasible — but the **async context-window resolution** and **telemetry id** must be re-homed (into the factory at ChatModel construction, or passed as params). Net: one atomic change across ~30 files (incl. ~10 test files) on the live channel/session turn path — must land as its own reviewed PR with streaming/cost/multimodal behavior-parity testing (the flagged regression surface: #4460 thread_id task-locals, $0-turn cost, tool timeline). `routing/provider.rs::IntelligentRoutingProvider` stays a `Provider` impl (provider-stack member, Phase-3 → `ModelRegistry`); it gets wrapped via `chat_model_from_provider` at the producer boundary. **BLOCKER (found while executing):** the harness cannot hold `Arc<dyn ChatModel>` in Phase 1 as the plan assumed. `build_turn_models` needs the raw `Provider` for (a) workload-route projection — `routes::build_route_models(provider: &Arc<dyn Provider>)` re-instantiates a `ProviderModel` per tier alias with distinct model strings + per-route `with_vision`/`with_reasoning` flags, which a single baked `ChatModel` cannot re-alias — and (b) the separate-error-slot summarizer. The crate `ChatModel` trait exposes no `as_any`/downcast, so the `Provider` cannot be recovered from an `Arc<dyn ChatModel>`. Therefore the true harness inversion is gated on **Phase 3** (replace `RouterProvider`/route-projection with the crate `ModelRegistry`), an upstream `vendor/tinyagents` change — not host-only. Achievable host-only step instead: wrap the harness-held `Arc<dyn Provider>` in a seam-owned newtype (e.g. `tinyagents::TurnModelSource`) so no `agent/` code names the `Provider` trait and all Provider handling is confined to the seam + factory, making the Phase-3 swap seam-local. **PROGRESS:** `docs/tinyagents-phase3-router-registry-design.md` records the corrected premise (router→registry already crate-wired in `assemble_turn_harness`; no upstream gap; work is host-only Motion A). `TurnModelSource` (pub seam type) landed + `TurnModels` extended with `provider_id`/`context_window`/`native_tools`/`supports_vision`. **Channel/bus turn path fully migrated** (commit `30c7dfd92`): `AgentTurnRequest.provider → turn_model_source`; `run_channel_turn_via_graph` reads caps off the built crate models; channels/triage producers wrap at the bus boundary; lib + the 3 bus integration tests green; zero behavior change. **Subagent-runner path migrated** (commit `8db888712`): `agent_graph::AgentTurnRequest.provider → turn_model_source`; `run_subagent_via_graph` takes the source (reads vision/native-tool caps + telemetry id off the built models, resolves context window via the source); `SubagentCheckpoint` cap-hit summary now runs on a crate `ChatModel` (via `TurnModelSource::build_summarizer`) instead of `provider.chat`; runner wraps its resolved `subagent_provider` at both dispatch sites. Core lib green; changed files clean under `--lib --tests`; zero behavior change. **Agent session path migrated** (commit `9112330b9`): `Agent`/`AgentBuilder`, `ParentExecutionContext`, and `ChatTurnGraph` hold a `TurnModelSource`/built `TurnModels`; core builds the tiered model set up front (reads vision off it), `ParentExecutionContext` carries the source, and the streaming cap-hit checkpoint keeps `provider.chat` via a `source.provider()` escape hatch (crate `ChatModel::invoke` has no delta sink). Extract tool migrated (commit `6106ced83`). **Motion A is structurally complete:** no agent-harness struct (`Agent`, `AgentBuilder`, `ParentExecutionContext`, `ChatTurnGraph`, both `AgentTurnRequest`s) holds `Arc<dyn Provider>`; both Cargo worlds green; zero behavior change. `TurnModelSource` gained `is_local_provider()` + a `provider()` escape hatch used only at seam-boundary resolution sites. **Remaining `dyn Provider` in `agent/` (Motion B, not Motion A):** provider-*resolution/build* boundaries that construct a provider to wrap into a source — `session/builder/factory.rs` (`create_chat_provider`/`create_routed_provider`), `subagent_runner/ops/provider.rs::resolve_subagent_provider` (kept `Arc<dyn Provider>` to avoid churning its 9 unit tests), `tools/delegate.rs`, `triage/routing.rs`, and the builder `.provider()/.provider_arc()` setters — plus test files. These vanish when Motion B registers crate-native `providers::openai` clients directly. Pre-existing full-`--tests` breakage in unrelated modules (config load, web, ollama, sandbox, reliable_tests, memory) is untouched and orthogonal. |
 
 ## Motion B — Provider-Build Cutover (crate-native `ChatModel` construction)
+
+The closure rows below supersede older deferred/pending prose retained later in
+this section as investigation history.
+
+| # | Area | Status | Evidence / action |
+| --- | --- | --- | --- |
+| P1-10 | Wire-equivalent BYOK cloud slugs | **CLOSED** | [openhuman#4780](https://github.com/tinyhumansai/openhuman/pull/4780) routed eligible slugs to crate-native `OpenAiModel`. |
+| P1-11 | OpenAI/Codex/custom cloud slugs | **CLOSED** | [openhuman#4782](https://github.com/tinyhumansai/openhuman/pull/4782) completed the configured cloud-slug client cutover, including Responses API construction. |
+| P1-12 | Host workload routing | **CLOSED** | [openhuman#4783](https://github.com/tinyhumansai/openhuman/pull/4783) adopted crate `ModelRouter` for fallback and capability decisions. |
+| P1-13 | Crate-native registered turn models / `compatible*.rs` deletion | **CLOSED** | [openhuman#4784](https://github.com/tinyhumansai/openhuman/pull/4784) moved the hot turn path and deleted the former `compatible*.rs` cluster. The collapsed `legacy_provider.rs` facade and the broader legacy `Provider` stack remain WP-1 deletion work; see the deletion ledger. |
+| P1-14 | Legacy `run_turn_engine` and `OPENHUMAN_AGENT_GRAPH_*` escape hatches | **CLOSED BEFORE AUDIT** | WP-3 verified that both session and subagent production paths call the TinyAgents seam unconditionally. No engine definition or env read remains; only historical parity comments and stale migration prose named the retired implementation. |
+
+## WP-2 Consolidation Audit
+
+| # | Area | Status | Evidence / action |
+| --- | --- | --- | --- |
+| WP2-1 | `routing/` parallel provider/health stack | **CLOSED / DELETED** | Repository-wide reference audit found no caller outside the module; the live route already uses crate `ModelRouter`. Deleted the unreachable stack and kept the crate-backed seam. |
+| WP2-2 | `tool_timeout/` vs crate `harness::tool::ToolTimeout` | **HOST-OWNED** | The crate type is declarative per-tool metadata (`Inherit`/`Unbounded`/`Millis`) and has no process-global setting or execution store. OpenHuman owns persisted-config and `OPENHUMAN_TOOL_TIMEOUT_SECS` precedence, live UI updates, bounds/grace semantics, and the `tokio::time::timeout` around adapted host tools. The seam already projects host timeout policy into crate `ToolRuntime`; no upstream gap or duplicate engine remains. |
+| WP2-3 | `model_council/` ensemble | **CLOSED / DELETED** | The generic fan-out already used `tinyagents::graph::parallel::map_reduce`; upstream subsequently removed the unreachable product council and registry surfaces during dead-code cleanup. |
+| WP2-4 | `tool_status/` failure classification | **HOST-OWNED** | The types are serialized into OpenHuman threads/UI and the classifier consumes OpenHuman security markers, product retry categories, and user-facing remediation copy. TinyAgents owns raw tool outcomes; the host mapping is deliberately downstream product policy. |
+
+## WP-5 Detached Lifecycle Ownership Audit
+
+| Surface | Status | Ownership / exit evidence |
+| --- | --- | --- |
+| Process-local detached task map, ownership checks, status receivers, cancellation tokens, abort handles, terminal sweep, steering lookup | **CLOSED / CRATE ADOPTED — tinyagents#75** | TinyAgents #75 merged as `d548657`; the canonical vendored pointer `4358efe` includes its `DetachedTaskRegistry`. OpenHuman calls the crate registry for snapshots, wait/timeout, owned and trusted steering, per-task/thread/global cancellation, and soft-cap cleanup. Distinct lock-poison errors are propagated by the crate. All 17 focused host tests pass. |
+| Durable detached task lifecycle | **HOST PROJECTION ON CRATE STORE** | OpenHuman retains workspace-specific `JsonlTaskStore` selection and maps product `SubagentStatus` into crate `OrchestrationTaskStatus`; this is durable product projection, not executor ownership. |
+| Detached task metadata, RPC/UI delivery, `RunQueue` fallback | **HOST-OWNED** | Agent/session/thread/workspace metadata, cancellation notices, background delivery, trusted desktop RPC, and compatibility steering are OpenHuman product surfaces. The fallback can shrink independently after live crate-steering parity, but does not block generic registry deletion. |
+
+TinyAgents #75 is merged and the temporary integration gitlink has been
+replaced by canonical upstream commit `4358efe`.
+
+## WP-5 Middleware Ownership Audit
+
+The earlier seam snapshot counted 17 middleware types. The audit found 18: the
+tool-exposure shadow was added after that snapshot. The crate-backed
+`SchemaGuardMiddleware` cutover below reduces the current file to 17 again.
+`TurnContextMiddleware` is an installer/config bundle rather than another hook
+implementation and is not counted. A middleware may be deleted only after its
+crate replacement and host cutover are both verified.
+
+| Middleware | Status | Ownership / exit evidence |
+| --- | --- | --- |
+| `TranscriptSnapshotMiddleware` | **HOST-OWNED** | Mirrors partial crate transcripts into OpenHuman's persisted `ChatMessage` DTO so failed sub-agent runs remain ingestible. |
+| `OpenHumanToolExposureShadowMiddleware` | **TRANSITIONAL / PARITY-GATED** | Exercises crate allowlist/contextual selection in shadow against the host registry. Delete with the host precompute only after divergence telemetry proves parity; do not flip from this audit alone. |
+| `HandoffMiddleware` | **HOST-OWNED** | Implements integrations-agent progressive disclosure through OpenHuman's `ResultHandoffCache` and `extract_from_result` contract. |
+| `SuperContextMiddleware` | **HOST-OWNED** | Runs OpenHuman first-turn context collection and injects product-formatted context. |
+| `PromptCacheSegmentMiddleware` | **HOST SEAM** | Projects OpenHuman's stable system/tool-cache boundaries and SHA-256 identity into the crate `PromptCacheGuardMiddleware`; the actual drift guard is crate-owned. |
+| `ToolOutputMiddleware` | **HOST-OWNED** | Applies host artifact persistence, TokenJuice compaction, byte caps, and the OpenHuman payload summarizer. |
+| `ApprovalSecurityMiddleware` | **HOST-OWNED** | Calls the global OpenHuman approval gate, redacts args, and records product audit rows. Generic crate approval cannot replace this product/security decision. |
+| `CliRpcOnlyMiddleware` | **HOST-OWNED** | Enforces OpenHuman `ToolScope` at the autonomous-agent boundary. WP-4 defines the complete Agent/CLI/RPC scope matrix. |
+| `CredentialScrubMiddleware` | **HOST-OWNED** | Uses OpenHuman's credential detector and scrubs model context, errors, raw JSON, and persisted host surfaces. Crate redaction protects a different generic boundary. |
+| `ToolPolicyMiddleware` | **HOST-OWNED** | Enforces args-aware channel permission ceilings, generated-tool provenance, and OpenHuman policy decisions. Static crate `ToolPolicy` remains metadata and a generic fail-closed layer. |
+| `ToolOutcomeCaptureMiddleware` | **HOST-OWNED** | Projects final capped results and classified failures into OpenHuman tool-call records/UI state. |
+| `ArgRecoveryMiddleware` | **UPSTREAM READY — tinyagents#71** | PR #71 adds `NormalizeThenReturnToolError` and admission-time normalization with preservation regressions. Delete after the merged crate policy is vendored and the host config selects it. |
+| `SchemaGuardMiddleware` | **CLOSED / DELETED** | TinyAgents 2.1 already provides `InvalidArgsPolicy::ReturnToolError`. The host now selects it and deleted pre-validation, synthetic schema-valid arguments, the pending map, and the tool-wrap short circuit. The policy regression and all 18 `agent_harness_e2e` tests pass. PR #71 is only needed to absorb the remaining normalization middleware. |
+| `MemoryProtocolMiddleware` | **HOST-OWNED** | Enforces OpenHuman's read/dedupe/write/index memory protocol and product tool names. |
+| `CostBudgetMiddleware` | **HOST PROJECTION** | TinyAgents `BudgetMiddleware` already runs in shadow; this wrapper maps OpenHuman billing-envelope USD/token accounting and halt summaries. Thin only when crate usage is sufficient for every host provider. |
+| `RepeatedToolFailureMiddleware` | **CRATE-BACKED / HOST PROJECTION** | Detection uses crate `NoProgressTracker`; the wrapper owns OpenHuman retry taxonomy, polling exemptions, steering, and user-facing halt summary. No duplicate generic tracker remains to upstream. |
+| `RepeatProgressMiddleware` | **CLOSED / CRATE-BACKED — tinyagents#72** | PR #72 merged and is included in canonical pointer `4358efe`. The host duplicate `StreakGuard`, thresholds, and streak accounting are deleted; the remaining thin adapter builds OpenHuman signatures/polling exemptions and maps the crate `SuccessfulRepeatTracker` verdict to the host halt summary and steering pause. All 51 focused middleware tests pass. |
+| `ImageAwareMessageTrimMiddleware` | **UPSTREAM READY — tinyagents#73** | PR #73 makes crate trimming image/token-policy aware. Delete after vendoring and proving host context-window regressions against the crate middleware. |
+
+The three upstream PRs are independently mergeable and green at the time of
+this audit. Their remaining host deletions stay pending because OpenHuman still
+vendors an earlier TinyAgents revision.
 
 Motion A confined all `Provider` handling to the seam + factory. Motion B
 replaces the *construction* of host `Provider`s with crate-native
@@ -166,7 +231,8 @@ of P1-9). Two sub-motions:
 | Step | Status | Evidence |
 | --- | --- | --- |
 | Crate high-level router | **DONE** | [tinyagents#54](https://github.com/tinyhumansai/tinyagents/pull/54) `registry::router::{ModelRouter, WorkloadRoute}` (merged `4fc8cd8`) — declarative workload-tier table (alias→model, `CapabilitySet` gate, same-family fallbacks) filling the long-declared `ComponentKind::Router`; holds no models, no I/O. |
-| Host adopts `ModelRouter` for fallback + capability | **IN PROGRESS** | `tinyagents/routes.rs`: `OH_WORKLOAD_ROUTER` (`LazyLock<ModelRouter>`) now backs `route_fallback_policy` + `turn_required_capabilities`; deleted the hand-rolled `same_family_fallbacks`. Behavior-neutral (parity tests pin the exact chains + vision gate incl. `hint:vision`). `build_route_models`' per-tier `ProviderModel` construction (the P3-B client swap) is untouched. Host pin bumped `8e57665` → `4fc8cd8` (adds #53 langfuse run-tree + #54 router). |
+| Host adopts `ModelRouter` for fallback + capability | **CLOSED** | [openhuman#4783](https://github.com/tinyhumansai/openhuman/pull/4783) made `tinyagents/routes.rs::OH_WORKLOAD_ROUTER` authoritative for fallback and required capabilities. |
+| Registered tier models become crate-native | **CLOSED** | [openhuman#4784](https://github.com/tinyhumansai/openhuman/pull/4784) completed the P3-B hot-path client swap and deleted the former `compatible*.rs` cluster. Residual `ProviderModel` and the collapsed legacy facade are tracked separately in WP-1. |
 
 ## Host Validation Notes
 
@@ -190,7 +256,7 @@ error emitted before the cap.
 | Phase 0 - version alignment | P0-1, P0-2, P0-3, P0-4, P0-5, P0-6 | **CLOSED** |
 | Phase 1 - quick upstream ports | SchemaCleanr, error classification, model context, reasoning channel, worktree isolation, display metadata, time tools | **PARTIAL HOST CUTOVER** |
 | Phase 2 - tool model and builtin families | ToolResult structure, permission model, ToolAccess, edit tracking, filesystem/network/time tools | **NOT STARTED** |
-| Phase 3 - provider consolidation | OpenAI-compatible provider cutover, retry ownership, backend envelope split | **NOT STARTED** |
+| Phase 3 - provider consolidation | OpenAI-compatible client cutover and crate router adoption | **CLIENT CUTOVER CLOSED; LEGACY STACK REMOVAL IN WP-1** |
 | Phase 4 - orchestration consolidation | TaskStore/SteeringRegistry lifecycle, status vocabulary, session durability | **NOT STARTED** |
 | Phase 5 - workflow/team generic slices | Validation/scheduling slice evaluation | **NOT STARTED** |
 | Phase 6 - cleanup and docs | Transitional shim deletion and architecture docs | **NOT STARTED** |

@@ -4,24 +4,24 @@
  * The page loads the agent directory via `apiClient.graphql.agents()` and
  * renders one of: loading skeleton / payment_required / error (generic + wallet
  * locked) / empty / populated grid of agent cards. Each card derives a handle,
- * initials, avatar colour and skills/tags from the raw `AgentCard`, and toggles
- * a "selected" ring on click / Enter / Space. We mock the apiClient so no RPC
- * fires and the render stays deterministic.
+ * initials, avatar colour and skills/tags from the raw `AgentCard`, and opens
+ * that agent's profile modal on click / Enter / Space (GH-4927). We mock the
+ * apiClient so no RPC fires and the render stays deterministic.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
-import DirectorySection from './DirectorySection';
+import DirectorySection, { DIRECTORY_PAGE_SIZE } from './DirectorySection';
 
 // ── Mock apiClient ────────────────────────────────────────────────────────────
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
-    graphql: { agents: vi.fn() },
+    graphql: { agents: vi.fn(), user: vi.fn() },
     follows: {
       stats: vi.fn(),
       followers: vi.fn(),
@@ -35,6 +35,7 @@ vi.mock('../AgentWorldShell', () => ({
 vi.mock('../../services/walletApi', () => ({ fetchWalletStatus: vi.fn() }));
 
 const listAgents = vi.mocked(apiClient.graphql.agents);
+const getUser = vi.mocked(apiClient.graphql.user);
 const walletStatus = vi.mocked(fetchWalletStatus);
 const followFollow = vi.mocked(apiClient.follows.follow);
 const followUnfollow = vi.mocked(apiClient.follows.unfollow);
@@ -50,6 +51,8 @@ beforeEach(() => {
     followerCount: 0,
     followingCount: 0,
   });
+  // Default: no richer GraphQL profile — the modal degrades to the card data.
+  getUser.mockResolvedValue(null);
 });
 
 // ── Loading state ──────────────────────────────────────────────────────────────
@@ -222,8 +225,14 @@ describe('populated directory grid', () => {
 
 // ── Interactions ────────────────────────────────────────────────────────────────
 
-describe('card selection', () => {
-  test('toggles the selected ring on click', async () => {
+describe('card opens the profile (GH-4927)', () => {
+  /** Grab the outer card div (role=button, tagName DIV — Follow is a <button>). */
+  function cardFor(text: string): HTMLElement {
+    const cards = screen.getAllByRole('button').filter(el => el.tagName === 'DIV');
+    return cards.find(c => within(c).queryByText(text)) as HTMLElement;
+  }
+
+  test('clicking a card opens its profile modal and fetches the full profile', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-007', username: 'clicky', name: 'Clicky' }],
@@ -231,21 +240,67 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@clicky');
 
-    // The card is a div[role=button]; the Follow button is a <button type=button>.
-    // Select the outer card div by its data-testid class (cursor-pointer).
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    // Not selected initially.
-    expect(card.className).not.toContain('ring-1');
+    // No modal until the card is activated.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    await user.click(card);
-    expect(card.className).toContain('ring-1');
+    await user.click(cardFor('@clicky'));
 
-    // Clicking again deselects.
-    await user.click(card);
-    expect(card.className).not.toContain('ring-1');
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('agent-profile-modal')).toBeInTheDocument();
+    // Title is the agent handle.
+    expect(within(dialog).getByText('@clicky')).toBeInTheDocument();
+    // The richer profile is requested by agentId.
+    expect(getUser).toHaveBeenCalledWith('agent-007');
   });
 
-  test('toggles selection with the Enter key', async () => {
+  test('renders the fetched profile bio + verified badge', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [{ agentId: 'agent-042', username: 'rich', name: 'Rich' }],
+    });
+    getUser.mockResolvedValueOnce({
+      cryptoId: 'agent-042',
+      actorType: 'agent',
+      displayName: 'Rich',
+      bio: 'Builds delightful things.',
+      private: false,
+      createdAt: '2026-01-02T00:00:00Z',
+      updatedAt: '2026-01-02T00:00:00Z',
+      verified: true,
+      attestations: [],
+      agentCard: null,
+      identities: null,
+    });
+    render(<DirectorySection />);
+    await screen.findByText('@rich');
+
+    await user.click(cardFor('@rich'));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Builds delightful things.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Verified')).toBeInTheDocument();
+    // No load-failure notice on a successful fetch.
+    expect(within(dialog).queryByTestId('agent-profile-load-notice')).not.toBeInTheDocument();
+  });
+
+  test('degrades to card data with a notice when the profile is unavailable', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [{ agentId: 'agent-050', username: 'bare', name: 'Bare', description: 'Card blurb' }],
+    });
+    getUser.mockRejectedValueOnce(new Error('graphql unavailable'));
+    render(<DirectorySection />);
+    await screen.findByText('@bare');
+
+    await user.click(cardFor('@bare'));
+
+    const dialog = await screen.findByRole('dialog');
+    // Falls back to the card's description and shows the soft notice.
+    expect(await within(dialog).findByText('Card blurb')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('agent-profile-load-notice')).toBeInTheDocument();
+  });
+
+  test('opens the profile with the Enter key', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-008', username: 'enterkey', name: 'EnterKey' }],
@@ -253,13 +308,12 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@enterkey');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@enterkey').focus();
     await user.keyboard('{Enter}');
-    expect(card.className).toContain('ring-1');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  test('toggles selection with the Space key', async () => {
+  test('opens the profile with the Space key', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-009', username: 'spacer', name: 'Spacer' }],
@@ -267,13 +321,12 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@spacer');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@spacer').focus();
     await user.keyboard('[Space]');
-    expect(card.className).toContain('ring-1');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  test('ignores other keys', async () => {
+  test('other keys do not open the profile', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-010', username: 'idle', name: 'Idle' }],
@@ -281,32 +334,26 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@idle');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@idle').focus();
     await user.keyboard('{Escape}');
-    expect(card.className).not.toContain('ring-1');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  test('selecting one card leaves the other unaffected', async () => {
+  test('closing the modal returns to the grid', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
-      agents: [
-        { agentId: 'agent-011', username: 'alpha', name: 'Alpha' },
-        { agentId: 'agent-012', username: 'beta', name: 'Beta' },
-      ],
+      agents: [{ agentId: 'agent-011', username: 'closer', name: 'Closer' }],
     });
     render(<DirectorySection />);
-    await screen.findByText('@alpha');
+    await screen.findByText('@closer');
 
-    // Card divs have role=button; Follow <button>s also have role=button.
-    // Filter for the outer card divs only.
-    const cards = screen.getAllByRole('button').filter(el => el.tagName === 'DIV');
-    const alphaCard = cards.find(c => within(c).queryByText('@alpha')) as HTMLElement;
-    const betaCard = cards.find(c => within(c).queryByText('@beta')) as HTMLElement;
+    await user.click(cardFor('@closer'));
+    const dialog = await screen.findByRole('dialog');
 
-    await user.click(alphaCard);
-    expect(alphaCard.className).toContain('ring-1');
-    expect(betaCard.className).not.toContain('ring-1');
+    await user.click(within(dialog).getByRole('button', { name: /close/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -403,6 +450,34 @@ describe('follow button', () => {
     expect(await screen.findByText('Following')).toBeInTheDocument();
   });
 
+  test('keyboard activation on Follow does not open the profile modal (a11y, #4927)', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [
+        {
+          agentId: 'other-agent-kbd',
+          username: 'kbduser',
+          name: 'Kbd',
+          viewerIsFollowing: false,
+          followerCount: 0,
+        },
+      ],
+    });
+    followFollow.mockResolvedValueOnce({
+      follower: 'MyWaLLetAddr123',
+      followee: 'other-agent-kbd',
+      createdAt: '',
+    });
+    render(<DirectorySection />);
+    const followBtn = await screen.findByText('Follow');
+    followBtn.focus();
+    // Enter on the focused Follow button must follow — the card's keydown handler
+    // must NOT hijack the bubbled event to open the profile modal.
+    await user.keyboard('{Enter}');
+    expect(followFollow).toHaveBeenCalledWith('other-agent-kbd');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   test('uses GraphQL follow edges and count-only stats fallback without follow-list fan-out', async () => {
     vi.mocked(apiClient.follows.stats).mockImplementation(agentId =>
       Promise.resolve({
@@ -446,5 +521,139 @@ describe('follow button', () => {
     await user.click(followingBtn);
     expect(followUnfollow).toHaveBeenCalledWith('other-agent-004');
     expect(await screen.findByText('Follow')).toBeInTheDocument();
+  });
+});
+
+// ── Search + pagination (#4776 §6) ───────────────────────────────────────────────
+
+describe('search + pagination', () => {
+  /** Minimal valid AgentCard for grid/pagination assertions. */
+  function agent(i: number) {
+    return { agentId: `ag-${i}`, username: `user${i}`, name: `User ${i}` };
+  }
+
+  test('typing a query searches server-side (debounced) and replaces the list', async () => {
+    const user = userEvent.setup();
+    listAgents
+      .mockResolvedValueOnce({ agents: [{ agentId: 'a1', username: 'alpha', name: 'Alpha' }] })
+      .mockResolvedValueOnce({ agents: [{ agentId: 'b1', username: 'beta', name: 'Beta' }] });
+    render(<DirectorySection />);
+    expect(await screen.findByText('@alpha')).toBeInTheDocument();
+
+    await user.type(screen.getByRole('searchbox'), 'bet');
+
+    // The debounced fetch carries the query and resets the offset to 0.
+    await waitFor(() =>
+      expect(listAgents).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'bet', offset: 0 }))
+    );
+    // Proves the debounce, not just the final args: the three keystrokes collapse
+    // into a single search request (mount + one search = 2), not one per keystroke
+    // (which would be 4). Guards against a regression that fires on every keypress.
+    expect(listAgents).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('@beta')).toBeInTheDocument();
+    // The previous (unfiltered) result is replaced, not appended.
+    expect(screen.queryByText('@alpha')).not.toBeInTheDocument();
+  });
+
+  test('Load more fetches the next offset, appends, and dedupes by agentId', async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: DIRECTORY_PAGE_SIZE }, (_, i) => agent(i));
+    // Second page overlaps ag-0 (a shifted offset) plus one fresh agent.
+    const secondPage = [agent(0), { agentId: 'ag-100', username: 'fresh', name: 'Fresh' }];
+    listAgents
+      .mockResolvedValueOnce({ agents: firstPage })
+      .mockResolvedValueOnce({ agents: secondPage });
+    render(<DirectorySection />);
+    await screen.findByText('@user0');
+
+    await user.click(await screen.findByRole('button', { name: /load more/i }));
+
+    await waitFor(() =>
+      expect(listAgents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ offset: DIRECTORY_PAGE_SIZE })
+      )
+    );
+    // Fresh agent appended.
+    expect(await screen.findByText('@fresh')).toBeInTheDocument();
+    // The overlapping agent renders exactly once (deduped by agentId).
+    expect(screen.getAllByText('@user0')).toHaveLength(1);
+  });
+
+  test('hides Load more when the first page is shorter than a full page', async () => {
+    listAgents.mockResolvedValueOnce({ agents: [agent(1), agent(2)] });
+    render(<DirectorySection />);
+    await screen.findByText('@user1');
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  test('renders a no-results message when a search returns nothing', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({ agents: [agent(1)] }).mockResolvedValueOnce({ agents: [] });
+    render(<DirectorySection />);
+    await screen.findByText('@user1');
+
+    await user.type(screen.getByRole('searchbox'), 'zzz');
+
+    expect(await screen.findByText(/No agents match/i)).toBeInTheDocument();
+    // Distinct from the pristine empty-directory copy.
+    expect(
+      screen.queryByText(/No agents are registered in the directory yet/i)
+    ).not.toBeInTheDocument();
+  });
+
+  test('a failed Load more surfaces an error and keeps the existing rows', async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: DIRECTORY_PAGE_SIZE }, (_, i) => agent(i));
+    listAgents
+      .mockResolvedValueOnce({ agents: firstPage })
+      .mockRejectedValueOnce(new Error('nope'));
+    render(<DirectorySection />);
+    await screen.findByText('@user0');
+
+    await user.click(await screen.findByRole('button', { name: /load more/i }));
+
+    expect(await screen.findByText(/Couldn't load more/i)).toBeInTheDocument();
+    // Existing rows survive the failed append.
+    expect(screen.getByText('@user0')).toBeInTheDocument();
+  });
+
+  test('discards a stale Load more response after the query changes', async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: DIRECTORY_PAGE_SIZE }, (_, i) => agent(i));
+    // The load-more response (for the empty query) is held open until after the
+    // search has replaced the list, so its append must be dropped.
+    let resolveStale: (v: { agents: Array<ReturnType<typeof agent>> }) => void = () => {};
+    const staleLoadMore = new Promise<{ agents: Array<ReturnType<typeof agent>> }>(res => {
+      resolveStale = res;
+    });
+    listAgents.mockImplementation(params => {
+      const p = params ?? {};
+      if (!p.q && p.offset === 0) return Promise.resolve({ agents: firstPage });
+      if (!p.q && p.offset === DIRECTORY_PAGE_SIZE) return staleLoadMore; // stale (old query)
+      if (p.q === 'x' && p.offset === 0)
+        return Promise.resolve({ agents: [{ agentId: 'ag-x', username: 'xray', name: 'Xray' }] });
+      return Promise.resolve({ agents: [] });
+    });
+
+    render(<DirectorySection />);
+    await screen.findByText('@user0');
+    // Start Load more (old query), then change the search before it resolves.
+    await user.click(await screen.findByRole('button', { name: /load more/i }));
+    await user.type(screen.getByRole('searchbox'), 'x');
+    await screen.findByText('@xray');
+
+    // Resolve the in-flight old-query page and await its (guarded) continuation
+    // inside act, so the assertion runs *after* the stale response has had its
+    // chance to append. A bare `waitFor(not present)` would pass immediately —
+    // before the continuation ran — and green even if the guard were broken.
+    await act(async () => {
+      resolveStale({ agents: [{ agentId: 'ag-stale', username: 'stale', name: 'Stale' }] });
+      await staleLoadMore;
+    });
+    // The stale response was dropped by the generation guard: no @stale row,
+    // the new search's result is intact, and the old query's rows are gone.
+    expect(screen.queryByText('@stale')).not.toBeInTheDocument();
+    expect(screen.getByText('@xray')).toBeInTheDocument();
+    expect(screen.queryByText('@user0')).not.toBeInTheDocument();
   });
 });

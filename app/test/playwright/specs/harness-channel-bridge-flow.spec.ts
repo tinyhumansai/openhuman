@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { agentMessageText } from '../helpers/chat-locators';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -135,8 +136,10 @@ test.describe('Harness - Cross-channel bridge flow', () => {
     await createNewThread(page);
     await sendMessage(page, 'set up a daily standup reminder at 9am');
 
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/I created a daily 9am standup reminder for you\./i)).toBeVisible();
+    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(
+      agentMessageText(page, /I created a daily 9am standup reminder for you\./i)
+    ).toBeVisible();
   });
 
   test.skip('telegram inbound/outbound bridge scenarios require a live listener restart in this lane', async () => {});

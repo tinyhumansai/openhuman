@@ -2,7 +2,7 @@
  * TokenJuice content-router client.
  *
  * Thin wrapper around the `openhuman.tokenjuice_*` JSON-RPC methods exposed by
- * the Rust core (`src/openhuman/tokenjuice/schemas.rs`): read/update the
+ * the Rust core (`src/openhuman/inference/tokenjuice/schemas.rs`): read/update the
  * `[tokenjuice]` settings block and read/reset compaction savings statistics.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';

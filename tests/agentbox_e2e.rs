@@ -14,7 +14,7 @@
 //!
 //! The AgentBox `/run` invoker (`agentbox::invoker::CoreAgentInvoker`) drives
 //! the **live agent runtime** through the web-channel pipeline
-//! (`channels::providers::web::start_chat`). End-to-end completion against a
+//! (`web_chat::start_chat`). End-to-end completion against a
 //! freshly-bootstrapped tempdir workspace requires:
 //!
 //!   1. A logged-in user session on disk — `start_chat` and several upstream
@@ -124,7 +124,10 @@ fn spawn_core_with_agentbox(port: u16, workspace: &std::path::Path, gmi_base_url
         .env("GMI_MAAS_API_KEY", "test-key")
         .env("GMI_MODELS", "stub-model")
         // Keep noise down; bump to debug locally when investigating.
-        .env("RUST_LOG", "warn,openhuman_core::openhuman::agentbox=info")
+        .env(
+            "RUST_LOG",
+            "warn,openhuman_core::openhuman::agent::agentbox=info",
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

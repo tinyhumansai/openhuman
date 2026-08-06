@@ -38,9 +38,7 @@ export default function WorkflowsRun() {
                 // which would bounce the user out of the app. `state.idx > 0`
                 // means there's an in-app entry to go back to (matches
                 // useSettingsNavigation's guard).
-                (window.history.state?.idx ?? 0) > 0
-                  ? navigate(-1)
-                  : navigate('/intelligence?tab=workflows')
+                (window.history.state?.idx ?? 0) > 0 ? navigate(-1) : navigate('/flows')
               }
               aria-label={t('common.back')}>
               <span aria-hidden="true">←</span> {t('common.back')}

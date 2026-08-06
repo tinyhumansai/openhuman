@@ -10,7 +10,7 @@ icon: search
 
 The [Memory Tree](memory-tree.md) is the write path: it folds the stream of your day into chunks, scores, and hierarchical summary trees on disk. **Retrieval** is the read path - how the agent finds the right node, hydrates the right raw chunk, and resolves "Alice" to a stable id before answering you.
 
-There is deliberately **no classifier, gate, or composer** in the retrieval layer. The primitives are deterministic and scope-specific; deciding *which* primitive to call and *how* to combine results is left to the calling agent (or, for the deterministic `walk`, to a pure routing algorithm). Source: `src/openhuman/memory_tree/retrieval/mod.rs`.
+There is deliberately **no classifier, gate, or composer** in the retrieval layer. The primitives are deterministic and scope-specific; deciding *which* primitive to call and *how* to combine results is left to the calling agent (or, for the deterministic `walk`, to a pure routing algorithm). Source: `src/openhuman/memory/tree/retrieval/mod.rs`.
 
 ***
 
@@ -34,7 +34,7 @@ The historical `query_global` and `query_topic` modes were **removed**: source t
 
 ## The `RetrievalHit` shape
 
-Every primitive emits `RetrievalHit` (`src/openhuman/memory_tree/retrieval/types.rs`). The important fields:
+Every primitive emits `RetrievalHit` (`src/openhuman/memory/tree/retrieval/types.rs`). The important fields:
 
 - `node_id`, `node_kind` - `leaf` (a raw `mem_tree_chunks` row) or `summary` (a sealed `mem_tree_summaries` row). Consumers branch on this (e.g. "only `drill_down` on summaries").
 - `tree_id` / `tree_kind` / `tree_scope` / `level` - provenance, so a UI can say "from Slack #eng".
@@ -72,7 +72,7 @@ It is a pure read-only SELF-JOIN over `mem_tree_entity_index` - no new tables, n
 
 ## Deterministic walk (`walk` / `smart_walk`, no LLM)
 
-`walk` and `smart_walk` both route through `fast_retrieve` (`src/openhuman/memory_tree/retrieval/fast.rs`), an **E2GraphRAG-style** algorithm that replaces the old agentic turn-by-turn loops. It never invokes an LLM. Routing is decided purely by query entities and co-occurrence-graph hop distance:
+`walk` and `smart_walk` both route through `fast_retrieve` (`src/openhuman/memory/tree/retrieval/fast.rs`), an **E2GraphRAG-style** algorithm that replaces the old agentic turn-by-turn loops. It never invokes an LLM. Routing is decided purely by query entities and co-occurrence-graph hop distance:
 
 1. Extract query entities `Eq` (spaCy NLP, regex fallback).
 2. `Eq` empty -> **global**: dense rerank over the summary tree.
@@ -98,9 +98,9 @@ Distinct from the tree, `memory_recall` (`src/openhuman/memory/tools/recall.rs`)
 
 ## The memory agent (specialist sub-agent)
 
-`src/openhuman/agent_memory/` owns a specialist retrieval sub-agent invoked via the `call_memory_agent` tool. It navigates the memory tree to answer a question by combining strategies the primitives expose: vector search, keyword search over raw files, entity search and relationship following, hierarchical tree browse, direct content reads, and source listing.
+`src/openhuman/memory/agent/` owns a specialist retrieval sub-agent invoked via the `call_memory_agent` tool. It navigates the memory tree to answer a question by combining strategies the primitives expose: vector search, keyword search over raw files, entity search and relationship following, hierarchical tree browse, direct content reads, and source listing.
 
-Its tool allowlist (`src/openhuman/agent_memory/agent/agent.toml`) is the full retrieval surface: `memory_tree` (with all the modes above, including deterministic `walk` / `smart_walk`), `memory_recall`, and `query_memory`. The prompt and iteration cap live alongside in `agent/prompt.md` + `agent/prompt.rs`; performance is tracked by the benchmark harness in `ops.rs` (`scripts/bench-memory-walk.sh`).
+Its tool allowlist (`src/openhuman/memory/agent/agent/agent.toml`) is the full retrieval surface: `memory_tree` (with all the modes above, including deterministic `walk` / `smart_walk`), `memory_recall`, and `query_memory`. The prompt and iteration cap live alongside in `agent/prompt.md` + `agent/prompt.rs`; performance is tracked by the benchmark harness in `ops.rs` (`scripts/bench-memory-walk.sh`).
 
 ***
 

@@ -76,13 +76,6 @@ pub(crate) fn parse_browser_action(
         }
         "get_title" => Ok(BrowserAction::GetTitle),
         "get_url" => Ok(BrowserAction::GetUrl),
-        "screenshot" => Ok(BrowserAction::Screenshot {
-            path: args.get("path").and_then(|v| v.as_str()).map(String::from),
-            full_page: args
-                .get("full_page")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-        }),
         "wait" => Ok(BrowserAction::Wait {
             selector: args
                 .get("selector")
@@ -168,7 +161,6 @@ pub(crate) fn is_supported_browser_action(action: &str) -> bool {
             | "get_text"
             | "get_title"
             | "get_url"
-            | "screenshot"
             | "wait"
             | "press"
             | "hover"
@@ -181,14 +173,13 @@ pub(crate) fn is_supported_browser_action(action: &str) -> bool {
             | "mouse_drag"
             | "key_type"
             | "key_press"
-            | "screen_capture"
     )
 }
 
 pub(crate) fn is_computer_use_only_action(action: &str) -> bool {
     matches!(
         action,
-        "mouse_move" | "mouse_click" | "mouse_drag" | "key_type" | "key_press" | "screen_capture"
+        "mouse_move" | "mouse_click" | "mouse_drag" | "key_type" | "key_press"
     )
 }
 

@@ -31,7 +31,7 @@ interface Props {
  * thread; clears itself on a recorded decision (the turn-end handlers in
  * {@link ChatRuntimeProvider} also clear it if the turn is cancelled).
  */
-export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
+const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const [deciding, setDeciding] = useState<Decision | null>(null);

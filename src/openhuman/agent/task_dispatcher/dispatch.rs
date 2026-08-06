@@ -3,8 +3,8 @@
 use crate::openhuman::agent::task_board::{TaskBoardCard, TaskCardStatus};
 use crate::openhuman::agent::task_session;
 use crate::openhuman::config::Config;
-use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
-use crate::openhuman::todos::runs;
+use crate::openhuman::threads::todos::ops::{self, BoardLocation, CardPatch};
+use crate::openhuman::threads::todos::runs;
 
 use super::executor::{resolve_executor, run_autonomous};
 use super::poller::requires_plan_approval;
@@ -49,7 +49,9 @@ pub async fn dispatch_card(
             &card_id,
             &[TaskCardStatus::Todo],
             TaskCardStatus::AwaitingApproval,
-        ) {
+        )
+        .await
+        {
             Ok(_parked) => {
                 if let Some(thread_id) = location.thread_id() {
                     crate::core::event_bus::publish_global(
@@ -79,6 +81,7 @@ pub async fn dispatch_card(
         &[TaskCardStatus::Todo, TaskCardStatus::Ready],
         TaskCardStatus::InProgress,
     )
+    .await
     .map_err(|e| format!("[task_dispatcher] claim rejected for {card_id}: {e}"))?;
 
     let mut prompt = build_task_prompt(&fresh_card);
@@ -130,7 +133,9 @@ pub async fn dispatch_card(
     // "View session" jump into Conversations. Best-effort: a failure here just
     // means the link is unavailable; the run proceeds regardless.
     if let Some(thread_id) = session_thread_id.as_deref() {
-        if let Err(e) = ops::set_session_thread(&location, &card_id, Some(thread_id.to_string())) {
+        if let Err(e) =
+            ops::set_session_thread(&location, &card_id, Some(thread_id.to_string())).await
+        {
             tracing::warn!(
                 card_id = %card_id,
                 thread_id = %thread_id,
@@ -166,7 +171,7 @@ pub async fn dispatch_card(
             None => true,
         };
         if still_ours {
-            super::executor::write_back(&location_for_run, &card_id, &run_id, outcome);
+            super::executor::write_back(&location_for_run, &card_id, &run_id, outcome).await;
         }
     });
 

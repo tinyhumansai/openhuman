@@ -1,6 +1,6 @@
 //! Workflow preflight gates — run BEFORE the orchestrator boots for a
 //! `skills_run`, so failures surface as a plain `Err` from
-//! [`crate::openhuman::skill_runtime::spawn_workflow_run_background`] (and from there into
+//! [`crate::openhuman::skills::runtime::spawn_workflow_run_background`] (and from there into
 //! the dashboard card / runner page UI) instead of leaking through as
 //! cryptic orchestrator output.
 //!
@@ -36,8 +36,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::openhuman::composio::{self};
 use crate::openhuman::config::Config;
+use crate::openhuman::integrations::composio::{self};
 
 use super::registry::{IdentityMatch, WorkflowGithubConfig};
 
@@ -79,8 +79,8 @@ impl GithubGateError {
         let body = match self {
             GithubGateError::ComposioGithubMissing => {
                 "GitHub preflight failed: no active Composio GitHub connection. \
-                 Connect via `composio_authorize github` (or Settings → \
-                 Integrations → GitHub) and re-run."
+                 Connect via `composio_authorize github` (or Connections → \
+                 OAuth → GitHub) and re-run."
                     .to_string()
             }
             GithubGateError::GitBinaryMissing(err) => format!(

@@ -13,13 +13,13 @@
 //! cannot satisfy the assertion accidentally.
 
 const ORCHESTRATOR_TOML: &str =
-    include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
+    include_str!("../src/openhuman/agent/registry/agents/orchestrator/agent.toml");
 
 const PRESENTATION_AGENT_TOML: &str =
-    include_str!("../src/openhuman/agent_registry/agents/presentation_agent/agent.toml");
+    include_str!("../src/openhuman/agent/registry/agents/presentation_agent/agent.toml");
 
 const CODE_EXECUTOR_TOML: &str =
-    include_str!("../src/openhuman/agent_registry/agents/code_executor/agent.toml");
+    include_str!("../src/openhuman/agent/registry/agents/code_executor/agent.toml");
 
 const TOOL_NAME: &str = "generate_presentation";
 

@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { cronToHuman } from '../../../../lib/cron/cronToHuman';
 import { SCHEDULE_PRESET_VALUES, SCHEDULE_PRESETS } from '../../../../lib/cron/schedulePresets';
 import { useT } from '../../../../lib/i18n/I18nContext';
+import type { AgentProfile } from '../../../../types/agentProfile';
 import type {
   CoreCronJob,
   CoreCronSchedule,
@@ -33,6 +34,8 @@ export interface CronJobFormModalProps {
   onClose: () => void;
   onCreate: (params: CronAddParams) => Promise<void>;
   onUpdate: (jobId: string, patch: Record<string, unknown>) => Promise<void>;
+  /** Agent profiles offered in the attribution picker (agent jobs only). */
+  profiles?: AgentProfile[];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -104,6 +107,8 @@ interface CronJobFormInitialState {
   sessionTarget: SessionTarget;
   delivery: DeliveryMode;
   deleteAfterRun: boolean;
+  /** '' means "no profile" / cleared attribution. */
+  profileId: string;
 }
 
 function getInitialFormState(mode: 'create' | 'edit', job?: CoreCronJob): CronJobFormInitialState {
@@ -126,6 +131,7 @@ function getInitialFormState(mode: 'create' | 'edit', job?: CoreCronJob): CronJo
       sessionTarget: job.session_target === 'main' ? 'main' : 'isolated',
       delivery: getInitialDelivery(job),
       deleteAfterRun: job.delete_after_run,
+      profileId: job.profile_id ?? '',
     };
   }
 
@@ -142,6 +148,7 @@ function getInitialFormState(mode: 'create' | 'edit', job?: CoreCronJob): CronJo
     sessionTarget: 'isolated',
     delivery: 'proactive',
     deleteAfterRun: false,
+    profileId: '',
   };
 }
 
@@ -154,6 +161,7 @@ const CronJobFormModal = ({
   onClose,
   onCreate,
   onUpdate,
+  profiles = [],
 }: CronJobFormModalProps) => {
   const { t } = useT();
   const initialState = getInitialFormState(mode, job);
@@ -172,6 +180,7 @@ const CronJobFormModal = ({
   const [sessionTarget, setSessionTarget] = useState<SessionTarget>(initialState.sessionTarget);
   const [delivery, setDelivery] = useState<DeliveryMode>(initialState.delivery);
   const [deleteAfterRun, setDeleteAfterRun] = useState(initialState.deleteAfterRun);
+  const [profileId, setProfileId] = useState(initialState.profileId);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -220,6 +229,9 @@ const CronJobFormModal = ({
           ...(jobType === 'agent'
             ? { delivery: { mode: delivery, best_effort: true } }
             : { delivery: { mode: 'none', best_effort: false } }),
+          // Attribute the run to an agent profile (agent jobs only). Omit the
+          // key entirely for "no profile" so the core leaves it unset.
+          ...(jobType === 'agent' && profileId ? { profile_id: profileId } : {}),
           delete_after_run: deleteAfterRun,
         };
         log('[CronJobFormModal] calling onCreate metadata=%o', {
@@ -228,6 +240,7 @@ const CronJobFormModal = ({
           scheduleKind: params.schedule.kind,
           hasName: Boolean(params.name),
           hasSessionTarget: Boolean(params.session_target),
+          hasProfileAttribution: 'profile_id' in params,
           deleteAfterRun: params.delete_after_run,
         });
         await onCreate(params);
@@ -242,6 +255,9 @@ const CronJobFormModal = ({
           ...(jobType === 'agent'
             ? { delivery: { mode: delivery, best_effort: true } }
             : { delivery: { mode: 'none', best_effort: false } }),
+          // Double-option attribution: send the id to (re)attribute, or `null`
+          // to clear. Only meaningful for agent jobs.
+          ...(jobType === 'agent' ? { profile_id: profileId || null } : {}),
           delete_after_run: deleteAfterRun,
         };
         const patchSchedule = patch.schedule as { kind?: string } | undefined;
@@ -251,6 +267,9 @@ const CronJobFormModal = ({
           scheduleKind: patchSchedule?.kind ?? 'unknown',
           hasName: patch.name !== null,
           hasSessionTarget: 'session_target' in patch,
+          // Whether the patch (re)attributes a profile (truthy) vs clears/omits
+          // it (null/absent). Privacy-safe: boolean only, never the profile id.
+          hasProfileAttribution: Boolean(patch.profile_id),
           deleteAfterRun: patch.delete_after_run,
         });
         await onUpdate(job.id, patch);
@@ -568,6 +587,39 @@ const CronJobFormModal = ({
                 <option value="isolated">{t('settings.cron.jobs.formSessionIsolated')}</option>
                 <option value="main">{t('settings.cron.jobs.formSessionMain')}</option>
               </select>
+            </div>
+          )}
+
+          {/* Agent profile attribution (agent only) */}
+          {jobType === 'agent' && (
+            <div>
+              <label
+                htmlFor="cron-form-profile"
+                className="block text-xs font-medium text-content-secondary mb-1">
+                {t('settings.cron.jobs.formProfile')}
+              </label>
+              <select
+                id="cron-form-profile"
+                data-testid="cron-form-profile"
+                value={profileId}
+                onChange={e => setProfileId(e.target.value)}
+                disabled={saving}
+                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50">
+                <option value="">{t('settings.cron.jobs.formProfileNone')}</option>
+                {profiles.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name || p.id}
+                  </option>
+                ))}
+                {profileId && !profiles.some(p => p.id === profileId) && (
+                  // The attributed profile was deleted — keep it selectable so
+                  // saving doesn't silently drop it, and surface the raw id.
+                  <option value={profileId}>{profileId}</option>
+                )}
+              </select>
+              <p className="text-xs text-content-muted mt-1">
+                {t('settings.cron.jobs.formProfileHint')}
+              </p>
             </div>
           )}
 

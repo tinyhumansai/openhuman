@@ -1,10 +1,10 @@
 //! Agent turn origin — the trust/routing label attached to every agent
-//! `run_turn` invocation. Read by [`crate::openhuman::approval::ApprovalGate`]
-//! and [`crate::openhuman::agent_tool_policy::ToolPolicyEngine`] to make
+//! `run_turn` invocation. Read by [`crate::openhuman::security::approval::ApprovalGate`]
+//! and [`crate::openhuman::tools::agent_policy::ToolPolicyEngine`] to make
 //! consistent decisions across web, channel, subconscious, and cron entry
 //! points without relying on the *absence* of other task-locals as a signal.
 //!
-//! Every entry point that drives the agent loop ([`crate::openhuman::channels::providers::web`],
+//! Every entry point that drives the agent loop ([`crate::openhuman::web_chat`],
 //! [`crate::openhuman::channels::runtime::dispatch`], [`crate::openhuman::subconscious`],
 //! [`crate::openhuman::cron`], CLI) MUST scope a real [`AgentTurnOrigin`]
 //! around its `run_turn` invocation. Any path that fails to do so is treated
@@ -16,12 +16,12 @@
 /// closed.
 ///
 /// This is a typed task-local label, not a credential — it is set by the
-/// entry point that owns the turn and read by [`crate::openhuman::approval`]
+/// entry point that owns the turn and read by [`crate::openhuman::security::approval`]
 /// alongside the existing per-turn chat context.
 #[derive(Clone, Debug)]
 pub enum AgentTurnOrigin {
     /// Live user chat in the desktop / web UI. The existing
-    /// [`crate::openhuman::approval::ApprovalChatContext`] task-local is
+    /// [`crate::openhuman::security::approval::ApprovalChatContext`] task-local is
     /// scoped alongside this so the approval gate has a thread / client to
     /// route the prompt back to.
     WebChat {
@@ -103,6 +103,29 @@ pub enum TrustedAutomationSource {
     },
 }
 
+impl AgentTurnOrigin {
+    /// A PII-free classification label safe for `info`-level logs and audit
+    /// trails — the variant name (and, for `TrustedAutomation`, its `source`
+    /// sub-kind), never an identifying field. Use this instead of `{:?}` /
+    /// `?origin` anywhere the log line isn't gated to `debug`/`trace`:
+    /// `WebChat.thread_id`/`client_id`, `ExternalChannel.sender`/
+    /// `reply_target`/`message_id`, and `TrustedAutomation.job_id` can carry
+    /// user- or channel-identifying data that must not land at `info`.
+    pub fn class(&self) -> String {
+        match self {
+            AgentTurnOrigin::WebChat { .. } => "WebChat".to_string(),
+            AgentTurnOrigin::ExternalChannel { channel, .. } => {
+                format!("ExternalChannel({channel})")
+            }
+            AgentTurnOrigin::TrustedAutomation { source, .. } => {
+                format!("TrustedAutomation({source:?})")
+            }
+            AgentTurnOrigin::Cli => "Cli".to_string(),
+            AgentTurnOrigin::Unknown => "Unknown".to_string(),
+        }
+    }
+}
+
 tokio::task_local! {
     /// Per-turn agent origin. Scoped by entry points (web channel, channel
     /// runtime dispatch, subconscious loop, cron scheduler, CLI) around the
@@ -112,7 +135,7 @@ tokio::task_local! {
 }
 
 /// Scope `origin` for the duration of `fut`. Mirrors the existing
-/// [`crate::openhuman::approval::APPROVAL_CHAT_CONTEXT`] scope pattern.
+/// [`crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT`] scope pattern.
 ///
 /// The inner future is `Box::pin`-ed before being handed to the task-local
 /// scope so the combined `with_origin(... scope(... run_turn(...)))` future
@@ -132,6 +155,18 @@ pub async fn with_origin<F: std::future::Future>(origin: AgentTurnOrigin, fut: F
 /// [`AgentTurnOrigin::Unknown`] / fail-closed).
 pub fn current() -> Option<AgentTurnOrigin> {
     AGENT_TURN_ORIGIN.try_with(|o| o.clone()).ok()
+}
+
+/// Read the ambient web-chat `request_id` for the current turn, when one was
+/// scoped by an [`AgentTurnOrigin::WebChat`] entry point. `None` for every
+/// other origin (channel / cron / CLI / sub-agent) and outside any scope —
+/// those turns are not request-scoped, so their transcript lines carry no
+/// turn-boundary marker.
+pub fn current_request_id() -> Option<String> {
+    match current() {
+        Some(AgentTurnOrigin::WebChat { request_id, .. }) => request_id,
+        _ => None,
+    }
 }
 
 #[cfg(test)]

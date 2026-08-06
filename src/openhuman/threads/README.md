@@ -62,7 +62,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 
 ## Persistence
 
-- **Threads + messages**: delegated to `memory::conversations` (JSONL store under the workspace), not owned here.
+- **Threads + messages**: delegated to `memory::conversations` (JSONL store under the workspace), not owned here. Every call goes through `memory_conversations::blocking::*` (`tokio::task::spawn_blocking`) — **never** the sync entry points directly, see the note below.
 - **Turn snapshots** (`turn_state/store.rs`): one JSON file per thread at `<workspace>/memory/conversations/turn_states/<hex(thread_id)>.json`. Whole-file atomic overwrite (tempfile → fsync → persist → best-effort dir fsync), serialized through a process-wide `parking_lot::Mutex`. A non-terminal file surviving cold boot is marked `Interrupted`; a `Completed` snapshot is intentionally retained (for processing replay) and skipped by startup interrupted-marking. The next turn on the thread overwrites it.
 - **Task board**: persisted by `agent::task_board::TaskBoardStore` under the workspace (this module only proxies).
 - **Migration marker**: `state/migrations/welcome_to_orchestrator_v1.done` guards the welcome migration.
@@ -72,7 +72,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 - `crate::openhuman::memory` / `memory_conversations` — thread + message store types and CRUD (`ensure_thread`, `list_threads`, `get_messages`, `append_message`, `update_thread_*`, `ConversationStore`, etc.); also the `ApiEnvelope`/`ApiMeta`/request/response DTOs.
 - `crate::openhuman::config::Config` — resolves `workspace_dir` and inference/runtime/secrets settings (`load_or_init`).
 - `crate::openhuman::inference::provider` — builds the intelligent-routing provider used for AI title generation (`create_intelligent_routing_provider`, `ProviderRuntimeOptions`).
-- `crate::openhuman::channels::providers::web` — `invalidate_thread_sessions` on thread delete (so a deleted thread's live web session can't keep appending).
+- `crate::openhuman::web_chat` — `invalidate_thread_sessions` on thread delete (so a deleted thread's live web session can't keep appending).
 - `crate::openhuman::agent::task_board` — `TaskBoard`, `TaskBoardCard`, `TaskBoardStore`, `board_for_thread` for the task-board RPCs; also the optional `task_board` field on `TurnState`.
 - `crate::openhuman::agent::progress::AgentProgress` — progress events consumed by `TurnStateMirror`.
 - `crate::core::all` — `ControllerFuture`, `RegisteredController` for the registry.
@@ -83,11 +83,12 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 
 - `src/core/all.rs` — registers the controllers/schemas into the JSON-RPC + CLI registry.
 - `src/core/jsonrpc.rs` — references threads (transport routing).
-- `src/openhuman/channels/providers/web.rs` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
-- `src/openhuman/startup/ops.rs` — invokes the welcome migration and/or turn-state startup handling.
+- `src/openhuman/web_chat/` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
+- `src/openhuman/platform/startup/ops.rs` — invokes the welcome migration and/or turn-state startup handling.
 
 ## Notes / gotchas
 
+- **Never call the sync `memory_conversations` API from these handlers — use `memory_conversations::blocking::*`.** Each store entry point takes a process-global `parking_lot::Mutex` and then does fsync'd JSONL IO while holding it, and the per-call cost grows with the user's history (`threads.jsonl` is folded on nearly every operation and gains ~2 lines per message, uncompacted). Called inline, a handler parks a tokio *worker* thread on that mutex; once more conversation ops are queued than there are workers, the runtime stops polling anything — including the HTTP task that owes the client a response — and a one-append create blows the frontend's 30 s RPC budget (`UnhandledRejection: Core RPC openhuman.threads_create_new timed out after 30000ms`, Sentry TAURI-REACT-10 / #5156). The wrappers keep the lock wait on the blocking pool; the store is just as serialized, but the executor stays live. `welcome_migration.rs` is the deliberate exception: it is a sync, one-shot, marker-guarded boot migration, not a request path.
 - `generate_title` only replaces titles matching the `Chat <Mon> <d> <h>:<mm> <AM|PM>` placeholder shape (`is_auto_generated_thread_title`); user-renamed threads are never overwritten. Provider/init/sanitization failures degrade to a deterministic fallback title derived from the first user message — never an error.
 - `delete` invalidates the web-channel session **before** turn-snapshot cleanup (ordering is load-bearing per the inline comment); snapshot-cleanup failure surfaces as an RPC error so callers see a partial failure rather than silent on-disk drift.
 - `purge` uses `clear_all` (not list+delete) so corrupted/half-written snapshot files — which `list()` warn-skips — are also removed.

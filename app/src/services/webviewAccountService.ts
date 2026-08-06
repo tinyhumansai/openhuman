@@ -45,7 +45,7 @@ export { isTauri };
  * which Sentry captures as `Non-Error promise rejection` with no stack trace.
  * Callers should branch on `kind` instead of re-parsing the message.
  */
-export type WebviewAccountErrorKind = 'unknown_provider' | 'invalid_url' | 'no_url' | 'unknown';
+type WebviewAccountErrorKind = 'unknown_provider' | 'invalid_url' | 'no_url' | 'unknown';
 
 export class WebviewAccountError extends Error {
   readonly kind: WebviewAccountErrorKind;
@@ -1381,15 +1381,6 @@ export async function hideWebviewAccount(accountId: string): Promise<void> {
   }
 }
 
-export async function showWebviewAccount(accountId: string): Promise<void> {
-  if (!isTauri()) return;
-  try {
-    await invoke('webview_account_show', { args: { account_id: accountId } });
-  } catch (err) {
-    errLog('show failed: %o', err);
-  }
-}
-
 export async function closeWebviewAccount(accountId: string): Promise<void> {
   if (!isTauri()) return;
   log('close account=%s', accountId);
@@ -1424,20 +1415,6 @@ export async function purgeWebviewAccount(accountId: string): Promise<void> {
 }
 
 // ────────────────────────── Notification bypass helpers ─────────────────────
-
-/**
- * Mute or unmute OS notification toasts for a specific embedded account.
- * When muted, toasts from that account are suppressed regardless of focus state.
- */
-export async function setAccountMuted(accountId: string, muted: boolean): Promise<void> {
-  if (!isTauri()) return;
-  try {
-    await invoke('webview_notification_mute_account', { accountId, muted });
-    log('notify-bypass: account=%s muted=%s', accountId, muted);
-  } catch (e) {
-    log('notify-bypass: setAccountMuted error %o', e);
-  }
-}
 
 /**
  * Enable or disable global Do Not Disturb mode for embedded webview notifications.
@@ -1477,7 +1454,7 @@ export async function getBypassPrefs(): Promise<{
  * Rust uses this together with the window-focus state to suppress
  * notifications while the user is actively looking at that account.
  */
-export async function setFocusedAccount(accountId: string | null): Promise<void> {
+async function setFocusedAccount(accountId: string | null): Promise<void> {
   if (!isTauri()) return;
   try {
     await invoke('webview_set_focused_account', { accountId });

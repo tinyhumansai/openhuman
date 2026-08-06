@@ -774,7 +774,7 @@ impl SpanCollector {
                 ("gen_ai.usage.reasoning_tokens", reasoning_tokens),
                 ("gen_ai.usage.cache_creation_tokens", cache_creation_tokens),
             ] {
-                if add == 0 && span.attributes.get(key).is_none() {
+                if add == 0 && !span.attributes.contains_key(key) {
                     continue;
                 }
                 let prior = span
@@ -1458,7 +1458,7 @@ pub(crate) async fn export_run_trace_from_journal(
     config: &Config,
     trace_ctx: &TraceContext,
     observations: &[tinyagents::harness::observability::AgentObservation],
-    run_telemetry: Option<&crate::openhuman::session_db::run_ledger::RunTelemetry>,
+    run_telemetry: Option<&crate::openhuman::agent::session_db::run_ledger::RunTelemetry>,
     live_spans: &[TraceSpan],
 ) {
     if observations.is_empty() && live_spans.is_empty() {

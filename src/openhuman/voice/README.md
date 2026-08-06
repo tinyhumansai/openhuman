@@ -79,7 +79,7 @@ No dedicated `store.rs`. State is persisted into the shared TOML `Config` via th
 
 - `crate::openhuman::inference` — local AI runtime (`local::global`, `whisper_engine`, model id/path resolution) and the relocated voice inference impls (`inference::voice::{cloud_transcribe, local_speech, local_transcribe, hallucination, postprocess, streaming}`); also `inference::provider::factory::lookup_key_for_slug` for provider API keys.
 - `crate::openhuman::config` — `Config`, `config::rpc::load_config_with_timeout`, voice-server / dictation config sections, and `config::schema::voice_providers` (`VoiceProviderCreds`, capability/auth/API-style enums).
-- `crate::openhuman::accessibility` (macOS only) — focused-app detection (`focused_text_context_verbose`) and the Swift globe-key listener (`globe_listener_start` / `globe_listener_poll`) used in place of rdev for the Fn key.
+- `crate::openhuman::desktop::accessibility` (macOS only) — focused-text inspection (`focused_text_context_verbose`) and the Swift globe-key listener (`globe_listener_start` / `globe_listener_poll`) used in place of rdev for the Fn key.
 - `crate::api` — `BackendOAuthClient`, `effective_backend_api_url`, `get_session_token` for backend-proxied reply-speech.
 - `crate::core::all` (`ControllerFuture`, `RegisteredController`), `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`, `crate::core::logging` (CLI run init), and `crate::rpc::RpcOutcome`.
 - External crates: `cpal` + `hound` (capture/WAV), `rdev` (hotkeys), `enigo` + `arboard` (paste insertion), `reqwest` (external provider HTTP), `tokio`/`tokio-util`, `once_cell`.
@@ -89,7 +89,7 @@ No dedicated `store.rs`. State is persisted into the shared TOML `Config` via th
 - `src/core/all.rs` — registers the voice controllers.
 - `src/core/socketio.rs` — subscribes to the dictation/transcription broadcast buses; `streaming::handle_dictation_ws`.
 - `src/core/jsonrpc.rs` — wiring.
-- `src/openhuman/desktop_companion/pipeline.rs`, `src/openhuman/meet_agent/brain.rs`, `src/openhuman/audio_toolkit/ops.rs`, `src/openhuman/credentials/ops.rs` — call factory / TTS / transcription helpers.
+- `src/openhuman/desktop_companion/pipeline.rs`, `src/openhuman/meet/agent/brain.rs`, `src/openhuman/voice/audio_toolkit/ops.rs`, `src/openhuman/security/credentials/ops.rs` — call factory / TTS / transcription helpers.
 - `src/openhuman/inference/local/{install_whisper,install_piper}.rs` — reference voice constants/presets.
 
 ## Notes / gotchas

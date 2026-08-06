@@ -8,8 +8,8 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::types::SourceKind;
-use crate::openhuman::memory_tree::retrieval::{self, QueryResponse, RetrievalHit};
+use crate::openhuman::memory::store::chunks::types::SourceKind;
+use crate::openhuman::memory::tree::retrieval::{self, QueryResponse, RetrievalHit};
 
 /// Query the per-source summary trees. The global (time-axis) and topic
 /// (subject-axis) trees were removed; source trees plus the entity index are

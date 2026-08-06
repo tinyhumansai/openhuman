@@ -431,18 +431,6 @@ impl BrowserTool {
                 self.to_result(resp)
             }
 
-            BrowserAction::Screenshot { path, full_page } => {
-                let mut args = vec!["screenshot"];
-                if let Some(ref p) = path {
-                    args.push(p);
-                }
-                if full_page {
-                    args.push("--full");
-                }
-                let resp = self.run_command(&args).await?;
-                self.to_result(resp)
-            }
-
             BrowserAction::Wait { selector, ms, text } => {
                 let mut args = vec!["wait"];
                 let ms_str;
@@ -758,7 +746,7 @@ impl Tool for BrowserTool {
         concat!(
             "Web/browser automation with pluggable backends (playwright, agent-browser, rust-native, computer_use). ",
             "Supports DOM actions plus optional OS-level actions (mouse_move, mouse_click, mouse_drag, ",
-            "key_type, key_press, screen_capture) through a computer-use sidecar. Use 'snapshot' to map ",
+            "key_type, key_press) through a computer-use sidecar. Use 'snapshot' to map ",
             "interactive elements to refs (@e1, @e2). Enforces browser.allowed_domains for open actions."
         )
     }
@@ -770,10 +758,10 @@ impl Tool for BrowserTool {
                 "action": {
                     "type": "string",
                     "enum": ["open", "snapshot", "click", "fill", "type", "get_text",
-                             "get_title", "get_url", "screenshot", "wait", "press",
+                             "get_title", "get_url", "wait", "press",
                              "hover", "scroll", "is_visible", "close", "find",
                              "mouse_move", "mouse_click", "mouse_drag", "key_type",
-                             "key_press", "screen_capture"],
+                             "key_press"],
                     "description": "Browser action to perform (OS-level actions require backend=computer_use)"
                 },
                 "url": {
@@ -846,14 +834,6 @@ impl Tool for BrowserTool {
                     "type": "integer",
                     "description": "For snapshot: limit tree depth"
                 },
-                "full_page": {
-                    "type": "boolean",
-                    "description": "For screenshot: capture full page"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "File path for screenshot"
-                },
                 "ms": {
                     "type": "integer",
                     "description": "Milliseconds to wait"
@@ -889,14 +869,7 @@ impl Tool for BrowserTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
-        let backend = match self.resolve_backend().await {
-            Ok(selected) => selected,
-            Err(error) => {
-                return Ok(ToolResult::error(error.to_string()));
-            }
-        };
-
-        // Parse action from args
+        // Reject unsupported actions before resolving or dispatching to a backend.
         let action_str = args
             .get("action")
             .and_then(|v| v.as_str())
@@ -905,6 +878,13 @@ impl Tool for BrowserTool {
         if !is_supported_browser_action(action_str) {
             return Ok(ToolResult::error(format!("Unknown action: {action_str}")));
         }
+
+        let backend = match self.resolve_backend().await {
+            Ok(selected) => selected,
+            Err(error) => {
+                return Ok(ToolResult::error(error.to_string()));
+            }
+        };
 
         if backend == ResolvedBackend::ComputerUse {
             return self.execute_computer_use_action(action_str, &args).await;

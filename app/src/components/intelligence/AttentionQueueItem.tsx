@@ -17,7 +17,7 @@ import type {
   AttentionKind,
 } from '../../lib/orchestration/orchestrationClient';
 
-export interface AttentionQueueItemProps {
+interface AttentionQueueItemProps {
   item: AttentionItem;
   onAction?: (action: AttentionAction) => void;
 }

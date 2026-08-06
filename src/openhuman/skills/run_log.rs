@@ -138,9 +138,26 @@ pub async fn write_header(
     inputs: &Value,
     task_prompt: &str,
 ) -> std::io::Result<()> {
+    write_header_with_profile(path, workflow_id, run_id, inputs, task_prompt, None).await
+}
+
+/// Write a run header attributed to the active profile. Profile-less callers
+/// retain the legacy header format through [`write_header`].
+pub async fn write_header_with_profile(
+    path: &Path,
+    workflow_id: &str,
+    run_id: &str,
+    inputs: &Value,
+    task_prompt: &str,
+    profile_id: Option<&str>,
+) -> std::io::Result<()> {
+    let profile_line = profile_id
+        .map(|id| format!("profile_id: {id}\n"))
+        .unwrap_or_default();
     let header = format!(
         "==== workflow_run: {skill} ====\n\
          run_id : {run}\n\
+         {profile_line}\
          started: {start} UTC\n\
          inputs : {inputs}\n\n\
          --- task prompt ---\n{prompt}\n\n\
@@ -291,6 +308,9 @@ pub fn detect_repeated_line(
 pub struct ScannedRun {
     pub run_id: String,
     pub workflow_id: String,
+    /// Profile that launched the run. `None` denotes a legacy/profile-less run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
     /// Header `started:` timestamp (RFC3339); empty if header was malformed.
     pub started: String,
     /// `"DONE"` / `"DEGENERATE"` / `"FAILED"` / `"RUNNING"` (running ⇔ no footer yet).
@@ -330,6 +350,7 @@ pub fn scan_runs(workspace: &Path, workflow_id: Option<&str>, limit: usize) -> V
         let mut sid = String::new();
         let mut rid = String::new();
         let mut started = String::new();
+        let mut profile_id: Option<String> = None;
         let mut status = String::from("RUNNING");
         let mut duration_ms: Option<u64> = None;
         let mut finished: Option<String> = None;
@@ -363,6 +384,7 @@ pub fn scan_runs(workspace: &Path, workflow_id: Option<&str>, limit: usize) -> V
             match (label, seen_result) {
                 // Header fields (before --- result ---)
                 ("run_id", false) => rid = value.to_string(),
+                ("profile_id", false) => profile_id = Some(value.to_string()),
                 ("started", false) => started = value.to_string(),
                 // Footer fields (after --- result ---)
                 ("status", true) => status = value.to_string(),
@@ -391,6 +413,7 @@ pub fn scan_runs(workspace: &Path, workflow_id: Option<&str>, limit: usize) -> V
         runs.push(ScannedRun {
             run_id: rid,
             workflow_id: sid,
+            profile_id,
             started,
             status,
             duration_ms,
@@ -848,14 +871,14 @@ mod tests {
         .is_none());
         let line = format_event(&AgentProgress::ToolCallStarted {
             call_id: "c1".into(),
-            tool_name: "codegraph_search".into(),
+            tool_name: "memory_search".into(),
             arguments: serde_json::json!({"query": "x"}),
             iteration: 2,
             display_label: None,
             display_detail: None,
         })
         .expect("tool call logged");
-        assert!(line.contains("codegraph_search"));
+        assert!(line.contains("memory_search"));
         assert!(line.contains("it 2"));
     }
 }

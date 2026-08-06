@@ -11,9 +11,6 @@ importers:
 
   .:
     dependencies:
-      '@rive-app/react-canvas':
-        specifier: ^4.28.6
-        version: 4.28.6(react@19.2.5)
       '@tauri-apps/api':
         specifier: 2.10.1
         version: 2.10.1
@@ -30,6 +27,9 @@ importers:
 
   app:
     dependencies:
+      '@elevenlabs/react':
+        specifier: ^1.12.0
+        version: 1.12.0(@types/dom-mediacapture-record@1.0.22)(react@19.2.5)
       '@noble/ciphers':
         specifier: ^1.2.1
         version: 1.3.0
@@ -48,12 +48,6 @@ importers:
       '@reduxjs/toolkit':
         specifier: ^2.11.2
         version: 2.11.2(react-redux@9.2.0(@types/react@19.2.14)(react@19.2.5)(redux@5.0.1))(react@19.2.5)
-      '@remotion/player':
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      '@remotion/zod-types':
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)
       '@rive-app/react-webgl2':
         specifier: ^4.28.6
         version: 4.28.6(react@19.2.5)
@@ -105,9 +99,6 @@ importers:
       katex:
         specifier: ^0.16.47
         version: 0.16.47
-      lottie-react:
-        specifier: ^2.4.1
-        version: 2.4.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       os-browserify:
         specifier: ^0.3.0
         version: 0.3.0
@@ -126,9 +117,6 @@ importers:
       react-dom:
         specifier: ^19.1.0
         version: 19.2.5(react@19.2.5)
-      react-ga4:
-        specifier: ^3.0.1
-        version: 3.0.1
       react-icons:
         specifier: ^5.6.0
         version: 5.6.0(react@19.2.5)
@@ -162,9 +150,6 @@ importers:
       remark-math:
         specifier: ^6.0.0
         version: 6.0.0
-      remotion:
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       socket.io-client:
         specifier: ^4.8.3
         version: 4.8.3
@@ -253,6 +238,9 @@ importers:
       '@wdio/cli':
         specifier: ^9.24.0
         version: 9.27.0(@types/node@25.6.0)(expect-webdriverio@5.6.5)
+      '@wdio/globals':
+        specifier: ^9.24.0
+        version: 9.27.0(expect-webdriverio@5.6.5)(webdriverio@9.27.0)
       '@wdio/local-runner':
         specifier: ^9.24.0
         version: 9.27.0(@wdio/globals@9.27.0)(webdriverio@9.27.0)
@@ -260,6 +248,9 @@ importers:
         specifier: ^9.24.0
         version: 9.27.0
       '@wdio/spec-reporter':
+        specifier: ^9.24.0
+        version: 9.27.0
+      '@wdio/types':
         specifier: ^9.24.0
         version: 9.27.0
       autoprefixer:
@@ -319,6 +310,9 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(jsdom@28.1.0(@noble/hashes@2.2.0))(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7)(jiti@1.21.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
+      webdriverio:
+        specifier: ^9.24.0
+        version: 9.27.0
 
   packages/tauri-plugin-ptt:
     devDependencies:
@@ -431,6 +425,9 @@ packages:
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
 
+  '@bufbuild/protobuf@1.10.1':
+    resolution: {integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==}
+
   '@csstools/color-helpers@6.0.2':
     resolution: {integrity: sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==}
     engines: {node: '>=20.19.0'}
@@ -469,6 +466,17 @@ packages:
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
+
+  '@elevenlabs/client@1.17.0':
+    resolution: {integrity: sha512-TcFF3KlfuI/ol1yrl6OXfFopCJ1+B8EHtEmx1k4XTNduqnucwTM5u61AtCGBskWUVxdCaYzNXWysEqMvEhXIgQ==}
+
+  '@elevenlabs/react@1.12.0':
+    resolution: {integrity: sha512-Cp/Mzla6IWnPH5VjWUSyjTT2VW9It26Cwpn6dJ5PXcZ+6uddh5qVLuI+S6sE7oOMd4kLC+HC4MRd6FZ8VQHeOg==}
+    peerDependencies:
+      react: '>=16.8.0'
+
+  '@elevenlabs/types@0.19.0':
+    resolution: {integrity: sha512-CjaWT0Q4CWJPFbYrTSxzkW2NwUb9Z88m1hWL+7R07YZSp444OGl70/u1U/7fS3gjkeG/RgadzipDrhXYTZ5SAw==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -924,6 +932,12 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@livekit/mutex@1.1.1':
+    resolution: {integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==}
+
+  '@livekit/protocol@1.42.2':
+    resolution: {integrity: sha512-0jeCwoMJKcwsZICg5S6RZM4xhJoF78qMvQELjACJQn6/VB+jmiySQKOSELTXvPBVafHfEbMlqxUw2UR1jTXs2g==}
 
   '@napi-rs/wasm-runtime@1.1.4':
     resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
@@ -1406,25 +1420,6 @@ packages:
         optional: true
       react-redux:
         optional: true
-
-  '@remotion/player@4.0.454':
-    resolution: {integrity: sha512-Q4fEWapH21uEErdOfZxagOQcxbf/JGxPwqBOrW/NG9Y5qHgMMe5tBUCnr8rEqOA4txW/S4QHnN9HGWfV2nIvTg==}
-    peerDependencies:
-      react: '>=16.8.0'
-      react-dom: '>=16.8.0'
-
-  '@remotion/zod-types@4.0.454':
-    resolution: {integrity: sha512-nNXcHF4AmgihwI7sMx50rSgFuCfNyroP0OsgN/mMkQI7Y66uPWBh4Pcytlxs039EShvsiiH621E2TKZOX8ciRA==}
-    peerDependencies:
-      zod: 4.3.6
-
-  '@rive-app/canvas@2.37.8':
-    resolution: {integrity: sha512-nffrPG+VkBKHAxZdcqYlP5M+n/mOAoagj774HH397UPTsfC27gwQURg64i6dX7WswMc5qIVX0rzCrZ86Wb2HOA==}
-
-  '@rive-app/react-canvas@4.28.6':
-    resolution: {integrity: sha512-tMEb7uDr+xuPny4HRVnkfGDHgTCkTFn15u7GHj12hC94N59g/dO15TiGr9312GVTO82FulOymOKy6sgxZyi5rw==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0
 
   '@rive-app/react-webgl2@4.28.6':
     resolution: {integrity: sha512-QqtlD7bm01SxMLuEHE/BfhiPoX3RZ2/B32nF0IR0IRPe2ykxMeebWPtsX50AL9EKLbOh3Fgk3PJ7smkkvQwD2w==}
@@ -2000,6 +1995,9 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
+
+  '@types/dom-mediacapture-record@1.0.22':
+    resolution: {integrity: sha512-mUMZLK3NvwRLcAAT9qmcK+9p7tpU2FHdDsntR3YI4+GY88XrgG4XiE7u1Q2LAN2/FZOz/tdMDC3GQCR4T8nFuw==}
 
   '@types/earcut@3.0.0':
     resolution: {integrity: sha512-k/9fOUGO39yd2sCjrbAJvGDEQvRwRnQIZlBz43roGwUZo5SHAmyVvSFyaVVZkicRVCaDXPKlbxrUcBuJoSWunQ==}
@@ -4088,6 +4086,9 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
+  jose@6.2.8:
+    resolution: {integrity: sha512-Bsdjwm3Qsd/P0jR+BHDe3LytDfY7WBq2HmCCLIwuVRHMuEC9ae7/R474GIUdF1NgCyZjzVo/A9DOiOBtXq8ZoQ==}
+
   js-binary-schema-parser@2.0.3:
     resolution: {integrity: sha512-xezGJmOb4lk/M1ZZLTR/jaBHQ4gG/lqQnJqdIv4721DMggsa1bDVlHXNeHYogaIEHD9vCRv0fcL4hMA+Coarkg==}
 
@@ -4248,6 +4249,11 @@ packages:
     resolution: {integrity: sha512-wM1+Z03eypVAVUCE7QdSqpVIvelbOakn1M0bPDoA4SGWPx3sNDVUiMo3L6To6WWGClB7VyXnhQ4Sn7gxiJbE6A==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
+  livekit-client@2.16.1:
+    resolution: {integrity: sha512-PmOHiGdkzw2P/t0vLbJRwHU59+T+JcFlGTYDV7PObWmzvypIij1Vlj0WhZKDZ/Ac7CvwWinbiGCVw/Pb/OiYYw==}
+    peerDependencies:
+      '@types/dom-mediacapture-record': ^1
+
   locate-app@2.5.0:
     resolution: {integrity: sha512-xIqbzPMBYArJRmPGUZD9CzV9wOqmVtQnaAn3wrj3s6WYW0bQvPI7x+sPYUGmDTYMHefVK//zc6HEYZ1qnxIK+Q==}
 
@@ -4300,15 +4306,6 @@ packages:
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
-
-  lottie-react@2.4.1:
-    resolution: {integrity: sha512-LQrH7jlkigIIv++wIyrOYFLHSKQpEY4zehPicL9bQsrt1rnoKRYCYgpCUe5maqylNtacy58/sQDZTkwMcTRxZw==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
-  lottie-web@5.13.0:
-    resolution: {integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==}
 
   lowlight@3.3.0:
     resolution: {integrity: sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==}
@@ -4985,9 +4982,6 @@ packages:
     peerDependencies:
       react: ^19.2.5
 
-  react-ga4@3.0.1:
-    resolution: {integrity: sha512-GyCc01bSheWXjzGDyHsXMOqk/SP5Cf/JrcJTg4hcpKx4eeSwaJKpJUc+ipF4ffLTZkmabmf3ZGBv4OKHTXNXyA==}
-
   react-icons@5.6.0:
     resolution: {integrity: sha512-RH93p5ki6LfOiIt0UtDyNg/cee+HLVR6cHHtW3wALfo+eOHTp8RnU2kRkI6E+H19zMIs03DyxUG/GfZMOGvmiA==}
     peerDependencies:
@@ -5196,12 +5190,6 @@ packages:
   remark-stringify@11.0.0:
     resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
 
-  remotion@4.0.454:
-    resolution: {integrity: sha512-NGzA7HLBpzRPo1jAyLGXG7AaAdUYHJ18n06GM3nBvFkC5zVZua+2rhezxDTkMJFEMgL54cRQ2Zw/2yd3cWCRbg==}
-    peerDependencies:
-      react: '>=16.8.0'
-      react-dom: '>=16.8.0'
-
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
@@ -5309,6 +5297,13 @@ packages:
 
   scrollparent@2.1.0:
     resolution: {integrity: sha512-bnnvJL28/Rtz/kz2+4wpBjHzWoEzXhVg/TE8BeVGJHUqE8THNIRnDxDWMktwM+qahvlRdvlLdsQfYe+cuqfZeA==}
+
+  sdp-transform@2.15.0:
+    resolution: {integrity: sha512-KrOH82c/W+GYQ0LHqtr3caRpM3ITglq3ljGUIb8LTki7ByacJZ9z+piSGiwZDsRyhQbYBOBJgr2k6X4BZXi3Kw==}
+    hasBin: true
+
+  sdp@3.2.2:
+    resolution: {integrity: sha512-xZocWwfyp4hkbN4hLWxMjmv2Q8aNa9MhmOZ7L9aCZPT+dZsgRr6wZRrSYE3HTdyk/2pZKPSgqI7ns7Een1xMSA==}
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
@@ -5665,6 +5660,9 @@ packages:
     peerDependencies:
       typescript: '>=4.8.4'
 
+  ts-debounce@4.0.0:
+    resolution: {integrity: sha512-+1iDGY6NmOGidq7i7xZGA4cm8DAa6fqdYcvO5Z6yBevH++Bdo9Qt/mN0TzHUgcCcKv1gmh9+W5dHqz8pMWbCbg==}
+
   ts-interface-checker@0.1.13:
     resolution: {integrity: sha512-Y/arvbn+rrz3JCKl9C4kVNfTfSm2/mEp5FSz5EsZSANGPSlQrpRI5M4PKF+mJnE52jOO90PnPSc3Ur3bTQw0gA==}
 
@@ -5713,6 +5711,9 @@ packages:
   typed-array-length@1.0.7:
     resolution: {integrity: sha512-3KS2b+kL7fsuk/eJZ7EQdnEmQoaho/r6KUef7hxvltNA5DR8NAUM+8wJMbJyZ4G9/7i3v5zPBIMN5aybAh2/Jg==}
     engines: {node: '>= 0.4'}
+
+  typed-emitter@2.1.0:
+    resolution: {integrity: sha512-g/KzbYKbH5C2vPkaXGu8DJlHrGKHLsM25Zg9WuC9pMGfuvT+X25tZQWo5fK1BjBm8+UrVE9LDCvaY0CQk+fXDA==}
 
   typescript@5.8.3:
     resolution: {integrity: sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==}
@@ -5975,6 +5976,10 @@ packages:
 
   webpack-virtual-modules@0.5.0:
     resolution: {integrity: sha512-kyDivFZ7ZM0BVOUteVbDFhlRt7Ah/CSPwJdi8hBpkK7QLumUqdLtVfm/PX/hkcnrvr0i77fO5+TjZ94Pe+C9iw==}
+
+  webrtc-adapter@9.0.6:
+    resolution: {integrity: sha512-CHbl2ZQbxx164IgWRgzJno4hWtM4tFbRam1QfI3Yxhs3w/DvqluVxVWeXs3oL5/fbGkSNLKo0Ty5MgUWceNhog==}
+    engines: {node: '>=6.0.0', npm: '>=3.10.0'}
 
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
@@ -6310,6 +6315,8 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
+  '@bufbuild/protobuf@1.10.1': {}
+
   '@csstools/color-helpers@6.0.2': {}
 
   '@csstools/css-calc@3.2.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)':
@@ -6335,6 +6342,22 @@ snapshots:
   '@csstools/css-tokenizer@4.0.0': {}
 
   '@dimforge/rapier3d-compat@0.12.0': {}
+
+  '@elevenlabs/client@1.17.0(@types/dom-mediacapture-record@1.0.22)':
+    dependencies:
+      '@elevenlabs/types': 0.19.0
+      livekit-client: 2.16.1(@types/dom-mediacapture-record@1.0.22)
+    transitivePeerDependencies:
+      - '@types/dom-mediacapture-record'
+
+  '@elevenlabs/react@1.12.0(@types/dom-mediacapture-record@1.0.22)(react@19.2.5)':
+    dependencies:
+      '@elevenlabs/client': 1.17.0(@types/dom-mediacapture-record@1.0.22)
+      react: 19.2.5
+    transitivePeerDependencies:
+      - '@types/dom-mediacapture-record'
+
+  '@elevenlabs/types@0.19.0': {}
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -6729,6 +6752,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@livekit/mutex@1.1.1': {}
+
+  '@livekit/protocol@1.42.2':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
+
   '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
       '@emnapi/core': 1.10.0
@@ -7096,27 +7125,6 @@ snapshots:
     optionalDependencies:
       react: 19.2.5
       react-redux: 9.2.0(@types/react@19.2.14)(react@19.2.5)(redux@5.0.1)
-
-  '@remotion/player@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
-    dependencies:
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-      remotion: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-
-  '@remotion/zod-types@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)':
-    dependencies:
-      remotion: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - react
-      - react-dom
-
-  '@rive-app/canvas@2.37.8': {}
-
-  '@rive-app/react-canvas@4.28.6(react@19.2.5)':
-    dependencies:
-      '@rive-app/canvas': 2.37.8
-      react: 19.2.5
 
   '@rive-app/react-webgl2@4.28.6(react@19.2.5)':
     dependencies:
@@ -7581,6 +7589,8 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/deep-eql@4.0.2': {}
+
+  '@types/dom-mediacapture-record@1.0.22': {}
 
   '@types/earcut@3.0.0': {}
 
@@ -10161,6 +10171,8 @@ snapshots:
 
   jiti@2.6.1: {}
 
+  jose@6.2.8: {}
+
   js-binary-schema-parser@2.0.3: {}
 
   js-tokens@10.0.0: {}
@@ -10324,6 +10336,20 @@ snapshots:
 
   lines-and-columns@2.0.4: {}
 
+  livekit-client@2.16.1(@types/dom-mediacapture-record@1.0.22):
+    dependencies:
+      '@livekit/mutex': 1.1.1
+      '@livekit/protocol': 1.42.2
+      '@types/dom-mediacapture-record': 1.0.22
+      events: 3.3.0
+      jose: 6.2.8
+      loglevel: 1.9.2
+      sdp-transform: 2.15.0
+      ts-debounce: 4.0.0
+      tslib: 2.8.1
+      typed-emitter: 2.1.0
+      webrtc-adapter: 9.0.6
+
   locate-app@2.5.0:
     dependencies:
       '@promptbook/utils': 0.69.5
@@ -10368,14 +10394,6 @@ snapshots:
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
-
-  lottie-react@2.4.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
-    dependencies:
-      lottie-web: 5.13.0
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-
-  lottie-web@5.13.0: {}
 
   lowlight@3.3.0:
     dependencies:
@@ -11382,8 +11400,6 @@ snapshots:
       react: 19.2.5
       scheduler: 0.27.0
 
-  react-ga4@3.0.1: {}
-
   react-icons@5.6.0(react@19.2.5):
     dependencies:
       react: 19.2.5
@@ -11677,11 +11693,6 @@ snapshots:
       mdast-util-to-markdown: 2.1.2
       unified: 11.0.5
 
-  remotion@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
-    dependencies:
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-
   require-directory@2.1.1: {}
 
   require-from-string@2.0.2: {}
@@ -11826,6 +11837,10 @@ snapshots:
   scroll@3.0.1: {}
 
   scrollparent@2.1.0: {}
+
+  sdp-transform@2.15.0: {}
+
+  sdp@3.2.2: {}
 
   semver@6.3.1: {}
 
@@ -12273,6 +12288,8 @@ snapshots:
     dependencies:
       typescript: 5.8.3
 
+  ts-debounce@4.0.0: {}
+
   ts-interface-checker@0.1.13: {}
 
   tsconfig-paths@3.15.0:
@@ -12335,6 +12352,10 @@ snapshots:
       is-typed-array: 1.1.15
       possible-typed-array-names: 1.1.0
       reflect.getprototypeof: 1.0.10
+
+  typed-emitter@2.1.0:
+    optionalDependencies:
+      rxjs: 7.8.2
 
   typescript@5.8.3: {}
 
@@ -12631,6 +12652,10 @@ snapshots:
   webpack-sources@3.4.0: {}
 
   webpack-virtual-modules@0.5.0: {}
+
+  webrtc-adapter@9.0.6:
+    dependencies:
+      sdp: 3.2.2
 
   whatwg-encoding@3.1.1:
     dependencies:

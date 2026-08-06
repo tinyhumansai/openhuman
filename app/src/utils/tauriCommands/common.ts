@@ -125,8 +125,14 @@ export class IpcUnavailableError extends Error {
   /** The original `TypeError` (or other sync throw) the IPC bridge raised. */
   readonly cause: unknown;
   constructor(cmd: string, cause: unknown) {
+    // The cause is a `TypeError` on the legacy unguarded path, but a plain
+    // `{ message }` object on the guarded reject paths (see
+    // `looksLikeGuardedIpcUnavailable`) — read both so the real reason is
+    // preserved instead of collapsing to the generic fallback string.
+    const rawMessage =
+      typeof cause === 'string' ? cause : (cause as { message?: unknown } | null)?.message;
     const message =
-      cause instanceof Error && cause.message ? cause.message : 'IPC bridge not wired';
+      typeof rawMessage === 'string' && rawMessage.length > 0 ? rawMessage : 'IPC bridge not wired';
     super(`Tauri IPC unavailable for command "${cmd}": ${message}`);
     this.name = 'IpcUnavailableError';
     this.cmd = cmd;
@@ -156,12 +162,34 @@ function looksLikeCefPostMessageThrow(err: unknown): boolean {
 }
 
 /**
- * Classify a value thrown synchronously by `coreInvoke()`. Returns the typed
- * `IpcUnavailableError` when the shape matches the CEF fallback failure, or
- * `null` to let the caller surface the original error verbatim.
+ * Messages the *guarded* IPC-unavailable paths reject with. Since #5155 the
+ * dereference no longer throws: the vendored bootstrap settles the pending
+ * callback with `'IPC postMessage interface is unavailable on this platform'`,
+ * and `utils/ipcTransportFallback.ts` rejects with its own
+ * `'Tauri IPC …'`-prefixed messages when even the custom-protocol
+ * re-dispatch can't run. Those arrive as *rejections* carrying a plain
+ * `{ message }` object rather than a `TypeError`, so the pattern above misses
+ * them — match them here so call sites keep getting `IpcUnavailableError` and
+ * their graceful-degradation branches keep firing.
+ */
+const IPC_UNAVAILABLE_MESSAGE_PATTERN =
+  /IPC postMessage interface is unavailable|Tauri IPC bridge (is unavailable|never became available)|Tauri IPC fallback transport failed/;
+
+function looksLikeGuardedIpcUnavailable(err: unknown): boolean {
+  if (err === null || err === undefined) return false;
+  const candidate = (err as { message?: unknown }).message;
+  const msg = typeof err === 'string' ? err : typeof candidate === 'string' ? candidate : '';
+  return IPC_UNAVAILABLE_MESSAGE_PATTERN.test(msg);
+}
+
+/**
+ * Classify a value thrown synchronously by — or rejected from — `coreInvoke()`.
+ * Returns the typed `IpcUnavailableError` when the shape matches a CEF
+ * IPC-bridge failure, or `null` to let the caller surface the original error
+ * verbatim.
  */
 function classifyIpcThrow(cmd: string, err: unknown): IpcUnavailableError | null {
-  if (looksLikeCefPostMessageThrow(err)) {
+  if (looksLikeCefPostMessageThrow(err) || looksLikeGuardedIpcUnavailable(err)) {
     return new IpcUnavailableError(cmd, err);
   }
   return null;

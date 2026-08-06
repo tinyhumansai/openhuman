@@ -119,7 +119,7 @@ export type ParseErrorCode =
  * actual schema string we got, etc.). Consumers render via
  * `t(\`mcp.inventory.parseError.\${errorCode}\`)` + optional detail.
  */
-export type ParseResult =
+type ParseResult =
   | { ok: true; manifest: McpInventoryManifest }
   | { ok: false; errorCode: ParseErrorCode; detail?: string };
 

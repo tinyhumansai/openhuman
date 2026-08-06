@@ -20,23 +20,23 @@ interface DisconnectChannelOptions {
   clearMemory?: boolean;
 }
 
-export interface TelegramLoginStartResult {
+interface TelegramLoginStartResult {
   linkToken: string;
   telegramUrl: string;
   botUsername: string;
 }
 
-export interface DiscordLinkStartResult {
+interface DiscordLinkStartResult {
   linkToken: string;
   instructions: string;
 }
 
-export interface DiscordLinkCheckResult {
+interface DiscordLinkCheckResult {
   linked: boolean;
   details?: Record<string, unknown> | null;
 }
 
-export interface TelegramLoginCheckResult {
+interface TelegramLoginCheckResult {
   linked: boolean;
   details?: Record<string, unknown> | null;
 }

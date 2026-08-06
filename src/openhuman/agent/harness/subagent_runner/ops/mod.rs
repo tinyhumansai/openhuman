@@ -11,7 +11,7 @@
 //!
 //! | File                | Contents                                                       |
 //! | ------------------- | -------------------------------------------------------------- |
-//! | `provider.rs`       | `resolve_subagent_provider`, `user_is_signed_in_to_composio`, `LazyToolkitResolver` |
+//! | `provider.rs`       | `resolve_subagent_source`, `user_is_signed_in_to_composio`, `LazyToolkitResolver` |
 //! | `prompt.rs`         | Role-contract suffix, `append_subagent_role_contract`, `dedup_tool_specs_by_name` |
 //! | `runner.rs`         | `run_subagent`, `run_typed_mode`                               |
 //! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
@@ -35,11 +35,8 @@ pub use runner::run_subagent;
 // without reaching into a private sibling module.
 pub(crate) use provider::user_is_signed_in_to_composio;
 
-// `resolve_subagent_provider` is called from tests via
-// `super::resolve_subagent_provider`. Keep it accessible at the ops
-// module boundary.
 pub(crate) use prompt::append_subagent_role_contract;
-pub(crate) use provider::resolve_subagent_provider;
+pub(crate) use provider::resolve_subagent_source;
 
 // Re-exports for test companion modules that use `use super::*`.
 // These provide the same flat namespace the original ops.rs had.
@@ -59,9 +56,7 @@ pub(super) use provider::LazyToolkitResolver;
 pub(super) use super::tool_prep::filter_tool_indices;
 // Types used by tests that were previously in scope via the flat ops.rs imports.
 #[cfg(test)]
-pub(super) use super::types::{
-    SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
-};
+pub(super) use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions};
 #[cfg(test)]
 pub(super) use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
 #[cfg(test)]

@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use super::state::IngestionState;
 use super::MemoryIngestionConfig;
 use crate::core::event_bus::{publish_global, DomainEvent};
-use crate::openhuman::memory_store::{NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
 
 /// Default capacity of the ingestion job channel.
 ///
@@ -409,7 +409,7 @@ mod tests {
     #[tokio::test]
     #[should_panic(expected = "ingestion queue capacity must be greater than zero")]
     async fn start_worker_rejects_zero_capacity() {
-        use crate::openhuman::embeddings::NoopEmbedding;
+        use crate::openhuman::inference::embeddings::NoopEmbedding;
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
         let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();

@@ -24,6 +24,7 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: false,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });
@@ -36,6 +37,7 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: true,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });
@@ -46,6 +48,7 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: false,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });
@@ -56,6 +59,7 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: false,
       errorMessage: 'token expired',
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });
@@ -65,8 +69,37 @@ describe('deepLinkAuthState transitions', () => {
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: false,
       errorMessage: 'cannot decrypt',
+      errorMessageKey: null,
       requiresAppDataReset: true,
     });
+  });
+
+  // Deep-link auth runs outside React and cannot call `useT()`, so failures
+  // whose copy is localized hand over an i18n key for the rendering component
+  // to resolve. Everything else keeps a literal message.
+  it('failDeepLinkAuthProcessing carries an i18n key for localized failures', () => {
+    failDeepLinkAuthProcessing('', { messageKey: 'welcome.coreConfigUnreadable' });
+    expect(getDeepLinkAuthState()).toEqual({
+      isProcessing: false,
+      errorMessage: '',
+      errorMessageKey: 'welcome.coreConfigUnreadable',
+      requiresAppDataReset: false,
+    });
+  });
+
+  it('clears a stale i18n key on the next transition', () => {
+    failDeepLinkAuthProcessing('', { messageKey: 'welcome.coreConfigUnreadable' });
+    beginDeepLinkAuthProcessing();
+    expect(getDeepLinkAuthState().errorMessageKey).toBeNull();
+
+    failDeepLinkAuthProcessing('', { messageKey: 'welcome.coreConfigUnreadable' });
+    completeDeepLinkAuthProcessing();
+    expect(getDeepLinkAuthState().errorMessageKey).toBeNull();
+
+    // A later literal-message failure must not inherit the previous key.
+    failDeepLinkAuthProcessing('', { messageKey: 'welcome.coreConfigUnreadable' });
+    failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
+    expect(getDeepLinkAuthState().errorMessageKey).toBeNull();
   });
 });
 
@@ -120,6 +153,7 @@ describe('useDeepLinkAuthState hook', () => {
     expect(result.current).toEqual({
       isProcessing: false,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
 
@@ -129,6 +163,7 @@ describe('useDeepLinkAuthState hook', () => {
     expect(result.current).toEqual({
       isProcessing: true,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
 
@@ -138,6 +173,7 @@ describe('useDeepLinkAuthState hook', () => {
     expect(result.current).toEqual({
       isProcessing: false,
       errorMessage: 'denied',
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });

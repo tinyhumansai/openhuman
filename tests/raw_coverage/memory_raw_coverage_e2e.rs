@@ -13,30 +13,30 @@ use openhuman_core::openhuman::memory::{
     ExtractionMode, IngestionState, MemoryIngestionConfig, MemoryIngestionRequest,
     NamespaceDocumentInput,
 };
-use openhuman_core::openhuman::memory_sources::status::{source_status, FreshnessLabel};
-use openhuman_core::openhuman::memory_sources::{MemorySourceEntry, SourceKind};
-use openhuman_core::openhuman::memory_store::chunks::store::upsert_chunks;
-use openhuman_core::openhuman::memory_store::chunks::types::{
+use openhuman_core::openhuman::memory::sources::status::{source_status, FreshnessLabel};
+use openhuman_core::openhuman::memory::sources::{MemorySourceEntry, SourceKind};
+use openhuman_core::openhuman::memory::store::chunks::store::upsert_chunks;
+use openhuman_core::openhuman::memory::store::chunks::types::{
     approx_token_count, chunk_id, Chunk, Metadata, SourceKind as ChunkSourceKind, SourceRef,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::chat::{
+use tinycortex::memory::ingest::canonicalize::chat::{
     canonicalise as canonicalise_chat, ChatBatch, ChatMessage,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::document::{
+use tinycortex::memory::ingest::canonicalize::document::{
     canonicalise as canonicalise_document, DocumentInput,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::email::{
+use tinycortex::memory::ingest::canonicalize::email::{
     canonicalise as canonicalise_email, EmailMessage, EmailThread,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::{
+use openhuman_core::openhuman::memory::sync::composio::providers::{
     classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope,
 };
-use openhuman_core::openhuman::memory_sync::{SyncOutcome, SyncPipelineKind};
-use openhuman_core::openhuman::memory_tree::summarise::{
+use tinycortex::memory::sync::{SyncOutcome, SyncPipelineKind};
+use openhuman_core::openhuman::memory::tree::summarise::{
     fallback_summary, SummaryContext, SummaryInput,
 };
-use openhuman_core::openhuman::memory_tree::tree_runtime::store as tree_store;
-use openhuman_core::openhuman::memory_tree::tree_runtime::{
+use openhuman_core::openhuman::memory::tree::tree_runtime::store as tree_store;
+use openhuman_core::openhuman::memory::tree::tree_runtime::{
     derive_node_ids, estimate_tokens, level_from_node_id, node_id_to_path, NodeLevel, TreeNode,
 };
 use openhuman_core::openhuman::threads::turn_state::{
@@ -83,7 +83,7 @@ fn tree_node(namespace: &str, node_id: &str, summary: &str) -> TreeNode {
         node_id: node_id.to_string(),
         namespace: namespace.to_string(),
         level: level_from_node_id(node_id),
-        parent_id: openhuman_core::openhuman::memory_tree::tree_runtime::derive_parent_id(node_id),
+        parent_id: openhuman_core::openhuman::memory::tree::tree_runtime::derive_parent_id(node_id),
         summary: summary.to_string(),
         token_count: estimate_tokens(summary),
         child_count: 0,
@@ -267,9 +267,12 @@ fn memory_tree_types_and_fallback_summary_cover_budget_and_legacy_parse_paths() 
 
     let ctx = SummaryContext {
         tree_id: "tree-coverage",
-        tree_kind: openhuman_core::openhuman::memory_store::trees::types::TreeKind::Global,
+        tree_kind: openhuman_core::openhuman::memory::store::trees::types::TreeKind::Global,
         target_level: 2,
         token_budget: 128,
+        input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+        overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+        ask: None,
     };
     assert_eq!(ctx.tree_id, "tree-coverage");
     assert_eq!(ctx.target_level, 2);
@@ -392,6 +395,7 @@ fn memory_sources_validation_and_sync_classification_edges() {
         records_ingested: 3,
         more_pending: true,
         note: Some("paged".into()),
+        ..SyncOutcome::default()
     };
     let encoded = serde_json::to_value(&outcome).expect("sync outcome json");
     assert_eq!(encoded["records_ingested"], 3);
@@ -620,6 +624,7 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
             transcript: vec![],
         }),
         output: None,
+        seq: None,
     });
     let second = TurnState::started("thread-b", "req-b", 2, "2026-05-29T12:01:00Z");
     store.put(&first).expect("put first");

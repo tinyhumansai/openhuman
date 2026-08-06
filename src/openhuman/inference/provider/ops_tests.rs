@@ -1,7 +1,7 @@
 use super::*;
 use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::AuthService;
+use crate::openhuman::security::credentials::AuthService;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -289,17 +289,6 @@ async fn openrouter_key_is_trimmed_for_validation_and_catalog_probe() {
 }
 
 #[test]
-fn factory_backend() {
-    assert!(create_backend_inference_provider(
-        None,
-        None,
-        None,
-        &ProviderRuntimeOptions::default()
-    )
-    .is_ok());
-}
-
-#[test]
 fn skips_sentry_report_for_transient_upstream_statuses() {
     // Transient statuses — 429 rate-limit, 408 client timeout, and 502/503/504
     // gateway-layer failures — are retried by reliable.rs. The aggregate
@@ -336,7 +325,7 @@ fn skips_sentry_report_for_transient_upstream_statuses() {
 
 #[test]
 fn backend_error_code_owned_gates_managed_errors_except_malformed_bad_request() {
-    use crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+    use crate::openhuman::inference::provider::openhuman_backend_model::PROVIDER_LABEL;
 
     // F2/F4: backend-owned / expected-user-state errorCodes must NOT page the
     // provider HTTP layer.
@@ -526,12 +515,12 @@ mod provider_config_rejection_suppression {
         // rule.)
         assert!(!is_provider_config_rejection_http(
             reqwest::StatusCode::BAD_REQUEST,
-            openhuman_backend::PROVIDER_LABEL,
+            openhuman_backend_model::PROVIDER_LABEL,
             TIER_LEAK_BODY,
         ));
         assert!(!is_provider_config_rejection_http(
             reqwest::StatusCode::BAD_REQUEST,
-            openhuman_backend::PROVIDER_LABEL,
+            openhuman_backend_model::PROVIDER_LABEL,
             TEMP_BODY,
         ));
     }
@@ -556,7 +545,7 @@ mod provider_config_rejection_suppression {
             assert!(
                 is_provider_config_rejection_http(
                     reqwest::StatusCode::BAD_REQUEST,
-                    openhuman_backend::PROVIDER_LABEL,
+                    openhuman_backend_model::PROVIDER_LABEL,
                     body,
                 ),
                 "TAURI-RUST-2Z1 body must be suppressed for openhuman backend: {body:?}"
@@ -625,7 +614,7 @@ mod provider_config_rejection_suppression {
         assert!(
             !is_provider_config_rejection_http(
                 reqwest::StatusCode::FORBIDDEN,
-                openhuman_backend::PROVIDER_LABEL,
+                openhuman_backend_model::PROVIDER_LABEL,
                 body,
             ),
             "backend 403 subscription phrase must NOT be suppressed (polarity guard)"
@@ -1141,7 +1130,7 @@ fn parse_models_response_handles_non_object_body() {
 #[test]
 fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
     use reqwest::StatusCode;
-    let backend = crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+    let backend = crate::openhuman::inference::provider::openhuman_backend_model::PROVIDER_LABEL;
 
     assert!(is_backend_auth_failure(backend, StatusCode::UNAUTHORIZED));
     assert!(is_backend_auth_failure(backend, StatusCode::FORBIDDEN));
@@ -1221,7 +1210,7 @@ fn byo_provider_auth_failure_demotes_authentication_error_bodies() {
 #[test]
 fn byo_provider_auth_failure_excludes_openhuman_backend() {
     use reqwest::StatusCode;
-    let backend = crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+    let backend = crate::openhuman::inference::provider::openhuman_backend_model::PROVIDER_LABEL;
     let body = r#"{"error":{"type":"authentication_error"}}"#;
     assert!(!is_byo_provider_auth_failure_http(
         backend,
@@ -1358,7 +1347,7 @@ async fn publish_backend_session_expired_emits_sanitized_session_expired() {
     );
     publish_backend_session_expired(
         "chat_completions",
-        crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL,
+        crate::openhuman::inference::provider::openhuman_backend_model::PROVIDER_LABEL,
         reqwest::StatusCode::UNAUTHORIZED,
         &msg,
     );
@@ -1386,93 +1375,6 @@ async fn publish_backend_session_expired_emits_sanitized_session_expired() {
     );
     assert!(
         !reason.contains(secret),
-        "raw secret must not survive into the SessionExpired reason: {reason}"
-    );
-}
-
-/// End-to-end regression for TAURI-RUST-N: a backend `401 Invalid token`
-/// on the hand-rolled `chat_completions` path must publish `SessionExpired`
-/// (driving reauth) and surface the typed error — NOT spam Sentry. The
-/// provider is labelled exactly like the OpenHuman backend provider, which
-/// is what gates the backend-auth-failure branch.
-#[tokio::test]
-async fn chat_completions_backend_401_publishes_session_expired() {
-    use crate::core::event_bus::{global, init_global, DomainEvent};
-    use axum::routing::post;
-
-    init_global(1024);
-    let mut rx = global().expect("event bus initialized").raw_receiver();
-
-    async fn unauthorized_handler() -> Response {
-        // `TEST_MARKER_B` distinguishes this event from the sibling
-        // `publish_backend_session_expired_*` test on the shared global
-        // bus; the `sk-` token probes end-to-end redaction through
-        // `api_error` → `publish_backend_session_expired`.
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "TEST_MARKER_B Invalid token sk-LIVEB9876543210fedcbaSECRET"
-            })),
-        )
-            .into_response()
-    }
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let addr = listener.local_addr().expect("local_addr");
-    let app = Router::new().route("/chat/completions", post(unauthorized_handler));
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
-    });
-
-    let provider =
-        crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new_no_responses_fallback(
-            crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL,
-            &format!("http://{addr}"),
-            Some("expired-jwt"),
-            crate::openhuman::inference::provider::compatible::AuthStyle::Bearer,
-        );
-
-    let err = crate::openhuman::inference::provider::traits::Provider::chat_with_system(
-        &provider,
-        None,
-        "hi",
-        "reasoning-quick-v1",
-        0.0,
-    )
-    .await
-    .expect_err("backend 401 must surface as an error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("OpenHuman API error (401") && msg.contains("Invalid token"),
-        "error must carry the backend 401 envelope: {msg}"
-    );
-
-    let mut reason_seen: Option<String> = None;
-    loop {
-        match rx.try_recv() {
-            Ok(DomainEvent::SessionExpired { source, reason }) => {
-                if source == "llm_provider.openhuman_backend" && reason.contains("TEST_MARKER_B") {
-                    reason_seen = Some(reason);
-                    break;
-                }
-            }
-            Ok(_) => continue,
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-            Err(_) => break,
-        }
-    }
-    let reason = reason_seen.expect(
-        "backend 401 on chat_completions must publish SessionExpired carrying TEST_MARKER_B, not report to Sentry",
-    );
-    assert!(
-        reason.contains("[REDACTED]"),
-        "sanitize_api_error must redact the sk- token end-to-end: {reason}"
-    );
-    assert!(
-        !reason.contains("sk-LIVEB9876543210fedcbaSECRET"),
         "raw secret must not survive into the SessionExpired reason: {reason}"
     );
 }

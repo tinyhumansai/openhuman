@@ -1,0 +1,65 @@
+# Dependency-floor ratchet. `scripts/check-kernel-floor.sh` fails when a profile
+# exceeds its limit here.
+#
+# Format: <profile>:<max packages>:<max unique crate names>:<max native builds>
+#
+# The ratchet only goes DOWN. Lowering a number is the point — every gating step
+# that sheds crates should lower it in the same PR, which is what stops the floor
+# silently growing back. Raising one requires a written justification in the PR
+# body and a reviewer who reads it; a dependency added to an always-on path is
+# exactly the regression this file exists to catch.
+#
+# Measure with:  scripts/kernel-floor.sh flows
+# Simulate with: scripts/dep-sim.py --cut <crates>
+#
+# History
+#   312/285/6  2026-08-02  merge origin/main (+5 names) — INHERITED, not introduced here.
+#                      A rise in this number is the one thing this file exists
+#                      to make someone justify, so: main grew the graph on its
+#                      own (the #5232 tinyhumans-sdk vendoring and the #5202 /
+#                      #5233 backend-client refactors landed between this
+#                      branch's base and the merge). None of the seven gates
+#                      regressed — verified with
+#                        scripts/assert-shed.sh tokenjuice-treesitter \
+#                          arboard enigo rdev clap env_logger tracing-appender \
+#                          tracing-log starship-battery ethers-core \
+#                          ethers-signers coins-bip39 bitcoin lettre \
+#                          async-imap mail-parser axum prost
+#                      → all 17 still absent. So the branch's -138 is intact and
+#                      the +5 rides on top of it. Do NOT raise this number again
+#                      without re-running that assertion: the failure mode it
+#                      guards against is a merge silently re-adding a crate a
+#                      gate had removed, which looks identical to upstream growth
+#                      if you only compare totals.
+#   280/6  2026-08-02  tinychannels provider gating (-28). Gated the two heavy
+#                      PROVIDERS inside the vendored crate (`email` = lettre/
+#                      async-imap/mail-parser, `lark` = axum/prost) rather than
+#                      gating the crate out of openhuman — the crate itself is
+#                      load-bearing (DomainEvent embeds its envelope, config and
+#                      security::pairing re-export its types), so gating it
+#                      would have meant stubbing ~28 items including crypto
+#                      helpers and a PERSISTED session-key derivation.
+#   308/6  2026-08-02  web3 cohort: ethers-core/ethers-signers/coins-bip39
+#                      join the `web3` gate, unblocked by giving Polymarket its
+#                      own `prediction-markets` feature that implies it (-67 —
+#                      the largest single shed in the program). bs58 and
+#                      ed25519-dalek stay always-on (orchestration + tinyplace
+#                      identity), and curve25519-dalek survives under them.
+#   375/6  2026-08-01  M2 step 4: tracing-appender + tracing-log behind
+#                      default-ON `file-logging` (-9). Off-state keeps stderr
+#                      and Sentry but writes nothing to disk, and drops the
+#                      log->tracing bridge in every init path.
+#   384/6  2026-08-01  M2 step 3: starship-battery behind default-ON
+#                      `scheduler-gate` (-3). Off-state = "on AC, no charge
+#                      signal", i.e. require_ac_power is not enforced.
+#   387/6  2026-08-01  M2 step 2: clap + env_logger behind default-OFF
+#                      `bin-tools`; the six src/bin/ targets declare it as a
+#                      required-feature (-14, a whole CLI stack).
+#   401/6  2026-08-01  M2 step 1: arboard/enigo/rdev folded into the `voice`
+#                      gate (-17). arboard alone was 11 of those — an X11/wayland
+#                      clipboard stack in every workflow-only build.
+#   418/6  2026-08-01  baseline at the start of the kernelization program.
+#                      Native: aws-lc-sys libgit2-sys libsqlite3-sys libz-sys
+#                      lzma-sys ring. Target after gating is 222 names / 2 native
+#                      (libsqlite3-sys, ring) — see docs/plans MIGRATION-PLAN G6.
+flows:312:285:6

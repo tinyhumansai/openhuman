@@ -109,6 +109,10 @@ vi.mock('../components/layout/shell/SidebarSlot', () => ({
 }));
 vi.mock('../components/OpenhumanLinkModal', () => ({ default: () => null }));
 vi.mock('../components/upsell/GlobalUpsellBanner', () => ({ default: () => null }));
+// Same reason as the banner above: it reads billing usage via `useUsageState`,
+// which needs the real `CoreStateProvider` snapshot this suite deliberately
+// stubs out. This suite is about webview overlay visibility, not banners.
+vi.mock('../components/upsell/MemoryEmbeddingBudgetBanner', () => ({ default: () => null }));
 vi.mock('../features/meet/MascotFrameProducer', () => ({ MascotFrameProducer: () => null }));
 vi.mock('../components/walkthrough/AppWalkthrough', () => ({ default: () => null }));
 

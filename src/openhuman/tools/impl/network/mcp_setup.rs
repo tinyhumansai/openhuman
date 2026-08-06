@@ -1,9 +1,9 @@
-//! Agent-facing tool wrappers around `mcp_registry::setup_ops`.
+//! Agent-facing tool wrappers around `mcp::registry::setup_ops`.
 //!
 //! Six thin tools the `mcp_setup` sub-agent uses to walk the user
 //! through installing an MCP server. They are intentionally simple —
 //! the real logic lives in
-//! [`crate::openhuman::mcp_registry::setup_ops`]; these structs only
+//! [`crate::openhuman::mcp::registry::setup_ops`]; these structs only
 //! marshall args ↔ `serde_json::Value` and turn `RpcOutcome` into a
 //! `ToolResult`.
 //!
@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::mcp_registry::setup_ops;
+use crate::openhuman::mcp::registry::setup_ops;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

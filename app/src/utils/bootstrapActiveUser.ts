@@ -20,7 +20,7 @@
  * `userScopedStorage.ts::primeActiveUserId` and the "cloud-mode reload
  * survival" test.
  */
-export interface BootstrapContext {
+interface BootstrapContext {
   isStandaloneNativeWindow: boolean;
   coreMode: 'local' | 'cloud' | null;
   getActiveUserIdFromCore: () => Promise<string | null>;

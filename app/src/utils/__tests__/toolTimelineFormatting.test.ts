@@ -6,6 +6,7 @@ import {
   buildProcessingBlocks,
   categorizeTool,
   extractAgentSources,
+  extractSearchProvider,
   formatTimelineEntry,
   formatToolName,
   isKnownClientTool,
@@ -14,7 +15,7 @@ import {
 } from '../toolTimelineFormatting';
 
 function entry(overrides: Partial<ToolTimelineEntry>): ToolTimelineEntry {
-  return { id: 'x', name: 'delegate_notion', round: 1, status: 'running', ...overrides };
+  return { id: 'x', name: 'delegate_notion', round: 1, seq: 0, status: 'running', ...overrides };
 }
 
 describe('formatTimelineEntry', () => {
@@ -167,6 +168,87 @@ describe('formatTimelineEntry', () => {
     ).toEqual({ title: 'Searching: rust async trait' });
   });
 
+  it('attributes a completed web_search to the resolved provider', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search',
+          status: 'success',
+          argsBuffer: JSON.stringify({ query: 'rust async trait' }),
+          result: 'Search results for: rust async trait (via Exa)\n1. Some title\n   https://x.dev',
+        })
+      )
+    ).toEqual({ title: 'Searched with Exa', detail: 'rust async trait' });
+  });
+
+  it('reflects a different provider from the result (attribution is dynamic)', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search',
+          status: 'success',
+          argsBuffer: JSON.stringify({ query: 'weather' }),
+          result: 'Search results for: weather (via Brave)\n1. Forecast',
+        })
+      )
+    ).toEqual({ title: 'Searched with Brave', detail: 'weather' });
+  });
+
+  it('keeps the running label when no result is present yet', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search',
+          status: 'running',
+          argsBuffer: JSON.stringify({ query: 'rust async trait' }),
+        })
+      )
+    ).toEqual({ title: 'Searching: rust async trait' });
+  });
+
+  // `web_search_tool` is the name the core actually registers and streams for
+  // the canonical search slot; `web_search` is only the settings-family id.
+  // Without this the real production row fell through to "Web Search Tool".
+  it('formats the streamed web_search_tool name while running', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search_tool',
+          status: 'running',
+          argsBuffer: JSON.stringify({ query: 'rust async trait' }),
+        })
+      )
+    ).toEqual({ title: 'Searching: rust async trait' });
+  });
+
+  it('attributes a completed web_search_tool from the markdown result', () => {
+    // Production renders tool results as markdown (`output_for_llm(true)`),
+    // so the marker arrives on the markdown heading line.
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search_tool',
+          status: 'success',
+          argsBuffer: JSON.stringify({ query: 'rust async trait' }),
+          result: '# Search results — `rust async trait` (via Exa)\n\n## [T](https://x.dev)',
+        })
+      )
+    ).toEqual({ title: 'Searched with Exa', detail: 'rust async trait' });
+  });
+
+  it('attributes a completed web_search_tool that returned no results', () => {
+    expect(
+      formatTimelineEntry(
+        entry({
+          name: 'web_search_tool',
+          status: 'success',
+          argsBuffer: JSON.stringify({ query: 'zzzz' }),
+          result: '_No results for `zzzz`_ (via Exa)',
+        })
+      )
+    ).toEqual({ title: 'Searched with Exa', detail: 'zzzz' });
+  });
+
   it('formats file_read with shortened path', () => {
     expect(
       formatTimelineEntry(
@@ -205,12 +287,6 @@ describe('formatTimelineEntry', () => {
     ).toEqual({ title: 'Git diff', detail: 'diff --stat' });
   });
 
-  it('formats screenshot as a simple label', () => {
-    expect(formatTimelineEntry(entry({ name: 'screenshot' }))).toEqual({
-      title: 'Taking screenshot',
-    });
-  });
-
   it('formats glob with pattern detail', () => {
     expect(
       formatTimelineEntry(
@@ -239,6 +315,45 @@ describe('formatTimelineEntry', () => {
   });
 });
 
+describe('extractSearchProvider', () => {
+  it('reads the provider from a `(via …)` marker', () => {
+    expect(extractSearchProvider('Search results for: q (via Exa)\n1. foo')).toBe('Exa');
+    expect(extractSearchProvider('Search results for: q (via Brave)')).toBe('Brave');
+    expect(extractSearchProvider('# Search results — `q` (via Querit)')).toBe('Querit');
+  });
+
+  it('returns undefined when there is no marker or no result', () => {
+    expect(extractSearchProvider(undefined)).toBeUndefined();
+    expect(extractSearchProvider('')).toBeUndefined();
+    expect(extractSearchProvider('No results found for: q')).toBeUndefined();
+  });
+
+  it('trims surrounding whitespace in the provider name', () => {
+    expect(extractSearchProvider('foo (via  Exa )')).toBe('Exa');
+  });
+
+  it('ignores a `(via …)` string that appears only in a result excerpt', () => {
+    expect(
+      extractSearchProvider('Search results for: q\n1. Title\n   Booked (via SomeAirline) today.')
+    ).toBeUndefined();
+  });
+
+  it('ignores an implausibly long marker', () => {
+    expect(extractSearchProvider(`Search results for: q (via ${'x'.repeat(64)})`)).toBeUndefined();
+  });
+
+  it('reads the trailing marker when the echoed query also contains one', () => {
+    // The heading echoes the user's query, so a query like `login (via OAuth)`
+    // puts a decoy marker ahead of the real one. Only the trailing marker counts.
+    expect(extractSearchProvider('Search results for: login (via OAuth) (via Exa)')).toBe('Exa');
+  });
+
+  it('reads the marker from an empty-result heading', () => {
+    expect(extractSearchProvider('No results found for: q (via Exa)')).toBe('Exa');
+    expect(extractSearchProvider('_No results for `q`_ (via Brave)')).toBe('Brave');
+  });
+});
+
 describe('formatToolName', () => {
   it('returns human-readable names for known tools', () => {
     expect(formatToolName('shell')).toBe('Running command');
@@ -247,7 +362,6 @@ describe('formatToolName', () => {
     expect(formatToolName('edit')).toBe('Editing file');
     expect(formatToolName('grep')).toBe('Searching code');
     expect(formatToolName('git_operations')).toBe('Git operation');
-    expect(formatToolName('screenshot')).toBe('Taking screenshot');
     expect(formatToolName('lsp')).toBe('Code intelligence');
   });
 
@@ -284,6 +398,9 @@ describe('isKnownClientTool', () => {
     expect(isKnownClientTool('shell')).toBe(true);
     expect(isKnownClientTool('subagent:researcher')).toBe(true);
     expect(isKnownClientTool('delegate_to_integrations_agent')).toBe(true);
+    // The streamed search-slot name, so the client label wins over the
+    // server's humanized "Web Search Tool".
+    expect(isKnownClientTool('web_search_tool')).toBe(true);
   });
 
   it('does not recognize dynamic Composio/MCP actions (server labels them)', () => {

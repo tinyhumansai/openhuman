@@ -6,9 +6,9 @@
  */
 
 /** Toolkits whose OAuth flows are hosted by Meta. */
-export const META_OAUTH_TOOLKITS = ['instagram', 'facebook'] as const;
+const META_OAUTH_TOOLKITS = ['instagram', 'facebook'] as const;
 
-export type MetaOAuthToolkit = (typeof META_OAUTH_TOOLKITS)[number];
+type MetaOAuthToolkit = (typeof META_OAUTH_TOOLKITS)[number];
 
 export function isMetaOAuthToolkit(slug: string): slug is MetaOAuthToolkit {
   const key = slug.trim().toLowerCase();

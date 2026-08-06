@@ -3,6 +3,7 @@
 use super::dispatch::{run_message_dispatch_loop, RuntimeChannelMessage};
 use super::supervision::{compute_max_in_flight_messages, spawn_supervised_listener};
 use crate::core::event_bus::{self, DomainEvent, TracingSubscriber, DEFAULT_CAPACITY};
+use crate::openhuman::agent::context::channels_prompt::build_system_prompt;
 use crate::openhuman::agent::harness::build_tool_instructions_filtered;
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::channels::context::{
@@ -29,10 +30,9 @@ use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::yuanbao::YuanbaoChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
-use crate::openhuman::context::channels_prompt::build_system_prompt;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
+use crate::openhuman::memory::store as memory_store;
 use crate::openhuman::memory::Memory;
-use crate::openhuman::memory_store;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools;
 use anyhow::Result;
@@ -47,12 +47,10 @@ use tokio::sync::mpsc;
 /// `chat_provider` routing and unconditionally build a cloud chain, so
 /// Telegram (and other channels) never honored a user's local-Ollama /
 /// BYOK selection. `resolve_chat_workload` inspects the resolved chat
-/// workload string and chooses between preserving the legacy
-/// `create_intelligent_routing_provider` chain (Cloud) and dispatching
-/// to the unified workload factory (Workload).
+/// workload string and chooses between the managed-cloud selection (Cloud)
+/// and dispatching to the unified workload factory (Workload).
 pub(super) enum ChatWorkloadResolution {
-    /// Preserve the existing cloud chain (`ReliableProvider` +
-    /// `IntelligentRoutingProvider`) and `config.default_model`.
+    /// Preserve the managed-cloud selection and `config.default_model`.
     Cloud,
     /// Build the channel provider via `create_chat_provider("chat", config)`.
     Workload {
@@ -155,22 +153,25 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // subscriber for debug logging of all domain events.
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
-    crate::openhuman::health::bus::register_health_subscriber();
-    crate::openhuman::skills::bus::register_workflow_cleanup_subscriber();
-    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+    crate::openhuman::platform::health::bus::register_health_subscriber();
+    crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
-    crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
-    crate::openhuman::composio::register_composio_trigger_subscriber();
-    crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
-    crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
+    crate::openhuman::memory::sync_events::register_sync_stage_bridge(&config);
+    crate::openhuman::integrations::composio::register_composio_trigger_subscriber();
+    crate::openhuman::meet::backend_bot::calendar::register_meet_calendar_subscriber();
+    crate::openhuman::meet::backend_bot::bus::register_meeting_event_subscriber();
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
-    crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    crate::openhuman::web_chat::register_approval_surface_subscriber();
     // Surface generated-artifact lifecycle events (ArtifactReady /
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
-    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    crate::openhuman::web_chat::register_artifact_surface_subscriber();
+    // Surface external-egress disclosure events (ExternalTransferPending) as
+    // `external_transfer_pending` web-channel events so the frontend can show a
+    // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
+    crate::openhuman::web_chat::register_egress_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -178,12 +179,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // `bootstrap_core_runtime` may also start it — `start_periodic_sync`
     // is intentionally cheap and the loop body no-ops when there are
     // no connections.
-    crate::openhuman::composio::start_periodic_sync();
+    crate::openhuman::integrations::composio::start_periodic_sync();
     // Task-sources: subscribe to Composio connection-created events for
     // one-shot fetches, and spawn the periodic poll that pulls work from
     // configured external sources onto the agent's todo board.
-    crate::openhuman::task_sources::bus::register_task_sources_subscriber();
-    crate::openhuman::task_sources::start_periodic_poll();
+    crate::openhuman::integrations::task_sources::bus::register_task_sources_subscriber();
+    crate::openhuman::integrations::task_sources::start_periodic_poll();
     // Board poller: dispatch the highest-urgency `todo` card on the
     // task-sources board (catch-all for cards without a proactive trigger).
     crate::openhuman::agent::task_dispatcher::start_board_poller();
@@ -193,79 +194,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // channel dispatch calls `request_native_global("agent.run_turn", …)`
     // for every inbound message.
     crate::openhuman::agent::bus::register_agent_handlers();
-    // Phase 2 learning producers: email-signature subscriber reacts to
-    // DocumentCanonicalized events and emits Identity candidates into the buffer.
-    // The handle is intentionally leaked into a static so the subscription stays
-    // alive for the lifetime of the process (same pattern as TracingSubscriber).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static EMAIL_SIG_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        EMAIL_SIG_HANDLE.get_or_init(|| {
-            crate::openhuman::learning::extract::signature::register_email_signature_subscriber()
-        });
-    }
-
-    // Phase 3 learning: register the event-driven rebuild trigger.
-    // The stability detector is wired up only when the global memory client is
-    // already initialised (it may not be in the channel runtime path — the
-    // client is initialised later in `start_channels`).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static REBUILD_TRIGGER_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        REBUILD_TRIGGER_HANDLE.get_or_init(|| {
-            if let Some(client) = crate::openhuman::memory::global::client_if_ready() {
-                use crate::openhuman::learning::cache::FacetCache;
-                use crate::openhuman::learning::scheduler::register_event_trigger;
-                use crate::openhuman::learning::StabilityDetector;
-                use std::sync::Arc;
-                let cache = FacetCache::new(client.profile_conn());
-                let detector = Arc::new(StabilityDetector::new(cache));
-                // Also spawn the periodic rebuild loop (30-minute cadence).
-                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-                // Leak the sender so the loop never receives a shutdown signal
-                // until the process exits. This matches the pattern used by
-                // other always-on background tasks.
-                Box::leak(Box::new(shutdown_tx));
-                crate::openhuman::learning::scheduler::spawn_rebuild_loop(
-                    Arc::clone(&detector),
-                    crate::openhuman::learning::scheduler::DEFAULT_REBUILD_INTERVAL,
-                    shutdown_rx,
-                );
-                register_event_trigger(detector)
-            } else {
-                tracing::debug!("[learning::scheduler] memory client not ready at channel startup, skipping event-trigger registration");
-                None
-            }
-        });
-    }
-
-    // Phase 4 learning: register the ProfileMdRenderer subscriber.
-    // Subscribes to CacheRebuilt events and re-renders the five cache-derived
-    // PROFILE.md blocks (style, identity, tooling, vetoes, goals).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static PROFILE_MD_RENDERER_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        PROFILE_MD_RENDERER_HANDLE.get_or_init(|| {
-            if let Some(client) = crate::openhuman::memory::global::client_if_ready() {
-                use crate::openhuman::learning::cache::FacetCache;
-                use crate::openhuman::learning::ProfileMdRenderer;
-                use std::sync::Arc;
-                let cache = Arc::new(FacetCache::new(client.profile_conn()));
-                let renderer =
-                    Arc::new(ProfileMdRenderer::new(cache, config.workspace_dir.clone()));
-                ProfileMdRenderer::subscribe(renderer)
-            } else {
-                tracing::debug!(
-                    "[learning::profile_md_renderer] memory client not ready at startup, \
-                     skipping ProfileMdRenderer registration"
-                );
-                None
-            }
-        });
-    }
+    // The Phase 2/3/4 self-improvement subscribers (email-signature producer,
+    // rebuild trigger, ProfileMdRenderer) are registered in
+    // core::jsonrpc::register_domain_subscribers instead. start_channels is
+    // skipped when no channel is configured, so wiring them here silently
+    // dropped user-profile inference for channel-less users (#5003).
 
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
@@ -289,42 +222,32 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let (provider, model, provider_name): (Arc<dyn Provider>, String, String) =
-        match resolve_chat_workload(&config) {
-            ChatWorkloadResolution::Cloud => {
-                let p: Arc<dyn Provider> =
-                    Arc::from(provider::create_intelligent_routing_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config,
-                        &provider_runtime_options,
-                    )?);
-                let m = config
-                    .default_model
-                    .clone()
-                    .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
-                (p, m, provider::INFERENCE_BACKEND_ID.to_string())
-            }
-            ChatWorkloadResolution::Workload {
-                provider_string,
-                slug,
-            } => {
-                tracing::info!(
-                    chat_provider = %provider_string,
-                    slug = %slug,
-                    "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
-                );
-                let (boxed, model_id) = provider::create_chat_provider("chat", &config)?;
-                (Arc::from(boxed), model_id, slug)
-            }
-        };
-
-    // Warm up the provider connection pool (TLS handshake, DNS, HTTP/2 setup)
-    // so the first real message doesn't hit a cold-start timeout.
-    if let Err(e) = provider.warmup().await {
-        tracing::warn!("Provider warmup failed (non-fatal): {e}");
-    }
+    let (model, provider_name) = match resolve_chat_workload(&config) {
+        ChatWorkloadResolution::Cloud => {
+            let (_chat, model) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model, provider::INFERENCE_BACKEND_ID.to_string())
+        }
+        ChatWorkloadResolution::Workload {
+            provider_string,
+            slug,
+        } => {
+            tracing::info!(
+                chat_provider = %provider_string,
+                slug = %slug,
+                "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
+            );
+            let (_chat, model_id) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model_id, slug)
+        }
+    };
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(host_runtime::create_runtime(
         &config.runtime,
@@ -350,17 +273,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         config.workspace_dir.clone(),
         config.action_dir.clone(),
     );
-    // Seed the live tool-execution timeout from the persisted `[agent]` config so
-    // a user-configured value (Settings → Agent OS access → Action timeout) is in
-    // effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when set,
-    // still overrides this inside `set_tool_timeout_secs`.
-    let effective_timeout =
-        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
-    tracing::debug!(
-        configured = config.agent.agent_timeout_secs,
-        effective = effective_timeout,
-        "[startup] seeded tool-execution timeout from config"
-    );
+    // NOTE: the live tool-execution timeout seed is done in
+    // `core::jsonrpc::register_domain_subscribers` (unconditional core boot), NOT
+    // here — `start_channels` is skipped when no channel is configured or
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set, which would otherwise leave
+    // channel-less / web-chat-only cores running the default timeout instead of the
+    // user-configured `[agent].agent_timeout_secs` (#5027).
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
     // therefore the `audit` knob) onto the runtime `Config` schema so users
@@ -373,8 +291,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     )?;
     let temperature = config.default_temperature;
     let local_embedding = config.workload_local_model("embeddings");
-    let embedding_api_key =
-        crate::openhuman::embeddings::resolve_api_key(&config, &config.memory.embedding_provider);
+    let embedding_api_key = crate::openhuman::inference::embeddings::resolve_api_key(
+        &config,
+        &config.memory.embedding_provider,
+    );
     // Build the memory store. A misconfigured/removed embedding provider (e.g. a
     // stale `embedding_provider = "fastembed"` that the factory no longer knows)
     // makes the embedder build fail — but that must NOT take every messaging
@@ -423,6 +343,9 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         &config.action_dir,
         &config.agents,
         &config,
+        None,
+        None,
+        None,
         None,
         None,
     ));
@@ -897,7 +820,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
-        crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
+        crate::openhuman::memory::tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
     ));
 
     let listener_count = channels.len() + relay_config.as_ref().map(|_| 1).unwrap_or_default();
@@ -905,14 +828,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =
         effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
-        provider: Arc::clone(&provider),
+        turn_model_source: None,
         default_provider: Arc::new(provider_name),
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
@@ -923,7 +844,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         max_tool_iterations: config.agent.max_tool_iterations,
         min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: config.api_url.clone(),
         inference_url: config.inference_url.clone(),
@@ -933,6 +854,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
         multimodal_files: config.multimodal_files.clone(),
+        // Crate-native turn models for the channel turn (Phase 3 P3-B).
+        config: Some(std::sync::Arc::new(config.clone())),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
@@ -1017,7 +940,7 @@ fn resolve_yuanbao_app_secret(
     if !yb_cfg.app_secret.is_empty() {
         return yb_cfg;
     }
-    let auth = crate::openhuman::credentials::AuthService::from_config(config);
+    let auth = crate::openhuman::security::credentials::AuthService::from_config(config);
     match auth.get_profile("channel:yuanbao:api_key", None) {
         Ok(Some(profile)) => {
             let stored_app_key = profile.metadata.get("app_key").map(String::as_str);
@@ -1059,7 +982,7 @@ fn resolve_email_password(
     if !email_cfg.password.is_empty() {
         return email_cfg;
     }
-    let auth = crate::openhuman::credentials::AuthService::from_config(config);
+    let auth = crate::openhuman::security::credentials::AuthService::from_config(config);
     match auth.get_profile("channel:email:api_key", None) {
         Ok(Some(profile)) => {
             let stored_username = profile.metadata.get("username").map(String::as_str);
@@ -1105,7 +1028,7 @@ mod tests;
 mod yuanbao_secret_tests {
     use super::*;
     use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
-    use crate::openhuman::credentials::AuthService;
+    use crate::openhuman::security::credentials::AuthService;
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -1201,7 +1124,7 @@ mod yuanbao_secret_tests {
 mod email_secret_tests {
     use super::*;
     use crate::openhuman::channels::email_channel::EmailConfig;
-    use crate::openhuman::credentials::AuthService;
+    use crate::openhuman::security::credentials::AuthService;
     use std::collections::HashMap;
     use tempfile::tempdir;
 

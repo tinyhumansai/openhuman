@@ -50,7 +50,7 @@ export interface FlowNodeData extends Record<string, unknown> {
 export type FlowNode = Node<FlowNodeData>;
 export type FlowEdge = Edge;
 
-export interface Point {
+interface Point {
   x: number;
   y: number;
 }
@@ -157,7 +157,7 @@ export function workflowGraphToXyflow(graph: WorkflowGraph): {
  * effective port names `FlowNodeComponent` renders — and may be `null` when a
  * node exposes a single unnamed handle, in which case they default to `main`.
  */
-export interface FlowConnectionCandidate {
+interface FlowConnectionCandidate {
   source?: string | null;
   target?: string | null;
   sourceHandle?: string | null;
@@ -227,6 +227,30 @@ export function isValidFlowConnection(
 }
 
 /**
+ * Stable {@link edgeId} for a live React Flow `Connection` candidate (what
+ * `onConnect` receives once {@link isValidFlowConnection} has approved it),
+ * applying the same `main` port default used throughout this module.
+ *
+ * `EditableFlowCanvas`'s `onConnect` must pass this to `addEdge` explicitly —
+ * left to its own default, `addEdge` mints React Flow's built-in
+ * `${source}${sourceHandle}-${target}${targetHandle}` id, which is exactly
+ * the plain-concatenation scheme {@link edgeId} exists to avoid (see its
+ * doc). Without this, an edge created by drawing a connection on the canvas
+ * gets a different id than the same edge would get after a reload (which
+ * goes through {@link workflowGraphToXyflow} → {@link edgeId}), and two
+ * connections that collide under plain concatenation would produce duplicate
+ * React keys.
+ */
+export function connectionEdgeId(connection: FlowConnectionCandidate): string {
+  return edgeId({
+    from_node: connection.source ?? '',
+    from_port: connection.sourceHandle || DEFAULT_PORT,
+    to_node: connection.target ?? '',
+    to_port: connection.targetHandle || DEFAULT_PORT,
+  });
+}
+
+/**
  * Declared output `ports` a freshly-added node of `kind` needs at creation
  * time, for kinds whose runtime routing is fixed and NOT derivable from
  * config or wired edges. A `condition` node always routes through `true`/
@@ -235,11 +259,19 @@ export function isValidFlowConnection(
  * are config-driven and materialize once the author wires an edge, per
  * {@link effectiveOutputPorts}'s doc comment), a new `condition` node must be
  * seeded with both ports up front or its second branch is never wireable
- * from the canvas.
+ * from the canvas. A `loop` node is the same shape: it always routes through
+ * `body`/`done` (`vendor/tinyflows/src/nodes/control_flow/loop_node.rs`), and
+ * the canvas has no port editor to derive them from later — without seeding
+ * both here, a palette-added loop renders a single `main` output and neither
+ * required loop edge (back to the loop head, and onward past it) can be
+ * wired.
  */
 function defaultPortsForKind(kind: NodeKind): Port[] {
   if (kind === 'condition') {
     return [{ name: 'true' }, { name: 'false' }];
+  }
+  if (kind === 'loop') {
+    return [{ name: 'body' }, { name: 'done' }];
   }
   return [];
 }
@@ -326,6 +358,30 @@ export function xyflowToWorkflowGraph(
 }
 
 /**
+ * Round-trips `graph` through {@link workflowGraphToXyflow} /
+ * {@link xyflowToWorkflowGraph} — the exact conversion the editable canvas
+ * itself performs on mount — so a caller comparing `graph` against a LATER
+ * canvas serialization (to decide "is this dirty?") compares like with like.
+ *
+ * F-m3 fix: a graph saved without per-node `position` (e.g. authored by the
+ * agent, which never sets one) gets concrete auto-layout coordinates baked in
+ * the moment the canvas mounts it (`workflowGraphToXyflow`'s `autoLayout`
+ * fallback) — `EditableFlowCanvas`'s mount-time `onGraphChange` reports that
+ * position-filled graph immediately. A dirty check that diffs the canvas's
+ * report against the RAW, positionless server graph reads that fill-in as an
+ * edit and shows "Unsaved" with zero real changes. Normalizing the baseline
+ * through this same round-trip before comparing eliminates that false
+ * positive, since both sides then agree on where every node landed.
+ */
+export function normalizeWorkflowGraphForDirtyCheck(
+  graph: WorkflowGraph,
+  meta: WorkflowGraphMeta
+): WorkflowGraph {
+  const { nodes, edges } = workflowGraphToXyflow(graph);
+  return xyflowToWorkflowGraph(nodes, edges, meta);
+}
+
+/**
  * Assigns a `{x, y}` position to every node in `nodes`, via a simple BFS
  * layering over `edges`: `y = depth * 160`, `x = column * 280` where
  * `column` is the node's index within its depth layer (assigned in
@@ -400,4 +456,123 @@ export function autoLayout(nodes: WorkflowNode[], edges: WorkflowEdge[]): Map<st
   }
 
   return positions;
+}
+
+/**
+ * Assigns each node a 1-based execution-order index for display ("3. Fetch
+ * Unread Emails").
+ *
+ * Uses the same breadth-first walk as {@link autoLayout} — chain-starting roots
+ * (no incoming edge but at least one outgoing, normally just the trigger)
+ * first, then each successor as it is reached — so a card's number always
+ * agrees with its position in the laid-out graph rather than with declaration
+ * order, which is arbitrary for a graph the agent authored.
+ *
+ * A DAG has no single "correct" ordering once it branches: two parallel
+ * branches genuinely run concurrently, so any numbering imposes an order that
+ * execution does not guarantee. BFS is chosen because it numbers breadth-first
+ * across a fan-out (both branches' first steps get adjacent numbers) rather
+ * than running one branch to its end before starting the next, which is what a
+ * depth-first walk would do and reads as wrong beside a two-column layout.
+ *
+ * Independent chains are kept contiguous rather than interleaved: each root's
+ * component is drained completely before the next root is seeded. Otherwise
+ * `a → b` plus `c → d` would number a=1, c=2, b=3, d=4, and drawing a second
+ * chain would renumber the first one's steps.
+ *
+ * Every node gets a number, including ones the walk cannot reach — a node not
+ * yet wired up, or a cycle with no zero-in-degree entry. Those are appended in
+ * declaration order after the reachable ones, so no card renders without an
+ * index and, crucially, adding disconnected work to the canvas never renumbers
+ * the flow it has not joined yet.
+ */
+export function stepNumbers(nodes: WorkflowNode[], edges: WorkflowEdge[]): Map<string, number> {
+  return stepNumbersFor(
+    nodes.map(n => n.id),
+    edges.map(e => [e.from_node, e.to_node])
+  );
+}
+
+/**
+ * {@link stepNumbers} for the xyflow shape — the live editing state.
+ *
+ * The editable canvas holds its graph in `useNodesState`/`useEdgesState` and
+ * mutates it directly (`addNode` builds a node with `createFlowNode`,
+ * `onConnect` only calls `setEdges`), so `workflowGraphToXyflow` runs once at
+ * mount and never again. Numbering must therefore be derived from the live
+ * arrays on every change rather than baked into node `data` at adapt time — a
+ * node added mid-edit has no adapter-supplied number at all, and every existing
+ * number goes stale the moment the topology changes.
+ */
+export function stepNumbersForFlow(nodes: FlowNode[], edges: FlowEdge[]): Map<string, number> {
+  return stepNumbersFor(
+    nodes.map(n => n.id),
+    edges.map(e => [e.source, e.target])
+  );
+}
+
+/**
+ * Shared BFS behind both public entry points, over bare ids and `[from, to]`
+ * pairs so the two graph shapes cannot drift in ordering behaviour.
+ */
+function stepNumbersFor(ids: string[], pairs: Array<[string, string]>): Map<string, number> {
+  const order = new Map<string, number>();
+  if (ids.length === 0) return order;
+
+  const known = new Set(ids);
+  const incoming = new Map<string, number>(ids.map(id => [id, 0]));
+  const adjacency = new Map<string, string[]>(ids.map(id => [id, []]));
+  for (const [from, to] of pairs) {
+    if (!known.has(from) || !known.has(to)) continue;
+    adjacency.get(from)?.push(to);
+    incoming.set(to, (incoming.get(to) ?? 0) + 1);
+  }
+
+  // Seed only with roots that actually start a chain — in-degree 0 AND at
+  // least one outgoing edge. A node with no edges at all is *not* step 2 just
+  // because it has no incoming one: on the editable canvas a node dropped from
+  // the palette is unwired for as long as it takes to connect it, and seeding
+  // it as a root would renumber the entire flow underneath the user each time
+  // they added one. Such nodes fall through to the trailing pass below and are
+  // numbered after the wired flow instead.
+  const roots = ids.filter(
+    id => (incoming.get(id) ?? 0) === 0 && (adjacency.get(id)?.length ?? 0) > 0
+  );
+
+  const seen = new Set<string>();
+  let next = 1;
+
+  // One component at a time: drain each root's BFS completely before seeding
+  // the next. Seeding every root at once would interleave independent chains —
+  // for `a → b` and `c → d` that yields a=1, c=2, b=3, d=4, so drawing a second
+  // chain on the canvas renumbers the first one's steps. That is the same
+  // renumbering-underneath-the-user problem the root filter above avoids for
+  // lone nodes, and it would contradict this function's contract that
+  // disconnected work is numbered *after* the flow it has not joined.
+  //
+  // BFS still applies *within* a component, so a fan-out's sibling branches
+  // keep adjacent numbers; only whole components are kept contiguous.
+  for (const root of roots) {
+    if (seen.has(root)) continue;
+    const queue: string[] = [root];
+    seen.add(root);
+    let head = 0;
+    while (head < queue.length) {
+      const id = queue[head++];
+      order.set(id, next++);
+      for (const nextId of adjacency.get(id) ?? []) {
+        if (seen.has(nextId)) continue;
+        seen.add(nextId);
+        queue.push(nextId);
+      }
+    }
+  }
+
+  // Everything the walk never reached: unwired nodes, disconnected sub-graphs,
+  // and cycles with no zero-in-degree entry. Numbered in declaration order so
+  // every card still shows an index.
+  for (const id of ids) {
+    if (!order.has(id)) order.set(id, next++);
+  }
+  return order;
 }

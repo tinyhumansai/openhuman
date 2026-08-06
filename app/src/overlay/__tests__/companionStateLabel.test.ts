@@ -11,7 +11,6 @@ describe('companionStateLabel', () => {
     ['listening', '“[overlay.companion.listening]”'],
     ['thinking', '“[overlay.companion.thinking]”'],
     ['speaking', '“[overlay.companion.speaking]”'],
-    ['pointing', '“[overlay.companion.pointing]”'],
   ])('routes %s through the matching i18n key', (state, expected) => {
     expect(companionStateLabel(state, t)).toBe(expected);
   });

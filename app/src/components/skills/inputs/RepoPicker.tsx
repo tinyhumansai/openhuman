@@ -22,7 +22,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 const log = createDebug('app:skills:RepoPicker');
 
 /** Shape returned by `openhuman.composio_list_github_repos`. */
-export interface ComposioGhRepo {
+interface ComposioGhRepo {
   owner: string;
   repo: string;
   fullName: string;
@@ -31,7 +31,7 @@ export interface ComposioGhRepo {
   htmlUrl?: string;
 }
 
-export interface RepoPickerProps {
+interface RepoPickerProps {
   /** Currently-selected `owner/name` (or empty). */
   value: string;
   /** Fires with the picked `owner/name`. */

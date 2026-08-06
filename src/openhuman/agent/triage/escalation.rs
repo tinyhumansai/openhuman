@@ -21,7 +21,7 @@ use anyhow::{anyhow, Context};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::agent::harness::subagent_runner::{self, SubagentRunOptions};
-use crate::openhuman::agent_orchestration::parent_context::build_root_parent;
+use crate::openhuman::agent::orchestration::parent_context::build_root_parent;
 use crate::openhuman::config::Config;
 
 use super::decision::TriageAction;
@@ -61,7 +61,7 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             // the triage verdict — would re-run it on the next tick, silently
             // breaking the noise-gating contract documented on
             // `SourceTarget::AgentTodoProactive`.
-            gate_linked_card_terminal(envelope, "drop");
+            gate_linked_card_terminal(envelope, "drop").await;
         }
         TriageAction::Acknowledge => {
             tracing::info!(
@@ -72,7 +72,7 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             );
             // Acknowledge means "seen, no autonomous action needed" — same as
             // drop, the linked card must not be picked up by the board poller.
-            gate_linked_card_terminal(envelope, "acknowledge");
+            gate_linked_card_terminal(envelope, "acknowledge").await;
         }
         TriageAction::React | TriageAction::Escalate => {
             let target = run
@@ -142,9 +142,9 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             // allowlist after the first approval).
             let mut approval_request_id: Option<String> = None;
             let mut approval_gate_for_audit: Option<
-                std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
+                std::sync::Arc<crate::openhuman::security::approval::ApprovalGate>,
             > = None;
-            if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+            if let Some(gate) = crate::openhuman::security::approval::ApprovalGate::try_global() {
                 let summary = format!(
                     "triage::{} target={} prompt_chars={}",
                     action_str,
@@ -162,13 +162,13 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 let (outcome, request_id) =
                     gate.intercept_audited(&tool_key, &summary, redacted).await;
                 match outcome {
-                    crate::openhuman::approval::GateOutcome::Allow => {
+                    crate::openhuman::security::approval::GateOutcome::Allow => {
                         approval_request_id = request_id;
                         if approval_request_id.is_some() {
                             approval_gate_for_audit = Some(gate);
                         }
                     }
-                    crate::openhuman::approval::GateOutcome::Deny { reason } => {
+                    crate::openhuman::security::approval::GateOutcome::Deny { reason } => {
                         tracing::warn!(
                             action = %action_str,
                             target_agent = %target,
@@ -194,9 +194,12 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 approval_request_id.as_ref(),
             ) {
                 let (exec_outcome, err_text) = match &dispatch_result {
-                    Ok(_) => (crate::openhuman::approval::ExecutionOutcome::Success, None),
+                    Ok(_) => (
+                        crate::openhuman::security::approval::ExecutionOutcome::Success,
+                        None,
+                    ),
                     Err(e) => (
-                        crate::openhuman::approval::ExecutionOutcome::Failure,
+                        crate::openhuman::security::approval::ExecutionOutcome::Failure,
                         Some(e.to_string()),
                     ),
                 };
@@ -313,7 +316,7 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
 async fn dispatch_linked_card(
     link: &TaskCardLink,
 ) -> Result<crate::openhuman::agent::task_dispatcher::DispatchOutcome, String> {
-    let snapshot = crate::openhuman::todos::ops::list(&link.location)?;
+    let snapshot = crate::openhuman::threads::todos::ops::list(&link.location).await?;
     let card = snapshot
         .cards
         .into_iter()
@@ -328,15 +331,15 @@ async fn dispatch_linked_card(
 /// if it already advanced (the poller claimed it, or it's already terminal)
 /// it is left untouched. Best-effort: a missing card or write failure is
 /// logged, never propagated — the trigger was already evaluated.
-fn gate_linked_card_terminal(envelope: &TriggerEnvelope, decision: &str) {
+async fn gate_linked_card_terminal(envelope: &TriggerEnvelope, decision: &str) {
     use crate::openhuman::agent::task_board::TaskCardStatus;
-    use crate::openhuman::todos::ops;
+    use crate::openhuman::threads::todos::ops;
 
     let Some(link) = &envelope.card_link else {
         return;
     };
 
-    let current = match ops::list(&link.location) {
+    let current = match ops::list(&link.location).await {
         Ok(snapshot) => snapshot
             .cards
             .into_iter()
@@ -354,7 +357,8 @@ fn gate_linked_card_terminal(envelope: &TriggerEnvelope, decision: &str) {
 
     match current {
         Some(TaskCardStatus::Todo | TaskCardStatus::Ready | TaskCardStatus::AwaitingApproval) => {
-            match ops::update_status(&link.location, &link.card_id, TaskCardStatus::Rejected) {
+            match ops::update_status(&link.location, &link.card_id, TaskCardStatus::Rejected).await
+            {
                 Ok(_) => tracing::info!(
                     card_id = %link.card_id,
                     decision = %decision,
@@ -565,18 +569,19 @@ mod tests {
         )));
     }
 
-    fn seed_task_card() -> (
+    async fn seed_task_card() -> (
         tempfile::TempDir,
-        crate::openhuman::todos::ops::BoardLocation,
+        crate::openhuman::threads::todos::ops::BoardLocation,
         String,
     ) {
-        use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+        use crate::openhuman::threads::todos::ops::{self, BoardLocation, CardPatch};
         let dir = tempfile::tempdir().unwrap();
         let location = BoardLocation::Thread {
             workspace_dir: dir.path().to_path_buf(),
             thread_id: "task-sources".to_string(),
         };
         let card_id = ops::add(&location, "ingested issue", CardPatch::default())
+            .await
             .unwrap()
             .cards[0]
             .id
@@ -587,11 +592,11 @@ mod tests {
     #[tokio::test]
     async fn apply_decision_drop_gates_linked_card_to_rejected() {
         use crate::openhuman::agent::task_board::TaskCardStatus;
-        use crate::openhuman::todos::ops;
+        use crate::openhuman::threads::todos::ops;
 
         let _events_guard = test_events_guard().await;
         let _ = init_global(32);
-        let (_dir, location, card_id) = seed_task_card();
+        let (_dir, location, card_id) = seed_task_card().await;
 
         let envelope = envelope("esc-drop-card").with_task_card(card_id.clone(), location.clone());
         apply_decision(run(TriageAction::Drop), &envelope)
@@ -599,6 +604,7 @@ mod tests {
             .expect("drop should not fail");
 
         let status = ops::list(&location)
+            .await
             .unwrap()
             .cards
             .into_iter()
@@ -614,11 +620,11 @@ mod tests {
     #[tokio::test]
     async fn apply_decision_acknowledge_gates_linked_card_to_rejected() {
         use crate::openhuman::agent::task_board::TaskCardStatus;
-        use crate::openhuman::todos::ops;
+        use crate::openhuman::threads::todos::ops;
 
         let _events_guard = test_events_guard().await;
         let _ = init_global(32);
-        let (_dir, location, card_id) = seed_task_card();
+        let (_dir, location, card_id) = seed_task_card().await;
 
         let envelope = envelope("esc-ack-card").with_task_card(card_id.clone(), location.clone());
         apply_decision(run(TriageAction::Acknowledge), &envelope)
@@ -626,6 +632,7 @@ mod tests {
             .expect("acknowledge should not fail");
 
         let status = ops::list(&location)
+            .await
             .unwrap()
             .cards
             .into_iter()

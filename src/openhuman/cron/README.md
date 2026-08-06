@@ -18,7 +18,7 @@ Scheduled-job runtime. Owns cron-expression and human-delay parsing, the persist
 - `src/openhuman/agent/` — `agent` job type runs through `agent::triage::TriggerEnvelope::from_cron` + `apply_decision`.
 - `src/openhuman/security/` — `SecurityPolicy::from_config` sandboxes shell jobs.
 - `src/openhuman/config/` — `Config` provides poll interval, workspace dir, autonomy policy.
-- `src/openhuman/health/` — `health::bus::register_health_subscriber` on startup.
+- `src/openhuman/platform/health/` — `health::bus::register_health_subscriber` on startup.
 - `src/openhuman/channels/` — `bus.rs` can fan delivery events into channels.
 - `src/core/event_bus/` — `init_global`, `publish_global(DomainEvent::Cron(*))`.
 

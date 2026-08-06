@@ -53,7 +53,7 @@
 //! that phrase set is intrinsically scoped to custom providers. The
 //! HTTP-layer wrapper [`super::ops::is_provider_config_rejection_http`]
 //! polarity-guards those phrases on `provider !=
-//! openhuman_backend::PROVIDER_LABEL` so a model-rejection from our
+//! openhuman_backend_model::PROVIDER_LABEL` so a model-rejection from our
 //! **own** backend that we did not expect (which would be a real
 //! regression we sent it a bad request) still reaches Sentry. The
 //! message-only predicate is consumed by
@@ -167,8 +167,8 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // when the request body contains an empty `"model":""` field.
         "model field is required",
         // TAURI-RUST-GKV (~2.3k events / 1 user) — the LOCAL form of the
-        // 4NM empty-model state, caught one layer earlier. The #2784 guard
-        // in `factory::make_cloud_provider_by_slug` bails BEFORE any
+        // 4NM empty-model state, caught one layer earlier. The #2784 cloud-slug
+        // resolution guard bails BEFORE any
         // provider HTTP call when a `<slug>` provider string carries no
         // model and the `cloud_providers` entry has no `default_model`:
         //   "[chat-factory] no model configured: role '<r>' resolved to an
@@ -199,7 +199,7 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
         // Body: `{"error":"this model requires a subscription, upgrade for
         // access: https://ollama.com/upgrade (ref: <uuid>)"}` on a 403
-        // Forbidden from `compatible::OpenAiCompatibleProvider` with
+        // Forbidden from the OpenAI-compatible client with
         // `name = "ollama"`. User-state: the model picked in Settings is
         // a paid-tier Ollama Cloud model the user's account doesn't
         // cover. The UI surfaces an actionable upgrade link in the
@@ -292,7 +292,7 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
 /// the same phrase already lives in that predicate's list. The narrower
 /// helper exists so the HTTP-layer wrapper
 /// ([`super::ops::is_provider_config_rejection_http`]) can drop its
-/// `provider != openhuman_backend::PROVIDER_LABEL` polarity guard for
+/// `provider != openhuman_backend_model::PROVIDER_LABEL` polarity guard for
 /// this specific body shape — the OpenHuman hosted backend now emits the
 /// same OpenAI-compatible "Model 'X' is not available" wire body in
 /// response to user-configured unknown model ids, so the original
@@ -640,8 +640,8 @@ mod tests {
 
     #[test]
     fn detects_chat_factory_empty_model_local_bail() {
-        // TAURI-RUST-GKV — the #2784 factory guard
-        // (`make_cloud_provider_by_slug`) catches the empty-model state
+        // TAURI-RUST-GKV — the #2784 cloud-slug resolution guard catches the
+        // empty-model state
         // BEFORE the provider HTTP call (the local form of 4NM) and bails
         // with this body (role/slug interpolated). Verbatim from Sentry
         // issue 18482 (role='chat', slug='nvidia').

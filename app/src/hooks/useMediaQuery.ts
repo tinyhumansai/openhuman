@@ -23,5 +23,3 @@ export const useMediaQuery = (query: string): boolean => {
 
   return useSyncExternalStore(subscribe, getSnapshot, () => false);
 };
-
-export default useMediaQuery;

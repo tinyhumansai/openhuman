@@ -4,7 +4,7 @@ use super::super::runtime::{
     process_channel_message, run_message_dispatch_loop, RuntimeChannelMessage,
 };
 use super::super::{traits, Channel};
-use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
+use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowModel};
 use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::openhuman::inference::provider;
@@ -116,9 +116,13 @@ async fn message_dispatch_processes_messages_in_parallel() {
 
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             channels_by_name: Arc::new(channels_by_name),
-            provider: Arc::new(SlowProvider {
-                delay: Duration::from_millis(5),
-            }),
+            turn_model_source: Some(
+                crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                    SlowModel {
+                        delay: Duration::from_millis(5),
+                    },
+                )),
+            ),
             default_provider: Arc::new("test-provider".to_string()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
@@ -129,7 +133,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
             max_tool_iterations: 10,
             min_relevance_score: 0.0,
             conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-            provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
             route_overrides: Arc::new(Mutex::new(HashMap::new())),
             api_url: None,
             inference_url: None,
@@ -139,6 +143,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
             multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+            config: None,
         });
 
         (channel_impl, runtime_ctx)
@@ -188,9 +193,11 @@ async fn process_channel_message_cancels_scoped_typing_task() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(SlowProvider {
-            delay: Duration::from_millis(20),
-        }),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(SlowModel {
+                delay: Duration::from_millis(20),
+            })),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -201,7 +208,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         max_tool_iterations: 10,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -211,6 +218,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -275,9 +283,13 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        // Still need a Provider for the Arc field, but the stubbed bus
+        // Still need a model for the context field, but the stubbed bus
         // handler never invokes it — so a minimal no-op is fine.
-        provider: Arc::new(super::common::DummyProvider),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                super::common::DummyModel,
+            )),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -288,7 +300,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         max_tool_iterations: 10,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -298,6 +310,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -359,7 +372,11 @@ async fn channel_processed_event_records_resolved_agent_route() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                super::common::DummyModel,
+            )),
+        ),
         default_provider: Arc::new("requested-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -370,7 +387,7 @@ async fn channel_processed_event_records_resolved_agent_route() {
         max_tool_iterations: 10,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -380,6 +397,7 @@ async fn channel_processed_event_records_resolved_agent_route() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -402,8 +420,14 @@ async fn channel_processed_event_records_resolved_agent_route() {
     for _ in 0..50 {
         let event = tokio::time::timeout(Duration::from_millis(200), events.recv())
             .await
-            .expect("ChannelMessageProcessed event should be published")
-            .expect("event receiver should stay open");
+            .expect("ChannelMessageProcessed event should be published");
+        let event = match event {
+            Ok(event) => event,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("event receiver should stay open")
+            }
+        };
 
         if let DomainEvent::ChannelMessageProcessed {
             message_id,
@@ -470,7 +494,11 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
     };
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                super::common::DummyModel,
+            )),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -481,7 +509,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         max_tool_iterations: 10,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -491,6 +519,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: permissive_operator_default,
+        config: None,
     });
 
     // Attacker-shaped message: an absolute-path FILE marker dropped
@@ -552,7 +581,11 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(Arc::new(
+                super::common::DummyModel,
+            )),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -563,7 +596,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         max_tool_iterations: 10,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -573,6 +606,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(

@@ -34,6 +34,39 @@ export interface RuntimeErrorSignal {
   provider?: string;
 }
 
+/**
+ * #5324: the memory pipeline's typed `budget_exhausted` cause, promoted to a
+ * first-class user-actionable error.
+ *
+ * Unlike the classifiers below this takes the core's stable `FailureCode`
+ * directly rather than pattern-matching prose — the memory pipeline already
+ * emits a typed cause on `first_blocking_cause`, so there is nothing to guess.
+ * That is the end state the text matchers below are migrating toward.
+ *
+ * Scoped to `workspace` (not `chat`) so a memory outage and a chat outage
+ * dedupe as separate entries. They have different fixes, and a user can hit
+ * both at once off the same exhausted budget.
+ *
+ * @param failureCode The `first_blocking_cause.code` from
+ *   `memory_tree_pipeline_status`.
+ * @returns A descriptor when the cause is user-actionable, else `null`.
+ */
+export function classifyMemoryPipelineFailure(
+  failureCode: string | null | undefined
+): UserErrorDescriptor | null {
+  if (failureCode !== 'budget_exhausted') return null;
+  return {
+    id: userErrorId('memory_budget_exhausted', 'workspace'),
+    kind: 'memory_budget_exhausted',
+    severity: 'warning',
+    scope: 'workspace',
+    sourceDomain: 'memory_tree',
+    titleKey: 'userErrors.memoryBudgetExhausted.title',
+    bodyKey: 'userErrors.memoryBudgetExhausted.body',
+    action: 'open_embeddings_settings',
+  };
+}
+
 /** Build the stable dedupe identity for an error. */
 export function userErrorId(
   kind: UserErrorDescriptor['kind'],
@@ -122,6 +155,46 @@ export function classifyUserActionableError(
       provider: signal.provider,
       titleKey: 'userErrors.apiKeyMissing.title',
       bodyKey: 'userErrors.apiKeyMissing.body',
+      action: 'open_provider_settings',
+    };
+  }
+
+  // The local model runtime a workload depends on is unusable — Ollama is not
+  // running, or the configured model was never pulled (#5354). Emitted by core
+  // as the stable `local_model_unavailable` kind token (memory embedder health
+  // gate); the prose variants match the wording the local embedder itself
+  // produces, so a signal that arrives with a message instead of a token still
+  // classifies. Deliberately last: it is the narrowest rule, and a provider
+  // that is out of credits should keep its billing remediation even when the
+  // message happens to name Ollama.
+  // Each prose matcher is anchored on the FULL producer wording, never a bare
+  // `daemon unreachable at`: backend connection-health logs in other domains
+  // emit that phrase too, and promoting one of those into an "install Ollama"
+  // panel entry would be worse than showing nothing. Mirrors the same
+  // deliberate anchoring in the Rust matcher `is_ollama_user_config_rejection`.
+  const isLocalModelUnavailable =
+    text.includes('local_model_unavailable') ||
+    // tinyagents embedder, daemon not listening.
+    text.includes('is ollama running') ||
+    // tinyagents embedder, model never pulled — the second shape the Rust
+    // classifier recognises, so the two sides stay symmetric.
+    (text.includes('ollama embedding model') && text.includes('is not installed at')) ||
+    // platform doctor report.
+    text.includes('ollama daemon unreachable') ||
+    // memory embedder health gate.
+    text.includes('ollama embeddings opted-in but daemon unreachable at');
+  if (isLocalModelUnavailable) {
+    return {
+      id: userErrorId('local_model_unavailable', scope, signal.provider),
+      kind: 'local_model_unavailable',
+      severity: 'warning',
+      scope,
+      sourceDomain: signal.sourceDomain,
+      provider: signal.provider,
+      titleKey: 'userErrors.localModelUnavailable.title',
+      bodyKey: 'userErrors.localModelUnavailable.body',
+      // Local AI + embedding provider selection both live behind
+      // `/settings/llm`, which redirects to Connections → API keys.
       action: 'open_provider_settings',
     };
   }

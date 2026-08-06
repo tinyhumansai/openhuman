@@ -1,3 +1,7 @@
+// Host-condition policy for scheduled work (battery / AC / thermal). Lives
+// with cron because it exists to answer "may this scheduled job run now?".
+pub mod scheduler_gate;
+
 pub mod bus;
 pub mod ops;
 mod schedule;

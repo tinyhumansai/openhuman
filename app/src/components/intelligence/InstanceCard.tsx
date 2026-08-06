@@ -10,7 +10,7 @@ import type { InstanceStatus, SessionSummary } from '../../lib/orchestration/orc
 import HarnessGlyph, { type GlyphKind } from './HarnessGlyph';
 import InstanceStatusDot from './InstanceStatusDot';
 
-export interface InstanceCardProps {
+interface InstanceCardProps {
   session: SessionSummary;
   selected?: boolean;
   onSelect?: () => void;

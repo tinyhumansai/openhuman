@@ -210,6 +210,36 @@ describe('BountyStatusBadge colors', () => {
 // ── Accordion expand ──────────────────────────────────────────────────────────
 
 describe('Accordion expand', () => {
+  test('uses unique disclosure IDs and supports keyboard activation', async () => {
+    const user = userEvent.setup();
+    const secondBounty = {
+      ...sampleBounty,
+      bountyId: 'bounty-002',
+      title: 'Build another integration plugin',
+    };
+    vi.mocked(apiClient.bounties.list).mockResolvedValue({
+      bounties: [sampleBounty, secondBounty],
+    });
+    render(<BountiesSection />);
+
+    const firstToggle = await screen.findByRole('button', { name: /build an integration plugin/i });
+    const secondToggle = screen.getByRole('button', { name: /build another integration plugin/i });
+    expect(firstToggle).toHaveAttribute('id', 'bounty-bounty-001-toggle');
+    expect(firstToggle).toHaveAttribute('aria-controls', 'bounty-bounty-001-details');
+    expect(secondToggle).toHaveAttribute('id', 'bounty-bounty-002-toggle');
+    expect(secondToggle).toHaveAttribute('aria-controls', 'bounty-bounty-002-details');
+
+    firstToggle.focus();
+    await user.keyboard('{Enter}');
+    expect(firstToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region')).toHaveAttribute('id', 'bounty-bounty-001-details');
+
+    secondToggle.focus();
+    await user.keyboard(' ');
+    expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region')).toHaveAttribute('id', 'bounty-bounty-002-details');
+  });
+
   test('click expands row to show description and reward detail', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.bounties.list).mockResolvedValue(listWithBounties);
@@ -300,6 +330,8 @@ describe('Create Bounty form', () => {
       titleInput = document.querySelector('input[placeholder="Bounty title"]') as HTMLElement;
       expect(titleInput).not.toBeNull();
     });
+    expect(titleInput).toHaveAttribute('id', 'create-bounty-title');
+    expect(screen.getByLabelText('Title *')).toBe(titleInput);
 
     // Submit with empty form — should show validation error (title field is empty)
     const submitBtn = document.querySelector('button[type="submit"]') as HTMLElement;
@@ -401,6 +433,7 @@ describe('Submit Work', () => {
     await waitFor(() => {
       expect(document.querySelector('input[placeholder="https://github.com/…"]')).not.toBeNull();
     });
+    expect(screen.getByLabelText('URL *')).toHaveAttribute('id', 'submit-work-url');
 
     // Click the submit button (type=submit) without filling in URL
     const submitBtn = document.querySelector('button[type="submit"]') as HTMLElement;
@@ -476,7 +509,9 @@ describe('Comment flow', () => {
       expect(screen.getByPlaceholderText(/your comment/i)).toBeInTheDocument();
     });
 
-    await user.type(screen.getByPlaceholderText(/your comment/i), 'Great bounty!');
+    const comment = screen.getByLabelText('Comment *');
+    expect(comment).toHaveAttribute('id', 'add-comment-body');
+    await user.type(comment, 'Great bounty!');
     await user.click(screen.getByText('Post Comment'));
 
     await waitFor(() => {

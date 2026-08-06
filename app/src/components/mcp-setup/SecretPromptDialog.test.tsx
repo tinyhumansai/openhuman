@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SecretPromptDialog } from './SecretPromptDialog';
+import SecretPromptDialog from './SecretPromptDialog';
 
 const callCoreRpc = vi.fn();
 vi.mock('../../services/coreRpcClient', () => ({

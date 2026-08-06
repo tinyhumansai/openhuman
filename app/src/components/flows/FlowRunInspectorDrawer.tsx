@@ -28,10 +28,16 @@ import { useFlowPendingApprovals } from '../../hooks/useFlowPendingApprovals';
 import { useFlowRunPoller } from '../../hooks/useFlowRunPoller';
 import { type FlowNodeRunStatus, useFlowRunProgress } from '../../hooks/useFlowRunProgress';
 import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
+import { summarizeStep } from '../../lib/flows/runStepSummary';
 import { useT } from '../../lib/i18n/I18nContext';
-import type { FlowRunStatus, FlowRunStep } from '../../services/api/flowsApi';
+import type { FlowRunStep } from '../../services/api/flowsApi';
 import Button from '../ui/Button';
 import { FlowRunPendingApprovalCard } from './FlowRunPendingApprovalCard';
+import {
+  flowRunStatusAccentClass,
+  flowRunStatusDotClass,
+  flowRunStatusLabel,
+} from './FlowRunStatus';
 import { RunItemDataBrowser } from './RunItemDataBrowser';
 
 /**
@@ -48,51 +54,6 @@ export interface FlowRepairRequest {
 
 const log = debug('flows:run-inspector-drawer');
 
-/**
- * Accent classes per run status (semantic palette from tailwind.config.js).
- * Exported so {@link FlowRunsDrawer} (issue B5a.1) can reuse the same
- * status-pill visual language for its run-history rows instead of
- * duplicating the mapping.
- */
-export const FLOW_RUN_STATUS_ACCENT: Record<FlowRunStatus, string> = {
-  running:
-    'border-ocean-200 bg-ocean-50 text-ocean-700 dark:border-ocean-500/30 dark:bg-ocean-500/10 dark:text-ocean-300',
-  completed:
-    'border-sage-200 bg-sage-50 text-sage-700 dark:border-sage-500/30 dark:bg-sage-500/10 dark:text-sage-300',
-  // Settled like `completed`, but at least one step had a `=`-binding that
-  // resolved to `null` (run honesty, PR2) — reuse `pending_approval`'s amber
-  // so "needs a look" reads consistently across statuses.
-  completed_with_warnings:
-    'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  pending_approval:
-    'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  failed:
-    'border-coral-200 bg-coral-50 text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300',
-  // Neutral treatment, matching `WorkflowRunDetail.tsx`'s `RUN_STATUS_ACCENT.cancelled`.
-  cancelled: 'border-line bg-surface-muted text-content-secondary',
-};
-
-/** Header status dot per run status — mirrors `PHASE_STATUS_DOT`. Exported, see above. */
-export const FLOW_RUN_STATUS_DOT: Record<FlowRunStatus, string> = {
-  running: 'bg-ocean-500 animate-pulse',
-  completed: 'bg-sage-500',
-  // Settled (no pulse) — the amber signals "worth a look", not "in progress".
-  completed_with_warnings: 'bg-amber-500',
-  pending_approval: 'bg-amber-500 animate-pulse',
-  failed: 'bg-coral-500',
-  cancelled: 'bg-surface-strong',
-};
-
-/** i18n key per run status. Exported, see above. */
-export const FLOW_RUN_STATUS_KEY: Record<FlowRunStatus, string> = {
-  running: 'flowRuns.status.running',
-  completed: 'flowRuns.status.completed',
-  completed_with_warnings: 'flowRuns.status.completed_with_warnings',
-  pending_approval: 'flowRuns.status.pending_approval',
-  failed: 'flowRuns.status.failed',
-  cancelled: 'flowRuns.status.cancelled',
-};
-
 function formatTimestamp(value: string | null | undefined): string | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -108,7 +69,7 @@ function formatTimestamp(value: string | null | undefined): string | null {
 
 /**
  * Live per-node status dot colour, keyed off the socket `flow:run_progress`
- * feed (Phase 3e). Mirrors the run-level {@link FLOW_RUN_STATUS_DOT} language:
+ * feed (Phase 3e). Mirrors the run-level status-dot language:
  * ocean (running, pulsing), sage (success), coral (error). Falls back to the
  * faint dot when the node has no live status yet (the poller stays the source
  * of truth for the durable step list).
@@ -118,6 +79,20 @@ const FLOW_STEP_LIVE_DOT: Record<string, string> = {
   success: 'bg-sage-500',
   error: 'bg-coral-500',
   failed: 'bg-coral-500',
+};
+
+/** Text color per plain-language summary outcome (issue B20). */
+const STEP_SUMMARY_TEXT_CLASS: Record<'success' | 'error' | 'neutral', string> = {
+  success: 'text-content-secondary',
+  error: 'text-coral-600 dark:text-coral-400',
+  neutral: 'italic text-content-faint',
+};
+
+/** Leading emoji per plain-language summary outcome (issue B20). */
+const STEP_SUMMARY_EMOJI: Record<'success' | 'error' | 'neutral', string> = {
+  success: '✅',
+  error: '❌',
+  neutral: '',
 };
 
 function StepRow({
@@ -138,7 +113,14 @@ function StepRow({
 }) {
   const { t } = useT();
   const items = normalizeItems(step.output);
-  const dotClass = (liveStatus && FLOW_STEP_LIVE_DOT[liveStatus]) ?? 'bg-content-faint';
+  // Live socket status (Phase 3e) takes priority while the run is in flight;
+  // once it's gone quiet (drawer reopened after the fact), fall back to the
+  // durable per-step `status` the observer recorded (`services/api/flowsApi.ts`).
+  const dotClass =
+    (liveStatus && FLOW_STEP_LIVE_DOT[liveStatus]) ??
+    (step.status && FLOW_STEP_LIVE_DOT[step.status]) ??
+    'bg-content-faint';
+  const summary = summarizeStep({ status: step.status }, items, t);
 
   return (
     <li
@@ -178,6 +160,18 @@ function StepRow({
           </ul>
         </div>
       )}
+      {/* Plain-language summary (issue B20) — the primary, always-visible view
+          of what this step did. Raw Composio/tool JSON (costUsd, labelIds,
+          markdownFormatted, …) lives only behind the "Show raw output"
+          disclosure below, never here. */}
+      <div
+        data-testid={`flow-run-step-summary-${index}`}
+        className={`mt-1.5 text-[11px] ${STEP_SUMMARY_TEXT_CLASS[summary.outcome]}`}>
+        {STEP_SUMMARY_EMOJI[summary.outcome] && (
+          <span aria-hidden>{STEP_SUMMARY_EMOJI[summary.outcome]} </span>
+        )}
+        {summary.text}
+      </div>
       {items.length > 0 && (
         <details className="mt-1.5">
           <summary className="cursor-pointer text-[11px] font-medium text-content-faint hover:text-content-secondary">
@@ -284,7 +278,7 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
               {run && (
                 <span
                   data-testid="flow-run-status-dot"
-                  className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[run.status]}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${flowRunStatusDotClass(run.status)}`}
                 />
               )}
             </div>
@@ -292,12 +286,23 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
               {run && (
                 <span
                   data-testid="flow-run-status-pill"
-                  className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${FLOW_RUN_STATUS_ACCENT[run.status]}`}>
-                  {t(FLOW_RUN_STATUS_KEY[run.status])}
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${flowRunStatusAccentClass(run.status)}`}>
+                  {flowRunStatusLabel(run.status, t)}
                 </span>
               )}
-              {run && <span className="truncate font-mono">{run.flow_id}</span>}
-              {run && <span className="truncate font-mono">{run.thread_id}</span>}
+              {/* Internal ids are dev/debug info, not primary-view content (issue
+                  B20) — shown short-form only, full value on hover via `title`,
+                  matching `FlowRunsDrawer`'s row-level `run.id.slice(0, 8)`. */}
+              {run && (
+                <span className="truncate font-mono" title={run.flow_id}>
+                  {run.flow_id.slice(0, 8)}
+                </span>
+              )}
+              {run && (
+                <span className="truncate font-mono" title={run.thread_id}>
+                  {run.thread_id.slice(0, 8)}
+                </span>
+              )}
             </div>
           </div>
           <button
@@ -432,5 +437,3 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
     </div>
   );
 }
-
-export default FlowRunInspectorDrawer;

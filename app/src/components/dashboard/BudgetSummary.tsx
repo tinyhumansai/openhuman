@@ -4,7 +4,7 @@ import type { BudgetStatus } from '../../hooks/useCostDashboard';
 import { useT } from '../../lib/i18n/I18nContext';
 import { formatCurrency } from './formatCurrency';
 
-export interface BudgetSummaryProps {
+interface BudgetSummaryProps {
   currency: string;
   periodTotalUsd: number;
   monthlyPaceUsd: number;

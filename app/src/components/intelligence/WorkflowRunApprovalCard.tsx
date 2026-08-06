@@ -33,7 +33,7 @@ const REASON_KEY: Record<WorkflowCostReason, string> = {
 };
 
 /** i18n key for each safety tier label. */
-export const SAFETY_TIER_KEY: Record<WorkflowSafetyTier, string> = {
+const SAFETY_TIER_KEY: Record<WorkflowSafetyTier, string> = {
   read_only: 'orchestration.tier.readOnly',
   standard: 'orchestration.tier.standard',
   edit_capable: 'orchestration.tier.editCapable',
@@ -48,7 +48,7 @@ interface Props {
   onCancel: () => void;
 }
 
-export const WorkflowRunApprovalCard: React.FC<Props> = ({
+const WorkflowRunApprovalCard: React.FC<Props> = ({
   definition,
   reasons,
   starting = false,

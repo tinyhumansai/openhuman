@@ -14,6 +14,7 @@ The catch-all family. Small, sharp tools the agent reaches for to round out a ta
 | `shell`             | Run a shell command. Bounded output, captured exit code.                      |
 | `node_exec`         | Run a Node.js snippet - useful for one-off scripting.                         |
 | `npm_exec`          | Run an `npm`/`pnpm`/`yarn` script.                                            |
+| `python_exec`       | Run a Python 3 snippet or `.py` script - one-off scripting in Python.         |
 | `current_time`      | Get the current time in any timezone, with formatting options.                |
 | `schedule`          | One-shot "do this once at time T" - for recurring jobs see [Cron](cron.md).   |
 | `pushover`          | Send a push notification to your devices.                                     |

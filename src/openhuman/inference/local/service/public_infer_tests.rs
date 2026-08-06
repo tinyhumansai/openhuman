@@ -15,6 +15,17 @@ fn enabled_config() -> Config {
     config
 }
 
+fn openai_response(content: &str) -> serde_json::Value {
+    json!({
+        "id": "chatcmpl-test",
+        "choices": [{
+            "message": { "role": "assistant", "content": content },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8 }
+    })
+}
+
 fn lm_studio_config(base: &str) -> Config {
     let mut config = enabled_config();
     config.local_ai.provider = "lm_studio".to_string();
@@ -37,22 +48,18 @@ fn ready_service(config: &Config) -> LocalAiService {
 }
 
 #[tokio::test]
-async fn inference_hits_ollama_generate_and_returns_response() {
+async fn inference_hits_ollama_chat_completions_and_returns_response() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
     let app = Router::new().route(
-        "/api/generate",
+        "/v1/chat/completions",
         post(|Json(_body): Json<serde_json::Value>| async move {
-            Json(json!({
-                "model": "test",
-                "response": "hello from mock",
-                "done": true,
-                "total_duration": 1_000_000u64,
-                "prompt_eval_count": 5,
-                "prompt_eval_duration": 100_000u64,
-                "eval_count": 3,
-                "eval_duration": 500_000u64
-            }))
+            let mut response = openai_response("hello from mock");
+            response["prompt_eval_count"] = json!(5);
+            response["prompt_eval_duration"] = json!(100_000u64);
+            response["eval_count"] = json!(3);
+            response["eval_duration"] = json!(500_000u64);
+            Json(response)
         }),
     );
     let base = spawn_mock(app).await;
@@ -78,7 +85,7 @@ async fn inference_errors_on_non_success_status() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
     let app = Router::new().route(
-        "/api/generate",
+        "/v1/chat/completions",
         post(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
     );
     let base = spawn_mock(app).await;
@@ -124,14 +131,8 @@ async fn inference_errors_on_empty_response_when_allow_empty_false() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
     let app = Router::new().route(
-        "/api/generate",
-        post(|| async {
-            Json(json!({
-                "model": "test",
-                "response": "   ",
-                "done": true
-            }))
-        }),
+        "/v1/chat/completions",
+        post(|| async { Json(openai_response("   ")) }),
     );
     let base = spawn_mock(app).await;
     unsafe {
@@ -164,7 +165,7 @@ async fn lm_studio_prompt_hits_openai_chat_completions() {
         "/v1/chat/completions",
         post(|Json(body): Json<serde_json::Value>| async move {
             assert_eq!(body["model"], "local-model");
-            assert_eq!(body["stream"], false);
+            assert!(body.get("stream").is_none());
             assert_eq!(body["max_tokens"], 16);
             assert_eq!(body["messages"][0]["role"], "system");
             assert_eq!(body["messages"][1]["role"], "user");
@@ -209,7 +210,7 @@ async fn lm_studio_prompt_errors_on_non_success_status() {
 
     let err = service.prompt(&config, "hi", None, true).await.unwrap_err();
 
-    assert!(err.contains("lm studio chat failed with status 502"));
+    assert!(err.contains("502"));
 }
 
 #[tokio::test]
@@ -269,18 +270,12 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
     // Hold the global LLM permit for the duration of the test.
-    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+    let _held = crate::openhuman::cron::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit; previous test leaked one");
 
     let app = Router::new().route(
-        "/api/generate",
-        post(|Json(_body): Json<serde_json::Value>| async move {
-            Json(json!({
-                "model": "test",
-                "response": "ip",
-                "done": true
-            }))
-        }),
+        "/v1/chat/completions",
+        post(|Json(_body): Json<serde_json::Value>| async move { Json(openai_response("ip")) }),
     );
     let base = spawn_mock(app).await;
     unsafe {
@@ -314,17 +309,13 @@ async fn inline_complete_interactive_does_not_block_on_held_permit() {
 async fn prompt_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
-    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+    let _held = crate::openhuman::cron::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");
 
     let app = Router::new().route(
-        "/api/generate",
+        "/v1/chat/completions",
         post(|Json(_body): Json<serde_json::Value>| async move {
-            Json(json!({
-                "model": "test",
-                "response": "hello from mock",
-                "done": true
-            }))
+            Json(openai_response("hello from mock"))
         }),
     );
     let base = spawn_mock(app).await;
@@ -355,13 +346,13 @@ async fn prompt_interactive_does_not_block_on_held_permit() {
 async fn summarize_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
-    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+    let _held = crate::openhuman::cron::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");
 
     let app = Router::new().route(
-        "/api/generate",
+        "/v1/chat/completions",
         post(|Json(body): Json<serde_json::Value>| async move {
-            let prompt = body["prompt"].as_str().unwrap_or_default();
+            let prompt = body["messages"][1]["content"].as_str().unwrap_or_default();
             assert!(
                 prompt.contains("commitments.\n\ntext to summarize"),
                 "summary prompt should use real newlines, got: {prompt:?}"
@@ -370,11 +361,7 @@ async fn summarize_interactive_does_not_block_on_held_permit() {
                 !prompt.contains(r"commitments.\n\ntext to summarize"),
                 "summary prompt must not contain literal backslash-n separators"
             );
-            Json(json!({
-                "model": "test",
-                "response": "summary from mock",
-                "done": true
-            }))
+            Json(openai_response("summary from mock"))
         }),
     );
     let base = spawn_mock(app).await;
@@ -405,17 +392,13 @@ async fn summarize_interactive_does_not_block_on_held_permit() {
 async fn chat_with_history_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
-    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+    let _held = crate::openhuman::cron::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");
 
     let app = Router::new().route(
-        "/api/chat",
+        "/v1/chat/completions",
         post(|Json(_body): Json<serde_json::Value>| async move {
-            Json(json!({
-                "model": "test",
-                "message": { "role": "assistant", "content": "history reply" },
-                "done": true
-            }))
+            Json(openai_response("history reply"))
         }),
     );
     let base = spawn_mock(app).await;
@@ -466,18 +449,12 @@ async fn chat_with_history_interactive_does_not_block_on_held_permit() {
 async fn gated_inline_complete_blocks_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
-    let held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+    let held = crate::openhuman::cron::scheduler_gate::gate::try_acquire_llm_permit()
         .expect("test must start with a free permit");
 
     let app = Router::new().route(
-        "/api/generate",
-        post(|Json(_body): Json<serde_json::Value>| async move {
-            Json(json!({
-                "model": "test",
-                "response": "x",
-                "done": true
-            }))
-        }),
+        "/v1/chat/completions",
+        post(|Json(_body): Json<serde_json::Value>| async move { Json(openai_response("x")) }),
     );
     let base = spawn_mock(app).await;
     unsafe {

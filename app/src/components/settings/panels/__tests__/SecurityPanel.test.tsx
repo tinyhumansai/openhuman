@@ -34,10 +34,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
-
 const mockUseCoreState = vi.fn();
 
 vi.mock('../../../../providers/CoreStateProvider', () => ({

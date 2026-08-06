@@ -28,12 +28,12 @@ export interface ToolActivity {
 }
 
 /** A plain (non-tool) transcript row, rendered as a bubble/inline block. */
-export interface MessageRow {
+interface MessageRow {
   kind: 'message';
   message: ChatMessage;
 }
 
-export type TranscriptRow = ToolActivity | MessageRow;
+type TranscriptRow = ToolActivity | MessageRow;
 
 /** Whether a `tool_result` row represents a failure. */
 export function toolResultFailed(

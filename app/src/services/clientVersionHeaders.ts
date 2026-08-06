@@ -9,7 +9,7 @@ const CLIENT_VERSION_MAX_LENGTH = 64;
 let tauriVersionPromise: Promise<string | null> | null = null;
 let coreVersionPromise: Promise<string | null> | null = null;
 
-export function sanitizeClientVersion(raw: string | null | undefined): string | null {
+function sanitizeClientVersion(raw: string | null | undefined): string | null {
   const sanitized = String(raw ?? '')
     .trim()
     .replace(/[^0-9A-Za-z._+-]+/g, '')

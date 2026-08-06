@@ -47,28 +47,10 @@ export interface ActionableItem {
   currentSessionId?: string;
 }
 
-export interface ActionableItemAction {
-  type: 'complete' | 'dismiss' | 'snooze';
-  timestamp: Date;
-  itemId: string;
-  metadata?: Record<string, unknown>;
-}
-
 export interface TimeGroup {
   label: string;
   items: ActionableItem[];
   count: number;
-}
-
-export interface IntelligencePageState {
-  items: ActionableItem[];
-  loading: boolean;
-  error: string | null;
-  lastUpdate: Date | null;
-
-  // UI state
-  showCompleted: boolean;
-  filter: ActionableItemSource | 'all';
 }
 
 // Snooze time options
@@ -100,12 +82,4 @@ export interface ConfirmationModal {
   destructive?: boolean;
   showDontShowAgain?: boolean;
   preferenceKey?: string;
-}
-
-// Chat message type
-export interface ChatMessage {
-  id: string;
-  content: string;
-  sender: 'user' | 'ai';
-  timestamp: Date;
 }

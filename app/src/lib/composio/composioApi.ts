@@ -1,6 +1,6 @@
 /**
  * Imperative RPC wrapper for the Composio domain — typed counterpart
- * to `src/openhuman/composio/*` on the Rust side.
+ * to `src/openhuman/integrations/composio/*` on the Rust side.
  *
  * Every function here calls the core sidecar via JSON-RPC. The core
  * in turn proxies to the openhuman backend's

@@ -18,7 +18,7 @@ import ChatFilesPanel from './ChatFilesPanel';
  * survive app restarts via the `artifactsReadyOnlyTransform` configured in
  * `store/index.ts`.
  */
-export interface ChatFilesChipProps {
+interface ChatFilesChipProps {
   threadId: string;
 }
 

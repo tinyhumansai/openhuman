@@ -1,8 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 
+import type { AgentProfile } from '../../../../types/agentProfile';
 import type { CoreCronJob, CoreCronRun } from '../../../../utils/tauriCommands';
 import CoreJobList from './CoreJobList';
+
+const profiles: AgentProfile[] = [
+  { id: 'writer', name: 'Writer', description: '', agentId: 'orchestrator', builtIn: false },
+];
 
 vi.mock('../../../../lib/i18n/I18nContext', () => ({
   useT: () => ({
@@ -15,6 +20,7 @@ vi.mock('../../../../lib/i18n/I18nContext', () => ({
         'settings.cron.jobs.lastStatus': 'Last status',
         'settings.cron.jobs.nextRun': 'Next run',
         'settings.cron.jobs.pause': 'Pause',
+        'settings.cron.jobs.profile': 'Profile',
         'settings.cron.jobs.recentRuns': 'Recent runs',
         'settings.cron.jobs.saving': 'Saving…',
         'settings.cron.jobs.schedule': 'Schedule',
@@ -106,6 +112,45 @@ describe('CoreJobList stable test hooks', () => {
     fireEvent.click(editBtn);
     expect(onEditCoreJob).toHaveBeenCalledOnce();
     expect(onEditCoreJob).toHaveBeenCalledWith(job);
+  });
+
+  test('shows the attributed profile name when it resolves', () => {
+    render(
+      <CoreJobList
+        loading={false}
+        coreJobs={[{ ...job, profile_id: 'writer' }]}
+        profiles={profiles}
+        coreRunsByJob={{}}
+        coreBusyKey={null}
+        onToggleCoreJob={vi.fn()}
+        onRunCoreJob={vi.fn()}
+        onLoadCoreRuns={vi.fn()}
+        onRemoveCoreJob={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId(`cron-job-profile-${job.id}`)).toHaveTextContent('Writer');
+  });
+
+  test('falls back to the raw profile id when the profile was deleted', () => {
+    render(
+      <CoreJobList
+        loading={false}
+        coreJobs={[{ ...job, profile_id: 'ghost' }]}
+        profiles={profiles}
+        coreRunsByJob={{}}
+        coreBusyKey={null}
+        onToggleCoreJob={vi.fn()}
+        onRunCoreJob={vi.fn()}
+        onLoadCoreRuns={vi.fn()}
+        onRemoveCoreJob={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId(`cron-job-profile-${job.id}`)).toHaveTextContent('ghost');
+  });
+
+  test('omits the profile row when the job has no attribution', () => {
+    renderList();
+    expect(screen.queryByTestId(`cron-job-profile-${job.id}`)).not.toBeInTheDocument();
   });
 
   test('toggle button shows saving label when coreBusyKey targets the toggle', () => {

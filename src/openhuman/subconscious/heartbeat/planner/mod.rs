@@ -27,8 +27,8 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
-use crate::openhuman::notifications::bus::publish_core_notification;
-use crate::openhuman::notifications::types::CoreNotificationEvent;
+use crate::openhuman::desktop::notifications::bus::publish_core_notification;
+use crate::openhuman::desktop::notifications::types::CoreNotificationEvent;
 
 use collectors::{
     collect_calendar_meetings, collect_cron_reminders, collect_relevant_notifications,
@@ -158,7 +158,7 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
                     "[heartbeat:planner] forwarding imminent meeting to auto-join policy"
                 );
                 let owns_notification =
-                    crate::openhuman::agent_meetings::calendar::handle_calendar_meeting_candidate(
+                    crate::openhuman::meet::backend_bot::calendar::handle_calendar_meeting_candidate(
                         meeting_url,
                         event.title.clone(),
                         // Heartbeat-polled events carry only a title + URL; the
@@ -248,7 +248,7 @@ mod tests {
     use super::*;
     use crate::openhuman::config::Config;
     use crate::openhuman::cron::{self, Schedule};
-    use crate::openhuman::notifications::subscribe_core_notifications;
+    use crate::openhuman::desktop::notifications::subscribe_core_notifications;
     use chrono::TimeZone;
     use serde_json::json;
     use tempfile::TempDir;
@@ -454,8 +454,10 @@ mod tests {
 
     #[tokio::test]
     async fn heartbeat_provider_notifications_are_not_re_escalated() {
-        use crate::openhuman::notifications::store as notifications_store;
-        use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
+        use crate::openhuman::desktop::notifications::store as notifications_store;
+        use crate::openhuman::desktop::notifications::types::{
+            IntegrationNotification, NotificationStatus,
+        };
 
         let tmp = TempDir::new().unwrap();
         let mut config = test_config(&tmp);

@@ -905,6 +905,34 @@ export async function memoryTreePipelineStatus(): Promise<MemoryTreePipelineStat
   return out;
 }
 
+// ── memory_tree_retry_failed (#002 FR-011) ───────────────────────────────
+
+/** Response shape for `openhuman.memory_tree_retry_failed`. */
+export interface MemoryTreeRetryFailedResponse {
+  /** Number of terminally-failed jobs flipped back to `ready`. */
+  requeued: number;
+}
+
+/**
+ * Requeue every terminally-failed Memory Tree job.
+ *
+ * Unrecoverable failures (auth, budget, dimension mismatch) are terminal by
+ * design — the worker never retries them — so once the user fixes the
+ * underlying cause this is the only thing that unparks the work. Without it a
+ * single bad batch pins the panel on `error` permanently.
+ *
+ * Backed by `openhuman.memory_tree_retry_failed`.
+ */
+export async function memoryTreeRetryFailed(): Promise<MemoryTreeRetryFailedResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeRetryFailed: entry');
+  const resp = await callCoreRpc<
+    MemoryTreeRetryFailedResponse | ResultEnvelope<MemoryTreeRetryFailedResponse>
+  >({ method: 'openhuman.memory_tree_retry_failed', params: {} });
+  const out = unwrapResult(resp);
+  console.debug('[memory-tree-rpc] memoryTreeRetryFailed: exit requeued=%d', out.requeued);
+  return out;
+}
+
 // ── memory_tree_set_enabled (#1856 Part 1) ───────────────────────────────
 
 /**

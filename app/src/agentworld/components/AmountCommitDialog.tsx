@@ -17,7 +17,7 @@ import Button from '../../components/ui/Button';
 import { ModalShell } from '../../components/ui/ModalShell';
 import { useT } from '../../lib/i18n/I18nContext';
 
-export interface AmountCommitDialogProps {
+interface AmountCommitDialogProps {
   /** Header title, e.g. "Bid on @handle". */
   title: string;
   /** Context line under the title. */
@@ -36,7 +36,7 @@ export interface AmountCommitDialogProps {
   onCancel: () => void;
 }
 
-export interface ParsedAmount {
+interface ParsedAmount {
   /** Amount in base units, ready for the RPC. Only set when `valid`. */
   base: string | null;
   valid: boolean;

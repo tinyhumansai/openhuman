@@ -6,19 +6,15 @@ use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
 use openhuman_core::openhuman::agent::harness::run_queue::RunQueue;
 use openhuman_core::openhuman::agent::harness::session::Agent;
 use openhuman_core::openhuman::agent::host_runtime::NativeRuntime;
+use openhuman_core::openhuman::agent::tinyagents::thread_context::with_thread_id;
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::inference::provider::thread_context::with_thread_id;
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
-};
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::monitor::tools::{
+use openhuman_core::openhuman::security::{AuditLogger, AutonomyLevel, SecurityPolicy};
+use openhuman_core::openhuman::subconscious::monitors::tools::{
     MonitorListTool, MonitorReadTool, MonitorStopTool, MonitorTool,
 };
-use openhuman_core::openhuman::security::{AuditLogger, AutonomyLevel, SecurityPolicy};
 use openhuman_core::openhuman::tools::Tool;
 use parking_lot::Mutex;
 use serde_json::json;
@@ -26,24 +22,27 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
 use tokio::time::{sleep, Duration};
 
-type ResponseFactory = Box<dyn Fn(&[ChatMessage]) -> ChatResponse + Send + Sync>;
+type ResponseFactory = Box<dyn Fn(&[Message]) -> ModelResponse + Send + Sync>;
 
-enum ProviderStep {
-    Static(ChatResponse),
-    Delayed(Duration, ChatResponse),
+enum ModelStep {
+    Static(ModelResponse),
+    Delayed(Duration, ModelResponse),
     FromHistory(ResponseFactory),
 }
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
 }
 
-struct ScriptedProvider {
-    steps: Mutex<VecDeque<ProviderStep>>,
+struct ScriptedModel {
+    steps: Mutex<VecDeque<ModelStep>>,
     requests: Mutex<Vec<CapturedRequest>>,
 }
 
@@ -52,8 +51,8 @@ fn monitor_e2e_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-impl ScriptedProvider {
-    fn new(steps: Vec<ProviderStep>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(steps: Vec<ModelStep>) -> Arc<Self> {
         Arc::new(Self {
             steps: Mutex::new(steps.into()),
             requests: Mutex::new(Vec::new()),
@@ -66,47 +65,36 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: OnceLock<ModelProfile> = OnceLock::new();
+        Some(PROFILE.get_or_init(|| {
+            let mut profile = ModelProfile::default();
+            profile.tool_calling = true;
+            profile.parallel_tool_calls = true;
+            profile
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("summary:{message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        let messages = request.messages.to_vec();
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let messages = request.messages;
         self.requests.lock().push(CapturedRequest {
             messages: messages.clone(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
         });
 
         let step = self.steps.lock().pop_front();
         match step {
-            Some(ProviderStep::Static(response)) => Ok(response),
-            Some(ProviderStep::Delayed(delay, response)) => {
+            Some(ModelStep::Static(response)) => Ok(response),
+            Some(ModelStep::Delayed(delay, response)) => {
                 sleep(delay).await;
                 Ok(response)
             }
-            Some(ProviderStep::FromHistory(factory)) => Ok(factory(&messages)),
+            Some(ModelStep::FromHistory(factory)) => Ok(factory(&messages)),
             None => Ok(text_response("default monitor final")),
         }
     }
@@ -202,38 +190,35 @@ impl Memory for StubMemory {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
+fn text_response(text: &str) -> ModelResponse {
+    ModelResponse::assistant(text)
+}
+
+fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: Vec::new(),
+            tool_calls: vec![ToolCall::new(id, name, arguments)],
+            usage: None,
+        },
         usage: None,
-        reasoning_content: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!("calling {name}")),
-        tool_calls: vec![ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
-        usage: None,
-        reasoning_content: Some(format!("need {name}")),
-    }
-}
-
-fn all_messages_text(messages: &[ChatMessage]) -> String {
+fn all_messages_text(messages: &[Message]) -> String {
     messages
         .iter()
-        .map(|message| format!("{}:{}", message.role, message.content))
+        .map(Message::text)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn first_monitor_id(messages: &[ChatMessage]) -> String {
+fn first_monitor_id(messages: &[Message]) -> String {
     let text = all_messages_text(messages);
     let start = text
         .find("mon_")
@@ -270,12 +255,12 @@ fn monitor_tools(workspace: &Path, autonomy: AutonomyLevel) -> Vec<Box<dyn Tool>
 
 fn build_agent(
     workspace: &Path,
-    provider: Arc<ScriptedProvider>,
+    provider: Arc<ScriptedModel>,
     tools: Vec<Box<dyn Tool>>,
     max_tool_iterations: usize,
 ) -> Agent {
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(tools)
         .memory(Arc::new(StubMemory::default()))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
@@ -302,7 +287,7 @@ fn build_agent(
 
 async fn run_monitor_turn(
     tmp: &TempDir,
-    provider: Arc<ScriptedProvider>,
+    provider: Arc<ScriptedModel>,
     autonomy: AutonomyLevel,
     max_tool_iterations: usize,
 ) -> String {
@@ -326,8 +311,8 @@ async fn run_monitor_turn(
 async fn orchestrator_monitor_line_reaches_next_llm_call_as_collect_context() {
     let _guard = monitor_e2e_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
-    let provider = ScriptedProvider::new(vec![
-        ProviderStep::Static(tool_response(
+    let provider = ScriptedModel::new(vec![
+        ModelStep::Static(tool_response(
             "call-monitor",
             "monitor",
             json!({
@@ -337,11 +322,11 @@ async fn orchestrator_monitor_line_reaches_next_llm_call_as_collect_context() {
                 "persistent": false
             }),
         )),
-        ProviderStep::Delayed(
+        ModelStep::Delayed(
             Duration::from_millis(150),
             tool_response("call-list", "monitor_list", json!({})),
         ),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(
                 text.contains("[Additional context from user]: [Monitor mon_"),
@@ -365,15 +350,15 @@ async fn orchestrator_monitor_line_reaches_next_llm_call_as_collect_context() {
     assert!(requests[2]
         .messages
         .iter()
-        .any(|message| message.content.contains("MONITOR_READY")));
+        .any(|message| message.text().contains("MONITOR_READY")));
 }
 
 #[tokio::test]
 async fn orchestrator_reads_monitor_output_after_registration() {
     let _guard = monitor_e2e_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
-    let provider = ScriptedProvider::new(vec![
-        ProviderStep::Static(tool_response(
+    let provider = ScriptedModel::new(vec![
+        ModelStep::Static(tool_response(
             "call-monitor",
             "monitor",
             json!({
@@ -383,11 +368,11 @@ async fn orchestrator_reads_monitor_output_after_registration() {
                 "persistent": false
             }),
         )),
-        ProviderStep::Delayed(
+        ModelStep::Delayed(
             Duration::from_millis(120),
             tool_response("call-list", "monitor_list", json!({})),
         ),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let monitor_id = first_monitor_id(messages);
             tool_response(
                 "call-read",
@@ -395,7 +380,7 @@ async fn orchestrator_reads_monitor_output_after_registration() {
                 json!({ "monitor_id": monitor_id, "max_bytes": 4096 }),
             )
         })),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(text.contains("READBACK_LINE"));
             text_response("orchestrator read monitor output")
@@ -411,8 +396,8 @@ async fn orchestrator_reads_monitor_output_after_registration() {
 async fn orchestrator_stops_a_running_monitor_by_id_from_tool_result() {
     let _guard = monitor_e2e_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
-    let provider = ScriptedProvider::new(vec![
-        ProviderStep::Static(tool_response(
+    let provider = ScriptedModel::new(vec![
+        ModelStep::Static(tool_response(
             "call-monitor",
             "monitor",
             json!({
@@ -422,7 +407,7 @@ async fn orchestrator_stops_a_running_monitor_by_id_from_tool_result() {
                 "persistent": false
             }),
         )),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let monitor_id = first_monitor_id(messages);
             tool_response(
                 "call-stop",
@@ -430,7 +415,7 @@ async fn orchestrator_stops_a_running_monitor_by_id_from_tool_result() {
                 json!({ "monitor_id": monitor_id }),
             )
         })),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(
                 contains_tool_json_pair(&text, "status", "stopped"),
@@ -449,8 +434,8 @@ async fn orchestrator_stops_a_running_monitor_by_id_from_tool_result() {
 async fn orchestrator_sees_monitor_timeout_status_through_list() {
     let _guard = monitor_e2e_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
-    let provider = ScriptedProvider::new(vec![
-        ProviderStep::Static(tool_response(
+    let provider = ScriptedModel::new(vec![
+        ModelStep::Static(tool_response(
             "call-monitor",
             "monitor",
             json!({
@@ -460,11 +445,11 @@ async fn orchestrator_sees_monitor_timeout_status_through_list() {
                 "persistent": false
             }),
         )),
-        ProviderStep::Delayed(
+        ModelStep::Delayed(
             Duration::from_millis(120),
             tool_response("call-list", "monitor_list", json!({})),
         ),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(
                 text.contains("e2e timed monitor")
@@ -484,8 +469,8 @@ async fn orchestrator_sees_monitor_timeout_status_through_list() {
 async fn orchestrator_gets_denial_when_monitor_command_violates_policy() {
     let _guard = monitor_e2e_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
-    let provider = ScriptedProvider::new(vec![
-        ProviderStep::Static(tool_response(
+    let provider = ScriptedModel::new(vec![
+        ModelStep::Static(tool_response(
             "call-monitor",
             "monitor",
             json!({
@@ -495,7 +480,7 @@ async fn orchestrator_gets_denial_when_monitor_command_violates_policy() {
                 "persistent": false
             }),
         )),
-        ProviderStep::FromHistory(Box::new(|messages| {
+        ModelStep::FromHistory(Box::new(|messages| {
             let text = all_messages_text(messages);
             assert!(
                 text.contains("[policy-blocked] Tool 'monitor' was blocked by the security policy"),

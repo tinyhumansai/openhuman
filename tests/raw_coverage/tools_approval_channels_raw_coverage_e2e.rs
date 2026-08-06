@@ -71,23 +71,23 @@ use openhuman_core::openhuman::channels::{
     IrcChannel, LinqChannel, MattermostChannel, QQChannel, SendMessage, SignalChannel,
     SlackChannel, WhatsAppChannel,
 };
-use openhuman_core::openhuman::composio::all_composio_agent_tools;
+use openhuman_core::openhuman::integrations::composio::all_composio_agent_tools;
 use openhuman_core::openhuman::config::schema::{
     CapabilityProviderConfig, CapabilityProviderTrustState, NodeConfig, WhatsAppConfig,
 };
 use openhuman_core::openhuman::config::{Config, IMessageConfig, WebhookConfig};
-use openhuman_core::openhuman::context::prompt::ConnectedIntegration;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::agent::context::prompt::ConnectedIntegration;
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
-use openhuman_core::openhuman::javascript::NodeBootstrap;
+use openhuman_core::openhuman::runtime::javascript::NodeBootstrap;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
 use openhuman_core::openhuman::security::{AuditLogger, AutonomyLevel, SecurityPolicy};
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
-use openhuman_core::openhuman::tool_registry::ops::diagnostics_for_config;
-use openhuman_core::openhuman::tool_registry::{
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::tools::registry::ops::diagnostics_for_config;
+use openhuman_core::openhuman::tools::registry::{
     all_tool_registry_controller_schemas, all_tool_registry_registered_controllers,
     capability_provider_by_id, capability_provider_diagnostics, capability_provider_registry,
     denials, get_tool, is_capability_provider_trusted_enabled, list_capability_providers,
@@ -98,12 +98,10 @@ use openhuman_core::openhuman::tools::generated::{
     admit_generated_tool_definitions, generated_tools_from_definitions, GeneratedToolAdapter,
     GeneratedToolAdmissionConfig, GeneratedToolDefinition, GeneratedToolRisk,
 };
-use openhuman_core::openhuman::tools::local_cli::tools_wrappers_list_json;
 use openhuman_core::openhuman::tools::orchestrator_tools::collect_orchestrator_tools;
 use openhuman_core::openhuman::tools::{
     all_tools, all_tools_controller_schemas, all_tools_registered_controllers,
-    decode_data_url_bytes, default_tools, extract_data_url, extract_saved_path,
-    write_bytes_to_path, ApplyPatchTool, BrowserAction, BrowserTool, CleaningStrategy,
+    default_tools, ApplyPatchTool, BrowserTool, CleaningStrategy,
     ComputerUseConfig, CsvExportTool, CurrentTimeTool, DefaultToolPolicy, DetectToolsTool,
     EditFileTool, FileReadTool, FileWriteTool, GitbooksGetPageTool, GitbooksSearchTool, GlobTool,
     GrepTool, InsertSqlRecordTool, ListFilesTool, LspTool, NodeExecTool, NpmExecTool,
@@ -483,7 +481,7 @@ async fn mock_backend(request: Request) -> Response {
     let payload = match (method, path.as_str()) {
         (Method::GET, "/auth/me") => json!({
             "success": true,
-            "user": {
+            "data": {
                 "id": "user-e2e",
                 "telegramId": "telegram-user-1",
                 "discord_id": "discord-user-1"
@@ -1391,7 +1389,6 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
         "example.com".to_string(),
     ];
     config.gitbooks.enabled = true;
-    config.computer_control.enabled = true;
     config.learning.enabled = true;
     config.learning.tool_tracking_enabled = true;
     config.mcp_client.enabled = true;
@@ -1425,10 +1422,7 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
         "curl",
         "gitbooks_search",
         "gitbooks_get_page",
-        "mouse",
-        "keyboard",
         "tool_stats",
-        "screenshot",
         "image_info",
     ] {
         assert!(
@@ -1436,6 +1430,8 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
             "missing tool {expected}; got {names:?}"
         );
     }
+    assert!(!names.contains(&"mouse"));
+    assert!(!names.contains(&"keyboard"));
     assert!(!names.contains(&"node_exec"));
     assert!(!names.contains(&"npm_exec"));
 
@@ -1443,14 +1439,6 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
     assert_eq!(baseline.len(), 3);
     assert_eq!(baseline[0].scope(), ToolScope::All);
     assert_eq!(baseline[0].permission_level(), PermissionLevel::Execute);
-
-    let wrappers = tools_wrappers_list_json();
-    assert!(wrappers
-        .pointer("/result/wrappers")
-        .and_then(Value::as_array)
-        .expect("wrapper list")
-        .iter()
-        .any(|wrapper| wrapper.get("name").and_then(Value::as_str) == Some("screenshot")));
 
     let tool_schemas = all_tools_controller_schemas();
     let tool_controllers = all_tools_registered_controllers();
@@ -1574,31 +1562,6 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
     assert!(default_tool.generated_runtime_context(&json!({})).is_none());
     assert!(default_tool.max_result_size_chars().is_none());
 
-    let png_data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-    let raw_screenshot = format!(
-        "noise\nScreenshot saved to: {}\n{png_data_url}\n",
-        dir.path().join("shot.png").display()
-    );
-    assert_eq!(
-        extract_data_url(&raw_screenshot).as_deref(),
-        Some(png_data_url)
-    );
-    assert_eq!(
-        extract_saved_path(&raw_screenshot).as_deref(),
-        Some(dir.path().join("shot.png").as_path())
-    );
-    let decoded = decode_data_url_bytes(png_data_url).expect("decode png");
-    assert_eq!(&decoded[..4], b"\x89PNG");
-    assert!(decode_data_url_bytes("data:text/plain;base64,aGVsbG8=")
-        .expect_err("non-image data URL rejected")
-        .contains("invalid data URL"));
-    let nested = dir.path().join("screens").join("nested").join("shot.png");
-    write_bytes_to_path(&nested, &decoded).expect("write screenshot bytes");
-    assert_eq!(
-        std::fs::read(&nested).expect("read screenshot bytes"),
-        decoded
-    );
-
     let computer = ComputerUseConfig {
         api_key: Some("secret-key".into()),
         window_allowlist: vec!["OpenHuman".into()],
@@ -1609,13 +1572,6 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
     let debug = format!("{computer:?}");
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("secret-key"));
-    let action = serde_json::to_value(BrowserAction::Screenshot {
-        path: Some("shot.png".into()),
-        full_page: true,
-    })
-    .expect("serialize browser action");
-    assert_eq!(action.pointer("/screenshot/path"), Some(&json!("shot.png")));
-    assert_eq!(action.pointer("/screenshot/full_page"), Some(&json!(true)));
 }
 
 #[tokio::test]
@@ -1768,7 +1724,6 @@ async fn browser_tool_with_agent_browser_shim_covers_action_parser_and_command_p
         json!({ "action": "get_text", "selector": "main" }),
         json!({ "action": "get_title" }),
         json!({ "action": "get_url" }),
-        json!({ "action": "screenshot", "path": "shot.png", "full_page": true }),
         json!({ "action": "wait", "selector": ".ready" }),
         json!({ "action": "wait", "ms": 25 }),
         json!({ "action": "wait", "text": "Loaded" }),
@@ -2067,8 +2022,8 @@ async fn channel_provider_public_paths_cover_pre_network_errors_and_utilities() 
 
 #[tokio::test]
 async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
-    let mut rx = openhuman_core::openhuman::channels::web::subscribe_web_channel_events();
-    openhuman_core::openhuman::channels::web::publish_web_channel_event(WebChannelEvent {
+    let mut rx = openhuman_core::openhuman::web_chat::subscribe_web_channel_events();
+    openhuman_core::openhuman::web_chat::publish_web_channel_event(WebChannelEvent {
         event: "coverage_event".to_string(),
         client_id: "client-1".to_string(),
         thread_id: "thread-1".to_string(),
@@ -2086,7 +2041,7 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     assert_eq!(event.message.as_deref(), Some("hello web channel"));
 
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "",
             "thread-1",
             "hello",
@@ -2095,14 +2050,14 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank client_id"),
         "client_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "client-1",
             "",
             "hello",
@@ -2111,14 +2066,14 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank thread_id"),
         "thread_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "client-1",
             "thread-1",
             "   ",
@@ -2127,7 +2082,7 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank message"),
@@ -2135,26 +2090,26 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     );
 
     assert_eq!(
-        openhuman_core::openhuman::channels::web::cancel_chat("", "thread-1")
+        openhuman_core::openhuman::web_chat::cancel_chat("", "thread-1")
             .await
             .expect_err("blank cancel client_id"),
         "client_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::cancel_chat("client-1", "")
+        openhuman_core::openhuman::web_chat::cancel_chat("client-1", "")
             .await
             .expect_err("blank cancel thread_id"),
         "thread_id is required"
     );
     assert!(
-        openhuman_core::openhuman::channels::web::cancel_chat("client-1", "thread-1")
+        openhuman_core::openhuman::web_chat::cancel_chat("client-1", "thread-1")
             .await
             .expect("cancel with no in-flight request")
             .is_none()
     );
-    openhuman_core::openhuman::channels::web::invalidate_thread_sessions("thread-1").await;
+    openhuman_core::openhuman::web_chat::invalidate_thread_sessions("thread-1").await;
     assert!(
-        openhuman_core::openhuman::channels::web::in_flight_entries_for_test()
+        openhuman_core::openhuman::web_chat::in_flight_entries_for_test()
             .await
             .is_empty()
     );
@@ -2181,7 +2136,7 @@ async fn proactive_subscriber_routes_web_and_active_external_channel_without_net
         }
     }
 
-    let mut rx = openhuman_core::openhuman::channels::web::subscribe_web_channel_events();
+    let mut rx = openhuman_core::openhuman::web_chat::subscribe_web_channel_events();
     let capture = Arc::new(CapturingChannel::default());
     let mut channels: HashMap<String, Arc<dyn Channel>> = HashMap::new();
     channels.insert("capture".into(), capture.clone());
@@ -3587,7 +3542,16 @@ async fn node_and_npm_exec_tools_cover_validation_policy_and_disabled_runtime_pa
         reqwest::Client::new(),
     ));
 
-    let node = NodeExecTool::new(full_security.clone(), runtime.clone(), bootstrap.clone());
+    let node = NodeExecTool::new(
+        full_security.clone(),
+        runtime.clone(),
+        bootstrap.clone(),
+        openhuman_core::openhuman::config::RuntimePoolConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        config.workspace_dir.clone(),
+    );
     assert_eq!(node.name(), "node_exec");
     assert_eq!(node.permission_level(), PermissionLevel::Execute);
     assert!(node.description().contains("Execute JavaScript"));
@@ -3614,6 +3578,11 @@ async fn node_and_npm_exec_tools_cover_validation_policy_and_disabled_runtime_pa
         readonly_security.clone(),
         runtime.clone(),
         bootstrap.clone(),
+        openhuman_core::openhuman::config::RuntimePoolConfig {
+            enabled: false,
+            ..Default::default()
+        },
+        config.workspace_dir.clone(),
     );
     let blocked = readonly_node
         .execute(json!({ "inline_code": "console.log('blocked')" }))

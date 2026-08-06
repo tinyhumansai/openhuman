@@ -75,8 +75,6 @@ export const selectSpeakReplies = (state: { ptt: PttState }): boolean => state.p
 
 export const selectShowOverlay = (state: { ptt: PttState }): boolean => state.ptt.showOverlay;
 
-export const selectIsHeld = (state: { ptt: PttState }): boolean => state.ptt.isHeld;
-
 export const selectPttRegistrationError = (state: { ptt: PttState }): string | null =>
   state.ptt.registrationError;
 

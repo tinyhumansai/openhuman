@@ -15,7 +15,7 @@ import {
 import { defaultMascot, fetchMascotManifest, findMascot } from './manifestService';
 import type { MascotManifest, MascotManifestEntry } from './types';
 
-export interface UseMascotManifestResult {
+interface UseMascotManifestResult {
   manifest: MascotManifest | null;
   /** The selected mascot, or the default when none is chosen / found yet. */
   entry: MascotManifestEntry | null;

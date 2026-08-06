@@ -47,6 +47,10 @@ vi.mock('../../../store/accountsSlice', () => ({
 }));
 vi.mock('../../../store/threadSlice', () => ({
   createNewThread: vi.fn(() => ({ type: 'thread/createNewThread' })),
+  // The hook normalises a rejected `.unwrap()` (a bare string / SerializedError,
+  // never an `Error`) before logging it (#5156).
+  formatThreadCreateError: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
   loadThreadMessages: vi.fn((id: string) => ({ type: 'thread/loadThreadMessages', payload: id })),
   setSelectedThread: vi.fn((id: string) => ({ type: 'thread/setSelectedThread', payload: id })),
 }));

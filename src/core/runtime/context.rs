@@ -50,6 +50,11 @@ tokio::task_local! {
 pub struct CoreContext {
     host_kind: HostKind,
     workspace_dir: RwLock<Option<std::path::PathBuf>>,
+    /// Which domain families are live for this context (#4796). The registry
+    /// filters its controller/schema/dispatch surface by this set via
+    /// [`CoreContext::current`] → [`CoreContext::domains`]. `full()` for the
+    /// desktop shell / standalone CLI (byte-identical to pre-#4796).
+    domains: crate::core::runtime::DomainSet,
 }
 
 impl CoreContext {
@@ -65,23 +70,25 @@ impl CoreContext {
     pub async fn init(
         host_kind: HostKind,
         token: &TokenSource,
+        domains: crate::core::runtime::DomainSet,
     ) -> anyhow::Result<(
         Arc<CoreContext>,
         bool,
         Option<crate::openhuman::config::Config>,
     )> {
+        log::debug!("[core-context] init: host_kind={host_kind:?} domains={domains:?}");
         // 1. Ensure all controllers are registered before anything dispatches.
         let _ = crate::core::all::all_registered_controllers();
 
         // 2. Load the master encryption key before any config/credential op that
         //    needs to decrypt secrets. No-op if already called (e.g. from
         //    run_core_from_args for the CLI).
-        crate::openhuman::keyring::init_master_key();
+        crate::openhuman::security::keyring::init_master_key();
 
         // 3. AgentBox GMI MaaS provider bridge — no-op when env vars absent. Must
         //    run before the router mounts the AgentBox routes so the inference
         //    catalog knows about "gmi-maas" by the time `/run` accepts traffic.
-        crate::openhuman::agentbox::register_gmi_provider_if_present();
+        crate::openhuman::agent::agentbox::register_gmi_provider_if_present();
 
         // 4. Seed the per-process RPC bearer. `Fixed` seeds the in-memory value
         //    directly (never touches the env); `EnvOrFile` reads
@@ -112,15 +119,15 @@ impl CoreContext {
         };
 
         // 5. Resolve config once, then initialize workspace-bound stores
-        //    (memory, attachments, whatsapp, people) with that exact workspace.
+        //    (memory, attachments, people) with that exact workspace.
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(cfg) => {
-                init_stores(&cfg).await;
+                init_stores(&cfg, domains).await;
                 Some(cfg)
             }
             Err(e) => {
                 log::error!(
-                    "[boot] memory::global + whatsapp_data init SKIPPED — \
+                    "[boot] memory::global init SKIPPED — \
                      Config::load_or_init failed ({e:#}). Memory persistence is \
                      DISABLED for this run; no silent fallback to the default \
                      workspace (which would cause chunk loss / cross-workspace \
@@ -138,11 +145,12 @@ impl CoreContext {
         //    background jobs start later, from CoreRuntime::serve(), after bind
         //    succeeds.
         let runtime_config = config.clone();
-        crate::core::jsonrpc::bootstrap_core_runtime(host_kind, config).await;
+        crate::core::jsonrpc::bootstrap_core_runtime(host_kind, config, domains).await;
 
         let ctx = Arc::new(CoreContext {
             host_kind,
             workspace_dir: RwLock::new(workspace_dir),
+            domains,
         });
 
         // Register the process default context (first build wins). Dispatch
@@ -155,6 +163,13 @@ impl CoreContext {
     /// The host that constructed this context (Tauri shell / CLI / Docker).
     pub fn host_kind(&self) -> HostKind {
         self.host_kind
+    }
+
+    /// Which domain families are live for this context (#4796). The controller
+    /// registry consults this (via [`CoreContext::current`]) to filter its
+    /// schema/dispatch/tool surface. `full()` for desktop/CLI.
+    pub fn domains(&self) -> crate::core::runtime::DomainSet {
+        self.domains
     }
 
     /// The resolved per-user workspace directory this context is bound to.
@@ -176,9 +191,11 @@ impl CoreContext {
     /// stores; the same context always gets the same cached store. Handlers
     /// migrate off `people::store::get()` by reading through
     /// `CoreContext::current()?.people()` instead.
-    pub fn people(&self) -> Result<Arc<crate::openhuman::people::store::PeopleStore>, String> {
+    pub fn people(
+        &self,
+    ) -> Result<Arc<crate::openhuman::memory::people::store::PeopleStore>, String> {
         let workspace_dir = self.workspace_dir()?;
-        crate::openhuman::people::store::for_workspace(&workspace_dir)
+        crate::openhuman::memory::people::store::for_workspace(&workspace_dir)
     }
 
     /// The context for the current dispatch: the one scoped by
@@ -242,6 +259,23 @@ impl CoreContext {
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
         CURRENT_CONTEXT.scope(ctx, fut).await
     }
+
+    /// Test-only constructor: build a context with an explicit
+    /// [`DomainSet`](crate::core::runtime::DomainSet) and optional workspace, so
+    /// cross-module tests (e.g. `core::all`'s registry filter) can exercise the
+    /// ambient DomainSet gate without going through the full [`CoreContext::init`]
+    /// boot sequence.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        domains: crate::core::runtime::DomainSet,
+        workspace_dir: Option<std::path::PathBuf>,
+    ) -> Arc<CoreContext> {
+        Arc::new(CoreContext {
+            host_kind: HostKind::Cli,
+            workspace_dir: RwLock::new(workspace_dir),
+            domains,
+        })
+    }
 }
 
 /// Initialize the global `MemoryClient` and the other workspace-bound stores so
@@ -252,78 +286,137 @@ impl CoreContext {
 /// A `Config::load_or_init` failure here is operator-visible and serious
 /// (corrupt toml, bad permissions, missing/unwritable `OPENHUMAN_WORKSPACE` —
 /// common on headless/containerised deploys with no writable `$HOME`).
-/// Previously the fallback to `Config::default()` initialised the memory +
-/// whatsapp_data stores against the *wrong* workspace dir, silently causing
+/// Previously the fallback to `Config::default()` initialised the memory
+/// store against the *wrong* workspace dir, silently causing
 /// chunk loss / cross-workspace bleed-over while the app looked healthy (Sentry
 /// OPENHUMAN-CORE-48). Instead: skip the workspace-bound init entirely so
 /// memory stays explicitly *uninitialised* — callers then get a clear "memory
 /// client not ready" error rather than reading/writing the wrong workspace. The
 /// server still comes up; the operator sees the loud error and fixes their
 /// config or sets `OPENHUMAN_WORKSPACE` to a writable path, then restarts.
-pub async fn init_stores(cfg: &crate::openhuman::config::Config) {
-    let keyring_dir = crate::openhuman::keyring::store::workspace_dir_for_file_backend();
+/// Per-`DomainGroup` gating decision for each workspace-bound store that
+/// [`init_stores`] initializes. Extracted as a pure value so the store-gating
+/// mapping (which store is owned by which `DomainGroup`) has a single source of
+/// truth that `init_stores` consumes and tests assert directly — without
+/// touching process-global store state or booting a runtime (#4796 DoD item 3).
+///
+/// The keyring-path log and the credentials Sentry bind in `init_stores` are
+/// intentionally *not* represented here: they are unguarded core infra every
+/// `DomainSet` needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreInitPlan {
+    /// `memory::global` — gated on [`DomainGroup::Memory`].
+    pub memory: bool,
+    /// `agent::multimodal` attachments sidecar dir — gated on [`DomainGroup::Agent`].
+    pub agent_attachments: bool,
+    /// `memory::people::store` — gated on [`DomainGroup::Memory`].
+    ///
+    /// Was `Platform` while `people` was a top-level domain. The reorg moved it
+    /// to `memory/people` and its controllers are tagged `Memory`; leaving the
+    /// store on `Platform` would register those controllers under `harness()`
+    /// with no store behind them.
+    pub people: bool,
+    /// legacy-workflow prune under `skills::registry` — gated on [`DomainGroup::Skills`].
+    pub skills_prune: bool,
+}
+
+impl StoreInitPlan {
+    /// The store-init plan for `domains`. Pure: no side effects, no globals.
+    pub fn for_domains(domains: crate::core::runtime::DomainSet) -> Self {
+        use crate::core::all::DomainGroup;
+        Self {
+            memory: domains.allows(DomainGroup::Memory),
+            agent_attachments: domains.allows(DomainGroup::Agent),
+            people: domains.allows(DomainGroup::Memory),
+            skills_prune: domains.allows(DomainGroup::Skills),
+        }
+    }
+}
+
+pub async fn init_stores(
+    cfg: &crate::openhuman::config::Config,
+    domains: crate::core::runtime::DomainSet,
+) {
+    let plan = StoreInitPlan::for_domains(domains);
+
+    let keyring_dir = crate::openhuman::security::keyring::store::workspace_dir_for_file_backend();
+    // Keyring path log + credentials Sentry bind (below) are unguarded — they
+    // are core infra every DomainSet needs. Each workspace-bound store init is
+    // gated on its owning DomainGroup so an excluded domain's store stays
+    // uninitialized under `harness()`/`none()` (#4796 DoD item 3).
     log::info!(
-        "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={}",
+        "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={} domains={:?}",
         cfg.config_path.display(),
         cfg.workspace_dir.display(),
         keyring_dir.display(),
-        crate::openhuman::keyring::backend_name(),
+        crate::openhuman::security::keyring::backend_name(),
+        domains,
     );
-    match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
-        Ok(_) => log::info!(
-            "[boot] memory::global initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+    if plan.memory {
+        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] memory::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+        }
+    } else {
+        log::debug!("[boot] memory::global init SKIPPED — Memory domain disabled");
     }
     // Install the on-disk image-attachment sidecar dir so inbound
     // image markers persist under <workspace>/attachments/ instead
     // of an in-memory FIFO (survives restarts + delegation hops).
     // Also fires a best-effort stale-file sweep.
-    crate::openhuman::agent::multimodal::init_attachments_dir(
-        cfg.workspace_dir.join("attachments"),
-    );
-    log::info!(
-        "[boot] image attachments sidecar dir = {}",
-        cfg.workspace_dir.join("attachments").display()
-    );
-    // Initialize the WhatsApp data store so scanner ingest calls
-    // can write data without requiring a lazy-init fallback.
-    match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
-        Ok(_) => log::info!(
-            "[boot] whatsapp_data::global initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+    if plan.agent_attachments {
+        crate::openhuman::agent::multimodal::init_attachments_dir(
+            cfg.workspace_dir.join("attachments"),
+        );
+        log::info!(
+            "[boot] image attachments sidecar dir = {}",
+            cfg.workspace_dir.join("attachments").display()
+        );
+    } else {
+        log::debug!("[boot] image attachments sidecar dir SKIPPED — Agent domain disabled");
     }
+    // (The WhatsApp data store moved to the Tauri shell; the core no longer
+    // initializes it here. The shell lazily opens it from its own workspace
+    // dir when the first ingest / query arrives.)
     // Seed the people store so people controllers + `people_*`
     // tools can read/write. Without this the process-global stays
     // empty and every call fails with "people store not
     // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
     // Ok(cfg) arm so it inherits the wrong-workspace guard above
     // (never seed against a Config::default fallback).
-    match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
-        Ok(_) => log::info!(
-            "[boot] people::store initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+    if plan.people {
+        match crate::openhuman::memory::people::store::init_from_workspace(&cfg.workspace_dir) {
+            Ok(_) => log::info!(
+                "[boot] people::store initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+        }
+    } else {
+        log::debug!("[boot] people::store init SKIPPED — Memory domain disabled");
     }
     // Prune legacy bundled skills (dev-workflow / github-issue-crusher
     // / pr-review-shepherd) that older builds seeded into
     // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
     // this removes the stale dirs on upgrade. Idempotent.
-    crate::openhuman::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
+    if plan.skills_prune {
+        crate::openhuman::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
+    } else {
+        log::debug!("[boot] skills legacy-workflow prune SKIPPED — Skills domain disabled");
+    }
     // Boot-time Sentry user binding — issue #3135. If the user is
     // already signed in (typical desktop restart), the auth-profile
     // store has their `user_id` *now*, before any background loop
     // (Composio sync tick, heartbeat, etc.) fires its first event.
     // Reading from the store here means subsequent events carry
     // `user.id` even when no `app_state_snapshot` RPC has run yet.
-    match crate::openhuman::credentials::session_support::build_session_state(cfg) {
+    match crate::openhuman::security::credentials::session_support::build_session_state(cfg) {
         Ok(state) => {
             if let Some(uid) = state.user_id.as_deref() {
-                crate::openhuman::credentials::sentry_scope::bind(uid);
+                crate::openhuman::security::credentials::sentry_scope::bind(uid);
             }
         }
         Err(e) => {
@@ -341,6 +434,7 @@ mod tests {
         Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(PathBuf::from(dir))),
+            domains: crate::core::runtime::DomainSet::full(),
         })
     }
 
@@ -350,6 +444,65 @@ mod tests {
     // directly (independent of the process DEFAULT_CONTEXT global, since
     // `current()` inside a scope resolves the scoped value).
 
+    // ---- store-init gating (#4796 DoD item 3) --------------------------------
+    // `init_stores` side-effects on process globals with no init-state probe, so
+    // the gating is proven via the pure `StoreInitPlan` the registrar consumes.
+
+    #[test]
+    fn store_init_plan_full_initializes_every_store() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::full());
+        assert_eq!(
+            plan,
+            StoreInitPlan {
+                memory: true,
+                agent_attachments: true,
+                people: true,
+                skills_prune: true,
+            },
+            "full() must initialize every workspace-bound store"
+        );
+    }
+
+    #[test]
+    fn store_init_plan_none_initializes_nothing() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::none());
+        assert_eq!(
+            plan,
+            StoreInitPlan {
+                memory: false,
+                agent_attachments: false,
+                people: false,
+                skills_prune: false,
+            },
+            "none() must leave every workspace-bound store uninitialized"
+        );
+    }
+
+    #[test]
+    fn store_init_plan_harness_gates_by_owning_group() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::harness());
+        // harness() = agent + memory + threads + config + security.
+        assert!(plan.memory, "harness keeps memory::global (Memory)");
+        assert!(
+            plan.agent_attachments,
+            "harness keeps agent attachments sidecar (Agent)"
+        );
+        // `people` moved to `memory/people` in the domain reorg (#5328) and its
+        // controllers are tagged `Memory`, so harness — which enables Memory —
+        // must now initialize its store too. Before the realignment it keyed on
+        // `Platform`, which meant harness registered the people controllers with
+        // no store behind them.
+        assert!(
+            plan.people,
+            "harness keeps memory::people::store (Memory) — it moved under memory/"
+        );
+        // Skills is NOT in harness → its store work stays off.
+        assert!(
+            !plan.skills_prune,
+            "harness must skip skills legacy-prune (Skills)"
+        );
+    }
+
     #[tokio::test]
     async fn scope_sets_current_context() {
         let a = ctx("/tmp/ctx-a");
@@ -358,6 +511,19 @@ mod tests {
         })
         .await;
         assert_eq!(seen, Some(PathBuf::from("/tmp/ctx-a")));
+    }
+
+    #[tokio::test]
+    async fn scoped_context_exposes_its_domain_set() {
+        // The ambient `current().domains()` must reflect the scoped context's
+        // DomainSet — this is the seam the registry filter reads (#4796).
+        let harness = crate::core::runtime::DomainSet::harness();
+        let ctx = CoreContext::for_test(harness, Some(PathBuf::from("/tmp/ctx-domains")));
+        let seen =
+            CoreContext::scope(ctx, async { CoreContext::current().map(|c| c.domains()) }).await;
+        assert_eq!(seen, Some(harness));
+        assert!(seen.unwrap().allows(crate::core::all::DomainGroup::Memory));
+        assert!(!seen.unwrap().allows(crate::core::all::DomainGroup::Web3));
     }
 
     #[tokio::test]
@@ -390,10 +556,12 @@ mod tests {
         let a = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
         let b = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_b.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
 
         let store_a = a.people().expect("open people store for workspace A");
@@ -413,6 +581,7 @@ mod tests {
         let ctx = CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         };
 
         let store_a = ctx.people().expect("open people store for workspace A");
@@ -426,17 +595,19 @@ mod tests {
 
     #[tokio::test]
     async fn people_rpc_uses_scoped_context_store() {
-        use crate::openhuman::people::types::Handle;
+        use crate::openhuman::memory::people::types::Handle;
 
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
         let a = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
         let b = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_b.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
 
         let params = serde_json::json!({
@@ -483,6 +654,7 @@ mod tests {
         let ctx = CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(None),
+            domains: crate::core::runtime::DomainSet::full(),
         };
 
         let err = match ctx.people() {

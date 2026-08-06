@@ -15,13 +15,23 @@ impl Agent {
     /// Snapshot the parent's runtime so spawned sub-agents can read
     /// it via the [`harness::PARENT_CONTEXT`] task-local.
     pub(super) fn build_parent_execution_context(&self) -> harness::ParentExecutionContext {
-        let workspace_descriptor =
-            harness::current_parent().and_then(|parent| parent.workspace_descriptor);
+        // Prefer an ambient `current_parent()` descriptor (a nested subagent
+        // inherits its enclosing worktree/profile workspace threaded down the
+        // spawn chain). Fall back to THIS session agent's own descriptor: on a
+        // ROOT chat turn `current_parent()` is `None`, so without the fallback a
+        // dedicated-workspace profile's descriptor (`<action_dir>/profiles/<id>`,
+        // set on the Agent at build time) would never reach delegated subagents
+        // spawned via `spawn_subagent` / `spawn_async_subagent`, and they'd drop
+        // to the shared `action_dir` — the profile isolation would silently not
+        // apply to common delegated writes.
+        let workspace_descriptor = harness::current_parent()
+            .and_then(|parent| parent.workspace_descriptor)
+            .or_else(|| self.workspace_descriptor.clone());
         if let Some(descriptor) = workspace_descriptor.as_ref() {
             tracing::debug!(
                 root = %descriptor.root.display(),
                 policy_id = %descriptor.policy_id,
-                "[agent_loop] inheriting ambient workspace descriptor for parent context snapshot"
+                "[agent_loop] snapshotting workspace descriptor for parent context (ambient or own)"
             );
         }
         let allowed_subagent_ids = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
@@ -51,17 +61,12 @@ impl Agent {
             turn_model_source: self.turn_model_source.clone(),
             all_tools: Arc::clone(&self.tools),
             all_tool_specs: Arc::clone(&self.tool_specs),
-            // Names of the tools the parent actually advertises this turn —
-            // taken from the *policy-filtered* `visible_tool_specs` (after
-            // ToolPolicySession drops tools above the channel's permission),
-            // not the raw `visible_tool_names` (pre-policy). This is the exact
-            // set the parent provider receives, so consumers like
-            // `agent_prepare_context` never surface a tool the parent can't call.
             visible_tool_names: self
                 .visible_tool_specs
                 .iter()
                 .map(|spec| spec.name.clone())
                 .collect(),
+            subagent_tool_ceiling_names: self.subagent_tool_ceiling_names.clone(),
             model_name: self.model_name.clone(),
             temperature: self.temperature,
             workspace_dir: self.workspace_dir.clone(),
@@ -100,23 +105,23 @@ impl Agent {
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
     ///
-    /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
+    /// Delegates to the shared [`crate::openhuman::integrations::composio::fetch_connected_integrations`]
     /// which is the single source of truth for integration discovery.
     ///
     /// **No session-scoped Composio client is cached on the agent any
     /// more (#1710 Wave 2)**. Every downstream caller that needs to
     /// dispatch a Composio action now resolves a fresh client via
-    /// [`crate::openhuman::composio::client::create_composio_client`]
+    /// [`crate::openhuman::integrations::composio::client::create_composio_client`]
     /// at call time so the live `composio.mode` toggle is honoured
     /// without rebuilding the session — see `ComposioActionTool`,
     /// `ProviderContext::execute`, the 5 migrated agent tools in
     /// `composio/tools.rs`, and the spawn-time per-action tool build
     /// path in `subagent_runner/ops.rs`.
     pub async fn fetch_connected_integrations(&mut self) {
-        let config = match self.integration_runtime_config.clone() {
+        let config = match self.runtime_config.clone() {
             Some(config) => config,
             None => match crate::openhuman::config::Config::load_or_init().await {
-                Ok(config) => config,
+                Ok(config) => Arc::new(config),
                 Err(e) => {
                     log::debug!(
                         "[agent] skipping connected integrations fetch: config load failed: {e}"
@@ -126,7 +131,7 @@ impl Agent {
             },
         };
         self.connected_integrations =
-            crate::openhuman::composio::fetch_connected_integrations(&config).await;
+            crate::openhuman::integrations::composio::fetch_connected_integrations(&config).await;
         self.connected_integrations_initialized = true;
     }
 
@@ -254,14 +259,16 @@ impl Agent {
         &mut self,
         trigger: &str,
     ) -> bool {
-        let Some(cfg) = self.integration_runtime_config.as_ref() else {
+        let Some(cfg) = self.runtime_config.as_ref() else {
             return false;
         };
-        let Some(cache_view) = crate::openhuman::composio::cached_active_integrations(cfg) else {
+        let Some(cache_view) =
+            crate::openhuman::integrations::composio::cached_active_integrations(cfg)
+        else {
             return false;
         };
 
-        let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
+        let new_hash = crate::openhuman::integrations::composio::connected_set_hash(&cache_view);
         if new_hash == self.last_seen_integrations_hash {
             return false;
         }
@@ -326,7 +333,28 @@ impl Agent {
                 w.dir_name.clone()
             }
         };
-        let latest = crate::openhuman::skills::load_workflow_metadata(&self.workspace_dir);
+        // Keep the mid-session refresh consistent with the initial catalog
+        // (built in the session factory): include the active profile's private
+        // skills root so profile-local installs are tracked/announced too. `None`
+        // for the profile-less session reproduces the prior behaviour.
+        let profile_skills_root = self.active_profile_id.as_deref().and_then(|id| {
+            crate::openhuman::agent::profiles::profile_skills_root(&self.workspace_dir, id)
+        });
+        // An invalid/absent active profile id silently falls back to shared
+        // discovery. Log the branch id-free (boolean only, never the profile id or
+        // resolved path) per the observability convention for new/changed flows.
+        let profile_local_skills_active = profile_skills_root.is_some();
+        log::debug!(
+            "[agent_loop] refreshing installed-skills metadata (trigger={trigger}, profile_local_skills_active={profile_local_skills_active})"
+        );
+        let latest = crate::openhuman::skills::load_workflow_metadata_for_profile(
+            &self.workspace_dir,
+            profile_skills_root.as_deref(),
+        );
+        log::debug!(
+            "[agent_loop] refreshed installed-skills metadata (trigger={trigger}, profile_local_skills_active={profile_local_skills_active}, workflow_count={})",
+            latest.len()
+        );
         let current_ids: std::collections::HashSet<String> =
             self.workflows.iter().map(&id_of).collect();
         let latest_ids: std::collections::HashSet<String> = latest.iter().map(&id_of).collect();
@@ -473,7 +501,7 @@ impl Agent {
     /// subsequent turn where the connection set has changed since the
     /// last reconcile (detected via
     /// [`Self::last_seen_integrations_hash`] vs.
-    /// [`crate::openhuman::composio::cached_active_integrations`]).
+    /// [`crate::openhuman::integrations::composio::cached_active_integrations`]).
     ///
     /// **Shared-Arc behavior**: when `self.tools` is currently shared
     /// (e.g. an in-flight turn cloned the Arc into its tool source), we

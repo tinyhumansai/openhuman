@@ -7,7 +7,9 @@ use crate::openhuman::inference::local::ollama::{
     ollama_base_url_from_config, OllamaModelShow, OllamaModelTag, OllamaShowRequest,
     OllamaShowResponse, OllamaTagsResponse,
 };
-use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
+use crate::openhuman::inference::local::provider::{
+    model_discovery_api, provider_from_config, LocalAiProvider, ModelDiscoveryApi,
+};
 use crate::openhuman::inference::model_ids;
 use crate::openhuman::inference::presets::{self, VisionMode};
 
@@ -23,6 +25,26 @@ impl LocalAiService {
         }
 
         let base_url = ollama_base_url_from_config(config);
+
+        // Route OpenAI-compatible local runtimes to the `/v1/models` probe.
+        // `provider_from_config` collapses everything that is not literally
+        // `lm_studio` onto `Ollama`, so an OMLX / `local-openai` / custom BYOK
+        // endpoint on the OpenAI `/v1` surface (e.g. LM Studio at
+        // `http://localhost:1234/v1`) would otherwise be probed at
+        // `<base>/api/tags` -> `GET /v1/api/tags`, which LM Studio rejects as an
+        // unexpected endpoint and answers with an empty catalog — silently
+        // breaking model discovery (GH #5053). Decide by endpoint *type*, never
+        // by "is it localhost".
+        if model_discovery_api(&config.local_ai.provider, &base_url)
+            == ModelDiscoveryApi::OpenAiModels
+        {
+            log::debug!(
+                "[local_ai] diagnostics: base_url={} is OpenAI-compatible (/v1) — routing to /v1/models discovery instead of Ollama /api/tags",
+                base_url
+            );
+            return self.lm_studio_diagnostics(config).await;
+        }
+
         let healthy = self.ollama_healthy_at(&base_url).await;
         let runner_ok = if healthy {
             self.ollama_runner_ok_at(&base_url).await
@@ -243,7 +265,7 @@ impl LocalAiService {
             .send()
             .await
             .map_err(|e| {
-                tracing::error!(
+                tracing::warn!(
                     target: "local_ai::ollama_admin",
                     %url,
                     error = %e,
@@ -287,7 +309,7 @@ impl LocalAiService {
 
         // Read the body as text first so we can log it if JSON parsing fails.
         let body = response.text().await.map_err(|e| {
-            tracing::error!(
+            tracing::warn!(
                 target: "local_ai::ollama_admin",
                 %url,
                 error = %e,

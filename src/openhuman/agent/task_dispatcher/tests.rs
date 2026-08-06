@@ -3,12 +3,12 @@
 use serde_json::json;
 
 use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard, TaskCardStatus};
-use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+use crate::openhuman::threads::todos::ops::{self, BoardLocation, CardPatch};
 
 use super::executor::{truncate_chars, write_back, EVIDENCE_MAX_CHARS};
 use super::poller::{pick_next_todo, requires_plan_approval};
 use super::prompt::{build_progress_instruction, build_task_prompt};
-use super::registry::{register_active_run, take_active_run};
+use super::registry::{cancel_session_scoped, register_active_run, take_active_run};
 use super::types::ActiveRun;
 
 #[tokio::test]
@@ -32,6 +32,95 @@ async fn active_run_registry_take_is_once() {
     assert!(
         take_active_run(key).is_none(),
         "second take gets nothing — write-back happens exactly once"
+    );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn cancel_session_scoped_returns_false_without_a_run() {
+    // No autonomous run on the thread — scoped and unscoped both no-op.
+    assert!(!cancel_session_scoped("no-such-thread-xyz", Some("r1")).await);
+    assert!(!cancel_session_scoped("no-such-thread-xyz", None).await);
+}
+
+#[tokio::test]
+async fn cancel_session_scoped_ignores_a_mismatched_request() {
+    // #4760: a scoped cancel whose request_id does not match the in-flight run's
+    // run_id must NOT abort it — the run survives for the request that owns it,
+    // so a stale cancel for a superseded request can't kill a newer run.
+    let (tx, _rx) = tokio::sync::watch::channel(false);
+    let handle = tokio::spawn(async { std::future::pending::<()>().await });
+    let key = "task-cancel-scoped-mismatch-test";
+    register_active_run(
+        key.to_string(),
+        ActiveRun {
+            abort: handle.abort_handle(),
+            hb_cancel: tx,
+            location: BoardLocation::Scratch,
+            card_id: "c1".to_string(),
+            run_id: "r1".to_string(),
+        },
+    );
+    assert!(
+        !cancel_session_scoped(key, Some("some-other-request")).await,
+        "a scoped cancel naming a different request must be a no-op"
+    );
+    assert!(
+        take_active_run(key).is_some(),
+        "the mismatched scoped cancel must leave the run in flight"
+    );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn cancel_session_scoped_aborts_the_run_when_the_request_matches() {
+    // The matching-request path: a scoped cancel that names the running turn
+    // tears it down and lands the card in a terminal (blocked) state.
+    let dir = tempfile::tempdir().unwrap();
+    let loc = board_loc(dir.path());
+    let id = ops::add(&loc, "run me", CardPatch::default())
+        .await
+        .unwrap()
+        .cards[0]
+        .id
+        .clone();
+    ops::update_status(&loc, &id, TaskCardStatus::InProgress)
+        .await
+        .unwrap();
+
+    let (tx, _rx) = tokio::sync::watch::channel(false);
+    let handle = tokio::spawn(async { std::future::pending::<()>().await });
+    let key = "task-cancel-scoped-match-test";
+    register_active_run(
+        key.to_string(),
+        ActiveRun {
+            abort: handle.abort_handle(),
+            hb_cancel: tx,
+            location: loc.clone(),
+            card_id: id.clone(),
+            run_id: "r1".to_string(),
+        },
+    );
+
+    assert!(
+        cancel_session_scoped(key, Some("r1")).await,
+        "a scoped cancel naming the running request must abort it"
+    );
+    assert!(
+        take_active_run(key).is_none(),
+        "the cancelled run is removed from the registry"
+    );
+    let card = ops::list(&loc)
+        .await
+        .unwrap()
+        .cards
+        .into_iter()
+        .find(|c| c.id == id)
+        .unwrap();
+    assert_eq!(
+        card.status,
+        TaskCardStatus::Blocked,
+        "cancellation lands the card in a terminal state, not stale in_progress"
     );
     handle.abort();
 }
@@ -300,25 +389,30 @@ fn board_loc(dir: &std::path::Path) -> BoardLocation {
     }
 }
 
-#[test]
-fn write_back_marks_done_with_evidence_on_success() {
+#[tokio::test]
+async fn write_back_marks_done_with_evidence_on_success() {
     let dir = tempfile::tempdir().unwrap();
     let loc = board_loc(dir.path());
     let id = ops::add(&loc, "do the thing", CardPatch::default())
+        .await
         .unwrap()
         .cards[0]
         .id
         .clone();
-    ops::update_status(&loc, &id, TaskCardStatus::InProgress).unwrap();
+    ops::update_status(&loc, &id, TaskCardStatus::InProgress)
+        .await
+        .unwrap();
 
     write_back(
         &loc,
         &id,
         "run-1",
         Ok("completed: opened PR #5".to_string()),
-    );
+    )
+    .await;
 
     let card = ops::list(&loc)
+        .await
         .unwrap()
         .cards
         .into_iter()
@@ -328,8 +422,8 @@ fn write_back_marks_done_with_evidence_on_success() {
     assert!(card.evidence.iter().any(|e| e.contains("opened PR #5")));
 }
 
-#[test]
-fn write_back_preserves_agent_set_blocked_on_clean_run() {
+#[tokio::test]
+async fn write_back_preserves_agent_set_blocked_on_clean_run() {
     // The run marked its own card `blocked` (needs user input) via
     // update_task, then ended cleanly. write_back must NOT force it to
     // `done` — the task stays blocked, with the agent's blocker intact,
@@ -337,11 +431,14 @@ fn write_back_preserves_agent_set_blocked_on_clean_run() {
     let dir = tempfile::tempdir().unwrap();
     let loc = board_loc(dir.path());
     let id = ops::add(&loc, "update alan", CardPatch::default())
+        .await
         .unwrap()
         .cards[0]
         .id
         .clone();
-    ops::update_status(&loc, &id, TaskCardStatus::InProgress).unwrap();
+    ops::update_status(&loc, &id, TaskCardStatus::InProgress)
+        .await
+        .unwrap();
     // Agent self-blocks mid-run, as build_progress_instruction asks it to.
     ops::edit(
         &loc,
@@ -352,6 +449,7 @@ fn write_back_preserves_agent_set_blocked_on_clean_run() {
             ..Default::default()
         },
     )
+    .await
     .unwrap();
 
     // Run returns Ok (the turn finished) — but the card is self-blocked.
@@ -360,9 +458,11 @@ fn write_back_preserves_agent_set_blocked_on_clean_run() {
         &id,
         "run-2",
         Ok("I checked GitHub and memory…".to_string()),
-    );
+    )
+    .await;
 
     let card = ops::list(&loc)
+        .await
         .unwrap()
         .cards
         .into_iter()
@@ -380,20 +480,24 @@ fn write_back_preserves_agent_set_blocked_on_clean_run() {
     );
 }
 
-#[test]
-fn write_back_marks_blocked_with_reason_on_failure() {
+#[tokio::test]
+async fn write_back_marks_blocked_with_reason_on_failure() {
     let dir = tempfile::tempdir().unwrap();
     let loc = board_loc(dir.path());
     let id = ops::add(&loc, "do the thing", CardPatch::default())
+        .await
         .unwrap()
         .cards[0]
         .id
         .clone();
-    ops::update_status(&loc, &id, TaskCardStatus::InProgress).unwrap();
+    ops::update_status(&loc, &id, TaskCardStatus::InProgress)
+        .await
+        .unwrap();
 
-    write_back(&loc, &id, "run-1", Err("agent build failed".to_string()));
+    write_back(&loc, &id, "run-1", Err("agent build failed".to_string())).await;
 
     let card = ops::list(&loc)
+        .await
         .unwrap()
         .cards
         .into_iter()

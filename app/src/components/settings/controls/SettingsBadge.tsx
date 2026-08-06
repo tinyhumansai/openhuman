@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 
 export type SettingsBadgeVariant = 'neutral' | 'primary' | 'success' | 'warning' | 'danger';
 
-export interface SettingsBadgeProps {
+interface SettingsBadgeProps {
   variant: SettingsBadgeVariant;
   children: ReactNode;
   className?: string;

@@ -5,16 +5,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::Utc;
-use openhuman_core::openhuman::app_state::{
+use openhuman_core::openhuman::desktop::app_state::{
     peek_cached_current_user_identity, snapshot, update_local_state, StoredAppStatePatch,
     StoredOnboardingTasks,
 };
 use openhuman_core::openhuman::config::rpc as config_rpc;
-use openhuman_core::openhuman::credentials::ops::store_session;
-use openhuman_core::openhuman::credentials::profiles::{
+use openhuman_core::openhuman::security::credentials::ops::store_session;
+use openhuman_core::openhuman::security::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     list_provider_credentials_by_prefix, AuthService, APP_SESSION_PROVIDER,
     DEFAULT_AUTH_PROFILE_NAME,
 };
@@ -827,7 +827,7 @@ async fn snapshot_activates_user_dir_after_pending_revalidation_without_initial_
 }
 
 #[tokio::test]
-async fn snapshot_preserves_pending_session_when_revalidated_user_activation_fails() {
+async fn snapshot_errors_without_clearing_pending_session_when_active_user_marker_is_unreadable() {
     let _lock = env_lock();
     let (api_url, server_task, shutdown_tx) = auth_me_server(
         r#"{"data":{"id":"fresh-activation-failure","name":"Activation Failure","email":"activation-failure@example.test"}}"#,
@@ -863,28 +863,16 @@ async fn snapshot_preserves_pending_session_when_revalidated_user_activation_fai
         )
         .expect("seed activation-failure pending app session");
 
-    let snap = snapshot()
+    let error = snapshot()
         .await
-        .expect("snapshot with failed pending activation")
-        .value;
+        .expect_err("unreadable active_user.toml must stop snapshot configuration resolution");
     assert!(
-        snap.auth.is_authenticated,
-        "activation write failure should keep the pending local session for retry"
-    );
-    assert_eq!(
-        snap.session_token.as_deref(),
-        Some("round14.pending.activation-failure")
-    );
-    assert_eq!(
-        snap.current_user
-            .as_ref()
-            .and_then(|v| v.get("pendingBackendValidation")),
-        Some(&json!(true)),
-        "failed activation must not return a validated backend user"
+        error.contains("read active user marker"),
+        "snapshot must surface the unreadable marker instead of resolving to the pre-login profile: {error}"
     );
     assert!(
         active_user_root.join("active_user.toml").is_dir(),
-        "failed active_user.toml write must not be treated as an activated user"
+        "unreadable active_user.toml must remain in place"
     );
 
     let profile = AuthService::from_config(&config)
@@ -901,7 +889,7 @@ async fn snapshot_preserves_pending_session_when_revalidated_user_activation_fai
     assert_eq!(
         stored_user.get("pendingBackendValidation"),
         Some(&json!(true)),
-        "activation failure must not clear persisted pendingBackendValidation"
+        "configuration-resolution failure must not clear persisted pendingBackendValidation"
     );
 
     let _ = shutdown_tx.send(());
@@ -1419,20 +1407,20 @@ async fn round14_credentials_prefix_listing_and_composio_direct_edges() {
     let config = harness.config().await;
 
     let empty =
-        openhuman_core::openhuman::credentials::store_composio_api_key(&config, "   ").await;
+        openhuman_core::openhuman::security::credentials::store_composio_api_key(&config, "   ").await;
     assert_eq!(
         empty.expect_err("empty composio key rejected"),
         "composio api_key must not be empty"
     );
 
-    openhuman_core::openhuman::credentials::store_composio_api_key(
+    openhuman_core::openhuman::security::credentials::store_composio_api_key(
         &config,
         "  composio-round14-key  ",
     )
     .await
     .expect("store composio key");
     assert_eq!(
-        openhuman_core::openhuman::credentials::get_composio_api_key(&config)
+        openhuman_core::openhuman::security::credentials::get_composio_api_key(&config)
             .expect("get composio key")
             .as_deref(),
         Some("composio-round14-key")
@@ -1473,16 +1461,16 @@ async fn round14_credentials_prefix_listing_and_composio_direct_edges() {
         .iter()
         .any(|profile| profile.metadata_keys == vec!["chat_id"]));
 
-    let cleared = openhuman_core::openhuman::credentials::clear_composio_api_key(&config)
+    let cleared = openhuman_core::openhuman::security::credentials::clear_composio_api_key(&config)
         .await
         .expect("clear composio key");
     assert_eq!(cleared.value["removed"], true);
     assert_eq!(
-        openhuman_core::openhuman::credentials::get_composio_api_key(&config)
+        openhuman_core::openhuman::security::credentials::get_composio_api_key(&config)
             .expect("get cleared composio key"),
         None
     );
-    let cleared_again = openhuman_core::openhuman::credentials::clear_composio_api_key(&config)
+    let cleared_again = openhuman_core::openhuman::security::credentials::clear_composio_api_key(&config)
         .await
         .expect("clear composio key idempotent");
     assert_eq!(cleared_again.value["removed"], false);

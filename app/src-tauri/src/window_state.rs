@@ -26,11 +26,32 @@
 //! on small or scaled displays — see issue #2282. We also re-clamp on
 //! restore so a window saved on a large external display does not come
 //! back oversized after the user undocks onto a small laptop screen.
+//!
+//! ## Mixed-DPI multi-monitor (#5041)
+//!
+//! Every coordinate in this module is a **physical** pixel:
+//! `Monitor::work_area()`, `outer_position()` and `outer_size()` all
+//! speak physical, so there is no logical/physical conversion to get
+//! wrong. The DPI hazard is elsewhere — Windows preserves a window's
+//! *logical* size across a monitor change, so moving a window from a
+//! 100 % display to a 150 % one makes the OS multiply its physical size
+//! by 1.5 on arrival. A size that was correctly clamped to the
+//! destination monitor before the move therefore arrives 1.5x too large.
+//!
+//! Two mitigations, because the OS rescale is asynchronous:
+//!
+//! 1. [`center_main`] targets the monitor the window is *already* on
+//!    (avoiding the cross-DPI move entirely), and when a move is
+//!    unavoidable it positions **before** sizing so the rescale lands
+//!    first and the applied size is measured against the destination.
+//! 2. [`install_dpi_guard`] re-clamps on `ScaleFactorChanged`, which is
+//!    delivered through the message loop *after* `setup()` has returned
+//!    — the case no amount of startup clamping can catch.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
+use tauri::{PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, WindowEvent};
 
 use crate::cef_profile;
 
@@ -59,15 +80,23 @@ struct WindowState {
     height: u32,
 }
 
-/// A monitor's usable work area in physical pixels. Plain-data struct so
-/// the geometry math in [`clamp_to_work_area`] / [`pick_monitor_for_window`]
-/// can be unit-tested without a live Tauri runtime.
+/// A monitor's usable work area in physical pixels, plus its DPI scale
+/// factor. Plain-data struct so the geometry math in
+/// [`clamp_to_work_area`] / [`pick_monitor_for_window`] /
+/// [`dpi_adjusted_size`] can be unit-tested without a live Tauri runtime.
+///
+/// `scale` is only meaningful for cross-monitor moves on Windows — see
+/// [`dpi_adjusted_size`]. All four geometry fields are physical pixels,
+/// matching `Monitor::work_area()`, `outer_position()` and
+/// `outer_size()`, so no logical/physical conversion happens anywhere in
+/// this module.
 #[derive(Debug, Clone, Copy)]
 struct WorkArea {
     x: i32,
     y: i32,
     width: u32,
     height: u32,
+    scale: f64,
 }
 
 fn state_path() -> Option<PathBuf> {
@@ -184,12 +213,18 @@ pub fn restore_main<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     let (x, y, width, height) =
         clamp_to_work_area(state.x, state.y, state.width, state.height, monitor);
 
-    if let Err(err) = window.set_size(PhysicalSize::new(width, height)) {
-        log::warn!("[window-state] set_size failed: {err}");
-    }
+    // Position before size (#5041). The saved geometry may belong to a
+    // monitor with a different scale factor than the one the window was
+    // just created on; moving first lets the OS apply its DPI rescale,
+    // so the size we then set is the size that sticks. The reverse order
+    // lets Windows multiply our just-applied size by the DPI ratio on
+    // arrival. `install_dpi_guard` still backstops the async case.
     if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
         log::warn!("[window-state] set_position failed: {err}");
         return false;
+    }
+    if let Err(err) = window.set_size(PhysicalSize::new(width, height)) {
+        log::warn!("[window-state] set_size failed: {err}");
     }
     if (x, y, width, height) != (state.x, state.y, state.width, state.height) {
         log::info!(
@@ -223,24 +258,92 @@ pub fn restore_main<R: Runtime>(window: &WebviewWindow<R>) -> bool {
 /// not exceed the user's actual screen on small or scaled displays
 /// (issue #2282).
 pub fn center_main<R: Runtime>(window: &WebviewWindow<R>) {
-    let Some(monitor) = primary_or_current_work_area(window) else {
-        let _ = window.center();
-        return;
-    };
     let Ok(size) = window.outer_size() else {
         let _ = window.center();
         return;
     };
+    let work_areas = collect_work_areas(window);
+    let primary = primary_or_current_work_area(window);
+    // Where the window currently sits drives monitor selection. With no
+    // readable position there is nothing to overlap-test, so go straight
+    // to the primary.
+    let target = match window.outer_position() {
+        Ok(pos) => target_work_area_for_new_window(
+            pos.x,
+            pos.y,
+            size.width,
+            size.height,
+            &work_areas,
+            primary,
+        ),
+        Err(err) => {
+            log::warn!("[window-state] outer_position unavailable ({err}); targeting primary");
+            primary.or_else(|| work_areas.first().copied())
+        }
+    };
+    let Some(monitor) = target else {
+        let _ = window.center();
+        return;
+    };
+
+    // Scale factor the window is living at *right now*. On a cross-DPI
+    // move the OS will rescale by `monitor.scale / current_scale`, so we
+    // need both halves of the ratio.
+    let current_scale = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .or_else(|| window.scale_factor().ok())
+        .unwrap_or(monitor.scale);
+
+    // Move onto the target monitor BEFORE committing a size (#5041).
+    //
+    // Ordering is load-bearing: `set_size` then `set_position` lets
+    // Windows rescale the just-applied size on arrival, which is exactly
+    // how a correctly-clamped window ends up 1.5x too wide. Positioning
+    // first lets the DPI change land, so the size we then apply is
+    // measured against the monitor the window is actually on.
+    if (monitor.scale - current_scale).abs() > f64::EPSILON {
+        let (predicted_w, predicted_h) =
+            dpi_adjusted_size(size.width, size.height, current_scale, monitor.scale);
+        log::info!(
+            "[window-state] cross-DPI placement: scale {} -> {}; size {}x{} would become {}x{} on arrival; positioning before sizing",
+            current_scale,
+            monitor.scale,
+            size.width,
+            size.height,
+            predicted_w,
+            predicted_h,
+        );
+        if let Err(err) = window.set_position(PhysicalPosition::new(monitor.x, monitor.y)) {
+            log::warn!("[window-state] pre-size set_position failed: {err}");
+        }
+    }
+
+    // Re-read the size: on the cross-DPI path above the OS may already
+    // have rescaled us, so `size` is stale and clamping it would apply
+    // the wrong number.
+    let settled = window.outer_size().unwrap_or(size);
+    if (settled.width, settled.height) != (size.width, size.height) {
+        log::info!(
+            "[window-state] OS rescaled window during placement: {}x{} -> {}x{}",
+            size.width,
+            size.height,
+            settled.width,
+            settled.height,
+        );
+    }
 
     // Resolve the new size first; if the default exceeds work area we
     // shrink before centering so the centered position is computed
     // against the actually-applied size, not the oversized default.
-    let (clamped_w, clamped_h) = clamp_size(size.width, size.height, &monitor);
-    if (clamped_w, clamped_h) != (size.width, size.height) {
+    let (clamped_w, clamped_h) = clamp_size(settled.width, settled.height, &monitor);
+    if (clamped_w, clamped_h) != (settled.width, settled.height) {
         log::info!(
-            "[window-state] default size {}x{} exceeds work area {}x{}; shrinking to {}x{}",
-            size.width,
-            size.height,
+            "[window-state] size {}x{} exceeds work area {}x{}; shrinking to {}x{}",
+            settled.width,
+            settled.height,
             monitor.width,
             monitor.height,
             clamped_w,
@@ -267,22 +370,129 @@ pub fn center_main<R: Runtime>(window: &WebviewWindow<R>) {
     }
 }
 
+/// Re-clamp the window into its current monitor's work area after the OS
+/// has changed its scale factor.
+///
+/// `center_main` and `restore_main` both run inside Tauri's `setup()`
+/// hook, but `WM_DPICHANGED` is delivered through the message loop
+/// *after* `setup()` returns. Any size the OS imposes on arrival at a
+/// different-DPI monitor therefore lands after our clamping has already
+/// finished — the "clamping runs too late" half of #5041. This handler
+/// is the durable fix: whenever the scale factor changes, re-fit the
+/// window to whichever monitor it is now on.
+///
+/// It also covers the case the startup path cannot: the user dragging
+/// the window from a 100 % monitor onto a 150 % one at any point during
+/// the session, where the same OS rescale applies.
+fn reclamp_after_scale_change<R: Runtime>(window: &WebviewWindow<R>, new_scale: f64) {
+    // Maximized and fullscreen windows intentionally carry geometry that can
+    // exceed the work area, and the OS owns it in those states. Clamping here
+    // would issue `set_size`/`set_position` that unmaximizes the window, or
+    // overwrite the bounds the OS restores on leaving fullscreen. Both states
+    // are reachable from the app's own `toggleMaximize()` and the native
+    // fullscreen menu, so this is a normal path, not an edge case.
+    //
+    // A failed query is treated as "not in that state": the pre-#5041 behaviour
+    // was to always clamp, so falling back to clamping keeps the fix working
+    // rather than silently disabling it on a backend that cannot answer.
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        log::debug!(
+            "[window-state] scale change to {new_scale}; window is maximized/fullscreen — leaving geometry to the OS"
+        );
+        return;
+    }
+
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        log::warn!("[window-state] scale change but current_monitor unavailable; skip re-clamp");
+        return;
+    };
+    let work_area = work_area_of(&monitor);
+    let Ok(pos) = window.outer_position() else {
+        log::warn!("[window-state] scale change but outer_position unavailable; skip re-clamp");
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        log::warn!("[window-state] scale change but outer_size unavailable; skip re-clamp");
+        return;
+    };
+
+    let (x, y, w, h) = clamp_to_work_area(pos.x, pos.y, size.width, size.height, work_area);
+    if (x, y, w, h) == (pos.x, pos.y, size.width, size.height) {
+        log::debug!(
+            "[window-state] scale change to {new_scale}; geometry {}x{} at ({},{}) already fits work area",
+            size.width,
+            size.height,
+            pos.x,
+            pos.y
+        );
+        return;
+    }
+
+    log::info!(
+        "[window-state] scale change to {new_scale}; re-clamping {}x{} at ({},{}) -> {}x{} at ({},{}) for work area ({},{} {}x{})",
+        size.width,
+        size.height,
+        pos.x,
+        pos.y,
+        w,
+        h,
+        x,
+        y,
+        work_area.x,
+        work_area.y,
+        work_area.width,
+        work_area.height,
+    );
+    // Size before position: shrinking first means the subsequent move
+    // has a frame that already fits, so it cannot be pushed back out.
+    // `clamp_to_work_area` only ever shrinks and shifts within this one
+    // monitor, so this cannot bounce the window onto another display and
+    // re-trigger the handler.
+    if (w, h) != (size.width, size.height) {
+        if let Err(err) = window.set_size(PhysicalSize::new(w, h)) {
+            log::warn!("[window-state] set_size during scale-change re-clamp failed: {err}");
+        }
+    }
+    if (x, y) != (pos.x, pos.y) {
+        if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
+            log::warn!("[window-state] set_position during scale-change re-clamp failed: {err}");
+        }
+    }
+}
+
+/// Subscribe the main window to scale-factor changes so it is re-fitted
+/// whenever the OS moves it across a DPI boundary (#5041).
+///
+/// Call once, from `setup()`, alongside `restore_main` / `center_main`.
+pub fn install_dpi_guard<R: Runtime>(window: &WebviewWindow<R>) {
+    let guarded = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::ScaleFactorChanged { scale_factor, .. } = event {
+            reclamp_after_scale_change(&guarded, *scale_factor);
+        }
+    });
+    log::info!("[window-state] DPI guard installed on main window");
+}
+
+/// Project a live `Monitor` into the plain-data [`WorkArea`] the pure
+/// geometry helpers operate on. Single conversion point so the
+/// physical-pixel contract is stated once.
+fn work_area_of(monitor: &tauri::Monitor) -> WorkArea {
+    let wa = monitor.work_area();
+    WorkArea {
+        x: wa.position.x,
+        y: wa.position.y,
+        width: wa.size.width,
+        height: wa.size.height,
+        scale: monitor.scale_factor(),
+    }
+}
+
 fn collect_work_areas<R: Runtime>(window: &WebviewWindow<R>) -> Vec<WorkArea> {
     let Ok(monitors) = window.available_monitors() else {
         return Vec::new();
     };
-    monitors
-        .iter()
-        .map(|m| {
-            let wa = m.work_area();
-            WorkArea {
-                x: wa.position.x,
-                y: wa.position.y,
-                width: wa.size.width,
-                height: wa.size.height,
-            }
-        })
-        .collect()
+    monitors.iter().map(work_area_of).collect()
 }
 
 fn primary_or_current_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
@@ -291,13 +501,47 @@ fn primary_or_current_work_area<R: Runtime>(window: &WebviewWindow<R>) -> Option
         .ok()
         .flatten()
         .or_else(|| window.current_monitor().ok().flatten())?;
-    let wa = monitor.work_area();
-    Some(WorkArea {
-        x: wa.position.x,
-        y: wa.position.y,
-        width: wa.size.width,
-        height: wa.size.height,
-    })
+    Some(work_area_of(&monitor))
+}
+
+/// Emit the full monitor layout once at startup.
+///
+/// Mixed-DPI multi-monitor bugs (#5041) are effectively undebuggable from
+/// a user report without knowing each monitor's origin, work area and
+/// scale factor — the reporter's own numbers came from a third-party
+/// tool and could not be reconciled afterwards. Logged at info so it
+/// lands in the shipped log file.
+pub fn log_monitor_layout<R: Runtime>(window: &WebviewWindow<R>) {
+    let Ok(monitors) = window.available_monitors() else {
+        log::warn!("[window-state] available_monitors unavailable; cannot log layout");
+        return;
+    };
+    let primary_name = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .and_then(|m| m.name().cloned());
+    log::info!(
+        "[window-state] monitor layout: {} attached, primary={:?}",
+        monitors.len(),
+        primary_name
+    );
+    for (idx, m) in monitors.iter().enumerate() {
+        let wa = m.work_area();
+        let size = m.size();
+        log::info!(
+            "[window-state]   monitor[{}] name={:?} scale={} full={}x{} work_area=({},{} {}x{})",
+            idx,
+            m.name(),
+            m.scale_factor(),
+            size.width,
+            size.height,
+            wa.position.x,
+            wa.position.y,
+            wa.size.width,
+            wa.size.height,
+        );
+    }
 }
 
 /// Return the work area whose intersection with the saved window rect
@@ -339,6 +583,92 @@ fn pick_monitor_for_window(
         .map(|(_, wa)| wa)
 }
 
+/// Pick the monitor a freshly-created window should be sized and centered
+/// against.
+///
+/// Preference order:
+/// 1. The monitor the window is **actually on** (largest work-area
+///    overlap). Staying put avoids a cross-monitor move entirely, which
+///    on Windows is what triggers the DPI rescale described in
+///    [`dpi_adjusted_size`].
+/// 2. The primary monitor, when the window overlaps nothing (Windows can
+///    place a not-yet-shown window at `CW_USEDEFAULT`, off every work
+///    area).
+/// 3. Any attached monitor, so we never return `None` while monitors exist.
+///
+/// The previous behaviour — always prefer the primary — is what made the
+/// mixed-DPI case (#5041) reachable: a window created on a 100 % monitor
+/// was clamped against the 150 % primary's work area and then moved
+/// there, and Windows rescaled the just-applied size by 1.5 on arrival.
+fn target_work_area_for_new_window(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    work_areas: &[WorkArea],
+    primary: Option<WorkArea>,
+) -> Option<WorkArea> {
+    pick_monitor_for_window(x, y, width, height, work_areas)
+        .or(primary)
+        .or_else(|| work_areas.first().copied())
+}
+
+/// Predict the physical size an OS will impose on a window that moves
+/// between monitors with different DPI scale factors.
+///
+/// This is the crux of #5041. Windows preserves a window's **logical**
+/// size across a monitor change: on `WM_DPICHANGED` it multiplies the
+/// physical size by `to_scale / from_scale`. So setting a physical size
+/// that fits monitor B, and *then* moving the window from monitor A to
+/// monitor B, does not leave the window at that size — it arrives
+/// `to_scale / from_scale` times larger.
+///
+/// Concretely, for the reporter's layout (secondary 1920×1080 @ 100 %,
+/// primary 2560×1600 @ 150 %): a window correctly clamped to the
+/// primary's 2560-px width while still sitting on the secondary arrives
+/// at `2560 × 1.5 = 3840` physical pixels — wider than the 2560-px
+/// monitor it was just fitted to, overflowing off the right edge.
+///
+/// Returns the input unchanged when either scale is not a usable
+/// positive, finite number, so a runtime reporting `0.0` or `NaN` can
+/// never zero out or panic the window size.
+fn dpi_adjusted_size(width: u32, height: u32, from_scale: f64, to_scale: f64) -> (u32, u32) {
+    let usable = |s: f64| s.is_finite() && s > 0.0;
+    if !usable(from_scale) || !usable(to_scale) {
+        return (width, height);
+    }
+    let ratio = to_scale / from_scale;
+    if !ratio.is_finite() || ratio <= 0.0 {
+        return (width, height);
+    }
+    let scaled = |v: u32| {
+        // Round rather than truncate. Truncation always loses, so a
+        // window shuttled between two monitors shrinks by up to a pixel
+        // per move and the error accumulates without bound. Rounding
+        // keeps it bounded at ±1 px total, however many moves happen.
+        //
+        // It is NOT an exact inverse in general. When the first hop is a
+        // *downscale* the intermediate size has genuinely lost
+        // information, and scaling back up cannot recover it: 1281 px at
+        // 2.0→1.25 gives 801, and 801 back at 1.25→2.0 gives 1282. The
+        // round trip is exact when the first hop scales up (the common
+        // case: a window sized on a low-DPI monitor moving to a high-DPI
+        // one and back). `dpi_adjusted_size_round_trips_without_drift`
+        // pins both halves of that contract.
+        let out = (f64::from(v) * ratio).round();
+        // Saturate instead of wrapping — an absurd ratio must not
+        // produce a tiny window via u32 overflow.
+        if out >= f64::from(u32::MAX) {
+            u32::MAX
+        } else if out <= 0.0 {
+            1
+        } else {
+            out as u32
+        }
+    };
+    (scaled(width), scaled(height))
+}
+
 /// Clamp width/height into the work area while preserving the
 /// `MIN_WINDOW_*` floors. Pure helper extracted from
 /// [`clamp_to_work_area`] so `center_main` can reuse it when the window
@@ -378,13 +708,52 @@ fn clamp_to_work_area(
 mod tests {
     use super::*;
 
+    #[test]
+    fn window_state_toml_roundtrips() {
+        // `save_main` serializes this record to `window_state.toml` and
+        // `restore_main` parses it back on the next launch. The whole
+        // save-on-quit → restore-on-launch feature (#4810) hinges on this
+        // record surviving the round trip byte-for-byte, including a
+        // negative x from a monitor left of the primary. Guards the
+        // on-disk contract against an accidental serde/rename change.
+        let state = WindowState {
+            x: -1920,
+            y: 100,
+            width: 1280,
+            height: 800,
+        };
+        let raw = toml::to_string_pretty(&state).expect("serialize");
+        let parsed: WindowState = toml::from_str(&raw).expect("parse");
+        assert_eq!(
+            (parsed.x, parsed.y, parsed.width, parsed.height),
+            (state.x, state.y, state.width, state.height)
+        );
+    }
+
     fn wa(x: i32, y: i32, width: u32, height: u32) -> WorkArea {
+        wa_dpi(x, y, width, height, 1.0)
+    }
+
+    /// Same as [`wa`] but with an explicit DPI scale factor, for the
+    /// mixed-DPI cases in #5041.
+    fn wa_dpi(x: i32, y: i32, width: u32, height: u32, scale: f64) -> WorkArea {
         WorkArea {
             x,
             y,
             width,
             height,
+            scale,
         }
+    }
+
+    /// The reporter's layout from #5041: a 2560x1600 @ 150 % primary at
+    /// the virtual-desktop origin, and a 1920x1080 @ 100 % secondary
+    /// placed to its **left** (so the secondary's origin is negative).
+    /// Work areas subtract a plausible taskbar.
+    fn reporter_layout() -> (WorkArea, WorkArea) {
+        let primary = wa_dpi(0, 0, 2560, 1520, 1.5);
+        let secondary = wa_dpi(-1920, 0, 1920, 1032, 1.0);
+        (primary, secondary)
     }
 
     #[test]
@@ -512,6 +881,211 @@ mod tests {
         // Secondary first — same answer.
         let m = pick_monitor_for_window(1820, 0, 1000, 700, &[secondary, primary]).unwrap();
         assert_eq!((m.x, m.width), (1920, 1280));
+    }
+
+    // ── Mixed-DPI multi-monitor (#5041) ──────────────────────────────
+
+    #[test]
+    fn dpi_adjusted_size_grows_when_moving_to_a_higher_dpi_monitor() {
+        // The #5041 arithmetic: a window fitted to the 150 % primary's
+        // 2560 px work-area width while still sitting on the 100 %
+        // secondary arrives at 3840 px — wider than the very monitor it
+        // was just fitted to. This is the reported ~3875 px window.
+        let (grown_w, grown_h) = dpi_adjusted_size(2560, 1520, 1.0, 1.5);
+        assert_eq!(grown_w, 3840);
+        assert_eq!(grown_h, 2280);
+    }
+
+    #[test]
+    fn dpi_adjusted_size_shrinks_when_moving_to_a_lower_dpi_monitor() {
+        let (w, h) = dpi_adjusted_size(3840, 2280, 1.5, 1.0);
+        assert_eq!((w, h), (2560, 1520));
+    }
+
+    #[test]
+    fn dpi_adjusted_size_is_identity_at_equal_scale() {
+        assert_eq!(dpi_adjusted_size(1280, 900, 1.5, 1.5), (1280, 900));
+        assert_eq!(dpi_adjusted_size(1280, 900, 1.0, 1.0), (1280, 900));
+    }
+
+    #[test]
+    fn dpi_adjusted_size_round_trips_without_drift() {
+        // A→B→A must land back on the original size; truncating instead
+        // of rounding would lose a pixel on every move.
+        //
+        // Covers the whole standard DPI ladder rather than just 1.0↔1.5:
+        // a single pair does not establish the property (review, #5041).
+        // Odd dimensions are deliberate — even ones round-trip trivially.
+        const SIZES: [(u32, u32); 3] = [(1281, 901), (1920, 1080), (2560, 1600)];
+
+        // Upscale first: exact. This is the common case — a window sized
+        // on a low-DPI monitor moves to a high-DPI one and back.
+        for (from, to) in [
+            (1.0, 1.25),
+            (1.0, 1.5),
+            (1.0, 1.75),
+            (1.0, 2.0),
+            (1.25, 1.5),
+            (1.5, 2.0),
+        ] {
+            for (w, h) in SIZES {
+                let (up_w, up_h) = dpi_adjusted_size(w, h, from, to);
+                let (back_w, back_h) = dpi_adjusted_size(up_w, up_h, to, from);
+                assert_eq!(
+                    (back_w, back_h),
+                    (w, h),
+                    "upscale-first round trip {w}x{h} at {from}->{to}->{from} drifted to {back_w}x{back_h}"
+                );
+            }
+        }
+
+        // Downscale first: bounded, not exact. The intermediate size has
+        // genuinely lost information (1281 at 2.0->1.25 is 801, and 801
+        // back up is 1282), so the contract is that the error stays
+        // within 1 px and never accumulates — which is precisely what
+        // truncation fails to do.
+        for (from, to) in [(2.0, 1.25), (1.75, 1.0), (2.0, 1.0), (1.5, 1.25)] {
+            for (w, h) in SIZES {
+                let (down_w, down_h) = dpi_adjusted_size(w, h, from, to);
+                let (back_w, back_h) = dpi_adjusted_size(down_w, down_h, to, from);
+                assert!(
+                    back_w.abs_diff(w) <= 1 && back_h.abs_diff(h) <= 1,
+                    "downscale-first round trip {w}x{h} at {from}->{to}->{from} drifted to {back_w}x{back_h}, beyond the 1px bound"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dpi_adjusted_size_rejects_unusable_scale_factors() {
+        // A runtime reporting 0.0 / NaN / infinity must not zero out or
+        // panic the window size — return the input untouched instead.
+        for (from, to) in [
+            (0.0, 1.5),
+            (1.5, 0.0),
+            (f64::NAN, 1.5),
+            (1.5, f64::NAN),
+            (f64::INFINITY, 1.5),
+            (1.5, f64::INFINITY),
+            (-1.0, 1.5),
+        ] {
+            assert_eq!(
+                dpi_adjusted_size(1280, 900, from, to),
+                (1280, 900),
+                "scale pair ({from}, {to}) must be treated as unusable"
+            );
+        }
+    }
+
+    #[test]
+    fn target_prefers_the_monitor_the_window_is_already_on() {
+        // Window created on the 100 % secondary (negative origin).
+        // Selecting the primary here is what forces the cross-DPI move
+        // that #5041 is about — we must stay put instead.
+        let (primary, secondary) = reporter_layout();
+        let target = target_work_area_for_new_window(
+            -1800,
+            100,
+            1280,
+            900,
+            &[primary, secondary],
+            Some(primary),
+        )
+        .expect("a monitor should be selected");
+        assert_eq!(
+            (target.x, target.width),
+            (secondary.x, secondary.width),
+            "window on the secondary must be sized against the secondary"
+        );
+        assert!(
+            (target.scale - secondary.scale).abs() < f64::EPSILON,
+            "and must carry the secondary's scale factor"
+        );
+    }
+
+    #[test]
+    fn target_falls_back_to_primary_when_window_overlaps_nothing() {
+        // Windows can place a not-yet-shown window at CW_USEDEFAULT,
+        // off every work area.
+        let (primary, secondary) = reporter_layout();
+        let target = target_work_area_for_new_window(
+            50_000,
+            50_000,
+            1280,
+            900,
+            &[primary, secondary],
+            Some(primary),
+        )
+        .expect("should fall back to primary");
+        assert_eq!((target.x, target.width), (primary.x, primary.width));
+    }
+
+    #[test]
+    fn target_falls_back_to_any_monitor_without_a_primary() {
+        let (primary, secondary) = reporter_layout();
+        let target =
+            target_work_area_for_new_window(50_000, 50_000, 1280, 900, &[secondary, primary], None)
+                .expect("should fall back to the first attached monitor");
+        assert_eq!(target.x, secondary.x);
+    }
+
+    #[test]
+    fn target_returns_none_without_monitors() {
+        assert!(target_work_area_for_new_window(0, 0, 1280, 900, &[], None).is_none());
+    }
+
+    #[test]
+    fn clamp_then_move_overflows_but_move_then_clamp_fits() {
+        // End-to-end regression for #5041, expressed against the pure
+        // helpers so it runs without a Tauri runtime.
+        //
+        // Setup: an oversized window (larger than either work area) is
+        // created on the 100 % secondary and needs to end up on the
+        // 150 % primary.
+        let (primary, _secondary) = reporter_layout();
+        let (created_w, created_h) = (3000, 1700);
+
+        // OLD ordering — clamp to the destination, then move. The OS
+        // rescales by 1.5 on arrival and the result overflows the very
+        // monitor it was fitted to.
+        let (clamped_w, clamped_h) = clamp_size(created_w, created_h, &primary);
+        assert_eq!(
+            (clamped_w, clamped_h),
+            (2560, 1520),
+            "clamp itself is correct"
+        );
+        let (arrived_w, arrived_h) = dpi_adjusted_size(clamped_w, clamped_h, 1.0, 1.5);
+        assert!(
+            arrived_w > primary.width && arrived_h > primary.height,
+            "old ordering must reproduce the oversized window: {arrived_w}x{arrived_h} vs work area {}x{}",
+            primary.width,
+            primary.height
+        );
+
+        // NEW ordering — move first (absorbing the OS rescale), then
+        // clamp against the destination. Result fits.
+        let (moved_w, moved_h) = dpi_adjusted_size(created_w, created_h, 1.0, 1.5);
+        let (final_w, final_h) = clamp_size(moved_w, moved_h, &primary);
+        assert!(
+            final_w <= primary.width && final_h <= primary.height,
+            "new ordering must fit the work area: {final_w}x{final_h} vs {}x{}",
+            primary.width,
+            primary.height
+        );
+    }
+
+    #[test]
+    fn reclamped_geometry_never_leaves_the_work_area_after_a_scale_change() {
+        // What `reclamp_after_scale_change` delegates to: whatever size
+        // the OS imposed on arrival, the window must end up wholly
+        // inside the destination work area.
+        let (primary, _) = reporter_layout();
+        let (os_w, os_h) = dpi_adjusted_size(2560, 1520, 1.0, 1.5);
+        let (x, y, w, h) = clamp_to_work_area(0, 0, os_w, os_h, primary);
+        assert!(w <= primary.width && h <= primary.height);
+        assert!(x >= primary.x && y >= primary.y);
+        assert!(x.saturating_add(w as i32) <= primary.x.saturating_add(primary.width as i32));
+        assert!(y.saturating_add(h as i32) <= primary.y.saturating_add(primary.height as i32));
     }
 
     #[test]

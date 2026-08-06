@@ -18,6 +18,7 @@
  */
 import debug from 'debug';
 
+import { trackAnalyticsEvent } from '../analytics';
 import { callCoreRpc } from '../coreRpcClient';
 
 const log = debug('workflowRunsApi');
@@ -122,7 +123,7 @@ interface MaybeRunResult {
 }
 
 /** Filters accepted by `workflow_run_list`. */
-export interface ListRunsParams {
+interface ListRunsParams {
   definitionId?: string;
   status?: WorkflowRunStatus;
   parentThreadId?: string;
@@ -131,7 +132,7 @@ export interface ListRunsParams {
 }
 
 /** Parameters accepted by `workflow_run_start`. */
-export interface StartRunParams {
+interface StartRunParams {
   definitionId: string;
   /** Run input, e.g. `{ question: "..." }` or `{ modelOverride: "..." }`. */
   input?: Record<string, unknown>;
@@ -150,7 +151,7 @@ export interface StartRunParams {
  */
 export type WorkflowCostReason = 'non_read_only_tier' | 'high_concurrency' | 'high_children';
 
-export interface WorkflowCostAssessment {
+interface WorkflowCostAssessment {
   /** True when the definition must be explicitly approved before starting. */
   requiresApproval: boolean;
   /** Machine-readable reasons (empty when no approval required). */
@@ -162,14 +163,14 @@ export interface WorkflowCostAssessment {
  * The builtin parallel-research workflow runs at 2, so routine read-only
  * fan-outs stay frictionless; only unusually wide phases trip the gate.
  */
-export const HIGH_CONCURRENCY_THRESHOLD = 4;
+const HIGH_CONCURRENCY_THRESHOLD = 4;
 
 /**
  * Total child-agent budget at or above this is treated as high-cost — every
  * child is a full agent turn (tokens + wall-clock), so a large cap is the
  * clearest proxy for spend in the absence of an explicit cost field.
  */
-export const HIGH_CHILDREN_THRESHOLD = 8;
+const HIGH_CHILDREN_THRESHOLD = 8;
 
 /**
  * Decide whether starting `def` needs explicit user approval.
@@ -233,6 +234,7 @@ export const workflowRunsApi = {
     log('startRun: request definitionId=%s', params.definitionId);
     const result = await callCoreRpc<RunResult>({ method: 'openhuman.workflow_run_start', params });
     log('startRun: id=%s status=%s', result.workflowRun.id, result.workflowRun.status);
+    trackAnalyticsEvent('automation_run_started', { automation_kind: 'orchestration' });
     return result.workflowRun;
   },
 
@@ -244,6 +246,9 @@ export const workflowRunsApi = {
       params: { id },
     });
     log('stopRun: status=%s', result?.workflowRun?.status ?? 'null');
+    if (result?.workflowRun) {
+      trackAnalyticsEvent('automation_run_cancelled', { automation_kind: 'orchestration' });
+    }
     return result?.workflowRun ?? null;
   },
 
@@ -255,6 +260,7 @@ export const workflowRunsApi = {
       params: { id },
     });
     log('resumeRun: status=%s', result.workflowRun.status);
+    trackAnalyticsEvent('automation_run_resumed', { automation_kind: 'orchestration' });
     return result.workflowRun;
   },
 };

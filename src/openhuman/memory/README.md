@@ -14,7 +14,7 @@ Orchestration layer over the memory stack. Owns:
   memory\_\* RPC namespace.
 
 Does **not** own any storage primitives — those live in
-[`memory_store`](../memory_store/). See that module for raw md, chunks,
+[`memory_store`](store/). See that module for raw md, chunks,
 entities, trees, vectors, kv, and contacts.
 
 ## Sibling memory\_\* modules
@@ -24,27 +24,27 @@ one job. memory orchestrates and routes between them.
 
 | Module                                     | Role                                                                                                |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| [`memory_store`](../memory_store/)         | Storage primitives: raw / chunks / entities / trees / vectors / kv / contacts. SQLite + on-disk md. |
-| [`memory_tree`](../memory_tree/)           | Generic tree mechanics: bucket-seal, flush, summarise, and retrieval/traversal backends.            |
-| [`memory_archivist`](../memory_archivist/) | Chat conversation → clip tool-calls → push to tree (shim over `tinycortex::memory::archivist`).      |
-| [`memory_tools`](../memory_tools/)         | Tool-scoped rules + agent read/write tools.                                                         |
-| [`memory_sync`](../memory_sync/)           | Composio + workspace + MCP sync pipelines.                                                          |
+| [`memory_store`](store/)         | Storage primitives: raw / chunks / entities / trees / vectors / kv / contacts. SQLite + on-disk md. |
+| [`memory_tree`](tree/)           | Generic tree mechanics: bucket-seal, flush, summarise, and retrieval/traversal backends.            |
+| `tinycortex::memory::archivist`            | Chat conversation → clip tool-calls → push to tree; called directly by the host harness.            |
+| [`tool_memory`](tool_memory/)         | Tool-scoped rules + agent read/write tools.                                                         |
+| [`memory_sync`](sync/)           | Composio + workspace + MCP sync pipelines.                                                          |
 
 ## What lives here
 
 | Path                                              | Role                                                                                                                                                                    |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`mod.rs`](mod.rs)                                | Module root + orchestration-facing exports.                                                                                                                              |
-| [`sync.rs`](sync.rs)                              | High-level sync lifecycle types + frontend-visible stage events.                                                                                                         |
+| [`sync_events.rs`](sync_events.rs)                              | High-level sync lifecycle types + frontend-visible stage events.                                                                                                         |
 | [`query/`](query/)                                | High-level memory query tools, including the agentic tree-walk flow.                                                                                                     |
 | [`remember.rs`](remember.rs)                      | High-level remember source classification (`chat_history`, `uploaded_data`, `llm_thought`).                                                                              |
 | [`ingest_pipeline.rs`](ingest_pipeline.rs)        | Source-agnostic ingest orchestration. Called by sync pipelines and tree ingest RPC.                                                                                      |
 | [`ingestion/`](ingestion/)                        | Document ingestion queue + extraction (entities, relations, embeddings) — feeds UnifiedMemory documents.                                                                |
-| [`canonicalize/`](../memory_sync/canonicalize/)   | Source → canonical markdown (chat / email / document). Implemented in `memory_sync/canonicalize` and used at ingest time.                                               |
+| [`tinycortex::memory::ingest::canonicalize`](https://github.com/tinyhumansai/tinycortex/tree/main/src/memory/ingest/canonicalize) | Source → canonical markdown (chat / email / document), owned by TinyCortex and used at ingest time. |
 | [`chat/`](chat.rs)                                | Chat-source canonicalisation helpers.                                                                                                                                   |
 | [`read_rpc/`](read_rpc/)                           | RPC handlers for memory reads.                                                                                                                                          |
 | [`schemas/`](schemas/) + [`schema/`](schema/)      | Controller schema definitions for the memory + memory_tree RPC namespaces.                                                                                              |
-| [`sync_status/`](../memory_sync/sync_status/)     | Sync freshness tracking + RPC.                                                                                                                                          |
+| [`sync_status/`](sync/sync_status/)     | Sync freshness tracking + RPC.                                                                                                                                          |
 | [`ops/`](ops/)                                    | RPC operation handlers + the shared `active_memory_client` helper.                                                                                                      |
 | [`preferences.rs`](preferences.rs)                | User preference read/write helpers.                                                                                                                                     |
 | [`rpc_models.rs`](rpc_models.rs)                  | Shared RPC request/response shapes.                                                                                                                                     |

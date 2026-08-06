@@ -9,6 +9,8 @@ use crate::openhuman::inference::{device, presets, sentiment, SentimentResult};
 use crate::openhuman::inference::{LocalAiEmbeddingResult, LocalAiStatus};
 use crate::rpc::RpcOutcome;
 use serde_json::{json, Value};
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 use tracing::{debug, error, warn};
 
 const LOG_PREFIX: &str = "[inference::ops]";
@@ -30,7 +32,7 @@ fn is_unknown_provider_user_config(err: &str) -> bool {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct InferenceTestProviderModelResult {
+pub struct InferenceTestChatModelResult {
     pub reply: String,
 }
 
@@ -45,7 +47,7 @@ pub async fn inference_status(config: &Config) -> Result<RpcOutcome<LocalAiStatu
     let result = local_runtime::rpc::local_ai_status(config).await;
     match &result {
         Ok(outcome) => debug!(state = %outcome.value.state, "{LOG_PREFIX} status:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} status:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} status:error"),
     }
     result
 }
@@ -66,7 +68,7 @@ pub async fn inference_summarize(
             output_len = outcome.value.len(),
             "{LOG_PREFIX} summarize:ok"
         ),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} summarize:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} summarize:error"),
     }
     result
 }
@@ -86,7 +88,7 @@ pub async fn inference_prompt(
     let result = local_runtime::rpc::local_ai_prompt(config, prompt, max_tokens, no_think).await;
     match &result {
         Ok(outcome) => debug!(output_len = outcome.value.len(), "{LOG_PREFIX} prompt:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} prompt:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} prompt:error"),
     }
     result
 }
@@ -110,7 +112,7 @@ pub async fn inference_vision_prompt(
             output_len = outcome.value.len(),
             "{LOG_PREFIX} vision_prompt:ok"
         ),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} vision_prompt:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} vision_prompt:error"),
     }
     result
 }
@@ -127,7 +129,7 @@ pub async fn inference_embed(
             dimensions = outcome.value.dimensions,
             "{LOG_PREFIX} embed:ok"
         ),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} embed:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} embed:error"),
     }
     result
 }
@@ -137,49 +139,54 @@ pub async fn inference_test_provider_model(
     workload: &str,
     provider: &str,
     prompt: &str,
-) -> Result<RpcOutcome<InferenceTestProviderModelResult>, String> {
+) -> Result<RpcOutcome<InferenceTestChatModelResult>, String> {
     debug!(
         workload,
         provider,
         prompt_len = prompt.len(),
         "{LOG_PREFIX} test_provider_model:start"
     );
-    let result =
-        if provider.trim().starts_with("lmstudio:") || provider.trim().starts_with("ollama:") {
-            log::debug!("{LOG_PREFIX} test_provider_model: routing to local provider={provider}");
-            let (chat_provider, model) =
-            crate::openhuman::inference::provider::factory::create_local_chat_provider_from_string(
-                provider, config,
+    let local = provider.trim().starts_with("lmstudio:")
+        || provider.trim().starts_with("ollama:")
+        || provider.trim().starts_with("mlx:")
+        || provider.trim().starts_with("omlx:")
+        || provider.trim().starts_with("local-openai:");
+    let (chat_model, model) = if local {
+        debug!(
+            provider,
+            "{LOG_PREFIX} test_provider_model:build_local_model"
+        );
+        crate::openhuman::inference::provider::factory::create_local_chat_model_from_string(
+            provider, config,
+        )
+    } else {
+        debug!(provider, "{LOG_PREFIX} test_provider_model:build_model");
+        crate::openhuman::inference::provider::create_chat_model_from_string_with_model_id(
+            workload,
+            provider,
+            config,
+            config.default_temperature,
+        )
+    }
+    .map_err(|e| e.to_string())?;
+    debug!(%model, local, "{LOG_PREFIX} test_provider_model:invoke");
+    let result = chat_model
+        .invoke(
+            &(),
+            ModelRequest::new(vec![Message::user(prompt)])
+                .with_model(model)
+                .with_temperature(config.default_temperature),
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .map(|response| {
+            RpcOutcome::single_log(
+                InferenceTestChatModelResult {
+                    reply: response.text(),
+                },
+                "provider model test completed",
             )
-            .map_err(|e| e.to_string())?;
-            log::debug!("{LOG_PREFIX} test_provider_model: invoking local model={model}");
-            chat_provider
-                .simple_chat(prompt, &model, config.default_temperature)
-                .await
-                .map_err(|e| e.to_string())
-                .map(|reply| {
-                    RpcOutcome::single_log(
-                        InferenceTestProviderModelResult { reply },
-                        "provider model test completed",
-                    )
-                })
-        } else {
-            let (chat_provider, model) =
-                crate::openhuman::inference::provider::factory::create_chat_provider_from_string(
-                    workload, provider, config,
-                )
-                .map_err(|e| e.to_string())?;
-            chat_provider
-                .simple_chat(prompt, &model, config.default_temperature)
-                .await
-                .map_err(|e| e.to_string())
-                .map(|reply| {
-                    RpcOutcome::single_log(
-                        InferenceTestProviderModelResult { reply },
-                        "provider model test completed",
-                    )
-                })
-        };
+        });
     match &result {
         Ok(outcome) => debug!(
             output_len = outcome.value.reply.len(),
@@ -222,7 +229,7 @@ pub async fn inference_should_react(
             should_react = outcome.value.should_react,
             "{LOG_PREFIX} should_react:ok"
         ),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} should_react:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} should_react:error"),
     }
     result
 }
@@ -240,7 +247,7 @@ pub async fn inference_analyze_sentiment(
         Ok(outcome) => {
             debug!(valence = %outcome.value.valence, "{LOG_PREFIX} analyze_sentiment:ok")
         }
-        Err(err) => error!(error = %err, "{LOG_PREFIX} analyze_sentiment:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} analyze_sentiment:error"),
     }
     result
 }
@@ -250,7 +257,7 @@ pub async fn inference_get_client_config() -> Result<RpcOutcome<Value>, String> 
     let result = config_rpc::load_and_get_client_config_snapshot().await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} get_client_config:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} get_client_config:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} get_client_config:error"),
     }
     result
 }
@@ -262,7 +269,7 @@ pub async fn inference_update_model_settings(
     let result = config_rpc::load_and_apply_model_settings(update).await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} update_model_settings:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} update_model_settings:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} update_model_settings:error"),
     }
     result
 }
@@ -274,7 +281,7 @@ pub async fn inference_update_local_settings(
     let result = config_rpc::load_and_apply_local_ai_settings(update).await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} update_local_settings:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} update_local_settings:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} update_local_settings:error"),
     }
     result
 }
@@ -355,7 +362,7 @@ pub async fn inference_device_profile() -> Result<RpcOutcome<Value>, String> {
 /// editor, not only in the notification center. Cleared when the user updates
 /// or removes the offending key.
 pub async fn inference_provider_auth_errors() -> Result<RpcOutcome<Value>, String> {
-    let errors = providers::auth_error_registry::snapshot();
+    let errors = crate::openhuman::inference::auth_error_registry::snapshot();
     debug!(count = errors.len(), "{LOG_PREFIX} provider_auth_errors:ok");
     Ok(RpcOutcome::single_log(
         json!({ "errors": errors }),
@@ -472,7 +479,7 @@ pub async fn inference_openai_oauth_start(config: &Config) -> Result<RpcOutcome<
         });
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} openai_oauth_start:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_start:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} openai_oauth_start:error"),
     }
     result
 }
@@ -491,7 +498,7 @@ pub async fn inference_openai_oauth_complete(
             .map(|payload| RpcOutcome::single_log(payload, "openai oauth connected"));
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} openai_oauth_complete:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_complete:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} openai_oauth_complete:error"),
     }
     result
 }
@@ -536,7 +543,7 @@ pub async fn inference_openai_oauth_status(config: &Config) -> Result<RpcOutcome
         });
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} openai_oauth_status:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_status:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} openai_oauth_status:error"),
     }
     result
 }
@@ -549,7 +556,7 @@ pub async fn inference_openai_oauth_disconnect(
         .map(|payload| RpcOutcome::single_log(payload, "openai oauth disconnected"));
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} openai_oauth_disconnect:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_disconnect:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} openai_oauth_disconnect:error"),
     }
     result
 }
@@ -567,7 +574,7 @@ pub async fn inference_diagnostics(config: &Config) -> Result<RpcOutcome<Value>,
         .map(|value| RpcOutcome::new(value, Vec::new()));
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} diagnostics:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} diagnostics:error"),
+        Err(err) => warn!(error = %err, "{LOG_PREFIX} diagnostics:error"),
     }
     result
 }

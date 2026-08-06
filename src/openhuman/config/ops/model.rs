@@ -22,7 +22,7 @@ pub struct ModelSettingsPatch {
     pub model_routes: Option<Vec<crate::openhuman::config::ModelRouteConfig>>,
     /// When `Some`, REPLACES the entire `config.cloud_providers` array with
     /// the supplied entries (each lacking the API key — those live in
-    /// `auth-profiles.json` via [`crate::openhuman::credentials::AuthService`]).
+    /// `auth-profiles.json` via [`crate::openhuman::security::credentials::AuthService`]).
     /// Pass `Some(vec![])` to clear all third-party cloud providers.
     pub cloud_providers:
         Option<Vec<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds>>,
@@ -99,6 +99,12 @@ pub async fn apply_model_settings(
     config: &mut Config,
     update: ModelSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
+    // #5324: snapshot the embedder selection BEFORE applying the patch so the
+    // failed-job un-park below only fires when the embedder actually changed.
+    // This path also saves chat/reasoning/vision/etc. providers; without this
+    // gate, saving an unrelated model setting would restart every terminally
+    // `unrecoverable` embedding job and re-run the same external failure.
+    let prev_embeddings_provider = config.embeddings_provider.clone();
     if let Some(api_url) = update.api_url {
         config.api_url = if api_url.trim().is_empty() {
             None
@@ -247,12 +253,30 @@ pub async fn apply_model_settings(
     // so a UI embedder switch recovers prior memory under the new
     // signature. Coverage-gated + non-fatal: if the active signature did
     // not actually change, this enqueues nothing.
-    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
+    crate::openhuman::memory::queue::ensure_reembed_backfill(config);
+    // #5324: the embedder may have just moved off the exhausted managed
+    // budget onto local Ollama / a BYO provider. Give the jobs that parked as
+    // `unrecoverable` under the old provider a fresh attempt budget — but ONLY
+    // when the embedder selection actually changed, so a chat/vision/etc. model
+    // save leaves terminally-failed jobs parked instead of re-failing them.
+    let embedder_changed = config.embeddings_provider != prev_embeddings_provider;
+    // #5324: the save has already succeeded, so a failed un-park must NOT fail
+    // the RPC — but it must not be reported as `requeued_failed=0` either, which
+    // would read identically to "nothing was parked" and hide that the parked
+    // jobs are still stuck. Surface the error in the outcome line instead.
+    let requeued_note = if embedder_changed {
+        match crate::openhuman::memory::queue::requeue_failed_after_provider_change(config) {
+            Ok(n) => n.to_string(),
+            Err(e) => format!("error ({e})"),
+        }
+    } else {
+        "0".to_string()
+    };
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
         vec![format!(
-            "model settings saved to {}",
+            "model settings saved to {} (requeued_failed={requeued_note})",
             config.config_path.display()
         )],
     ))
@@ -271,6 +295,13 @@ pub async fn apply_memory_settings(
     config: &mut Config,
     update: MemorySettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
+    // #5324: snapshot the embedding signature BEFORE applying the patch. This
+    // path also saves `backend` / `auto_save` / `memory_window`, none of which
+    // remediate a budget-exhausted embedder — so the failed-job un-park below
+    // must fire only when the provider/model/dimensions actually changed.
+    let prev_embedding_provider = config.memory.embedding_provider.clone();
+    let prev_embedding_model = config.memory.embedding_model.clone();
+    let prev_embedding_dimensions = config.memory.embedding_dimensions;
     if let Some(backend) = update.backend {
         config.memory.backend = backend;
     }
@@ -288,7 +319,9 @@ pub async fn apply_memory_settings(
         // would otherwise be stored unchecked and 400 "does not exist" on every
         // memory re-embed (2205 events from one user). Conservative check — see
         // `embeddings::non_embedding_model_reason`.
-        if let Some(reason) = crate::openhuman::embeddings::non_embedding_model_reason(&model) {
+        if let Some(reason) =
+            crate::openhuman::inference::embeddings::non_embedding_model_reason(&model)
+        {
             return Err(format!("invalid embeddings model `{model}`: {reason}"));
         }
         config.memory.embedding_model = model;
@@ -315,12 +348,29 @@ pub async fn apply_memory_settings(
     // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
     // are logged, never fail the settings save). §7's migration is
     // one-shot so it does not cover a later switch — this does.
-    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
+    crate::openhuman::memory::queue::ensure_reembed_backfill(config);
+    // #5324: same rationale as the model-settings path — a switch away from
+    // the exhausted managed budget must un-park the jobs that failed under it,
+    // but a `memory_window` / `auto_save` / `backend` save must not. Gate on a
+    // real embedder change (provider/model/dimensions).
+    let embedder_changed = config.memory.embedding_provider != prev_embedding_provider
+        || config.memory.embedding_model != prev_embedding_model
+        || config.memory.embedding_dimensions != prev_embedding_dimensions;
+    // #5324: same as the model-settings path — keep the save successful but
+    // report an un-park failure instead of a misleading `requeued_failed=0`.
+    let requeued_note = if embedder_changed {
+        match crate::openhuman::memory::queue::requeue_failed_after_provider_change(config) {
+            Ok(n) => n.to_string(),
+            Err(e) => format!("error ({e})"),
+        }
+    } else {
+        "0".to_string()
+    };
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
         vec![format!(
-            "memory settings saved to {}",
+            "memory settings saved to {} (requeued_failed={requeued_note})",
             config.config_path.display()
         )],
     ))
@@ -504,10 +554,16 @@ pub async fn get_composio_trigger_settings() -> Result<RpcOutcome<serde_json::Va
     ))
 }
 
-/// Resolves the effective API URL from configuration or defaults.
+/// Resolve the hosted backend URL, excluding local or third-party inference
+/// overrides that must never receive OpenHuman session credentials.
+pub(crate) fn resolve_backend_api_url(config: &Config) -> String {
+    crate::api::config::effective_backend_api_url(&config.api_url)
+}
+
+/// Resolves the effective backend API URL from configuration or defaults.
 pub async fn load_and_resolve_api_url() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
-    let resolved = crate::api::config::effective_api_url(&config.api_url);
+    let resolved = resolve_backend_api_url(&config);
     Ok(RpcOutcome::new(
         serde_json::json!({ "api_url": resolved }),
         Vec::new(),

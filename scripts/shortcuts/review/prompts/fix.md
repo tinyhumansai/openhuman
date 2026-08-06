@@ -68,7 +68,7 @@ Run a CodeRabbit-style review against these axes:
 - CEF webviews must not grow new JS injection.
 - Debug logging on new flows (entry/exit, branches, retries); grep-friendly prefixes; no secrets/PII.
 - Files preferably ≤ ~500 lines.
-- Capability changes update `src/openhuman/about_app/`.
+- Capability changes update `src/openhuman/platform/about_app/`.
 
 **Testing** — new behavior ships with tests; coverage gate is ≥ 80% on changed lines.
 

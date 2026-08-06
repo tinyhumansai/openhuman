@@ -38,7 +38,7 @@ export interface AgentRegistryEntry {
 }
 
 /** Fields accepted when creating a custom agent. */
-export interface CreateCustomAgentInput {
+interface CreateCustomAgentInput {
   id: string;
   name: string;
   description: string;
@@ -58,7 +58,7 @@ export interface AgentToolInfo {
 }
 
 /** Patch for `update` — any omitted field is left unchanged. */
-export interface UpdateAgentInput {
+interface UpdateAgentInput {
   name?: string;
   description?: string;
   enabled?: boolean;

@@ -22,7 +22,7 @@ const log = createDebug('app:devices-ui');
 // Types (mirror the Rust types.rs)
 // ---------------------------------------------------------------------------
 
-export interface PairedDevice {
+interface PairedDevice {
   channel_id: string;
   label: string;
   device_pubkey: string;

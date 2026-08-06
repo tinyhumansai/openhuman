@@ -13,7 +13,7 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { RelayInfo } from '../../lib/orchestration/orchestrationClient';
 
-export interface RelayBadgeProps {
+interface RelayBadgeProps {
   relay: RelayInfo | null;
 }
 

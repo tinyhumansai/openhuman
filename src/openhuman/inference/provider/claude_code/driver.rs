@@ -22,7 +22,8 @@ use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
 use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
 use super::stream_parser::StreamJsonParser;
-use crate::openhuman::inference::provider::traits::{ChatMessage, ChatResponse, ProviderDelta};
+use crate::openhuman::agent::messages::ChatMessage;
+use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
 
 /// Tools withheld in the DEFAULT (`acceptEdits`) posture: Claude Code can
 /// read/edit files in the project, but not run shell, hit the network, or
@@ -40,6 +41,7 @@ const DISALLOWED_CC_BUILTINS: &[&str] = &[
 
 /// Whether the user opted into FULL access for Claude Code (`bypassPermissions`
 /// + full native toolset incl. Bash/network). Default is **off** → the safer
+///
 /// `acceptEdits` posture (file edits only). This is a deliberate user choice,
 /// not the default — enabling Claude Code alone does not grant shell/network
 /// power.
@@ -185,6 +187,42 @@ fn write_mcp_http_config(
     Ok(path)
 }
 
+/// Keep the potentially large harness prompt out of argv. Windows flattens
+/// argv into a command line capped at 32,767 UTF-16 code units, while Claude's
+/// file flag has no such limit. The per-turn scratch directory owns cleanup.
+fn append_system_prompt_args(
+    dir: &std::path::Path,
+    prompt: Option<&str>,
+) -> std::io::Result<Vec<String>> {
+    let Some(prompt) = prompt.filter(|value| !value.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let path = dir.join("append-system-prompt.txt");
+    log::debug!(
+        "[claude-code][driver] append-system-prompt file write start path={} bytes={}",
+        path.display(),
+        prompt.len()
+    );
+    if let Err(error) = std::fs::write(&path, prompt) {
+        log::warn!(
+            "[claude-code][driver] append-system-prompt file write failed path={} error={}",
+            path.display(),
+            error
+        );
+        return Err(error);
+    }
+    log::debug!(
+        "[claude-code][driver] append-system-prompt file write complete path={} bytes={}",
+        path.display(),
+        prompt.len()
+    );
+    Ok(vec![
+        "--append-system-prompt-file".to_string(),
+        path.display().to_string(),
+    ])
+}
+
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards
 /// `ProviderDelta`s through `ctx.stream` as they arrive and returns the
 /// aggregated `ChatResponse` when done.
@@ -214,7 +252,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     // Point CC at OpenHuman's in-process HTTP MCP server (unjailed core), so
     // the memory bridge survives CC's `.openhuman` jail deny.
     let mut mcp_config_path: Option<PathBuf> = None;
-    match crate::openhuman::mcp_server::ensure_local_http().await {
+    match crate::openhuman::mcp::server::ensure_local_http().await {
         Ok(endpoint) => match write_mcp_http_config(scratch.path(), endpoint.addr, &endpoint.token) {
             Ok(p) => {
                 log::debug!(
@@ -280,14 +318,10 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         "--model".into(),
         ctx.model.clone(),
     ];
-    if let Some(sp) = ctx
-        .append_system_prompt
-        .as_ref()
-        .filter(|s| !s.trim().is_empty())
-    {
-        args.push("--append-system-prompt".into());
-        args.push(sp.clone());
-    }
+    args.extend(
+        append_system_prompt_args(scratch.path(), ctx.append_system_prompt.as_deref())
+            .map_err(|e| anyhow::anyhow!("write Claude Code system prompt file: {e}"))?,
+    );
     if let Some(p) = mcp_config_path.as_ref() {
         args.push("--mcp-config".into());
         args.push(p.display().to_string());
@@ -483,6 +517,44 @@ mod tests {
         assert_eq!(server["headers"]["Authorization"], "Bearer tok-abc123");
         // It must NOT spawn a stdio child (the old jailed path).
         assert!(server.get("command").is_none());
+    }
+
+    #[test]
+    fn large_system_prompt_is_written_to_file_instead_of_argv() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prompt = "system instruction\n".repeat(2_500);
+        assert!(prompt.len() > 32_767);
+
+        let args = append_system_prompt_args(dir.path(), Some(&prompt)).expect("prompt args");
+
+        assert_eq!(args[0], "--append-system-prompt-file");
+        assert_eq!(args.len(), 2);
+        assert!(!args.iter().any(|arg| arg.contains(&prompt)));
+        assert_eq!(
+            std::fs::read_to_string(&args[1]).expect("read prompt file"),
+            prompt
+        );
+    }
+
+    #[test]
+    fn empty_system_prompt_does_not_add_an_argument() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = append_system_prompt_args(dir.path(), Some("  \n ")).expect("prompt args");
+
+        assert!(args.is_empty());
+        assert!(!dir.path().join("append-system-prompt.txt").exists());
+    }
+
+    #[test]
+    fn system_prompt_write_error_is_propagated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let not_a_directory = dir.path().join("file");
+        std::fs::write(&not_a_directory, "occupied").expect("write blocking file");
+
+        let error = append_system_prompt_args(&not_a_directory, Some("system prompt"))
+            .expect_err("non-directory parent must fail");
+
+        assert!(!error.to_string().is_empty());
     }
 
     #[cfg(target_os = "macos")]

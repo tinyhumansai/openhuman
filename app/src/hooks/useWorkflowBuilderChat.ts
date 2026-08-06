@@ -16,8 +16,10 @@
  * `pendingWorkflowProposalsByThread` for this thread as the turn runs. This hook
  * only appends the local USER turn (the web channel never persists user
  * messages) and reads the streamed state back out; the blocking
- * `{proposal, error}` return is a fallback for when streaming isn't wired
- * (CLI / tests / a missed socket event).
+ * `{proposal, error}` return is used for the proposal/error signal only —
+ * `ChatRuntimeProvider.onDone` is the SINGLE authoritative path for
+ * persisting the assistant's reply (B26: a local fallback append here used
+ * to race it and double the bubble on tool-calling turns).
  *
  * Invariant: `create`/`revise`/`repair` never persist; only a `build` turn (with
  * a real flow id) may save onto an existing flow. Nothing here enables a flow.
@@ -25,12 +27,19 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { type BuilderTurnRequest, buildWorkflow } from '../services/api/flowsApi';
-import { store } from '../store';
 import {
+  type BuilderTurnRequest,
+  type BuilderTurnResult,
+  buildWorkflow,
+  flowsBuildCancel,
+} from '../services/api/flowsApi';
+import {
+  beginInferenceTurn,
   clearWorkflowProposalForThread,
+  endInferenceTurn,
   fetchAndHydrateTurnHistory,
   fetchAndHydrateTurnState,
+  type PendingApproval,
   setWorkflowProposalForThread,
   type ToolTimelineEntry,
   type WorkflowProposal,
@@ -48,7 +57,7 @@ import type { ThreadMessage } from '../types/thread';
 const log = createDebug('app:flows:builder-chat');
 
 /** A single builder turn: what the user sees vs. the structured turn request. */
-export interface WorkflowBuilderSendParams {
+interface WorkflowBuilderSendParams {
   /** Human-readable text shown as the user's message in the thread transcript. */
   displayText: string;
   /**
@@ -88,13 +97,44 @@ export interface WorkflowBuilderSendResult {
   proposed: boolean;
 }
 
-export interface UseWorkflowBuilderChat {
+interface UseWorkflowBuilderChat {
   /** The dedicated thread id, or `null` before the first send creates it. */
   threadId: string | null;
   /** True while a builder turn is in flight on this thread. */
   sending: boolean;
+  /**
+   * Whether a turn is in flight on this thread per the runtime's
+   * `inferenceTurnLifecycleByThread` — the same turn-lifecycle signal the main
+   * chat threads page uses to derive `isSending`. Passed through as
+   * `ToolTimelineBlock`'s `turnActive` prop so the panel's sticky
+   * open/collapse override resets once per TURN instead of once per
+   * sub-agent (see that component's doc for the #5008 flicker this fixes).
+   */
+  turnActive: boolean;
   /** The latest proposal the agent returned on this thread, or `null`. */
   proposal: WorkflowProposal | null;
+  /**
+   * A parked `ApprovalGate` request for this thread (PR3:
+   * flows-copilot-live-run-approval), or `null`. The copilot's `flows_build`
+   * turn now runs `run_flow` / `resume_flow_run` under the same
+   * `AgentTurnOrigin::WebChat` + `APPROVAL_CHAT_CONTEXT` scope a real
+   * interactive chat turn uses, so a live test-run parks here instead of
+   * either auto-allowing or being hidden outright. Sourced from the SAME
+   * `pendingApprovalByThread` slice / `approval_request` socket event the
+   * main chat's `ApprovalRequestCard` reads — no new plumbing, just scoped to
+   * this hook's dedicated thread.
+   */
+  pendingApproval: PendingApproval | null;
+  /**
+   * `true` when the most recently settled turn paused because it hit the
+   * agent's tool-call budget with no proposal yet (B34) — the caller should
+   * render a "Continue building" affordance instead of treating
+   * `displayMessages`' latest agent bubble (the raw "Done so far / Next
+   * steps" checkpoint) as a normal reply or a clarifying question. Reset to
+   * `false` at the start of every new `send()` call, so it only ever
+   * reflects the most recent turn.
+   */
+  capped: boolean;
   /**
    * The dedicated thread's FULL transcript (user + agent turns, including
    * between-tool narration bubbles), so a caller that needs the complete
@@ -110,8 +150,8 @@ export interface UseWorkflowBuilderChat {
    * that narration already renders live via `toolTimeline`/`liveResponse`
    * below — showing it again as a bubble double-renders it. User messages and
    * any non-interim agent message (the turn's terminal answer, including a
-   * clarifying question appended via the `assistantText` fallback in `send`)
-   * are always kept.
+   * clarifying question) are kept, with consecutive identical-content agent
+   * messages collapsed to one (B26 dedup guard).
    */
   displayMessages: ThreadMessage[];
   /**
@@ -139,6 +179,13 @@ export interface UseWorkflowBuilderChat {
    * knows whether the instruction is still unresolved.
    */
   send: (params: WorkflowBuilderSendParams) => Promise<WorkflowBuilderSendResult>;
+  /**
+   * Cancel the in-flight builder turn for the current thread. The copilot's
+   * Send button morphs into a Stop button while `sending` is true (mirrors the
+   * main chat's `handleStopGeneration`); clicking it calls this. No-op when
+   * there is no bound thread or nothing is in flight.
+   */
+  stop: () => void;
   /** Clear the current proposal (e.g. after Accept/Reject) without persisting. */
   clearProposal: () => void;
 }
@@ -163,6 +210,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const [threadId, setThreadId] = useState<string | null>(seedThreadId ?? null);
   const [localSending, setLocalSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false);
   // Tracks a thread id this hook created itself via `send()`'s `createNewThread`
   // call — as opposed to one that arrived from `seedThreadId` because a caller
   // (e.g. `WorkflowCopilotPanel`) reports every `threadId` change back up via
@@ -176,6 +224,17 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   // against the unnecessary refetch itself, not a correctness requirement.
   const createdThreadIdRef = useRef<string | null>(null);
 
+  // Attempt guard (P2/Major re-send race): bumped at the start of every
+  // `send()` call. A `send`'s `finally` only clears `localSending` when its
+  // captured attempt is still the latest one recorded here — so an EARLIER
+  // turn that was Stop-cancelled (and whose in-flight `buildWorkflow` promise
+  // is now just settling in the background) can never clear the `sending`
+  // flag out from under a NEWER turn the user started right after clicking
+  // Stop. Without this guard, turn A's `finally` racing turn B's still-active
+  // RPC would flip `sending` back to `false` while B is genuinely in flight,
+  // dropping the Stop-button UI for a turn that's still running.
+  const sendAttemptRef = useRef(0);
+
   const proposalsByThread = useAppSelector(
     state => state.chatRuntime.pendingWorkflowProposalsByThread
   );
@@ -184,6 +243,24 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );
+  const inferenceTurnLifecycleByThread = useAppSelector(
+    state => state.chatRuntime.inferenceTurnLifecycleByThread
+  );
+  const pendingApprovalByThread = useAppSelector(
+    state => state.chatRuntime.pendingApprovalByThread
+  );
+
+  // A turn is in flight on this thread iff its lifecycle entry is `'started'`
+  // or `'streaming'` — NOT `'interrupted'`, which `hydrateRuntimeFromSnapshot`
+  // (chatRuntimeSlice.ts) writes for a turn that crashed mid-flight in a PRIOR
+  // core process (cold-boot rehydrate): there is no live driver behind it, so
+  // treating it as "active" would leak stale disclosure state into a later,
+  // genuinely new turn on this same thread. Mirrors `Conversations.tsx`'s
+  // `isSending` derivation (same explicit two-state check, not a broad `in`
+  // membership test) so the copilot's `ToolTimelineBlock` resets its sticky
+  // override on the same real turn-settle edge the main chat uses.
+  const threadLifecycle = threadId != null ? inferenceTurnLifecycleByThread[threadId] : undefined;
+  const turnActive = threadLifecycle === 'started' || threadLifecycle === 'streaming';
 
   // Prefer the runtime's streamed proposal (populated on this thread by
   // `ChatRuntimeProvider` as the builder's `propose_workflow`/`revise_workflow`
@@ -192,6 +269,15 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const proposal = useMemo(
     () => (threadId ? (proposalsByThread[threadId] ?? null) : null),
     [threadId, proposalsByThread]
+  );
+
+  // PR3 (flows-copilot-live-run-approval): mirrors `proposal` above — read the
+  // shared `pendingApprovalByThread` slice scoped to this hook's dedicated
+  // thread, so a parked `run_flow`/`resume_flow_run` call surfaces here the
+  // same way `Conversations.tsx` surfaces one for the main chat.
+  const pendingApproval = useMemo(
+    () => (threadId ? (pendingApprovalByThread[threadId] ?? null) : null),
+    [threadId, pendingApprovalByThread]
   );
 
   const messages = useMemo(
@@ -204,10 +290,20 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   // non-interim agent turn (the terminal answer for a round, including a
   // clarifying question with no `isInterim` tag). `messages` itself stays the
   // full set — rehydration (below) and any future persistence need it intact.
-  const displayMessages = useMemo(
-    () => messages.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim),
-    [messages]
-  );
+  //
+  // Also dedupes consecutive agent messages with identical content (B26
+  // defense-in-depth): the fallback append in `send()` that used to race
+  // `ChatRuntimeProvider.onDone` is gone, but this guards against any future
+  // regression (e.g. a socket reconnect replaying `chat_done`) producing a
+  // doubled bubble.
+  const displayMessages = useMemo(() => {
+    const filtered = messages.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim);
+    return filtered.filter((m, i) => {
+      if (m.sender !== 'agent' || i === 0) return true;
+      const prev = filtered[i - 1];
+      return !(prev.sender === 'agent' && prev.content === m.content);
+    });
+  }, [messages]);
 
   const toolTimeline = useMemo(
     () => (threadId ? (toolTimelineByThread[threadId] ?? EMPTY_TIMELINE) : EMPTY_TIMELINE),
@@ -282,8 +378,17 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
         setError('offline');
         return { outcome: 'skipped', proposed: false };
       }
+      // Attempt guard (P2/Major re-send race): claim this call as the latest
+      // attempt BEFORE anything async happens, so this send's own `finally`
+      // below can tell whether it's still the most recent one by the time it
+      // settles.
+      const attempt = ++sendAttemptRef.current;
       setLocalSending(true);
       setError(null);
+      // A fresh turn supersedes any prior cap-hit signal, same as the
+      // proposal-clearing dispatch below — `capped` must only ever reflect
+      // this turn, not a stale one.
+      setCapped(false);
       let targetThreadId = threadId;
       let proposed = false;
       try {
@@ -314,12 +419,40 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
         // text/thinking/tool events + a terminal `chat_done` keyed by it. The
         // GLOBAL `ChatRuntimeProvider` owns that transcript — it appends the
         // final assistant message on `chat_done` and fills the streaming/tool
-        // slices as the turn runs, so in the normal (streaming-wired) case this
-        // hook must NOT also append the agent reply (doing so would double
-        // it) — see the dedup check below. We still await the blocking result
-        // for its `proposal`/`error`/`assistantText` fallback.
+        // slices as the turn runs, so this hook must NOT also append the agent
+        // reply (doing so would double it — B26). We still await the blocking
+        // result for its `proposal`/`error` signal.
+        //
+        // Seed the shared turn-lifecycle entry for this thread (mirrors
+        // `Conversations.tsx`'s `beginInferenceTurn` dispatch on send) so
+        // `turnActive` above (`threadId in inferenceTurnLifecycleByThread`)
+        // reflects a REAL turn in flight. Without this, nothing ever creates
+        // an entry for the builder's dedicated thread — `ChatRuntimeProvider`
+        // only *updates* an existing entry (`markInferenceTurnStreaming` is a
+        // no-op unless one is already present) — so `turnActive` would stay
+        // `false` for the entire life of every builder turn. Because it's a
+        // *boolean* `false` rather than `undefined`, that permanently defeats
+        // `ToolTimelineBlock`'s `turnActive ?? isRunning` fallback (nullish
+        // coalescing only falls back on null/undefined, never on `false`),
+        // so the panel's settle-edge override reset — the entire point of
+        // this fix — would never fire for the copilot surface it targets.
+        dispatch(beginInferenceTurn({ threadId: targetThreadId }));
         log('send: running flows_build thread=%s mode=%s', targetThreadId, request.mode);
-        const result = await buildWorkflow(request, targetThreadId);
+        let result: BuilderTurnResult;
+        try {
+          result = await buildWorkflow(request, targetThreadId);
+        } finally {
+          // The blocking RPC settling (success or error) IS the turn ending —
+          // clear eagerly here rather than relying solely on
+          // `ChatRuntimeProvider`'s generic `chat_done` listener (which also
+          // calls `endInferenceTurn` for this thread — redundant but
+          // harmless, since it's a plain delete). If the server-side turn
+          // never reaches `chat_done` (e.g. this call throws before the core
+          // ever starts one), that listener never fires and the lifecycle
+          // entry would otherwise leak, stranding `turnActive` — and the
+          // panel it drives — permanently `true`.
+          dispatch(endInferenceTurn({ threadId: targetThreadId }));
+        }
 
         // Surface the proposal via the same store slice the streamed path used,
         // so `WorkflowProposalCard` / the copilot preview render unchanged. This
@@ -333,39 +466,24 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
           );
         } else if (result.error) {
           setError(result.error);
-        } else if (result.assistantText?.trim()) {
-          // Neither a proposal nor an error: the agent replied with plain
-          // text instead of proposing this turn — most commonly a clarifying
-          // question (the "ask" branch of the clarify/verify posture). When
-          // streaming is wired (the normal case) `ChatRuntimeProvider` already
-          // appended this exact text on the turn's `chat_done` — the Rust
-          // side (`finalize_flow_stream`) delivers it unconditionally,
-          // independent of whether a proposal was made — so re-appending here
-          // would double the bubble. Read the live store (not the stale
-          // closed-over `messages`) to check whether that already landed;
-          // only append when it hasn't, which is the actual fallback case
-          // (streaming not wired: CLI / tests / a missed socket event).
-          const latest = store.getState().thread.messagesByThreadId[targetThreadId] ?? [];
-          const lastMessage = latest[latest.length - 1];
-          const alreadyStreamed =
-            lastMessage?.sender === 'agent' && lastMessage.content === result.assistantText;
-          log(
-            'send: assistantText fallback thread=%s alreadyStreamed=%s',
-            targetThreadId,
-            alreadyStreamed
-          );
-          if (!alreadyStreamed) {
-            const assistantMessage: ThreadMessage = {
-              id: `msg_${globalThis.crypto.randomUUID()}`,
-              content: result.assistantText,
-              type: 'text',
-              extraMetadata: {},
-              sender: 'agent',
-              createdAt: new Date().toISOString(),
-            };
-            dispatch(addMessageLocal({ threadId: targetThreadId, message: assistantMessage }));
-          }
         }
+        // (B34) Surface the cap-hit signal so the panel can render a
+        // "Continue building" card instead of the raw checkpoint text as a
+        // normal reply. Scoped to `!result.proposal` server-side already
+        // (`ops.rs`'s `capped` field), but re-checked here too — a proposal
+        // means there's nothing left to "continue".
+        setCapped(result.capped && !result.proposal);
+        // Note: no local fallback append for `result.assistantText` here (B26).
+        // `ChatRuntimeProvider.onDone` is the SINGLE authoritative path that
+        // persists the assistant's reply on the turn's `chat_done` event — the
+        // Rust side (`finalize_flow_stream`) delivers it unconditionally,
+        // independent of whether a proposal was made. A local fallback here
+        // raced that streamed append (the socket event isn't guaranteed to have
+        // landed by the time this blocking call resolves) and produced a
+        // doubled bubble on tool-calling turns, which take longer and widen the
+        // race window. If streaming is ever not wired (CLI / tests), the
+        // assistant's reply simply won't appear in the thread transcript — the
+        // `proposal` still surfaces via the Redux slice above.
         return { outcome: 'dispatched', proposed };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -389,11 +507,63 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
         // the turn) — `failed` is distinct from the retryable `skipped`.
         return { outcome: 'failed', proposed };
       } finally {
-        setLocalSending(false);
+        // Only clear `sending` if THIS attempt is still the latest one — a
+        // Stop-cancelled earlier turn settling here after a newer send()
+        // started must not clear the newer turn's in-flight indicator (the
+        // re-send race the attempt guard exists to close).
+        if (sendAttemptRef.current === attempt) {
+          setLocalSending(false);
+        } else {
+          log(
+            'send: finally skipped clearing sending — a newer attempt (%d) has superseded this one (%d)',
+            sendAttemptRef.current,
+            attempt
+          );
+        }
       }
     },
     [dispatch, localSending, socketStatus, threadId]
   );
+
+  const stop = useCallback(() => {
+    if (!threadId) {
+      log('stop: no bound thread — noop');
+      return;
+    }
+    if (!localSending) {
+      log('stop: nothing in flight — noop');
+      return;
+    }
+    log('stop: cancelling builder turn thread=%s', threadId);
+    // `flows_build_cancel` (not the shared `chatCancel`/`channel_web_cancel`
+    // primitive) actually signals the in-flight `workflow_builder` agent turn
+    // to stop server-side — `flows_build` runs inline and is never registered
+    // anywhere `channel_web_cancel` looks, so `chatCancel` used to resolve
+    // `true` without touching the running turn at all (the FE-only Stop
+    // button the review bots flagged as cosmetic).
+    //
+    // This hook doesn't mint/track a per-turn `request_id` client-side (the
+    // server generates one when `flows_build` streams without one), so the
+    // cancel is unscoped here — it cancels whatever build turn is currently
+    // registered on this thread, same scope `chatCancel(threadId)` had.
+    //
+    // Deliberately NOT eagerly clearing `sending` here: with cancellation now
+    // real, the in-flight `buildWorkflow` call this triggered a cancel for
+    // returns promptly once the server-side turn settles, and ITS `finally`
+    // (gated by the attempt guard above) is the single place `sending` is
+    // cleared — clearing it here too would race that settle and could clear
+    // a NEWER turn's `sending` if the user re-sent immediately after Stop.
+    void flowsBuildCancel(threadId)
+      .then(cancelled => {
+        log('stop: flowsBuildCancel thread=%s cancelled=%s', threadId, cancelled);
+      })
+      .catch(err => {
+        // Fire-and-forget: a rejected cancel (network/RPC failure) must not
+        // become an unhandled rejection. The in-flight turn's own settle still
+        // clears `sending`; we just log the failed cancel attempt.
+        log('stop: flowsBuildCancel failed thread=%s err=%o', threadId, err);
+      });
+  }, [threadId, localSending]);
 
   const clearProposal = useCallback(() => {
     if (threadId) dispatch(clearWorkflowProposalForThread({ threadId }));
@@ -402,13 +572,17 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   return {
     threadId,
     sending,
+    turnActive,
     proposal,
+    pendingApproval,
+    capped,
     messages,
     displayMessages,
     toolTimeline,
     liveResponse,
     error,
     send,
+    stop,
     clearProposal,
   };
 }

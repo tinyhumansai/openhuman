@@ -8,6 +8,7 @@ import {
   SKILL_TOOL_CHAIN_TARGET_MS,
 } from '../lib/ai/skillToolChainLatency';
 import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
+import { maybeParseWorkflowProposalTool } from '../lib/workflows/workflowProposal';
 import {
   type ChatApprovalRequestEvent,
   type ChatDoneEvent,
@@ -38,6 +39,7 @@ import {
   clearProcessingForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
+  fetchAndHydrateDerivedTranscript,
   markInferenceTurnStreaming,
   parseToolFailure,
   recordChatTurnUsage,
@@ -63,7 +65,6 @@ import {
   upsertArtifactFailedForThread,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
-  type WorkflowProposal,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
@@ -76,7 +77,7 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
-import { IS_PROD } from '../utils/config';
+import { DERIVED_TRANSCRIPT_ENABLED, IS_PROD } from '../utils/config';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 const USER_FACING_AGENT_ERROR_MESSAGE =
@@ -259,78 +260,10 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
   };
 }
 
-/**
- * Parses a completed `propose_workflow` tool call's JSON `output` into a
- * `WorkflowProposal` for `WorkflowProposalCard` (issue B4 — agent-first
- * Workflow authoring). The tool's `execute()`
- * (`src/openhuman/flows/tools.rs`) returns
- * `{ type: "workflow_proposal", name, graph, require_approval, summary }` as
- * its `ToolResult` body; this maps that wire shape onto the store's camelCase
- * `WorkflowProposal`. Returns `null` for anything that fails to parse or
- * doesn't match the expected shape — defensive, since a malformed proposal
- * must never crash the chat runtime, it should just silently not render a
- * card.
- */
-/**
- * Tool names whose successful `output` carries a `workflow_proposal` payload.
- * `propose_workflow` (first draft) and `revise_workflow` (iterative refine)
- * both return the identical wire shape (see `src/openhuman/flows/builder_tools.rs`),
- * so the runtime surfaces a `WorkflowProposalCard` from either. These run inside
- * the `workflow_builder` specialist — reached either as the main agent's own
- * tool or, in the Flows copilot / prompt-bar flow, as a delegated subagent
- * (`build_workflow`) — so BOTH `onToolResult` and `onSubagentToolResult` funnel
- * through {@link maybeParseWorkflowProposalTool}.
- */
-const WORKFLOW_PROPOSAL_TOOLS = new Set(['propose_workflow', 'revise_workflow']);
-
-/**
- * If a completed tool result is a successful workflow-builder proposal
- * (`propose_workflow`/`revise_workflow`), parse it. Returns `null` for anything
- * else so callers can cheaply gate on it. Keyed by the tool NAME + success, not
- * by agent, so a proposal surfaces whether the tool ran in the main agent or in
- * the delegated `workflow_builder` worker.
- */
-function maybeParseWorkflowProposalTool(
-  toolName: string,
-  success: boolean,
-  output: string | undefined
-): WorkflowProposal | null {
-  if (!success || !WORKFLOW_PROPOSAL_TOOLS.has(toolName) || !output) return null;
-  return parseWorkflowProposal(output);
-}
-
-function parseWorkflowProposal(output: string): WorkflowProposal | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const obj = parsed as Record<string, unknown>;
-  if (obj.type !== 'workflow_proposal') return null;
-  if (typeof obj.name !== 'string' || obj.graph == null) return null;
-
-  const summary = (obj.summary ?? {}) as Record<string, unknown>;
-  const rawSteps = Array.isArray(summary.steps) ? summary.steps : [];
-  const steps = rawSteps
-    .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
-    .map(s => ({
-      kind: typeof s.kind === 'string' ? s.kind : 'unknown',
-      name: typeof s.name === 'string' ? s.name : '',
-      config_hint: typeof s.config_hint === 'string' ? s.config_hint : undefined,
-    }));
-
-  return {
-    name: obj.name,
-    graph: obj.graph,
-    // The Rust tool defaults `require_approval` to `true` when the caller
-    // omits it, so treat anything other than an explicit `false` as `true`
-    // here too — keeps the client's fallback in lockstep with the server's.
-    requireApproval: obj.require_approval !== false,
-    summary: { trigger: typeof summary.trigger === 'string' ? summary.trigger : '', steps },
-  };
-}
+// `maybeParseWorkflowProposalTool` / `parseWorkflowProposal` moved to
+// `lib/workflows/workflowProposal.ts` so the live socket handlers below and
+// the persisted-message rehydration path (`threadSlice.loadThreadMessages`)
+// share one content-based parser. See that module's doc comment.
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
@@ -511,6 +444,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       await flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
+      // Live-turn seam: the turn just settled and its line was appended to the
+      // append-only transcript. Invalidate/refresh the thread's derived
+      // settled-turn trails so the next reopen is fresh. The just-finished turn
+      // is the newest, so the derived hydration skips it — this never fights the
+      // live anchor, and it does not touch any socket delta handler.
+      if (DERIVED_TRANSCRIPT_ENABLED) {
+        void dispatch(fetchAndHydrateDerivedTranscript(event.thread_id));
+      }
     };
 
     rtLog('subscribe_chat_events', { socket: socketStatus });
@@ -886,33 +827,36 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           return;
         const content = event.full_response?.trim() ?? '';
         if (!content) return;
-        // Persist this round's leading narration as its own interleaved bubble,
-        // stamped with the producing turn's request id (Phase 4 anchoring).
-        // `isInterim: true` marks this as between-tool narration rather than a
-        // turn's terminal answer — the main chat still renders it as a bubble
-        // (unchanged), but callers that only want the terminal turn (e.g. the
-        // Flows copilot's `displayMessages`, see `useWorkflowBuilderChat`) can
-        // filter it out.
-        rtLog('interim_narration_tagged', {
+        // Narration is NOT promoted to a chat message any more.
+        //
+        // It used to be persisted here via `addInferenceResponse({ isInterim })`,
+        // which gave it a lifetime no other progress signal has: thinking is
+        // wiped at `chat_done`, tool rows collapse, but narration bubbles
+        // ("Let me get the data for both.", "The HTML is hard to parse…")
+        // stayed in the thread forever, wedged between the question and the
+        // answer they were superseded by.
+        //
+        // It is already captured twice over without this: `streamDeltaReceived`
+        // coalesces every `content` delta into `processingByThread` as a
+        // `narration` transcript item (chatRuntimeSlice), and the core persists
+        // the same thing server-side as `TranscriptItem::Narration`, kept after
+        // completion so a reload replays it. The inline rail and the Agent
+        // Process Source panel both render that transcript — so narration is
+        // still fully visible while the turn runs, and still inspectable after,
+        // just not as a permanent chat bubble.
+        //
+        // The event is still consumed (not dropped upstream) for its dedup key
+        // and the preview reset below, both of which are round-scoped.
+        rtLog('interim_narration_observed', {
           thread: event.thread_id,
           request: event.request_id,
           round: event.round,
         });
-        void dispatch(
-          addInferenceResponse({
-            content,
-            threadId: event.thread_id,
-            extraMetadata: {
-              isInterim: true,
-              ...(event.request_id ? { requestId: event.request_id } : {}),
-            },
-          })
-        );
-        // The narration has now become a bubble, so drop it from the live
-        // streaming preview (which accumulates across the whole turn under one
-        // request_id) — otherwise the same text lingers in the preview tail and
-        // reads as a duplicate for the full duration of the tool call. Reset
-        // synchronously so the next round's deltas start from an empty buffer.
+        // Drop the round's narration from the live streaming preview, which
+        // accumulates across the whole turn under one request_id. This matters
+        // MORE now: without it the same text renders both in the rail (as a
+        // transcript item) and in the preview tail. Reset synchronously so the
+        // next round's deltas start from an empty buffer.
         const cr = store.getState().chatRuntime;
         const existing = cr.streamingAssistantByThread[event.thread_id];
         if (existing && existing.requestId === event.request_id) {

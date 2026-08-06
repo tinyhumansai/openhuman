@@ -2,13 +2,23 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderTurnResult } from '../services/api/flowsApi';
-import type { WorkflowProposal } from '../store/chatRuntimeSlice';
+import type {
+  InferenceTurnLifecycle,
+  PendingApproval,
+  WorkflowProposal,
+} from '../store/chatRuntimeSlice';
 import type { ThreadMessage } from '../types/thread';
 import { useWorkflowBuilderChat, type WorkflowBuilderSendResult } from './useWorkflowBuilderChat';
 
 // The hook now runs the builder server-side via `openhuman.flows_build`.
 const buildWorkflow = vi.hoisted(() => vi.fn());
-vi.mock('../services/api/flowsApi', () => ({ buildWorkflow }));
+// Stop button cancels the in-flight turn via `openhuman.flows_build_cancel`
+// (the RPC that actually signals the running agent turn to stop — unlike the
+// shared `chatCancel`/`channel_web_cancel` primitive, which silently no-ops
+// for a `flows_build` turn since it runs inline and is never registered
+// anywhere that primitive looks).
+const flowsBuildCancel = vi.hoisted(() => vi.fn());
+vi.mock('../services/api/flowsApi', () => ({ buildWorkflow, flowsBuildCancel }));
 
 // Socket status is configurable per test (reset to 'connected' in beforeEach)
 // so the no-op/`skipped` path (socket not connected) can be exercised.
@@ -21,6 +31,8 @@ const selectorState = vi.hoisted(() => ({
   messagesByThreadId: {} as Record<string, unknown[]>,
   toolTimelineByThread: {} as Record<string, unknown[]>,
   streamingAssistantByThread: {} as Record<string, { content: string }>,
+  inferenceTurnLifecycleByThread: {} as Record<string, InferenceTurnLifecycle>,
+  pendingApprovalByThread: {} as Record<string, PendingApproval>,
 }));
 vi.mock('../store/hooks', () => ({
   useAppDispatch: () => dispatch,
@@ -31,6 +43,8 @@ vi.mock('../store/hooks', () => ({
         pendingWorkflowProposalsByThread: selectorState.proposals,
         toolTimelineByThread: selectorState.toolTimelineByThread,
         streamingAssistantByThread: selectorState.streamingAssistantByThread,
+        inferenceTurnLifecycleByThread: selectorState.inferenceTurnLifecycleByThread,
+        pendingApprovalByThread: selectorState.pendingApprovalByThread,
       },
     }),
 }));
@@ -43,6 +57,8 @@ vi.mock('../store/threadSlice', () => ({
   THREAD_NOT_FOUND_MESSAGE,
 }));
 vi.mock('../store/chatRuntimeSlice', () => ({
+  beginInferenceTurn: (p: unknown) => ({ type: 'beginInferenceTurn', p }),
+  endInferenceTurn: (p: unknown) => ({ type: 'endInferenceTurn', p }),
   clearWorkflowProposalForThread: (p: unknown) => ({ type: 'clearProposal', p }),
   setWorkflowProposalForThread: (p: unknown) => ({ type: 'setProposal', p }),
   fetchAndHydrateTurnState: (threadId: string) => ({ type: 'fetchAndHydrateTurnState', threadId }),
@@ -52,31 +68,25 @@ vi.mock('../store/chatRuntimeSlice', () => ({
   }),
 }));
 
-// The hook reads the live store directly (not the stale closed-over selector
-// value) to dedup against a message the streamed `chat_done` path may have
-// already appended for this exact turn — see the `assistantText` fallback
-// branch. Controllable per test via `rawStoreState.thread.messagesByThreadId`.
-const rawStoreState = vi.hoisted(() => ({
-  thread: { messagesByThreadId: {} as Record<string, { sender: string; content: string }[]> },
-}));
-vi.mock('../store', () => ({ store: { getState: () => rawStoreState } }));
-
 const okResult = (over: Partial<BuilderTurnResult> = {}): BuilderTurnResult => ({
   proposal: null,
   assistantText: 'done',
   error: null,
+  capped: false,
   ...over,
 });
 
 describe('useWorkflowBuilderChat', () => {
   beforeEach(() => {
     buildWorkflow.mockReset().mockResolvedValue(okResult());
+    flowsBuildCancel.mockReset().mockResolvedValue(true);
     socketStatus.current = 'connected';
     selectorState.proposals = {};
     selectorState.messagesByThreadId = {};
     selectorState.toolTimelineByThread = {};
     selectorState.streamingAssistantByThread = {};
-    rawStoreState.thread.messagesByThreadId = {};
+    selectorState.inferenceTurnLifecycleByThread = {};
+    selectorState.pendingApprovalByThread = {};
     dispatch.mockReset().mockImplementation((action: { type: string }) => {
       if (action.type === 'createNewThread') {
         return { unwrap: () => Promise.resolve({ id: 'builder-1' }) };
@@ -116,6 +126,86 @@ describe('useWorkflowBuilderChat', () => {
     await waitFor(() => expect(result.current.threadId).toBe('builder-1'));
   });
 
+  it('seeds and clears the shared turn-lifecycle entry around the blocking flows_build call', async () => {
+    // Regression test: `turnActive` (derived from `inferenceTurnLifecycleByThread`
+    // below) must reflect a REAL turn in flight, or `ToolTimelineBlock`'s
+    // `turnActive ?? isRunning` fallback is defeated — a `false` `turnActive`
+    // (as opposed to `undefined`) short-circuits nullish coalescing and never
+    // falls back to `isRunning`, permanently disabling the panel's settle-edge
+    // override reset for the copilot surface this hook drives.
+    let sawActiveDuringCall = false;
+    buildWorkflow.mockImplementation(async () => {
+      // `beginInferenceTurn` must have been dispatched — and not yet cleared —
+      // by the time the blocking RPC is in flight.
+      sawActiveDuringCall = dispatch.mock.calls.some(
+        ([a]) => (a as { type: string }).type === 'beginInferenceTurn'
+      );
+      return okResult();
+    });
+
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'hi',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+
+    expect(sawActiveDuringCall).toBe(true);
+    const calls = dispatch.mock.calls.map(([a]) => a as { type: string; p?: unknown });
+    const beginIndex = calls.findIndex(a => a.type === 'beginInferenceTurn');
+    const endIndex = calls.findIndex(a => a.type === 'endInferenceTurn');
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(endIndex).toBeGreaterThan(beginIndex);
+    expect(calls[beginIndex].p).toEqual({ threadId: 'builder-1' });
+    expect(calls[endIndex].p).toEqual({ threadId: 'builder-1' });
+  });
+
+  it('clears the turn-lifecycle entry even when the blocking flows_build call throws', async () => {
+    buildWorkflow.mockRejectedValue(new Error('network blip'));
+
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'hi',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+
+    // A failed turn must not leak the lifecycle entry — otherwise `turnActive`
+    // would stay stuck `true` forever, since no `chat_done` ever arrives for a
+    // turn that never reached the server.
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'endInferenceTurn', p: { threadId: 'builder-1' } })
+    );
+  });
+
+  it("treats an 'interrupted' lifecycle entry as NOT active (no live driver behind it)", () => {
+    // 'interrupted' is written by `hydrateRuntimeFromSnapshot` for a turn that
+    // crashed mid-flight in a PRIOR core process (cold-boot rehydrate) — there
+    // is no live driver streaming for it, so `turnActive` must stay `false`,
+    // or stale disclosure state (from before the crash) leaks into whatever
+    // the user does next on this thread.
+    const interrupted: InferenceTurnLifecycle = 'interrupted';
+    selectorState.inferenceTurnLifecycleByThread = { 'builder-1': interrupted };
+
+    const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+
+    expect(result.current.turnActive).toBe(false);
+  });
+
+  it("treats 'started'/'streaming' lifecycle entries as active", () => {
+    const started: InferenceTurnLifecycle = 'started';
+    selectorState.inferenceTurnLifecycleByThread = { 'builder-1': started };
+    const { result: startedResult } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+    expect(startedResult.current.turnActive).toBe(true);
+
+    const streaming: InferenceTurnLifecycle = 'streaming';
+    selectorState.inferenceTurnLifecycleByThread = { 'builder-1': streaming };
+    const { result: streamingResult } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+    expect(streamingResult.current.turnActive).toBe(true);
+  });
+
   it('surfaces the proposal the builder returned by dispatching it into the store', async () => {
     const proposal: WorkflowProposal = {
       name: 'Digest',
@@ -139,13 +229,63 @@ describe('useWorkflowBuilderChat', () => {
     );
   });
 
-  it('appends the user turn locally — the runtime normally owns the agent reply', async () => {
-    // Simulate the streamed path already having delivered this exact text via
-    // `chat_done` (the normal case when streaming is wired) so the fallback
-    // branch below can prove it does NOT double the bubble.
-    rawStoreState.thread.messagesByThreadId = {
-      'builder-1': [{ sender: 'agent', content: 'Here is your workflow.' }],
+  it('B34: surfaces `capped` when the turn hit the iteration cap with no proposal', async () => {
+    buildWorkflow.mockResolvedValue(okResult({ capped: true, proposal: null }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    expect(result.current.capped).toBe(false);
+    await act(async () => {
+      await result.current.send({
+        displayText: 'build me something complex',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(true);
+  });
+
+  it('B34: does not surface `capped` for a normal turn (not capped)', async () => {
+    buildWorkflow.mockResolvedValue(okResult({ capped: false }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'hi',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(false);
+  });
+
+  it('B34: resets a stale `capped=true` at the start of a new turn even if the server sends capped again with a proposal', async () => {
+    // First turn: capped, no proposal.
+    buildWorkflow.mockResolvedValueOnce(okResult({ capped: true, proposal: null }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'build me something complex',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(true);
+
+    // Second turn resolves with a proposal — `capped` must clear even if the
+    // (malformed/stale) server payload still says `capped: true`, since the
+    // hook re-checks `!result.proposal` itself, not just at the top of send().
+    const proposal: WorkflowProposal = {
+      name: 'Digest',
+      graph: { nodes: [], edges: [] },
+      requireApproval: true,
+      summary: { trigger: 'schedule', steps: [] },
     };
+    buildWorkflow.mockResolvedValueOnce(okResult({ capped: true, proposal }));
+    await act(async () => {
+      await result.current.send({
+        displayText: 'continue',
+        request: { mode: 'revise', instruction: 'continue' },
+      });
+    });
+    expect(result.current.capped).toBe(false);
+  });
+
+  it('appends the user turn locally but never the agent reply — onDone is the single authoritative path (B26)', async () => {
     buildWorkflow.mockResolvedValue(okResult({ assistantText: 'Here is your workflow.' }));
     const { result } = renderHook(() => useWorkflowBuilderChat());
     await act(async () => {
@@ -160,12 +300,13 @@ describe('useWorkflowBuilderChat', () => {
     // The web channel never persists user messages, so the hook appends the
     // user turn itself...
     expect(appended.some(a => a.p?.message?.sender === 'user')).toBe(true);
-    // ...but NOT the agent reply when it was already streamed — appending
-    // here too would double it.
+    // ...but NEVER the agent reply — `ChatRuntimeProvider.onDone` is the sole
+    // path that persists it (B26: the local fallback append that used to race
+    // it, doubling the bubble on tool-calling turns, is gone entirely).
     expect(appended.some(a => a.p?.message?.sender === 'agent')).toBe(false);
   });
 
-  it('surfaces a clarifying question as an assistant message when the builder returns plain text with no proposal (fallback)', async () => {
+  it('never locally appends an assistant message, even for a clarifying-question-shaped reply with no proposal (B26)', async () => {
     buildWorkflow.mockResolvedValue(
       okResult({
         proposal: null,
@@ -184,12 +325,10 @@ describe('useWorkflowBuilderChat', () => {
     const appendedAgentMessages = dispatch.mock.calls
       .map(([a]) => a as { type: string; p?: { threadId?: string; message?: ThreadMessage } })
       .filter(a => a.type === 'addMessageLocal' && a.p?.message?.sender === 'agent');
-    expect(appendedAgentMessages).toHaveLength(1);
-    expect(appendedAgentMessages[0]?.p?.message?.content).toBe(
-      'Which Slack channel — #eng or #sales?'
-    );
-    expect(appendedAgentMessages[0]?.p?.threadId).toBe('builder-1');
-    // No proposal was surfaced for this turn.
+    // No local fallback append — the assistant's reply (if any) arrives only
+    // via the streamed `chat_done` -> `ChatRuntimeProvider.onDone` path.
+    expect(appendedAgentMessages).toHaveLength(0);
+    // No proposal was surfaced for this turn either.
     expect(dispatch.mock.calls.some(([a]) => (a as { type: string }).type === 'setProposal')).toBe(
       false
     );
@@ -337,6 +476,38 @@ describe('useWorkflowBuilderChat', () => {
     });
   });
 
+  // PR3 (flows-copilot-live-run-approval): `pendingApproval` is a thin
+  // thread-scoped selector over `pendingApprovalByThread` — the same slice
+  // `Conversations.tsx` reads for the main chat's `ApprovalRequestCard`.
+  describe('pendingApproval', () => {
+    it('is null before a thread exists', () => {
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      expect(result.current.pendingApproval).toBeNull();
+    });
+
+    it('surfaces the parked approval for the dedicated/seeded thread', () => {
+      const approval: PendingApproval = {
+        requestId: 'req-1',
+        toolName: 'run_flow',
+        message: 'Run the saved flow "Daily digest"?',
+      };
+      selectorState.pendingApprovalByThread = { 'builder-1': approval };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.pendingApproval).toEqual(approval);
+    });
+
+    it('does not surface an approval parked on a DIFFERENT thread', () => {
+      const approval: PendingApproval = {
+        requestId: 'req-1',
+        toolName: 'run_flow',
+        message: 'Run the saved flow "Daily digest"?',
+      };
+      selectorState.pendingApprovalByThread = { 'some-other-thread': approval };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.pendingApproval).toBeNull();
+    });
+  });
+
   describe('displayMessages', () => {
     it('excludes isInterim agent messages but keeps user + terminal agent messages (incl. a clarifying question)', () => {
       selectorState.messagesByThreadId = {
@@ -354,10 +525,9 @@ describe('useWorkflowBuilderChat', () => {
             content: 'Now let me build the workflow.',
             extraMetadata: { isInterim: true, requestId: 'r1' },
           },
-          // The #4630-style clarifying question is appended via
-          // `addMessageLocal` (the `send` fallback branch), never through
-          // `onInterim` — so it carries no `isInterim` tag and must still
-          // render as a bubble.
+          // The #4630-style clarifying question is persisted by
+          // `ChatRuntimeProvider.onDone` on the turn's `chat_done` event —
+          // it carries no `isInterim` tag and must still render as a bubble.
           {
             id: 'm4',
             sender: 'agent',
@@ -369,6 +539,44 @@ describe('useWorkflowBuilderChat', () => {
       const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
       expect(result.current.messages).toHaveLength(4);
       expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm4']);
+    });
+
+    it('dedupes consecutive agent messages with identical content (B26 defense-in-depth)', () => {
+      // Simulates a doubled persistence (e.g. a socket reconnect replaying
+      // `chat_done`): two consecutive agent messages with the exact same
+      // content must collapse to a single rendered bubble.
+      selectorState.messagesByThreadId = {
+        'builder-1': [
+          { id: 'm1', sender: 'user', content: 'build me a digest', extraMetadata: {} },
+          {
+            id: 'm2',
+            sender: 'agent',
+            content: "I've built this — review below.",
+            extraMetadata: {},
+          },
+          {
+            id: 'm3',
+            sender: 'agent',
+            content: "I've built this — review below.",
+            extraMetadata: {},
+          },
+        ] as ThreadMessage[],
+      };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.messages).toHaveLength(3);
+      expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm2']);
+    });
+
+    it('keeps consecutive agent messages with DIFFERENT content (no over-collapsing)', () => {
+      selectorState.messagesByThreadId = {
+        'builder-1': [
+          { id: 'm1', sender: 'user', content: 'build me a digest', extraMetadata: {} },
+          { id: 'm2', sender: 'agent', content: 'First reply.', extraMetadata: {} },
+          { id: 'm3', sender: 'agent', content: 'Second, different reply.', extraMetadata: {} },
+        ] as ThreadMessage[],
+      };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm2', 'm3']);
     });
   });
 
@@ -505,6 +713,175 @@ describe('useWorkflowBuilderChat', () => {
 
       expect(result.current.error).toBe(THREAD_NOT_FOUND_MESSAGE);
       expect(result.current.threadId).toBeNull();
+    });
+  });
+
+  describe('stop (Stop button)', () => {
+    it('cancels the in-flight builder turn via flowsBuildCancel; sending clears once the RPC settles', async () => {
+      let resolveBuild: (v: BuilderTurnResult) => void = () => {};
+      buildWorkflow.mockReset().mockImplementation(
+        () =>
+          new Promise<BuilderTurnResult>(res => {
+            resolveBuild = res;
+          })
+      );
+
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+
+      // Kick off a turn but do NOT await it — it stays in flight, so `sending`
+      // is true and the composer shows the Stop button.
+      let sendPromise: Promise<WorkflowBuilderSendResult> | undefined;
+      act(() => {
+        sendPromise = result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      await waitFor(() => expect(result.current.sending).toBe(true));
+
+      // Hitting Stop signals the server to actually cancel the running
+      // `workflow_builder` turn on the copilot's dedicated thread.
+      await act(async () => {
+        result.current.stop();
+      });
+      expect(flowsBuildCancel).toHaveBeenCalledWith('builder-1');
+      // `stop()` does NOT eagerly clear `sending` — with real cancellation the
+      // in-flight `buildWorkflow` call this triggered now returns promptly, and
+      // its own `finally` is the single place that clears `sending` (avoids the
+      // early-clear race the review bots flagged).
+      expect(result.current.sending).toBe(true);
+
+      // The server-side cancel makes the in-flight `buildWorkflow` call settle
+      // promptly — once it does, `send`'s `finally` clears `sending`.
+      await act(async () => {
+        resolveBuild(okResult());
+        await sendPromise;
+      });
+      expect(result.current.sending).toBe(false);
+    });
+
+    it('is a no-op when nothing is in flight', async () => {
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      await act(async () => {
+        result.current.stop();
+      });
+      expect(flowsBuildCancel).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op before a thread is bound (never sent)', async () => {
+      // No seed thread id and no send() yet, so threadId is null: stop() hits
+      // the no-bound-thread guard and never calls the cancel RPC.
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      expect(result.current.threadId).toBeNull();
+      await act(async () => {
+        result.current.stop();
+      });
+      expect(flowsBuildCancel).not.toHaveBeenCalled();
+    });
+
+    it('swallows a rejected cancel RPC without an unhandled rejection', async () => {
+      let resolveBuild: (v: BuilderTurnResult) => void = () => {};
+      buildWorkflow.mockReset().mockImplementation(
+        () =>
+          new Promise<BuilderTurnResult>(res => {
+            resolveBuild = res;
+          })
+      );
+      flowsBuildCancel.mockRejectedValue(new Error('cancel rpc down'));
+
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      let sendPromise: Promise<WorkflowBuilderSendResult> | undefined;
+      act(() => {
+        sendPromise = result.current.send({
+          displayText: 'hi',
+          request: { mode: 'create', instruction: 'x' },
+        });
+      });
+      await waitFor(() => expect(result.current.sending).toBe(true));
+
+      // Stop with a cancel RPC that rejects: the fire-and-forget `.catch` must
+      // handle it (no throw, no unhandled rejection).
+      await act(async () => {
+        result.current.stop();
+      });
+      expect(flowsBuildCancel).toHaveBeenCalledWith('builder-1');
+
+      // Settle the underlying build so no promise dangles past the test.
+      await act(async () => {
+        resolveBuild(okResult());
+        await sendPromise;
+      });
+    });
+
+    it("re-send race: an earlier (Stop-cancelled) send settling does not clear a newer send's `sending` flag (attempt guard)", async () => {
+      // Regression test for the P2/Major re-send race the review bots
+      // flagged. `send()` normally can't dispatch a second turn while
+      // `sending` is already `true` (the `if (localSending)` guard at its
+      // top) — but that guard reads `localSending` from the closure `send`
+      // was memoized with on the LAST commit, so two `send()` calls fired
+      // back-to-back in the same synchronous tick (e.g. a fast double-click
+      // on Send, or clicking Send again immediately after Stop before the
+      // button has re-rendered) both observe the stale pre-turn value and
+      // both dispatch — exactly the overlap the attempt guard exists to
+      // survive: WITHOUT it, whichever of the two `buildWorkflow` calls
+      // settles FIRST would unconditionally clear `sending` in its `finally`,
+      // even while the other one is still genuinely in flight.
+      let resolveA: (v: BuilderTurnResult) => void = () => {};
+      let resolveB: (v: BuilderTurnResult) => void = () => {};
+      buildWorkflow
+        .mockReset()
+        .mockImplementationOnce(
+          () =>
+            new Promise<BuilderTurnResult>(res => {
+              resolveA = res;
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<BuilderTurnResult>(res => {
+              resolveB = res;
+            })
+        );
+
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+
+      // Fire A then, in the SAME synchronous batch (no `await` in between, no
+      // re-render has committed yet), fire B — both dispatch.
+      let sendAPromise: Promise<WorkflowBuilderSendResult> | undefined;
+      let sendBPromise: Promise<WorkflowBuilderSendResult> | undefined;
+      act(() => {
+        sendAPromise = result.current.send({
+          displayText: 'first',
+          request: { mode: 'create', instruction: 'a' },
+        });
+        sendBPromise = result.current.send({
+          displayText: 'second',
+          request: { mode: 'create', instruction: 'b' },
+        });
+      });
+      // Both calls already made their (stale-closure) `if (localSending)`
+      // decision synchronously above, before either awaited anything — the
+      // `waitFor` below just lets those already-decided calls' pending
+      // microtasks (e.g. the `addMessageLocal` dispatch) drain through to
+      // their `buildWorkflow` call.
+      await waitFor(() => expect(buildWorkflow).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(result.current.sending).toBe(true));
+
+      // A (the earlier/superseded attempt) settles first — e.g. it was the
+      // one the user hit Stop on. WITHOUT the attempt guard this would clear
+      // `sending` even though B is still genuinely in flight.
+      await act(async () => {
+        resolveA(okResult());
+        await sendAPromise;
+      });
+      expect(result.current.sending).toBe(true);
+
+      // B (the latest attempt) settling is what actually clears `sending`.
+      await act(async () => {
+        resolveB(okResult());
+        await sendBPromise;
+      });
+      expect(result.current.sending).toBe(false);
     });
   });
 });

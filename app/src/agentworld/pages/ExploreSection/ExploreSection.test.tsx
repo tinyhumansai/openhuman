@@ -12,13 +12,17 @@
  *      Each section independently handles loading (skeleton) / ok / empty / error
  *      (silent degrade — section hidden). Mocks prevent real RPC calls.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { PaymentRequiredError } from '../../../lib/agentworld/invokeApiClient';
 import { apiClient } from '../../AgentWorldShell';
 import ExploreSection from './index';
+
+const debugLog = vi.hoisted(() => vi.fn());
+vi.mock('debug', () => ({ default: () => debugLog }));
 
 // ── Mock apiClient ────────────────────────────────────────────────────────────
 
@@ -136,6 +140,20 @@ function renderExplore() {
       <ExploreSection />
     </MemoryRouter>
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function sensitiveFailure(): TypeError {
+  return Object.assign(new TypeError('private resource response'), {
+    payload: 'do-not-log-this-payload',
+  });
 }
 
 // ── beforeEach: resolve all calls with success data ───────────────────────────
@@ -451,6 +469,45 @@ describe('section error: graceful degrade', () => {
   });
 });
 
+describe('section error: private diagnostics', () => {
+  test.each([
+    [
+      'communities',
+      () => mockGroupsList.mockRejectedValue(sensitiveFailure()),
+      'communities fetch failed error_type=%s',
+    ],
+    [
+      'jobs',
+      () => mockGraphqlJobs.mockRejectedValue(sensitiveFailure()),
+      'jobs fetch failed error_type=%s',
+    ],
+    [
+      'bounties',
+      () => mockBountiesList.mockRejectedValue(sensitiveFailure()),
+      'bounties fetch failed error_type=%s',
+    ],
+    [
+      'agents',
+      () => mockListAgents.mockRejectedValue(sensitiveFailure()),
+      'agents fetch failed error_type=%s',
+    ],
+  ] as const)('logs only the safe error type for %s failures', async (_, reject, format) => {
+    reject();
+
+    renderExplore();
+
+    await waitFor(() => {
+      const failureCalls = debugLog.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('fetch failed')
+      );
+      expect(failureCalls).toEqual([[format, 'TypeError']]);
+    });
+    const logged = JSON.stringify(debugLog.mock.calls);
+    expect(logged).not.toContain('private resource response');
+    expect(logged).not.toContain('do-not-log-this-payload');
+  });
+});
+
 // ── Stats section error states ────────────────────────────────────────────────
 
 describe('stats section: wallet locked', () => {
@@ -567,6 +624,41 @@ describe('cancellation on unmount', () => {
     unmount();
     resolveGroups(GROUPS_OK);
     await waitFor(() => expect(mockGroupsList).toHaveBeenCalled());
-    // No error — the cancelled flag swallowed the state update.
+    // No error — the latest-only guard swallowed the state update.
+  });
+});
+
+describe('latest request wins', () => {
+  test('does not let an older communities response overwrite a newer response', async () => {
+    const requestA = deferred<typeof GROUPS_OK>();
+    const requestB = deferred<typeof GROUPS_OK>();
+    mockGroupsList.mockReset();
+    mockGroupsList.mockReturnValueOnce(requestA.promise).mockReturnValueOnce(requestB.promise);
+
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <ExploreSection />
+        </MemoryRouter>
+      </StrictMode>
+    );
+
+    await waitFor(() => expect(mockGroupsList).toHaveBeenCalledTimes(2));
+
+    const newestGroups = [{ ...GROUPS_OK[0], groupId: 'new', name: 'Newest Community' }];
+    await act(async () => {
+      requestB.resolve(newestGroups);
+      await requestB.promise;
+    });
+    expect(await screen.findByText('Newest Community')).toBeInTheDocument();
+
+    const olderGroups = [{ ...GROUPS_OK[0], groupId: 'old', name: 'Older Community' }];
+    await act(async () => {
+      requestA.resolve(olderGroups);
+      await requestA.promise;
+    });
+
+    expect(screen.getByText('Newest Community')).toBeInTheDocument();
+    expect(screen.queryByText('Older Community')).not.toBeInTheDocument();
   });
 });

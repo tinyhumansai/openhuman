@@ -1,6 +1,6 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::query::backend;
-use crate::openhuman::memory_tree::retrieval::rpc::FetchLeavesRequest;
+use crate::openhuman::memory::tree::retrieval::rpc::FetchLeavesRequest;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -179,7 +179,7 @@ mod tests {
         );
         assert_eq!(parsed, json!([]));
 
-        let direct = crate::openhuman::memory_tree::retrieval::fetch::fetch_leaves(
+        let direct = crate::openhuman::memory::tree::retrieval::fetch::fetch_leaves(
             &cfg,
             &[
                 "chunk-does-not-exist-1".to_string(),

@@ -218,10 +218,6 @@ pub(crate) fn redact_ollama_base_url(raw: &str) -> String {
         .unwrap_or_else(|_| "<invalid-endpoint>".to_string())
 }
 
-/// Back-compat constant kept at its original value for callers that
-/// reference it directly. New callers should use [`ollama_base_url`].
-pub(crate) const OLLAMA_BASE_URL: &str = DEFAULT_OLLAMA_BASE_URL;
-
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaPullRequest {
     pub name: String,
@@ -316,6 +312,14 @@ impl OllamaPullProgress {
 pub(crate) struct OllamaTagsResponse {
     #[serde(default)]
     pub models: Vec<OllamaModelTag>,
+    /// Set when the server answered with an error envelope rather than a
+    /// catalog. LM Studio replies to unknown paths with `200 {"error": …}` and
+    /// no `models` (GH #5053), which is indistinguishable from a real catalog
+    /// by `models` alone — a fresh Ollama with nothing pulled legitimately
+    /// returns `{"models":[]}`. Callers must branch on this field, not on
+    /// emptiness.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -390,6 +394,7 @@ impl OllamaShowResponse {
 /// (unknown):
 ///   * empty / absent capabilities (older Ollama, or an `/api/show` miss);
 ///   * a tag set we don't recognise (e.g. `["insert"]` only).
+///
 /// Callers treat `None` as "keep visible" — fail-open, never hide a model
 /// that might be usable for chat. Mirrors the non-rejecting `Unknown` arm of
 /// [`super::model_requirements::ContextEligibility`]. See Sentry TAURI-RUST-4P6.
@@ -467,42 +472,10 @@ pub(crate) struct OllamaGenerateResponse {
     pub eval_duration: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct OllamaEmbedRequest {
-    pub model: String,
-    pub input: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct OllamaEmbedResponse {
-    #[serde(default)]
-    pub embeddings: Vec<Vec<f32>>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct OllamaChatMessage {
     pub role: String,
     pub content: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct OllamaChatRequest {
-    pub model: String,
-    pub messages: Vec<OllamaChatMessage>,
-    pub stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<OllamaGenerateOptions>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct OllamaChatResponse {
-    pub message: OllamaChatMessage,
-    #[allow(dead_code)]
-    pub done: Option<bool>,
-    pub prompt_eval_count: Option<u32>,
-    pub prompt_eval_duration: Option<u64>,
-    pub eval_count: Option<u32>,
-    pub eval_duration: Option<u64>,
 }
 
 pub(crate) fn ns_to_tps(tokens: f32, duration_ns: u64) -> Option<f32> {

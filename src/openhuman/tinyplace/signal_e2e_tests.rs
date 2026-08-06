@@ -11,7 +11,7 @@ use tinyplace::signal::store::{SessionState, SessionStore};
 use tinyplace::signal::x3dh::{build_associated_data, x3dh_initiate, x3dh_respond, X3DHBundle};
 use tinyplace::types::{KeyBundle, MessageEnvelope};
 
-use crate::openhuman::keyring::SecretStore;
+use crate::openhuman::security::keyring::SecretStore;
 use crate::openhuman::tinyplace::signal_store::FileSessionStore;
 
 #[tokio::test]

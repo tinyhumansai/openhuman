@@ -332,8 +332,9 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
         .contains("downloaded payload too small"));
 
     let seen = state.requests.lock().expect("requests").clone();
-    assert!(seen.iter().any(|(path, _)| path == "/api/generate"));
-    assert!(seen.iter().any(|(path, _)| path == "/api/chat"));
+    assert!(seen
+        .iter()
+        .any(|(path, _)| path == "/v1/chat/completions"));
     assert!(seen.iter().any(|(path, _)| path.ends_with("ggml-tiny.bin")));
     assert!(seen
         .iter()
@@ -351,8 +352,7 @@ async fn serve_mock() -> (String, MockState) {
         .route("/api/tags", get(ollama_tags))
         .route("/api/show", post(ollama_show))
         .route("/api/pull", post(ollama_pull))
-        .route("/api/generate", post(ollama_generate))
-        .route("/api/chat", post(ollama_chat))
+        .route("/v1/chat/completions", post(ollama_chat_completions))
         .route("/asset/stt", get(asset_stt))
         .route("/asset/tts", get(asset_tts))
         .route("/asset/tts-json", get(asset_tts_json))
@@ -415,44 +415,44 @@ async fn ollama_pull(State(state): State<MockState>, Json(body): Json<Value>) ->
         .expect("pull response")
 }
 
-async fn ollama_generate(
+async fn ollama_chat_completions(
     State(state): State<MockState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
-    remember(&state, "/api/generate", &headers, body.clone());
-    let prompt = body["prompt"].as_str().unwrap_or_default();
-    let system = body["system"].as_str().unwrap_or_default();
+    remember(&state, "/v1/chat/completions", &headers, body.clone());
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    let system = messages
+        .iter()
+        .find(|message| message["role"] == "system")
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default();
+    let prompt = messages
+        .iter()
+        .rev()
+        .find(|message| message["role"] == "user")
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default();
     let response = if prompt.contains("single emoji character") {
         "⭐".to_string()
     } else if system.contains("inline text completion") {
         "adds tests".to_string()
+    } else if prompt == "chat please" {
+        "chat generated".to_string()
     } else {
         format!("generated: {}", prompt.trim())
     };
     Json(json!({
-        "response": response,
-        "done": true,
+        "id": "chatcmpl-round21",
+        "choices": [{
+            "message": { "role": "assistant", "content": response },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 2, "completion_tokens": 4, "total_tokens": 6 },
         "prompt_eval_count": 2,
         "prompt_eval_duration": 1_000_000,
         "eval_count": 4,
         "eval_duration": 2_000_000
-    }))
-}
-
-async fn ollama_chat(
-    State(state): State<MockState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    remember(&state, "/api/chat", &headers, body);
-    Json(json!({
-        "message": { "role": "assistant", "content": "chat generated" },
-        "done": true,
-        "prompt_eval_count": 1,
-        "prompt_eval_duration": 1_000_000,
-        "eval_count": 1,
-        "eval_duration": 1_000_000
     }))
 }
 

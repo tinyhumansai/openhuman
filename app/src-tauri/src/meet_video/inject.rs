@@ -282,7 +282,7 @@ pub fn spawn_diagnostics_poller<R: tauri::Runtime>(
 }
 
 /// Host-side mood control. Future hookup: the meet-agent state machine
-/// (`src/openhuman/meet_agent/session.rs`) calls this on phase
+/// (`src/openhuman/meet/agent/session.rs`) calls this on phase
 /// transitions so the camera reflects what the agent is actually doing
 /// instead of running on the JS-side 5s auto-toggle. Until that's
 /// wired, the bridge's own `setInterval` provides the visible toggle.

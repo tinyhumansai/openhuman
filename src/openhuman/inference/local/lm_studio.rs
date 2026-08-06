@@ -153,97 +153,6 @@ pub(crate) struct LmStudioModel {
     pub owned_by: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct LmStudioChatCompletionRequest {
-    pub model: String,
-    pub messages: Vec<LmStudioChatMessage>,
-    pub stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LmStudioChatMessage {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LmStudioChatCompletionResponse {
-    #[serde(default)]
-    pub choices: Vec<LmStudioChatChoice>,
-    #[serde(default)]
-    pub usage: Option<LmStudioUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LmStudioChatChoice {
-    pub message: LmStudioChatResponseMessage,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LmStudioChatResponseMessage {
-    #[serde(default)]
-    pub content: Option<String>,
-    /// Local reasoning models expose chain-of-thought as `reasoning_content`
-    /// or `reasoning` depending on the runtime — accept both field names.
-    #[serde(default, alias = "reasoning")]
-    pub reasoning_content: Option<String>,
-}
-
-impl LmStudioChatResponseMessage {
-    pub(crate) fn effective_content(&self) -> String {
-        let content = self
-            .content
-            .as_deref()
-            .map(crate::openhuman::inference::provider::compatible_parse::strip_think_tags)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default();
-        if !content.is_empty() {
-            tracing::trace!(
-                source = "content",
-                output_chars = content.chars().count(),
-                "[lm-studio] effective content selected"
-            );
-            return content;
-        }
-
-        let reasoning = self
-            .reasoning_content
-            .as_deref()
-            .map(crate::openhuman::inference::provider::compatible_parse::strip_think_tags)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default();
-        if !reasoning.is_empty() {
-            tracing::trace!(
-                source = "reasoning_content",
-                output_chars = reasoning.chars().count(),
-                "[lm-studio] effective content selected"
-            );
-            return reasoning;
-        }
-
-        tracing::trace!(
-            source = "none",
-            output_chars = 0,
-            "[lm-studio] effective content empty"
-        );
-        String::new()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LmStudioUsage {
-    #[serde(default)]
-    pub prompt_tokens: Option<u32>,
-    #[serde(default)]
-    pub completion_tokens: Option<u32>,
-}
-
 /// LM Studio **native** REST (`GET /api/v0/models`) model entry.
 ///
 /// Unlike the OpenAI-compatible `/v1/models` (which returns only
@@ -274,11 +183,28 @@ pub(crate) struct LmStudioNativeModelsResponse {
 /// Map a normalized `…/v1` base URL to the LM Studio native models endpoint
 /// `…/api/v0/models` (a sibling of `/v1`, served at the host root).
 pub(crate) fn lm_studio_native_models_url(v1_base_url: &str) -> String {
-    let root = v1_base_url
+    format!("{}/api/v0/models", host_root_of(v1_base_url))
+}
+
+/// Strip a trailing `/v1` so sibling endpoints served at the host root can be
+/// derived from an OpenAI-compatible base URL.
+pub(crate) fn host_root_of(v1_base_url: &str) -> &str {
+    v1_base_url
         .trim_end_matches('/')
         .trim_end_matches("/v1")
-        .trim_end_matches('/');
-    format!("{root}/api/v0/models")
+        .trim_end_matches('/')
+}
+
+/// Ollama-native `GET /api/tags` URL derived from an OpenAI-compatible base.
+///
+/// Only used as the one-shot 404 fallback in
+/// [`LocalAiService::list_lm_studio_models`](crate::openhuman::inference::local::service::LocalAiService):
+/// some runtimes are reachable on an OpenAI-shaped base URL but expose only the
+/// Ollama listing (e.g. plain Ollama configured with a `/v1` base). Discovery is
+/// still chosen by provider type first — this is a recovery path, not a probe
+/// order (GH #5055).
+pub(crate) fn ollama_tags_fallback_url(v1_base_url: &str) -> String {
+    format!("{}/api/tags", host_root_of(v1_base_url))
 }
 
 /// Resolve the context window LM Studio reports for `model_id` from a native
@@ -317,6 +243,37 @@ mod tests {
             lm_studio_native_models_url("https://lm.example.com/lmstudio/v1"),
             "https://lm.example.com/lmstudio/api/v0/models"
         );
+    }
+
+    /// GH #5055: the `/api/tags` fallback URL is a sibling of `/v1` at the host
+    /// root. Appending to the `/v1` base would produce `/v1/api/tags` — the
+    /// exact malformed request LM Studio logs as `Unexpected endpoint or
+    /// method` (GH #5053).
+    #[test]
+    fn ollama_tags_fallback_url_is_host_rooted_not_v1_suffixed() {
+        assert_eq!(
+            ollama_tags_fallback_url("http://localhost:1234/v1"),
+            "http://localhost:1234/api/tags"
+        );
+        assert_eq!(
+            ollama_tags_fallback_url("http://127.0.0.1:1234/v1/"),
+            "http://127.0.0.1:1234/api/tags"
+        );
+        assert_eq!(
+            ollama_tags_fallback_url("https://lm.example.com/lmstudio/v1"),
+            "https://lm.example.com/lmstudio/api/tags"
+        );
+        // A host-rooted base (no /v1) is left alone.
+        assert_eq!(
+            ollama_tags_fallback_url("http://localhost:11434"),
+            "http://localhost:11434/api/tags"
+        );
+        for url in [
+            ollama_tags_fallback_url("http://localhost:1234/v1"),
+            ollama_tags_fallback_url("http://localhost:1234/v1/"),
+        ] {
+            assert!(!url.contains("/v1/api/tags"), "malformed probe URL: {url}");
+        }
     }
 
     #[test]
@@ -378,32 +335,5 @@ mod tests {
             normalize_lm_studio_base_url("http://127.0.0.1:1234/v1/models").as_deref(),
             Some("http://127.0.0.1:1234/v1")
         );
-    }
-
-    #[test]
-    fn effective_content_falls_back_to_reasoning_content() {
-        let msg = LmStudioChatResponseMessage {
-            content: Some("".into()),
-            reasoning_content: Some("thinking text".into()),
-        };
-        assert_eq!(msg.effective_content(), "thinking text");
-    }
-
-    #[test]
-    fn effective_content_strips_think_tags() {
-        let msg = LmStudioChatResponseMessage {
-            content: Some("<think>hidden</think>Visible reply".into()),
-            reasoning_content: None,
-        };
-        assert_eq!(msg.effective_content(), "Visible reply");
-    }
-
-    #[test]
-    fn reasoning_content_accepts_reasoning_alias() {
-        // Local runtimes that name the field `reasoning` must still be captured
-        // (issue #3094) so reasoning round-trips like the canonical field.
-        let msg: LmStudioChatResponseMessage =
-            serde_json::from_str(r#"{"content":null,"reasoning":"local cot"}"#).unwrap();
-        assert_eq!(msg.reasoning_content.as_deref(), Some("local cot"));
     }
 }

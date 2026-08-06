@@ -34,7 +34,7 @@ Builds a `tinyagents::registry::CapabilityRegistry<()>` for a session:
 
 - **Tools**: take the turn's `Vec<Arc<dyn openhuman Tool>>` (the same list
   the harness registered, minus exclusions), wrap each in the existing
-  `crate::openhuman::tinyagents::tools::ToolAdapter`, and
+  `crate::openhuman::agent::tinyagents::tools::ToolAdapter`, and
   `registry.replace_tool(name, adapter)`. **Exclusions** (recursion +
   duplication guards): `rlm` itself, `spawn_subagent`/`spawn_parallel_agents`
   (use `agent_query` instead), `run_workflow`/`await_workflow`. Because

@@ -23,7 +23,7 @@ already assumes.
 
 ## WHAT EXISTS TODAY
 
-Domain root: `src/openhuman/orchestration/` (declared in `mod.rs:16-34`; enabled behind
+Domain root: `src/openhuman/hosted/orchestration/` (declared in `mod.rs:16-34`; enabled behind
 `config.orchestration.enabled`, schema `src/openhuman/config/schema/orchestration.rs:39`).
 Startup wiring: `src/core/jsonrpc.rs:2294-2300` (ingest subscriber, wake subscriber, drain
 supervisor).

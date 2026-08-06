@@ -33,7 +33,7 @@ struct InferenceResolveModelParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct InferenceTestProviderModelParams {
+struct InferenceTestChatModelParams {
     workload: String,
     provider: String,
     prompt: Option<String>,
@@ -934,7 +934,7 @@ fn handle_inference_vision_prompt(params: Map<String, Value>) -> ControllerFutur
 
 fn handle_inference_test_provider_model(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let p = deserialize_params::<InferenceTestProviderModelParams>(params)?;
+        let p = deserialize_params::<InferenceTestChatModelParams>(params)?;
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(
             crate::openhuman::inference::rpc::inference_test_provider_model(

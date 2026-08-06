@@ -25,10 +25,10 @@ A plugin-only model means tools live in different processes, behind RPC, with th
 
 | Family | What it covers |
 | ------ | -------------- |
-| [Web Search](web-search.md) | Search the live web via the managed proxy, or opt into self-hosted SearXNG. |
+| [Web Search](web-search.md) | Search the live web via the managed proxy (powered by Exa), backend-proxied Parallel, your own Exa/Brave/Querit key, or self-hosted SearXNG. |
 | [Web Scraper](web-scraper.md) | Pull clean text out of any URL - articles, docs, READMEs. |
 | [Coder](coder.md) | Read/write/edit/patch files, glob, grep, git, lint, test. |
-| [Browser & Computer Control](browser-and-computer.md) | Open URLs, screenshot, click, type, move the mouse. |
+| [Browser & Computer Control](browser-and-computer.md) | Open URLs, inspect DOM snapshots, click, type, move the mouse. |
 | [Cron & Scheduling](cron.md) | Recurring jobs, one-off reminders, scheduled agent runs. |
 | [Voice](voice.md) | Speech-to-text in, text-to-speech out, live Google Meet agent. |
 | [Memory Tools](memory-tools.md) | Recall, store, forget, and search the [Memory Tree](../obsidian-wiki/memory-tree.md). |

@@ -24,7 +24,7 @@ export interface GoalItem {
 }
 
 /** Outcome of an enrichment (reflect) pass. */
-export interface ReflectResult {
+interface ReflectResult {
   ran: boolean;
   summary: string;
   items: GoalItem[];

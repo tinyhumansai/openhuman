@@ -31,21 +31,38 @@
   fill: rgb(var(--line-strong));
 }
 
+/* Connectors read as `--content-faint`, not `--line-strong`. On the dark theme
+   the canvas is pure black and `--line-strong` is #404040, which left the graph
+   structure — the thing a workflow canvas exists to show — barely visible. A
+   text-weight grey survives both themes at this stroke width. */
 .flow-canvas .react-flow__edge-path {
-  stroke: rgb(var(--line-strong));
-  stroke-width: 1.5;
+  stroke: rgb(var(--content-faint));
+  stroke-width: 1.75;
 }
 
 .flow-canvas .react-flow__edge.selected .react-flow__edge-path,
 .flow-canvas .react-flow__edge:hover .react-flow__edge-path {
   stroke: rgb(var(--primary-500));
+  stroke-width: 2.5;
 }
 
+/* The ring is `--surface-muted` rather than `--surface`: the node card is now a
+   top-lit gradient whose *top* stop is `--surface-muted`, and that is the band
+   the handles sit against. */
 .flow-canvas .react-flow__handle {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   background: rgb(var(--primary-500));
-  border: 1.5px solid rgb(var(--surface));
+  border: 2px solid rgb(var(--surface-muted));
+  transition: box-shadow 120ms ease;
+}
+
+/* Halo only — no `transform`. `FlowNodeComponent` pins `transform: none` inline
+   on every handle to opt out of React Flow's absolute edge placement, and an
+   inline declaration outranks this rule, so a `scale()` here would silently do
+   nothing. */
+.flow-canvas .react-flow__handle:hover {
+  box-shadow: 0 0 0 4px rgb(var(--primary-500) / 0.25);
 }
 
 .flow-canvas .react-flow__controls {

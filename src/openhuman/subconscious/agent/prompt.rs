@@ -1,6 +1,6 @@
 //! System prompt builder for the `subconscious` built-in agent.
 
-use crate::openhuman::context::prompt::{
+use crate::openhuman::agent::context::prompt::{
     render_safety, render_tools, render_user_files, render_workspace, PromptContext,
 };
 use anyhow::Result;

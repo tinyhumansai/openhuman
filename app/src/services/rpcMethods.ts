@@ -28,7 +28,6 @@ export const CORE_RPC_METHODS = {
   configUpdateModelSettings: 'openhuman.config_update_model_settings',
   configUpdateRuntimeSettings: 'openhuman.config_update_runtime_settings',
   configUpdateSandboxSettings: 'openhuman.config_update_sandbox_settings',
-  configUpdateScreenIntelligenceSettings: 'openhuman.config_update_screen_intelligence_settings',
   configWorkspaceOnboardingFlagExists: 'openhuman.config_workspace_onboarding_flag_exists',
   configWorkspaceOnboardingFlagSet: 'openhuman.config_workspace_onboarding_flag_set',
   corePing: 'core.ping',
@@ -54,7 +53,6 @@ export const CORE_RPC_METHODS = {
   inferenceUpdateModelSettings: 'openhuman.inference_update_model_settings',
   inferenceWhisperInstallStatus: 'openhuman.inference_whisper_install_status',
   providersListModels: 'openhuman.inference_list_models',
-  screenIntelligenceStatus: 'openhuman.screen_intelligence_status',
   embeddingsGetSettings: 'openhuman.embeddings_get_settings',
   embeddingsUpdateSettings: 'openhuman.embeddings_update_settings',
   embeddingsSetApiKey: 'openhuman.embeddings_set_api_key',
@@ -69,7 +67,7 @@ export const CORE_RPC_METHODS = {
   healthSystemInfo: 'openhuman.health_system_info',
 } as const;
 
-export type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
+type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
 
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   // #3565: old desktop clients used dotted namespace/function channel calls.
@@ -104,8 +102,6 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.update_memory_settings': CORE_RPC_METHODS.configUpdateMemorySettings,
   'openhuman.update_model_settings': CORE_RPC_METHODS.inferenceUpdateModelSettings,
   'openhuman.update_runtime_settings': CORE_RPC_METHODS.configUpdateRuntimeSettings,
-  'openhuman.update_screen_intelligence_settings':
-    CORE_RPC_METHODS.configUpdateScreenIntelligenceSettings,
   'openhuman.workspace_onboarding_flag_exists':
     CORE_RPC_METHODS.configWorkspaceOnboardingFlagExists,
   'openhuman.workspace_onboarding_flag_set': CORE_RPC_METHODS.configWorkspaceOnboardingFlagSet,
@@ -152,10 +148,6 @@ export function normalizeRpcMethod(method: string): string {
 
   if (normalized.startsWith('openhuman.auth.')) {
     return `openhuman.auth_${normalized.slice('openhuman.auth.'.length).split('.').join('_')}`;
-  }
-
-  if (normalized.startsWith('openhuman.accessibility_')) {
-    return normalized.replace('openhuman.accessibility_', 'openhuman.screen_intelligence_');
   }
 
   return normalized;

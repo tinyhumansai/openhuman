@@ -1,7 +1,7 @@
 //! `gitbooks` — answer questions about OpenHuman by talking to the
-//! GitBook MCP server through the shared `openhuman::mcp_client` path.
+//! GitBook MCP server through the shared `openhuman::mcp::http_client` path.
 
-use crate::openhuman::mcp_client::{redact_endpoint, McpHttpClient};
+use crate::openhuman::mcp::http_client::{redact_endpoint, McpHttpClient};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};

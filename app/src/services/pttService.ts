@@ -49,7 +49,7 @@ export interface PttDeps {
   };
 }
 
-export interface PttService {
+interface PttService {
   onStart(sessionId: number): Promise<void>;
   onStop(sessionId: number): Promise<void>;
   cancel(reason: 'preempted' | 'mic_failure' | 'user_cancel'): Promise<void>;

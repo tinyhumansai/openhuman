@@ -1,7 +1,7 @@
 import { parseShortcut } from './shortcut';
 import type { Action, RegisteredAction } from './types';
 
-export interface Registry {
+interface Registry {
   registerAction: (action: Action, scopeFrame: symbol) => () => void;
   getAction: (id: string) => RegisteredAction | undefined;
   getActiveActions: (scopeStack: symbol[]) => RegisteredAction[];

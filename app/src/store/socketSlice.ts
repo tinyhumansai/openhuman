@@ -2,9 +2,9 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 import { resetUserScopedState } from './resetActions';
 
-export type SocketConnectionStatus = 'connected' | 'disconnected' | 'connecting';
+type SocketConnectionStatus = 'connected' | 'disconnected' | 'connecting';
 
-export interface SocketUserState {
+interface SocketUserState {
   status: SocketConnectionStatus;
   socketId: string | null;
 }

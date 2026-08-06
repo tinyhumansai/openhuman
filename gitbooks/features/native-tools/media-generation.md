@@ -19,7 +19,7 @@ OpenHuman can *make* media, not just read it. Ask the assistant to "generate an 
 
 ## How it works
 
-The `media_generation` domain (`src/openhuman/media_generation/`) exposes three agent tools (generate image, generate video, list models) backed by the OpenHuman backend's media-generation provider. The backend owns the provider keys, billing, and rate limiting; your subscription covers it like any other model call.
+The `media_generation` domain (`src/openhuman/media/generation/`) exposes three agent tools (generate image, generate video, list models) backed by the OpenHuman backend's media-generation provider. The backend owns the provider keys, billing, and rate limiting; your subscription covers it like any other model call.
 
 The tools submit the job and then poll on a 4-second cadence (up to 180 s for images, 420 s for video), so the agent, and you, get live progress instead of a hung call. Finished artifacts are downloaded into the agent's `generated-media/` folder in your workspace and returned as local file paths, ready to attach, post, or edit further.
 

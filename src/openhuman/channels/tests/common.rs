@@ -1,11 +1,52 @@
 use crate::openhuman::channels::{traits, Channel, SendMessage};
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 use crate::openhuman::tools::{Tool, ToolResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+
+fn message_role(message: &Message) -> &'static str {
+    match message {
+        Message::System(_) => "system",
+        Message::User(_) => "user",
+        Message::Assistant(_) => "assistant",
+        Message::Tool(_) => "tool",
+    }
+}
+
+fn native_tool_profile() -> &'static ModelProfile {
+    static PROFILE: std::sync::OnceLock<ModelProfile> = std::sync::OnceLock::new();
+    PROFILE.get_or_init(|| {
+        let mut profile = ModelProfile::default();
+        profile.tool_calling = true;
+        profile.parallel_tool_calls = true;
+        profile
+    })
+}
+
+fn tool_call_response(step: Option<usize>) -> ModelResponse {
+    let mut arguments = serde_json::json!({"symbol": "BTC"});
+    if let Some(step) = step {
+        arguments["step"] = serde_json::json!(step);
+    }
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: Vec::new(),
+            tool_calls: vec![ToolCall::new("mock-price-call", "mock_price", arguments)],
+            usage: None,
+        },
+        usage: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
+    }
+}
 
 // Note: the shared bus handler lock and the "install the real agent
 // handler for this test" helper both live in
@@ -43,18 +84,16 @@ pub(super) fn make_workspace() -> TempDir {
     tmp
 }
 
-pub(super) struct DummyProvider;
+pub(super) struct DummyModel;
 
 #[async_trait::async_trait]
-impl Provider for DummyProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for DummyModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok("ok".to_string())
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(ModelResponse::assistant("ok"))
     }
 }
 
@@ -132,227 +171,153 @@ impl Channel for RecordingChannel {
     }
 }
 
-pub(super) struct SlowProvider {
+pub(super) struct SlowModel {
     pub(super) delay: Duration,
 }
 
 #[async_trait::async_trait]
-impl Provider for SlowProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for SlowModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         tokio::time::sleep(self.delay).await;
-        Ok(format!("echo: {message}"))
+        let message = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| matches!(message, Message::User(_)))
+            .map(Message::text)
+            .unwrap_or_default();
+        Ok(ModelResponse::assistant(format!("echo: {message}")))
     }
 }
 
-pub(super) struct ToolCallingProvider;
-
-pub(super) fn tool_call_payload() -> String {
-    r#"<tool_call>
-{"name":"mock_price","arguments":{"symbol":"BTC"}}
-</tool_call>"#
-        .to_string()
-}
-
-/// Like [`tool_call_payload`] but embeds the iteration index as an extra `step`
-/// argument so successive calls have DISTINCT `(tool, args)` signatures.
-/// `mock_price` only reads `symbol`, so the extra field is ignored at execution
-/// but keeps the harness repeat-CALL guard — which hashes args, not narration —
-/// from treating a legitimate multi-step loop as a no-progress repeat.
-pub(super) fn tool_call_payload_for_iteration(step: usize) -> String {
-    format!(
-        r#"<tool_call>
-{{"name":"mock_price","arguments":{{"symbol":"BTC","step":{step}}}}}
-</tool_call>"#
-    )
-}
-
-pub(super) fn tool_call_payload_with_alias_tag() -> String {
-    r#"<toolcall>
-{"name":"mock_price","arguments":{"symbol":"BTC"}}
-</toolcall>"#
-        .to_string()
-}
+pub(super) struct ToolCallingModel;
 
 #[async_trait::async_trait]
-impl Provider for ToolCallingProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(tool_call_payload())
+impl ChatModel<()> for ToolCallingModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(native_tool_profile())
     }
 
-    async fn chat_with_history(
+    async fn invoke(
         &self,
-        messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        let has_tool_results = messages
-            .iter()
-            .any(|msg| msg.role == "user" && msg.content.contains("[Tool results]"));
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let has_tool_results = request.messages.iter().any(|message| {
+            matches!(message, Message::Tool(_)) || message.text().contains("[Tool results]")
+        });
         if has_tool_results {
-            Ok("BTC is currently around $65,000 based on latest tool output.".to_string())
+            Ok(ModelResponse::assistant(
+                "BTC is currently around $65,000 based on latest tool output.",
+            ))
         } else {
-            Ok(tool_call_payload())
+            Ok(tool_call_response(None))
         }
     }
 }
 
-pub(super) struct ToolCallingAliasProvider;
-
-#[async_trait::async_trait]
-impl Provider for ToolCallingAliasProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(tool_call_payload_with_alias_tag())
-    }
-
-    async fn chat_with_history(
-        &self,
-        messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        let has_tool_results = messages
-            .iter()
-            .any(|msg| msg.role == "user" && msg.content.contains("[Tool results]"));
-        if has_tool_results {
-            Ok("BTC alias-tag flow resolved to final text output.".to_string())
-        } else {
-            Ok(tool_call_payload_with_alias_tag())
-        }
-    }
-}
-
-pub(super) struct IterativeToolProvider {
+pub(super) struct IterativeToolModel {
     pub(super) required_tool_iterations: usize,
 }
 
-impl IterativeToolProvider {
-    pub(super) fn completed_tool_iterations(messages: &[ChatMessage]) -> usize {
+impl IterativeToolModel {
+    pub(super) fn completed_tool_iterations(messages: &[Message]) -> usize {
         messages
             .iter()
-            .filter(|msg| msg.role == "user" && msg.content.contains("[Tool results]"))
+            .filter(|message| {
+                matches!(message, Message::Tool(_)) || message.text().contains("[Tool results]")
+            })
             .count()
     }
 }
 
 #[async_trait::async_trait]
-impl Provider for IterativeToolProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(tool_call_payload())
+impl ChatModel<()> for IterativeToolModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(native_tool_profile())
     }
 
-    async fn chat_with_history(
+    async fn invoke(
         &self,
-        messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        let completed_iterations = Self::completed_tool_iterations(messages);
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let completed_iterations = Self::completed_tool_iterations(&request.messages);
         if completed_iterations >= self.required_tool_iterations {
-            Ok(format!(
+            Ok(ModelResponse::assistant(format!(
                 "Completed after {completed_iterations} tool iterations."
-            ))
+            )))
         } else {
             // Prefix a per-iteration progress note so each turn's assistant
             // output is distinct. A healthy multi-step agent varies its
             // narration as it advances; only byte-identical repeats (the
             // degeneration signature) should trip the harness repeat guard.
-            Ok(format!(
-                "Progress update {completed_iterations}.\n{}",
-                tool_call_payload_for_iteration(completed_iterations)
-            ))
+            Ok(tool_call_response(Some(completed_iterations)))
         }
     }
 }
 
 #[derive(Default)]
-pub(super) struct HistoryCaptureProvider {
+pub(super) struct HistoryCaptureModel {
     pub(super) calls: Mutex<Vec<Vec<(String, String)>>>,
 }
 
 #[async_trait::async_trait]
-impl Provider for HistoryCaptureProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for HistoryCaptureModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok("fallback".to_string())
-    }
-
-    async fn chat_with_history(
-        &self,
-        messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        let snapshot = messages
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let snapshot = request
+            .messages
             .iter()
-            .map(|m| (m.role.clone(), m.content.clone()))
+            .map(|message| (message_role(message).to_string(), message.text()))
             .collect::<Vec<_>>();
         let mut calls = self.calls.lock().unwrap_or_else(|e| e.into_inner());
         calls.push(snapshot);
-        Ok(format!("response-{}", calls.len()))
+        Ok(ModelResponse::assistant(format!(
+            "response-{}",
+            calls.len()
+        )))
     }
 }
 
 pub(super) struct MockPriceTool;
 
 #[derive(Default)]
-pub(super) struct ModelCaptureProvider {
+pub(super) struct ModelCaptureModel {
     pub(super) call_count: AtomicUsize,
     pub(super) models: Mutex<Vec<String>>,
+    label: String,
+}
+
+impl ModelCaptureModel {
+    pub(super) fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            ..Self::default()
+        }
+    }
 }
 
 #[async_trait::async_trait]
-impl Provider for ModelCaptureProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for ModelCaptureModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok("fallback".to_string())
-    }
-
-    async fn chat_with_history(
-        &self,
-        _messages: &[ChatMessage],
-        model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.models
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push(model.to_string());
-        Ok("ok".to_string())
+            .push(self.label.clone());
+        Ok(ModelResponse::assistant("ok"))
     }
 }
 

@@ -7,7 +7,7 @@ import { apiClient } from '../apiClient';
 const REWARDS_SNAPSHOT_TIMEOUT_MS = 15_000;
 const log = createDebug('rewards:api');
 
-export type RewardsApiError = ApiError & { code?: string; status?: number };
+type RewardsApiError = ApiError & { code?: string; status?: number };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

@@ -25,7 +25,7 @@ use std::time::Duration;
 const DEFAULT_API_BASE: &str = "https://api.search.brave.com/res/v1";
 
 fn http_client(timeout_secs: u64) -> anyhow::Result<reqwest::Client> {
-    crate::openhuman::tls::tls_client_builder()
+    crate::openhuman::util::tls::tls_client_builder()
         .timeout(Duration::from_secs(timeout_secs.max(1)))
         .connect_timeout(Duration::from_secs(10))
         .build()
@@ -269,9 +269,13 @@ fn render_web_plain(results: &[WebResult], query: &str, max: usize) -> String {
 
 fn render_web_markdown(results: &[WebResult], query: &str, max: usize) -> String {
     if results.is_empty() {
-        return format!("_No results for `{query}`._");
+        return format!("_No results for `{query}`_ (via Brave)");
     }
-    let mut out = format!("# Search results — `{query}` (Brave)\n");
+    // `(via Brave)` — the shared attribution marker every engine emits, which
+    // the tool timeline reads back to label the row (#5136). The markdown
+    // renderer is what production shows (`output_for_llm(true)`), so it has to
+    // carry the same marker the plain-text renderer already did.
+    let mut out = format!("# Search results — `{query}` (via Brave)\n");
     for r in results.iter().take(max) {
         let title = if r.title.trim().is_empty() {
             "Untitled"
@@ -666,6 +670,29 @@ mod tests {
     fn web_tool_advertises_unified_name() {
         let t = BraveWebSearchTool::new(Some("k".into()), 5, 5);
         assert_eq!(t.name(), "web_search_tool");
+    }
+
+    #[test]
+    fn web_markdown_carries_provider_marker() {
+        // The markdown renderer is what production shows
+        // (`output_for_llm(true)`), so its heading must end with the shared
+        // `(via <Provider>)` marker the plain-text renderer already emits —
+        // that is what the tool timeline reads back to label the row (#5136).
+        // It previously read `(Brave)`, which no marker parser matched.
+        let results = vec![WebResult {
+            title: "Example".into(),
+            url: "https://example.com".into(),
+            description: "Desc.".into(),
+            age: None,
+        }];
+        let out = render_web_markdown(&results, "test", 5);
+        assert!(out.lines().next().unwrap().ends_with("(via Brave)"));
+        assert!(out.contains("[Example](https://example.com)"));
+
+        // A completed empty search is attributed too, so the timeline does not
+        // keep showing it as in-progress.
+        let empty = render_web_markdown(&[], "test", 5);
+        assert!(empty.trim_end().ends_with("(via Brave)"));
     }
 
     #[test]

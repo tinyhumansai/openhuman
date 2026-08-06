@@ -1,15 +1,86 @@
-use super::{grouped_schemas, load_dotenv_for_cli, parse_function_params, parse_input_value};
+use super::{
+    grouped_schemas, load_dotenv_for_cli, parse_function_params, parse_input_value,
+    should_auto_launch_tui, strip_no_tui,
+};
+use crate::core::types::HostKind;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use std::sync::{Mutex, OnceLock};
 use tempfile::tempdir;
 
-static CLI_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+#[test]
+fn bare_cli_auto_launches_tui_only_for_interactive_non_container_hosts() {
+    let none: Vec<String> = vec![];
+    assert!(should_auto_launch_tui(
+        &none,
+        true,
+        true,
+        HostKind::Cli,
+        true
+    ));
+    assert!(!should_auto_launch_tui(
+        &none,
+        false,
+        true,
+        HostKind::Cli,
+        true
+    ));
+    assert!(!should_auto_launch_tui(
+        &none,
+        true,
+        false,
+        HostKind::Cli,
+        true
+    ));
+    assert!(!should_auto_launch_tui(
+        &none,
+        true,
+        true,
+        HostKind::Docker,
+        true
+    ));
+    assert!(!should_auto_launch_tui(
+        &none,
+        true,
+        true,
+        HostKind::Cli,
+        false
+    ));
+}
 
+#[test]
+fn explicit_args_never_trigger_bare_cli_auto_launch() {
+    for args in [
+        vec!["--no-tui".to_string()],
+        vec!["run".to_string()],
+        vec!["tui".to_string()],
+    ] {
+        assert!(!should_auto_launch_tui(
+            &args,
+            true,
+            true,
+            HostKind::Cli,
+            true
+        ));
+    }
+}
+
+#[test]
+fn no_tui_is_stripped_before_normal_cli_dispatch() {
+    let args = vec![
+        "--no-tui".to_string(),
+        "run".to_string(),
+        "--jsonrpc-only".to_string(),
+    ];
+    assert_eq!(strip_no_tui(&args), &args[1..]);
+
+    let ordinary = vec!["run".to_string()];
+    assert_eq!(strip_no_tui(&ordinary), ordinary.as_slice());
+}
+
+/// Serialises env-mutating CLI tests via the crate-wide backend env lock —
+/// these tests set `BACKEND_URL`, which `api::config` and `medulla::ops`
+/// tests also read/remove, so a module-local lock is not enough.
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    CLI_ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    crate::api::config::backend_env_test_lock()
 }
 
 #[test]
@@ -19,7 +90,6 @@ fn grouped_schemas_contains_migrated_namespaces() {
     assert!(grouped.contains_key("doctor"));
     assert!(grouped.contains_key("encrypt"));
     assert!(grouped.contains_key("decrypt"));
-    assert!(grouped.contains_key("autocomplete"));
     assert!(grouped.contains_key("config"));
     assert!(grouped.contains_key("auth"));
     assert!(grouped.contains_key("service"));
@@ -139,4 +209,111 @@ fn load_dotenv_for_cli_reads_cwd_dotenv_without_overwriting_existing_env() {
         Some("https://staging-api.example.test")
     );
     assert_eq!(loaded_app_env.as_deref(), Some("production"));
+}
+
+// --- `mcp` compile-time gate (#4799) ------------------------------------
+
+/// With the `mcp` feature compiled out, `openhuman mcp` must fail with a
+/// diagnostic that names the BUILD as the cause — not a generic
+/// "unknown namespace" error.
+///
+/// Why this matters enough to test: the naive way to gate the CLI is to delete
+/// the `"mcp" | "mcp-server"` match arm. That is WRONG — `mcp` would fall
+/// through to generic namespace resolution and die with `unknown namespace:
+/// mcp`, which reads like the user typo'd a command rather than like a
+/// property of this build. Instead `cli.rs` is untouched and the arm resolves
+/// to `mcp::server::stub::run_stdio_from_cli`, which bails with the message
+/// asserted below. An MCP host (Claude Desktop, Cursor, …) spawning
+/// `openhuman mcp` therefore gets a non-zero exit + a one-line reason on
+/// stderr instead of hanging on stdout that never speaks JSON-RPC.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_subcommand_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["mcp".to_string()])
+        .expect_err("`openhuman mcp` must fail when the `mcp` feature is compiled out");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("mcp feature disabled"),
+        "error must name the compile-time gate as the cause; got: {msg}"
+    );
+    assert!(
+        msg.contains("--features mcp"),
+        "error must tell the user how to get a working build; got: {msg}"
+    );
+    assert!(
+        !msg.contains("unknown namespace"),
+        "must NOT degrade into generic namespace resolution — that reads like a typo, \
+         not a build fact; got: {msg}"
+    );
+}
+
+/// The `mcp-server` alias must behave identically to `mcp` — both arms route
+/// to the same stub, so neither can silently regress into the fall-through.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_server_alias_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["mcp-server".to_string()])
+        .expect_err("`openhuman mcp-server` must fail when the `mcp` feature is compiled out");
+
+    assert!(
+        err.to_string().contains("mcp feature disabled"),
+        "the `mcp-server` alias must give the same build-fact diagnostic as `mcp`"
+    );
+}
+
+// --- `tui` compile-time gate --------------------------------------------
+
+/// With the `tui` feature compiled out, `openhuman tui` must fail with a
+/// diagnostic that names the BUILD as the cause — not a generic
+/// "unknown namespace" error.
+///
+/// Same reasoning as the `mcp` gate test above: the naive way to gate the CLI
+/// is to delete the `"tui" | "chat"` match arm, which is WRONG — `tui` would
+/// fall through to generic namespace resolution and die with `unknown
+/// namespace: tui`, reading like a user typo. Instead `cli.rs` is untouched and
+/// the arm resolves to the CLI-local disabled-feature dispatcher, which bails
+/// with the message asserted below.
+#[test]
+#[cfg(not(feature = "tui"))]
+fn tui_subcommand_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["tui".to_string()])
+        .expect_err("`openhuman tui` must fail when the `tui` feature is compiled out");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("tui feature disabled"),
+        "error must name the compile-time gate as the cause; got: {msg}"
+    );
+    assert!(
+        msg.contains("--features tui"),
+        "error must tell the user how to get a working build; got: {msg}"
+    );
+    assert!(
+        !msg.contains("unknown namespace"),
+        "must NOT degrade into generic namespace resolution — that reads like a typo, \
+         not a build fact; got: {msg}"
+    );
+}
+
+/// The `chat` alias must behave identically to `tui` — both names route to the
+/// same dispatcher, so neither can silently regress into the fall-through.
+#[test]
+#[cfg(not(feature = "tui"))]
+fn chat_alias_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["chat".to_string()])
+        .expect_err("`openhuman chat` must fail when the `tui` feature is compiled out");
+
+    assert!(
+        err.to_string().contains("tui feature disabled"),
+        "the `chat` alias must give the same build-fact diagnostic as `tui`"
+    );
 }

@@ -22,7 +22,7 @@ interface GhBranch {
   name: string;
 }
 
-export interface BranchPickerProps {
+interface BranchPickerProps {
   /** Selected branch name (or empty). */
   value: string;
   /** Fires with the picked branch name. */

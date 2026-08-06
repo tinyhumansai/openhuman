@@ -42,7 +42,7 @@ const retryLocalAiCommand = async <T>(
   throw lastError instanceof Error ? lastError : new Error(`Failed to ${label}`);
 };
 
-export interface LocalAiPresetResolution {
+interface LocalAiPresetResolution {
   presets: PresetsResponse;
   recommendedTier: string;
   selectedTier: string | null;

@@ -1,7 +1,7 @@
 //! Built-in [`AgentDefinition`]s.
 //!
 //! The authoritative list of built-in agents lives in
-//! [`crate::openhuman::agent_registry::agents`] — each agent is a subfolder
+//! [`crate::openhuman::agent::registry::agents`] — each agent is a subfolder
 //! containing `agent.toml` + `prompt.md`. This module is a thin
 //! wrapper that loads that set.
 //!
@@ -17,8 +17,8 @@ use super::definition::DefinitionSource;
 /// Panics if the baked-in built-in TOML fails to parse. `include_str!`
 /// guarantees at compile time that each file exists, but the actual
 /// TOML parse happens at runtime; the unit tests in
-/// [`crate::openhuman::agent_registry::agents`] verify in CI that every entry in
-/// [`crate::openhuman::agent_registry::agents::BUILTINS`] still parses cleanly.
+/// [`crate::openhuman::agent::registry::agents`] verify in CI that every entry in
+/// [`crate::openhuman::agent::registry::agents::BUILTINS`] still parses cleanly.
 ///
 /// In `#[cfg(test)]` builds the list additionally contains
 /// [`test_inherit_echo_def`] — a sub-agent with `ModelSpec::Inherit`
@@ -29,7 +29,7 @@ use super::definition::DefinitionSource;
 /// test's `MockProvider`). It is never compiled into release builds.
 pub fn all() -> Vec<AgentDefinition> {
     #[allow(unused_mut)]
-    let mut defs = crate::openhuman::agent_registry::agents::load_builtins()
+    let mut defs = crate::openhuman::agent::registry::agents::load_builtins()
         .expect("built-in agent TOML must always parse (see agents/*/agent.toml)");
     #[cfg(test)]
     {
@@ -75,7 +75,8 @@ pub(crate) fn test_main_def() -> AgentDefinition {
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
-        tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression:
+            crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![
             SubagentEntry::AgentId("__test_inherit_echo".into()),
             SubagentEntry::AgentId("__test_inherit_parallel_worker".into()),
@@ -93,7 +94,7 @@ pub(crate) fn test_main_def() -> AgentDefinition {
 /// which is exactly what the full-path spawn test needs to assert the
 /// dispatch → run_subagent → result-threading chain end to end.
 /// Provider *routing* for `Hint` sub-agents is covered separately by
-/// `subagent_runner::ops::tests::resolve_subagent_provider_*`.
+/// `subagent_runner::ops::tests::resolve_subagent_source_*`.
 #[cfg(test)]
 pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
     use super::definition::{ModelSpec, PromptSource, SandboxMode, ToolScope};
@@ -122,7 +123,8 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
-        tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression:
+            crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -162,7 +164,8 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
-        tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression:
+            crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
@@ -178,10 +181,26 @@ mod tests {
     #[test]
     fn all_definitions_present() {
         let defs = all();
+        // Count enabled built-ins, accounting for feature gates (e.g., presentation_agent only when documents is on).
+        let enabled_builtins = crate::openhuman::agent::registry::agents::BUILTINS
+            .iter()
+            .filter(|_b| {
+                #[cfg(not(feature = "documents"))]
+                if _b.id == "presentation_agent" {
+                    return false;
+                }
+                true
+            })
+            .count();
         // +3 for the cfg(test) default parent and inherit-based test defs appended by all().
+        let expected = enabled_builtins + 3;
         assert_eq!(
             defs.len(),
-            crate::openhuman::agent_registry::agents::BUILTINS.len() + 3
+            expected,
+            "Expected {} definitions but got {} (enabled BUILTINS={}, +3 test overrides)",
+            expected,
+            defs.len(),
+            enabled_builtins
         );
     }
 
@@ -258,7 +277,6 @@ mod tests {
             "settings_agent",
             "profile_memory_agent",
             "account_admin_agent",
-            "screen_awareness_agent",
             "tinyplace_agent",
             "tool_maker",
             "skill_creator",
@@ -266,7 +284,10 @@ mod tests {
             "critic",
             "archivist",
             "summarizer",
+            // Gated with `flows` (#4797) — absent from a slim build.
+            #[cfg(feature = "flows")]
             "workflow_builder",
+            #[cfg(feature = "flows")]
             "flow_discovery",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");

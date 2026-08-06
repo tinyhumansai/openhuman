@@ -1,7 +1,7 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::query::backend;
-use crate::openhuman::memory_store::chunks::types::SourceKind;
-use crate::openhuman::memory_tree::retrieval::rpc::QuerySourceRequest;
+use crate::openhuman::memory::store::chunks::types::SourceKind;
+use crate::openhuman::memory::tree::retrieval::rpc::QuerySourceRequest;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(parsed["hits"], json!([]));
         assert_eq!(parsed["total"], json!(0));
 
-        let direct = crate::openhuman::memory_tree::retrieval::source::query_source(
+        let direct = crate::openhuman::memory::tree::retrieval::source::query_source(
             &cfg,
             None,
             Some(SourceKind::Document),

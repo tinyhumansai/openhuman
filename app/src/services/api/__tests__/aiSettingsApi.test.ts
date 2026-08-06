@@ -10,8 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type AISettings,
+  classifyProviderVerificationFailure,
   clearCloudProviderKey,
   completeOpenAiCodexOAuth,
+  describeProviderVerificationFailure,
   flushCloudProviders,
   importOpenAiCodexCliAuth,
   listProviderModels,
@@ -31,6 +33,7 @@ import {
   startOpenAiCodexOAuth,
   testProviderModel,
   upsertModelRegistryVision,
+  verifyCloudProviderConnection,
 } from '../aiSettingsApi';
 
 // ─── Mock declarations (must be hoisted before imports) ───────────────────────
@@ -1076,5 +1079,237 @@ describe('model registry vision helpers', () => {
     const flipped = upsertModelRegistryVision(reg, 'openai', 'text-only', true);
     expect(flipped.filter(e => e.id === 'text-only')).toHaveLength(1);
     expect(modelRegistryVision(flipped, 'openai', 'text-only')).toBe(true);
+  });
+});
+
+// ─── #5146 §2.4: connected-but-unusable providers ─────────────────────────────
+
+// The messages are rendered through `useT()` in the panel; these tests drive the
+// same code path with a translator that returns each key's English fallback, so
+// the assertions read as the user-visible copy while the i18n wiring is exercised.
+const tFallback = (_key: string, fallback?: string) => fallback ?? '';
+
+describe('describeProviderVerificationFailure', () => {
+  it('maps an auth rejection onto a key-checking remedy', () => {
+    const msg = describeProviderVerificationFailure(
+      'openai',
+      'HTTP 401 invalid_api_key',
+      tFallback
+    );
+    expect(msg).toContain('openai');
+    expect(msg).toContain('rejected it');
+    // Must not leave the user thinking the save itself failed.
+    expect(msg).toContain('saved');
+  });
+
+  it('maps an unknown model onto a model-id remedy, not an auth remedy', () => {
+    const msg = describeProviderVerificationFailure(
+      'openai',
+      'The model `gpt-4p` does not exist or you do not have access to it.',
+      tFallback
+    );
+    expect(msg).toContain('does not recognise the selected model');
+    expect(msg).not.toContain('rejected it');
+  });
+
+  it('maps quota and rate-limit failures onto a billing remedy', () => {
+    for (const raw of [
+      '429 Too Many Requests',
+      'insufficient_quota',
+      'billing hard limit reached',
+    ]) {
+      expect(describeProviderVerificationFailure('deepseek', raw, tFallback)).toContain(
+        'quota or billing reasons'
+      );
+    }
+  });
+
+  it('maps a bare 404 onto the /v1 base-url remedy', () => {
+    const msg = describeProviderVerificationFailure('custom', 'HTTP 404', tFallback);
+    expect(msg).toContain('/v1');
+    expect(msg).toContain('base URL');
+  });
+
+  it('maps a timeout onto an endpoint/network remedy', () => {
+    expect(describeProviderVerificationFailure('custom', 'request timed out', tFallback)).toContain(
+      'did not respond in time'
+    );
+  });
+
+  it('keeps an unrecognised provider error out of the user-visible copy', () => {
+    // A raw upstream string can echo request material (headers, key
+    // fragments) and this lands in a screenshot-able banner, so the fallback
+    // branch must stay generic. The raw text is still returned on
+    // `CloudProviderVerification.detail` and logged by the caller.
+    const msg = describeProviderVerificationFailure(
+      'custom',
+      'kaboom: sk-secret-tail leaked in provider text',
+      tFallback
+    );
+    expect(msg).not.toContain('kaboom');
+    expect(msg).not.toContain('sk-secret-tail');
+    expect(msg).toContain('custom');
+  });
+
+  it('reads cleanly when the error string is empty', () => {
+    const msg = describeProviderVerificationFailure('custom', '   ', tFallback);
+    expect(msg).toContain('custom');
+    expect(msg).not.toMatch(/:\s*$/);
+  });
+
+  it('classifies case-insensitively', () => {
+    expect(describeProviderVerificationFailure('openai', 'INVALID API KEY', tFallback)).toContain(
+      'rejected it'
+    );
+  });
+
+  it('renders through i18n rather than hard-coded copy', () => {
+    // The panel is non-English for most users; every branch must resolve a key
+    // so the locale files (not this module) own the wording.
+    const seen: string[] = [];
+    const t = (key: string, fallback?: string) => {
+      seen.push(key);
+      return fallback ?? '';
+    };
+
+    describeProviderVerificationFailure('openai', 'HTTP 401', t);
+    describeProviderVerificationFailure('openai', 'model_not_found', t);
+    describeProviderVerificationFailure('openai', 'insufficient_quota', t);
+    describeProviderVerificationFailure('openai', 'HTTP 404', t);
+    describeProviderVerificationFailure('openai', 'timed out', t);
+    describeProviderVerificationFailure('openai', 'something novel', t);
+
+    expect(seen).toEqual([
+      'settings.ai.providerTest.authRejected',
+      'settings.ai.providerTest.modelNotRecognized',
+      'settings.ai.providerTest.quotaOrBilling',
+      'settings.ai.providerTest.endpointNotFound',
+      'settings.ai.providerTest.timeout',
+      'settings.ai.providerTest.unknown',
+    ]);
+  });
+
+  it('interpolates the slug into the translated template', () => {
+    const msg = describeProviderVerificationFailure(
+      'deepseek',
+      'HTTP 401',
+      () => 'translated: {slug} refused'
+    );
+    expect(msg).toBe('translated: deepseek refused');
+  });
+});
+
+describe('classifyProviderVerificationFailure', () => {
+  it('maps each recognised shape onto its reason, defaulting to unknown', () => {
+    expect(classifyProviderVerificationFailure('HTTP 401 invalid_api_key')).toBe('auth');
+    // A 403 counts as a rejected credential only with credential wording…
+    expect(classifyProviderVerificationFailure('provider returned 403: forbidden')).toBe('auth');
+    expect(classifyProviderVerificationFailure('403: API key does not have permission')).toBe(
+      'auth'
+    );
+    // …but network-side 403/407 (proxy / WAF / gateway) must NOT delete the key
+    // (#5341): they classify as unknown even though they contain 403/authentication.
+    expect(classifyProviderVerificationFailure('403 Forbidden (via Cloudflare)')).toBe('unknown');
+    expect(classifyProviderVerificationFailure('407 Proxy Authentication Required')).toBe(
+      'unknown'
+    );
+    expect(classifyProviderVerificationFailure('502 Bad Gateway')).toBe('unknown');
+    // Bare digit runs like a request id must not trip the 401/403 match.
+    expect(classifyProviderVerificationFailure('request id 1403 failed')).toBe('unknown');
+    expect(classifyProviderVerificationFailure('unknown model')).toBe('model');
+    expect(classifyProviderVerificationFailure('429 rate limit')).toBe('quota');
+    expect(classifyProviderVerificationFailure('HTTP 404')).toBe('endpoint');
+    // The endpoint branch matches a bare 'not found'; these natural phrasings
+    // must still reach the model branch rather than sending the user to check
+    // their base URL (greptile #5254).
+    expect(classifyProviderVerificationFailure('model not found')).toBe('model');
+    expect(classifyProviderVerificationFailure('The model `x` was not found')).toBe('model');
+    expect(classifyProviderVerificationFailure('request timed out')).toBe('timeout');
+    expect(classifyProviderVerificationFailure('kaboom')).toBe('unknown');
+    expect(classifyProviderVerificationFailure('')).toBe('unknown');
+  });
+});
+
+describe('verifyCloudProviderConnection', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+    mockIsTauri.mockReturnValue(true);
+  });
+
+  it('reports ok when the provider actually answers a test prompt', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { reply: 'pong' } });
+
+    const result = await verifyCloudProviderConnection('openai');
+
+    expect(result).toEqual({ ok: true, message: '', detail: '' });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'openhuman.inference_test_provider_model' })
+    );
+  });
+
+  it('defaults to the chat workload and sends a minimal prompt', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { reply: 'pong' } });
+
+    await verifyCloudProviderConnection('openai');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { workload: 'chat', provider: 'openai', prompt: 'ping' } })
+    );
+  });
+
+  it('treats an empty reply as unusable — this is the connected-but-unusable case', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { reply: '   ' } });
+
+    const result = await verifyCloudProviderConnection('openai');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('empty response');
+  });
+
+  it('returns the classified failure instead of throwing, so the caller never loses the save', async () => {
+    mockCallCoreRpc.mockRejectedValue(new Error('HTTP 401 invalid_api_key'));
+
+    const result = await verifyCloudProviderConnection('openai');
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('rejected it');
+    // Raw provider text stays available for the details expander.
+    expect(result.detail).toContain('401');
+  });
+
+  it('handles a non-Error rejection without stringifying to [object Object]', async () => {
+    mockCallCoreRpc.mockRejectedValue('plain string failure');
+
+    const result = await verifyCloudProviderConnection('openai');
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toBe('plain string failure');
+  });
+
+  it('forwards a model-qualified provider verbatim but names only the slug', async () => {
+    // The core only builds a configured cloud provider from `<slug>:<model>`, so
+    // the composite must reach the RPC untouched; the user-facing message must
+    // still say "openai", not "openai:gpt-4o".
+    mockCallCoreRpc.mockRejectedValue(new Error('HTTP 401 invalid_api_key'));
+
+    const result = await verifyCloudProviderConnection('openai:gpt-4o');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { workload: 'chat', provider: 'openai:gpt-4o', prompt: 'ping' },
+      })
+    );
+    expect(result.message).toContain("'openai'");
+    expect(result.message).not.toContain('gpt-4o');
+  });
+
+  it('renders its own messages through the supplied translator', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { reply: '' } });
+
+    const result = await verifyCloudProviderConnection('openai:gpt-4o', 'chat', (key: string) =>
+      key === 'settings.ai.providerTest.emptyReply' ? 'translated empty {slug}' : 'wrong key'
+    );
+
+    expect(result.message).toBe('translated empty openai');
   });
 });

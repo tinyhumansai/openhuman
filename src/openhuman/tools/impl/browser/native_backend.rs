@@ -1,6 +1,5 @@
 use super::BrowserAction;
 use anyhow::{Context, Result};
-use base64::Engine;
 use fantoccini::actions::{InputSource, MouseActions, PointerAction};
 use fantoccini::key::Key;
 use fantoccini::{Client, ClientBuilder, Locator};
@@ -135,31 +134,6 @@ impl NativeBrowserState {
                     "action": "get_url",
                     "url": url.as_str(),
                 }))
-            }
-            BrowserAction::Screenshot { path, full_page } => {
-                let client = self.active_client()?;
-                let png = client
-                    .screenshot()
-                    .await
-                    .context("Failed to capture screenshot")?;
-                let mut payload = json!({
-                    "backend": "rust_native",
-                    "action": "screenshot",
-                    "full_page": full_page,
-                    "bytes": png.len(),
-                });
-
-                if let Some(path_str) = path {
-                    tokio::fs::write(&path_str, &png)
-                        .await
-                        .with_context(|| format!("Failed to write screenshot to {path_str}"))?;
-                    payload["path"] = Value::String(path_str);
-                } else {
-                    payload["png_base64"] =
-                        Value::String(base64::engine::general_purpose::STANDARD.encode(&png));
-                }
-
-                Ok(payload)
             }
             BrowserAction::Wait { selector, ms, text } => {
                 let client = self.active_client()?;

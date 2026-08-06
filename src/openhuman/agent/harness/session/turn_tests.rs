@@ -1,16 +1,18 @@
 use super::*;
-use crate::core::event_bus::{global, init_global, DomainEvent};
-use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
+use crate::openhuman::agent::dispatcher::{
+    PFormatToolDispatcher, ToolDispatcher, XmlToolDispatcher,
+};
+use crate::openhuman::agent::experience::{
+    AgentExperience, AgentExperienceStore, ExperienceOutcome, ExperienceSource,
+};
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
+use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
 use crate::openhuman::agent::tool_policy::{
     GeneratedToolRuntimeContext, GeneratedToolRuntimeRisk, ToolPolicy, ToolPolicyDecision,
     ToolPolicyRequest,
 };
-use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
-use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolResultMessage,
-    UsageInfo,
-};
+use crate::openhuman::inference::provider::{ChatResponse, UsageInfo};
+use crate::openhuman::memory::agent::memory_loader::MemoryLoader;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::ToolResult;
 use crate::openhuman::tools::{PermissionLevel, Tool};
@@ -18,36 +20,30 @@ use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{timeout, Duration};
 
 struct DummyProvider;
 
 #[async_trait]
-impl Provider for DummyProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("unused".into())
+impl ChatModel<()> for DummyProvider {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::LazyLock<ModelProfile> =
+            std::sync::LazyLock::new(ModelProfile::default);
+        Some(&PROFILE)
     }
 
-    async fn chat(
+    async fn invoke(
         &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        Ok(ChatResponse {
-            text: Some("unused".into()),
-            tool_calls: vec![],
-            usage: None,
-            reasoning_content: None,
-        })
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(ModelResponse::assistant("unused"))
     }
 }
 
@@ -57,25 +53,63 @@ struct SequenceProvider {
 }
 
 #[async_trait]
-impl Provider for SequenceProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("unused".into())
+impl ChatModel<()> for SequenceProvider {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::LazyLock<ModelProfile> =
+            std::sync::LazyLock::new(ModelProfile::default);
+        Some(&PROFILE)
     }
 
-    async fn chat(
+    async fn invoke(
         &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        self.requests.lock().await.push(request.messages.to_vec());
-        self.responses.lock().await.remove(0)
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.requests.lock().await.push(
+            request
+                .messages
+                .iter()
+                .map(|message| ChatMessage {
+                    id: None,
+                    role: match message {
+                        Message::System(_) => "system",
+                        Message::User(_) => "user",
+                        Message::Assistant(_) => "assistant",
+                        // SequenceProvider replaces the old prompt-guided
+                        // Provider fixture. Its wire adapter flattened tool
+                        // results into a user turn rather than sending the
+                        // native `tool` role.
+                        Message::Tool(_) => "user",
+                    }
+                    .to_string(),
+                    content: match message {
+                        Message::Tool(_) => format!("[Tool results]\n{}", message.text()),
+                        _ => message.text(),
+                    },
+                    extra_metadata: None,
+                })
+                .collect(),
+        );
+        match self.responses.lock().await.remove(0) {
+            Ok(response) => Ok(
+                crate::openhuman::agent::tinyagents::model::native_model_response_for_request(
+                    &response, &request,
+                ),
+            ),
+            Err(error) => Err(tinyagents::TinyAgentsError::Model(error.to_string())),
+        }
+    }
+
+    async fn stream(&self, state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        // The legacy fixture implemented `chat` but did not write provider
+        // deltas. Preserve that non-streaming wire behavior: the harness still
+        // receives the authoritative completed response, while turn-owned
+        // continuation deltas remain independently observable.
+        let response = self.invoke(state, request).await?;
+        Ok(Box::pin(futures::stream::iter(vec![
+            ModelStreamItem::Started,
+            ModelStreamItem::Completed(response),
+        ])))
     }
 }
 
@@ -313,11 +347,11 @@ fn make_agent(visible_tool_names: Option<HashSet<String>>) -> Agent {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+        crate::openhuman::memory::store::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut builder = Agent::builder()
-        .provider(Box::new(DummyProvider))
+        .chat_model(Arc::new(DummyProvider))
         .tools(vec![Box::new(EchoTool)])
         .memory(mem)
         .tool_dispatcher(Box::new(XmlToolDispatcher))
@@ -336,12 +370,32 @@ fn make_agent(visible_tool_names: Option<HashSet<String>>) -> Agent {
 }
 
 fn make_agent_with_builder(
-    provider: Arc<dyn Provider>,
+    provider: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     memory_loader: Box<dyn MemoryLoader>,
     post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     config: crate::openhuman::config::AgentConfig,
     context_config: crate::openhuman::config::ContextConfig,
+) -> Agent {
+    make_agent_with_builder_and_dispatcher(
+        provider,
+        tools,
+        memory_loader,
+        post_turn_hooks,
+        config,
+        context_config,
+        Box::new(XmlToolDispatcher),
+    )
+}
+
+fn make_agent_with_builder_and_dispatcher(
+    provider: Arc<dyn ChatModel<()>>,
+    tools: Vec<Box<dyn Tool>>,
+    memory_loader: Box<dyn MemoryLoader>,
+    post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+    config: crate::openhuman::config::AgentConfig,
+    context_config: crate::openhuman::config::ContextConfig,
+    tool_dispatcher: Box<dyn ToolDispatcher>,
 ) -> Agent {
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
@@ -351,15 +405,15 @@ fn make_agent_with_builder(
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+        crate::openhuman::memory::store::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(tools)
         .memory(mem)
         .memory_loader(memory_loader)
-        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .tool_dispatcher(tool_dispatcher)
         .post_turn_hooks(post_turn_hooks)
         .config(config)
         .context_config(context_config)
@@ -402,7 +456,8 @@ fn trim_history_preserves_system_and_keeps_latest_non_system_entries() {
 /// `trim_history` must snap past the orphan so the window starts on a clean turn.
 #[test]
 fn trim_history_snaps_past_orphaned_tool_results() {
-    use crate::openhuman::inference::provider::{ToolCall, ToolResultMessage};
+    use crate::openhuman::agent::messages::ToolResultMessage;
+    use crate::openhuman::inference::provider::ToolCall;
 
     let mut agent = make_agent(None); // max_history_messages = 3
     agent.history = vec![
@@ -469,7 +524,49 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     );
     let long = "x".repeat(500);
     assert_eq!(sanitize_learned_entry(&long).chars().count(), 200);
-    assert!(collect_tree_root_summaries(agent.workspace_dir(), 8_000, 32_000).is_empty());
+    assert!(collect_tree_root_summaries(agent.workspace_dir(), "memory", 8_000, 32_000).is_empty());
+}
+
+#[test]
+fn build_parent_context_propagates_own_descriptor_on_root_turn() {
+    // Regression (PR #5118 review, Codex): on a ROOT chat turn `current_parent()`
+    // is `None`, so the parent snapshot must fall back to the agent's OWN
+    // descriptor. Without it, a dedicated-workspace profile's descriptor never
+    // reaches subagents spawned via spawn_subagent/spawn_async_subagent, and they
+    // silently fall back to the shared action_dir instead of
+    // `<action_dir>/profiles/<id>`.
+    let descriptor = tinyagents::harness::workspace::WorkspaceDescriptor::new(
+        std::path::PathBuf::from("/tmp/act/profiles/alice"),
+    )
+    .with_policy_id("openhuman.profile:alice");
+
+    let mut agent = make_agent(None);
+    // No ambient parent context is installed in this test, so current_parent()
+    // is None — exactly the root-turn scenario.
+    agent.workspace_descriptor = Some(descriptor);
+
+    let parent = agent.build_parent_execution_context();
+    assert_eq!(
+        parent.workspace_descriptor.as_ref().map(|d| d.root.clone()),
+        Some(std::path::PathBuf::from("/tmp/act/profiles/alice")),
+        "root turn must propagate the agent's own profile descriptor to spawned subagents"
+    );
+    assert_eq!(
+        parent
+            .workspace_descriptor
+            .as_ref()
+            .map(|d| d.policy_id.clone()),
+        Some("openhuman.profile:alice".to_string()),
+    );
+}
+
+#[test]
+fn build_parent_context_has_no_descriptor_without_profile_or_parent() {
+    // A profile-less root turn (no ambient parent, no own descriptor) keeps the
+    // snapshot's descriptor `None` so shared-action_dir behaviour is unchanged.
+    let agent = make_agent(None);
+    let parent = agent.build_parent_execution_context();
+    assert!(parent.workspace_descriptor.is_none());
 }
 
 #[test]
@@ -477,8 +574,8 @@ fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
     // #2944: the wrapper must carry the root node's `updated_at` from the
     // store tuple into the `NamespaceSummary` the prompt renderer stamps.
     use crate::openhuman::config::Config;
-    use crate::openhuman::memory_tree::tree_runtime::store::write_node;
-    use crate::openhuman::memory_tree::tree_runtime::types::{
+    use crate::openhuman::memory::tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory::tree::tree_runtime::types::{
         derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
     };
 
@@ -508,11 +605,48 @@ fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
     };
     write_node(&config, &node).unwrap();
 
-    let summaries = collect_tree_root_summaries(&workspace, 8_000, 32_000);
+    let summaries = collect_tree_root_summaries(&workspace, "memory", 8_000, 32_000);
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].namespace, "activities");
     assert_eq!(summaries[0].body, summary);
     assert_eq!(summaries[0].updated_at, updated_at);
+}
+
+#[test]
+fn collect_tree_root_summaries_reads_only_profile_memory_subtree() {
+    use crate::openhuman::config::Config;
+    use crate::openhuman::memory::tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory::tree::tree_runtime::types::{
+        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let config = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
+    let now = chrono::Utc::now();
+    let node = TreeNode {
+        node_id: "root".into(),
+        namespace: "private".into(),
+        level: level_from_node_id("root"),
+        parent_id: derive_parent_id("root"),
+        summary: "Alice-only context".into(),
+        token_count: estimate_tokens("Alice-only context"),
+        child_count: 0,
+        created_at: now,
+        updated_at: now,
+        metadata: None,
+    };
+    write_node(&config, &node).unwrap();
+    std::fs::rename(workspace.join("memory"), workspace.join("memory-alice")).unwrap();
+
+    assert!(collect_tree_root_summaries(&workspace, "memory", 8_000, 32_000).is_empty());
+    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].body, "Alice-only context");
 }
 
 #[tokio::test]
@@ -570,6 +704,54 @@ async fn transcript_resume_is_bounded_by_max_history_messages() {
     assert_eq!(cached[4].content, "a7");
 }
 
+#[tokio::test]
+async fn transcript_resume_uses_profile_scoped_raw_directory() {
+    let mut shared = make_agent(None);
+    shared.persist_session_transcript(
+        &[
+            ChatMessage::system("shared-system"),
+            ChatMessage::user("shared-user"),
+        ],
+        0,
+        0,
+        0,
+        0.0,
+        None,
+    );
+
+    let mut profile = make_agent(None);
+    profile.workspace_dir = shared.workspace_dir.clone();
+    profile.agent_definition_name = shared.agent_definition_name.clone();
+    profile.session_raw_subdir = "session_raw-alice".to_string();
+    profile.persist_session_transcript(
+        &[
+            ChatMessage::system("profile-system"),
+            ChatMessage::user("profile-user"),
+        ],
+        0,
+        0,
+        0,
+        0.0,
+        None,
+    );
+
+    let mut resumed = make_agent(None);
+    resumed.workspace_dir = shared.workspace_dir.clone();
+    resumed.agent_definition_name = shared.agent_definition_name.clone();
+    resumed.session_raw_subdir = "session_raw-alice".to_string();
+    resumed.try_load_session_transcript();
+
+    let cached = resumed
+        .cached_transcript_messages
+        .expect("profile transcript");
+    assert!(cached
+        .iter()
+        .any(|message| message.content == "profile-user"));
+    assert!(cached
+        .iter()
+        .all(|message| message.content != "shared-user"));
+}
+
 // NOTE: The `execute_tool_call_*` tests that exercised the legacy per-call
 // direct tool executor (`Agent::execute_tool_call`) were removed during the
 // tinyagents migration. The direct executor and its test-only parity shim
@@ -584,7 +766,7 @@ async fn transcript_resume_is_bounded_by_max_history_messages() {
 
 #[test]
 fn system_prompt_includes_tool_policy_boundary() {
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(DummyProvider);
     let mut config = crate::openhuman::config::AgentConfig::default();
     config
         .channel_permissions
@@ -617,7 +799,7 @@ fn system_prompt_includes_tool_policy_boundary() {
 
 #[test]
 fn set_agent_definition_name_refreshes_tool_policy_identity() {
-    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(DummyProvider);
     let mut config = crate::openhuman::config::AgentConfig::default();
     config
         .channel_permissions
@@ -673,7 +855,7 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
         ]),
         requests: AsyncMutex::new(Vec::new()),
     });
-    let provider: Arc<dyn Provider> = provider_impl.clone();
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let hook_calls = Arc::new(AsyncMutex::new(Vec::<TurnContext>::new()));
     let hook_notify = Arc::new(Notify::new());
     let hooks: Vec<Arc<dyn PostTurnHook>> = vec![Arc::new(RecordingHook {
@@ -773,7 +955,7 @@ async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
         ]),
         requests: AsyncMutex::new(Vec::new()),
     });
-    let provider: Arc<dyn Provider> = provider_impl.clone();
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
     let memory_cfg = crate::openhuman::config::MemoryConfig {
@@ -781,11 +963,11 @@ async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
         ..crate::openhuman::config::MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> = Arc::from(
-        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+        crate::openhuman::memory::store::create_memory(&memory_cfg, &workspace_path).unwrap(),
     );
 
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(vec![Box::new(EchoTool)])
         .memory(mem)
         .memory_loader(Box::new(FixedMemoryLoader {
@@ -842,7 +1024,7 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
         })]),
         requests: AsyncMutex::new(Vec::new()),
     });
-    let provider: Arc<dyn Provider> = provider_impl.clone();
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let mut agent = make_agent_with_builder(
         provider,
         vec![Box::new(EchoTool)],
@@ -883,6 +1065,528 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
     );
 }
 
+/// Issue #4117 — a reply that already carries a well-formed leading block is
+/// accepted verbatim: no corrective re-prompt, so exactly one provider call.
+#[tokio::test]
+async fn turn_accepts_valid_required_output_without_repair() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some("{\"thoughts\": \"planning\", \"next_action\": \"answer\"}".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract {
+            block_key: "thoughts".into(),
+            required_keys: vec!["next_action".into()],
+        }),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+
+    assert!(
+        response.contains("thoughts") && response.contains("next_action"),
+        "a valid reply must be accepted verbatim, got: {response}"
+    );
+    // No corrective re-prompt fired — a single provider call.
+    assert_eq!(provider_impl.requests.lock().await.len(), 1);
+}
+
+/// Issue #4117 — with no live progress sink (background/routing agent), when the
+/// model emits prose without the mandated JSON block the turn engine re-prompts
+/// and the recovered block-bearing reply *replaces* the omitting one.
+#[tokio::test]
+async fn turn_repairs_missing_required_output_via_reprompt() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Turn 1 final reply: prose only, no `thoughts` block.
+            Ok(ChatResponse {
+                text: Some("Sure, I'll handle that.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Corrective re-prompt: the model now emits a valid block.
+            Ok(ChatResponse {
+                text: Some(
+                    "{\"thoughts\": \"planning the work\", \"next_action\": \"answer\"}".into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract {
+            block_key: "thoughts".into(),
+            required_keys: vec!["next_action".into()],
+        }),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+
+    // The returned reply carries the recovered block.
+    assert!(
+        response.contains("thoughts") && response.contains("next_action"),
+        "repaired reply must contain the required block, got: {response}"
+    );
+    // The omitting prose reply was re-prompted (2 provider calls total).
+    assert_eq!(provider_impl.requests.lock().await.len(), 2);
+    // History's trailing assistant message was rewritten to match.
+    assert!(agent.history.iter().rev().any(|message| matches!(
+        message,
+        ConversationMessage::Chat(chat)
+            if chat.role == "assistant" && chat.content.contains("next_action")
+    )));
+}
+
+/// Issue #4117 — when the corrective re-prompt *also* omits the block (and no
+/// live sink is attached), the turn engine synthesizes a minimal valid block and
+/// prepends it to the original prose so the accepted turn leads with a
+/// well-formed block and never loses the model's answer.
+#[tokio::test]
+async fn turn_synthesizes_required_output_when_reprompt_also_omits() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Turn 1 final reply: prose only.
+            Ok(ChatResponse {
+                text: Some("Working on it.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Re-prompt: still no block.
+            Ok(ChatResponse {
+                text: Some("Still just prose, sorry.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract::new(
+            "thoughts",
+        )),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+
+    // The synthesized block is prepended to the ORIGINAL turn reply
+    // ("Working on it."), not the failed corrective re-prompt — so the leading
+    // JSON object carries the block and the original prose is preserved.
+    let first_block = crate::openhuman::agent::harness::parse::extract_json_values(&response)
+        .into_iter()
+        .next();
+    assert!(
+        first_block
+            .as_ref()
+            .is_some_and(|v| v.get("thoughts").is_some()),
+        "synthesized reply must lead with a `thoughts` block, got: {response}"
+    );
+    assert!(response.contains("Working on it."));
+    assert_eq!(provider_impl.requests.lock().await.len(), 2);
+}
+
+/// Issue #4117 (the #4387 / sanil-23 streaming blocker) — when a live progress
+/// sink is attached (the reply was streamed to the client) and the block is
+/// omitted, the repair is **append-only**: the original prose is preserved, the
+/// recovered block is *appended* after it (never replacing what the user saw),
+/// and the appended block is streamed as a `TextDelta` continuation so the
+/// returned reply is exactly the concatenation the client watched.
+#[tokio::test]
+async fn turn_appends_required_output_block_when_streamed_to_preserve_consistency() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Turn 1 final reply: prose only, streamed to the client.
+            Ok(ChatResponse {
+                text: Some("Sure, I'll handle that.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Corrective re-prompt: the model now emits a valid block.
+            Ok(ChatResponse {
+                text: Some(
+                    "{\"thoughts\": \"planning the work\", \"next_action\": \"answer\"}".into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract {
+            block_key: "thoughts".into(),
+            required_keys: vec!["next_action".into()],
+        }),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    // Attach a live progress sink and drain it concurrently so the streamed
+    // deltas are captured without the bounded channel ever back-pressuring the
+    // turn.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let text_deltas = Arc::new(AsyncMutex::new(Vec::<String>::new()));
+    let text_deltas_drain = text_deltas.clone();
+    let drain = tokio::spawn(async move {
+        while let Some(progress) = rx.recv().await {
+            if let crate::openhuman::agent::progress::AgentProgress::TextDelta { delta, .. } =
+                progress
+            {
+                text_deltas_drain.lock().await.push(delta);
+            }
+        }
+    });
+    agent.set_on_progress(Some(tx));
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+
+    // Drop the sink so the drain task observes channel close and finishes.
+    agent.set_on_progress(None);
+    // The continuation delta is sent (awaited) during the turn, so it is already
+    // drained; guard the join with a timeout so a leaked sender clone can never
+    // hang the test.
+    let _ = timeout(Duration::from_secs(5), drain).await;
+
+    // Append-only: the original prose is preserved AND precedes the block — the
+    // streamed preview is a prefix of the final reply, never contradicted.
+    assert!(
+        response.contains("Sure, I'll handle that."),
+        "original streamed prose must be preserved, not replaced: {response}"
+    );
+    assert!(
+        response.contains("next_action"),
+        "repaired reply must contain the required block: {response}"
+    );
+    let prose_at = response
+        .find("Sure, I'll handle that.")
+        .expect("prose present");
+    let block_at = response.find("next_action").expect("block present");
+    assert!(
+        prose_at < block_at,
+        "the block must be appended AFTER the already-streamed prose: {response}"
+    );
+
+    // The appended correction was streamed as a `TextDelta` continuation.
+    let deltas = text_deltas.lock().await;
+    assert!(
+        deltas.iter().any(|d| d.contains("next_action")),
+        "the appended block must be streamed as a TextDelta continuation, got: {deltas:?}"
+    );
+    assert_eq!(provider_impl.requests.lock().await.len(), 2);
+}
+
+/// Issue #4117 / #4900 — streamed path where the corrective re-prompt obeys
+/// `repair_instruction` literally: it leads with the block **and continues with
+/// the answer** (as the prompt asks). Because the original prose is already on
+/// the client, only the block may be appended — appending the whole re-prompt
+/// reply would duplicate the answer. Guards against that regression.
+#[tokio::test]
+async fn turn_appends_only_block_not_restated_answer_when_streamed() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Turn 1 final reply: prose only, streamed to the client.
+            Ok(ChatResponse {
+                text: Some("Paris is the capital of France.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Corrective re-prompt: block first, THEN the restated answer — exactly
+            // what `repair_instruction` ("…then continue with your answer") elicits.
+            Ok(ChatResponse {
+                text: Some(
+                    "{\"thoughts\": \"restating\", \"next_action\": \"answer\"}\n\n\
+                     Paris is the capital of France."
+                        .into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract {
+            block_key: "thoughts".into(),
+            required_keys: vec!["next_action".into()],
+        }),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let text_deltas = Arc::new(AsyncMutex::new(Vec::<String>::new()));
+    let text_deltas_drain = text_deltas.clone();
+    let drain = tokio::spawn(async move {
+        while let Some(progress) = rx.recv().await {
+            if let crate::openhuman::agent::progress::AgentProgress::TextDelta { delta, .. } =
+                progress
+            {
+                text_deltas_drain.lock().await.push(delta);
+            }
+        }
+    });
+    agent.set_on_progress(Some(tx));
+
+    let response = agent
+        .turn("what is the capital of France?")
+        .await
+        .expect("turn should succeed");
+
+    agent.set_on_progress(None);
+    let _ = timeout(Duration::from_secs(5), drain).await;
+
+    // The block is appended and the original prose preserved …
+    assert!(
+        response.contains("next_action"),
+        "repaired reply must contain the required block: {response}"
+    );
+    // … but the answer must appear exactly ONCE — the restated answer from the
+    // re-prompt reply must not be appended after the block.
+    assert_eq!(
+        response.matches("Paris is the capital of France.").count(),
+        1,
+        "the answer must not be duplicated by appending the re-prompt's restated prose: {response}"
+    );
+    // Streamed continuation carried the block, not a second copy of the answer.
+    let deltas = text_deltas.lock().await;
+    let streamed_continuation: String = deltas.concat();
+    assert!(
+        streamed_continuation.contains("next_action"),
+        "the appended block must be streamed as a continuation, got: {deltas:?}"
+    );
+    assert!(
+        !streamed_continuation.contains("Paris is the capital of France."),
+        "the streamed continuation must not restream the answer, got: {deltas:?}"
+    );
+}
+
+/// Issue #4117 — streamed path, but the corrective re-prompt *also* omits the
+/// block. A synthesized block is appended (never replacing the streamed prose)
+/// and streamed as a continuation, so the accepted turn still leads with the
+/// original prose and carries a well-formed block.
+#[tokio::test]
+async fn turn_appends_synthesized_block_when_streamed_reprompt_also_omits() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("Working on it.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Re-prompt: still no block.
+            Ok(ChatResponse {
+                text: Some("Still just prose, sorry.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract::new(
+            "thoughts",
+        )),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let text_deltas = Arc::new(AsyncMutex::new(Vec::<String>::new()));
+    let text_deltas_drain = text_deltas.clone();
+    let drain = tokio::spawn(async move {
+        while let Some(progress) = rx.recv().await {
+            if let crate::openhuman::agent::progress::AgentProgress::TextDelta { delta, .. } =
+                progress
+            {
+                text_deltas_drain.lock().await.push(delta);
+            }
+        }
+    });
+    agent.set_on_progress(Some(tx));
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+    agent.set_on_progress(None);
+    // The continuation delta is sent (awaited) during the turn, so it is already
+    // drained; guard the join with a timeout so a leaked sender clone can never
+    // hang the test.
+    let _ = timeout(Duration::from_secs(5), drain).await;
+
+    // Original prose preserved and leads; a synthesized `thoughts` block follows.
+    assert!(response.contains("Working on it."));
+    let prose_at = response.find("Working on it.").expect("prose present");
+    let block_at = response.find("thoughts").expect("synth block present");
+    assert!(
+        prose_at < block_at,
+        "synthesized block must be appended after the streamed prose: {response}"
+    );
+    let deltas = text_deltas.lock().await;
+    assert!(
+        deltas.iter().any(|d| d.contains("thoughts")),
+        "the synthesized block must be streamed as a continuation, got: {deltas:?}"
+    );
+    assert_eq!(provider_impl.requests.lock().await.len(), 2);
+}
+
+/// Issue #4117 — when the corrective re-prompt call itself fails, enforcement
+/// still guarantees a well-formed block: the deterministic synthesized fallback
+/// is used so the turn is never left without one (no live sink → replace path).
+#[tokio::test]
+async fn turn_synthesizes_required_output_when_reprompt_call_fails() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("Working on it.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Re-prompt call errors out.
+            Err(anyhow::anyhow!("provider boom")),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+
+    let config = crate::openhuman::config::AgentConfig {
+        max_tool_iterations: 3,
+        max_history_messages: 10,
+        required_output: Some(crate::openhuman::config::RequiredOutputContract::new(
+            "thoughts",
+        )),
+        ..crate::openhuman::config::AgentConfig::default()
+    };
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        config,
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let response = agent.turn("hello").await.expect("turn should succeed");
+
+    // Deterministic fallback: a synthesized block leads, original prose kept.
+    let first_block = crate::openhuman::agent::harness::parse::extract_json_values(&response)
+        .into_iter()
+        .next();
+    assert!(
+        first_block
+            .as_ref()
+            .is_some_and(|v| v.get("thoughts").is_some()),
+        "failed re-prompt must still yield a synthesized leading block, got: {response}"
+    );
+    assert!(response.contains("Working on it."));
+}
+
 #[tokio::test]
 async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
     // First response forces a tool call (consuming the single allowed
@@ -891,7 +1595,7 @@ async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
     // error anymore — it returns a resumable checkpoint so the thread stays
     // well-formed and the user can continue on their next message
     // (bug-report-2026-05-26 A1).
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
             Ok(ChatResponse {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
@@ -957,7 +1661,7 @@ async fn turn_errors_on_empty_provider_response() {
     // answer — surface it as an error instead of accepting a blank reply,
     // which previously rendered as silence and wedged the thread
     // (bug-report-2026-05-26 A1, defect B).
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![Ok(ChatResponse {
             text: Some(String::new()),
             tool_calls: vec![],
@@ -993,7 +1697,7 @@ async fn turn_checkpoint_falls_back_to_deterministic_summary_when_model_summary_
     // comes back empty. The harness must fall back to a deterministic
     // done/next summary so the turn never returns blank — the safety net
     // that guarantees the thread can't re-wedge (bug-report-2026-05-26 A1).
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
             Ok(ChatResponse {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
@@ -1039,6 +1743,63 @@ async fn turn_checkpoint_falls_back_to_deterministic_summary_when_model_summary_
 }
 
 #[tokio::test]
+async fn turn_checkpoint_rejects_pformat_wrapup_without_streaming_it() {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                ..ChatResponse::default()
+            }),
+            Ok(ChatResponse {
+                text: Some("<tool_call>echo[]</tool_call>".into()),
+                ..ChatResponse::default()
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
+    let registry = crate::openhuman::agent::pformat::build_registry(&tools);
+    let mut agent = make_agent_with_builder_and_dispatcher(
+        provider,
+        tools,
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 1,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+        Box::new(PFormatToolDispatcher::new(registry)),
+    );
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(16);
+    agent.set_on_progress(Some(progress_tx));
+
+    let reply = agent
+        .turn("hello")
+        .await
+        .expect("P-Format wrap-up call should use the deterministic checkpoint");
+    assert!(
+        reply.contains("tool-call limit"),
+        "P-Format wrap-up must be rejected, got: {reply}"
+    );
+
+    agent.set_on_progress(None);
+    let mut rendered_invalid_wrapup = false;
+    while let Ok(progress) = progress_rx.try_recv() {
+        if let crate::openhuman::agent::progress::AgentProgress::TextDelta { delta, .. } = progress
+        {
+            rendered_invalid_wrapup |= delta.contains("echo[]");
+        }
+    }
+    assert!(
+        !rendered_invalid_wrapup,
+        "rejected P-Format wrap-up must not be emitted to the progress sink"
+    );
+}
+
+#[tokio::test]
 async fn turn_synthesizes_final_answer_when_tool_turn_yields_no_text() {
     // #4093: the model runs a tool and then yields a terminating response with
     // NO text and NO further tool calls — the turn did work but would end
@@ -1046,7 +1807,7 @@ async fn turn_synthesizes_final_answer_when_tool_turn_yields_no_text() {
     // harness must enforce the "must produce a final response" terminal step by
     // re-prompting the model (tools disabled) for a closing summary and
     // returning that instead of a blank reply.
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
             // Tool iteration (well under the cap).
             Ok(ChatResponse {
@@ -1130,7 +1891,7 @@ async fn turn_final_answer_falls_back_to_deterministic_summary_when_reprompt_emp
     // back to a deterministic summary of the tool calls so the turn is never
     // blank — and, unlike the cap path, it must read as a completed summary
     // rather than a paused "tool-call limit" checkpoint.
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
             Ok(ChatResponse {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
@@ -1198,11 +1959,54 @@ async fn turn_final_answer_falls_back_to_deterministic_summary_when_reprompt_emp
 }
 
 #[tokio::test]
+async fn summarize_turn_wrapup_rejects_prompt_tool_call_and_preserves_usage() {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+            tool_calls: vec![],
+            usage: Some(UsageInfo {
+                input_tokens: 13,
+                output_tokens: 5,
+                cached_input_tokens: 3,
+                charged_amount_usd: 0.07,
+                ..UsageInfo::default()
+            }),
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let (summary, usage) = agent
+        .summarize_turn_wrapup(&[], "test-model", 1, "write a wrap-up")
+        .await;
+
+    assert!(
+        summary.is_empty(),
+        "prompt-formatted tool calls must trigger the deterministic fallback"
+    );
+    let usage = usage.expect("rejected wrap-up must preserve provider usage");
+    assert_eq!(usage.input_tokens, 13);
+    assert_eq!(usage.output_tokens, 5);
+    assert_eq!(usage.cached_input_tokens, 3);
+    assert_eq!(usage.charged_amount_usd, 0.07);
+}
+
+#[tokio::test]
 async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
     // The extra checkpoint provider call costs tokens; those must land in
     // the persisted transcript's cumulative accounting rather than being
     // silently dropped (CodeRabbit review on bug-report-2026-05-26 A1).
-    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
             // Tool iteration — provider reports no usage.
             Ok(ChatResponse {
@@ -1286,7 +2090,7 @@ fn make_agent_with_memory(
     explicit_preferences_enabled: bool,
 ) -> Agent {
     Agent::builder()
-        .provider(Box::new(DummyProvider))
+        .chat_model(Arc::new(DummyProvider))
         .tools(vec![])
         .memory(memory)
         .tool_dispatcher(Box::new(XmlToolDispatcher))
@@ -1299,9 +2103,65 @@ fn make_agent_with_memory(
 }
 
 fn make_real_memory(workspace: &std::path::Path) -> Arc<dyn Memory> {
-    use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory_store::UnifiedMemory;
+    use crate::openhuman::inference::embeddings::NoopEmbedding;
+    use crate::openhuman::memory::store::UnifiedMemory;
     Arc::new(UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None).unwrap())
+}
+
+#[tokio::test]
+async fn dedicated_profile_experience_recall_merges_shared_legacy_store() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dedicated = make_real_memory(&tmp.path().join("dedicated"));
+    let shared = make_real_memory(&tmp.path().join("shared"));
+    AgentExperienceStore::new(shared.clone())
+        .put(AgentExperience {
+            id: "legacy-shared-deploy".into(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            source: ExperienceSource::ToolLoop,
+            agent_id: None,
+            entrypoint: None,
+            profile_id: None,
+            task_fingerprint: "deploy-rust-service".into(),
+            task_summary: "Deploy the Rust service safely".into(),
+            tools_used: vec![],
+            tool_sequence: vec![],
+            outcome: ExperienceOutcome::Success,
+            error_class: None,
+            lesson: "Legacy shared deployment guidance".into(),
+            reuse_hint: "Check the release health endpoint".into(),
+            avoid_hint: None,
+            confidence: 0.9,
+            tags: vec![],
+            payload_hash: None,
+            dismissed: false,
+        })
+        .await
+        .unwrap();
+
+    let agent = Agent::builder()
+        .chat_model(Arc::new(DummyProvider))
+        .tools(vec![])
+        .memory(dedicated)
+        .shared_experience_memory(Some(shared))
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(tmp.path().to_path_buf())
+        .event_context("profile-experience-test", "web_chat")
+        .active_profile_id(Some("alice".into()))
+        .profile_memory_storage("memory-alice".into(), "session_raw-alice".into())
+        .learning_enabled(true)
+        .build()
+        .unwrap();
+
+    let enriched = agent
+        .inject_agent_experience_context(
+            "How should I deploy the Rust service?",
+            "original prompt".into(),
+        )
+        .await;
+
+    assert!(enriched.contains("Legacy shared deployment guidance"));
+    assert!(enriched.contains("original prompt"));
 }
 
 #[tokio::test]

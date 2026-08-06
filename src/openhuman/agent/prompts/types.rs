@@ -381,6 +381,17 @@ pub struct PromptContext<'a> {
     /// Non-self personality roster entries for the master agent's prompt.
     /// Empty for non-master agents.
     pub personality_roster: Vec<PersonalityRosterEntry>,
+    /// Pre-loaded global `AGENTS.md` content (`<workspace_dir>/AGENTS.md`),
+    /// injected by [`crate::openhuman::agent::prompts::sections::AgentsInstructionsSection`].
+    /// `None` when the file is absent/empty or the `agents_md_enabled` config
+    /// gate is off. Loaded once at system-prompt build time (never re-read per
+    /// turn) so the frozen system-prompt prefix / KV-cache contract holds.
+    pub agents_md_global: Option<String>,
+    /// Pre-loaded project-layer `AGENTS.md` content — `<action_dir>/AGENTS.md`,
+    /// or a sub-agent's `worktree_action_dir` override. `None` when the file is
+    /// absent/empty, deduplicated against the global layer (same dir), or the
+    /// gate is off. Rendered after the global layer.
+    pub agents_md_local: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

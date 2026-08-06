@@ -48,7 +48,7 @@ pub struct ModelRegistryEntry {
     /// with [`Self::cost_per_1m_output`]) to estimate request cost when the
     /// provider doesn't echo an authoritative `charged_amount_usd`. `0.0` means
     /// "unknown" — callers fall back to the tier/catalog estimate. Pre-filled
-    /// for known vendor models from [`crate::openhuman::cost::catalog`].
+    /// for known vendor models from [`crate::openhuman::platform::cost::catalog`].
     #[serde(default)]
     pub cost_per_1m_input: f64,
     /// Cached-prefix prompt rate, USD per million cached input tokens (KV-cache
@@ -61,7 +61,7 @@ pub struct ModelRegistryEntry {
     /// Maximum context window in tokens (published max input). `0` means
     /// "unknown". Providers differ widely (128K–1M+); callers use this to
     /// budget prompts, trigger compaction, and route work. Pre-filled for known
-    /// vendor models from [`crate::openhuman::cost::catalog`].
+    /// vendor models from [`crate::openhuman::platform::cost::catalog`].
     #[serde(default)]
     pub context_window: u32,
     #[serde(default)]
@@ -94,8 +94,16 @@ pub struct Config {
     pub action_dir_override: Option<PathBuf>,
     #[serde(skip)]
     pub config_path: PathBuf,
+    /// Runtime only — `true` when this config was produced by the loader's
+    /// corruption-recovery path: the on-disk `config.toml` was unreadable
+    /// (non-UTF-8) or unparseable, so it was renamed to `.corrupted.<ts>` and the
+    /// config was reset to defaults (or restored from `.bak`). Never persisted and
+    /// recomputed on every load. Read once at boot by `bootstrap_core_runtime` to
+    /// raise a user-visible "settings were reset" notice (#5167).
+    #[serde(skip)]
+    pub recovered_from_corruption: bool,
     /// Workspace data-schema version. Bumped each time a one-shot data
-    /// migration under [`crate::openhuman::migrations`] runs successfully.
+    /// migration under [`crate::openhuman::config::migrations`] runs successfully.
     /// `#[serde(default)]` so existing `config.toml` files (which predate
     /// the field) load as version `0` and pick up pending migrations on
     /// the first launch of the new build.
@@ -152,12 +160,6 @@ pub struct Config {
     pub shell: ShellConfig,
 
     #[serde(default)]
-    pub screen_intelligence: ScreenIntelligenceConfig,
-
-    #[serde(default)]
-    pub autocomplete: AutocompleteConfig,
-
-    #[serde(default)]
     pub reliability: ReliabilityConfig,
 
     #[serde(default)]
@@ -166,12 +168,12 @@ pub struct Config {
     /// Background-AI scheduler gate — throttles memory-tree digests,
     /// embeddings, and other LLM-bound background work based on power
     /// state, CPU pressure, and deployment mode. See
-    /// [`crate::openhuman::scheduler_gate`].
+    /// [`crate::openhuman::cron::scheduler_gate`].
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
 
     /// tiny.place harness session-DM ingest layer. See
-    /// [`crate::openhuman::orchestration`].
+    /// [`crate::openhuman::hosted::orchestration`].
     #[serde(default)]
     pub orchestration: OrchestrationConfig,
 
@@ -217,7 +219,7 @@ pub struct Config {
     /// Global context management configuration — budget thresholds,
     /// summarization trigger, microcompact/autocompact toggles, and the
     /// session-memory extraction cadence. Consumed by
-    /// [`crate::openhuman::context::ContextManager`].
+    /// [`crate::openhuman::agent::context::ContextManager`].
     #[serde(default)]
     pub context: ContextConfig,
 
@@ -230,12 +232,18 @@ pub struct Config {
     #[serde(default)]
     pub heartbeat: HeartbeatConfig,
 
+    /// Subconscious engine selection (local tinyagents graph vs. local
+    /// medulla-serve child). Default `local` — omitting this block preserves
+    /// the historical behavior exactly.
+    #[serde(default)]
+    pub subconscious: crate::openhuman::config::schema::SubconsciousConfig,
+
     #[serde(default)]
     pub cron: CronConfig,
 
     /// Task-sources domain defaults — master switch + new-source
     /// defaults. Per-source records live in the domain's SQLite store.
-    /// See [`crate::openhuman::task_sources`].
+    /// See [`crate::openhuman::integrations::task_sources`].
     #[serde(default)]
     pub task_sources: TaskSourcesConfig,
 
@@ -311,15 +319,12 @@ pub struct Config {
     /// describes a data connector (Composio OAuth, local folder, GitHub
     /// repo, RSS feed, Twitter query, web page) that feeds memory.
     #[serde(default)]
-    pub memory_sources: Vec<crate::openhuman::memory_sources::types::MemorySourceEntry>,
+    pub memory_sources: Vec<crate::openhuman::memory::sources::types::MemorySourceEntry>,
 
     /// User-facing agent registry — shipped default agents plus user-authored
     /// custom agents and persisted enable/disable/tool-policy overrides.
     #[serde(default)]
-    pub agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig,
-
-    #[serde(default)]
-    pub computer_control: ComputerControlConfig,
+    pub agent_registry: crate::openhuman::agent::registry::types::AgentRegistryConfig,
 
     #[serde(default)]
     pub agents: HashMap<String, DelegateAgentConfig>,
@@ -340,7 +345,7 @@ pub struct Config {
     //                            openhuman, behaves identically to "openhuman"
     //   "openhuman"            → OpenHuman backend (api_url + api_key session JWT)
     //   "openai:<model>"       → look up cloud_providers entry of type=openai;
-    //                            build OpenAiCompatibleProvider with Bearer auth
+    //                            build crate OpenAiModel with Bearer auth
     //   "anthropic:<model>"    → type=anthropic; Bearer auth on the compat endpoint
     //   "openrouter:<model>"   → type=openrouter; Bearer auth
     //   "orcarouter:<model>"   → type=orcarouter; Bearer auth (e.g. "orcarouter:orcarouter/auto")
@@ -408,6 +413,11 @@ pub struct Config {
     /// other Python subprocess integrations).
     #[serde(default)]
     pub runtime_python: RuntimePythonConfig,
+
+    /// Shared language-runtime pool (long-lived `node`/`python` workers reused
+    /// across skill runs and `node_exec` instead of one child per run, #5106).
+    #[serde(default)]
+    pub runtime_pool: RuntimePoolConfig,
 
     /// TokenJuice content-router / compaction configuration.
     #[serde(default)]
@@ -734,6 +744,7 @@ impl Default for Config {
             action_dir: crate::openhuman::config::default_action_dir(),
             action_dir_override: None,
             config_path: openhuman_dir.join("config.toml"),
+            recovered_from_corruption: false,
             schema_version: 0,
             api_url: None,
             api_key: None,
@@ -749,8 +760,6 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),
-            screen_intelligence: ScreenIntelligenceConfig::default(),
-            autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
@@ -764,6 +773,7 @@ impl Default for Config {
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
+            subconscious: crate::openhuman::config::schema::SubconsciousConfig::default(),
             cron: CronConfig::default(),
             task_sources: TaskSourcesConfig::default(),
             channels_config: ChannelsConfig::default(),
@@ -787,8 +797,8 @@ impl Default for Config {
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             memory_sources: Vec::new(),
-            agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig::default(),
-            computer_control: ComputerControlConfig::default(),
+            agent_registry: crate::openhuman::agent::registry::types::AgentRegistryConfig::default(
+            ),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
             claude_agent_sdk: ClaudeAgentSdkConfig::default(),
@@ -806,6 +816,7 @@ impl Default for Config {
             subconscious_provider: None,
             node: NodeConfig::default(),
             runtime_python: RuntimePythonConfig::default(),
+            runtime_pool: RuntimePoolConfig::default(),
             tokenjuice: TokenjuiceConfig::default(),
             voice_server: VoiceServerConfig::default(),
             voice_providers: Vec::new(),
@@ -890,6 +901,25 @@ mod model_pin_tests {
         assert_eq!(
             config.configured_agent_model("code_executor", false),
             Some("qwen/qwen3")
+        );
+    }
+
+    #[test]
+    fn config_ignores_legacy_screen_intelligence_table() {
+        let config: Config = toml::from_str(
+            r#"
+                [screen_intelligence]
+                enabled = true
+                baseline_fps = 30.0
+            "#,
+        )
+        .expect("legacy screen intelligence TOML should be ignored");
+
+        assert!(
+            !toml::to_string(&config)
+                .expect("config should serialize")
+                .contains("screen_intelligence"),
+            "legacy screen intelligence data must not be persisted again"
         );
     }
 

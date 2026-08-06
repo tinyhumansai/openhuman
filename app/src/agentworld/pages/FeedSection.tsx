@@ -14,6 +14,13 @@
  * - Inline post composer at the top of the feed (refetches feed on success)
  * - Delete post / delete comment (own content only, via an in-app ConfirmDialog)
  *
+ * Post *media* (images / GIFs) is intentionally NOT composable in-app: the
+ * tiny.place backend serves no media field on posts (neither `PostCreate` nor
+ * the read-side `Post` / `GqlPost` in the vendored SDK carry one), so an
+ * in-app upload would round-trip to nothing and render nowhere. Attaching media
+ * is therefore web-only on tiny.place; the composer links users there for it.
+ * See #4924 (and the same web-only resolution as marketplace selling, #4920).
+ *
  * Pattern mirrors ExploreSection / MarketplaceSection: useState + useEffect
  * fetch, PanelScaffold wrapper, StatusBlock for loading/error/empty states.
  */
@@ -25,15 +32,42 @@ import Button from '../../components/ui/Button';
 import {
   type GqlComment,
   type GqlHomeFeedItem,
+  type GqlHomeFeedResult,
   type GqlPost,
   type LikeResult,
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import ConfirmDialog from '../components/ConfirmDialog';
+import StatusBlock from '../components/StatusBlock';
+import { useTinyplaceStream } from '../hooks/useTinyplaceStream';
+import { relativeTime } from './relativeTime';
 
 const log = debug('agentworld:feed');
+
+// Attaching images / GIFs to a post is web-only — the tiny.place backend serves
+// no post-media field, so we point users at the web app for it (#4924). tiny.place's
+// home page is the feed, where the media composer lives.
+//
+// Single hardcoded origin by design: the *API* host varies by env (api.tiny.place
+// vs staging-api.tiny.place), but there is exactly one human-facing website —
+// `tiny.place` — used unconditionally across the codebase for the same reason
+// (post permalinks: `TINYPLACE_WEB_ORIGIN` in tinyplace/agent_tools/flows_write.rs;
+// `FUND_PAGE_URL` in X402ConfirmDialog.tsx; `SELL_ON_WEB_URL` in IdentitiesSection.tsx).
+// There is no per-network web frontend to derive this from.
+const ADD_MEDIA_ON_WEB_URL = 'https://tiny.place';
+
+/**
+ * Home-feed items fetched per page (also the initial page size). The
+ * `tinyplace_graphql_home_feed` RPC accepts `limit`/`offset`
+ * (`src/openhuman/tinyplace/manifest.rs`), so the feed is loaded a page at a
+ * time and extended via an offset-based "Load more" control. A page shorter
+ * than this size means the feed is exhausted (`hasMore=false`).
+ */
+export const FEED_PAGE_SIZE = 50;
 
 // ── State types ───────────────────────────────────────────────────────────────
 
@@ -42,7 +76,41 @@ type FeedState =
   | { status: 'wallet_unconfigured' }
   | { status: 'payment_required'; challenge: unknown }
   | { status: 'error'; message: string }
-  | { status: 'ok'; items: GqlHomeFeedItem[] };
+  | {
+      status: 'ok';
+      items: GqlHomeFeedItem[];
+      // Server-side cursor, in request units: how many rows to skip on the next
+      // page. Advances by FEED_PAGE_SIZE per fetch, decoupled from the client
+      // item count so dedupe never desyncs the offset.
+      nextOffset: number;
+      // A full page came back, so more items may exist.
+      hasMore: boolean;
+      // A "Load more" fetch is in flight.
+      loadingMore: boolean;
+      // Non-null when the most recent "Load more" fetch failed (existing items
+      // stay visible; the user can retry).
+      moreError: string | null;
+    };
+
+/**
+ * Build the first-page `ok` state from a home-feed result. Used by the initial
+ * fetch and by every post-mutation refetch (compose / delete), all of which
+ * reset pagination to page one. `hasMore` is derived from the raw returned page
+ * length so a full page signals that older items may still be reachable.
+ */
+function firstPageFeedState(result: GqlHomeFeedResult | null | undefined): FeedState {
+  const items = sortedHomeFeedItems(result);
+  const received = Array.isArray(result?.items) ? result.items.length : 0;
+  const hasMore = received >= FEED_PAGE_SIZE;
+  return {
+    status: 'ok',
+    items,
+    nextOffset: FEED_PAGE_SIZE,
+    hasMore,
+    loadingMore: false,
+    moreError: null,
+  };
+}
 
 /**
  * Result of resolving the local wallet on mount.
@@ -64,17 +132,6 @@ type WalletConfigured = 'resolving' | 'no' | 'yes' | 'unknown';
 type WalletResolution = { agentId: string | null; configured: WalletConfigured };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 function isWalletLocked(message: string): boolean {
   return (
@@ -104,16 +161,6 @@ function sortedHomeFeedItems(result: { items?: GqlHomeFeedItem[] } | null | unde
   }
 
   return items;
-}
-
-/** Centered status message for loading / error / info states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
-  return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-      <p className={`text-base font-medium ${tone}`}>{title}</p>
-      {body && <p className="max-w-md text-sm text-content-muted">{body}</p>}
-    </div>
-  );
 }
 
 /** Initial letter avatar circle for when no avatarUrl is available. */
@@ -326,6 +373,28 @@ function FeedComposer({ myAgentId, onPostCreated }: FeedComposerProps) {
             {submitting ? 'Posting…' : 'Post'}
           </Button>
         </div>
+      </div>
+      {/* Adding images / GIFs to a post is web-only (#4924): the tiny.place
+          backend serves no post-media field, so an in-app upload would render
+          nowhere. Point users at the web app instead of dead-ending. */}
+      <div
+        className="mt-2 flex items-center gap-1.5 pl-[2.625rem] text-[11px] text-content-faint"
+        data-testid="add-media-on-web">
+        <span>Add photos or GIFs on tiny.place.</span>
+        <button
+          type="button"
+          data-testid="add-media-on-web-cta"
+          data-analytics-id="feed.addMediaOnWeb"
+          className="font-medium text-primary-400 underline-offset-2 hover:underline focus:underline focus:outline-none"
+          onClick={() => {
+            // Static destination URL only — no post body / PII. openUrl owns the
+            // outcome diagnostics (low-PII breadcrumb + https fallback), so we
+            // don't re-observe success/error here.
+            log('[tinyplace][ui] add-media-on-web: opening %s', ADD_MEDIA_ON_WEB_URL);
+            void openUrl(ADD_MEDIA_ON_WEB_URL);
+          }}>
+          Open tiny.place →
+        </button>
       </div>
     </div>
   );
@@ -598,6 +667,7 @@ function CommentRow({
 // ── FeedSection (main export) ─────────────────────────────────────────────────
 
 export default function FeedSection() {
+  const { t } = useT();
   const [feedState, setFeedState] = useState<FeedState>({ status: 'loading' });
   const [followState, setFollowState] = useState<Record<string, boolean>>({});
   const [followLoading, setFollowLoading] = useState<Record<string, boolean>>({});
@@ -608,6 +678,29 @@ export default function FeedSection() {
   const [deletingPost, setDeletingPost] = useState(false);
 
   const { agentId: myAgentId, configured: walletConfigured } = useWalletResolution();
+
+  // ── Real-time feed updates (#4926) ─────────────────────────────────────────
+  // The SDK exposes a per-feed WebSocket stream (`feeds::stream`); core wires it
+  // as the `feed` StreamKind. We subscribe to the viewer's OWN feed while this
+  // panel is mounted and re-fetch the home feed whenever an event arrives, so
+  // new posts/comments/likes on the viewer's feed surface without a manual
+  // refresh (mirrors the inbox/DM live-update pattern — see #4988). The
+  // aggregated home feed has no server-side WS topic, so followed-author posts
+  // still arrive on the next fetch; this covers the viewer's own feed activity.
+  const feedStreamId = myAgentId ? `feed:${myAgentId}` : undefined;
+  const { messages: streamMessages, status: streamStatus } = useTinyplaceStream(feedStreamId);
+  const feedStreamRef = useRef<string | null>(null);
+
+  // Guards async setState after unmount. The initial fetch effect uses its own
+  // `cancelled` flag; "Load more" fetches outlive no single effect, so they read
+  // this ref instead.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // ── Hydrate follow state from the server ───────────────────────────────────
   // The home feed doesn't carry "am I following this author?", so seed the
@@ -664,18 +757,24 @@ export default function FeedSection() {
     // one they just created via the composer) never appear. Without this the
     // composer looks broken: Post succeeds server-side but the refetch can't
     // show it (#4059).
+    log('loading first feed page', { limit: FEED_PAGE_SIZE });
     void apiClient.graphql
-      .homeFeed({ limit: 50, includeSelf: true })
+      .homeFeed({ limit: FEED_PAGE_SIZE, offset: 0, includeSelf: true })
       .then(result => {
         if (cancelled) return;
-        const items = sortedHomeFeedItems(result);
-        setFeedState({ status: 'ok', items });
+        const next = firstPageFeedState(result);
+        log('loaded first feed page', {
+          received: Array.isArray(result?.items) ? result.items.length : 0,
+          hasMore: next.status === 'ok' ? next.hasMore : false,
+        });
+        setFeedState(next);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof PaymentRequiredError) {
           setFeedState({ status: 'payment_required', challenge: err.challenge });
         } else {
+          log('first feed page failed', { error: String(err) });
           setFeedState({ status: 'error', message: String(err) });
         }
       });
@@ -684,6 +783,54 @@ export default function FeedSection() {
       cancelled = true;
     };
   }, [walletConfigured]);
+
+  // ── Fetch the next page and append it ──────────────────────────────────────
+  // `offset` is passed in from the rendered 'ok' state so the cursor stays a
+  // pure function of pages requested. Reentry is prevented by disabling the
+  // button while `loadingMore` is set.
+  const loadMore = useCallback((offset: number) => {
+    log('loading more feed items', { offset, limit: FEED_PAGE_SIZE });
+    setFeedState(prev =>
+      prev.status === 'ok' ? { ...prev, loadingMore: true, moreError: null } : prev
+    );
+
+    void apiClient.graphql
+      .homeFeed({ limit: FEED_PAGE_SIZE, offset, includeSelf: true })
+      .then(result => {
+        if (!mountedRef.current) return;
+        const page = Array.isArray(result?.items) ? result.items : [];
+        const hasMore = page.length >= FEED_PAGE_SIZE;
+        setFeedState(prev => {
+          if (prev.status !== 'ok') return prev;
+          // Dedupe by postId: if items shifted between page fetches the overlap
+          // must not produce duplicate React keys or double-counted posts.
+          const seen = new Set(prev.items.map(item => item.post.postId));
+          const fresh = page.filter(item => !seen.has(item.post.postId));
+          const merged = sortedHomeFeedItems({ items: [...prev.items, ...fresh] });
+          log('appended feed items', {
+            received: page.length,
+            fresh: fresh.length,
+            total: merged.length,
+            hasMore,
+          });
+          return {
+            status: 'ok',
+            items: merged,
+            nextOffset: offset + FEED_PAGE_SIZE,
+            hasMore,
+            loadingMore: false,
+            moreError: null,
+          };
+        });
+      })
+      .catch((err: unknown) => {
+        if (!mountedRef.current) return;
+        log('load more feed failed', { error: String(err) });
+        setFeedState(prev =>
+          prev.status === 'ok' ? { ...prev, loadingMore: false, moreError: String(err) } : prev
+        );
+      });
+  }, []);
 
   // ── Follow / Unfollow ──────────────────────────────────────────────────────
 
@@ -751,11 +898,13 @@ export default function FeedSection() {
       .then(({ ok }) => {
         if (!ok) throw new Error('Post deletion was not accepted by the backend');
         // Return the refresh promise so its rejection reaches `.catch` (rather
-        // than resolving the delete as "done" before the feed is reloaded).
-        return apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
-          const items = sortedHomeFeedItems(result);
-          setFeedState({ status: 'ok', items });
-        });
+        // than resolving the delete as "done" before the feed is reloaded). A
+        // mutation invalidates offsets, so reset pagination to the first page.
+        return apiClient.graphql
+          .homeFeed({ limit: FEED_PAGE_SIZE, offset: 0, includeSelf: true })
+          .then(result => {
+            setFeedState(firstPageFeedState(result));
+          });
       })
       .catch(err => console.error('[FeedSection] delete post failed:', err))
       .finally(() => {
@@ -766,12 +915,96 @@ export default function FeedSection() {
 
   // ── Refetch feed ───────────────────────────────────────────────────────────
 
-  const refetchFeed = () => {
-    void apiClient.graphql.homeFeed({ limit: 50, includeSelf: true }).then(result => {
-      const items = sortedHomeFeedItems(result);
-      setFeedState({ status: 'ok', items });
-    });
-  };
+  // A fresh compose/delete invalidates offsets, so reset pagination to the first
+  // page. `useCallback` keeps a stable identity for the callers below.
+  const refetchFeed = useCallback(() => {
+    void apiClient.graphql
+      .homeFeed({ limit: FEED_PAGE_SIZE, offset: 0, includeSelf: true })
+      .then(result => {
+        setFeedState(firstPageFeedState(result));
+      });
+  }, []);
+
+  // Reconcile a live feed event WITHOUT collapsing pagination. A stream event
+  // means "something changed on your feed", so fetch page one and dedupe-merge
+  // the fresh items into the existing list — which may already span several
+  // "Load more" pages — while preserving the pagination cursor (nextOffset /
+  // hasMore). This is deliberately NOT `refetchFeed`: resetting to page one on
+  // every event would discard every older page the viewer expanded (oxoxDev
+  // review, #4994). New items sort to the top; already-loaded pages stay put.
+  const mergeLiveFeedUpdate = useCallback(() => {
+    void apiClient.graphql
+      .homeFeed({ limit: FEED_PAGE_SIZE, offset: 0, includeSelf: true })
+      .then(result => {
+        if (!mountedRef.current) return;
+        const page = Array.isArray(result?.items) ? result.items : [];
+        setFeedState(prev => {
+          // Still loading / errored → no expanded pages to preserve; render one.
+          if (prev.status !== 'ok') return firstPageFeedState(result);
+          const seen = new Set(prev.items.map(item => item.post.postId));
+          const fresh = page.filter(item => !seen.has(item.post.postId));
+          if (fresh.length === 0) return prev; // nothing new to surface
+          const merged = sortedHomeFeedItems({ items: [...prev.items, ...fresh] });
+          log('live feed event merged', { fresh: fresh.length, total: merged.length });
+          return { ...prev, items: merged };
+        });
+      })
+      .catch((err: unknown) => {
+        if (!mountedRef.current) return;
+        log('live feed merge failed: %s', String(err));
+      });
+  }, []);
+
+  // ── Start / stop the viewer's own feed stream ──────────────────────────────
+  // Open the stream while a resolved wallet is present; stop it on unmount /
+  // identity change. Failures are non-fatal — the feed still works via the
+  // mount fetch + explicit refetches, just without live push. Mirrors the
+  // InboxPanel/DM stream lifecycle (start-after-cancel guard included) so a
+  // rapid identity change can't orphan a live backend subscription (#4926).
+  useEffect(() => {
+    if (!myAgentId) return;
+    let cancelled = false;
+    void apiClient.streams
+      .start('feed', myAgentId)
+      .then(res => {
+        if (cancelled) {
+          void apiClient.streams.stop(res.streamId).catch(err => {
+            log('feed stream stop-after-cancel failed (%s): %s', res.streamId, String(err));
+          });
+          return;
+        }
+        feedStreamRef.current = res.streamId;
+        log('feed stream started: %s', res.streamId);
+      })
+      .catch(err => {
+        log('feed stream start failed: %s', String(err));
+      });
+    return () => {
+      cancelled = true;
+      if (feedStreamRef.current !== null) {
+        const stopId = feedStreamRef.current;
+        void apiClient.streams.stop(stopId).catch(err => {
+          log('feed stream stop failed (%s): %s', stopId, String(err));
+        });
+        feedStreamRef.current = null;
+      }
+    };
+  }, [myAgentId]);
+
+  // Reconcile the open feed whenever a new stream event arrives. Key the effect
+  // on the NEWEST message's identity, not `streamMessages.length`: the stream
+  // buffer is capped at 100 (`useTinyplaceStream`), so once full its length
+  // plateaus and a length-keyed effect would stop firing while events keep
+  // arriving (Codex P2 / oxoxDev). The buffer appends a fresh object per event
+  // (`[...prev.slice(-99), msg]`), so the last element's identity advances
+  // monotonically even after the cap. Merge (not reset) so expanded pages stay.
+  const lastStreamMessage =
+    streamMessages.length > 0 ? streamMessages[streamMessages.length - 1] : null;
+  useEffect(() => {
+    if (!myAgentId || !lastStreamMessage) return;
+    log('feed stream event -> merging live feed update');
+    mergeLiveFeedUpdate();
+  }, [lastStreamMessage, myAgentId, mergeLiveFeedUpdate]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -786,7 +1019,7 @@ export default function FeedSection() {
   } else if (feedState.status === 'wallet_unconfigured') {
     body = (
       <StatusBlock
-        tone="text-content-secondary"
+        tone="neutral"
         title="Set up your wallet to view your feed"
         body="Your personalized feed uses your wallet identity. Set up or import a wallet in Settings to continue."
       />
@@ -794,7 +1027,7 @@ export default function FeedSection() {
   } else if (feedState.status === 'payment_required') {
     body = (
       <StatusBlock
-        tone="text-amber-600 dark:text-amber-400"
+        tone="warning"
         title="Access requires payment"
         body="Your wallet will be used to fulfill the x402 payment challenge."
       />
@@ -802,29 +1035,26 @@ export default function FeedSection() {
   } else if (feedState.status === 'error') {
     body = isWalletLocked(feedState.message) ? (
       <StatusBlock
-        tone="text-content-secondary"
+        tone="neutral"
         title="Unlock your wallet to view your feed"
         body="Your personalized feed uses your wallet identity. Import your recovery phrase in Settings to continue."
       />
     ) : (
-      <StatusBlock
-        tone="text-red-600 dark:text-red-400"
-        title="Failed to load"
-        body={feedState.message}
-      />
+      <StatusBlock tone="danger" title="Failed to load" body={feedState.message} />
     );
   } else if (feedState.items.length === 0) {
     body = (
       <StatusBlock
-        tone="text-content-muted"
+        tone="neutral"
         title="No posts in your feed yet"
         body="Follow some agents to see their posts here."
       />
     );
   } else {
+    const { items, hasMore, loadingMore, moreError, nextOffset } = feedState;
     body = (
       <div className="space-y-3">
-        {feedState.items.map(item => (
+        {items.map(item => (
           <PostCard
             key={item.post.postId}
             item={item}
@@ -841,12 +1071,40 @@ export default function FeedSection() {
             onDeletePost={handleDeletePost}
           />
         ))}
+
+        {moreError && (
+          <p className="text-center text-xs text-red-600 dark:text-red-400">
+            {t('agentWorld.feed.loadMoreError')}
+          </p>
+        )}
+
+        {hasMore && (
+          <div className="flex justify-center">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => loadMore(nextOffset)}>
+              {loadingMore ? t('agentWorld.feed.loadingMore') : t('agentWorld.feed.loadMore')}
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <PanelScaffold description="Social feed">
+      {streamStatus === 'connected' && (
+        <div className="mb-2 flex justify-end">
+          <span
+            data-testid="feed-live-indicator"
+            className="inline-flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+            {t('agentworld.feed.live', 'Live')}
+          </span>
+        </div>
+      )}
       {myAgentId && feedState.status === 'ok' && (
         <FeedComposer myAgentId={myAgentId} onPostCreated={refetchFeed} />
       )}

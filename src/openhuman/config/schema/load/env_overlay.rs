@@ -7,6 +7,31 @@ use super::dirs::MEMORY_SYNC_INTERVAL_SECS_ENV_VAR;
 use super::env::parse_env_bool;
 use std::path::PathBuf;
 
+/// Classification of an `OPENHUMAN_SHELL_HIDE_WINDOW` env value. Split out from
+/// the apply site (where the three cases differ only by log level) so the
+/// empty-vs-unrecognized distinction is unit-testable without capturing tracing
+/// output — a bare `VAR=` must classify as `Unset` (silent no-op), not
+/// `Unrecognized` (which warns).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ShellHideWindowParse {
+    /// Empty / whitespace-only — the var is present but has no value; treat as
+    /// absent (no change, no warning).
+    Unset,
+    /// A recognized boolean value.
+    Set(bool),
+    /// A non-empty value that isn't a recognized boolean — warn and ignore.
+    Unrecognized,
+}
+
+pub(super) fn classify_shell_hide_window(raw: &str) -> ShellHideWindowParse {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" => ShellHideWindowParse::Unset,
+        "1" | "true" | "yes" | "on" => ShellHideWindowParse::Set(true),
+        "0" | "false" | "no" | "off" => ShellHideWindowParse::Set(false),
+        _ => ShellHideWindowParse::Unrecognized,
+    }
+}
+
 impl Config {
     pub fn apply_env_overrides(&mut self) {
         use super::env::ProcessEnv;
@@ -25,7 +50,7 @@ impl Config {
 
         set_runtime_proxy_config(self.proxy.clone());
 
-        crate::openhuman::embeddings::rate_limit::set_embedding_rate_limit(
+        crate::openhuman::inference::embeddings::rate_limit::set_embedding_rate_limit(
             self.memory.embedding_rate_limit_per_min,
         );
     }
@@ -119,23 +144,25 @@ impl Config {
         }
 
         if let Some(flag) = env.get_any(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]) {
-            let normalized = flag.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => {
-                    self.shell.hide_window = true;
+            match classify_shell_hide_window(&flag) {
+                // An empty / whitespace-only value means the var is present but
+                // unset (common when a `.env` or launcher exports `VAR=`). Treat
+                // it as absent — keep the current value rather than warning on
+                // every boot. Trace-level so the no-op stays diagnosable without
+                // the INFO/WARN noise this change exists to remove.
+                ShellHideWindowParse::Unset => tracing::trace!(
+                    "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW empty value treated as unset; \
+                     keeping hide_window={}",
+                    self.shell.hide_window
+                ),
+                ShellHideWindowParse::Set(value) => {
+                    self.shell.hide_window = value;
                     tracing::debug!(
                         value = %flag,
-                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=true"
+                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window={value}"
                     );
                 }
-                "0" | "false" | "no" | "off" => {
-                    self.shell.hide_window = false;
-                    tracing::debug!(
-                        value = %flag,
-                        "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW applied: hide_window=false"
-                    );
-                }
-                _ => tracing::warn!(
+                ShellHideWindowParse::Unrecognized => tracing::warn!(
                     value = %flag,
                     "[config][shell] OPENHUMAN_SHELL_HIDE_WINDOW unrecognized value ignored; \
                      keeping current hide_window={}",
@@ -234,6 +261,11 @@ impl Config {
         if let Some(key) = env.get_any(&["OPENHUMAN_QUERIT_API_KEY", "QUERIT_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.querit.api_key = Some(key);
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_EXA_API_KEY", "EXA_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.exa.api_key = Some(key);
             }
         }
         if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
@@ -420,6 +452,33 @@ impl Config {
         }
         if let Some(command) = env.get("OPENHUMAN_RUNTIME_PYTHON_PREFERRED_COMMAND") {
             self.runtime_python.preferred_command = command.trim().to_string();
+        }
+
+        // --- Shared language-runtime pool (#5106) --------------------------
+        if let Some(flag) = env.get("OPENHUMAN_RUNTIME_POOL_ENABLED") {
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_RUNTIME_POOL_ENABLED", &flag) {
+                self.runtime_pool.enabled = enabled;
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS") {
+            match raw.trim().parse::<usize>() {
+                Ok(n) => self.runtime_pool.node.max_workers = n,
+                Err(e) => tracing::warn!(
+                    value = %raw,
+                    error = %e,
+                    "[config] ignoring invalid OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS"
+                ),
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS") {
+            match raw.trim().parse::<usize>() {
+                Ok(n) => self.runtime_pool.python.max_workers = n,
+                Err(e) => tracing::warn!(
+                    value = %raw,
+                    error = %e,
+                    "[config] ignoring invalid OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS"
+                ),
+            }
         }
 
         // --- TokenJuice content router -------------------------------------
@@ -940,8 +999,8 @@ impl Config {
             }
         }
         // "Super context" — harness-driven first-turn context collection.
-        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
-        // the canonical short name and the namespaced form.
+        // Off by default (expensive); `OPENHUMAN_SUPER_CONTEXT=1` opts in.
+        // Accepts the canonical short name and the namespaced form.
         if let Some(flag) = env
             .get("OPENHUMAN_SUPER_CONTEXT")
             .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))
@@ -953,7 +1012,7 @@ impl Config {
             }
         }
 
-        let context_default = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
+        let context_default = crate::openhuman::agent::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
         let context_env_set = env.contains("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES");
         if !context_env_set
             && self.context.tool_result_budget_bytes == context_default

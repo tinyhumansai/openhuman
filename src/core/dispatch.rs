@@ -109,7 +109,19 @@ pub const UNKNOWN_METHOD_PREFIX: &str = "unknown method: ";
 /// This also covers retired feature calls from older clients when no safe
 /// canonical handler exists (#3565: `openhuman.memory_tree_create_namespace`).
 ///
-/// Each miss previously produced recurring Sentry ERROR events with zero user
+/// `openhuman.harness_init_status` (#5157) is in the list for a *different*
+/// reason and must not be read as retired — it is a **live, registered**
+/// method (`harness_init::all_harness_init_registered_controllers`, tagged
+/// `DomainGroup::Platform`). It only misses when the caller and the running
+/// core disagree about the surface: an older core behind a newer UI bundle, a
+/// runtime `DomainSet` without `Platform` (e.g. `DomainSet::harness()`), or a
+/// slim feature build. Those are legitimate configurations, not core defects,
+/// so the miss stays debug-only — but do **not** delete the controller on the
+/// strength of this entry. `harness_init_status_is_registered_in_a_full_build`
+/// below pins that the method really is served, so a genuine regression fails
+/// a test instead of being silently swallowed by this allow-list.
+///
+/// Each miss previously produced recurring Sentry events with zero user
 /// impact. The transport layer keeps these debug-only (never captured). The
 /// matching health-method *aliases* land separately in `legacy_aliases`
 /// (#3566), which depends on this severity change.
@@ -120,6 +132,7 @@ const KNOWN_PROBE_METHODS: &[&str] = &[
     "auth.status",
     "config/get",
     "openhuman.memory_tree_create_namespace",
+    "openhuman.harness_init_status",
 ];
 
 /// Returns `true` when `method` is a known non-actionable unknown method name
@@ -376,6 +389,7 @@ mod tests {
             "auth.status",
             "config/get",
             "openhuman.memory_tree_create_namespace",
+            "openhuman.harness_init_status",
         ] {
             assert!(
                 is_known_probe_method(m),
@@ -392,7 +406,29 @@ mod tests {
         assert!(!is_known_probe_method(""));
     }
 
+    /// `openhuman.harness_init_status` is allow-listed as a debug-only miss so
+    /// client/core surface skew stops paging Sentry (#5157) — but it is a
+    /// **live** method, not a retired one. That allow-list entry means a
+    /// genuine regression (controller dropped from the registry) would go
+    /// completely silent: no error, no warn, no Sentry event. This test is the
+    /// replacement signal — if the method stops being served in a full build,
+    /// this fails instead of the regression shipping unnoticed.
+    #[test]
+    fn harness_init_status_is_registered_in_a_full_build() {
+        let served: Vec<String> = crate::core::all::all_controller_schemas()
+            .iter()
+            .map(crate::core::all::rpc_method_name)
+            .collect();
+        assert!(
+            served.iter().any(|m| m == "openhuman.harness_init_status"),
+            "harness_init_status must remain a registered controller — it is \
+             allow-listed in KNOWN_PROBE_METHODS for client/core skew only, so \
+             losing the real handler would be silently swallowed"
+        );
+    }
+
     #[tokio::test]
+    #[cfg(feature = "channels")]
     async fn dispatch_dotted_channel_list_aliases_route_to_registry() {
         for method in ["channels.list", "openhuman.channels.list"] {
             let out = dispatch(test_state(), method, json!({}))

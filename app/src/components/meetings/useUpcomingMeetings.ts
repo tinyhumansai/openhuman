@@ -14,7 +14,7 @@ const log = debug('meetings:upcoming');
 
 const POLL_INTERVAL_MS = 60_000;
 
-export interface UseUpcomingMeetingsResult {
+interface UseUpcomingMeetingsResult {
   meetings: UpcomingMeeting[];
   loading: boolean;
   error: string | null;

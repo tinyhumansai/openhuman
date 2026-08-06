@@ -12,11 +12,11 @@
 //! # Fresh workspace (forces cold-start path)
 //! rm -rf /tmp/mt-smoke
 //! OPENHUMAN_WORKSPACE=/tmp/mt-smoke \
-//!   cargo run --bin memory-tree-init-smoke -- 32
+//!   cargo run --features bin-tools --bin memory-tree-init-smoke -- 32
 //!
 //! # Re-run against warm DB (should also be Ok; exercises fast path)
 //! OPENHUMAN_WORKSPACE=/tmp/mt-smoke \
-//!   cargo run --bin memory-tree-init-smoke -- 32
+//!   cargo run --features bin-tools --bin memory-tree-init-smoke -- 32
 //! ```
 //!
 //! Arg is thread count (default 16, must be > 0). Higher = more contention.
@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory_store::chunks::store::with_connection;
+use openhuman_core::openhuman::memory::store::chunks::store::with_connection;
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -57,8 +57,10 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut cfg = Config::default();
-    cfg.workspace_dir = workspace.clone();
+    let cfg = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
 
     let db_path = workspace.join("memory_tree").join("chunks.db");
     let cold = !db_path.exists();

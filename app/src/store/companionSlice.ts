@@ -2,29 +2,30 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import { resetUserScopedState } from './resetActions';
 
-// ── Types matching Rust `desktop_companion/types.rs` ─────────────────
+// ── Types matching the Tauri-side companion module ───────────────────
 
 /** Matches `CompanionState` enum (serde rename_all = "snake_case"). */
-export type CompanionState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'pointing' | 'error';
+export type CompanionState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
 
 /** Matches `CompanionConfig` struct. */
 export interface CompanionConfig {
   hotkey: string;
   activation_mode: string;
   ttl_secs: number;
-  capture_screen: boolean;
-  include_app_context: boolean;
 }
 
-/** Matches `CompanionStateChangedEvent` — Socket.IO payload. */
+/**
+ * Matches the `companion://state_changed` Tauri event payload
+ * (`CompanionStateChangedEvent`, serialized camelCase). Replaces the old
+ * Socket.IO `companion:state_changed` snake_case payload.
+ */
 export interface CompanionStateChangedEvent {
-  session_id: string;
+  sessionId: string;
   state: CompanionState;
-  previous_state: CompanionState;
-  message?: string;
+  previousState: CompanionState;
 }
 
-/** Matches `CompanionSessionStatus` — RPC response. */
+/** Matches `CompanionSessionStatus` — command response (snake_case). */
 export interface CompanionSessionStatus {
   active: boolean;
   state: CompanionState;
@@ -76,11 +77,9 @@ const companionSlice = createSlice({
     setCompanionState(state, action: PayloadAction<CompanionStateChangedEvent>) {
       const event = action.payload;
       state.state = event.state;
-      state.sessionId = event.session_id;
+      state.sessionId = event.sessionId;
       state.sessionActive = event.state !== 'idle' && event.state !== 'error';
-      if (event.state === 'error') {
-        if (event.message) state.lastError = event.message;
-      } else {
+      if (event.state !== 'error') {
         // Clear stale error once the session recovers to a healthy state.
         state.lastError = null;
       }
@@ -111,7 +110,7 @@ export const { setCompanionState, setSessionActive, setConfig, setLastError, cle
   companionSlice.actions;
 
 // ── Selectors ────────────────────────────────────────────────────────
-// Selectors tolerate a missing `companion` slice so consumers (e.g. BottomTabBar)
+// Selectors tolerate a missing `companion` slice so consumers (e.g. SidebarNav)
 // don't crash inside test harnesses that mock the store without this slice.
 
 type MaybeCompanionRoot = { companion?: CompanionSliceState };

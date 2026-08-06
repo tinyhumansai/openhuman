@@ -3,7 +3,7 @@
 //! Controls the TinyJuice content-aware tool-output compaction engine: which
 //! compressors are enabled, the Compress-Cache-Retrieve (CCR) store limits, and
 //! the opt-in Python/ML plain-text compressor. Installed into the runtime at
-//! startup via [`crate::openhuman::tokenjuice::install_from_config`].
+//! startup via [`crate::openhuman::inference::tokenjuice::install_from_config`].
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

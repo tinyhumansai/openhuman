@@ -14,7 +14,7 @@ import closeSrc from '../../assets/audio/ptt-close.wav';
 import errorSrc from '../../assets/audio/ptt-error.wav';
 import openSrc from '../../assets/audio/ptt-open.wav';
 
-export type ChimeKind = 'open' | 'close' | 'error';
+type ChimeKind = 'open' | 'close' | 'error';
 
 const sources: Record<ChimeKind, string> = { open: openSrc, close: closeSrc, error: errorSrc };
 

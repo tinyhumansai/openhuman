@@ -30,10 +30,10 @@
 //! [`SubagentEntry::AgentId`]: crate::openhuman::agent::harness::definition::SubagentEntry::AgentId
 //! [`SubagentEntry::Skills`]: crate::openhuman::agent::harness::definition::SubagentEntry::Skills
 
+use crate::openhuman::agent::context::prompt::ConnectedIntegration;
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, SubagentEntry,
 };
-use crate::openhuman::context::prompt::ConnectedIntegration;
 
 // SpawnWorkerThreadTool import kept commented while the worker-thread spawn is
 // temporarily disabled (see tinyhumansai/openhuman#1624).
@@ -281,7 +281,8 @@ mod tests {
             sandbox_mode: SandboxMode::None,
             background: false,
             trigger_memory_agent: Default::default(),
-            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
+            tokenjuice_compression:
+                crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
             subagents: vec![],
             delegate_name: delegate_name.map(String::from),
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,

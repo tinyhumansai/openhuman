@@ -18,6 +18,80 @@ fn full_policy() -> SecurityPolicy {
     }
 }
 
+// -- Cross-profile write guard (1b) -------------------------------
+//
+// These drive the guard through the real `validate_parent_path` gate that every
+// file write tool funnels through, proving the tightening lands at the shared
+// call site (not just in the standalone classifier). `active_profile = None`
+// keeps the exact same setup passing, pinning the byte-identical shared path.
+
+/// Build a `<root>/projects/profiles/{alice,bob}` layout and a policy whose cwd
+/// is scoped to alice (as `security_for_tool_context` would), with the guard
+/// optionally armed for alice against the broad action root.
+fn cross_profile_policy(arm_for_alice: bool) -> (tempfile::TempDir, PathBuf, SecurityPolicy) {
+    let root = tempfile::tempdir().expect("root tempdir");
+    let action_root = root.path().join("projects");
+    let profiles = action_root.join("profiles");
+    for id in ["alice", "bob"] {
+        std::fs::create_dir_all(profiles.join(id)).unwrap();
+    }
+    let alice_dir = profiles.join("alice");
+    let policy = SecurityPolicy {
+        autonomy: AutonomyLevel::Full,
+        // Everything under `root` is inside the workspace, so the sibling path
+        // clears containment and reaches the cross-profile check.
+        workspace_dir: root.path().to_path_buf(),
+        // Mirrors the per-tool-call override: cwd scoped to the profile dir.
+        action_dir: alice_dir.clone(),
+        workspace_only: false,
+        // Clear the default forbidden list (it blocks /tmp, /var, …, which the
+        // OS tempdir lives under) so the guard is what does the blocking.
+        forbidden_paths: Vec::new(),
+        active_profile: arm_for_alice.then(|| ActiveProfileGuard {
+            profile_id: "alice".to_string(),
+            action_dir: action_root.clone(),
+        }),
+        ..SecurityPolicy::default()
+    };
+    (root, action_root, policy)
+}
+
+#[tokio::test]
+async fn cross_profile_guard_blocks_write_into_sibling_profile() {
+    let (_root, action_root, policy) = cross_profile_policy(true);
+    let sibling = action_root.join("profiles").join("bob").join("loot.txt");
+    let err = policy
+        .validate_parent_path(sibling.to_str().unwrap())
+        .await
+        .expect_err("write into sibling profile must be blocked");
+    assert!(err.contains(POLICY_BLOCKED_MARKER), "err: {err}");
+    assert!(err.contains("bob"), "error should name the sibling: {err}");
+}
+
+#[tokio::test]
+async fn cross_profile_guard_allows_write_into_own_profile() {
+    let (_root, action_root, policy) = cross_profile_policy(true);
+    let own = action_root.join("profiles").join("alice").join("notes.txt");
+    let resolved = policy
+        .validate_parent_path(own.to_str().unwrap())
+        .await
+        .expect("write into own profile must be allowed");
+    assert!(resolved.ends_with("notes.txt"));
+}
+
+#[tokio::test]
+async fn cross_profile_guard_disarmed_allows_sibling_write() {
+    // Same setup, guard OFF (active_profile None): the sibling write is allowed,
+    // proving the guard only tightens and the shared path is byte-identical.
+    let (_root, action_root, policy) = cross_profile_policy(false);
+    let sibling = action_root.join("profiles").join("bob").join("loot.txt");
+    let resolved = policy
+        .validate_parent_path(sibling.to_str().unwrap())
+        .await
+        .expect("with the guard disarmed the sibling write must be allowed");
+    assert!(resolved.ends_with("loot.txt"));
+}
+
 // -- AutonomyLevel ------------------------------------------------
 
 #[test]
@@ -830,6 +904,30 @@ fn relative_paths_allowed() {
 }
 
 #[test]
+fn relative_personalities_path_resolves_under_action_dir() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let workspace = tmp.path().join("state");
+    let action = tmp.path().join("projects");
+    std::fs::create_dir_all(workspace.join("personalities").join("alice")).unwrap();
+    std::fs::create_dir_all(action.join("personalities")).unwrap();
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        action_dir: action,
+        ..SecurityPolicy::default()
+    };
+
+    assert!(policy.is_path_string_allowed("personalities/alice.md"));
+    assert!(!policy.is_path_string_allowed(
+        workspace
+            .join("personalities")
+            .join("alice")
+            .join("SOUL.md")
+            .to_string_lossy()
+            .as_ref()
+    ));
+}
+
+#[test]
 fn path_traversal_blocked() {
     let p = default_policy();
     assert!(!p.is_path_string_allowed("../etc/passwd"));
@@ -1047,6 +1145,25 @@ fn from_config_maps_all_fields() {
     // The "Always allow" allowlist is carried onto the policy so the gate can
     // skip prompting for these tools.
     assert_eq!(policy.auto_approve, vec!["shell", "file_write"]);
+}
+
+#[test]
+fn policy_from_config_carries_auto_approve_all() {
+    let workspace = PathBuf::from("/tmp/test-workspace");
+
+    let enabled_config = crate::openhuman::config::AutonomyConfig {
+        auto_approve_all: true,
+        ..crate::openhuman::config::AutonomyConfig::default()
+    };
+    let enabled_policy = SecurityPolicy::from_config(&enabled_config, &workspace, &workspace);
+    assert!(enabled_policy.auto_approve_all);
+
+    let disabled_config = crate::openhuman::config::AutonomyConfig {
+        auto_approve_all: false,
+        ..crate::openhuman::config::AutonomyConfig::default()
+    };
+    let disabled_policy = SecurityPolicy::from_config(&disabled_config, &workspace, &workspace);
+    assert!(!disabled_policy.auto_approve_all);
 }
 
 // -- Default policy -----------------------------------------------
@@ -2542,12 +2659,29 @@ fn is_workspace_internal_path_blocks_state_dirs() {
     };
     assert!(policy.is_workspace_internal_path(&ws.join("memory")));
     assert!(policy.is_workspace_internal_path(&ws.join("memory").join("namespaces")));
+    assert!(policy.is_workspace_internal_path(&ws.join("memory-alice").join("memory.db")));
+    assert!(policy.is_workspace_internal_path(&ws.join("memory_tree-alice").join("tree")));
+    assert!(policy.is_workspace_internal_path(
+        &ws.join("session_raw-alice")
+            .join("1700000000_orchestrator.jsonl")
+    ));
     assert!(policy.is_workspace_internal_path(&ws.join("sessions")));
     assert!(policy.is_workspace_internal_path(&ws.join("state")));
     assert!(policy.is_workspace_internal_path(&ws.join("cron")));
     assert!(policy.is_workspace_internal_path(&ws.join("memory_tree")));
+    assert!(
+        policy.is_workspace_internal_path(&ws.join("personalities").join("alice").join("SOUL.md"))
+    );
+    assert!(policy.is_workspace_internal_path(
+        &ws.join("personalities")
+            .join("alice")
+            .join("skills")
+            .join("private-skill")
+            .join("SKILL.md")
+    ));
     assert!(policy.is_workspace_internal_path(&ws.join("approval")));
     assert!(policy.is_workspace_internal_path(&ws.join("mcp_clients")));
+    assert!(policy.is_workspace_internal_path(&ws.join("codegraph")));
 }
 
 #[test]
@@ -2597,6 +2731,37 @@ fn is_path_string_allowed_blocks_workspace_internal() {
         !policy.is_path_string_allowed(&memory_path.to_string_lossy()),
         "absolute path to workspace internal dir should be blocked"
     );
+}
+
+#[tokio::test]
+async fn trusted_root_cannot_expose_workspace_internal_state() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let ws = tmp.path().join("workspace");
+    let personality = ws.join("personalities").join("alice");
+    std::fs::create_dir_all(&personality).expect("create profile home");
+    let soul = personality.join("SOUL.md");
+    std::fs::write(&soul, "private identity").expect("write soul");
+    let policy = SecurityPolicy {
+        workspace_dir: ws.clone(),
+        action_dir: ws.clone(),
+        workspace_only: false,
+        trusted_roots: vec![TrustedRoot {
+            path: ws.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+        ..SecurityPolicy::default()
+    };
+
+    assert!(!policy.is_path_string_allowed(&soul.to_string_lossy()));
+    assert!(policy.validate_path(&soul.to_string_lossy()).await.is_err());
+    assert!(policy
+        .validate_parent_path(
+            &ws.join("session_raw-alice")
+                .join("new.jsonl")
+                .to_string_lossy()
+        )
+        .await
+        .is_err());
 }
 
 #[test]

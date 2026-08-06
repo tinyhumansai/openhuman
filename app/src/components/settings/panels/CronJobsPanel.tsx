@@ -2,6 +2,8 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { loadAgentProfiles, selectAgentProfiles } from '../../../store/agentProfileSlice';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   type CoreCronJob,
   type CoreCronRun,
@@ -23,6 +25,8 @@ const loadCronJobsLog = createDebug('app:settings:CronJobsPanel:loadCronSkills')
 
 const CronJobsPanel = () => {
   const { t } = useT();
+  const dispatch = useAppDispatch();
+  const profiles = useAppSelector(selectAgentProfiles);
   const formatCronError = useCallback(
     (key: string, message: string) => t(key).replace('{message}', message),
     [t]
@@ -69,6 +73,11 @@ const CronJobsPanel = () => {
   useEffect(() => {
     void loadCoreCronJobsOnly();
   }, [loadCoreCronJobsOnly]);
+
+  // Populate the agent-profile attribution picker + job-list labels.
+  useEffect(() => {
+    void dispatch(loadAgentProfiles());
+  }, [dispatch]);
 
   const toggleCoreJob = async (job: CoreCronJob) => {
     const key = `core-toggle:${job.id}`;
@@ -207,6 +216,7 @@ const CronJobsPanel = () => {
           <CoreJobList
             loading={loading}
             coreJobs={coreJobs}
+            profiles={profiles}
             coreRunsByJob={coreRunsByJob}
             coreBusyKey={coreBusyKey}
             onToggleCoreJob={job => void toggleCoreJob(job)}
@@ -235,6 +245,7 @@ const CronJobsPanel = () => {
           key="cron-form-create"
           mode="create"
           open={true}
+          profiles={profiles}
           onClose={() => setFormOpen(false)}
           onCreate={params => handleCreate(params)}
           onUpdate={handleUpdate}
@@ -248,6 +259,7 @@ const CronJobsPanel = () => {
           mode="edit"
           job={editingJob}
           open={true}
+          profiles={profiles}
           onClose={() => setEditingJob(null)}
           onCreate={handleCreate}
           onUpdate={handleUpdate}

@@ -9,7 +9,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 
 export type JoinPolicy = 'auto' | 'ask' | 'skip';
 
-export interface JoinPolicyToggleProps {
+interface JoinPolicyToggleProps {
   value: JoinPolicy;
   onChange: (v: JoinPolicy) => void;
   disabled?: boolean;

@@ -45,10 +45,7 @@ pub use models::{
 };
 
 pub use provider_factory::{
-    canonical_china_provider_name, create_backend_inference_provider,
-    create_intelligent_routing_provider, create_resilient_provider,
-    create_resilient_provider_with_options, create_routed_provider,
-    create_routed_provider_with_options, is_glm_alias, is_minimax_alias, is_moonshot_alias,
+    canonical_china_provider_name, is_glm_alias, is_minimax_alias, is_moonshot_alias,
     is_qianfan_alias, is_qwen_alias, is_qwen_oauth_alias, is_zai_alias, list_providers,
     ProviderInfo, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
 };
@@ -58,7 +55,7 @@ pub use provider_factory::{
 #[cfg(test)]
 pub(crate) use super::openai_codex::openai_codex_client_version;
 #[cfg(test)]
-pub(crate) use super::openhuman_backend;
+pub(crate) use super::openhuman_backend_model;
 
 // ── test companion ──
 

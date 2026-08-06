@@ -151,10 +151,6 @@ vi.mock('../../hooks/useStickToBottom', () => ({
   useStickToBottom: vi.fn(() => ({ containerRef: { current: null }, endRef: { current: null } })),
 }));
 
-vi.mock('../../features/autocomplete/useAutocompleteSkillStatus', () => ({
-  useAutocompleteSkillStatus: vi.fn(() => ({ status: 'idle', skills: [] })),
-}));
-
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 // The composer gates image attachments on the resolved model's vision capability

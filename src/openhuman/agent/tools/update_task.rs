@@ -6,13 +6,13 @@
 //! own thread) can advance the task it's working: move it to
 //! `in_progress`/`blocked`/`done`, or update its objective/notes/evidence/blocker.
 //!
-//! It is a thin wrapper over [`crate::openhuman::todos::ops::edit`], which
+//! It is a thin wrapper over [`crate::openhuman::threads::todos::ops::edit`], which
 //! applies the status move + field updates atomically, enforces the
 //! single-`in_progress` invariant, and emits the board-progress event that the
 //! Tasks board UI listens on.
 
-use crate::openhuman::task_sources::TASK_SOURCES_THREAD_ID;
-use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+use crate::openhuman::integrations::task_sources::TASK_SOURCES_THREAD_ID;
+use crate::openhuman::threads::todos::ops::{self, BoardLocation, CardPatch};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -113,21 +113,21 @@ impl Tool for UpdateTaskTool {
             Err(err) => return Ok(ToolResult::error(err)),
         };
 
-        Ok(apply(&location, &id, patch))
+        Ok(apply(&location, &id, patch).await)
     }
 }
 
 /// Apply the move/update to the card and render the result. Split out from
 /// `execute` so the edit + response shaping is testable without a fork/thread
 /// context (which `resolve_location` needs).
-fn apply(location: &BoardLocation, id: &str, patch: CardPatch) -> ToolResult {
+async fn apply(location: &BoardLocation, id: &str, patch: CardPatch) -> ToolResult {
     tracing::info!(
         card_id = %id,
         thread_id = ?location.thread_id(),
         status = ?patch.status,
         "[tool][update_task] move/update task card"
     );
-    match ops::edit(location, id, patch) {
+    match ops::edit(location, id, patch).await {
         Ok(snap) => {
             let payload = json!({
                 "threadId": snap.thread_id,

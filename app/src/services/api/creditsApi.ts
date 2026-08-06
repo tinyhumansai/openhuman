@@ -79,7 +79,7 @@ export interface TeamUsage {
   insights: TeamUsageInsights;
 }
 
-export interface TopUpResult {
+interface TopUpResult {
   url: string;
   gatewayTransactionId: string;
   amountUsd: number;
@@ -95,7 +95,7 @@ export interface CreditTransaction {
   createdAt: string;
 }
 
-export interface PaginatedTransactions {
+interface PaginatedTransactions {
   transactions: CreditTransaction[];
   total: number;
 }
@@ -117,7 +117,7 @@ export interface AutoRechargeSettings {
   lastError: string | null;
 }
 
-export interface AutoRechargeUpdatePayload {
+interface AutoRechargeUpdatePayload {
   enabled?: boolean;
   thresholdUsd?: number;
   rechargeAmountUsd?: number;
@@ -148,26 +148,26 @@ export interface SavedCard {
   billingDetails: CardBillingDetails;
 }
 
-export interface CardsData {
+interface CardsData {
   customerId: string;
   defaultPaymentMethodId: string;
   cards: SavedCard[];
 }
 
-export interface SetupIntentData {
+interface SetupIntentData {
   clientSecret: string;
   customerId: string;
   setupIntentId: string;
 }
 
-export interface UpdateCardPayload {
+interface UpdateCardPayload {
   isDefault?: boolean;
   billingDetails?: CardBillingDetails;
 }
 
 // ── Coupon types ────────────────────────────────────────────────────────────
 
-export interface CouponRedeemResult {
+interface CouponRedeemResult {
   couponCode: string;
   amountUsd: number;
   pending: boolean;

@@ -1,8 +1,11 @@
+use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::config::{
     build_runtime_proxy_client_with_timeouts, MultimodalConfig, MultimodalFileConfig,
 };
-use crate::openhuman::inference::provider::ChatMessage;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use flate2::read::GzDecoder;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -32,6 +35,7 @@ const FILE_MARKER_PREFIX: &str = "[FILE:";
 /// may run before the worker is abandoned and the file degrades to a
 /// metadata-only reference. PDFs known to choke the parser (extremely
 /// large, encrypted, malformed) must not stall a chat turn.
+#[cfg(feature = "documents")]
 const PDF_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Worst-case length budget reserved for the rendered truncation
@@ -195,19 +199,89 @@ fn latest_user_message(messages: &[ChatMessage]) -> Option<&ChatMessage> {
     messages.iter().rev().find(|m| m.role == "user")
 }
 
+/// Longest bare reference still treated as a possible filesystem path.
+///
+/// 64 base64 characters decode to 48 bytes. No real image comes in under that
+/// (a minimal GIF is ~35 bytes, the smallest valid PNG ~67), so a path-prefixed
+/// reference this short cannot be image data.
+const MAX_PATH_SHAPED_REF_LEN: usize = 64;
+
+/// `true` when a **bare** reference is shaped like an absolute filesystem path
+/// rather than base64 image data.
+///
+/// Shape alone cannot decide this: `/` is in the standard base64 alphabet, and
+/// a bare base64 JPEG legitimately begins `/9j/`. The length bound is what
+/// separates the two — a real payload carrying that prefix runs to thousands of
+/// characters, while `/tmp/foo` does not.
+///
+/// Relative paths (`./x`, `~/x`, `../x`) need no check here: `.` and `~` are
+/// outside the base64 alphabet, so the decode below already rejects them, as it
+/// does every Windows path (`:` and `\` are likewise outside it).
+///
+/// **Known residual ambiguity:** a relative path built only from base64
+/// characters that also decodes cleanly — `photos/cats1` — is genuinely
+/// indistinguishable from a short payload and is still accepted. Tightening
+/// that would start rejecting real base64, so it is left alone deliberately.
+/// The window is narrower than it looks: the length must not be `4n + 1`, and a
+/// partial trailing group must carry zero spare bits, which an arbitrary word
+/// rarely does.
+fn looks_like_absolute_path(payload: &str) -> bool {
+    payload.starts_with('/') && payload.len() < MAX_PATH_SHAPED_REF_LEN
+}
+
+/// The base64 payload Ollama's `images` array expects, or `None` when
+/// `image_ref` does not carry one.
+///
+/// Accepts a `data:` URI (payload after the comma) or a bare base64 string.
+///
+/// **Both forms are validated as base64** (#5146 P6). This used to return any
+/// non-`data:` string verbatim, so a caller that passed a filesystem path — a
+/// very natural reading of the `image_refs` parameter name — had that path
+/// forwarded to Ollama as if it were image bytes, and got back
+/// `illegal base64 data at input byte 19`. That error names neither the
+/// parameter nor the path, and points at Ollama rather than at the caller.
+/// Returning `None` instead lets the caller say something useful about which
+/// reference it could not use.
 pub fn extract_ollama_image_payload(image_ref: &str) -> Option<String> {
-    if image_ref.starts_with("data:") {
+    let is_data_uri = image_ref.starts_with("data:");
+    let payload = if is_data_uri {
         let comma_idx = image_ref.find(',')?;
-        let (_, payload) = image_ref.split_at(comma_idx + 1);
-        let payload = payload.trim();
-        if payload.is_empty() {
-            None
-        } else {
-            Some(payload.to_string())
-        }
+        image_ref.split_at(comma_idx + 1).1.trim()
     } else {
-        Some(image_ref.trim().to_string()).filter(|value| !value.is_empty())
+        image_ref.trim()
+    };
+    if payload.is_empty() {
+        return None;
     }
+    if !is_data_uri && looks_like_absolute_path(payload) {
+        tracing::debug!(
+            "[multimodal] image reference is shaped like a filesystem path, not image bytes"
+        );
+        return None;
+    }
+    // Decode to validate only — the encoded form is what goes on the wire, and
+    // re-encoding would just burn a copy of a multi-MB image. Accept both
+    // padded and unpadded alphabets: real data URIs are padded, but some
+    // producers omit the `=`, and rejecting those would be a new regression
+    // rather than the fix this is.
+    //
+    // Length picks the engine rather than trying both: a complete group
+    // (`len % 4 == 0`) is exactly what `STANDARD` accepts, with or without
+    // trailing `=`, and only a partial group needs `STANDARD_NO_PAD`. Trying
+    // both in sequence decoded a multi-MB image twice for every unpadded
+    // payload.
+    let is_base64 = if payload.len() % 4 == 0 {
+        STANDARD.decode(payload).is_ok()
+    } else {
+        STANDARD_NO_PAD.decode(payload).is_ok()
+    };
+    if !is_base64 {
+        tracing::debug!(
+            "[multimodal] image reference is not base64 (a filesystem path is not accepted here)"
+        );
+        return None;
+    }
+    Some(payload.to_string())
 }
 
 /// Strip every `[FILE:…]` marker from `content` and return the cleaned
@@ -1550,6 +1624,7 @@ fn extract_utf8_text(bytes: &[u8]) -> Result<String, String> {
 /// extracted text on success; on timeout / panic / parse error the
 /// caller degrades the file to [`FilePayload::Reference`] rather than
 /// surface the failure to the user (avoids Sentry noise on broken PDFs).
+#[cfg(feature = "documents")]
 async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
     let extraction = tokio::task::spawn_blocking(move || {
         pdf_extract::extract_text_from_mem(&bytes).map_err(|error| error.to_string())
@@ -1564,6 +1639,15 @@ async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
             PDF_EXTRACTION_TIMEOUT.as_secs()
         )),
     }
+}
+
+/// Disabled variant when the `documents` feature is off: `pdf-extract` is not
+/// compiled in, so signal failure and let the caller degrade the file to
+/// [`FilePayload::Reference`] — the same path a parse error / timeout takes.
+#[cfg(not(feature = "documents"))]
+async fn extract_pdf_text(_bytes: Vec<u8>) -> Result<String, String> {
+    log::debug!("[multimodal] pdf text extraction skipped: built without the `documents` feature");
+    Err("pdf text extraction disabled (built without the `documents` feature)".to_string())
 }
 
 /// Truncate `text` to at most `max_chars` Unicode scalar values, leaving

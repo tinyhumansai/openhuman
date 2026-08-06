@@ -27,6 +27,20 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # The entrypoint starts as root so it can repair the ownership of a volume
+    # Docker created as root:root, then drops to the `openhuman` user. Both
+    # steps need capabilities that `cap_drop: ALL` removes:
+    #   CHOWN  — heal mis-owned workspace files (scripts/docker-entrypoint-core.sh)
+    #   SETUID/SETGID — gosu's privilege drop; without them the container
+    #                   crash-loops before openhuman-core ever starts.
+    # Deny-by-default is preserved: these three are the entire grant.
+    # Alternative if you prefer zero capabilities: pin `user: "10001:10001"`,
+    # which makes the entrypoint exec the binary directly and skip the heal —
+    # at the cost of no longer being able to repair a root-owned volume.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     tmpfs:
       - /tmp
     ports:

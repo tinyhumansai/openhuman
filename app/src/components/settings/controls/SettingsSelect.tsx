@@ -1,8 +1,8 @@
 import { forwardRef, type SelectHTMLAttributes } from 'react';
 
-export type SettingsSelectSize = 'sm' | 'md';
+type SettingsSelectSize = 'sm' | 'md';
 
-export interface SettingsSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+interface SettingsSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   inputSize?: SettingsSelectSize;
   'data-testid'?: string;
 }

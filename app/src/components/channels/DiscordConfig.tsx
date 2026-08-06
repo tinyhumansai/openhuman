@@ -383,12 +383,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                   <input
                     type="checkbox"
                     checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
-                    onChange={event =>
-                      setClearMemoryOnDisconnect(prev => ({
-                        ...prev,
-                        [compositeKey]: event.currentTarget.checked,
-                      }))
-                    }
+                    onChange={event => {
+                      // See the sibling checkbox below / #5161: `currentTarget`
+                      // is null by the time a functional updater runs, so the
+                      // value has to be read synchronously in the handler.
+                      const { checked } = event.currentTarget;
+                      setClearMemoryOnDisconnect(prev => ({ ...prev, [compositeKey]: checked }));
+                    }}
                     className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                   />
                   <span className="min-w-0">
@@ -423,12 +424,13 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     <input
                       type="checkbox"
                       checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
-                      onChange={event =>
-                        setClearMemoryOnDisconnect(prev => ({
-                          ...prev,
-                          [compositeKey]: event.currentTarget.checked,
-                        }))
-                      }
+                      onChange={event => {
+                        // React resets `currentTarget` to null once the handler
+                        // returns, and the updater below runs later — read the
+                        // value synchronously (#5161).
+                        const { checked } = event.currentTarget;
+                        setClearMemoryOnDisconnect(prev => ({ ...prev, [compositeKey]: checked }));
+                      }}
                       className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                     />
                     <span className="min-w-0">

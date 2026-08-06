@@ -4,10 +4,7 @@ use super::dirs::{
     resolve_config_dirs_ignoring_env, resolve_runtime_config_dirs_with, ConfigResolutionSource,
 };
 use super::env::{EnvLookup, ProcessEnv, ProcessEnvWithoutWorkspace};
-use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_legacy_autocomplete_disabled_apps,
-    migrate_legacy_inference_url,
-};
+use super::migrate::{migrate_cloud_provider_slugs, migrate_legacy_inference_url};
 use super::secrets::{decrypt_config_secrets, encrypt_config_secrets};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -18,6 +15,128 @@ use tokio::io::AsyncWriteExt;
 
 static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<std::path::PathBuf>>> =
     OnceLock::new();
+
+/// Guards the "corrupted config read, resetting to defaults" warning so it
+/// fires at most once per process lifetime. Without this, a permanently
+/// non-UTF-8 config file floods telemetry with hundreds of identical
+/// `stream did not contain valid UTF-8` events (#5167).
+static WARNED_CONFIG_READ_FAILURE: OnceLock<Mutex<bool>> = OnceLock::new();
+
+/// Try to read `config_path`. On content corruption (non-UTF-8 bytes), rename
+/// the corrupted file to `<config_file>.corrupted.<timestamp>`, try the `.bak`
+/// backup, and if that also fails return an empty string so the caller's
+/// `parse_config_with_recovery` falls through to defaults.
+///
+/// Only triggers auto-recovery for **content** corruption (`InvalidData`), not
+/// for transient or permission errors (`PermissionDenied`, `NotFound`, etc.),
+/// which are propagated as errors so the caller can surface them to the user.
+///
+/// Rate-limits the warning to at most one per process lifetime so a
+/// permanently corrupted file does not flood telemetry (#5167).
+async fn read_config_with_recovery_or_default(config_path: &Path) -> Result<(String, bool)> {
+    let reads = || async {
+        match fs::read_to_string(config_path).await {
+            Ok(contents) => Ok(contents),
+            Err(error) => {
+                let ownership = describe_config_ownership(config_path).await;
+                Err(anyhow::Error::new(error).context(format!(
+                    "Failed to read config file: {}{ownership}",
+                    config_path.display()
+                )))
+            }
+        }
+    };
+
+    let result =
+        crate::openhuman::util::retry_with_backoff_async("read config file", 5, 20, reads).await;
+    match result {
+        Ok(contents) => Ok((contents, false)),
+        Err(e) => {
+            // Check if this is a content-corruption error (non-UTF-8).
+            // Only in that case do we auto-recover by renaming the file
+            // and falling back to backup/defaults. Other errors (permission
+            // denied, file not found after retries, etc.) are propagated
+            // so the caller surfaces them to the user.
+            let is_content_corruption = e.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|ioe| ioe.kind() == std::io::ErrorKind::InvalidData)
+            });
+
+            if !is_content_corruption {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    error = %format!("{e:#}"),
+                    "[config] failed to read config file"
+                );
+                return Err(e);
+            }
+
+            // Rate-limit the warning to once per process lifetime.  The
+            // MutexGuard *must* be scoped in its own block so it is dropped
+            // before any `.await` below -- holding a non-Send guard across
+            // an await would poison the future's Send bound (#5167).
+            {
+                let warned = WARNED_CONFIG_READ_FAILURE.get_or_init(|| Mutex::new(false));
+                let mut guard = warned.lock().unwrap_or_else(|e| e.into_inner());
+                if !*guard {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        error = %e,
+                        "[config] Config file contains non-UTF-8 content; \
+                         renaming to .corrupted and attempting recovery from backup"
+                    );
+                    *guard = true;
+                }
+            }
+
+            // Rename the corrupted file with a UNIX-timestamp suffix so it's
+            // recoverable by the user but does not block future config loads.
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let stem = config_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("config");
+            let corrupted_name = format!("{stem}.corrupted.{ts}");
+            let corrupted_path = config_path.with_file_name(&corrupted_name);
+            if let Err(rename_err) = std::fs::rename(config_path, &corrupted_path) {
+                tracing::warn!(
+                    src = %config_path.display(),
+                    dst = %corrupted_path.display(),
+                    error = %rename_err,
+                    "[config] Failed to rename corrupted config file; \
+                     subsequent loads will fail again"
+                );
+            }
+
+            // Try the backup.
+            let backup_path = config_path.with_extension("toml.bak");
+            match fs::read_to_string(&backup_path).await {
+                Ok(bak_contents) => {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        backup = %backup_path.display(),
+                        "[config] Read of config file failed; recovered from backup"
+                    );
+                    Ok((bak_contents, true))
+                }
+                Err(bak_err) => {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        backup = %backup_path.display(),
+                        error = %bak_err,
+                        "[config] Backup also unreadable after failed config read; \
+                         resetting to defaults"
+                    );
+                    Ok((String::new(), true))
+                }
+            }
+        }
+    }
+}
 
 pub(crate) async fn parse_config_with_recovery(
     config_path: &Path,
@@ -89,6 +208,56 @@ async fn parse_toml_off_worker(contents: String) -> Result<Config, String> {
     }
 }
 
+/// Marker appended to a config-read failure when the file is owned by a
+/// different uid than the process trying to read it.
+///
+/// `core::observability::expected_error_kind` keys on this to keep the failure
+/// paging instead of demoting it as an unpreventable user-environment denial:
+/// a uid mismatch on a file *we* created with mode 0600 is an OpenHuman defect
+/// (typically a container whose entrypoint chowned only the workspace
+/// directory, leaving a stale-uid `config.toml` inside it), not an ACL the user
+/// has to fix for us.
+pub(crate) const CONFIG_OWNER_MISMATCH_MARKER: &str = "[config owner mismatch]";
+
+/// Numeric ownership/permission facts about the config file, appended to the
+/// read-failure context.
+///
+/// An `EACCES` on a file whose `exists()` check just succeeded is fully
+/// explained by four numbers we can always obtain: the file's uid/gid, its
+/// mode, and the process's effective uid/gid. Without them the operator sees
+/// only "Permission denied (os error 13)" and cannot tell a foreign-owner
+/// container volume (our bug) from a genuine ACL / antivirus denial (theirs).
+///
+/// Numeric ids and mode bits are not PII, so this is safe both in the local log
+/// and in the error chain that reaches the client.
+#[cfg(unix)]
+async fn describe_config_ownership(path: &Path) -> String {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let Ok(meta) = fs::metadata(path).await else {
+        return String::new();
+    };
+    // SAFETY: `geteuid`/`getegid` take no arguments, mutate no process state,
+    // and are documented as always succeeding.
+    let (euid, egid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    let mismatch = if meta.uid() == euid {
+        String::new()
+    } else {
+        format!("{CONFIG_OWNER_MISMATCH_MARKER} ")
+    };
+    format!(
+        " {mismatch}(file uid={} gid={} mode={:04o}; process euid={euid} egid={egid})",
+        meta.uid(),
+        meta.gid(),
+        meta.permissions().mode() & 0o777,
+    )
+}
+
+#[cfg(not(unix))]
+async fn describe_config_ownership(_path: &Path) -> String {
+    String::new()
+}
+
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
@@ -141,9 +310,23 @@ impl Config {
         if config_path.exists() {
             #[cfg(unix)]
             {
-                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+                use std::{
+                    fs::Permissions,
+                    os::unix::fs::{MetadataExt, PermissionsExt},
+                };
                 if let Ok(meta) = fs::metadata(&config_path).await {
-                    if meta.permissions().mode() & 0o004 != 0 {
+                    // SAFETY: `geteuid` takes no arguments, mutates no process
+                    // state, and is documented as always succeeding.
+                    let euid = unsafe { libc::geteuid() };
+                    // Only harden a file we own. Chmod-ing a foreign-owned
+                    // config either fails with EPERM (log noise) or — with
+                    // CAP_FOWNER, e.g. a root-run CLI inside a container —
+                    // succeeds and strips the read bit that was the only thing
+                    // letting the *other* uid (the one that actually serves
+                    // requests) open it. Leaving a foreign 0644 config alone is
+                    // strictly safer: it still loads, and the entrypoint owns
+                    // repairing ownership.
+                    if meta.uid() == euid && meta.permissions().mode() & 0o004 != 0 {
                         let warned = WARNED_WORLD_READABLE_CONFIGS
                             .get_or_init(|| Mutex::new(HashSet::new()));
                         let already_fixed = warned
@@ -193,52 +376,84 @@ impl Config {
                 );
             }
 
-            let contents = crate::openhuman::util::retry_with_backoff_async(
-                "read config file",
-                5,
-                20,
-                || async {
-                    fs::read_to_string(&config_path).await.with_context(|| {
-                        format!("Failed to read config file: {}", config_path.display())
-                    })
-                },
-            )
-            .await?;
-            let (mut config, config_was_corrupted) =
-                parse_config_with_recovery(&config_path, &contents).await;
+            // Use the recovery-aware read path. If the file cannot be read
+            // (e.g. non-UTF-8 bytes), the corrupted file is renamed to
+            // `.corrupted.<timestamp>` and backup/defaults are attempted,
+            // with rate-limited error logging (#5167).
+            let (contents, read_was_recovered) =
+                read_config_with_recovery_or_default(&config_path).await?;
+
+            // When `read_config_with_recovery_or_default` returned an empty
+            // string (both primary and backup were unreadable), skip the TOML
+            // parse and use `Config::default()` directly.  An empty TOML would
+            // otherwise parse successfully with serde defaults (all fields at
+            // their `Option::None` / `vec![]` / `false` values) instead of
+            // the richer `Default` impl (issue #5167).
+            let (mut config, config_was_corrupted) = if read_was_recovered && contents.is_empty() {
+                (Config::default(), true)
+            } else {
+                parse_config_with_recovery(&config_path, &contents).await
+            };
+
+            // If the read itself was recovered (non-UTF-8 file renamed, backup
+            // used, or file renamed to .corrupted.ts), treat it as corruption so
+            // the recovery path below persists the default config.
+            let config_was_corrupted = config_was_corrupted || read_was_recovered;
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
             config.action_dir = resolve_action_dir(&config.action_dir_override);
-            migrate_legacy_autocomplete_disabled_apps(&mut config);
+            // Runtime-only signal consumed once at boot to raise a user-visible
+            // "settings were reset" notice (#5167). Set before env overrides so a
+            // later override can never mask that recovery happened.
+            config.recovered_from_corruption = config_was_corrupted;
             migrate_legacy_inference_url(&mut config);
             migrate_cloud_provider_slugs(&mut config);
             config.apply_env_overrides_from(env);
 
             if config_was_corrupted {
-                let corrupted_path = config_path.with_extension("toml.corrupted");
-                match fs::rename(&config_path, &corrupted_path).await {
-                    Ok(()) => {
-                        tracing::debug!(
-                            src = %config_path.display(),
-                            dst = %corrupted_path.display(),
-                            "[config] Renamed corrupted config; persisting recovered config"
+                let already_renamed = !tokio::fs::try_exists(&config_path).await.unwrap_or(false);
+                if already_renamed {
+                    // The read helper already renamed the corrupted file to
+                    // `.corrupted.<ts>` -- just persist the recovered config.
+                    tracing::debug!(
+                        path = %config_path.display(),
+                        read_recovered = read_was_recovered,
+                        "[config] Config file already renamed by read recovery; \
+                         persisting recovered config"
+                    );
+                    if let Err(e) = config.save().await {
+                        tracing::warn!(
+                            path = %config.config_path.display(),
+                            error = %e,
+                            "[config] Failed to persist recovered config to disk"
                         );
-                        if let Err(e) = config.save().await {
+                    }
+                } else {
+                    let corrupted_path = config_path.with_extension("toml.corrupted");
+                    match fs::rename(&config_path, &corrupted_path).await {
+                        Ok(()) => {
+                            tracing::debug!(
+                                src = %config_path.display(),
+                                dst = %corrupted_path.display(),
+                                "[config] Renamed corrupted config; persisting recovered config"
+                            );
+                            if let Err(e) = config.save().await {
+                                tracing::warn!(
+                                    path = %config.config_path.display(),
+                                    error = %e,
+                                    "[config] Failed to persist recovered config to disk"
+                                );
+                            }
+                        }
+                        Err(e) => {
                             tracing::warn!(
-                                path = %config.config_path.display(),
+                                src = %config_path.display(),
+                                dst = %corrupted_path.display(),
                                 error = %e,
-                                "[config] Failed to persist recovered config to disk"
+                                "[config] Failed to rename corrupted config; skipping save to \
+                                 protect the .bak -- will retry recovery on next startup"
                             );
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            src = %config_path.display(),
-                            dst = %corrupted_path.display(),
-                            error = %e,
-                            "[config] Failed to rename corrupted config; skipping save to \
-                             protect the .bak — will retry recovery on next startup"
-                        );
                     }
                 }
             }
@@ -251,13 +466,13 @@ impl Config {
                 recovered = config_was_corrupted,
                 "Config loaded"
             );
-            crate::openhuman::migrations::run_pending(&mut config).await;
+            crate::openhuman::config::migrations::run_pending(&mut config).await;
             let migrated_legacy_secrets = decrypt_config_secrets(&mut config, &openhuman_dir)?;
             if migrated_legacy_secrets {
                 // One-time forced migration: a legacy `enc:` (XOR) secret was
                 // upgraded to `enc2:` on read. Persist immediately so the
                 // insecure ciphertext stops living on disk (audit C8). A save
-                // failure is non-fatal — the config is still usable in memory
+                // failure is non-fatal -- the config is still usable in memory
                 // and migration will be retried on the next startup.
                 if let Err(e) = config.save().await {
                     log::warn!(
@@ -272,7 +487,7 @@ impl Config {
                 config_path: config_path.clone(),
                 workspace_dir,
                 action_dir: default_action_dir(),
-                schema_version: crate::openhuman::migrations::CURRENT_SCHEMA_VERSION,
+                schema_version: crate::openhuman::config::migrations::CURRENT_SCHEMA_VERSION,
                 ..Default::default()
             };
             config.save().await?;
@@ -292,7 +507,7 @@ impl Config {
                 initialized = true,
                 "Config loaded"
             );
-            crate::openhuman::migrations::run_pending(&mut config).await;
+            crate::openhuman::config::migrations::run_pending(&mut config).await;
             Ok(config)
         }
     }
@@ -321,11 +536,12 @@ impl Config {
             return Ok(config);
         }
 
-        // NOTE: no backup recovery here by design — this is the debug-dump path only;
+        // NOTE: no backup recovery here by design -- this is the debug-dump path only;
         // `load_or_init()` is the authoritative startup path that handles corruption.
-        let raw = fs::read_to_string(&config_path)
-            .await
-            .context("reading config.toml from default paths")?;
+        // However, we still use `read_config_with_recovery_or_default` to handle the
+        // non-UTF-8 case: a corrupted file is renamed to `.corrupted.<ts>` so the next
+        // authoritative load can create a fresh config.
+        let (raw, _read_was_recovered) = read_config_with_recovery_or_default(&config_path).await?;
         let (mut config, _was_corrupted) = parse_config_with_recovery(&config_path, &raw).await;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
@@ -362,7 +578,7 @@ impl Config {
         }
 
         // See the `load_or_init` read branch: a directory at the config path is
-        // corruption, not a transient read failure — fail fast with distinct
+        // corruption, not a transient read failure -- fail fast with distinct
         // wording so it pages instead of being demoted (#3962, Codex P2).
         if config_path.is_dir() {
             anyhow::bail!(
@@ -371,15 +587,17 @@ impl Config {
             );
         }
 
-        let raw = fs::read_to_string(&config_path)
-            .await
-            .with_context(|| format!("reading config.toml from {}", config_path.display()))?;
-        let (mut config, config_was_corrupted) =
-            parse_config_with_recovery(&config_path, &raw).await;
+        let (raw, read_was_recovered) = read_config_with_recovery_or_default(&config_path).await?;
+        let (mut config, config_was_corrupted) = if read_was_recovered && raw.is_empty() {
+            (Config::default(), true)
+        } else {
+            parse_config_with_recovery(&config_path, &raw).await
+        };
+        let config_was_corrupted = config_was_corrupted || read_was_recovered;
         config.config_path = config_path;
         config.workspace_dir = workspace_dir;
         config.action_dir = resolve_action_dir(&config.action_dir_override);
-        migrate_legacy_autocomplete_disabled_apps(&mut config);
+        config.recovered_from_corruption = config_was_corrupted;
         migrate_legacy_inference_url(&mut config);
         migrate_cloud_provider_slugs(&mut config);
         config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
@@ -391,7 +609,7 @@ impl Config {
             );
         }
 
-        crate::openhuman::migrations::run_pending(&mut config).await;
+        crate::openhuman::config::migrations::run_pending(&mut config).await;
         Ok(config)
     }
 
@@ -433,6 +651,35 @@ impl Config {
                     temp_path.display()
                 )
             })?;
+
+        // Harden BEFORE any secret bytes are written. `create_new` opens at
+        // `0o666 & ~umask` (0644 under the usual 022), and the atomic rename
+        // below carries the *temp file's* mode onto the live config — so
+        // without this every save silently re-widened a config that holds
+        // `enc2:` provider keys and channel tokens back to world-readable, and
+        // `fs::copy` propagated the same mode onto `config.toml.bak`. The
+        // load-time auto-fix only ever repaired it on the next startup.
+        // Same pattern as `keyring::backend`.
+        //
+        // Non-fatal by design: filesystems that do not implement chmod
+        // (CIFS/SMB, exFAT, some FUSE mounts) would otherwise turn a save that
+        // has always worked into a hard failure. A failed hardening leaves the
+        // file exactly as permissive as it was before this call existed, so
+        // warn and continue rather than regress writability — matching the
+        // best-effort `let _ = set_permissions(..)` on the first-init path.
+        #[cfg(unix)]
+        {
+            use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+            if let Err(e) = fs::set_permissions(&temp_path, Permissions::from_mode(0o600)).await {
+                tracing::warn!(
+                    path = %temp_path.display(),
+                    error = %e,
+                    "[security][config] could not restrict config file to 0600; \
+                     it may be readable by other local users"
+                );
+            }
+        }
+
         temp_file
             .write_all(toml_str.as_bytes())
             .await

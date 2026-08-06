@@ -12,17 +12,14 @@ use openhuman_core::openhuman::agent::tool_policy::{
     ToolPolicy, ToolPolicyDecision, ToolPolicyRequest,
 };
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
+use openhuman_core::openhuman::memory::agent::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ProviderDelta, ToolCall,
-    UsageInfo,
-};
+use openhuman_core::openhuman::agent::messages::ConversationMessage;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::memory_store;
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::memory::store as memory_store;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::traits::ToolCallOptions;
 use openhuman_core::openhuman::tools::{
     PermissionLevel, Tool, ToolContent, ToolResult, ToolScope as RuntimeToolScope,
@@ -33,6 +30,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyagents::harness::model::{
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+};
+use tinyagents::harness::tool::{ToolCall, ToolDelta};
+use tinyagents::harness::usage::Usage;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::time::{timeout, Duration};
 
@@ -69,24 +72,35 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 struct CapturedRequest {
     model: String,
     temperature: f64,
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
     stream_was_requested: bool,
 }
 
-#[derive(Default)]
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<CapturedRequest>>,
-    stream_events: Vec<ProviderDelta>,
-    native_tools: bool,
+    stream_events: Vec<ModelStreamItem>,
+    profile: ModelProfile,
     /// When set, every `chat` call fails with this message — models a provider
     /// that is down for the whole turn, so no fallback route can recover it.
     always_fail: Option<&'static str>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl Default for ScriptedModel {
+    fn default() -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::new()),
+            requests: Mutex::new(Vec::new()),
+            stream_events: Vec::new(),
+            profile: ModelProfile::default(),
+            always_fail: None,
+        }
+    }
+}
+
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             ..Self::default()
@@ -106,55 +120,51 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(
-        &self,
-    ) -> openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities {
-        openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities {
-            native_tool_calling: self.native_tools,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(format!("summary: {message}"))
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.capture(&request, false);
+        self.pop_response()
     }
 
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        self.capture(&request, true);
+        let response = self.pop_response()?;
+        let mut items = vec![ModelStreamItem::Started];
+        items.extend(self.stream_events.iter().cloned());
+        items.push(ModelStreamItem::Completed(response));
+        Ok(Box::pin(futures::stream::iter(items)))
+    }
+}
+
+impl ScriptedModel {
+    fn capture(&self, request: &ModelRequest, streamed: bool) {
         self.requests.lock().unwrap().push(CapturedRequest {
-            model: model.to_string(),
-            temperature,
-            messages: request.messages.to_vec(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
-            stream_was_requested: request.stream.is_some(),
+            model: request.model.clone().unwrap_or_default(),
+            temperature: request.temperature.unwrap_or_default(),
+            messages: request.messages.clone(),
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+            stream_was_requested: streamed,
         });
+    }
+
+    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
         if let Some(message) = self.always_fail {
-            return Err(anyhow::anyhow!(message));
-        }
-        if let Some(stream) = request.stream {
-            for event in &self.stream_events {
-                stream.send(event.clone()).await.ok();
-            }
+            return Err(tinyagents::TinyAgentsError::Model(message.to_string()));
         }
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("default scripted final")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -461,53 +471,67 @@ impl ToolPolicy for DenyNamedPolicy {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: vec![],
-        usage: Some(UsageInfo {
-            input_tokens: 17,
-            output_tokens: 9,
-            context_window: 16_000,
-            cached_input_tokens: 4,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.0003,
-        }),
-        reasoning_content: None,
+fn usage(input_tokens: u64, output_tokens: u64, cached_input_tokens: u64) -> Usage {
+    let mut usage = Usage::new(input_tokens, output_tokens);
+    usage.cache_read_tokens = cached_input_tokens;
+    usage
+}
+
+fn text_response(text: &str) -> ModelResponse {
+    ModelResponse::assistant(text).with_usage(usage(17, 9, 4))
+}
+
+fn reasoning_text_response(text: &str, reasoning: &str, usage: Usage) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text(text.to_string()),
+                ContentBlock::thinking(reasoning),
+            ],
+            tool_calls: Vec::new(),
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: Some("stop".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn xml_tool_response(name: &str, args: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some(format!(
-            "pre-tool <tool_call>{{\"name\":\"{name}\",\"arguments\":{args}}}</tool_call>"
-        )),
-        tool_calls: vec![],
-        usage: None,
-        reasoning_content: Some("tool reasoning".to_string()),
+fn tool_response(id: &str, name: &str, args: serde_json::Value) -> ModelResponse {
+    let usage = usage(21, 6, 5);
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("native preamble".to_string()),
+                ContentBlock::thinking("native reasoning"),
+            ],
+            tool_calls: vec![ToolCall::new(id, name, args)],
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
-fn native_tool_response(id: &str, name: &str, args: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some("native preamble".to_string()),
-        tool_calls: vec![ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments: args.to_string(),
-            extra_content: None,
-        }],
-        usage: Some(UsageInfo {
-            input_tokens: 21,
-            output_tokens: 6,
-            context_window: 16_000,
-            cached_input_tokens: 5,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.0004,
-        }),
-        reasoning_content: Some("native reasoning".to_string()),
+fn prompt_tool_response(name: &str, args: serde_json::Value) -> ModelResponse {
+    tool_response(&format!("round17-{name}"), name, args)
+}
+
+fn native_profile() -> ModelProfile {
+    ModelProfile {
+        provider: Some("round17".to_string()),
+        tool_calling: true,
+        parallel_tool_calls: true,
+        streaming: true,
+        streaming_tool_chunks: true,
+        ..ModelProfile::default()
     }
 }
 
@@ -535,7 +559,7 @@ fn memory_for_workspace(path: &PathBuf) -> Arc<dyn Memory> {
 }
 
 fn agent_with(
-    provider: Arc<dyn Provider>,
+    model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     workspace_path: PathBuf,
     dispatcher: Box<dyn openhuman_core::openhuman::agent::dispatcher::ToolDispatcher>,
@@ -543,7 +567,7 @@ fn agent_with(
     context_config: ContextConfig,
 ) -> Agent {
     Agent::builder()
-        .provider_arc(provider)
+        .chat_model(model)
         .tools(tools)
         .memory(memory_for_workspace(&workspace_path))
         .memory_loader(Box::new(StaticMemoryLoader {
@@ -568,49 +592,38 @@ async fn turn_native_tool_progress_reasoning_usage_and_resume_seed_paths() {
     let (_temp, workspace_path) = workspace("native-progress");
     let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
     let calls = Arc::new(AtomicUsize::new(0));
-    let provider = Arc::new(ScriptedProvider {
+    let provider = Arc::new(ScriptedModel {
         responses: Mutex::new(
             vec![
-                Ok(native_tool_response(
+                Ok(tool_response(
                     "native-1",
                     "round17_echo",
                     json!({ "value": "alpha" }),
                 )),
-                Ok(ChatResponse {
-                    text: Some("native final".to_string()),
-                    tool_calls: vec![],
-                    usage: Some(UsageInfo {
-                        input_tokens: 5,
-                        output_tokens: 3,
-                        context_window: 16_000,
-                        cached_input_tokens: 2,
-                        cache_creation_tokens: 0,
-                        reasoning_tokens: 0,
-                        charged_amount_usd: 0.0001,
-                    }),
-                    reasoning_content: Some("final hidden reasoning".to_string()),
-                }),
+                Ok(reasoning_text_response(
+                    "native final",
+                    "final hidden reasoning",
+                    usage(5, 3, 2),
+                )),
             ]
             .into(),
         ),
         requests: Mutex::new(Vec::new()),
         stream_events: vec![
-            ProviderDelta::TextDelta {
-                delta: "stream text".to_string(),
-            },
-            ProviderDelta::ThinkingDelta {
-                delta: "stream thought".to_string(),
-            },
-            ProviderDelta::ToolCallStart {
+            ModelStreamItem::MessageDelta(MessageDelta::text("stream text")),
+            ModelStreamItem::MessageDelta(MessageDelta::reasoning("stream thought")),
+            ModelStreamItem::ToolCallDelta(ToolDelta {
                 call_id: "native-1".to_string(),
-                tool_name: "round17_echo".to_string(),
-            },
-            ProviderDelta::ToolCallArgsDelta {
+                tool_name: Some("round17_echo".to_string()),
+                content: String::new(),
+            }),
+            ModelStreamItem::ToolCallDelta(ToolDelta {
                 call_id: "native-1".to_string(),
-                delta: "{\"value\":\"alpha\"}".to_string(),
-            },
+                tool_name: None,
+                content: "{\"value\":\"alpha\"}".to_string(),
+            }),
         ],
-        native_tools: true,
+        profile: native_profile(),
         always_fail: None,
     });
     let mut agent = agent_with(
@@ -679,17 +692,15 @@ async fn turn_native_tool_progress_reasoning_usage_and_resume_seed_paths() {
     let requests = provider.requests();
     assert!(requests[0].stream_was_requested);
     assert_eq!(requests[0].tool_names, vec!["round17_echo"]);
-    assert!(
-        requests[1]
-            .messages
-            .iter()
-            .any(|message| message.role == "tool"
-                && message.content.contains("**echo-output:alpha**"))
-    );
+    assert!(requests[1]
+        .messages
+        .iter()
+        .any(|message| matches!(message, Message::Tool(_))
+            && message.text().contains("**echo-output:alpha**")));
 
     let (_seeded_tmp, seeded_workspace) = workspace("seeded-resume");
     let mut seeded = agent_with(
-        ScriptedProvider::new(vec![text_response("seeded final")]),
+        ScriptedModel::new(vec![text_response("seeded final")]),
         vec![Round17Tool::boxed(
             "round17_echo",
             "unused",
@@ -726,33 +737,37 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     let err_calls = Arc::new(AtomicUsize::new(0));
     let boom_calls = Arc::new(AtomicUsize::new(0));
     let write_calls = Arc::new(AtomicUsize::new(0));
-    let provider = Arc::new(ScriptedProvider {
+    let provider = Arc::new(ScriptedModel {
         responses: Mutex::new(
             vec![
-                Ok(xml_tool_response("hidden_tool", json!({ "value": "h" }))),
-                Ok(xml_tool_response("cli_only", json!({ "value": "c" }))),
-                Ok(xml_tool_response("round17_error", json!({ "value": "e" }))),
-                Ok(xml_tool_response("round17_boom", json!({ "value": "b" }))),
-                Ok(xml_tool_response("round17_write", json!({ "value": "w" }))),
-                Ok(xml_tool_response("round17_ok", json!({ "value": "o" }))),
-                Ok(ChatResponse {
-                    text: Some(String::new()),
-                    tool_calls: vec![],
-                    usage: None,
-                    reasoning_content: None,
-                }),
+                Ok(prompt_tool_response("hidden_tool", json!({ "value": "h" }))),
+                Ok(prompt_tool_response("cli_only", json!({ "value": "c" }))),
+                Ok(prompt_tool_response(
+                    "round17_error",
+                    json!({ "value": "e" }),
+                )),
+                Ok(prompt_tool_response(
+                    "round17_boom",
+                    json!({ "value": "b" }),
+                )),
+                Ok(prompt_tool_response(
+                    "round17_write",
+                    json!({ "value": "w" }),
+                )),
+                Ok(prompt_tool_response("round17_ok", json!({ "value": "o" }))),
+                Ok(ModelResponse::assistant("")),
             ]
             .into(),
         ),
         requests: Mutex::new(Vec::new()),
-        ..ScriptedProvider::default()
+        ..ScriptedModel::default()
     });
     let hook_calls = Arc::new(AsyncMutex::new(Vec::<TurnContext>::new()));
     let hook_notify = Arc::new(Notify::new());
     let mut channel_permissions = std::collections::HashMap::new();
     channel_permissions.insert("round17-channel".to_string(), "read_only".to_string());
     let mut agent = Agent::builder()
-        .provider_arc(provider.clone())
+        .chat_model(provider.clone())
         .tools(vec![
             Round17Tool::boxed("round17_ok", "ok-output", ok_calls.clone()),
             Round17Tool::tool_error("round17_error", err_calls.clone()),
@@ -852,7 +867,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
         .requests()
         .into_iter()
         .flat_map(|request| request.messages)
-        .map(|message| message.content)
+        .map(|message| message.text().to_string())
         .collect::<Vec<_>>()
         .join("\n");
     // An unregistered tool (`hidden_tool`, absent from both the tool set and the
@@ -867,7 +882,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     assert!(joined.contains("denied by policy 'round17-deny'"));
 
     let (_failing_tmp, failing_workspace) = workspace("provider-error");
-    let provider_error = ScriptedProvider::failing("provider offline");
+    let provider_error = ScriptedModel::failing("provider offline");
     let mut failing_agent = agent_with(
         provider_error,
         vec![],
@@ -879,7 +894,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     // A provider that fails on every attempt (primary *and* every same-family
     // fallback route the tinyagents `RunPolicy.fallback` chain tries — issue #4249,
     // Workstream 02.2) must surface a terminal error from `run_single` rather than
-    // wedging on a partial/empty reply. `ScriptedProvider::failing` fails
+    // wedging on a partial/empty reply. `ScriptedModel::failing` fails
     // unconditionally, so the cross-route fallback cannot mask it.
     let err = failing_agent.run_single("fail now").await.unwrap_err();
     assert!(err.to_string().contains("provider offline"));
@@ -901,10 +916,10 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
     let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
     let echo_calls = Arc::new(AtomicUsize::new(0));
     let hidden_calls = Arc::new(AtomicUsize::new(0));
-    let provider = Arc::new(ScriptedProvider {
+    let provider = Arc::new(ScriptedModel {
         responses: Mutex::new(
             vec![
-                Ok(native_tool_response(
+                Ok(tool_response(
                     "child-1",
                     "round17_echo",
                     json!({ "value": "child" }),
@@ -914,8 +929,8 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
             .into(),
         ),
         requests: Mutex::new(Vec::new()),
-        native_tools: true,
-        ..ScriptedProvider::default()
+        profile: native_profile(),
+        ..ScriptedModel::default()
     });
     let all_tools = vec![
         Round17Tool::boxed("round17_echo", "child-tool", echo_calls.clone()),
@@ -935,12 +950,13 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
             provider.clone(),
         ),
         all_tools: Arc::new(all_tools),
         all_tool_specs: Arc::new(all_specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "parent-model".to_string(),
         temperature: 0.22,
         workspace_dir: workspace_path.clone(),
@@ -955,7 +971,7 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         session_id: "round17-parent-session".to_string(),
         channel: "round17-parent-channel".to_string(),
         connected_integrations: Vec::new(),
-        tool_call_format: openhuman_core::openhuman::context::prompt::ToolCallFormat::Json,
+        tool_call_format: openhuman_core::openhuman::agent::context::prompt::ToolCallFormat::Json,
         session_key: "123_parent".to_string(),
         session_parent_prefix: Some("root_ancestor".to_string()),
         on_progress: None,
@@ -1001,19 +1017,19 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
     assert!(requests[0]
         .messages
         .iter()
-        .any(|message| message.role == "system"
-            && message.content.contains("Sub-agent Role Contract")
-            && message.content.contains("round17 child prompt")));
+        .any(|message| matches!(message, Message::System(_))
+            && message.text().contains("Sub-agent Role Contract")
+            && message.text().contains("round17 child prompt")));
     assert!(requests[0]
         .messages
         .iter()
-        .any(|message| message.role == "user"
-            && message.content.contains("spawn context")
-            && message.content.contains("delegate this")));
+        .any(|message| matches!(message, Message::User(_))
+            && message.text().contains("spawn context")
+            && message.text().contains("delegate this")));
 
     let error_parent = ParentExecutionContext {
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
-            ScriptedProvider::failing("subagent provider offline"),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            ScriptedModel::failing("subagent provider offline"),
         ),
         ..parent
     };

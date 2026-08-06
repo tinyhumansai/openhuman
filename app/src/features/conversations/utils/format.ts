@@ -11,54 +11,6 @@ export function formatRelativeTime(dateStr: string): string {
   return `${days}d ago`;
 }
 
-export function getInlineCompletionSuffix(input: string, suggestion: string): string {
-  if (!input || !suggestion) return '';
-  const normalize = (value: string) =>
-    value
-      .replace(/\u2192/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const normalizedInput = normalize(input);
-  const normalizedSuggestion = normalize(suggestion);
-  if (!normalizedSuggestion) return '';
-
-  if (normalizedSuggestion.startsWith(normalizedInput)) {
-    return normalizedSuggestion.slice(normalizedInput.length).trimStart();
-  }
-
-  const maxOverlap = Math.min(normalizedInput.length, normalizedSuggestion.length, 120);
-  for (let overlap = maxOverlap; overlap >= 1; overlap -= 1) {
-    if (
-      normalizedInput.slice(normalizedInput.length - overlap) ===
-      normalizedSuggestion.slice(0, overlap)
-    ) {
-      return normalizedSuggestion.slice(overlap).trimStart();
-    }
-  }
-
-  if (normalizedInput.endsWith(normalizedSuggestion)) {
-    return '';
-  }
-  return normalizedSuggestion;
-}
-
-export function buildAcceptedInlineCompletion(input: string, suffix: string): string {
-  const normalizedInput = input.replace(/\u2192/g, ' ').replace(/\t+/g, ' ');
-  const cleanSuffix = suffix
-    .replace(/\u2192/g, ' ')
-    .replace(/\t+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!cleanSuffix) return normalizedInput;
-
-  const needsSpace =
-    normalizedInput.length > 0 && !/\s$/.test(normalizedInput) && !/^[,.;:!?)]/.test(cleanSuffix);
-
-  return `${normalizedInput}${needsSpace ? ' ' : ''}${cleanSuffix}`;
-}
-
 export function isAllowedExternalHref(rawHref: string): boolean {
   try {
     const url = new URL(rawHref);
@@ -83,18 +35,18 @@ export function isAllowedExternalHref(rawHref: string): boolean {
  * Path is the hash route under HashRouter (e.g. `settings/notifications`
  * → `#/settings/notifications`). Leading/trailing slashes are tolerated.
  */
-export interface OpenhumanLinkSegment {
+interface OpenhumanLinkSegment {
   kind: 'link';
   path: string;
   label: string;
 }
 
-export interface TextSegment {
+interface TextSegment {
   kind: 'text';
   text: string;
 }
 
-export type BubbleSegment = TextSegment | OpenhumanLinkSegment;
+type BubbleSegment = TextSegment | OpenhumanLinkSegment;
 
 const OPENHUMAN_LINK_RE =
   /<openhuman-link\s+path=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)<\/openhuman-link>/gi;

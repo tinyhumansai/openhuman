@@ -3,6 +3,7 @@
 mod assets;
 mod bootstrap;
 mod lm_studio;
+mod model_rpc;
 pub(crate) mod ollama_admin;
 mod public_infer;
 pub(crate) mod spawn_marker;

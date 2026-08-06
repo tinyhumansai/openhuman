@@ -13,7 +13,6 @@ import {
   setIsRecovering,
   useDaemonUserState,
 } from '../features/daemon/store';
-import { daemonHealthService } from '../services/daemonHealthService';
 import {
   type CommandResponse,
   openhumanAgentServerStatus,
@@ -165,23 +164,9 @@ export const useDaemonHealth = (userId?: string) => {
     void probeAgentStatus();
   }, [probeAgentStatus]);
 
-  useEffect(() => {
-    let cleanup: (() => void) | null = null;
-    let cancelled = false;
-
-    void daemonHealthService.setupHealthListener().then(result => {
-      if (cancelled) {
-        result?.();
-      } else {
-        cleanup = result;
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      cleanup?.();
-    };
-  }, []);
+  // Health is no longer polled here — CoreStateProvider feeds each
+  // app_state_snapshot's health payload to daemonHealthService.ingestHealthSnapshot.
+  // This hook only reads the resulting daemon store state.
 
   return {
     // State
@@ -229,28 +214,5 @@ function formatUptime(seconds: number): string {
     return `${minutes}m ${secs}s`;
   } else {
     return `${secs}s`;
-  }
-}
-
-/**
- * Format relative time from ISO string
- */
-export function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSeconds = Math.floor(diffMs / 1000);
-
-  if (diffSeconds < 60) {
-    return `${diffSeconds}s ago`;
-  } else if (diffSeconds < 3600) {
-    const minutes = Math.floor(diffSeconds / 60);
-    return `${minutes}m ago`;
-  } else if (diffSeconds < 86400) {
-    const hours = Math.floor(diffSeconds / 3600);
-    return `${hours}h ago`;
-  } else {
-    const days = Math.floor(diffSeconds / 86400);
-    return `${days}d ago`;
   }
 }

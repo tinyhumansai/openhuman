@@ -1,6 +1,6 @@
 //! Factory functions for creating voice (STT / TTS) providers.
 //!
-//! Mirrors the shape of [`crate::openhuman::embeddings::factory`]: a single
+//! Mirrors the shape of [`crate::openhuman::inference::embeddings::factory`]: a single
 //! entry point that takes a provider name + parameters and returns a boxed
 //! trait object. Production paths pick the provider based on the user's
 //! config (`stt_provider`, `tts_provider`); unit tests use the factory

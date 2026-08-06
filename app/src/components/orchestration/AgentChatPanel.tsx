@@ -19,12 +19,14 @@ import debugFactory from 'debug';
 import {
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react';
 
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
   orchestrationClient,
@@ -47,6 +49,10 @@ import SessionTranscript from './SessionTranscript';
 
 const debug = debugFactory('orchestration:agent-chat');
 
+// Stable identity for an empty transcript so `useStickToBottom`'s layout effect
+// doesn't re-run every render when the selected chat has no messages yet.
+const EMPTY_MESSAGES: readonly unknown[] = [];
+
 function sessionLabel(session: SessionSummary): string {
   return session.label?.trim() || session.sessionId;
 }
@@ -60,37 +66,60 @@ function sessionLabel(session: SessionSummary): string {
 function ChatPageScaffold({
   header,
   footer,
+  scrollRef,
   children,
 }: {
   header?: ReactNode;
   footer?: ReactNode;
+  scrollRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   const footerRef = useRef<HTMLDivElement | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
 
+  // Subscribe on footer *presence*, never on the `footer` node itself. Every
+  // call site passes inline JSX, so `footer` has a fresh object identity on
+  // every render — depending on it re-ran this effect each render, tearing down
+  // and rebuilding the ResizeObserver and re-measuring. Because
+  // `ResizeObserver.observe` delivers an immediate initial observation, each
+  // render therefore scheduled another `setFooterHeight`; any measurement that
+  // disagreed with the committed height re-rendered, re-ran the effect, and
+  // cascaded until React's nested-update limit tripped with "Maximum update
+  // depth exceeded" (#5162 / TAURI-REACT-2G). Typing was the easiest trigger:
+  // the composer's auto-growing textarea lives inside this footer, so each
+  // keystroke changed the measured height. The observer already reports every
+  // size change, so it never needs re-subscribing when the footer's children
+  // re-render — only when the footer element mounts or unmounts.
+  const hasFooter = Boolean(footer);
+
   useEffect(() => {
+    // Drop measurements that match the committed height so a settled layout can
+    // never schedule a re-render, and therefore can never feed a cascade.
+    const applyHeight = (next: number) => setFooterHeight(prev => (prev === next ? prev : next));
+
     const el = footerRef.current;
-    if (!el) {
-      setFooterHeight(0);
+    if (!hasFooter || !el) {
+      applyHeight(0);
       return;
     }
     // ResizeObserver may be absent in some test environments; fall back to a
     // one-shot measure so the layout still resolves.
     if (typeof ResizeObserver === 'undefined') {
-      setFooterHeight(el.offsetHeight);
+      applyHeight(el.offsetHeight);
       return;
     }
-    const ro = new ResizeObserver(() => setFooterHeight(el.offsetHeight));
+    const ro = new ResizeObserver(() => applyHeight(el.offsetHeight));
     ro.observe(el);
-    setFooterHeight(el.offsetHeight);
+    applyHeight(el.offsetHeight);
     return () => ro.disconnect();
-  }, [footer]);
+  }, [hasFooter]);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-surface/70 dark:bg-black/40">
       {header}
       <div
+        ref={scrollRef}
+        data-testid="orch-chat-scroll"
         className="min-h-0 flex-1 overflow-y-auto"
         style={footer ? { paddingBottom: footerHeight } : undefined}>
         {children}
@@ -108,6 +137,7 @@ function ChatPageScaffold({
       {footer ? (
         <div
           ref={footerRef}
+          data-testid="orch-chat-footer"
           className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[48.75rem] px-4 pb-4 pt-6">
           {footer}
         </div>
@@ -184,6 +214,11 @@ function AgentComposer({
 function SessionChatView({ session }: { session: SessionSummary }) {
   const { t } = useT();
   const { state, messages, refresh } = useSessionTranscript(session.sessionId);
+  const { containerRef: scrollRef } = useStickToBottom(
+    messages,
+    session.sessionId,
+    session.sessionId
+  );
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -226,12 +261,44 @@ function SessionChatView({ session }: { session: SessionSummary }) {
     [body, sending, session.agentId, session.sessionId, refresh]
   );
 
+  // A runtime tool-approval decision → reply "allow"/"deny" to the peer. Rethrows
+  // on failure so SessionTranscript rolls the card back to buttons for a retry.
+  const decide = useCallback(
+    async (decision: 'allow' | 'deny'): Promise<void> => {
+      setSendError(null);
+      debug(
+        '[orchestration:agent-chat] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
+      try {
+        await orchestrationClient.sendMasterMessage({
+          body: decision,
+          recipient: session.agentId,
+          sessionId: session.sessionId,
+        });
+        if (mountedRef.current) void refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debug(
+          '[orchestration:agent-chat] approval decision: failed session=%s %s',
+          session.sessionId,
+          message
+        );
+        if (mountedRef.current) setSendError(message);
+        throw error;
+      }
+    },
+    [session.agentId, session.sessionId, refresh]
+  );
+
   const runtime = session.harnessType || session.source || null;
   const directory = session.workspace?.trim() || null;
   const runningOn = session.agentId?.trim() || null;
 
   return (
     <ChatPageScaffold
+      scrollRef={scrollRef}
       header={
         // Agent metadata, centered to the same width-capped column as the chat.
         <div className="border-b border-line bg-surface/60 dark:bg-black/30">
@@ -307,18 +374,21 @@ function SessionChatView({ session }: { session: SessionSummary }) {
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => decide(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
       </div>
     </ChatPageScaffold>
   );
 }
 
-export interface AgentChatPanelProps {
+interface AgentChatPanelProps {
   /**
    * Controlled open peer-session id (the full-page session subpage). When
-   * `onOpenSession` is provided the parent owns this (OrchestrationPage drives
-   * it from the `?session=` query param + the sidebar's active sub-agents list);
+   * `onOpenSession` is provided the parent owns this (OrchestrationView drives
+   * it from the `?session=` query param + the active sub-agents rail);
    * otherwise the panel falls back to its own local state.
    */
   openSessionId?: string | null;
@@ -343,12 +413,20 @@ export default function AgentChatPanel({
     sendMessage,
   } = useOrchestrationChats(t);
   const contactSessions = useContactSessions();
+  // Keep the transcript pinned to the newest message (and disengage when the
+  // user scrolls up). Called before the `openSession` early return so hook order
+  // stays stable; `selectedId` as thread + reset key snaps fresh on tab switch.
+  const { containerRef: masterScrollRef } = useStickToBottom(
+    selected?.messages ?? EMPTY_MESSAGES,
+    selectedId,
+    selectedId
+  );
 
   const [composerBody, setComposerBody] = useState('');
   const [sending, setSending] = useState(false);
   const [runningReview, setRunningReview] = useState(false);
-  // Controlled by the parent when `onOpenSession` is wired (OrchestrationPage
-  // drives it from the URL + sidebar session list); local state otherwise.
+  // Controlled by the parent when `onOpenSession` is wired (OrchestrationView
+  // drives it from the URL + active sub-agents rail); local state otherwise.
   const [localOpenSessionId, setLocalOpenSessionId] = useState<string | null>(null);
   const openSessionId =
     controlledOpenSessionId !== undefined ? controlledOpenSessionId : localOpenSessionId;
@@ -456,6 +534,7 @@ export default function AgentChatPanel({
     // switching chip in the footer. When subconscious is active, the steering
     // directive + "Run review" ride alongside the chip (no header bar).
     <ChatPageScaffold
+      scrollRef={masterScrollRef}
       footer={
         <div className="flex flex-col gap-2">
           {showComposer ? (

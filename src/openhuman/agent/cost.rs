@@ -134,7 +134,7 @@ pub(crate) fn is_managed_tier(model: &str) -> bool {
 /// Resolution order:
 /// 1. Exact match on a canonical OpenHuman tier name (`agentic-v1`, …).
 /// 2. The concrete-vendor-model pricing catalog
-///    ([`crate::openhuman::cost::catalog`]) — accurate per-model rates for
+///    ([`crate::openhuman::platform::cost::catalog`]) — accurate per-model rates for
 ///    `claude-*`, `gpt-*`, `gemini-*`, `deepseek-*`, `kimi-*`, `qwen-*`,
 ///    `mistral-*`, including OpenRouter-style `vendor/model` ids.
 /// 3. Coarse case-insensitive vendor-name heuristics (so an unrecognised
@@ -144,7 +144,7 @@ pub(crate) fn lookup_pricing(model: &str) -> ModelPricing {
     if let Some(row) = PRICING_TABLE.iter().find(|row| row.model == model) {
         return *row;
     }
-    if let Some(price) = crate::openhuman::cost::catalog::lookup(model) {
+    if let Some(price) = crate::openhuman::platform::cost::catalog::lookup(model) {
         return ModelPricing {
             model: price.model_id,
             input_per_mtok_usd: price.input_per_mtok_usd,

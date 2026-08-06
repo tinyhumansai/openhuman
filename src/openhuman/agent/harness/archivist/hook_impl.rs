@@ -3,7 +3,7 @@
 use super::helpers::extract_lesson_from_tools;
 use super::types::ArchivistHook;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-use crate::openhuman::memory_store::fts5::{self, EpisodicEntry};
+use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -80,15 +80,19 @@ impl PostTurnHook for ArchivistHook {
 
         tracing::debug!("[archivist] episodic rows written: session={session_id}");
 
-        // Dual-write into memory_archivist::store (md-backed) so we can
+        // Dual-write into the crate-owned archivist store (md-backed) so we can
         // validate the FTS5 → md migration before flipping the read side.
         // Best-effort: a write failure here must not break the turn. The
         // user turn's assigned seq is captured into `current_seq` so the
         // segment ops can store it alongside the FTS5 episodic id.
         let mut current_seq: Option<u32> = None;
         if let Some(cfg) = self.config.as_ref() {
+            let engine_config = crate::openhuman::memory::tinycortex::memory_config_from(
+                cfg,
+                cfg.workspace_dir.clone(),
+            );
             let ts_ms = (timestamp * 1000.0) as i64;
-            let user_turn = crate::openhuman::memory_archivist::ArchivedTurn {
+            let user_turn = tinycortex::memory::archivist::types::ArchivedTurn {
                 session_id: session_id.to_string(),
                 seq: 0, // assigned by record_turn
                 timestamp_ms: ts_ms,
@@ -98,7 +102,7 @@ impl PostTurnHook for ArchivistHook {
                 tool_calls_json: None,
                 cost_microdollars: 0,
             };
-            match crate::openhuman::memory_archivist::store::record_turn(cfg, user_turn) {
+            match tinycortex::memory::archivist::store::record_turn(&engine_config, user_turn) {
                 Ok(stored) => current_seq = Some(stored.seq),
                 Err(e) => {
                     tracing::warn!("[archivist] memory_archivist user dual-write failed: {e}");
@@ -113,7 +117,7 @@ impl PostTurnHook for ArchivistHook {
             } else {
                 Some(serde_json::to_string(&ctx.tool_calls).unwrap_or_default())
             };
-            let assistant_turn = crate::openhuman::memory_archivist::ArchivedTurn {
+            let assistant_turn = tinycortex::memory::archivist::types::ArchivedTurn {
                 session_id: session_id.to_string(),
                 seq: 0,
                 timestamp_ms: ts_ms + 1,
@@ -124,7 +128,7 @@ impl PostTurnHook for ArchivistHook {
                 cost_microdollars: 0,
             };
             if let Err(e) =
-                crate::openhuman::memory_archivist::store::record_turn(cfg, assistant_turn)
+                tinycortex::memory::archivist::store::record_turn(&engine_config, assistant_turn)
             {
                 tracing::warn!("[archivist] memory_archivist assistant dual-write failed: {e}");
             }

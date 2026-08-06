@@ -28,13 +28,13 @@ const debug = debugFactory('orchestration:sessions');
 
 const TRANSCRIPT_LIMIT = 100;
 
-export type SessionsState =
+type SessionsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'payment_required' }
   | { status: 'ok' };
 
-export interface UseContactSessionsResult {
+interface UseContactSessionsResult {
   state: SessionsState;
   /** All non-pinned session windows. */
   sessions: SessionSummary[];
@@ -119,13 +119,13 @@ export function mapTranscriptMessage(message: OrchestrationMessage): ChatMessage
   };
 }
 
-export type TranscriptState =
+type TranscriptState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok' };
 
-export interface UseSessionTranscriptResult {
+interface UseSessionTranscriptResult {
   state: TranscriptState;
   messages: ChatMessage[];
   refresh: () => Promise<void>;

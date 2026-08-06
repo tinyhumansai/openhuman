@@ -16,7 +16,7 @@ Adding a world is a new profile file + one factory arm — not another engine.
 
 ## The generic tick (`instance.rs`)
 
-Each tick body is a [`tinyagents` `CompiledGraph`](../tinyagents) — the same durable
+Each tick body is a [`tinyagents` `CompiledGraph`](../agent/tinyagents) — the same durable
 runtime the orchestration wake path runs on:
 
 ```text

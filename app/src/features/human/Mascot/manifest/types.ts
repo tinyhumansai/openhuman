@@ -81,8 +81,3 @@ export interface MascotManifest {
 export function runtimeFile(entry: MascotManifestEntry): MascotManifestFile | undefined {
   return entry.files.find(f => f.role === 'runtime');
 }
-
-/** The source (`.rev`) file for a mascot, or `undefined` if it has none. */
-export function sourceFile(entry: MascotManifestEntry): MascotManifestFile | undefined {
-  return entry.files.find(f => f.role === 'source');
-}

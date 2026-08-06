@@ -4,9 +4,9 @@ use base64::Engine as _;
 use rand::RngExt as _;
 
 use crate::openhuman::config;
-use crate::openhuman::credentials::session_support;
 use crate::openhuman::http_host::types::HostedDirAuth;
 use crate::openhuman::http_host::LOG_PREFIX;
+use crate::openhuman::security::credentials::session_support;
 
 pub(crate) fn ensure_authorized(headers: &HeaderMap, auth: &HostedDirAuth) -> Result<(), Response> {
     if !auth.enabled {

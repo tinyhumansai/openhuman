@@ -36,7 +36,6 @@ import {
   type InstalledModelInfo,
   type LocalAiDiagnostics,
   type LocalAiStatus,
-  type ModelPresetResult,
   openhumanLocalAiApplyPreset,
   openhumanLocalAiDiagnostics,
   openhumanLocalAiPresets,
@@ -58,12 +57,7 @@ export type WorkloadId =
   | 'subconscious';
 
 export const CHAT_WORKLOADS: WorkloadId[] = ['chat', 'reasoning', 'agentic', 'coding'];
-export const BACKGROUND_WORKLOADS: WorkloadId[] = [
-  'memory',
-  'heartbeat',
-  'learning',
-  'subconscious',
-];
+const BACKGROUND_WORKLOADS: WorkloadId[] = ['memory', 'heartbeat', 'learning', 'subconscious'];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
 
 // Workloads that own a `<id>_provider` config field and must round-trip through
@@ -72,7 +66,7 @@ export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WOR
 // the managed `vision-v1` tier and is a delegate (like agentic BYOK), so it does
 // not participate in the billing-suppression / "routed away from OpenHuman"
 // checks in `useUsageState`.
-export const ROUTABLE_WORKLOADS: WorkloadId[] = [...ALL_WORKLOADS, 'vision'];
+const ROUTABLE_WORKLOADS: WorkloadId[] = [...ALL_WORKLOADS, 'vision'];
 export const OPENAI_CODEX_OAUTH_MISSING_AUTH_URL = 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL';
 export const OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL = 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL';
 
@@ -126,11 +120,11 @@ export interface ModelInfo {
   context_window?: number | null;
 }
 
-export interface ProviderModelTestResult {
+interface ProviderModelTestResult {
   reply: string;
 }
 
-export interface OpenAiCodexOAuthStartResult {
+interface OpenAiCodexOAuthStartResult {
   authUrl: string;
   state?: string;
   redirectUri?: string;
@@ -468,6 +462,250 @@ export async function setCloudProviderKey(slug: string, apiKey: string): Promise
   });
 }
 
+/**
+ * Outcome of a post-save connection check (#5146 §2.4).
+ *
+ * `ok: false` means the credential was stored but the provider could not
+ * actually serve an inference call — the "connected but unusable" state where
+ * the UI previously showed a healthy provider that failed on first real use.
+ */
+export interface CloudProviderVerification {
+  ok: boolean;
+  /** Actionable, user-facing explanation. Empty when `ok`. */
+  message: string;
+  /** Raw provider error, kept for the details/expander. Empty when `ok`. */
+  detail: string;
+}
+
+/** Minimal `{placeholder}` interpolation, matching `ProviderSetupErrorNotice`. */
+function fillTemplate(template: string, replacements: Record<string, string>): string {
+  return Object.entries(replacements).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, value),
+    template
+  );
+}
+
+/** Translator shape accepted here — the `(key, fallback)` form `useT` returns. */
+export type TranslateFn = (key: string, fallback?: string) => string;
+
+/**
+ * Which failure a raw provider/RPC error represents (#5146 §2.4).
+ *
+ * Classification is kept separate from wording so the decision is unit-testable
+ * without a translator and the copy can live in the locale files where the i18n
+ * tooling can see it.
+ */
+export type ProviderVerificationReason =
+  | 'auth'
+  | 'model'
+  | 'quota'
+  | 'endpoint'
+  | 'timeout'
+  | 'unknown';
+
+/** Map a raw upstream error string onto a [`ProviderVerificationReason`]. */
+export function classifyProviderVerificationFailure(raw: string): ProviderVerificationReason {
+  const haystack = raw.trim().toLowerCase();
+
+  // Network / gateway / proxy rejections are about the CONNECTION, not the key.
+  // They must NOT reach the `auth` branch, or the add-time flow would delete a
+  // valid key over a corporate proxy, WAF, or 407 challenge (#5341) — the exact
+  // failure class this change exists to preserve keys through. Checked first so
+  // `authentication` in "407 Proxy Authentication Required" and a WAF/Cloudflare
+  // "403 Forbidden" classify as `unknown` (non-destructive), not `auth`.
+  if (
+    /\b407\b/.test(haystack) ||
+    haystack.includes('proxy') ||
+    haystack.includes('cloudflare') ||
+    haystack.includes('bad gateway') ||
+    haystack.includes('gateway timeout')
+  ) {
+    return 'unknown';
+  }
+
+  // Rejected credential (revoked / invalid / no-permission key). A 403 counts
+  // only when it co-occurs with credential wording — a bare 403 from an
+  // unidentified intermediary is not proof the key itself is bad. Word
+  // boundaries keep `401`/`403` from matching ids like `1403` / `4032`.
+  const is403Credential =
+    /\b403\b/.test(haystack) &&
+    (haystack.includes('forbidden') ||
+      haystack.includes('key') ||
+      haystack.includes('credential') ||
+      haystack.includes('permission'));
+  if (
+    /\b401\b/.test(haystack) ||
+    is403Credential ||
+    haystack.includes('invalid api key') ||
+    haystack.includes('invalid_api_key') ||
+    haystack.includes('incorrect api key') ||
+    haystack.includes('unauthorized') ||
+    haystack.includes('authentication')
+  ) {
+    return 'auth';
+  }
+  if (
+    haystack.includes('model_not_found') ||
+    // Must be tested here: the endpoint branch below matches a bare
+    // 'not found', which would otherwise claim every provider that phrases a
+    // missing model as "model not found" or "The model `x` was not found" and
+    // send the user off to check their base URL instead of their model id.
+    (haystack.includes('not found') && haystack.includes('model')) ||
+    haystack.includes('does not exist') ||
+    haystack.includes('is not available') ||
+    haystack.includes('unknown model') ||
+    haystack.includes('invalid model')
+  ) {
+    return 'model';
+  }
+  if (
+    haystack.includes('quota') ||
+    haystack.includes('insufficient') ||
+    haystack.includes('billing') ||
+    haystack.includes('429') ||
+    haystack.includes('rate limit')
+  ) {
+    return 'quota';
+  }
+  if (haystack.includes('404') || haystack.includes('not found')) {
+    return 'endpoint';
+  }
+  if (haystack.includes('timeout') || haystack.includes('timed out')) {
+    return 'timeout';
+  }
+  return 'unknown';
+}
+
+/**
+ * Turn a raw provider/RPC failure into something a user can act on (#5146 §2.4).
+ *
+ * Storing a key only proves we wrote it to disk. The failures users actually
+ * hit (wrong model id, exhausted quota, a base URL that doesn't speak the
+ * endpoint we call) all surface as opaque upstream strings, so map the common
+ * shapes onto a concrete next step and pass anything unrecognised through
+ * verbatim rather than inventing a diagnosis.
+ *
+ * The rendered string is user-visible UI text, so it goes through `t` like the
+ * sibling `presentProviderSetupError`: the caller passes the translator from
+ * `useT()` and every branch resolves against the locale files. `slug` must be
+ * the bare provider slug (`openai`), not a composite `provider:model` string.
+ */
+export function describeProviderVerificationFailure(
+  slug: string,
+  raw: string,
+  t: TranslateFn
+): string {
+  const detail = raw.trim();
+  const reason = classifyProviderVerificationFailure(detail);
+
+  switch (reason) {
+    case 'auth':
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.authRejected',
+          "The key was saved, but '{slug}' rejected it. Check that you pasted the whole key and that it is still active in the provider's dashboard."
+        ),
+        { slug }
+      );
+    case 'model':
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.modelNotRecognized',
+          "The key was saved and accepted, but '{slug}' does not recognise the selected model. Pick a model id this provider actually serves (its default model is set on the provider entry)."
+        ),
+        { slug }
+      );
+    case 'quota':
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.quotaOrBilling',
+          "The key was saved and accepted, but '{slug}' refused the request for quota or billing reasons. Check your account balance and rate limits with the provider."
+        ),
+        { slug }
+      );
+    case 'endpoint':
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.endpointNotFound',
+          "The key was saved, but the configured endpoint for '{slug}' returned 404. Check the base URL: an OpenAI-compatible provider usually needs the '/v1' suffix (e.g. https://api.openai.com/v1)."
+        ),
+        { slug }
+      );
+    case 'timeout':
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.timeout',
+          "The key was saved, but '{slug}' did not respond in time. Check the endpoint URL and your network, then test again."
+        ),
+        { slug }
+      );
+    default:
+      // Deliberately generic. The upstream string can echo request material
+      // (headers, key fragments) and this lands in a screenshot-able banner, so
+      // it must not be interpolated into user-visible copy. The raw text stays
+      // on `CloudProviderVerification.detail` for the details surface and is
+      // logged by the caller for local diagnosis.
+      return fillTemplate(
+        t(
+          'settings.ai.providerTest.unknown',
+          "The key was saved, but a test call to '{slug}' failed. Check the provider's status page and the endpoint URL, then test again."
+        ),
+        { slug }
+      );
+  }
+}
+
+/**
+ * Prove a freshly configured provider can actually run inference (#5146 §2.4).
+ *
+ * Runs one real, minimal completion through the existing
+ * `openhuman.inference_test_provider_model` RPC. Never throws: a provider that
+ * cannot serve a request is a *result*, not an exception, because the caller
+ * always wants to show it rather than lose the save.
+ */
+export async function verifyCloudProviderConnection(
+  provider: string,
+  workload: WorkloadId = 'chat',
+  t: TranslateFn = (_key, fallback) => fallback ?? ''
+): Promise<CloudProviderVerification> {
+  // The core only builds a configured cloud provider from the `<slug>:<model>`
+  // form, so a bare slug would be rejected as an unrecognised provider and a
+  // perfectly good key would be reported as broken. Callers pass the same
+  // composite string the Test button uses; the bare slug is what the *messages*
+  // name, so derive it rather than echoing `provider:model[:temp]` at the user.
+  const providerString = provider.trim();
+  const slug = providerString.split(':')[0]?.trim() || providerString;
+
+  console.debug(`[ai-settings][verify] start workload=${workload} slug=${slug}`);
+  try {
+    const result = await testProviderModel(workload, providerString, 'ping');
+    const reply = (result?.reply ?? '').trim();
+    if (!reply) {
+      console.debug(`[ai-settings][verify] empty-reply workload=${workload} slug=${slug}`);
+      return {
+        ok: false,
+        message: fillTemplate(
+          t(
+            'settings.ai.providerTest.emptyReply',
+            "The key was saved, but '{slug}' returned an empty response to a test prompt. Check the model id configured for this provider."
+          ),
+          { slug }
+        ),
+        detail: '',
+      };
+    }
+    console.debug(`[ai-settings][verify] ok workload=${workload} slug=${slug}`);
+    return { ok: true, message: '', detail: '' };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // The raw detail can carry provider text; log only the classification.
+    console.error(
+      `[ai-settings][verify] failed workload=${workload} slug=${slug} reason=${classifyProviderVerificationFailure(detail)}`
+    );
+    return { ok: false, message: describeProviderVerificationFailure(slug, detail, t), detail };
+  }
+}
+
 /** Clear a stored API key. */
 export async function clearCloudProviderKey(slug: string): Promise<void> {
   if (slug === 'openhuman') {
@@ -625,5 +863,3 @@ export const localProvider = {
   applyPreset: (tier: string) => openhumanLocalAiApplyPreset(tier),
   setEnabled: (enabled: boolean) => setLocalRuntimeEnabled(enabled),
 };
-
-export type { ModelPresetResult };

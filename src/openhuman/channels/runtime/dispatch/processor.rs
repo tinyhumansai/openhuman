@@ -14,6 +14,7 @@ use crate::core::event_bus::{
     publish_global, request_native_global, DomainEvent, NativeRequestError,
 };
 use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
+use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
@@ -21,11 +22,11 @@ use crate::openhuman::channels::context::{
 };
 use crate::openhuman::channels::providers::telegram::TELEGRAM_APPROVAL_CLIENT_ID;
 use crate::openhuman::channels::routes::{
-    get_or_create_provider, get_route_selection, handle_runtime_command_if_needed,
+    get_or_create_turn_model_source, get_route_selection, handle_runtime_command_if_needed,
 };
 use crate::openhuman::channels::traits;
 use crate::openhuman::channels::{ChannelSendExt, SendMessage};
-use crate::openhuman::inference::provider::{self, ChatMessage};
+use crate::openhuman::inference::provider;
 use crate::openhuman::util::truncate_with_ellipsis;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -78,8 +79,8 @@ impl From<traits::ChannelMessage> for RuntimeChannelMessage {
 /// follow-up PR; surfacing approvals there without a subscriber would
 /// just TTL-deny every parked call, which is worse than the status quo.
 ///
-/// [`ApprovalChatContext`]: crate::openhuman::approval::ApprovalChatContext
-/// [`ApprovalGate`]: crate::openhuman::approval::ApprovalGate
+/// [`ApprovalChatContext`]: crate::openhuman::security::approval::ApprovalChatContext
+/// [`ApprovalGate`]: crate::openhuman::security::approval::ApprovalGate
 pub(crate) fn channel_has_approval_surface(channel: &str) -> bool {
     channel == TELEGRAM_APPROVAL_CLIENT_ID
 }
@@ -89,18 +90,19 @@ pub(crate) fn channel_has_approval_surface(channel: &str) -> bool {
 /// Otherwise return `false` so the caller can dispatch the message as a
 /// fresh turn (which intentionally cancels any parked approval — the
 /// user is redirecting). Mirrors the web channel intercept at
-/// `channels/providers/web.rs:493-525`.
+/// `web_chat/`.
 ///
-/// [`ApprovalGate::decide`]: crate::openhuman::approval::ApprovalGate::decide
+/// [`ApprovalGate::decide`]: crate::openhuman::security::approval::ApprovalGate::decide
 async fn try_route_approval_reply(msg: &traits::ChannelMessage) -> bool {
-    let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() else {
+    let Some(gate) = crate::openhuman::security::approval::ApprovalGate::try_global() else {
         return false;
     };
     let thread_id = conversation_history_key(msg);
     let Some(request_id) = gate.pending_for_thread(&thread_id) else {
         return false;
     };
-    let Some(decision) = crate::openhuman::approval::parse_approval_reply(&msg.content) else {
+    let Some(decision) = crate::openhuman::security::approval::parse_approval_reply(&msg.content)
+    else {
         return false;
     };
     match gate.decide(&request_id, decision) {
@@ -185,7 +187,7 @@ pub(crate) async fn process_channel_runtime_message(
     // history key, route it to `ApprovalGate::decide` and return — running
     // a fresh agent turn would cancel the parked tool call. Any other text
     // falls through to the normal dispatch (the user is redirecting). Mirrors
-    // the same intercept in `channels/providers/web.rs:493-525`.
+    // the same intercept in `web_chat/`.
     if channel_has_approval_surface(&msg.channel) && try_route_approval_reply(&msg).await {
         return;
     }
@@ -229,33 +231,37 @@ pub(crate) async fn process_channel_runtime_message(
 
     let history_key = conversation_history_key(&msg);
     let route = get_route_selection(ctx.as_ref(), &history_key);
-    let active_provider = match get_or_create_provider(ctx.as_ref(), &route.provider).await {
-        Ok(provider) => provider,
-        Err(err) => {
-            crate::core::observability::report_error(
-                &err,
-                "channels",
-                "provider_init",
-                &[
-                    ("channel", msg.channel.as_str()),
-                    ("provider", route.provider.as_str()),
-                ],
-            );
-            let safe_err = provider::sanitize_api_error(&err.to_string());
-            let message = format!(
+    let active_turn_model_source = if ctx.config.is_none() {
+        match get_or_create_turn_model_source(ctx.as_ref(), &route.provider).await {
+            Ok(source) => Some(source),
+            Err(err) => {
+                crate::core::observability::report_error(
+                    &err,
+                    "channels",
+                    "provider_init",
+                    &[
+                        ("channel", msg.channel.as_str()),
+                        ("provider", route.provider.as_str()),
+                    ],
+                );
+                let safe_err = provider::sanitize_api_error(&err.to_string());
+                let message = format!(
                 "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
                 route.provider
             );
-            if let Some(channel) = target_channel.as_ref() {
-                let _ = channel
-                    .send_with_outbound_intent(
-                        &SendMessage::new(message, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
-                    )
-                    .await;
+                if let Some(channel) = target_channel.as_ref() {
+                    let _ = channel
+                        .send_with_outbound_intent(
+                            &SendMessage::new(message, &msg.reply_target)
+                                .in_thread(msg.thread_ts.clone()),
+                        )
+                        .await;
+                }
+                return;
             }
-            return;
         }
+    } else {
+        None
     };
 
     let memory_context =
@@ -459,13 +465,21 @@ pub(crate) async fn process_channel_runtime_message(
     };
 
     let turn_request = AgentTurnRequest {
-        // Wrap the channel's cached provider into the seam turn-model source at
-        // the bus boundary (issue #4249, Phase 3 / Motion A) so the harness holds
-        // crate model types only. The channel provider cache stays provider-typed
-        // (a producer concern) until Motion B swaps in crate-native clients.
-        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::clone(
-            &active_provider,
-        )),
+        // Crate-native channel turn models (Phase 3 P3-B): when the runtime carries
+        // the full config, build crate `ChatModel`s from `("chat", route.provider,
+        // config)` — `route.provider` is the effective provider string. Tests (no
+        // `config`) stay on an injected model source.
+        turn_model_source: match &ctx.config {
+            Some(cfg) => {
+                crate::openhuman::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
+                    "chat",
+                    route.provider.clone(),
+                    cfg.clone(),
+                )
+            }
+            None => active_turn_model_source
+                .expect("test channel context must inject a turn model source"),
+        },
         history: std::mem::take(&mut history),
         tools_registry: Arc::clone(&ctx.tools_registry),
         provider_name: route.provider.clone(),
@@ -536,11 +550,11 @@ pub(crate) async fn process_channel_runtime_message(
     // until each gets its own approval surface in a follow-up PR.
     let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
         if channel_has_approval_surface(&msg.channel) {
-            let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+            let approval_ctx = crate::openhuman::security::approval::ApprovalChatContext {
                 thread_id: history_key.clone(),
                 client_id: msg.channel.clone(),
             };
-            crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+            crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT
                 .scope(approval_ctx, agent_call)
                 .await
         } else {

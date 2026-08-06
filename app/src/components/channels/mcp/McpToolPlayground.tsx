@@ -79,7 +79,7 @@ const formatArgs = (raw: string): string => {
  * caller can keep JSON-parse failures (user input) cleanly separate from RPC
  * failures (the actual tool call) — they surface to the user differently.
  */
-export type ParsedToolArgs = { ok: true; value: unknown } | { ok: false; error: string };
+type ParsedToolArgs = { ok: true; value: unknown } | { ok: false; error: string };
 
 export const parseToolArgs = (argsJson: string, fallbackMessage: string): ParsedToolArgs => {
   if (argsJson.trim() === '') return { ok: true, value: {} };

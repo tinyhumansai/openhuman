@@ -1,4 +1,4 @@
-use crate::openhuman::file_state;
+use crate::openhuman::agent::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
@@ -9,11 +9,27 @@ use tinyagents::harness::tool::ToolExecutionContext;
 /// Write file contents with path sandboxing
 pub struct FileWriteTool {
     security: Arc<SecurityPolicy>,
+    approval_workspace_root: Option<std::path::PathBuf>,
 }
 
 impl FileWriteTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        Self {
+            security,
+            approval_workspace_root: None,
+        }
+    }
+
+    /// Use the same effective workspace root for approval routing that tool
+    /// execution receives through its [`ToolExecutionContext`].
+    pub fn with_approval_workspace_root(
+        security: Arc<SecurityPolicy>,
+        approval_workspace_root: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            security,
+            approval_workspace_root: Some(approval_workspace_root),
+        }
     }
 }
 
@@ -73,7 +89,10 @@ impl Tool for FileWriteTool {
         let target = if std::path::Path::new(path).is_absolute() {
             std::path::PathBuf::from(path)
         } else {
-            self.security.action_dir.join(path)
+            self.approval_workspace_root
+                .as_deref()
+                .unwrap_or(&self.security.action_dir)
+                .join(path)
         };
         // Sync `stat` — intentionally blocking, since the `Tool` trait makes
         // this method sync. Fast for local paths; would only need
@@ -231,6 +250,24 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert!(required.contains(&json!("path")));
         assert!(required.contains(&json!("content")));
+    }
+
+    #[test]
+    fn approval_probe_uses_effective_workspace_root() {
+        let root = tempfile::tempdir().expect("root");
+        let profile_workspace = root.path().join("profiles/alice");
+        std::fs::create_dir_all(&profile_workspace).expect("profile workspace");
+        std::fs::write(profile_workspace.join("notes.md"), "existing").expect("seed file");
+
+        let tool = FileWriteTool::with_approval_workspace_root(
+            test_security(root.path().to_path_buf()),
+            profile_workspace,
+        );
+
+        assert!(tool.external_effect_with_args(&json!({
+            "path": "notes.md",
+            "content": "updated"
+        })));
     }
 
     #[tokio::test]
@@ -412,7 +449,7 @@ mod tests {
         // harness recognizes it and halts on a verbatim repeat instead of
         // grinding. Ties this tool's literal to the marker const — the
         // const→detector half lives in `RepeatedToolFailureMiddleware` and is
-        // covered by its tests (`src/openhuman/tinyagents/middleware.rs`).
+        // covered by its tests (`src/openhuman/agent/tinyagents/middleware.rs`).
         assert!(
             result
                 .output()

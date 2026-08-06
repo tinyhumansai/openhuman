@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::openhuman::agent::dispatcher::ToolExecutionResult;
-use crate::openhuman::memory_store::safety::{sanitize_text, SanitizationReport};
+use crate::openhuman::memory::store::safety::{sanitize_text, SanitizationReport};
 use async_trait::async_trait;
 use serde_json::Value;
 use tinyagents::harness::store::Store;

@@ -1,5 +1,5 @@
 //! Task-sources configuration — app-level defaults for the
-//! [`crate::openhuman::task_sources`] domain.
+//! [`crate::openhuman::integrations::task_sources`] domain.
 //!
 //! Per-source records (provider + filter + schedule) live in the
 //! domain's SQLite store, not here. This block only carries the master

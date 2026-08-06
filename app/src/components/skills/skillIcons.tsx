@@ -8,7 +8,6 @@ import {
   LuKeyboard,
   LuMessageSquareMore,
   LuMic,
-  LuMonitor,
   LuPlugZap,
   LuShare2,
   LuSparkles,
@@ -22,7 +21,7 @@ function iconClasses(...parts: Array<string | undefined>): string {
   return parts.filter(Boolean).join(' ');
 }
 
-export function SkillIconBadge({
+function SkillIconBadge({
   icon: Icon,
   label,
   bgClassName,
@@ -180,7 +179,6 @@ export function skillCategoryHeadingClassName(category: SkillCategory): string {
 }
 
 export const BUILT_IN_SKILL_ICONS = {
-  screenIntelligence: <LuMonitor className="h-5 w-5" aria-hidden="true" />,
   textAutocomplete: <LuKeyboard className="h-5 w-5" aria-hidden="true" />,
   voiceStt: <LuMic className="h-5 w-5" aria-hidden="true" />,
 };

@@ -12,12 +12,20 @@
  *   Offer commitments (signed authorizations — funds move only on acceptance).
  * Money only moves after the user confirms. The read-only data views (Registry
  * listing, floor prices, recent sales) are fully functional.
+ *
+ * Seller-side *writes* (list a handle for sale, accept / reject an offer/bid)
+ * are intentionally NOT in-app — they are web-only on tiny.place (the backend
+ * exposes no seller write routes). Seller-side *reads* do exist (offers on your
+ * handles, via marketplace_list_offers). The Trading tab links sellers to the
+ * web app for the write actions it cannot perform (#4920).
  */
+import debugFactory from 'debug';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import ChipTabs from '../../components/layout/ChipTabs';
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import Button from '../../components/ui/Button';
+import { ErrorBanner } from '../../components/ui/LoadingState';
 import {
   type AvailabilityResponse,
   type DirectoryIdentityListingsResponse,
@@ -30,11 +38,20 @@ import {
   type RegistrationChallenge,
   type RegistryWalletBalance,
 } from '../../lib/agentworld/invokeApiClient';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, formatAssetAmount } from '../assets';
 import CommitFlow from '../components/CommitFlow';
 import X402ConfirmDialog from '../components/X402ConfirmDialog';
 import { explorerTxUrl as buyExplorerTxUrl, useX402Buy } from '../hooks/useX402Buy';
+
+const debug = debugFactory('agentworld:identities');
+
+// Seller-side identity *writes* (list a handle for sale, accept/reject an offer)
+// are web-only — the tiny.place backend exposes no seller write routes (see
+// #4920). We point sellers at the web app for those. Hardcoded prod URL,
+// matching the `FUND_PAGE_URL` precedent in X402ConfirmDialog.tsx.
+const SELL_ON_WEB_URL = 'https://tiny.place/identities';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -244,7 +261,7 @@ function PaymentRequiredBanner() {
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
+function renderIdentityLoadError(message: string) {
   const isWalletLocked =
     message.includes('wallet is not configured') ||
     message.includes('wallet secret material is missing');
@@ -262,10 +279,10 @@ function ErrorBanner({ message }: { message: string }) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-32 gap-2 text-red-400">
+    <ErrorBanner className="flex h-32 flex-col items-center justify-center gap-2">
       <p className="text-sm font-medium">Failed to load</p>
       <p className="text-xs text-content-faint">{message}</p>
-    </div>
+    </ErrorBanner>
   );
 }
 
@@ -610,7 +627,7 @@ function RegistryTab() {
           <p className="px-3 py-4 text-xs text-content-muted animate-pulse">Loading identities…</p>
         )}
         {directoryState.status === 'payment_required' && <PaymentRequiredBanner />}
-        {directoryState.status === 'error' && <ErrorBanner message={directoryState.message} />}
+        {directoryState.status === 'error' && renderIdentityLoadError(directoryState.message)}
         {directoryState.status === 'ok' && listings.length === 0 && (
           <p className="px-3 py-4 text-xs text-content-muted">
             No directory identities are currently listed.
@@ -787,7 +804,7 @@ function TradingTab() {
           <p className="text-xs text-content-muted animate-pulse">Loading listings…</p>
         )}
         {marketState.status === 'payment_required' && <PaymentRequiredBanner />}
-        {marketState.status === 'error' && <ErrorBanner message={marketState.message} />}
+        {marketState.status === 'error' && renderIdentityLoadError(marketState.message)}
         {marketState.status === 'ok' && listings.length === 0 && (
           <p className="text-xs text-content-muted">No identities listed for sale</p>
         )}
@@ -942,6 +959,35 @@ function TradingTab() {
             }
           />
         )}
+      </div>
+
+      {/* Seller-side *writes* (list-for-sale / accept-reject offer) are web-only
+          (#4920): the backend exposes no seller write routes. Placed directly
+          under the listings — where someone who came to sell looks — rather than
+          below Recent Sales. Viewing offers on your handles is a separate read
+          that does exist (marketplace_list_offers). */}
+      <div
+        className="rounded-lg border border-line bg-surface-muted/40 p-3"
+        data-testid="sell-on-web">
+        <p className="text-xs text-content-muted">
+          Listing a handle for sale and accepting offers happens on tiny.place.
+        </p>
+        <Button
+          variant="secondary"
+          size="xs"
+          className="mt-2"
+          analyticsId="identities.sellOnWeb"
+          onClick={() => {
+            // Log the entry point (static destination URL only — no handle/PII).
+            // openUrl owns the outcome diagnostics: it logs a low-PII telemetry
+            // breadcrumb and keeps its https `window.open` fallback, so we don't
+            // re-observe success/error here.
+            debug('[tinyplace][ui] sell-on-web: opening %s', SELL_ON_WEB_URL);
+            void openUrl(SELL_ON_WEB_URL);
+          }}
+          data-testid="sell-on-web-cta">
+          Open tiny.place →
+        </Button>
       </div>
 
       {/* Recent sales */}

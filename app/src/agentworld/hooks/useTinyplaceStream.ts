@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { socketService } from '../../services/socketService';
 
-export interface TinyplaceStreamMessage {
+interface TinyplaceStreamMessage {
   stream_id: string;
   kind: string;
   message: unknown;
 }
 
-export interface TinyplaceStreamStatus {
+interface TinyplaceStreamStatus {
   stream_id: string;
   status: string;
 }

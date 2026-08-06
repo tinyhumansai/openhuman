@@ -29,11 +29,11 @@ Host-agnostic library crate on the `tinyagents` state-graph runtime. Pipeline: `
 
 Engine-side gaps (see Phase 7): `agent` node sub-ports (chat_model/memory/tool/output_parser) stubbed; `output_parser` is identity passthrough; README/Roadmap lag the code (claim jq and retry backoff are pending when both ship).
 
-### 1.2 Rust core seam (`src/openhuman/flows/` + `src/openhuman/tinyflows/` — implemented, with holes)
+### 1.2 Rust core seam (`src/openhuman/flows/` + `src/openhuman/flows/tinyflows/` — implemented, with holes)
 
 - **Domain** `flows::` (~3,700 lines + tests): `types.rs` (`Flow` wraps `WorkflowGraph` + `enabled`/`require_approval`/`last_status`; `FlowRun`, `FlowRunStep`, `FlowRunTrigger::{Rpc,Schedule,AppEvent,Resume}`), `store.rs` (SQLite incl. `flow_state` kv), `ops.rs` (validate/migrate + full run/resume under `TrustedAutomation → Workflow` origin, 600 s timeout), `schemas.rs`, `tools.rs` (`ProposeWorkflowTool` — validate-only, never persists), `bus.rs` (`FlowTriggerSubscriber`).
 - **RPC surface** (10 methods, wired in `src/core/all.rs`): `openhuman.flows_{create,get,list,update,delete,set_enabled,run,resume,list_runs,get_run}`.
-- **Capability seam** `src/openhuman/tinyflows/`: `caps.rs` (LLM/Composio-tools/HTTP/code/state adapters), `observability.rs` (currently `NoopObserver`), `langfuse_export.rs` (post-run trace export).
+- **Capability seam** `src/openhuman/flows/tinyflows/`: `caps.rs` (LLM/Composio-tools/HTTP/code/state adapters), `observability.rs` (currently `NoopObserver`), `langfuse_export.rs` (post-run trace export).
 - **Schedule triggers work end-to-end**: `flows::ops::bind_schedule_trigger` registers a cron `JobType::Flow` → scheduler publishes `DomainEvent::FlowScheduleTick` → `FlowTriggerSubscriber` runs the flow.
 - **Composio `app_event` triggers also work end-to-end**: `flows/bus.rs::handle_app_event` matches `DomainEvent::ComposioTriggerReceived { toolkit, trigger }` against enabled `app_event` flows (case-insensitive toolkit/slug match, per-flow concurrency guard) and runs them under `FlowRunTrigger::AppEvent`. Since Composio triggers are delivered by the platform, this **is** our webhook story for third-party apps — no tunnel needed.
 
@@ -120,7 +120,7 @@ Audit (2026-07-04):
 Work items:
 
 1. Bump `vendor/tinyagents` submodule to the **v1.7.1 tag**; bump root requirement `tinyagents = { version = "1.7", features = ["sqlite", "repl"] }` (verify both features still exist in 1.7); `cargo update -p tinyagents` in both lockfiles.
-2. Review the v1.5→v1.7 changelog for API breaks in the seams we touch: `Checkpointer`/`DurabilityMode`, `GraphEventJournal`/`GraphObservation`, interrupt/resume semantics (used by `flows::ops` + `src/openhuman/tinyagents/` + Rhai workflows).
+2. Review the v1.5→v1.7 changelog for API breaks in the seams we touch: `Checkpointer`/`DurabilityMode`, `GraphEventJournal`/`GraphObservation`, interrupt/resume semantics (used by `flows::ops` + `src/openhuman/agent/tinyagents/` + Rhai workflows).
 3. Retag `vendor/tinyflows` on a proper release (v0.3.1) whose `Cargo.toml` requires `tinyagents = "1.7"` so the version story is coherent end-to-end.
 4. Gate with `cargo check` both worlds, `pnpm test:rust`, and the flows/Rhai unit suites; adopt a standing rule: **vendored tiny\* submodules pin release tags, never floating commits** (early-adopting an upstream PR requires a pre-release tag).
 
@@ -142,7 +142,7 @@ Product decision: **Composio triggers are the webhook story.** `app_event` dispa
 
 **1c. Live run observation (G2).**
 
-- Implement a real `RunObserver` in `src/openhuman/tinyflows/observability.rs`: `on_step_finish` → persist `FlowRunStep` incrementally (timing, attempt count, status, output) via `flows::store`, and publish a new `DomainEvent::FlowRunProgress { run_id, node_id, status }`.
+- Implement a real `RunObserver` in `src/openhuman/flows/tinyflows/observability.rs`: `on_step_finish` → persist `FlowRunStep` incrementally (timing, attempt count, status, output) via `flows::store`, and publish a new `DomainEvent::FlowRunProgress { run_id, node_id, status }`.
 - Bridge to the frontend socket (`socket` domain) so the inspector can subscribe instead of polling (UI lands in Phase 2/3; keep polling as fallback).
 - Wire the journaled run variants so Langfuse export happens per-step, not only post-run.
 
@@ -301,4 +301,4 @@ Phase 8 (decommission)   ── independent; audit early, delete after a depreca
 4. **GPL-3.0 licensing** of `vendor/tinyflows` — already vendored/linked; re-confirm distribution posture before expanding surface (flag for legal, not an engineering blocker).
 5. **Submodule cadence** — engine changes (Phase 7) must land in the tinyflows repo and re-vendor; keep host-side workarounds (e.g. by-id sub-workflow resolution in caps) so UI phases aren't blocked on vendor releases.
 
-**Per-repo conventions that apply to all phases**: new RPCs go through domain `schemas.rs` + controller registry (no `dispatch.rs` branches); ≥80 % diff coverage gate; verbose `[flows]`-prefixed debug logging on every new path; i18n keys added to `en.ts` **and all 13 locales**; update `src/openhuman/about_app/` and `gitbooks/features/workflows.md` as features land.
+**Per-repo conventions that apply to all phases**: new RPCs go through domain `schemas.rs` + controller registry (no `dispatch.rs` branches); ≥80 % diff coverage gate; verbose `[flows]`-prefixed debug logging on every new path; i18n keys added to `en.ts` **and all 13 locales**; update `src/openhuman/platform/about_app/` and `gitbooks/features/workflows.md` as features land.

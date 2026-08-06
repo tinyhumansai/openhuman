@@ -10,8 +10,8 @@ icon: layer-group
 > **Status (issue #4249, tinyagents migration):** the agent turn no longer runs
 > on the in-tree `run_turn_engine` loop. **All three entry points (`Agent::turn`,
 > the channel/CLI bus path, and `run_subagent`) now drive every turn through the
-> published [`tinyagents`](https://crates.io/crates/tinyagents) 1.7 agent-loop
-> harness** via the adapter seam in [`src/openhuman/tinyagents/`](../../../src/openhuman/tinyagents/)
+> published [`tinyagents`](https://crates.io/crates/tinyagents) 2.1 agent-loop
+> harness** via the adapter seam in [`src/openhuman/agent/tinyagents/`](../../../src/openhuman/agent/tinyagents/)
 > (`run_turn_via_tinyagents_shared`). The legacy `run_turn_engine`, the three
 > hand-rolled loops, `turn_engine_adapter`, and the custom `agent_graph/` engine
 > described later in this page have been **removed**; the surviving shared seams
@@ -19,18 +19,16 @@ icon: layer-group
 > `token_budget.rs` (context trimming is now `MessageTrimMiddleware`) and the
 > vestigial `interrupt.rs` fence (cancellation is the tinyagents steering channel)
 > are gone; policy **stop hooks** (budget / thread-goal / iteration caps) now fire
-> through a `StopHookMiddleware` ([`tinyagents/stop_hooks.rs`](../../../src/openhuman/tinyagents/stop_hooks.rs))
+> through a `StopHookMiddleware` ([`tinyagents/stop_hooks.rs`](../../../src/openhuman/agent/tinyagents/stop_hooks.rs))
 > that pauses the run on the first stop vote, and the channel route forwards live
 > `AgentProgress` like the chat route.
 >
 > Multi-agent **orchestration** is expressed on tinyagents' **graph layer** via
 > `graph::parallel::map_reduce`, the `spawn_parallel_graph` scaffold, and the
 > shared `graph::orchestration` `TaskStore` lifecycle primitives re-exported from
-> [`tinyagents/orchestration.rs`](../../../src/openhuman/tinyagents/orchestration.rs):
+> [`tinyagents/orchestration.rs`](../../../src/openhuman/agent/tinyagents/orchestration.rs):
 >
-> - the model-council member fan-out runs on a real `StateGraph`
->   ([`model_council/graph.rs`](../../../src/openhuman/model_council/graph.rs));
-> - [`tinyagents/delegation.rs`](../../../src/openhuman/tinyagents/delegation.rs)
+> - [`tinyagents/delegation.rs`](../../../src/openhuman/agent/tinyagents/delegation.rs)
 >   is a `plan → execute ⇄ review → finalize` `CompiledGraph` (conditional routing,
 >   `RecursionPolicy`, durable `FileCheckpointer`, `CancellationToken`, `GraphTracingSink`);
 > - the **workflow phase engine** fans each phase's agents out on the graph
@@ -39,7 +37,7 @@ icon: layer-group
 > - `spawn_parallel_agents` runs its fan-out through `spawn_parallel_graph` +
 >   `graph::parallel::map_reduce`;
 > - the **agent-teams** member runtime is a conditional-routing graph
->   (`execute → complete | fail → done`, [`agent_teams/graph.rs`](../../../src/openhuman/agent_orchestration/agent_teams/graph.rs));
+>   (`execute → complete | fail → done`, [`agent_teams/graph.rs`](../../../src/openhuman/agent/orchestration/agent_teams/graph.rs));
 > - the **detached-sub-agent** registry is backed by a typed `TaskStore` lifecycle
 >   ledger (Pending → Running → Completed/Failed/Cancelled).
 >
@@ -49,13 +47,13 @@ icon: layer-group
 
 ## TinyAgents crate: features & compatibility
 
-OpenHuman requires `tinyagents = { version = "1.7", features = ["sqlite", "repl"] }`, patched to the vendored git submodule at `vendor/tinyagents` so SDK changes can be tested in-tree before being PR'd upstream (see [`Cargo.toml`](../../../Cargo.toml) — keep the submodule in lockstep with the version requirement). The rationale, so future upgrades don't silently regress it:
+OpenHuman requires `tinyagents = { version = "2.1", features = ["sqlite", "repl"] }`, patched to the vendored git submodule at `vendor/tinyagents` so SDK changes can be tested in-tree before being PR'd upstream (see [`Cargo.toml`](../../../Cargo.toml) — keep the submodule in lockstep with the version requirement). The rationale, so future upgrades don't silently regress it:
 
-- **OpenHuman-owned providers only.** We do **not** enable any bundled provider feature. OpenHuman owns provider transport, credentials, OAuth, and billing classification, so the live model is always OpenHuman's `Provider` wrapped as [`ProviderModel`](../../../src/openhuman/tinyagents/model.rs), never an SDK-owned provider client. The `ChatModel` adapter is the seam that replaces feature-gated SDK providers.
-- **`sqlite` feature enabled with one native sqlite chain.** OpenHuman's root and Tauri Cargo worlds pin `rusqlite = "=0.40.0"` and patch `rusqlite` / `libsqlite3-sys` locally to avoid the upstream `cfg_select!` build break on the current toolchain. Both worlds resolve to a single `libsqlite3-sys v0.38.0` chain. Durable graph checkpoints still run through [`SqlRunLedgerCheckpointer`](../../../src/openhuman/tinyagents/checkpoint.rs) until the migration re-points those rows to the crate checkpointer.
+- **Native TinyAgents model interface, OpenHuman-owned product policy.** Every live route is an `Arc<dyn ChatModel<()>>`: TinyAgents OpenAI-compatible clients cover wire-equivalent managed, local, and BYOK routes, while host `ChatModel` implementations cover Claude SDK/Code and Codex-specific transports. OpenHuman still owns credential resolution, OAuth, access gates, endpoint selection, egress disclosure, billing metadata, and error classification.
+- **`sqlite` feature enabled with one native sqlite chain.** OpenHuman's root and Tauri Cargo worlds pin `rusqlite = "=0.40.0"` and patch `rusqlite` / `libsqlite3-sys` locally to avoid the upstream `cfg_select!` build break on the current toolchain. Both worlds resolve to a single `libsqlite3-sys v0.38.0` chain. Durable graph checkpoints still run through [`SqlRunLedgerCheckpointer`](../../../src/openhuman/agent/tinyagents/checkpoint.rs) until the migration re-points those rows to the crate checkpointer.
 - **WhatsApp Web storage bridge.** `whatsapp-rust`'s Diesel-backed `sqlite-storage` feature links sqlite separately from rusqlite 0.40, so the optional `whatsapp-web` feature currently builds against `wacore::store::InMemoryBackend` and logs that sessions are not durable. A rusqlite-backed durable WhatsApp store is required before treating Web sessions as persistent again.
-- **`repl` feature enabled for language workflows; `.rag` expressive language unused.** OpenHuman still drives *graphs* from Rust (`GraphBuilder`), not the declarative `.rag` language. But the `repl` feature (the imperative Rhai `.ragsh` session runtime) is enabled to power the `rhai_workflows` language-workflow tool ([`openhuman::rhai_workflows`](../../../src/openhuman/rhai_workflows/README.md), see "Language workflows (Rhai)" below).
-- **Adapter map (feature-gated SDK piece → OpenHuman replacement):** provider clients → `ProviderModel`; crate SQLite checkpointer rows not yet adopted → `SqlRunLedgerCheckpointer`; task/status stores not yet controller-canonical → OpenHuman SQL/JSON run ledgers (`running_subagents`, `workflow_runs`, `agent_teams`, `command_center`). The generic harness/graph/middleware/event primitives are used as-is.
+- **`repl` feature enabled for language workflows; `.rag` expressive language unused.** OpenHuman still drives *graphs* from Rust (`GraphBuilder`), not the declarative `.rag` language. But the `repl` feature (the imperative Rhai `.ragsh` session runtime) is enabled to power the `rhai_workflows` language-workflow tool ([`openhuman::flows::rhai`](../../../src/openhuman/flows/rhai/README.md), see "Language workflows (Rhai)" below).
+- **Ownership map:** model construction → `inference::provider::create_chat_model*`; crate SQLite checkpointer rows not yet adopted → `SqlRunLedgerCheckpointer`; generic detached executor state → `DetachedTaskRegistry`; controller-facing durability → OpenHuman SQL/JSON run ledgers (`running_subagents`, `workflow_runs`, `agent_teams`, `command_center`). The generic harness/graph/middleware/event primitives are used as-is.
 
 The agent harness is the runtime that turns a user message (or a webhook fire, or a cron tick) into a complete, tool-using LLM interaction. It owns the tool-call loop, sub-agent dispatch, the trigger-triage pipeline, and the hook surface around them. It does **not** own provider HTTP transport, tool implementations, prompt-section assembly, or memory storage - those are separate domains the harness composes.
 
@@ -123,9 +121,20 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 
 The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte changes invalidate the KV-cache prefix and force a full re-prefill, so dynamic per-turn context (memory recall, freshly-learned snippets) is appended as user-visible message content rather than spliced into the system prompt.
 
+### AGENTS.md project instructions
+
+Alongside identity/soul/profile/memory, the system prompt pulls in **AGENTS.md** instruction files — OpenHuman's analog of Claude Code's `CLAUDE.md` / Codex's `AGENTS.md`. Two layers are loaded **once**, at system-prompt build time (never re-read per turn, so the frozen-prefix / KV-cache contract holds):
+
+* **Global** — `<workspace_dir>/AGENTS.md`, the user's OpenHuman workspace (where `SOUL.md` / `USER.md` live). Applies to every run.
+* **Project** — `<action_dir>/AGENTS.md`, the folder the agent is operating in. For sub-agent runs with a git-worktree override (`SubagentRunOptions.worktree_action_dir`), that override dir is the project layer instead.
+
+The global layer renders first, the project layer second (project instructions layered after, taking precedence on conflict), under a `## Project instructions (AGENTS.md)` heading. When the two dirs resolve to the same path the file is loaded **once** (deduped). Missing / unreadable / empty files are silently skipped, and each layer is capped at `BOOTSTRAP_MAX_CHARS` (~20 000 chars) with a `[... truncated]` marker so a large file can't crowd the prompt.
+
+The loader is `agent::prompts::agents_md` (pure functions returning pre-loaded strings, bounded at read time so a pathological multi-MB file can't exhaust memory before the render-time cap); the strings are threaded onto `PromptContext` (`agents_md_global` / `agents_md_local`) and rendered by `AgentsInstructionsSection`, which sits after the user-files section and before the tool catalogue in the default and sub-agent builders. The **primary / orchestrator** agent and the other built-in dynamic agents (`PromptSource::Dynamic`) assemble their own body via `render_*` helpers, so the same `AgentsInstructionsSection` is injected centrally by `SystemPromptBuilder::from_dynamic` — appended after the agent's own body, before the central grounding contract — rather than by each `agents/<id>/prompt.rs` builder. The feature is gated by `agent.agents_md_enabled` (default **on**); when off, no AGENTS.md content is loaded or injected.
+
 ## The tool-call loop
 
-Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`src/openhuman/tinyagents/mod.rs`](../../../src/openhuman/tinyagents/mod.rs)). It runs up to `max_tool_iterations` rounds (default 10):
+Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`src/openhuman/agent/tinyagents/mod.rs`](../../../src/openhuman/agent/tinyagents/mod.rs)). It runs up to `max_tool_iterations` rounds (default 10):
 
 ```
 loop {
@@ -142,7 +151,7 @@ loop {
 
 Every iteration emits a real-time `AgentProgress` event so the UI can render token-by-token streaming, "calling tool X" status, and per-iteration cost updates.
 
-**One engine, three entry points.** The loop lives in one place (the tinyagents `AgentHarness`, entered via `run_turn_via_tinyagents_shared` in `src/openhuman/tinyagents/mod.rs`) and every caller drives it: the chat turn (`harness/session/turn/core.rs` → `session/turn/graph.rs`), the channel/CLI bus turn (`harness/graph.rs`), and spawned sub-agents (`harness/subagent_runner/ops/graph.rs`). What varies per caller is supplied through the adapter seam: OpenHuman's provider wrapped as a `ChatModel` (`tinyagents/model.rs`), tools wrapped as tinyagents `Tool`s (`tinyagents/tools.rs`), an event bridge that projects harness `AgentEvent`s into `AgentProgress` + cost telemetry (`tinyagents/observability.rs`), `RunPolicy::unknown_tool` for hallucinated tool recovery, and a named middleware stack (`tinyagents/middleware.rs`) carrying the OpenHuman cross-cuts: approval/security gating (`ApprovalSecurityMiddleware`), tool policy and CLI/RPC-only denial (`ToolPolicyMiddleware`, `CliRpcOnlyMiddleware`), malformed-argument recovery (`ArgRecoveryMiddleware`), cost budget pre-checks (`CostBudgetMiddleware`), the repeated-tool-failure circuit breaker (`RepeatedToolFailureMiddleware`), and context trimming/compression. Policy stop hooks fire through `StopHookMiddleware` (`tinyagents/stop_hooks.rs`). The surviving OpenHuman-owned seams, `CheckpointStrategy` (error vs. summarize at the model-call cap) and `TurnProgress`, live in `harness/engine/`. Because all three entry points assemble the same harness, they can't drift.
+**One engine, three entry points.** The loop lives in one place (the tinyagents `AgentHarness`, entered via `run_turn_via_tinyagents_shared` in `src/openhuman/agent/tinyagents/mod.rs`) and every caller drives it: the chat turn (`harness/session/turn/core.rs` → `session/turn/graph.rs`), the channel/CLI bus turn (`harness/graph.rs`), and spawned sub-agents (`harness/subagent_runner/ops/graph.rs`). What varies per caller is supplied through the adapter seam: OpenHuman's provider wrapped as a `ChatModel` (`tinyagents/model.rs`), tools wrapped as tinyagents `Tool`s (`tinyagents/tools.rs`), an event bridge that projects harness `AgentEvent`s into `AgentProgress` + cost telemetry (`tinyagents/observability.rs`), `RunPolicy::unknown_tool` for hallucinated tool recovery, and a named middleware stack (`tinyagents/middleware.rs`) carrying the OpenHuman cross-cuts: approval/security gating (`ApprovalSecurityMiddleware`), tool policy and CLI/RPC-only denial (`ToolPolicyMiddleware`, `CliRpcOnlyMiddleware`), malformed-argument recovery (`ArgRecoveryMiddleware`), cost budget pre-checks (`CostBudgetMiddleware`), the repeated-tool-failure circuit breaker (`RepeatedToolFailureMiddleware`), and context trimming/compression. Policy stop hooks fire through `StopHookMiddleware` (`tinyagents/stop_hooks.rs`). The surviving OpenHuman-owned seams, `CheckpointStrategy` (error vs. summarize at the model-call cap) and `TurnProgress`, live in `harness/engine/`. Because all three entry points assemble the same harness, they can't drift.
 
 ### Tool dispatch and tool-call dialects
 
@@ -169,9 +178,46 @@ Some tool calls return enormous payloads - a Composio action dumping 200 KB of J
 
 When a tool result exceeds the summarizer's threshold, it gets routed through a dedicated `summarizer` sub-agent before entering the parent's history. The summarizer compresses the payload per an extraction contract that preserves identifiers and key facts, and the parent agent only sees the compressed summary. Hard truncation remains the backstop downstream when summarization fails or the payload is so absurdly large that paying for an LLM call on it makes no economic sense.
 
+### Filesystem offload - `outputs/` and `workspace/`
+
+Compression alone does not survive a long-horizon run. Summaries still accumulate step after step, and no amount of compressing restores the fidelity that was thrown away. So for minutes-to-hours tasks the harness moves large results **out of context and onto disk**, and hands the next step a **path**.
+
+Two directories under the agent's existing `action_dir` at runtime (the implementation lives in `src/openhuman/agent/harness/artifact_offload/`):
+
+| Directory                | Holds                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `action_dir/outputs/`    | Deliverables. Meant to outlive the step that made them, handed on by path.  |
+| `action_dir/workspace/`  | Scratch. Intermediate files a worker needs but does not hand back.          |
+
+Note `action_dir/workspace/` is a scratch folder inside the agent's action root. It is **not** the core's internal `workspace_dir`, which agent writes may never reach.
+
+Two halves enforce the convention:
+
+* **Prompt.** A sub-agent that actually holds `file_write` gets a Long-horizon Artifact Offload contract in its system prompt: results past roughly 2 000 tokens go to a file under `outputs/`, and the reply is that relative path plus a short abstract. The gate is deliberate — a prompt may only name tools the agent can really call, or the model emits calls that fail. `researcher` (search + fetch only) and skill-filtered specialists get no contract text, and dedicated guards assert their prompts never mention a filesystem tool. They stay covered by the harness half below, which needs no cooperation from the model. The relevant archetype prompts (`researcher`, `planner`) spell out what the convention means for their own work; the planner is told to reference artifact paths across DAG nodes rather than pasting payloads forward.
+* **Harness.** `offload_oversized_result` runs on every sub-agent outcome, so an oversized result is offloaded even when the worker inlined it anyway. It fires **before** the definition's `max_result_chars` cap, so the full body lands on disk instead of being cut.
+
+What the parent receives is a pointer, not a payload:
+
+```text
+[artifact] kind=output path=outputs/researcher/sub-1234-result.md bytes=52318
+read_with: file_read {"path":"outputs/researcher/sub-1234-result.md"}
+note: The full result was written to the action workspace instead of being inlined. …
+
+[abstract]
+HEADLINE FINDING …
+```
+
+`SubagentRunOutcome.artifact_paths` carries the same paths structurally, parsed out of the `[artifact]` pointers in the output, so the handoff carries paths whether the harness offloaded the result or the worker wrote the file itself. Any path the parent takes delivery of is recoverable with an ordinary `file_read` long after the child's context is gone.
+
+**The summarizer is now the fallback, not the first resort.** Offload catches the common case; the summarizer detour and the `tool_result_budget_bytes` truncation above still handle everything it does not, including every failure mode here. A refused or failed offload is deliberately soft: the caller keeps its inline payload and falls through to those backstops.
+
+**Path hardening is fail-closed.** `resolve_artifact_path` rejects absolute paths, `..` traversal, and anything that escapes its convention root after lexical normalization. When a `SecurityPolicy` is available it also refuses anything under `workspace_dir`, both by blanket containment and via `is_workspace_internal_path`. Offload targets resolve under `action_dir`, never `workspace_dir` - including the case where someone configures `action_dir` inside the workspace root, where every offload is refused rather than quietly writing to internal state.
+
+Writes log `[artifact] wrote worker artifact under action_dir`; each path a handoff carries logs `[artifact] handoff carried an artifact path to the parent`, on both the producing and the consuming side, so a run journal shows both ends of every pointer.
+
 ### TokenJuice - content-aware tool-output compaction (Stage 1a)
 
-Before a fresh tool result enters history (and ahead of the byte-budget backstop), it passes through the **TokenJuice content router** in the vendored TinyJuice crate (`vendor/tinyjuice`), with OpenHuman adapters in `src/openhuman/tokenjuice/`. Inspired by Headroom, the router *detects the content kind* (JSON, code, log, search, diff, HTML, plain text) from the bytes and/or a hint derived from the tool name and arguments, then dispatches to a specialised compressor:
+Before a fresh tool result enters history (and ahead of the byte-budget backstop), it passes through the **TokenJuice content router** in the vendored TinyJuice crate (`vendor/tinyjuice`), with OpenHuman adapters in `src/openhuman/inference/tokenjuice/`. Inspired by Headroom, the router *detects the content kind* (JSON, code, log, search, diff, HTML, plain text) from the bytes and/or a hint derived from the tool name and arguments, then dispatches to a specialised compressor:
 
 * **JSON** → SmartCrusher: array-of-objects → table (each key once), preserving rows that carry errors or numeric outliers.
 * **Code** → tree-sitter (Rust/TS/JS/Python) signature keeper that collapses function bodies; brace-depth heuristic fallback.
@@ -181,7 +227,7 @@ Before a fresh tool result enters history (and ahead of the byte-budget backstop
 * **HTML** → strip markup to readable text.
 * **Plain text** → the opt-in Python/ML "Kompress" compressor (ModernBERT), or pass-through.
 
-Every lossy compression offloads the original to the **CCR (Compress-Cache-Retrieve)** store behind a `⟦tj:<hash>⟧` marker, so compaction is effectively lossless: the agent calls `tokenjuice_retrieve` (token + optional byte/line range) to fetch the full original on demand. The same engine is exposed as a universal `compress_content(content, hint, opts)` for any large payload (file reads, web fetches), and as read-only `tokenjuice.*` debug RPCs. Configured via the `[tokenjuice]` block / `OPENHUMAN_TOKENJUICE_*` env. Agent definitions can override tool-result compression with `tokenjuice_compression = "auto" | "full" | "light" | "off"`; `auto` resolves coding-model agents (`[model] hint = "coding"`) to `light`, which disables CCR-backed lossy compression so coding agents keep raw build/test/diff/search text unless a reduction is truly lossless. Other agents default to `full`. The ML (Kompress) path runs as a `kompress` backend of the shared [`runtime_python_server`](../../../src/openhuman/runtime_python_server/) (torch + ModernBERT pip-installed at runtime), gated by the `ml_compression_enabled` flag and degrading gracefully to a native compressor when the Python runtime is unavailable.
+Every lossy compression offloads the original to the **CCR (Compress-Cache-Retrieve)** store behind a `⟦tj:<hash>⟧` marker, so compaction is effectively lossless: the agent calls `tokenjuice_retrieve` (token + optional byte/line range) to fetch the full original on demand. The same engine is exposed as a universal `compress_content(content, hint, opts)` for any large payload (file reads, web fetches), and as read-only `tokenjuice.*` debug RPCs. Configured via the `[tokenjuice]` block / `OPENHUMAN_TOKENJUICE_*` env. Agent definitions can override tool-result compression with `tokenjuice_compression = "auto" | "full" | "light" | "off"`; `auto` resolves coding-model agents (`[model] hint = "coding"`) to `light`, which disables CCR-backed lossy compression so coding agents keep raw build/test/diff/search text unless a reduction is truly lossless. Other agents default to `full`. The ML (Kompress) path runs as a `kompress` backend of the shared [`runtime_python_server`](../../../src/openhuman/runtime/python_server/) (torch + ModernBERT pip-installed at runtime), gated by the `ml_compression_enabled` flag and degrading gracefully to a native compressor when the Python runtime is unavailable.
 
 ### The `tool_maker` archetype
 
@@ -242,6 +288,8 @@ The child run itself still uses the same runner:
 
 `wait_subagent` and `steer_subagent` accept either the durable `subagent_session_id` or the transient `task_id`; durable ids are preferred across turns. `list_subagents` shows reusable children for the current parent thread, and `close_subagent` marks a worker non-reusable and cancels it if it is still running. Inline blocking is explicit via `blocking: true`; it is no longer the default.
 
+The synthesized archetype delegations (`delegate_*`, `build_workflow`, and the other `delegate_name` tools) follow the same contract: they route through the durable async path by default, returning an `[async_subagent_ref]` (with `subagent_session_id` + `task_id`) immediately, and the finished result is inserted into the parent chat as a new system turn via `background_completions`/`background_delivery`. They fall back to inline blocking automatically when there is no parent agent turn or no chat thread to deliver into (cron/CLI), or when `blocking: true` is passed. Cross-turn continuity comes from three pieces: the per-turn `[active_subagents]` roster merges the live in-memory registry with the durable `subagent_sessions` store (so a cold-booted orchestrator still sees earlier workers); `continue_subagent` falls back from pause checkpoints to the durable store, resuming an idle worker with its persisted history; and a `workflow_proposal` payload found in a finished child's history is persisted as a parent-thread message (`extraMetadata.scope = "workflow_proposal"`) that the frontend rehydrates into the proposal card on thread load.
+
 ### Spawn hierarchy and tiers
 
 Not every agent is allowed to spawn every other agent. The harness models a three-tier hierarchy that mirrors the cost / latency / depth-of-thought split between models:
@@ -288,7 +336,7 @@ The fixed delegation primitives (`spawn_subagent`, `spawn_parallel_agents`, `run
 
 **One tool call = one `eval_cell`.** The orchestrator's normal tool-call loop *is* the CodeAct driver loop: the model writes a Rhai cell, the cell runs against a persistent per-session namespace (top-level `let` bindings survive into the next cell via an optional `session_id`), and the structured result flows back as the tool result. Scripts reach the host only through capability functions — `tool_call`, `agent_query`, `model_query`, their `*_batched` fan-out variants, `emit`, and `answer`.
 
-The domain lives in [`src/openhuman/rhai_workflows/`](../../../src/openhuman/rhai_workflows/README.md):
+The domain lives in [`src/openhuman/flows/rhai/`](../../../src/openhuman/flows/rhai/README.md):
 
 - **`policy.rs`** maps the autonomy tier + `tool_timeout` clamps onto a `tinyagents::ReplPolicy` (always bounded, never unbounded; `readonly` refused; `full` may raise call-count limits to a hard 2× ceiling).
 - **`bridge.rs`** builds the `CapabilityRegistry`: the parent's visible tools (each re-wrapped so the **approval gate runs in the bridge** — it is *not* on the repl path, which bypasses the harness `wrap_tool` middleware), the turn's provider model, and a sub-agent capability per `allowed_subagent_ids`. Recursion/duplication hazards (`rhai`, legacy `rlm`, `spawn_*`, workflow tools, `CliRpcOnly`-scoped tools) are excluded. Because `eval_cell` runs on `spawn_blocking` + `block_on`, the `agent_query` adapter re-installs the `PARENT_CONTEXT` task-local that `run_subagent` resolves.
@@ -375,7 +423,7 @@ None of these change the loop's shape - they just make the common failure modes 
 
 ## Where to look in the code
 
-The harness shell lives under `src/openhuman/agent/`, with the tinyagents adapter seam in `src/openhuman/tinyagents/` and archetype definitions in `src/openhuman/agent_registry/`. The README in `src/openhuman/agent/` enumerates the public surface; the most load-bearing files (paths relative to `src/openhuman/agent/` unless prefixed) are:
+The harness shell lives under `src/openhuman/agent/`, with the tinyagents adapter seam in `src/openhuman/agent/tinyagents/` and archetype definitions in `src/openhuman/agent/registry/`. The README in `src/openhuman/agent/` enumerates the public surface; the most load-bearing files (paths relative to `src/openhuman/agent/` unless prefixed) are:
 
 | File / dir                    | What lives there                                                  |
 | ----------------------------- | ----------------------------------------------------------------- |
@@ -404,8 +452,8 @@ The harness shell lives under `src/openhuman/agent/`, with the tinyagents adapte
 > `SqliteCheckpointer` described below **do not exist**. The live system runs on
 > the published **tinyagents** crate; see the status banner at the top of this
 > page and "Agent engine + orchestration on tinyagents (live)" below. Graphs are
-> built with `tinyagents::graph::GraphBuilder` (`model_council/graph.rs`,
-> `agent_orchestration/*/graph.rs`, `tinyagents/delegation.rs`), durable
+> built with `tinyagents::graph::GraphBuilder` (`agent_orchestration/*/graph.rs`,
+> `tinyagents/delegation.rs`), durable
 > checkpoints use `SqlRunLedgerCheckpointer`, and per-agent graph selection is
 > `AgentGraph` (`agent/harness/agent_graph.rs`) with each agent's
 > `agent_registry/agents/<id>/graph.rs`. The text below is retained only as
@@ -436,7 +484,7 @@ StateGraph::new(name)
 
 ### Per-agent graphs (`graph.rs`)
 
-Each agent folder under `src/openhuman/agent_registry/agents/<name>/` (and the four agents that live in their own domains) now contains, alongside `agent.toml` + `prompt.rs`:
+Each agent folder under `src/openhuman/agent/registry/agents/<name>/` (and the four agents that live in their own domains) now contains, alongside `agent.toml` + `prompt.rs`:
 
 - **`graph.rs`**: `pub fn graph() -> GraphBlueprint`. `prompt.rs` defines what the agent *says*; `graph.rs` defines how it *runs*, meaning its node/edge chain. A loader test asserts **every** built-in agent's chain validates and compiles, so a malformed chain fails CI.
 
@@ -444,40 +492,40 @@ Most agents reuse `blueprint::canonical_turn(id)` (the standard tool-calling loo
 
 **RPC surface** (`schemas.rs` + `ops.rs`, registered in `src/core/all.rs`): `openhuman.agent_graph_definition_list`, `_run`, `_run_list`, `_run_get`, `_checkpoint_list`, `_resume`.
 
-> **Status (issue #4249, superseded by the published `tinyagents` crate):** the in-house `agent_graph` engine described in this section **no longer exists**. openhuman's agent engine + orchestration now run on the published [`tinyagents`](https://crates.io/crates/tinyagents) **1.7** crate (the same LangGraph-style harness + durable graph runtime), via the adapter seam in `src/openhuman/tinyagents/`. The sections above are retained as design history; the subsection below describes the live architecture.
+> **Status (issue #4249, superseded by the published `tinyagents` crate):** the in-house `agent_graph` engine described in this section **no longer exists**. openhuman's agent engine + orchestration now run on the published [`tinyagents`](https://crates.io/crates/tinyagents) **2.1** crate (the same LangGraph-style harness + durable graph runtime), via the adapter seam in `src/openhuman/agent/tinyagents/`. The sections above are retained as design history; the subsection below describes the live architecture.
 
 ## Agent engine + orchestration on tinyagents (live)
 
-Every agent turn (chat via `harness/session/turn/core.rs`, channel/CLI via `harness/graph.rs`, and sub-agent via `harness/subagent_runner/ops/graph.rs`) drives through `crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
+Every agent turn (chat via `harness/session/turn/core.rs`, channel/CLI via `harness/graph.rs`, and sub-agent via `harness/subagent_runner/ops/graph.rs`) drives through `crate::openhuman::agent::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
 
-| File (`src/openhuman/tinyagents/`) | Role |
+| File (`src/openhuman/agent/tinyagents/`) | Role |
 | --- | --- |
-| `mod.rs` | The runner (`run_turn_via_tinyagents_shared`): registers openhuman's `Provider`/`Tool` on an `AgentHarness`, runs one turn, caps output via `ProviderModel::with_max_tokens`, mirrors progress, forwards steering, and pauses gracefully at the model-call cap. |
+| `mod.rs` | The runner (`run_turn_via_tinyagents_shared`): installs the native `ChatModel`, host tool adapters, and middleware on an `AgentHarness`; runs one turn; caps output through `MaxTokenModel`; mirrors progress; forwards steering; and pauses gracefully at the model-call cap. |
 | `mod.rs` / `model.rs` / `tools.rs` / `convert.rs` | `RunPolicy` / `ChatModel` / `Tool` / message adapters (incl. unknown-tool policy and out-of-band reasoning forwarding). |
 | `observability.rs` | Harness `AgentEvent` → `AgentProgress` + cost; `GraphTracingSink` for graph events. |
 | `orchestration.rs` | Re-exported `graph::orchestration` task-store types; map-reduce fanout now uses the TinyAgents SDK surface directly. |
-| `checkpoint.rs` | `SqlRunLedgerCheckpointer`: a `Checkpointer` over openhuman's SQLite (`graph_checkpoints` table). TinyAgents 1.7 ships `SqliteCheckpointer`; OpenHuman keeps this adapter until existing checkpoint rows are migrated or expired and schema ownership is settled. |
+| `checkpoint.rs` | `SqlRunLedgerCheckpointer`: a `Checkpointer` over openhuman's SQLite (`graph_checkpoints` table). TinyAgents 2.1 ships `SqliteCheckpointer`; OpenHuman keeps this adapter until existing checkpoint rows are migrated or expired and schema ownership is settled. |
 | `delegation.rs` | The durable `plan → execute ⇄ review → finalize` delegation graph (production worker wired in `agent_orchestration::delegation`). |
 
-**Orchestration on graphs** (`src/openhuman/agent_orchestration/`):
+**Orchestration on graphs** (`src/openhuman/agent/orchestration/`):
 
 - **Workflow phase DAG** (`workflow_runs/engine.rs`) runs on a `dispatch ⇄ run_phase → done` conditional-routing graph; each phase fans its agents out via `graph::parallel::map_reduce`. The durable `workflow_runs` row stays the source of truth (controllers + resume read it).
 - **Team member runtime** (`agent_teams/graph.rs`) is a conditional-routing graph (`execute → complete|fail → done`).
 - **Multi-stage delegation** (`agent_orchestration::delegation` + the `delegate` tool) runs `delegation.rs`, checkpointed to the session DB.
-- **Detached sub-agents** (`running_subagents.rs`) track lifecycle through the crate task-store seam while OpenHuman keeps the executor (abort/steer/await) bespoke for controller compatibility, message injection, and user-facing hard-abort semantics.
+- **Detached sub-agents** (`running_subagents.rs`) use TinyAgents `DetachedTaskRegistry` for ownership-aware snapshots, wait/timeout, steering lookup, cooperative cancellation, hard abort, and terminal cleanup. OpenHuman retains durable task-store projection, product/session metadata, RPC and delivery semantics, and the `RunQueue` compatibility fallback.
 
 **Deliberately kept off the crate's primitives** (documented engineering decisions, not gaps):
 
 - **Sub-agent build pipeline** (`subagent_runner/`) stays openhuman-owned: definition resolution, archetype tool filtering, provider resolution, narrow prompt building, memory context, worker-thread mirror, handoff cache, checkpoint/resume. Sub-agents already *execute* on the harness; the crate's generic `SubAgentTool` would discard this pipeline for marginal crate-native depth tracking (openhuman's `spawn_depth_context` already bounds recursion).
 - **Durable run ledgers** (`workflow_runs`, `agent_teams`, `command_center`, `subagent_sessions`) stay on openhuman SQLite/JSON until their controller projections and restart semantics are mapped onto TinyAgents task/status/journal records. The `agent_teams` race-safe SQL compare-and-swap task claim remains OpenHuman-owned.
 
-> **Note:** TinyAgents 1.7 ships harness store/cache/session primitives (`harness::store` with JSONL append stores, `harness::cache`, `harness::subagent`, lineage-aware status) plus graph task stores and conformance contracts. The session shell, sub-agent pipeline, and detached-task lifecycle are still being migrated onto those primitives.
+> **Note:** TinyAgents 2.1 ships harness store/cache/session primitives (`harness::store` with JSONL append stores, `harness::cache`, `harness::subagent`, lineage-aware status), graph task stores, the detached runtime registry, and conformance contracts. The session shell and product-specific sub-agent build/delivery pipeline remain OpenHuman-owned.
 
 ## Reliability: breakers, handback, and classified failures
 
 Three cooperating mechanisms keep runs from wandering or dying silently:
 
-**No-progress circuit breaker** (`RepeatedToolFailureMiddleware`, `src/openhuman/tinyagents/middleware.rs`) is a thin driver over the crate's `NoProgressTracker`. It fingerprints each tool call's arguments and feeds outcomes into an escalation ladder: `Continue` → `Nudge` (a structured "no progress since step X" corrective injected via `SteeringCommand::InjectMessage`, which is safe inside interactive turns) → `Halt` (record a root-cause summary into the `HaltSummarySlot`, pause via the steering handle). Identical arguments retried count toward the trip (threshold 3 consecutive identical failures); *recoverable* failures (timeouts, connection resets, rate limits, 5xx) get an extended headroom ladder instead of the fixed crate thresholds.
+**No-progress circuit breaker** (`RepeatedToolFailureMiddleware`, `src/openhuman/agent/tinyagents/middleware.rs`) is a thin driver over the crate's `NoProgressTracker`. It fingerprints each tool call's arguments and feeds outcomes into an escalation ladder: `Continue` → `Nudge` (a structured "no progress since step X" corrective injected via `SteeringCommand::InjectMessage`, which is safe inside interactive turns) → `Halt` (record a root-cause summary into the `HaltSummarySlot`, pause via the steering handle). Identical arguments retried count toward the trip (threshold 3 consecutive identical failures); *recoverable* failures (timeouts, connection resets, rate limits, 5xx) get an extended headroom ladder instead of the fixed crate thresholds.
 
 **Sub-agent handback** (`subagent_runner/ops/runner.rs`): a sub-agent run resolves to one of three statuses:
 
@@ -487,7 +535,7 @@ Three cooperating mechanisms keep runs from wandering or dying silently:
 
 A breaker halt at the top level is likewise never a silent finish: the turn's final text is overridden with the breaker's root-cause summary, and `hit_cap` / `breaker_halt` are surfaced on the turn result.
 
-**Classified tool failures** (`src/openhuman/tool_status/`): every failed tool call is classified into a transport-agnostic `ClassifiedFailure { class, category, cause_plain, next_action, recoverable }`. Classes cover `MissingPermission`, `MissingApp`, `ServiceUnavailable`, `BadCredentials`, `BlockedByPolicy`, `ModelConnection`, `Timeout`, `Denied`, `ApprovalExpired`; categories map 1:1 to UI states: *recoverable* (safe auto-retry), *blocked by policy* (change settings), *needs user confirmation* (sign in / install / grant), *user declined* (never auto-retried). The classification rides `AgentProgress::ToolCallCompleted.failure` (including for sub-agent calls) into the chat timeline.
+**Classified tool failures** (`src/openhuman/tools/status/`): every failed tool call is classified into a transport-agnostic `ClassifiedFailure { class, category, cause_plain, next_action, recoverable }`. Classes cover `MissingPermission`, `MissingApp`, `ServiceUnavailable`, `BadCredentials`, `BlockedByPolicy`, `ModelConnection`, `Timeout`, `Denied`, `ApprovalExpired`; categories map 1:1 to UI states: *recoverable* (safe auto-retry), *blocked by policy* (change settings), *needs user confirmation* (sign in / install / grant), *user declined* (never auto-retried). The classification rides `AgentProgress::ToolCallCompleted.failure` (including for sub-agent calls) into the chat timeline.
 
 ## Journals, replay, and migration shadows
 
@@ -501,7 +549,7 @@ The remaining store cutover runs on **shadow scaffolding** (product behavior unc
 
 ## Workload routes and the burst tier
 
-`tinyagents/routes.rs` projects OpenHuman's workload tiers into the crate `ProviderModel` registry: `chat`, `reasoning`, `agentic`, `coding`, `burst`, `summarization`, `vision`. The **`burst-v1`** tier serves low-context, high-fanout workers (e.g. the SuperContext scout) on a fast/cheap model, while `inference/provider/router.rs` remains the product source of truth for which provider+model backs each tier. Each registry entry carries a `ModelProfile` (vision/reasoning capability, context window) enabling SDK-owned fallback and the model catalog.
+`tinyagents/routes.rs` is the declarative TinyAgents `ModelRouter` for the OpenHuman tiers `chat`, `reasoning`, `agentic`, `coding`, `burst`, `summarization`, and `vision`. It owns fallback chains and capability gates; `inference::provider::factory` resolves each selected tier to its configured native `ChatModel`. The **`burst-v1`** tier serves low-context, high-fanout workers (e.g. the SuperContext scout) on a fast/cheap model.
 
 ## See also
 

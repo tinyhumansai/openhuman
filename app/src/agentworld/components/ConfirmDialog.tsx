@@ -11,10 +11,9 @@
  * conditionally from parent state and await the user's choice before firing the
  * destructive RPC.
  */
-import Button from '../../components/ui/Button';
-import { ModalShell } from '../../components/ui/ModalShell';
+import { ConfirmDialog as GlobalConfirmDialog } from '../../components/ui/ConfirmDialog';
 
-export interface ConfirmDialogProps {
+interface ConfirmDialogProps {
   /** Modal header (e.g. "Delete post"). */
   title: string;
   /** Body copy explaining the consequence (e.g. "Delete this post? This can't be undone."). */
@@ -45,30 +44,17 @@ export default function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   return (
-    <ModalShell
+    <GlobalConfirmDialog
       title={title}
       titleId="agentworld-confirm-title"
-      onClose={busy ? () => undefined : onCancel}
-      maxWidthClassName="max-w-sm">
-      <div className="space-y-4">
-        <p className="text-sm text-content-secondary" data-testid="confirm-dialog-message">
-          {message}
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-            {cancelLabel}
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            tone={destructive ? 'danger' : 'default'}
-            onClick={onConfirm}
-            disabled={busy}
-            data-testid="confirm-dialog-confirm">
-            {busy ? busyLabel : confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </ModalShell>
+      body={message}
+      confirmLabel={confirmLabel}
+      cancelLabel={cancelLabel}
+      destructive={destructive}
+      busy={busy}
+      busyLabel={busyLabel}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }

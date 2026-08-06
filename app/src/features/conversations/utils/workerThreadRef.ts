@@ -16,7 +16,7 @@ export interface WorkerThreadRef {
   iterations?: number;
 }
 
-export interface ParsedWorkerThreadRef {
+interface ParsedWorkerThreadRef {
   /** The text that appeared before the envelope (model-readable summary). */
   before: string;
   /** The decoded reference, if the envelope parsed cleanly. */

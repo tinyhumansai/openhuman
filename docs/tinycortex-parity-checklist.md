@@ -1,5 +1,13 @@
 # TinyCortex Data-Format Parity Checklist (Phase 0.3)
 
+**Status (2026-07-22):** The engine cutover and crate test port are complete.
+The proposed pre-migration golden-fixture generator and differential
+comparators 2–4 are deliberately **descoped**: there is no trustworthy
+pre-cutover binary/fixture left to generate them from after cutover. Retained
+gates are the security-critical `MemoryTaint` byte/serde pins, deterministic
+chunk IDs, vector encoding/signature, content paths, schema composition,
+idempotent reopen, and the host public-surface E2E suites.
+
 **Purpose.** Existing user workspaces must open **unchanged** after every cutover flip.
 This checklist enumerates every on-disk format shared between the host engine and TinyCortex,
 records the audit result, and specifies the **golden-workspace parity harness** that gates W3, W5, W6.
@@ -7,7 +15,8 @@ records the audit result, and specifies the **golden-workspace parity harness** 
 **Hard rule (plan §0.3/§6):** any mismatch is fixed **upstream in tinycortex**, never papered over
 with a host shim.
 
-Anchors: host `7850cf363` · tinycortex `d1a8c7be` (v0.1.1).
+Anchors: historical audit host `7850cf363` · crate `d1a8c7be`; consolidation
+base host `5b8a9f269` · reviewed crate `daaaf6ba` · migration branch `7b4b115`.
 
 ## Ownership tiers in the shared workspace (key finding)
 
@@ -28,10 +37,10 @@ A user workspace's `chunks.db` (and content vault) holds **two tiers**:
    `event_ai/ad/au` triggers), `conversation_segments`, `segment_embeddings`, `vector_chunks`,
    `user_profile` **(10 tables + FTS + triggers)**.
 
-   These live in `src/openhuman/memory_store/unified/{init,fts5,events,segments,profile}.rs`.
-   **W3 must keep the host creating/reading these in the same DB the crate now manages** —
+   These live in `src/openhuman/memory/store/namespace_store/{init,fts5,events,segments,profile}.rs`.
+   **The host continues creating/reading these in the same DB the crate now manages** —
    the crate's `chunks::with_connection` opens the shared handle; host `UnifiedMemory` schema
-   init runs alongside the crate's. Parity requirement: crate schema init and host `unified`
+   init runs alongside the crate's. Parity requirement: crate schema init and host namespace-store
    init must **compose without collision** on both fresh and existing DBs.
 
 ## Parity results by format dimension
@@ -62,7 +71,7 @@ two layers.
 
 ### Layer 1 — schema/format asserters (host-side unit tests, cheap, run every PR)
 
-Pure-function comparators (no disk), implemented in **`src/openhuman/tinycortex/parity.rs`**
+Pure-function comparators (no disk), implemented in **`src/openhuman/memory/tinycortex/parity.rs`**
 (`#[cfg(test)]`). Status ✅ = landed & green; ⏳ = pending.
 
 - ✅ **`chunk_id_matches_historical_golden` / `chunk_id_is_sensitive_to_every_field`** — golden +
@@ -93,17 +102,15 @@ The core mechanism from plan §0.3: **one on-disk workspace, opened by both engi
 > tables) and the host `UnifiedMemory` tier (10 tables) **coexist without collision** (P3/P5/P11/P12),
 > and that re-running the flow adds/drops no tables (comparator 5). Still TODO: `vectors`/`store_meta`/
 > `kv_*` (created by the chunk/embed pipeline, need a widened ingest flow), the seeded golden fixture +
-> `scripts/gen-golden-workspace.sh`, and comparators **2** (recall/retrieval snapshot), **3** (tree
-> read), **4** (byte-compare vault) — these require a populated, sealed fixture and the W5 retrieval
-> surface, so they land alongside the W3/W5 flips.
+> Comparators **2** (recall/retrieval snapshot), **3** (tree read), and **4**
+> (byte-compare vault) were never landed before cutover and are now descoped by
+> the decision above. Comparator 1 (schema composition) and comparator 5
+> (idempotent reopen) remain active.
 
-**Fixture.** Check in a small, deterministic `tests/fixtures/golden-workspace/` produced by the
-*pre-migration* build: a real `chunks.db` + content vault + diff `.git`, seeded via a fixed script
-(`scripts/gen-golden-workspace.sh`) with: a handful of chat + document + email sources across ≥2
-namespaces, ingested + scored + sealed to ≥2 tree levels, some entities/edges, a few queue jobs in
-mixed states, and both tiers populated (episodic/event/segment rows present). Store the **generator
-script** and a **manifest** (expected chunk-ids, summary paths, recall snapshots) so the fixture is
-regenerable and reviewable, not an opaque blob.
+**Fixture decision.** Do not synthesize a fixture and label it “pre-migration”
+after the fact. Compatibility is guarded by the retained format pins, schema
+composition/idempotency test, and real host E2E fixtures. A future format
+migration may add a versioned fixture captured before that migration starts.
 
 **Comparators (read-only, both engines open the SAME copied workspace):**
 
@@ -124,7 +131,8 @@ regenerable and reviewable, not an opaque blob.
 
 **Wiring.** Runs under `pnpm test:rust` (host-side, counts toward coverage) and as a dedicated
 `tests/memory_golden_parity_e2e.rs`. The existing crate-level integration tests
-(`tests/memory_roundtrip_e2e.rs`, `memory_tree_sync_deep_raw_coverage_e2e.rs`) act as the
+(`tests/memory_roundtrip_e2e.rs`,
+`tests/raw_coverage/memory_tree_sync_deep_raw_coverage_e2e.rs`) act as the
 "public-surface still green" guard (plan §5.1); this harness adds the **differential** guard that a
 flip preserves *existing* data, not just that the API still functions.
 
@@ -135,11 +143,37 @@ job payload_json parity (P4/P9). Any red = upstream fix in tinycortex, re-bump s
 **W-SYNC gates (amendment 2026-07-09, plan §8):**
 - **P13 sync-status parity** — `memory_sync_status_list` output (per-`source_kind` freshness rows)
   byte-equal pre/post flip on a golden workspace; asserter added to
-  `src/openhuman/tinycortex/parity.rs`.
-- **P14 Composio sync test pair** — the crate's mocked-HTTP gmail pipeline test
-  (`vendor/tinycortex/tests/composio_sync_mock.rs`, wiremock, always-on) green in crate CI before
-  the W-SYNC.3 flip; the live `#[ignore]` test (`composio_sync_live.rs`, `COMPOSIO_API_KEY`) run
-  manually at least once per flip wave.
+  `src/openhuman/memory/tinycortex/parity.rs`.
+- **P14 Composio sync test pair** — the crate's mocked-HTTP provider suite
+  (`vendor/tinycortex/tests/composio_sync_mock.rs`, wiremock, always-on) covers Gmail, Slack,
+  GitHub, Notion, Linear, and ClickUp, including pagination/cursors, request budgets, retries,
+  taint, idempotency, proxied envelopes, and secret redaction. The live `#[ignore]` test
+  (`composio_sync_live.rs`, `COMPOSIO_API_KEY`) remains the manual direct-mode smoke gate.
+
+### W8 test-ownership audit (2026-07-13)
+
+Engine tests now run at their ownership boundary rather than through OpenHuman re-export shims:
+
+- TinyCortex owns memory value/chunk/tree/queue/scoring behavior and the Composio sync pipelines.
+  Duplicate engine assertions were removed from the pure `chunks::types`, `trees::types`,
+  queue-backfill flag, retrieval-weight, and score re-export shims.
+- OpenHuman retains tests that cross a product boundary: config and credential mapping,
+  `SkillDocSink` persistence, event-bus subscribers, RPC envelopes, provider profile/task/catalog
+  surfaces, agent-tool response post-processing, source registry side effects, and the
+  security-critical `MemoryTaint` seam.
+- OpenHuman CI now runs `cargo test --manifest-path vendor/tinycortex/Cargo.toml --features
+  git-diff,sync,persona` when the submodule pointer changes and in the reusable full Rust suite. This is
+  required because Cargo does not run dependency test targets while testing `openhuman`.
+
+The focused local verification commands are:
+
+```bash
+cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
+cargo test --test raw_coverage_all memory_sync -- --test-threads=1
+cargo test --test memory_sync_pipeline_e2e --test memory_artifacts_e2e \
+  --test memory_golden_parity_e2e --test memory_roundtrip_e2e --test memory_sources_e2e
+cargo test --test json_rpc_e2e json_rpc_memory
+```
 
 **W-EMB gate:** the existing **P10 `embedding_signature_parity`** asserter is the regression pin —
 the tinyagents-backed provider stack must emit byte-identical

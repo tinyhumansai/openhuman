@@ -149,7 +149,10 @@ fn legacy_workflow_dir(
             workspace_dir.join(".openhuman").join("skills"),
             workspace_dir.join(".agents").join("skills"),
         ],
-        WorkflowScope::Legacy => return None,
+        // Profile-local skills are placed by hand under
+        // `<workspace>/personalities/<id>/skills/`, never scaffolded through
+        // the create path; treat them like Legacy here (no create target).
+        WorkflowScope::Legacy | WorkflowScope::Profile => return None,
     };
     for root in roots {
         let canonical_root = match std::fs::canonicalize(&root) {
@@ -214,9 +217,10 @@ pub(crate) fn create_workflow_inner(
             }
             workspace_dir.join(".openhuman").join("workflows")
         }
-        WorkflowScope::Legacy => {
+        WorkflowScope::Legacy | WorkflowScope::Profile => {
             return Err(
-                "cannot create skill in legacy scope; choose 'user' or 'project'".to_string(),
+                "cannot create skill in legacy or profile scope; choose 'user' or 'project'"
+                    .to_string(),
             );
         }
     };
@@ -378,7 +382,7 @@ pub(crate) fn create_workflow_inner(
     );
 
     let trusted = is_workspace_trusted(workspace_dir);
-    let created = discover_workflows_inner(home_dir, Some(workspace_dir), trusted)
+    let created = discover_workflows_inner(home_dir, Some(workspace_dir), None, trusted)
         .into_iter()
         .find(|s| s.name == slug)
         .ok_or_else(|| format!("created skill '{slug}' but failed to re-discover"))?;

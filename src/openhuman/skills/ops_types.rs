@@ -51,6 +51,12 @@ pub enum WorkflowScope {
     Project,
     /// Workflow discovered under the legacy `<workspace>/skills/` layout.
     Legacy,
+    /// Workflow private to the active agent profile, discovered under
+    /// `<workspace>/personalities/<id>/skills/` and surfaced ONLY for turns
+    /// running under that profile. Highest collision precedence — a
+    /// profile-local skill shadows a same-named global one for its owner. See
+    /// `ops_discover::discover_workflows_with_profile`.
+    Profile,
 }
 
 /// Parsed frontmatter of a `SKILL.md` file.

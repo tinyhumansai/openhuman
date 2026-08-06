@@ -56,7 +56,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({ default: () => null }));
 vi.mock('../../components/SettingsBackButton', () => ({ default: () => null }));
 
 vi.mock('react-router-dom', () => ({

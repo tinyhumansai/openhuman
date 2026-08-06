@@ -1,11 +1,11 @@
-export type PromptInjectionVerdict = 'allow' | 'block' | 'review';
+type PromptInjectionVerdict = 'allow' | 'block' | 'review';
 
-export interface PromptInjectionReason {
+interface PromptInjectionReason {
   code: string;
   message: string;
 }
 
-export interface PromptInjectionCheck {
+interface PromptInjectionCheck {
   verdict: PromptInjectionVerdict;
   score: number;
   reasons: PromptInjectionReason[];

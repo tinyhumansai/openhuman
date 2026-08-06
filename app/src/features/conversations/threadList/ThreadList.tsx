@@ -4,7 +4,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import type { Thread } from '../../../types/thread';
 import { isImeCompositionKeyEvent } from '../Conversations';
 
-export interface ThreadListProps {
+interface ThreadListProps {
   /** Threads visible after the sidebar's search/tab filtering. */
   threads: Thread[];
   selectedThreadId: string | null;

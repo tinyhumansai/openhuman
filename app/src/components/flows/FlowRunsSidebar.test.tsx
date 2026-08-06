@@ -1,0 +1,262 @@
+/**
+ * FlowRunsSidebar — the flow canvas's projected run-history sidebar. Asserts
+ * the run list renders, a run row opens the {@link FlowRunInspectorDrawer},
+ * and (issue B22) the drawer's "Fix with agent" action navigates to this same
+ * flow's canvas seeded with a `copilotRepair` state and closes the sidebar's
+ * own drawer — this sidebar is only ever mounted while the user is ALREADY on
+ * the failing run's own `/flows/:id` canvas (`FlowCanvasPage` projects it into
+ * the shell sidebar), so re-navigating to the SAME route with a fresh repair
+ * seed is the fix (see `FlowCanvasPage.tsx`'s `locationKey`-based copilot
+ * panel remount, which reacts to exactly this navigation).
+ */
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { FlowRun } from '../../services/api/flowsApi';
+import { store } from '../../store';
+import FlowRunsSidebar from './FlowRunsSidebar';
+
+const listFlowRuns = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/flowsApi', () => ({ listFlowRuns, listAllFlowRuns: vi.fn() }));
+
+const fetchPendingApprovals = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/approvalApi', () => ({ fetchPendingApprovals }));
+
+// Stub the run-started hook (issue B35) so tests can trigger its `onStart`
+// callback directly, without standing up a real socket subscription — its own
+// match/filter/teardown behavior is covered by useFlowRunStarted.test.ts.
+const flowRunStartedCalls = vi.hoisted(
+  () => [] as Array<{ onStart: () => void; flowId?: string | null }>
+);
+vi.mock('../../hooks/useFlowRunStarted', () => ({
+  useFlowRunStarted: (onStart: () => void, flowId?: string | null) => {
+    flowRunStartedCalls.push({ onStart, flowId });
+  },
+}));
+
+// Capture the props handed to the drawer so "Fix with agent" can be invoked
+// directly without standing up the drawer's own run-polling machinery
+// (mirrors `FlowApprovalCard.test.tsx`'s stub pattern).
+const inspectorDrawerProps = vi.hoisted(() => ({
+  current: null as Record<string, unknown> | null,
+}));
+vi.mock('./FlowRunInspectorDrawer', () => ({
+  FlowRunInspectorDrawer: (props: Record<string, unknown>) => {
+    inspectorDrawerProps.current = props;
+    return props.runId ? (
+      <div data-testid="flow-run-inspector-drawer-stub">{props.runId as string}</div>
+    ) : null;
+  },
+}));
+
+function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
+  return {
+    id: 'run-1',
+    flow_id: 'flow-1',
+    thread_id: 'run-1',
+    status: 'failed',
+    started_at: '2026-07-13T18:23:00Z',
+    finished_at: '2026-07-13T18:23:05Z',
+    steps: [],
+    pending_approvals: [],
+    error: 'GMAIL_SEND_EMAIL: empty body',
+    ...overrides,
+  };
+}
+
+/** Renders whatever `location.state` a navigation landed with, for assertions. */
+function LocationStateProbe() {
+  const location = useLocation();
+  return <div data-testid="location-state-probe">{JSON.stringify(location.state)}</div>;
+}
+
+function renderSidebar(flowId = 'flow-1') {
+  return render(
+    <Provider store={store}>
+      <MemoryRouter initialEntries={[`/flows/${flowId}`]}>
+        <Routes>
+          <Route path="/flows/:id" element={<FlowRunsSidebar flowId={flowId} />} />
+        </Routes>
+      </MemoryRouter>
+    </Provider>
+  );
+}
+
+describe('FlowRunsSidebar', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    inspectorDrawerProps.current = null;
+    flowRunStartedCalls.length = 0;
+    fetchPendingApprovals.mockResolvedValue([]);
+  });
+
+  it('lists runs and opens the inspector drawer for the clicked run', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    renderSidebar();
+
+    const row = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    expect(screen.queryByTestId('flow-run-inspector-drawer-stub')).not.toBeInTheDocument();
+
+    fireEvent.click(row);
+
+    expect(screen.getByTestId('flow-run-inspector-drawer-stub')).toHaveTextContent('run-1');
+  });
+
+  it('uses an important padding override for the compact status badge', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    renderSidebar();
+
+    const badge = await screen.findByText('Failed');
+    expect(badge).toHaveClass('!px-1.5');
+    expect(badge).not.toHaveClass('px-1.5');
+  });
+
+  it('falls back to a humanized label instead of "undefined" for an unrecognized status (F-m8)', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'archived' as FlowRun['status'] })]);
+    renderSidebar();
+
+    const row = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    expect(row).toHaveTextContent('archived');
+    expect(row).not.toHaveTextContent('undefined');
+  });
+
+  it('passes onFixWithAgent through to the run inspector drawer', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    renderSidebar();
+
+    fireEvent.click(await screen.findByTestId('flow-runs-sidebar-run-run-1'));
+
+    expect(inspectorDrawerProps.current?.onFixWithAgent).toBeInstanceOf(Function);
+  });
+
+  it('"Fix with agent" closes the drawer and navigates to the same flow seeded with the repair context (B22)', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={['/flows/flow-1']}>
+          <Routes>
+            <Route
+              path="/flows/:id"
+              element={
+                <>
+                  <FlowRunsSidebar flowId="flow-1" />
+                  <LocationStateProbe />
+                </>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </Provider>
+    );
+
+    fireEvent.click(await screen.findByTestId('flow-runs-sidebar-run-run-1'));
+    expect(screen.getByTestId('flow-run-inspector-drawer-stub')).toBeInTheDocument();
+
+    act(() => {
+      (
+        inspectorDrawerProps.current?.onFixWithAgent as (request: {
+          flowId: string;
+          runId: string;
+          error?: string | null;
+          failingNodeIds?: string[];
+        }) => void
+      )({
+        flowId: 'flow-1',
+        runId: 'run-1',
+        error: 'GMAIL_SEND_EMAIL: empty body',
+        failingNodeIds: ['send_summary'],
+      });
+    });
+
+    // The sidebar's own run-inspector drawer closes (repair takes over).
+    await waitFor(() =>
+      expect(screen.queryByTestId('flow-run-inspector-drawer-stub')).not.toBeInTheDocument()
+    );
+    const probe = screen.getByTestId('location-state-probe');
+    expect(JSON.parse(probe.textContent ?? 'null')).toEqual({
+      copilotRepair: {
+        runId: 'run-1',
+        error: 'GMAIL_SEND_EMAIL: empty body',
+        failingNodeIds: ['send_summary'],
+      },
+    });
+  });
+
+  it('shows the empty state when there are no runs', async () => {
+    listFlowRuns.mockResolvedValue([]);
+    renderSidebar();
+
+    expect(await screen.findByTestId('flow-runs-sidebar-empty')).toBeInTheDocument();
+  });
+
+  it('shows "Awaiting approval" for a running run halted at an approval gate', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([
+      {
+        request_id: 'req-1',
+        tool_name: 'SLACK_SEND_MESSAGE',
+        action_summary: 'Send Slack message',
+        args_redacted: {},
+        session_id: 'session-1',
+        created_at: '2026-07-13T18:23:00Z',
+        expires_at: null,
+        source_context: { kind: 'flow', flow_id: 'flow-1', run_id: 'run-1' },
+      },
+    ]);
+    renderSidebar();
+
+    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    await waitFor(() => expect(runRow).toHaveTextContent('Awaiting approval'));
+    expect(runRow.querySelector('[aria-hidden="true"]')).toHaveClass(
+      'bg-amber-500',
+      'animate-pulse'
+    );
+    expect(screen.getByText('Awaiting approval')).toHaveClass('bg-amber-50');
+  });
+
+  it('leaves a running run without a matching approval labeled "Running"', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([]);
+    renderSidebar();
+
+    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    await waitFor(() => expect(runRow).toHaveTextContent('Running'));
+  });
+
+  it('registers useFlowRunStarted scoped to this flow and refetches when it fires (B35)', async () => {
+    listFlowRuns.mockResolvedValue([]);
+    renderSidebar('flow-1');
+
+    await screen.findByTestId('flow-runs-sidebar-empty');
+    // The hook is called (with the same args) on every render — assert the
+    // most recent registration is scoped to this flow.
+    const latestCall = flowRunStartedCalls.at(-1);
+    expect(latestCall?.flowId).toBe('flow-1');
+    expect(listFlowRuns).toHaveBeenCalledTimes(1);
+
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    act(() => {
+      latestCall?.onStart();
+    });
+
+    await waitFor(() => expect(listFlowRuns.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByTestId('flow-runs-sidebar-run-run-1')).toHaveTextContent('Running');
+    expect(screen.queryByTestId('flow-runs-sidebar-empty')).not.toBeInTheDocument();
+  });
+
+  it('shows runs once a run starts even though the list began empty (B35)', async () => {
+    listFlowRuns.mockResolvedValue([]);
+    renderSidebar();
+
+    expect(await screen.findByTestId('flow-runs-sidebar-empty')).toBeInTheDocument();
+
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    act(() => {
+      flowRunStartedCalls.at(-1)?.onStart();
+    });
+
+    expect(await screen.findByTestId('flow-runs-sidebar-run-run-1')).toBeInTheDocument();
+  });
+});

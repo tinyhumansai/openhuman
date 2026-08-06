@@ -7,7 +7,12 @@ import {
 } from '../../../features/conversations/utils/threadFilter';
 import { setActiveAccount } from '../../../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { createNewThread, loadThreadMessages, setSelectedThread } from '../../../store/threadSlice';
+import {
+  createNewThread,
+  formatThreadCreateError,
+  loadThreadMessages,
+  setSelectedThread,
+} from '../../../store/threadSlice';
 import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
 import { chatThreadPath } from '../../../utils/chatRoutes';
 
@@ -83,8 +88,12 @@ export function useNewChat(): () => void {
       })
       .catch(err => {
         // Don't silently drop the primary New Chat path — log so the failure is
-        // diagnosable. The user stays where they are (no broken navigation).
-        console.error('[new-chat] createNewThread failed', err);
+        // diagnosable. The user stays where they are (no broken navigation), and
+        // the chat page renders `thread.createThreadError` so the failure is
+        // visible rather than a dead button (#5156). Normalising the value keeps
+        // the log readable: an `.unwrap()` rejection is a bare string or a
+        // `SerializedError`, never an `Error`.
+        console.error('[new-chat] createNewThread failed', formatThreadCreateError(err));
       });
   }, [navigate, dispatch, threads, messagesByThreadId, streamingByThread, pendingSendThreadIds]);
 }

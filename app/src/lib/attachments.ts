@@ -10,7 +10,7 @@ import debugFactory from 'debug';
 
 const debug = debugFactory('chat:attachments');
 
-export const ALLOWED_IMAGE_MIME_TYPES = [
+const ALLOWED_IMAGE_MIME_TYPES = [
   'image/png',
   'image/jpeg',
   'image/webp',
@@ -20,7 +20,7 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
 
 export type AllowedImageMimeType = (typeof ALLOWED_IMAGE_MIME_TYPES)[number];
 
-export const ALLOWED_FILE_MIME_TYPES = [
+const ALLOWED_FILE_MIME_TYPES = [
   'application/pdf',
   'text/plain',
   'text/csv',
@@ -39,7 +39,7 @@ export type AllowedFileMimeType = (typeof ALLOWED_FILE_MIME_TYPES)[number];
 // them through the existing `[IMAGE:]` vision path (see `extractVideoFrames` +
 // `buildMessageWithAttachments`). So a vision-capable tier is required, the same
 // gate as images; audio and motion between frames are not conveyed.
-export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const;
+const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const;
 
 export type AllowedVideoMimeType = (typeof ALLOWED_VIDEO_MIME_TYPES)[number];
 export type AllowedAttachmentMimeType =
@@ -75,7 +75,6 @@ export const ATTACHMENT_MAX_FILES = 4;
 export const ATTACHMENT_MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 export const ATTACHMENT_MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB
 export const ATTACHMENT_MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
-export const ATTACHMENT_MAX_SIZE_BYTES = ATTACHMENT_MAX_IMAGE_SIZE_BYTES;
 // Still frames sampled from a video and forwarded as `[IMAGE:]` markers. 2 keeps
 // a clip within the 4-marker budget alongside other attachments (e.g. 1 video +
 // 2 images, or 2 videos).
@@ -97,7 +96,7 @@ export interface Attachment {
   frames?: string[];
 }
 
-export type AttachmentError =
+type AttachmentError =
   | { code: 'unsupported_type'; mimeType: string }
   | { code: 'too_large'; sizeBytes: number; maxBytes: number }
   | { code: 'too_many'; kind: AttachmentKind; max: number }
@@ -113,28 +112,24 @@ export function isVideoMimeType(mime: string): mime is AllowedVideoMimeType {
   return (ALLOWED_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
 }
 
-export function isAllowedAttachmentMimeType(mime: string): mime is AllowedAttachmentMimeType {
-  return (ALLOWED_ATTACHMENT_MIME_TYPES as readonly string[]).includes(mime);
-}
-
 /**
  * The exact MIME set the ingest validator accepts — images plus the
  * text-extractable documents. A strict subset of {@link AllowedAttachmentMimeType}
  * (which also lists reference-only types like CSV/DOCX/ZIP that we reject).
  */
-export type SupportedAttachmentMimeType =
+type SupportedAttachmentMimeType =
   | AllowedImageMimeType
   | AllowedVideoMimeType
   | (typeof EXTRACTABLE_FILE_MIME_TYPES)[number];
 
 /**
- * Stricter gate than {@link isAllowedAttachmentMimeType}: only the formats the
- * backend actually reads — images, plus the text-extractable documents (PDF via
+ * Only accepts formats the backend actually reads — images, plus the
+ * text-extractable documents (PDF via
  * pdf_extract; TXT/Markdown via UTF-8). DOCX/PPTX/XLSX/ZIP are excluded so they
  * can't be attached as content-less reference stubs. Applied on every ingest
  * path (picker, drag-drop, paste).
  */
-export function isSupportedAttachmentMimeType(mime: string): mime is SupportedAttachmentMimeType {
+function isSupportedAttachmentMimeType(mime: string): mime is SupportedAttachmentMimeType {
   return (
     (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(mime) ||
     (ALLOWED_VIDEO_MIME_TYPES as readonly string[]).includes(mime) ||

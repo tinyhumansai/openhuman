@@ -13,10 +13,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
-}));
-
 const teamApiMock = { createInvite: vi.fn(), revokeInvite: vi.fn() };
 vi.mock('../../../services/api/teamApi', () => ({ teamApi: teamApiMock }));
 

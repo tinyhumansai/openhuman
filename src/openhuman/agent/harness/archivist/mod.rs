@@ -30,9 +30,7 @@ pub use types::ArchivistHook;
 #[cfg(test)]
 pub(crate) use crate::openhuman::agent::hooks::PostTurnHook;
 #[cfg(test)]
-pub(crate) use crate::openhuman::config::Config;
-#[cfg(test)]
-pub(crate) use crate::openhuman::memory_store::profile;
+pub(crate) use crate::openhuman::memory::store::profile;
 #[cfg(test)]
 pub(crate) use helpers::extract_profile_key;
 #[cfg(test)]

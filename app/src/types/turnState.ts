@@ -156,6 +156,11 @@ export interface PersistedToolTimelineEntry {
   /** Size-capped tool result text. Absent while running and on snapshots
    *  written before this field. */
   output?: string;
+  /** Per-turn monotonic ordering key stamped when the row is first created, so
+   *  a rehydrated timeline orders rows identically to the live stream (shares
+   *  the per-turn ordering space with {@link PersistedTranscriptItem.seq}).
+   *  Absent on snapshots written before this field. */
+  seq?: number;
 }
 
 export interface PersistedTurnState {

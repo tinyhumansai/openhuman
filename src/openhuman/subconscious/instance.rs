@@ -44,8 +44,8 @@ use super::provider::{
     RATE_CAP_HALT_REASON, TOOL_UNSUPPORTED_REASON,
 };
 use super::types::{SubconsciousStatus, TickResult};
+use crate::openhuman::agent::tinyagents::observability::GraphTracingSink;
 use crate::openhuman::config::Config;
-use crate::openhuman::tinyagents::observability::GraphTracingSink;
 
 /// Hard timeout for a single subconscious tick.
 const TICK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -253,6 +253,21 @@ impl SubconsciousInstance {
     /// a crafted `Config` without hitting disk (`Config::load_or_init`).
     async fn run_tick(&self, config: Config) -> Result<TickResult> {
         let prefix = self.log_prefix();
+
+        // `subconscious.engine = "medulla"` is accepted but not implemented in
+        // this build: the supervised `medulla-serve` child that backed it was
+        // removed with the `medulla_local` draft, and the engine is to be
+        // re-ported onto the `medulla` domain. Warn and fall through to the
+        // local graph rather than failing the tick — an operator whose config
+        // selects it should get a working subconscious and a clear reason, not
+        // a silently dead one.
+        if config.subconscious.engine.is_medulla() {
+            warn!(
+                "{prefix} subconscious.engine=medulla is not implemented in this build; \
+                 running the local graph instead"
+            );
+        }
+
         let started = std::time::Instant::now();
         let tick_at = now_secs();
         let my_generation = self.tick_generation.fetch_add(1, Ordering::SeqCst) + 1;

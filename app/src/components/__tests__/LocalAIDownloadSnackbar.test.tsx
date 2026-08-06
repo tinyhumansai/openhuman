@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../lib/coreState/store';
 import { renderWithProviders } from '../../test/test-utils';
 import LocalAIDownloadSnackbar from '../LocalAIDownloadSnackbar';
 
@@ -11,6 +12,29 @@ vi.mock('../../utils/tauriCommands', () => ({
   openhumanLocalAiDownloadsProgress: vi.fn().mockResolvedValue({ result: null }),
 }));
 
+/**
+ * Seed the folded `runtime.localAi.state` in core state. The snackbar reads this
+ * (instead of an idle inference poll) to decide whether to run its fast poll, so
+ * tests that expect it to poll must mark a download active here first.
+ */
+function seedLocalAiState(state: string | null): void {
+  const current = getCoreStateSnapshot();
+  setCoreStateSnapshot({
+    ...current,
+    snapshot: {
+      ...current.snapshot,
+      runtime: {
+        ...current.snapshot.runtime,
+        localAi: state === null ? null : ({ state } as never),
+      },
+    },
+  });
+}
+
+afterEach(() => {
+  seedLocalAiState(null);
+});
+
 describe('LocalAIDownloadSnackbar', () => {
   it('does not render when not in Tauri environment', () => {
     renderWithProviders(<LocalAIDownloadSnackbar />);
@@ -19,30 +43,26 @@ describe('LocalAIDownloadSnackbar', () => {
     expect(screen.queryByLabelText('Dismiss download notification')).not.toBeInTheDocument();
   });
 
-  it('does not render when no download is active', async () => {
+  it('does not poll or render when core state reports no active download', async () => {
     const tauriCommands = await import('../../utils/tauriCommands');
     vi.mocked(tauriCommands.isTauri).mockReturnValue(true);
-    vi.mocked(tauriCommands.openhumanLocalAiStatus).mockResolvedValue({
-      result: { state: 'ready' } as never,
-      logs: [],
-    });
-    vi.mocked(tauriCommands.openhumanLocalAiDownloadsProgress).mockResolvedValue({
-      result: { state: 'idle', progress: null } as never,
-      logs: [],
-    });
+    vi.mocked(tauriCommands.openhumanLocalAiStatus).mockClear();
+    vi.mocked(tauriCommands.openhumanLocalAiDownloadsProgress).mockClear();
+    seedLocalAiState('ready');
 
     renderWithProviders(<LocalAIDownloadSnackbar />);
 
-    // Wait for poll cycle
     await vi.waitFor(() => {
       expect(screen.queryByText('Downloading')).not.toBeInTheDocument();
     });
+    // Idle → zero inference polls (the fold's whole point).
+    expect(tauriCommands.openhumanLocalAiStatus).not.toHaveBeenCalled();
+    expect(tauriCommands.openhumanLocalAiDownloadsProgress).not.toHaveBeenCalled();
 
-    // Reset mock
     vi.mocked(tauriCommands.isTauri).mockReturnValue(false);
   });
 
-  it('renders immediately when status reports bootstrap activity before downloads progress catches up', async () => {
+  it('polls and renders when core state reports an active download', async () => {
     const tauriCommands = await import('../../utils/tauriCommands');
     vi.mocked(tauriCommands.isTauri).mockReturnValue(true);
     vi.mocked(tauriCommands.openhumanLocalAiStatus).mockResolvedValue({
@@ -59,6 +79,7 @@ describe('LocalAIDownloadSnackbar', () => {
       result: { state: 'idle', progress: null } as never,
       logs: [],
     });
+    seedLocalAiState('loading');
 
     renderWithProviders(<LocalAIDownloadSnackbar />);
 

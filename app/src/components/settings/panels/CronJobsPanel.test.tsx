@@ -13,9 +13,15 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
-// ── Mock SettingsHeader ─────────────────────────────────────────────────
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
+// ── Mock Redux store hooks ──────────────────────────────────────────────
+// The panel dispatches loadAgentProfiles + reads the agentProfile slice to
+// feed the attribution picker / job-list labels. These tests render the panel
+// without a Provider, so stub the hooks (profile UI is covered by the
+// CronJobFormModal / CoreJobList component tests).
+const noopDispatch = vi.fn();
+vi.mock('../../../store/hooks', () => ({
+  useAppDispatch: () => noopDispatch,
+  useAppSelector: () => [],
 }));
 
 // ── Mock CronJobFormModal ───────────────────────────────────────────────

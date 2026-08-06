@@ -37,12 +37,12 @@ const log = createDebug('app:flows:canvas:agentInspector');
  * slugs `OpenHumanAgentRunner`/`resolve_model_for_hint` accept as bare tier
  * names — so the value written here runs unchanged in the flow engine.
  */
-export const AGENT_MANAGED_TIERS = ['reasoning-v1', 'chat-v1', 'agentic-v1', 'burst-v1'] as const;
+const AGENT_MANAGED_TIERS = ['reasoning-v1', 'chat-v1', 'agentic-v1', 'burst-v1'] as const;
 
 /** Sentinel select value for "type a raw model id" — never persisted. */
 const CUSTOM_MODEL = '__custom__';
 
-export interface AgentNodeInspectorProps {
+interface AgentNodeInspectorProps {
   /** The agent node's controlled config object. */
   config: Record<string, unknown>;
   /** Shallow-merge patch into the node's config. */

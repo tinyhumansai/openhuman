@@ -104,6 +104,84 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
 }
 
 #[test]
+fn agent_job_round_trips_profile_id_and_patch_clears_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Create an agent job attributed to a profile.
+    let job = add_agent_job_with_definition(
+        &config,
+        Some("attributed".into()),
+        Schedule::Cron {
+            expr: "0 9 * * *".into(),
+            tz: None,
+            active_hours: None,
+        },
+        "do the thing",
+        SessionTarget::Isolated,
+        None,
+        None,
+        false,
+        None,
+        true,
+        Some("alice".into()),
+    )
+    .unwrap();
+    assert_eq!(job.profile_id.as_deref(), Some("alice"));
+
+    // Reload from disk — the column round-trips.
+    let stored = get_job(&config, &job.id).unwrap();
+    assert_eq!(stored.profile_id.as_deref(), Some("alice"));
+
+    // Patch to a different profile.
+    let repointed = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            profile_id: Some(Some("bob".into())),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(repointed.profile_id.as_deref(), Some("bob"));
+
+    // Patch with `Some(None)` clears the attribution; `None` leaves it untouched.
+    let cleared = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            profile_id: Some(None),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(cleared.profile_id, None);
+
+    let untouched = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            name: Some("renamed".into()),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(untouched.profile_id, None);
+    assert_eq!(untouched.name.as_deref(), Some("renamed"));
+}
+
+#[test]
+fn shell_job_has_no_profile_attribution() {
+    // Back-compat: shell jobs (and any job created without profile_id) load with
+    // profile_id = None.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let job = add_job(&config, "*/5 * * * *", "echo ok").unwrap();
+    assert_eq!(job.profile_id, None);
+    assert_eq!(get_job(&config, &job.id).unwrap().profile_id, None);
+}
+
+#[test]
 fn enabling_stale_disabled_job_refreshes_next_run() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);

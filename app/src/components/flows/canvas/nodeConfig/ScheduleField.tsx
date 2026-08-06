@@ -22,13 +22,14 @@ import {
   describeCron,
   formatTime,
   parseCron,
-  WEEKDAY_INITIAL,
-  WEEKDAY_SHORT,
+  weekdayNarrowLabel,
+  WEEKDAYS,
+  weekdayShortLabel,
 } from '../../../../lib/flows/cron';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { Field, INPUT_CLASS, MONO_CLASS } from './nodeConfigFields';
 
-export interface ScheduleFieldProps {
+interface ScheduleFieldProps {
   /** The cron string stored on `config.schedule`. */
   value: string;
   onChange: (value: string) => void;
@@ -38,7 +39,7 @@ export interface ScheduleFieldProps {
 const FREQUENCIES: CronFreq[] = ['minutes', 'hours', 'daily'];
 
 export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const id = useId();
   const parsed = useMemo(() => parseCron(value), [value]);
   // Open in advanced mode only when the current value is a real cron the builder
@@ -85,7 +86,7 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
         <div
           className="rounded-lg border border-primary-200 bg-primary-50/60 px-2.5 py-1.5 text-xs font-medium text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300"
           data-testid={testId ? `${testId}-summary` : undefined}>
-          {describeCron(value)}
+          {describeCron(value, t, locale)}
         </div>
 
         {advanced ? (
@@ -157,15 +158,16 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
                 {t('flows.nodeConfig.trigger.scheduleDays')}
               </span>
               <div className="flex gap-1" data-testid={testId ? `${testId}-weekdays` : undefined}>
-                {WEEKDAY_INITIAL.map((initial, day) => {
+                {WEEKDAYS.map(day => {
                   const active = spec.weekdays.includes(day);
+                  const label = weekdayShortLabel(day, locale);
                   return (
                     <button
                       key={day}
                       type="button"
                       aria-pressed={active}
-                      aria-label={WEEKDAY_SHORT[day]}
-                      title={WEEKDAY_SHORT[day]}
+                      aria-label={label}
+                      title={label}
                       data-testid={testId ? `${testId}-day-${day}` : undefined}
                       onClick={() => toggleWeekday(day)}
                       className={`h-7 w-7 rounded-full text-[11px] font-semibold transition-colors ${
@@ -173,7 +175,7 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
                           ? 'bg-primary-500 text-content-inverted'
                           : 'border border-line-strong text-content-muted hover:bg-surface-hover'
                       }`}>
-                      {initial}
+                      {weekdayNarrowLabel(day, locale)}
                     </button>
                   );
                 })}

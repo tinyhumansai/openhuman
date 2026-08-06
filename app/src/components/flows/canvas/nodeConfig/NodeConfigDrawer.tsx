@@ -20,7 +20,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 
 import { useEscapeKey } from '../../../../hooks/useEscapeKey';
 import type { FlowEdge, FlowNode } from '../../../../lib/flows/graphAdapter';
-import { nodeKindMeta } from '../../../../lib/flows/nodeKindMeta';
+import { NodeKindTile } from '../../../../lib/flows/nodeKindIcons';
 import { describeNode } from '../../../../lib/flows/nodeSummary';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
@@ -36,7 +36,7 @@ export interface NodeConfigPatch {
   config?: Record<string, unknown>;
 }
 
-export interface NodeConfigDrawerProps {
+interface NodeConfigDrawerProps {
   /** The selected node to edit, or `null` when nothing single-node is selected. */
   node: FlowNode | null;
   onClose: () => void;
@@ -137,7 +137,7 @@ function NodeConfigDrawer({
   nodeLabelById = {},
   onRemoveEdge = () => {},
 }: NodeConfigDrawerProps) {
-  const { t } = useT();
+  const { t, locale } = useT();
 
   useEscapeKey(() => {
     log('escape: closing');
@@ -153,11 +153,16 @@ function NodeConfigDrawer({
 
   if (!node) return null;
 
-  const meta = nodeKindMeta(node.data.kind);
   const kindLabel = t(`flows.nodeKind.${node.data.kind}`, node.data.kind);
   // Dynamic "what this node will do", derived from the live config — updates as
   // the fields below are edited (same summary shown on the node card).
-  const summary = describeNode(node.data.kind, node.data.config ?? {}, node.data.outputPorts);
+  const summary = describeNode(
+    node.data.kind,
+    node.data.config ?? {},
+    node.data.outputPorts,
+    t,
+    locale
+  );
 
   return (
     // `pointer-events-none` wrapper so the drawer floats over the canvas
@@ -168,9 +173,7 @@ function NodeConfigDrawer({
       data-testid="node-config-drawer">
       <aside className="pointer-events-auto relative flex h-full w-full max-w-xs flex-col border-l border-line bg-surface shadow-xl">
         <header className="flex items-start gap-2 border-b border-line px-3.5 py-3">
-          <span className="text-lg leading-none" aria-hidden="true">
-            {meta.emoji}
-          </span>
+          <NodeKindTile kind={node.data.kind} className="mt-0.5" />
           <div className="min-w-0 flex-1">
             {/* Kind eyebrow — hidden when it just repeats the name (a default,
                 unrenamed node), so the header doesn't show the title twice. */}

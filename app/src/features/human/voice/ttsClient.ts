@@ -15,7 +15,7 @@ export interface VisemeFrame {
   end_ms: number;
 }
 
-export interface AlignmentFrame {
+interface AlignmentFrame {
   char: string;
   start_ms: number;
   end_ms: number;
@@ -26,14 +26,14 @@ export interface AlignmentFrame {
  * The core does the messy "tolerate multiple backend response shapes" work
  * (see `src/openhuman/voice/reply_speech.rs`) so the UI can stay strict.
  */
-export interface TtsResponse {
+interface TtsResponse {
   audio_base64: string;
   audio_mime: string;
   visemes: VisemeFrame[];
   alignment?: AlignmentFrame[];
 }
 
-export interface TtsOptions {
+interface TtsOptions {
   voiceId?: string;
   modelId?: string;
   outputFormat?: string;

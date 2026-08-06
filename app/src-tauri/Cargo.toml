@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.58.14"
+version = "0.63.6"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -103,13 +103,22 @@ env_logger = "0.11"
 # can be overridden at runtime via the same env var. Feature set mirrors the
 # core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
 # uses `log` + `env_logger`.
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "httpdate"] }
 
 # Used by the imessage_scanner module.
 anyhow = "1.0"
+# SQLite for the shell-side whatsapp_data store (relocated from the core). All
+# platforms — the store persists on Windows/Linux/macOS. Pinned to match the
+# core crate so a single bundled SQLite is linked. (The macOS-only iMessage
+# scanner also uses rusqlite; this general dep covers it too.)
+rusqlite = { version = "=0.40.0", features = ["bundled"] }
 parking_lot = "0.12"
 chrono = "0.4"
 async-trait = "0.1"
+# Desktop companion: native mic capture + POINT-tag parsing + session ids.
+cpal = "0.15"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
 # Mascot fake-camera pipeline (meet_call): rasterizes the OpenHuman
 # mascot SVG to a PNG once, converts it to a YUV420 Y4M frame, and
 # points CEF's `--use-file-for-fake-video-capture` flag at the cached
@@ -132,7 +141,64 @@ cef = { version = "=146.4.1", default-features = false }
 # by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
-openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+#
+# `default-features = false` (set in #1061, before the compile-time domain
+# gates existed) means the embedded core does NOT inherit the root crate's
+# default gate set, so each default-ON gate must be forwarded explicitly to
+# keep the shipped desktop build byte-identical (AGENTS.md "Compile-time
+# domain gates").
+#
+# This list is NOT optional polish — a gate missing here vanishes from the
+# shipped app silently, with no build error and no test failure:
+#
+# - `voice` — without it the `#[cfg(feature = "voice")]` controllers in
+#   `src/core/all.rs` are never registered, so the whole `openhuman.voice_*`
+#   namespace answers "unknown method" at runtime. This shipped broken from
+#   v0.58.19 to v0.61.x (#4901); the `VOICE_COMPILED_IN` const assert at the
+#   top of `src/lib.rs` now fails the build if it is dropped again.
+# - `media` — re-registers the `media_generate_*` agent tools that #4804 moved
+#   behind `#[cfg(feature = "media")]`; it sheds no deps, so this only restores
+#   the pre-gate desktop tool surface.
+# - `web3` — keeps the wallet/web3/x402 domains and their agent tools in the
+#   desktop build while allowing slim builds to omit the crypto-only deps.
+# - `tokenjuice-treesitter` — forwards `tinyjuice/tinyjuice-treesitter`, which
+#   pulls the tree-sitter Rust/TS/Python grammars. Without it TokenJuice falls
+#   back to the brace-depth heuristic, so the desktop app compresses code worse
+#   than intended. This failed *soft* (no error, no Sentry signal) and had never
+#   once been forwarded since the gate was added in #4123 (#4918).
+#
+# `scripts/ci/check-feature-forwarding.mjs` fails CI when this list drifts from
+# the core's `[features] default` (#4919) — do not hand-maintain it from memory.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+    "channels",
+    "media",
+    "tokenjuice-treesitter",
+    "inference",
+    "voice",
+    "web3",
+    "documents",
+    "flows",
+    "meet",
+    "skills",
+    "mcp",
+    "crash-reporting",
+    # The desktop shell reaches the in-process core only over
+    # http://127.0.0.1:<port>/rpc, so it REQUIRES the HTTP + Socket.IO transport
+    # (#5048). Enforced by the HTTP_SERVER_COMPILED_IN compile assert in lib.rs.
+    "http-server",
+    # Without this the desktop app has no battery/AC probe, so a user who sets
+    # `require_ac_power` gets no enforcement and `battery_floor` throttling never
+    # fires — silently, since the off-state is a valid "on AC" reading.
+    "scheduler-gate",
+    # The packaged app's only durable log. Without this, a support request
+    # comes back with nothing to attach — and the absence is silent.
+    "file-logging",
+    # Polymarket read + trading tools. Implies `web3`, which is already
+    # forwarded — but the checker does literal set membership with no
+    # transitive resolution, so this needs its own line.
+    "prediction-markets",
+    "contacts",
+] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
@@ -142,8 +208,8 @@ nix = { version = "0.29", default-features = false, features = ["hostname", "sig
 objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 mac-notification-sys = "0.6"
-# iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS.
-rusqlite = { version = "=0.40.0", features = ["bundled"] }
+# iMessage scanner reads ~/Library/Messages/chat.db read-only on macOS
+# (rusqlite is declared once in the general [dependencies] table above).
 objc2-user-notifications = "0.3.2"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", features = ["NSTimer", "block2"] }
@@ -208,6 +274,9 @@ e2e-test-support = ["openhuman_core/e2e-test-support"]
 # whisper.cpp to use MSVC's static runtime (/MT), matching CEF and avoiding
 # LNK2038/LNK1169 CRT conflicts on Windows.
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+# Keep reqwest defaults disabled in this independent Cargo world too. Without
+# this patch, the registry release reintroduces native-tls/OpenSSL on Linux.
+motosan-ai-oauth = { path = "../../vendor/motosan-ai-oauth" }
 # TinyAgents vendored submodule (repo-root vendor/tinyagents, pinned at the
 # released tag) — same patch as the root Cargo world so both resolve the
 # in-tree SDK source. `git submodule update --init vendor/tinyagents` first.

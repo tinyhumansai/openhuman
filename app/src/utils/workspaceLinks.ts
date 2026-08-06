@@ -1,4 +1,4 @@
-export interface WorkspaceLinkTarget {
+interface WorkspaceLinkTarget {
   path: string;
 }
 

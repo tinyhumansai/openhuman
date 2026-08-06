@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { McpRegistryUserError } from '../../../services/api/mcpRegistryErrors';
 import InstallDialog from './InstallDialog';
 
 const mockRegistryGet = vi.fn();
@@ -96,6 +97,22 @@ describe('InstallDialog', () => {
 
     await waitFor(() => screen.getByText('API_KEY'));
     expect(screen.getByText('SECRET_TOKEN')).toBeInTheDocument();
+  });
+
+  it('shows friendly guidance instead of raw registry 404 JSON when detail load fails', async () => {
+    mockRegistryGet.mockRejectedValue(
+      new Error(
+        'MCP official registry GET unreal-mcp returned HTTP 404 Not Found: {"title":"Not Found","status":404,"detail":"Server not found"}'
+      )
+    );
+    render(<InstallDialog qualifiedName="unreal-mcp" onSuccess={() => {}} onCancel={() => {}} />);
+
+    await waitFor(() => screen.getByText(/Server not found in registry/));
+
+    expect(screen.getByText(/browse available MCP servers/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Browse catalog' })).toBeInTheDocument();
+    expect(screen.queryByText(/"title":"Not Found"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 404/)).not.toBeInTheDocument();
   });
 
   it('renders env key inputs after clicking configure', async () => {
@@ -232,7 +249,34 @@ describe('InstallDialog', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Install' }));
     });
 
-    await waitFor(() => screen.getByText('Server error'));
+    await waitFor(() => screen.getByText('Install failed'));
+  });
+
+  it('shows friendly guidance instead of raw registry JSON when install re-fetch fails', async () => {
+    mockRegistryGet.mockResolvedValue(DETAIL);
+    mockInstall.mockRejectedValue(
+      new McpRegistryUserError(
+        'not_found',
+        'Failed to fetch registry detail: MCP official registry GET unreal-mcp returned HTTP 404 Not Found: {"title":"Not Found","status":404,"detail":"Server not found"}'
+      )
+    );
+
+    render(
+      <InstallDialog qualifiedName="acme/test-server" onSuccess={() => {}} onCancel={() => {}} />
+    );
+
+    await goToConfigureStep();
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'key' } });
+    fireEvent.change(screen.getByLabelText('SECRET_TOKEN'), { target: { value: 'secret' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+    });
+
+    await waitFor(() => screen.getByText(/Server not found in registry/));
+
+    expect(screen.queryByText(/"title":"Not Found"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/HTTP 404/)).not.toBeInTheDocument();
   });
 
   it('calls onCancel when Cancel is clicked on detail step', async () => {

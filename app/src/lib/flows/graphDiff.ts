@@ -11,7 +11,7 @@
  */
 import type { WorkflowGraph } from './types';
 
-export interface GraphDiff {
+interface GraphDiff {
   /** Node ids present in the proposed graph but not the current one. */
   addedNodeIds: Set<string>;
   /** Node ids present in the current graph but dropped from the proposed one. */

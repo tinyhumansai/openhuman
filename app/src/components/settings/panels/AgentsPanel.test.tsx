@@ -32,10 +32,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
-
 const mockList = vi.mocked(agentRegistryApi.list);
 const mockSetEnabled = vi.mocked(agentRegistryApi.setEnabled);
 

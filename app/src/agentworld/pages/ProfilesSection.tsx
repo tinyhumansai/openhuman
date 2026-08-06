@@ -7,7 +7,8 @@
  * "register a handle" prompt when the wallet owns none, and a wallet-locked
  * notice when the wallet isn't set up.
  */
-import { useCallback, useEffect, useState } from 'react';
+import debug from 'debug';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import Button from '../../components/ui/Button';
@@ -18,8 +19,13 @@ import {
   type IdentityExport,
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
+import StatusBlock from '../components/StatusBlock';
+import TransferHandleModal from '../components/TransferHandleModal';
+
+const log = debug('agentworld:profile');
 
 /** A handle registered to the wallet (subset of the directory.reverse identity). */
 interface OwnedIdentity {
@@ -168,7 +174,175 @@ function useMyIdentity(reloadKey: number): ProfileState {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+/**
+ * Own-profile edit form (name / bio / avatar), wired to the already-plumbed
+ * `users.updateProfile` write path (#4930). Prefills the writable fields from
+ * the authoritative `users.get` record — including `avatarEmail`, which the
+ * display-side `GqlProfile` does not carry (the shown avatar URL is derived
+ * server-side from the Gravatar email). On success the parent refetches so the
+ * saved values render.
+ */
+function ProfileEditForm({
+  cryptoId,
+  initialDisplayName,
+  initialBio,
+  onCancel,
+  onSaved,
+}: {
+  cryptoId: string;
+  initialDisplayName: string;
+  initialBio: string;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useT();
+  const [displayName, setDisplayName] = useState(initialDisplayName);
+  const [bio, setBio] = useState(initialBio);
+  const [avatarEmail, setAvatarEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Which fields the user has edited. The async prefill below must never
+  // overwrite a field the user already started typing in (its fetch can resolve
+  // after the user opens the form and begins editing — silently discarding
+  // their input otherwise, #4930 review).
+  const touched = useRef({ displayName: false, bio: false, avatarEmail: false });
+
+  // Seed the writable fields (notably avatarEmail, absent from GqlProfile) from
+  // the authoritative user record. Non-fatal: on failure we keep the values
+  // already seeded from the displayed profile. Untouched fields only.
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient.users
+      .get(cryptoId)
+      .then(user => {
+        if (cancelled) return;
+        if (!touched.current.displayName && typeof user?.displayName === 'string')
+          setDisplayName(user.displayName);
+        if (!touched.current.bio && typeof user?.bio === 'string') setBio(user.bio);
+        if (!touched.current.avatarEmail && typeof user?.avatarEmail === 'string')
+          setAvatarEmail(user.avatarEmail);
+      })
+      .catch((err: unknown) => {
+        log('prefill from users.get failed: %s', String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cryptoId]);
+
+  const handleSave = useCallback(async () => {
+    // A display name is required: `displayName`/`bio` are always sent trimmed,
+    // so an empty name would blank the existing one. Guard here (and disable
+    // Save below) rather than silently clearing it. `bio` may be empty; only
+    // `avatarEmail` is omitted-when-empty (so an existing avatar isn't cleared).
+    if (!displayName.trim()) {
+      setError(t('agentWorld.profile.nameRequired', 'Display name cannot be empty.'));
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    log('saving profile update');
+    try {
+      await apiClient.users.updateProfile(cryptoId, {
+        displayName: displayName.trim(),
+        bio: bio.trim(),
+        // Only send avatarEmail when the user provided one, so an untouched
+        // (empty) field never blanks an existing avatar. It is a Gravatar
+        // email, not an image URL.
+        ...(avatarEmail.trim() ? { avatarEmail: avatarEmail.trim() } : {}),
+      });
+      log('profile update saved');
+      onSaved();
+    } catch (err) {
+      log('profile update failed: %s', String(err));
+      setError(t('agentWorld.profile.saveError', 'Could not save your profile. Try again.'));
+    } finally {
+      setSaving(false);
+    }
+  }, [avatarEmail, bio, cryptoId, displayName, onSaved, t]);
+
+  const inputClass =
+    'w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-content ' +
+    'placeholder:text-content-faint focus:border-primary-500 focus:outline-none';
+
+  return (
+    <form
+      data-testid="profile-edit-form"
+      className="space-y-3"
+      onSubmit={e => {
+        e.preventDefault();
+        void handleSave();
+      }}>
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-content">
+          {t('agentWorld.profile.displayName', 'Display name')}
+        </span>
+        <input
+          type="text"
+          value={displayName}
+          disabled={saving}
+          onChange={e => {
+            touched.current.displayName = true;
+            setDisplayName(e.target.value);
+          }}
+          className={inputClass}
+        />
+      </label>
+
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-content">
+          {t('agentWorld.profile.bio', 'Bio')}
+        </span>
+        <textarea
+          value={bio}
+          rows={3}
+          disabled={saving}
+          onChange={e => {
+            touched.current.bio = true;
+            setBio(e.target.value);
+          }}
+          className={`${inputClass} resize-y`}
+        />
+      </label>
+
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-content">
+          {t('agentWorld.profile.avatarEmail', 'Avatar email')}
+        </span>
+        <input
+          type="email"
+          value={avatarEmail}
+          disabled={saving}
+          onChange={e => {
+            touched.current.avatarEmail = true;
+            setAvatarEmail(e.target.value);
+          }}
+          className={inputClass}
+        />
+        <span className="text-[11px] text-content-muted">
+          {t('agentWorld.profile.avatarEmailHint', 'Used to fetch your avatar from Gravatar.')}
+        </span>
+      </label>
+
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+
+      <div className="flex items-center gap-2">
+        <Button type="submit" variant="primary" size="sm" disabled={saving || !displayName.trim()}>
+          {saving
+            ? t('agentWorld.profile.saving', 'Saving…')
+            : t('agentWorld.profile.save', 'Save')}
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={onCancel}>
+          {t('agentWorld.profile.cancel', 'Cancel')}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?: () => void }) {
+  const { t } = useT();
+  const [editing, setEditing] = useState(false);
   const [followStats, setFollowStats] = useState<FollowStats | null>(null);
   const [exportData, setExportData] = useState<IdentityExport | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
@@ -176,6 +350,8 @@ function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?
   // Handle currently being promoted to primary (in-flight), and any error.
   const [switchingHandle, setSwitchingHandle] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  // The owned handle whose transfer modal is open (without @), or null.
+  const [transferHandle, setTransferHandle] = useState<string | null>(null);
 
   // ── Extract display fields from either data source ─────────────────────────
   const isGraphql = data.source === 'graphql';
@@ -312,6 +488,31 @@ function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?
         </div>
       </div>
 
+      {/* Own-profile editing (#4930). Only the graphql source carries an
+          editable profile + cryptoId; the bare directory fallback has neither. */}
+      {isGraphql && cryptoId && (
+        <div className="mt-4 border-t border-line pt-4">
+          {editing ? (
+            <ProfileEditForm
+              cryptoId={cryptoId}
+              initialDisplayName={displayName}
+              initialBio={bio}
+              onCancel={() => setEditing(false)}
+              onSaved={() => {
+                setEditing(false);
+                // Refetch so the saved name/bio/avatar render (reuses the
+                // active-handle-switch reload path).
+                onSwitched?.();
+              }}
+            />
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+              {t('agentWorld.profile.edit', 'Edit profile')}
+            </Button>
+          )}
+        </div>
+      )}
+
       {skills.length > 0 && (
         <div className="mt-4 border-t border-line pt-4">
           <h4 className="mb-2 text-xs font-medium text-content">Skills</h4>
@@ -371,6 +572,29 @@ function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?
                         : 'Make active'}
                     </Button>
                   )}
+                  {/* Transfer is destructive/irreversible — the modal confirms
+                      intent and fails closed. A primary (active) handle is
+                      locked from sale/transfer server-side, so it renders
+                      disabled with an explanation of the path out (make another
+                      handle active first) rather than silently vanishing (#4998
+                      M3). Only an explicit non-primary handle is transferable. */}
+                  {id.primary === false && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setTransferHandle(id.username.replace(/^@+/, ''))}>
+                      {t('agentWorld.transferHandle.action')}
+                    </Button>
+                  )}
+                  {id.primary === true && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled
+                      title={t('agentWorld.transferHandle.primaryLocked')}>
+                      {t('agentWorld.transferHandle.action')}
+                    </Button>
+                  )}
                   <span className="text-[10px] uppercase tracking-wide text-content-faint">
                     {id.status}
                   </span>
@@ -382,6 +606,14 @@ function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?
             <p className="mt-2 text-xs text-red-600 dark:text-red-400">{switchError}</p>
           )}
         </div>
+      )}
+
+      {transferHandle && (
+        <TransferHandleModal
+          handle={transferHandle}
+          onClose={() => setTransferHandle(null)}
+          onTransferred={() => onSwitched?.()}
+        />
       )}
 
       {followStats && (
@@ -429,16 +661,6 @@ function AgentProfileCard({ data, onSwitched }: { data: ProfileData; onSwitched?
   );
 }
 
-/** Centered status message used for loading / wallet / error states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
-  return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-      <p className={`text-base font-medium ${tone}`}>{title}</p>
-      {body && <p className="max-w-md text-sm text-content-muted">{body}</p>}
-    </div>
-  );
-}
-
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function ProfilesSection() {
@@ -456,7 +678,7 @@ export default function ProfilesSection() {
   } else if (state.status === 'wallet_locked') {
     body = (
       <StatusBlock
-        tone="text-content-secondary"
+        tone="neutral"
         title="Unlock your wallet to use Agent World"
         body="Agent World uses your wallet identity. Import your recovery phrase in Settings to continue."
       />
@@ -464,7 +686,7 @@ export default function ProfilesSection() {
   } else if (state.status === 'no_handle') {
     body = (
       <StatusBlock
-        tone="text-content-secondary"
+        tone="neutral"
         title="No handle registered yet"
         body={`Your wallet (${truncateCryptoId(state.cryptoId)}) doesn't own a @handle yet. Register one in the Identities tab to claim your profile.`}
       />
@@ -472,19 +694,13 @@ export default function ProfilesSection() {
   } else if (state.status === 'payment_required') {
     body = (
       <StatusBlock
-        tone="text-amber-600 dark:text-amber-400"
+        tone="warning"
         title="Access requires payment"
         body="Your wallet will be used to fulfill the x402 payment challenge."
       />
     );
   } else if (state.status === 'error') {
-    body = (
-      <StatusBlock
-        tone="text-red-600 dark:text-red-400"
-        title="Failed to load profile"
-        body={state.message}
-      />
-    );
+    body = <StatusBlock tone="danger" title="Failed to load profile" body={state.message} />;
   } else {
     // Render the wallet's own profile with either rich GraphQL data or bare
     // directory.reverse identity. AgentProfileCard handles both shapes internally.

@@ -78,7 +78,7 @@ interface Props {
   onResume: (id: string) => void;
 }
 
-export const WorkflowRunDetail: React.FC<Props> = ({
+const WorkflowRunDetail: React.FC<Props> = ({
   definition,
   run,
   busy = false,

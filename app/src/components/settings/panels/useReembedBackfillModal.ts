@@ -12,12 +12,12 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { memoryTreeBackfillStatus } from '../../../utils/tauriCommands/memoryTree';
 
-export interface ReembedState {
+interface ReembedState {
   open: boolean;
   pending: number;
 }
 
-export interface ReembedBackfillModal {
+interface ReembedBackfillModal {
   reembed: ReembedState;
   /** Wrap a settings-save: persist, then (only on success) surface re-embed progress. */
   handleSave: () => Promise<void>;

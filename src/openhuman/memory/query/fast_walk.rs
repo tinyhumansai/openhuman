@@ -6,7 +6,7 @@
 //! (no synthesized prose); a higher-level context agent composes the answer.
 
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory_tree::retrieval::{fast_retrieve, FastRetrieveOptions};
+use crate::openhuman::memory::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
 use crate::openhuman::tools::traits::ToolResult;
 
 /// Parse the shared `memory_tree` args and run deterministic retrieval.

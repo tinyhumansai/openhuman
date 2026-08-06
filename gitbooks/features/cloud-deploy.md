@@ -641,13 +641,44 @@ If you switch between building from `Dockerfile` (which creates the
 uses UID 1000), files already written to the persistent volume will be owned
 by the old UID and produce `Permission denied (os error 13)` on startup.
 
-Fix by SSH-ing in and re-owning the workspace:
+The same thing happens to a Docker named volume that outlives an image
+upgrade, and to any workspace a **root** `docker exec` wrote into — `docker
+exec` does not run the entrypoint, so it lands as root and leaves a
+`root:root` `config.toml` behind (the core writes it at mode 0600, so the
+runtime user then cannot open it at all).
+
+`scripts/docker-entrypoint-core.sh` now repairs this automatically: it chowns
+the workspace **recursively** on every start, skipping entries already owned
+correctly. If the repair cannot run — `cap_drop: ALL` without `cap_add: CHOWN`
+— the entrypoint refuses to start rather than booting a container that answers
+`/health` with 200 while every config RPC returns `Permission denied
+(os error 13)`, and prints the exact `chown` to run. Look for
+`[docker-entrypoint] pre-heal` / `FATAL` lines in the container log.
+
+Fix an older container by SSH-ing in and re-owning the workspace:
 
 ```bash
 fly ssh console --config .fly/fly.toml
 chown -R openhuman:openhuman /home/openhuman/.openhuman/
 exit
 fly machine restart --config .fly/fly.toml
+```
+
+The Docker equivalent. Derive the ids from the container rather than hard-coding
+them, so this stays correct whichever image you are running:
+
+```bash
+docker exec -u 0 openhuman-core sh -c \
+  'chown -Rh "$(id -u openhuman):$(id -g openhuman)" /home/openhuman/.openhuman'
+docker restart openhuman-core
+```
+
+To see which UID owns what before repairing. Note `docker exec` defaults to
+**root**, so ask about the runtime user explicitly rather than trusting a bare
+`id`:
+
+```bash
+docker exec openhuman-core sh -c 'id openhuman; ls -ln /home/openhuman/.openhuman/config.toml'
 ```
 
 ---

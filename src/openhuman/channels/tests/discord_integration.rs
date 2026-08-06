@@ -29,12 +29,12 @@ use super::super::context::{
 use super::super::runtime::process_channel_message;
 use super::super::traits;
 use super::super::{Channel, SendMessage};
-use super::common::{HistoryCaptureProvider, NoopMemory};
+use super::common::{HistoryCaptureModel, NoopMemory};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -81,44 +81,35 @@ impl Channel for DiscordRecordingChannel {
     // can prove dispatch honors that capability for Discord.
 }
 
-/// Provider that immediately returns a fixed response string — the channels
+/// Model that immediately returns a fixed response string — the channels
 /// module never needs to know or care that it's not a real LLM.
-struct FixedResponseProvider {
+struct FixedResponseModel {
     response: &'static str,
 }
 
 #[async_trait::async_trait]
-impl Provider for FixedResponseProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for FixedResponseModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(self.response.to_string())
-    }
-
-    async fn chat_with_history(
-        &self,
-        _messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(self.response.to_string())
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(ModelResponse::assistant(self.response))
     }
 }
 
 fn make_discord_ctx(
     channel: Arc<dyn Channel>,
-    provider: Arc<dyn Provider>,
+    model: Arc<dyn ChatModel<()>>,
 ) -> Arc<ChannelRuntimeContext> {
     let mut channels = HashMap::new();
     channels.insert(channel.name().to_string(), channel);
 
     Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels),
-        provider,
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -129,7 +120,7 @@ fn make_discord_ctx(
         max_tool_iterations: 1,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -140,6 +131,7 @@ fn make_discord_ctx(
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     })
 }
 
@@ -155,7 +147,7 @@ async fn discord_inbound_dispatches_through_full_pipeline() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(DiscordRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel {
         response: "hi from discord",
     });
     let ctx = make_discord_ctx(channel, provider);
@@ -207,7 +199,7 @@ async fn discord_threaded_message_does_not_emit_reaction_ack() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(DiscordRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider { response: "roger" });
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel { response: "roger" });
     let ctx = make_discord_ctx(channel, provider);
 
     process_channel_message(
@@ -256,8 +248,8 @@ async fn discord_thread_ts_splits_conversation_history_end_to_end() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(DiscordRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider_impl = Arc::new(HistoryCaptureProvider::default());
-    let provider: Arc<dyn Provider> = provider_impl.clone();
+    let provider_impl = Arc::new(HistoryCaptureModel::default());
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let ctx = make_discord_ctx(channel, provider);
 
     let first = traits::ChannelMessage {
@@ -359,7 +351,7 @@ async fn discord_dispatch_routes_through_agent_run_turn_bus_handler() {
     let recorder = Arc::new(DiscordRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
     // Minimal provider — never invoked because the stub short-circuits.
-    let ctx = make_discord_ctx(channel, Arc::new(super::common::DummyProvider));
+    let ctx = make_discord_ctx(channel, Arc::new(super::common::DummyModel));
 
     process_channel_message(
         ctx,

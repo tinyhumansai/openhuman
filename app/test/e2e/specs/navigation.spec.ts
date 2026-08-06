@@ -45,7 +45,11 @@ const ROUTES: Route[] = [
   { hash: '/settings' },
   { hash: '/agent-world' },
   { hash: '/flows' },
-  { hash: '/orchestration' },
+  // Orchestration folded under Brain; `/orchestration` now redirects to
+  // `/brain?tab=orchestration`, so we assert the Brain destination instead
+  // (the bare `/orchestration` hash would settle on the redirect target and
+  // fail the `^#/orchestration` match, same reasoning as /home above).
+  { hash: '/brain' },
 ];
 
 async function rootTextLength(): Promise<number> {

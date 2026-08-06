@@ -28,7 +28,6 @@ export const RIVE_POSES = [
   'coffeedrink',
   'writing',
   'bobbateadrink',
-  'recording',
   'hand_wave',
   'dancing',
 ] as const;
@@ -53,7 +52,6 @@ export const FACE_TO_POSE: Record<MascotFace, RivePose> = {
   celebrating: 'celebration',
   writing: 'writing',
   reading: 'bookreading',
-  recording: 'recording',
   waving: 'hand_wave',
   dancing: 'dancing',
   drinking_coffee: 'coffeedrink',
@@ -86,7 +84,7 @@ export const RIVE_VISEME_SET = [
   'oh',
   'ou',
 ] as const;
-export type RiveVisemeCode = (typeof RIVE_VISEME_SET)[number];
+type RiveVisemeCode = (typeof RIVE_VISEME_SET)[number];
 
 /**
  * Lowercased-alias → canonical `visme_codes` token.
@@ -159,8 +157,8 @@ export function toRiveVisemeCode(code: string): RiveVisemeCode {
 
 /**
  * Poses the mascot drifts through on its own while otherwise idle, to keep it
- * feeling alive. Deliberately excludes `idle` (the resting state it returns to
- * between picks) and `recording` (reads as an active screen-capture cue).
+ * feeling alive. Deliberately excludes `idle`, the resting state it returns to
+ * between picks.
  */
 export const AMBIENT_POSES: readonly RivePose[] = [
   'thinking',

@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 
-export interface SettingsStatusLineProps {
+interface SettingsStatusLineProps {
   saving: boolean;
   savedNote?: string | null;
   error?: string | null;

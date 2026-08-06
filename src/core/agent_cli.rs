@@ -123,6 +123,7 @@ fn run_dump_all(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     log::debug!("[agent-cli] run_dump_all: calling dump_all_agent_prompts");
     let dumps = rt.block_on(async {
@@ -255,6 +256,7 @@ fn run_dump_prompt(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     log::debug!("[agent-cli] run_dump_prompt: calling dump_agent_prompt");
     let dumped = rt.block_on(async { dump_agent_prompt(options).await })?;

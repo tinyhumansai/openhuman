@@ -87,10 +87,9 @@ impl EventHandler for ChannelInboundSubscriber {
         // here so the surface stays segregated end-to-end.
         let client_id = derive_inbound_client_id(channel, sender.as_deref());
 
-        let mut event_rx =
-            crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+        let mut event_rx = crate::openhuman::web_chat::subscribe_web_channel_events();
 
-        let request_id = match crate::openhuman::channels::providers::web::start_chat(
+        let request_id = match crate::openhuman::web_chat::start_chat(
             &client_id,
             &thread_id,
             message,
@@ -99,7 +98,7 @@ impl EventHandler for ChannelInboundSubscriber {
             None,
             None,
             None,
-            crate::openhuman::channels::providers::web::ChatRequestMetadata {
+            crate::openhuman::web_chat::ChatRequestMetadata {
                 // Tag inbound provider messages so traces classify as
                 // run:channel_inbound instead of interactive chat.
                 source: Some("channel_inbound".to_string()),
@@ -336,6 +335,83 @@ fn channel_supports_progressive_ui(channel: &str) -> bool {
     matches!(provider, "telegram" | "tg")
 }
 
+/// Why an edit of an already-posted channel message failed.
+///
+/// These three causes need three different recoveries, and conflating the
+/// first two is what broke the live "💭 Thinking:" bubble (#5230).
+#[derive(Debug, PartialEq, Eq)]
+enum EditFailure {
+    /// The backend serves no message-edit route at all, so the edit could
+    /// never have succeeded. The message itself is untouched and we still own
+    /// it: keep its id so it can still be deleted (or finally edited once the
+    /// backend ships the route) and just stop attempting edits.
+    RouteUnsupported,
+    /// The message really is gone on the provider side (user deleted it, or
+    /// the backend GC'd the relay row). The id is worthless — drop it.
+    MessageGone,
+    /// Anything else (transient 5xx, transport error, rate limit). Counts
+    /// against the per-turn failure budget and may be retried.
+    Transient,
+}
+
+/// Classify an edit failure by typed error rather than by message text, so the
+/// recovery a call site picks cannot drift with `#[error(...)]` wording.
+fn classify_edit_failure(err: &anyhow::Error) -> EditFailure {
+    match err.downcast_ref::<crate::api::rest::BackendApiError>() {
+        Some(crate::api::rest::BackendApiError::ChannelEditUnsupported { .. }) => {
+            EditFailure::RouteUnsupported
+        }
+        Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) => EditFailure::MessageGone,
+        _ => EditFailure::Transient,
+    }
+}
+
+/// Providers whose backend answered "no edit route" at least once this
+/// process. Whether the route exists is a property of the deployed backend,
+/// not of a turn, so re-probing it on every turn only buys a guaranteed-404
+/// round-trip per turn forever. Latching it here keeps that to one attempt per
+/// provider per process — and it self-heals on the next core start once the
+/// backend ships the route (#5230).
+static EDIT_UNSUPPORTED_PROVIDERS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
+/// Provider key for the edit-capability latch. Inbound channels arrive
+/// provider-prefixed (`telegram:<chat>`), and the route's existence is a
+/// per-provider fact, so latch on the prefix — same reasoning as
+/// [`channel_supports_progressive_ui`].
+fn edit_capability_key(channel: &str) -> String {
+    channel.split(':').next().unwrap_or(channel).to_string()
+}
+
+/// `true` once this process has learned the backend serves no edit route for
+/// `channel`'s provider. Callers should skip the request entirely.
+fn channel_edits_unsupported(channel: &str) -> bool {
+    EDIT_UNSUPPORTED_PROVIDERS
+        .get_or_init(Default::default)
+        .lock()
+        .map(|set| set.contains(&edit_capability_key(channel)))
+        .unwrap_or(false)
+}
+
+/// Latch `channel`'s provider as having no message-edit route.
+fn mark_channel_edits_unsupported(channel: &str) {
+    let key = edit_capability_key(channel);
+    if let Ok(mut set) = EDIT_UNSUPPORTED_PROVIDERS
+        .get_or_init(Default::default)
+        .lock()
+    {
+        if set.insert(key.clone()) {
+            tracing::warn!(
+                "[channel-inbound][edit] backend serves no message-edit route for provider='{}' — \
+                 progressive edits disabled for this process; placeholders will be posted once and \
+                 cleaned up by delete instead (#5230)",
+                key,
+            );
+        }
+    }
+}
+
 /// Maximum consecutive filler-send failures before we stop trying.
 /// Same rationale as the thinking/typing latches.
 const MAX_FILLER_FAILURES: u32 = 2;
@@ -466,6 +542,35 @@ async fn send_typing_indicator(channel: &str, state: &mut TypingState) {
 }
 
 impl StreamingState {
+    /// The backend has no edit route: stop attempting edits but **keep**
+    /// `message_id`. The draft is still on the user's screen and we still own
+    /// it, so finalization needs the id to delete it before posting the
+    /// canonical reply. Dropping the id here is what orphaned the draft and
+    /// left a stale "_working…_" bubble (#5230).
+    fn latch_draft_edits_unsupported(&mut self) {
+        self.edit_disabled = true;
+    }
+
+    /// The draft really is gone provider-side: the id is worthless, so forget
+    /// it as well as disabling edits.
+    fn forget_draft(&mut self) {
+        self.message_id = None;
+        self.edit_disabled = true;
+    }
+
+    /// Thinking-bubble counterpart of [`Self::latch_draft_edits_unsupported`].
+    /// Keeping `thinking_message_id` is what lets finalization delete the
+    /// ephemeral "💭 Thinking:" bubble instead of leaving it in the chat (#5230).
+    fn latch_thinking_edits_unsupported(&mut self) {
+        self.thinking_edit_disabled = true;
+    }
+
+    /// Thinking-bubble counterpart of [`Self::forget_draft`].
+    fn forget_thinking(&mut self) {
+        self.thinking_message_id = None;
+        self.thinking_edit_disabled = true;
+    }
+
     fn compose_draft(&self) -> String {
         let trimmed = self.content.trim_end();
         if trimmed.is_empty() {
@@ -497,6 +602,17 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
     };
 
     if let Some(ref message_id) = state.message_id {
+        // Known-missing edit route: skip the guaranteed 404 and let
+        // finalization replace the draft (delete + fresh atomic reply).
+        if channel_edits_unsupported(channel) {
+            tracing::debug!(
+                "[channel-inbound][stream] skipping edit channel='{}' msg_id={} — no edit route on this backend, draft stays as-is until finalize",
+                channel,
+                message_id,
+            );
+            state.latch_draft_edits_unsupported();
+            return;
+        }
         let body = json!({ "text": draft });
         match client
             .send_channel_edit(channel, message_id, &jwt, body)
@@ -512,19 +628,34 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
                 state.edit_failures = 0;
             }
             Err(err) => {
-                state.edit_failures += 1;
-                if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
-                    err.downcast_ref::<crate::api::rest::BackendApiError>()
-                {
-                    tracing::info!(
-                        "[channel-inbound][stream] edit channel='{}' msg_id={} — message gone provider-side (404), clearing stale id and disabling further edits",
-                        channel,
-                        message_id,
-                    );
-                    state.message_id = None;
-                    state.edit_disabled = true;
-                    return;
+                match classify_edit_failure(&err) {
+                    EditFailure::RouteUnsupported => {
+                        // Keep `message_id`: the draft is still on screen and
+                        // finalization must be able to delete it before posting
+                        // the canonical reply. Clearing it here (as the old
+                        // `MessageNotFound` branch did) orphaned the draft and
+                        // produced a stale "_working…_" bubble (#5230).
+                        tracing::info!(
+                            "[channel-inbound][stream] edit channel='{}' msg_id={} — backend has no edit route, keeping id for finalize cleanup and disabling progressive edits",
+                            channel,
+                            message_id,
+                        );
+                        mark_channel_edits_unsupported(channel);
+                        state.latch_draft_edits_unsupported();
+                        return;
+                    }
+                    EditFailure::MessageGone => {
+                        tracing::info!(
+                            "[channel-inbound][stream] edit channel='{}' msg_id={} — message gone provider-side (404), clearing stale id and disabling further edits",
+                            channel,
+                            message_id,
+                        );
+                        state.forget_draft();
+                        return;
+                    }
+                    EditFailure::Transient => {}
                 }
+                state.edit_failures += 1;
                 tracing::warn!(
                     "[channel-inbound][stream] edit failed channel='{}' msg_id={} err={} (failures={}/{})",
                     channel,
@@ -633,26 +764,50 @@ async fn flush_thinking_message(channel: &str, state: &mut StreamingState) {
     };
 
     if let Some(msg_id) = state.thinking_message_id.clone() {
+        // Known-missing edit route: the bubble stays as first posted and is
+        // deleted at finalization. Skip the guaranteed 404.
+        if channel_edits_unsupported(channel) {
+            tracing::debug!(
+                "[channel-inbound][thinking] skipping edit channel='{}' msg_id={} — no edit route on this backend, bubble stays until finalize deletes it",
+                channel,
+                msg_id,
+            );
+            state.latch_thinking_edits_unsupported();
+            return;
+        }
         // Edit existing thinking message with updated content.
         let body = json!({ "text": text });
         if let Err(err) = client.send_channel_edit(channel, &msg_id, &jwt, body).await {
-            if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
-                err.downcast_ref::<crate::api::rest::BackendApiError>()
-            {
-                tracing::info!(
-                    "[channel-inbound][thinking] edit channel='{}' msg_id={} — thinking msg gone provider-side (404), clearing id and disabling further thinking edits",
-                    channel,
-                    msg_id,
-                );
-                state.thinking_message_id = None;
-                state.thinking_edit_disabled = true;
-            } else {
-                tracing::debug!(
-                    "[channel-inbound][thinking] edit failed channel='{}' msg_id={} err={}",
-                    channel,
-                    msg_id,
-                    err,
-                );
+            match classify_edit_failure(&err) {
+                EditFailure::RouteUnsupported => {
+                    // Keep `thinking_message_id`. Clearing it (as the old
+                    // `MessageNotFound` branch did) meant finalization had
+                    // nothing to delete, so the ephemeral "💭 Thinking:"
+                    // bubble stayed in the chat forever (#5230).
+                    tracing::info!(
+                        "[channel-inbound][thinking] edit channel='{}' msg_id={} — backend has no edit route, keeping id so finalize still deletes the bubble",
+                        channel,
+                        msg_id,
+                    );
+                    mark_channel_edits_unsupported(channel);
+                    state.latch_thinking_edits_unsupported();
+                }
+                EditFailure::MessageGone => {
+                    tracing::info!(
+                        "[channel-inbound][thinking] edit channel='{}' msg_id={} — thinking msg gone provider-side (404), clearing id and disabling further thinking edits",
+                        channel,
+                        msg_id,
+                    );
+                    state.forget_thinking();
+                }
+                EditFailure::Transient => {
+                    tracing::debug!(
+                        "[channel-inbound][thinking] edit failed channel='{}' msg_id={} err={}",
+                        channel,
+                        msg_id,
+                        err,
+                    );
+                }
             }
         }
     } else {
@@ -829,6 +984,22 @@ async fn finalize_channel_reply(channel: &str, state: &mut StreamingState, final
     // times (#600).
     'send: {
         if let Some(ref message_id) = state.message_id {
+            // Once this process knows the backend serves no edit route, the
+            // "one last edit" below is a guaranteed 404 — go straight to
+            // replacing the draft. Deleting it first matters: it is still on
+            // screen showing partial text, so leaving it would strand a stale
+            // "_working…_" bubble next to the real answer (#5230).
+            if channel_edits_unsupported(channel) {
+                tracing::info!(
+                    "[channel-inbound] final edit skipped channel='{}' msg_id={} — no edit route on this backend, replacing the draft with a fresh atomic reply",
+                    channel,
+                    message_id,
+                );
+                let orphan = message_id.clone();
+                delete_channel_message(channel, &orphan).await;
+                send_channel_reply(channel, final_text).await;
+                break 'send;
+            }
             // We committed to a draft earlier in the turn. Always attempt
             // to edit it with the canonical reply, even when we'd
             // previously latched `edit_disabled` during the streaming
@@ -850,17 +1021,32 @@ async fn finalize_channel_reply(channel: &str, state: &mut StreamingState, final
                             final_text.len(),
                         );
                     }
-                    Err(err) => {
-                        if let Some(crate::api::rest::BackendApiError::MessageNotFound { .. }) =
-                            err.downcast_ref::<crate::api::rest::BackendApiError>()
-                        {
+                    Err(err) => match classify_edit_failure(&err) {
+                        EditFailure::MessageGone => {
                             tracing::info!(
                                 "[channel-inbound] final edit channel='{}' msg_id={} — draft already gone provider-side (404), sending fresh atomic reply",
                                 channel,
                                 message_id,
                             );
                             send_channel_reply(channel, final_text).await;
-                        } else {
+                        }
+                        // Route absent (or any other failure): the draft is
+                        // still on screen showing partial text, so it has to be
+                        // deleted before the canonical reply lands — otherwise
+                        // the user keeps a stale "_working…_" bubble alongside
+                        // the real answer (#5230).
+                        EditFailure::RouteUnsupported => {
+                            tracing::warn!(
+                                "[channel-inbound] final edit channel='{}' msg_id={} — backend has no edit route, deleting the draft and sending a fresh atomic reply",
+                                channel,
+                                message_id,
+                            );
+                            mark_channel_edits_unsupported(channel);
+                            let orphan = message_id.clone();
+                            delete_channel_message(channel, &orphan).await;
+                            send_channel_reply(channel, final_text).await;
+                        }
+                        EditFailure::Transient => {
                             tracing::warn!(
                                 "[channel-inbound] final edit failed channel='{}' msg_id={} err={} — deleting orphan draft and sending fresh atomic reply so user still sees the canonical response",
                                 channel,
@@ -871,7 +1057,7 @@ async fn finalize_channel_reply(channel: &str, state: &mut StreamingState, final
                             delete_channel_message(channel, &orphan).await;
                             send_channel_reply(channel, final_text).await;
                         }
-                    }
+                    },
                 }
             } else {
                 tracing::warn!(

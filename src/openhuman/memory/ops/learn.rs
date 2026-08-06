@@ -111,7 +111,7 @@ pub async fn memory_learn_all(
             "[memory.learn] running summarization for namespace='{}'",
             namespace
         );
-        let outcome = crate::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_run(
+        let outcome = crate::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_run(
             &config, namespace,
         )
         .await;
@@ -156,13 +156,12 @@ pub async fn memory_learn_all(
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::path::PathBuf;
 
     use serde_json::json;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::openhuman::memory_store::NamespaceDocumentInput;
+    use crate::openhuman::memory::store::NamespaceDocumentInput;
 
     fn ensure_memory_client() {
         crate::openhuman::memory::ops::ensure_shared_memory_client();

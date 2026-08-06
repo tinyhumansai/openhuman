@@ -100,7 +100,7 @@ export function latestRoleMessage(parsedBody, role) {
 // Substitute `{{DYNAMIC_*}}` placeholders using values pulled from the latest
 // `[SUBAGENT_AWAITING_USER]` envelope in the message history. When the
 // orchestrator receives a paused sub-agent's envelope from
-// `awaiting_user_envelope()` (src/openhuman/agent_orchestration/tools/
+// `awaiting_user_envelope()` (src/openhuman/agent/orchestration/tools/
 // awaiting_user.rs) it carries a runtime-generated
 // `task_id: sub-<uuid>` / `agent_id: <name>` / `worker_thread_id: ...`. A test
 // scripting the orchestrator's follow-up `continue_subagent` tool_call can't

@@ -210,6 +210,35 @@ describe('VoicePanel', () => {
     vi.useRealTimers();
   });
 
+  it('persists always-on listening and syncs the notch indicator', async () => {
+    renderWithProviders(<VoicePanel />);
+
+    const toggle = await screen.findByTestId('voice-always-on-toggle');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(openhumanUpdateVoiceServerSettings).toHaveBeenCalledWith({ always_on_enabled: true })
+    );
+    await waitFor(() => expect(syncNotchVisibility).toHaveBeenCalledWith(true));
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('restores the always-on toggle when persistence fails', async () => {
+    vi.mocked(openhumanUpdateVoiceServerSettings).mockRejectedValueOnce(
+      new Error('settings unavailable')
+    );
+    renderWithProviders(<VoicePanel />);
+
+    const toggle = await screen.findByTestId('voice-always-on-toggle');
+    fireEvent.click(toggle);
+
+    await screen.findByText('settings unavailable');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(syncNotchVisibility).not.toHaveBeenCalled();
+  });
+
   // ─── Voice Routing Section ──────────────────────────────────────────────
 
   it('renders the STT and TTS provider dropdowns defaulting to cloud', async () => {
@@ -528,8 +557,6 @@ describe('VoicePanel', () => {
 
     await waitFor(() => expect(screen.getByText('core offline')).toBeInTheDocument());
   });
-
-  // Always-on listening toggle moved to DesktopAgentPanel (see its test).
 
   // ─── STT / TTS Test buttons ────────────────────────────────────────────────
 

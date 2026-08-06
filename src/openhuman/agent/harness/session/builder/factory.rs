@@ -3,6 +3,7 @@
 
 use super::helpers::prefetch_tool_memory_rules_blocking;
 use super::should_synthesize_delegation_tools;
+use crate::openhuman::agent::context::prompt::SystemPromptBuilder;
 use crate::openhuman::agent::dispatcher::{
     NativeToolDispatcher, PFormatToolDispatcher, XmlToolDispatcher,
 };
@@ -11,13 +12,12 @@ use crate::openhuman::agent::harness::definition::{
 };
 use crate::openhuman::agent::harness::session::types::Agent;
 use crate::openhuman::agent::host_runtime;
-use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::config::Config;
-use crate::openhuman::context::prompt::SystemPromptBuilder;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
+use crate::openhuman::memory::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::memory::store as memory_store;
+use crate::openhuman::memory::tool_memory::ToolMemoryCaptureHook;
 use crate::openhuman::memory::Memory;
-use crate::openhuman::memory_store;
-use crate::openhuman::memory_tools::ToolMemoryCaptureHook;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool};
 use anyhow::Result;
@@ -74,47 +74,11 @@ impl Agent {
     pub fn from_config_for_agent(config: &Config, agent_id: &str) -> Result<Self> {
         // Look up the target definition up front so we can fail fast
         // with a clear error instead of building half an agent and then
-        // discovering the id is unknown. The registry is a singleton
-        // initialised at startup; if it's not yet populated we
-        // conservatively fall back to the legacy "orchestrator-shaped"
-        // build by proceeding without a definition override.
-        let target_def: Option<crate::openhuman::agent::harness::definition::AgentDefinition> =
-            match AgentDefinitionRegistry::global() {
-                Some(reg) => match reg.get(agent_id) {
-                    Some(def) => Some(def.clone()),
-                    None if agent_id == "orchestrator" => {
-                        // Orchestrator is allowed to be missing from the
-                        // registry (legacy path, tests, pre-startup) —
-                        // fall back to default behaviour.
-                        log::debug!(
-                            "[agent::builder] orchestrator definition not in registry — \
-                         using legacy default prompt + filter"
-                        );
-                        None
-                    }
-                    None => {
-                        return Err(anyhow::anyhow!(
-                            "agent definition '{}' not found in registry",
-                            agent_id
-                        ));
-                    }
-                },
-                None => {
-                    if agent_id != "orchestrator" {
-                        return Err(anyhow::anyhow!(
-                            "AgentDefinitionRegistry is not initialised — cannot \
-                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
-                         at startup.",
-                            agent_id
-                        ));
-                    }
-                    log::debug!(
-                        "[agent::builder] registry not initialised, orchestrator requested — \
-                     using legacy default prompt + filter"
-                    );
-                    None
-                }
-            };
+        // discovering the id is unknown. See `resolve_target_definition`
+        // for the full resolution order (harness registry, then the
+        // config-backed custom agent registry, then the orchestrator's
+        // legacy pre-startup fallback).
+        let target_def = resolve_target_definition(config, agent_id)?;
 
         log::info!(
             "[agent::builder] building session agent id={} \
@@ -195,32 +159,9 @@ impl Agent {
         agent_id: &str,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
-        profile: Option<&crate::openhuman::profiles::AgentProfile>,
+        profile: Option<&crate::openhuman::agent::profiles::AgentProfile>,
     ) -> Result<Self> {
-        let target_def: Option<crate::openhuman::agent::harness::definition::AgentDefinition> =
-            match AgentDefinitionRegistry::global() {
-                Some(reg) => match reg.get(agent_id) {
-                    Some(def) => Some(def.clone()),
-                    None if agent_id == "orchestrator" => None,
-                    None => {
-                        return Err(anyhow::anyhow!(
-                            "agent definition '{}' not found in registry",
-                            agent_id
-                        ));
-                    }
-                },
-                None => {
-                    if agent_id != "orchestrator" {
-                        return Err(anyhow::anyhow!(
-                            "AgentDefinitionRegistry is not initialised — cannot \
-                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
-                         at startup.",
-                            agent_id
-                        ));
-                    }
-                    None
-                }
-            };
+        let target_def = resolve_target_definition(config, agent_id)?;
         Self::build_session_agent_inner(
             config,
             agent_id,
@@ -230,63 +171,6 @@ impl Agent {
             false,
             profile,
         )
-    }
-
-    /// Constructs a council juror that runs the normal agent tool loop with
-    /// only read-only tools visible/executable.
-    ///
-    /// Model council calls need research/memory/search before a juror writes a
-    /// turn, but they must not mutate files, memory, schedules, wallets, or the
-    /// host. This constructor reuses the standard harness and provider wiring
-    /// while filtering the registry before tool specs and policy are built.
-    pub fn from_config_for_read_only_council_juror(
-        config: &Config,
-        juror_name: &str,
-        model_override: Option<String>,
-        temperature: Option<f64>,
-        prompt_suffix: String,
-    ) -> Result<Self> {
-        let mut agent = Self::build_session_agent_inner(
-            config,
-            "orchestrator",
-            None,
-            None,
-            Some(prompt_suffix),
-            true,
-            None,
-        )?;
-        let safe_name: String = juror_name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        agent.set_event_context(
-            format!("model-council-{safe_name}"),
-            "model_council_readonly",
-        );
-        agent.set_agent_definition_name(format!("model_council_{safe_name}"));
-        // Council jurors are non-interactive, single-shot read-only model calls
-        // built from the orchestrator definition. The first-turn super-context
-        // pass (default-on) is an interactive convenience for the user-facing
-        // chat orchestrator — running it per juror would add an unexpected
-        // `context_scout` LLM call to each jury seat. Suppress it here.
-        agent.context.set_super_context_enabled(false);
-        if let Some(model) = model_override
-            .map(|m| m.trim().to_string())
-            .filter(|m| !m.is_empty())
-        {
-            agent.model_name = model;
-        }
-        if let Some(temp) = temperature {
-            agent.temperature = temp;
-        }
-        agent.auto_save = false;
-        Ok(agent)
     }
 
     /// Internal constructor that consumes the optionally-resolved agent
@@ -300,15 +184,20 @@ impl Agent {
     /// the subconscious LLM cited when it produced the spawning
     /// reflection (#623). Empty / `None` is the default for normal chat
     /// threads — the section is omitted entirely.
+    // `pub(crate)` (rather than private) so `builder_tests` can drive the
+    // definition-cap resolution logic (issue #4868) directly with a
+    // hand-picked `target_def`, independent of the process-global
+    // `AgentDefinitionRegistry` singleton's init-once state. Still not part
+    // of the crate's public API.
     #[allow(clippy::too_many_arguments)]
-    fn build_session_agent_inner(
+    pub(crate) fn build_session_agent_inner(
         config: &Config,
         agent_id: &str,
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
         reflection_chunks: Option<Vec<crate::openhuman::subconscious::SourceChunk>>,
         profile_prompt_suffix: Option<String>,
         read_only_tools_only: bool,
-        profile: Option<&crate::openhuman::profiles::AgentProfile>,
+        profile: Option<&crate::openhuman::agent::profiles::AgentProfile>,
     ) -> Result<Self> {
         if let Some(p) = profile {
             tracing::debug!(
@@ -321,14 +210,39 @@ impl Agent {
                 "[profiles] applying per-profile session gate"
             );
         }
+
+        // Section D — per-profile dedicated workspace. When the active profile
+        // opts into `dedicated_workspace` (and its id passes validation), derive
+        // a `WorkspaceDescriptor` rooted at `<action_dir>/profiles/<id>` and
+        // thread it into the top-level chat turn so acting tools (shell/file/git)
+        // resolve their default cwd there. Because the dir is under `action_dir`,
+        // `SecurityPolicy` already permits it — no hardening change, and the
+        // agent's broad write root is left intact (cross-profile write guarding
+        // is a deliberate follow-up). `None` (the common case) preserves the
+        // shared-`action_dir` cwd behaviour byte-for-byte.
+        //
+        // NOTE (deliberate): this `ctx.workspace` descriptor propagates to
+        // subagents spawned from this session, so they too root under
+        // `<action_dir>/profiles/<id>` rather than the bare `action_dir`. That
+        // propagation is *intended* profile isolation, not a leak — a profile's
+        // subagents should share its dedicated workspace. Do not "fix" it by
+        // clearing the descriptor for child sessions.
+        //
+        // The expression is extracted into [`derive_profile_workspace_descriptor`]
+        // so the unit tests exercise the *same* code path rather than a
+        // hand-copied mirror.
+        let profile_workspace_descriptor =
+            derive_profile_workspace_descriptor(&config.action_dir, profile);
+
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
             host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
         );
-        let security = Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
+        // 1b — arm the cross-profile write guard for every active profile,
+        // independently of whether that profile uses (or successfully created)
+        // a dedicated workspace. A shared/default profile still must not reach
+        // another profile's `<action_dir>/profiles/<Q>` subtree from the broad
+        // action root. Profile-less sessions remain byte-identical.
+        let security = Arc::new(build_profile_security(config, profile));
         // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
         let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
             crate::openhuman::config::AuditConfig::default(),
@@ -336,18 +250,58 @@ impl Agent {
         )?;
 
         let local_embedding = config.workload_local_model("embeddings");
-        let embedding_api_key = crate::openhuman::embeddings::resolve_api_key(
+        let embedding_api_key = crate::openhuman::inference::embeddings::resolve_api_key(
             config,
             &config.memory.embedding_provider,
         );
-        let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
+        // Route this session's captures + recall into the active profile's memory
+        // subtree so `dedicatedMemory` isolation takes effect on the ordinary
+        // session path (web chat, cron), not just delegation preambles. The
+        // profile-less / default / shared cases resolve to `"memory"`
+        // (byte-identical): `effective_memory_suffix` returns `""` for them and
+        // `memory_subdir_for_suffix("")` == `"memory"`. A dedicated-memory profile
+        // yields `"memory-<id>"`; a legacy numeric-suffix profile `"memory-<n>"`.
+        let memory_subdir = profile
+            .map(|p| {
+                crate::openhuman::agent::profiles::memory_subdir_for_suffix(
+                    &crate::openhuman::agent::profiles::effective_memory_suffix(p),
+                )
+            })
+            .unwrap_or_else(|| "memory".to_string());
+        let memory_suffix = profile
+            .map(crate::openhuman::agent::profiles::effective_memory_suffix)
+            .unwrap_or_default();
+        let session_raw_subdir =
+            crate::openhuman::agent::profiles::session_raw_subdir_for_suffix(&memory_suffix);
+        tracing::debug!(
+            memory_subdir = %memory_subdir,
+            has_profile = profile.is_some(),
+            "[profiles] session memory subtree selected"
+        );
+        let session_memory = memory_store::factories::create_session_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
-        )?);
+            &memory_subdir,
+        )?;
+        let archivist_connection = session_memory.sqlite_connection;
+        let memory: Arc<dyn Memory> = Arc::from(session_memory.memory);
+        // Dedicated profiles still recall unstamped experiences written by
+        // pre-profile versions from the shared memory DB. Retain the global
+        // shared handle explicitly on the session rather than making the hot
+        // turn path reload config or reach into process-global state.
+        let shared_experience_memory = if memory_subdir == "memory" {
+            None
+        } else {
+            Some(
+                crate::openhuman::memory::global::init(config.workspace_dir.clone())
+                    .map_err(anyhow::Error::msg)?
+                    .memory_handle(),
+            )
+        };
 
         // Per-profile skill (workflow) + MCP-server allowlists. `None` = all.
         let profile_skill_allowlist: Option<std::collections::HashSet<String>> = profile
@@ -356,11 +310,26 @@ impl Agent {
         let profile_mcp_allowlist: Option<Vec<String>> =
             profile.and_then(|p| p.allowed_mcp_servers.clone());
 
+        // 2a — profile-local skills root (`<workspace>/personalities/<id>/skills/`).
+        // Threaded into the harness workflow catalog AND the discovery/list tools
+        // so a turn running under this profile sees its private skills (implicitly
+        // allowed for their owner, winning same-name collisions). `None` for the
+        // profile-less session / legacy ids keeps discovery byte-identical.
+        let profile_skills_root: Option<std::path::PathBuf> = profile.and_then(|p| {
+            crate::openhuman::agent::profiles::profile_skills_root(&config.workspace_dir, &p.id)
+        });
+        if let Some(root) = profile_skills_root.as_deref() {
+            tracing::debug!(
+                skills_root = %root.display(),
+                "[profiles] profile-local skills root active for this session"
+            );
+        }
+
         // Load the user's persisted tool preferences once. They drive two
         // things below: granting the App UI Control / App Automation mutation
         // opt-in (#3762) and filtering the tool set to the enabled snapshot.
         let enabled_tools: Vec<String> = {
-            use crate::openhuman::app_state::load_stored_app_state;
+            use crate::openhuman::desktop::app_state::load_stored_app_state;
             match load_stored_app_state(config) {
                 Ok(stored) => stored
                     .onboarding_tasks
@@ -375,32 +344,16 @@ impl Agent {
             }
         };
 
-        // Enabling the "App UI Control" (`ax_interact`) or "App Automation"
-        // (`automate`) tool in Settings → Features grants the mutating
-        // click/type actions its description promises — not just the read-only
-        // `list`. Previously those actions required the UI-less
-        // `computer_control.ax_interact_mutations` flag or Full autonomy, so the
-        // toggle silently did nothing on the default (Supervised) autonomy
-        // (#3762). The actions stay approval-gated and bound by the
-        // sensitive-app denylist; Full autonomy continues to grant this
-        // independently via `app_control_enabled`.
-        let adjusted_config: Config;
-        let tool_config: &Config = if !config.computer_control.ax_interact_mutations
-            && tools::enables_app_ui_control_mutations(&enabled_tools)
-        {
-            let mut c = config.clone();
-            c.computer_control.ax_interact_mutations = true;
-            log::debug!(
-                "[session-builder] action=grant_app_ui_control_mutations source=features_toggle"
-            );
-            adjusted_config = c;
-            &adjusted_config
-        } else {
-            config
-        };
+        // Share a single `Arc<Config>` across the heavyweight per-build consumers
+        // (the tool registry, the reflection hook, the turn provider) instead of
+        // deep-cloning the large `Config` at each site (#5050, Fix 1). `Config` is
+        // immutable after construction, so one refcounted instance is behaviourally
+        // identical to N independent clones.
+        let base_config: Arc<Config> = Arc::new(config.clone());
+        let tool_config: Arc<Config> = Arc::clone(&base_config);
 
         let mut tools = tools::all_tools_with_runtime(
-            Arc::new(tool_config.clone()),
+            Arc::clone(&tool_config),
             &security,
             runtime,
             audit,
@@ -409,9 +362,14 @@ impl Agent {
             &tool_config.http_request,
             &tool_config.action_dir,
             &tool_config.agents,
-            tool_config,
+            &tool_config,
+            profile,
             profile_skill_allowlist.as_ref(),
             profile_mcp_allowlist.as_deref(),
+            profile_skills_root.as_deref(),
+            profile_workspace_descriptor
+                .as_ref()
+                .map(|descriptor| descriptor.root.as_path()),
         );
 
         // Filter tools by the user preference loaded above.
@@ -476,14 +434,21 @@ impl Agent {
         // double-retry every transient error. Cross-route fallback is likewise
         // the crate registry `FallbackPolicy`, so `config.reliability.*` no longer
         // layers on the turn path (it still governs the non-seam provider paths).
-        let (provider, mut model_name): (Box<dyn Provider>, String) =
-            crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
+        let (resolved_chat_model, mut model_name) =
+            crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                provider_role,
+                config,
+                config.default_temperature,
+            )?;
+        let supports_native = resolved_chat_model
+            .profile()
+            .is_none_or(|profile| profile.tool_calling);
         log::info!(
             "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
             agent_id,
             provider_role,
             model_name,
-            provider.supports_native_tools()
+            supports_native
         );
         let target_agent_id = target_def
             .map(|def| def.id.as_str())
@@ -525,12 +490,24 @@ impl Agent {
         let model_vision =
             crate::openhuman::inference::model_context::model_supports_vision(&model_name, config);
 
+        // #5146 §2.1/§2.3: when the active model can't take images the turn
+        // engine silently strips them, and the user gets a confident answer
+        // about an image the model never saw. Log the actionable reason (which
+        // model, and what to switch to) at the moment the decision is made.
+        if let Err(reason) =
+            crate::openhuman::inference::provider::fallback_diagnostics::vision_preflight(
+                &model_name,
+                config,
+            )
+        {
+            log::info!("[vision-preflight] {reason}");
+        }
+
         // Dispatcher selection is deferred until after the tool list is
         // finalised (orchestrator tools are appended below). We capture
         // the choice string now so the provider borrow doesn't conflict
         // with the later `provider` move into the builder.
         let dispatcher_choice = config.agent.tool_dispatcher.clone();
-        let supports_native = provider.supports_native_tools();
 
         // Build prompt builder — either the default "orchestrator /
         // main agent" layout that bootstraps from workspace identity
@@ -614,13 +591,13 @@ impl Agent {
             prompt_builder = prompt_builder
                 .insert_section_before(
                     "user_memory",
-                    Box::new(crate::openhuman::context::prompt::UserReflectionsSection),
+                    Box::new(crate::openhuman::agent::context::prompt::UserReflectionsSection),
                 )
                 .add_section(Box::new(
-                    crate::openhuman::learning::LearnedContextSection::new(memory.clone()),
+                    crate::openhuman::agent::learning::LearnedContextSection::new(memory.clone()),
                 ))
                 .add_section(Box::new(
-                    crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+                    crate::openhuman::agent::learning::UserProfileSection::new(memory.clone()),
                 ));
             // NOTE: MemoryAccessSection is added after tool-filtering so we can
             // gate it on retrieval-tool visibility — see below.
@@ -638,7 +615,7 @@ impl Agent {
         // `session/turn.rs`) so the data is actually fetched and populated.
         if config.learning.explicit_preferences_enabled && !config.learning.enabled {
             prompt_builder = prompt_builder.add_section(Box::new(
-                crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+                crate::openhuman::agent::learning::UserProfileSection::new(memory.clone()),
             ));
             log::info!(
                 "[learning] explicit-preference UserProfileSection registered \
@@ -663,17 +640,36 @@ impl Agent {
                 prompt_builder = prompt_builder.with_reflection_context(chunks);
             }
         }
-        if let Some(suffix) = profile_prompt_suffix
+        // Compose the profile prompt section: the persona suffix, plus (1b) the
+        // cross-profile workspace notice when a dedicated workspace is active.
+        // The notice discloses the boundary the guard enforces, so it is added
+        // even when the profile carries no persona suffix.
+        let profile_suffix = profile_prompt_suffix
             .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-        {
+            .filter(|s| !s.is_empty());
+        let workspace_notice = profile_workspace_descriptor
+            .as_ref()
+            .and_then(|descriptor| {
+                profile.map(|p| {
+                    crate::openhuman::agent::profiles::cross_profile_workspace_notice(
+                        &p.id,
+                        &descriptor.root,
+                    )
+                })
+            });
+        if profile_suffix.is_some() || workspace_notice.is_some() {
             log::debug!(
-                "[agent:builder] profile prompt section injected suffix_chars={}",
-                suffix.chars().count()
+                "[agent:builder] profile prompt section injected suffix_chars={} workspace_notice={}",
+                profile_suffix.as_deref().map(|s| s.chars().count()).unwrap_or(0),
+                workspace_notice.is_some(),
             );
-            prompt_builder = prompt_builder.add_section(Box::new(
-                crate::openhuman::profiles::AgentProfilePromptSection::new(suffix),
-            ));
+            let mut section = crate::openhuman::agent::profiles::AgentProfilePromptSection::new(
+                profile_suffix.unwrap_or_default(),
+            );
+            if let Some(notice) = workspace_notice {
+                section = section.with_workspace_notice(notice);
+            }
+            prompt_builder = prompt_builder.add_section(Box::new(section));
         }
 
         // Build post-turn hooks when learning is enabled
@@ -681,11 +677,10 @@ impl Agent {
             Vec::new();
         if config.learning.enabled {
             if config.learning.reflection_enabled {
-                // Only the reflection hook needs an owned snapshot of the
-                // full config, so create the `Arc` lazily inside this
-                // branch instead of paying for the clone whenever
-                // `learning.enabled` is true.
-                let full_config = Arc::new(config.clone());
+                // The reflection hook needs an owned `Arc<Config>`; reuse the
+                // shared base config (a refcount bump) rather than a second deep
+                // clone of the full config (#5050, Fix 1).
+                let full_config = Arc::clone(&base_config);
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
                 let reflection_provider: Option<
@@ -693,32 +688,23 @@ impl Agent {
                 > = if config.learning.reflection_source
                     == crate::openhuman::config::ReflectionSource::Cloud
                 {
-                    // Reflection always calls with the `hint:reasoning` route +
-                    // 0.3 temperature (formerly `simple_chat(prompt,
-                    // "hint:reasoning", 0.3)`), so bake both into the wrapped
-                    // model. The routed provider still resolves the hint per call.
-                    let routed = provider::create_routed_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config.reliability,
-                        &config.model_routes,
-                        &model_name,
-                    )?;
-                    Some(provider::chat_model_from_provider(
-                        routed,
-                        "hint:reasoning".to_string(),
-                        0.3,
-                    ))
+                    let (model, resolved_model) =
+                        provider::create_chat_model_with_model_id("reasoning", config, 0.3)?;
+                    log::debug!(
+                        "[learning] built crate-native reflection model resolved_model={resolved_model}"
+                    );
+                    Some(model)
                 } else {
                     None
                 };
-                post_turn_hooks.push(Arc::new(crate::openhuman::learning::ReflectionHook::new(
-                    config.learning.clone(),
-                    full_config.clone(),
-                    memory.clone(),
-                    reflection_provider,
-                )));
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::agent::learning::ReflectionHook::new(
+                        config.learning.clone(),
+                        full_config.clone(),
+                        memory.clone(),
+                        reflection_provider,
+                    ),
+                ));
                 log::info!(
                     "[learning] reflection hook registered (source={:?})",
                     config.learning.reflection_source
@@ -726,18 +712,22 @@ impl Agent {
             }
 
             if config.learning.user_profile_enabled {
-                post_turn_hooks.push(Arc::new(crate::openhuman::learning::UserProfileHook::new(
-                    config.learning.clone(),
-                    memory.clone(),
-                )));
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::agent::learning::UserProfileHook::new(
+                        config.learning.clone(),
+                        memory.clone(),
+                    ),
+                ));
                 log::info!("[learning] user_profile hook registered");
             }
 
             if config.learning.tool_tracking_enabled {
-                post_turn_hooks.push(Arc::new(crate::openhuman::learning::ToolTrackerHook::new(
-                    config.learning.clone(),
-                    memory.clone(),
-                )));
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::agent::learning::ToolTrackerHook::new(
+                        config.learning.clone(),
+                        memory.clone(),
+                    ),
+                ));
                 log::info!("[learning] tool_tracker hook registered");
             }
 
@@ -747,10 +737,14 @@ impl Agent {
             }
 
             if config.learning.tool_memory_capture_enabled {
+                // 1c — stamp captured experiences with the active profile id so
+                // retrieval can partition them. `None` for the profile-less
+                // session leaves records unstamped (shared/legacy).
                 post_turn_hooks.push(Arc::new(
-                    crate::openhuman::agent_experience::AgentExperienceCaptureHook::new(
+                    crate::openhuman::agent::experience::AgentExperienceCaptureHook::with_profile(
                         memory.clone(),
                         true,
+                        profile.map(|p| p.id.clone()),
                     ),
                 ));
                 log::info!("[learning] agent_experience_capture hook registered");
@@ -763,33 +757,24 @@ impl Agent {
         // is the system-of-record for chat turns and must stay active even when
         // the inference stack (`reflection`, `stability_detector`) is disabled.
         // Gated only on `config.learning.episodic_capture_enabled` (default: true)
-        // and on the memory backend exposing a SQLite connection.
+        // using the explicit SQLite resource returned by the session factory.
         let archivist_hook_arc: Option<
             Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>,
         > = if config.learning.episodic_capture_enabled {
-            match memory.sqlite_conn() {
-                Some(conn) => {
-                    let hook = Arc::new(
-                        crate::openhuman::agent::harness::archivist::ArchivistHook::new(conn, true)
-                            .with_config(config.clone()),
-                    );
-                    post_turn_hooks
-                        .push(Arc::clone(&hook)
-                            as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
-                    log::info!(
-                        "[archivist] episodic capture hook registered (learning.enabled={})",
-                        config.learning.enabled
-                    );
-                    Some(hook)
-                }
-                None => {
-                    log::warn!(
-                        "[archivist] no SQLite connection available from memory backend — \
-                         episodic capture disabled"
-                    );
-                    None
-                }
-            }
+            let hook = Arc::new(
+                crate::openhuman::agent::harness::archivist::ArchivistHook::new(
+                    archivist_connection,
+                    true,
+                )
+                .with_config(config.clone()),
+            );
+            post_turn_hooks
+                .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
+            log::info!(
+                "[archivist] episodic capture hook registered (learning.enabled={})",
+                config.learning.enabled
+            );
+            Some(hook)
         } else {
             log::info!(
                 "[archivist] episodic_capture_enabled=false — archivist hook not registered"
@@ -801,7 +786,8 @@ impl Agent {
         // building the session with a knowingly stale `&[]` integration view
         // and then paying a repair pass on turn 1 just to recover the real
         // delegation surface.
-        let prewarmed_integrations = crate::openhuman::composio::cached_active_integrations(config);
+        let prewarmed_integrations =
+            crate::openhuman::integrations::composio::cached_active_integrations(config);
         // Per-profile connector gate: scope the connected-integration view to the
         // active profile's `composio_integrations` allowlist (None = all). This
         // governs both the system-prompt "connected integrations" surface and the
@@ -812,7 +798,8 @@ impl Agent {
             profile.and_then(|p| p.composio_integrations.as_deref()),
         ) {
             (Some(list), Some(allow)) => {
-                let filtered = crate::openhuman::profiles::filter_integrations(&list, Some(allow));
+                let filtered =
+                    crate::openhuman::agent::profiles::filter_integrations(&list, Some(allow));
                 tracing::debug!(
                     before = list.len(),
                     after = filtered.len(),
@@ -899,7 +886,35 @@ impl Agent {
                 };
                 (synthed, None)
             }
-            (_, None) => {
+            (Some(def), None) => {
+                // We have a target definition (either a pre-populated
+                // harness entry looked up before the registry singleton
+                // existed, or — the common case today — a `CustomRegistry`
+                // definition `resolve_target_definition` synthesizes
+                // straight from `config.agent_registry.entries` without
+                // ever consulting `AgentDefinitionRegistry::global()`, see
+                // `agent_registry::find_custom_in_config`). Delegation-tool
+                // synthesis needs the registry (to resolve named
+                // subagents), so it's skipped here, but `def.tools` is a
+                // real scope the caller authored and MUST still gate
+                // visibility — silently dropping it into the `(_, None)`
+                // "no registry, no filter" catch-all would leave a custom
+                // agent's `ToolScope::Named` allowlist entirely
+                // unenforced (visible tools empty rather than the named
+                // set), regressing the least-privilege contract this
+                // synthesis path exists to provide.
+                log::debug!(
+                    "[agent::builder] AgentDefinitionRegistry not initialised — skipping \
+                     delegation tool synthesis, but still applying target definition's own \
+                     tool scope"
+                );
+                let filter: Option<std::collections::HashSet<String>> = match &def.tools {
+                    ToolScope::Named(names) => Some(names.iter().cloned().collect()),
+                    ToolScope::Wildcard => None,
+                };
+                (Vec::new(), filter)
+            }
+            (None, None) => {
                 log::debug!(
                     "[agent::builder] AgentDefinitionRegistry not initialised — \
                      skipping delegation tool synthesis"
@@ -953,6 +968,35 @@ impl Agent {
             }
         }
 
+        // Profile tool selection is a restriction on the resolved agent
+        // definition, never a replacement for it. Apply it here at the shared
+        // session-builder seam so web chat, cron, tasks, and delegated profile
+        // runs all enforce the same callable surface. The web wrapper used to
+        // replace this set after construction, which both missed background
+        // runs and could broaden a named agent definition.
+        if let Some(allowed_tools) = profile
+            .and_then(|profile| profile.allowed_tools.as_ref())
+            .filter(|tools| !tools.is_empty())
+        {
+            let profile_visible: std::collections::HashSet<&str> = allowed_tools
+                .iter()
+                .map(|tool| tool.trim())
+                .filter(|tool| !tool.is_empty())
+                .collect();
+            if visible.is_empty() {
+                visible = profile_visible.into_iter().map(str::to_string).collect();
+            } else {
+                visible.retain(|tool| profile_visible.contains(tool.as_str()));
+                // Empty is the Agent's historical "all tools" sentinel. A
+                // disjoint profile/definition intersection must instead stay
+                // non-empty with an unregistered name so it advertises and
+                // permits zero tools rather than accidentally broadening.
+                if visible.is_empty() {
+                    visible.insert("__profile_no_tools__".to_string());
+                }
+            }
+        }
+
         // Phase 4 (#566): add the MemoryAccessSection bias instruction only
         // when at least one retrieval tool is actually loaded AND survives
         // filtering. We require both because:
@@ -970,8 +1014,9 @@ impl Agent {
                 registered && allowed_by_filter
             });
             if has_retrieval {
-                prompt_builder = prompt_builder
-                    .add_section(Box::new(crate::openhuman::learning::MemoryAccessSection));
+                prompt_builder = prompt_builder.add_section(Box::new(
+                    crate::openhuman::agent::learning::MemoryAccessSection,
+                ));
                 log::debug!("[learning] memory_access prompt section registered");
             } else {
                 log::debug!(
@@ -1040,13 +1085,13 @@ impl Agent {
             pformat_registry.len()
         );
 
-        // Temperature override: when we have a target definition, use
-        // its declared temperature from the TOML (welcome is 0.7,
-        // orchestrator is 0.4, etc). Fall back to
-        // `config.default_temperature` for the legacy "no definition"
-        // path so existing callers keep getting their configured value.
-        let effective_temperature = target_def
-            .map(|def| def.temperature)
+        // Temperature override: an active profile is the user-selected runtime
+        // default; otherwise use the target definition's TOML value (welcome is
+        // 0.7, orchestrator is 0.4, etc). Fall back to config for the legacy
+        // no-definition path.
+        let effective_temperature = profile
+            .and_then(|profile| profile.temperature)
+            .or_else(|| target_def.map(|def| def.temperature))
             .unwrap_or(config.default_temperature);
 
         // Thread PROFILE.md + MEMORY.md inclusion from the resolved
@@ -1059,7 +1104,7 @@ impl Agent {
             .unwrap_or_default();
         let effective_tokenjuice_compression = target_def
             .map(|def| def.effective_tokenjuice_compression())
-            .unwrap_or(crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full);
+            .unwrap_or(crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression::Full);
 
         // Stamp the resolved agent definition id onto the Agent via the
         // builder. Without this call, `agent_definition_name` falls
@@ -1100,7 +1145,9 @@ impl Agent {
         // `None` and their tool results stay untouched (the summarizer
         // itself MUST be `None` to avoid recursive self-summarization).
         let payload_summarizer: Option<
-            std::sync::Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
+            std::sync::Arc<
+                dyn crate::openhuman::agent::tinyagents::payload_summarizer::PayloadSummarizer,
+            >,
         > = if agent_id == "orchestrator" && config.context.summarizer_payload_threshold_tokens > 0
         {
             match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
@@ -1113,7 +1160,7 @@ impl Agent {
                             config.context.summarizer_max_payload_tokens
                         );
                         Some(std::sync::Arc::new(
-                            crate::openhuman::tinyagents::payload_summarizer::SubagentPayloadSummarizer::new(
+                            crate::openhuman::agent::tinyagents::payload_summarizer::SubagentPayloadSummarizer::new(
                                 summarizer_def.clone(),
                                 config.context.summarizer_payload_threshold_tokens,
                                 config.context.summarizer_max_payload_tokens,
@@ -1140,11 +1187,53 @@ impl Agent {
             None
         };
 
+        // Crate-native turn models (Phase 3 P3-B): the production main-turn agent
+        // builds crate `ChatModel`s from `(provider_role, config)` without retaining
+        // a host provider. The
+        // `agent_harness_e2e` mock now serves SSE for streaming, so the crate-native
+        // streaming path is exercised end-to-end.
+        //
+        // Issue #4868 — resolve the per-agent iteration cap. When a named
+        // definition is present, its `effective_max_iterations()` (which honors
+        // `iteration_policy = "extended"` -> 50, and the declared `max_iterations`
+        // for strict agents) takes priority over the global
+        // `config.agent.max_tool_iterations` (default 10). This is the single
+        // shared resolution point that closes #4868 for every direct-invocation
+        // path: flows_build, flows_discover, agent-node runtime, cron, MCP
+        // server, etc. Falls back to the global default when there is no
+        // definition for this agent_id.
+        let mut effective_agent_config = config.agent.clone();
+        if let Some(def) = target_def {
+            let def_cap = def.effective_max_iterations();
+            log::info!(
+                "[agent::builder] applying definition iteration cap for agent_id={}: \
+                 definition.max_iterations={} iteration_policy={:?} -> effective={} \
+                 (was global default {})",
+                agent_id,
+                def.max_iterations,
+                def.iteration_policy,
+                def_cap,
+                config.agent.max_tool_iterations,
+            );
+            effective_agent_config.max_tool_iterations = def_cap;
+        }
+        let profile_subagent_tool_ceiling = profile
+            .and_then(|profile| profile.allowed_tools.as_ref())
+            .filter(|tools| !tools.is_empty())
+            .map(|tools| {
+                tools
+                    .iter()
+                    .map(|tool| tool.trim())
+                    .filter(|tool| !tool.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            });
         let mut builder = Agent::builder()
-            .provider(provider)
+            .crate_native_provider(provider_role, Arc::clone(&base_config))
             .tools(tools)
             .visible_tool_names(visible)
             .memory(memory)
+            .shared_experience_memory(shared_experience_memory)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(
                 DefaultMemoryLoader::new(5, config.memory.min_relevance_score)
@@ -1163,16 +1252,38 @@ impl Agent {
                     ),
             ))
             .prompt_builder(prompt_builder)
-            .config(config.agent.clone())
+            .config(effective_agent_config)
             .context_config(config.context.clone())
             .model_name(model_name)
             .model_vision(model_vision)
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .action_dir(config.action_dir.clone())
-            .workflows(crate::openhuman::skills::load_workflow_metadata(
-                &config.workspace_dir,
-            ))
+            .workspace_descriptor(profile_workspace_descriptor)
+            // 1a — carry the active profile id (any active profile, not just
+            // dedicated-workspace ones) so profile-scoped post-turn hooks can
+            // see which profile the turn ran under. `None` for the profile-less
+            // session keeps every consumer byte-identical.
+            .active_profile_id(profile.map(|p| p.id.clone()))
+            .personality_soul_md(profile.and_then(|profile| {
+                crate::openhuman::agent::profiles::resolve_personality_soul(
+                    &config.workspace_dir,
+                    profile,
+                )
+            }))
+            .personality_memory_md(profile.and_then(|profile| {
+                crate::openhuman::agent::profiles::resolve_personality_memory_md(
+                    &config.workspace_dir,
+                    profile,
+                )
+            }))
+            .profile_memory_storage(memory_subdir, session_raw_subdir)
+            .workflows(
+                crate::openhuman::skills::load_workflow_metadata_for_profile(
+                    &config.workspace_dir,
+                    profile_skills_root.as_deref(),
+                ),
+            )
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
@@ -1182,6 +1293,9 @@ impl Agent {
             .omit_memory_md(effective_omit_memory_md)
             .trigger_memory_agent(effective_trigger_memory_agent)
             .tokenjuice_compression(effective_tokenjuice_compression);
+        if let Some(ceiling) = profile_subagent_tool_ceiling {
+            builder = builder.subagent_tool_ceiling_names(ceiling);
+        }
         if let Some(ps) = payload_summarizer {
             builder = builder.payload_summarizer(ps);
         }
@@ -1190,12 +1304,90 @@ impl Agent {
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        agent.integration_runtime_config = Some(config.clone());
+        agent.runtime_config = Some(Arc::new(config.clone()));
         agent.last_seen_integrations_hash =
-            crate::openhuman::composio::connected_set_hash(&agent.connected_integrations);
+            crate::openhuman::integrations::composio::connected_set_hash(
+                &agent.connected_integrations,
+            );
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
     }
+}
+
+/// Resolves the `AgentDefinition` a session should be built from, given the
+/// requested `agent_id`, in three steps:
+///
+/// 1. **Harness registry** (`AgentDefinitionRegistry`, the process-global
+///    singleton of built-in + workspace-TOML-override definitions) — a hit
+///    here wins outright.
+/// 2. **Config-backed custom agent registry** (`config.agent_registry.entries`,
+///    `AgentRegistrySource::Custom`) — on a harness-registry miss (or the
+///    registry not yet being initialised), a user-authored custom agent is
+///    synthesized into a real `AgentDefinition` via
+///    `agent_registry::definition_from_registry_entry` so it runs through
+///    the exact same `build_session_agent_inner` path (and therefore the
+///    exact same `SecurityPolicy` / tool-filtering / approval gate) as a
+///    built-in. This closes the gap where a custom agent either hard-errored
+///    (chat, task-dispatcher) or silently ran tool-less/persona-only (flows'
+///    `RegistryFallback`) — see the cross-cutting fix in the PR that added
+///    this function.
+/// 3. **Orchestrator legacy fallback** — `orchestrator` alone is allowed to
+///    resolve to `None` (pre-startup, tests): the caller then builds with the
+///    default prompt/filter, matching pre-#1 behaviour.
+///
+/// Any other id that resolves nowhere is a hard error, exactly as before this
+/// function existed — only the *search order* changed, not the failure
+/// contract for a genuinely-unknown id.
+fn resolve_target_definition(
+    config: &Config,
+    agent_id: &str,
+) -> Result<Option<crate::openhuman::agent::harness::definition::AgentDefinition>> {
+    let registry = AgentDefinitionRegistry::global();
+
+    if let Some(reg) = registry {
+        if let Some(def) = reg.get(agent_id) {
+            return Ok(Some(def.clone()));
+        }
+    }
+
+    // Harness registry miss (or not yet initialised). Before failing, check
+    // the config-backed custom agent registry — the one place custom
+    // (non-shipped) agents live.
+    if let Some(entry) = crate::openhuman::agent::registry::find_custom_in_config(config, agent_id)
+    {
+        log::info!(
+            "[agent::builder] agent_id={} not found in the harness AgentDefinitionRegistry — \
+             synthesizing a definition from its custom agent_registry entry so it runs with its \
+             real tool belt instead of persona-only / erroring",
+            agent_id
+        );
+        return Ok(Some(
+            crate::openhuman::agent::registry::definition_from_registry_entry(&entry),
+        ));
+    }
+
+    if agent_id == "orchestrator" {
+        // Orchestrator is allowed to be missing from every source (legacy
+        // path, tests, pre-startup) — fall back to default behaviour.
+        log::debug!(
+            "[agent::builder] orchestrator definition not in any registry — using legacy \
+             default prompt + filter"
+        );
+        return Ok(None);
+    }
+
+    if registry.is_none() {
+        return Err(anyhow::anyhow!(
+            "AgentDefinitionRegistry is not initialised — cannot resolve agent '{}'. Call \
+             AgentDefinitionRegistry::init_global at startup.",
+            agent_id
+        ));
+    }
+
+    Err(anyhow::anyhow!(
+        "agent definition '{}' not found in registry",
+        agent_id
+    ))
 }
 
 fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
@@ -1377,5 +1569,165 @@ mod provider_role_tests {
             resolve_dispatcher_kind("pformat", true, "integrations_agent"),
             DispatcherKind::PFormat
         );
+    }
+}
+
+/// Section D — derive the top-level chat turn's per-profile workspace
+/// descriptor. Shared by [`Agent::build_session_agent_inner`] and its unit tests
+/// so the two can never drift.
+///
+/// Returns a [`WorkspaceDescriptor`](tinyagents::harness::workspace::WorkspaceDescriptor)
+/// rooted at `<action_dir>/profiles/<id>` when `profile` opts into
+/// `dedicated_workspace` and its id passes validation (via
+/// [`dedicated_workspace_dir`](crate::openhuman::agent::profiles::dedicated_workspace_dir)),
+/// creating the dir as a side effect; `None` for the shared-workspace common case,
+/// for legacy ids that fail validation, and when the directory can't be created
+/// (all three fall back to the shared `action_dir` cwd rather than binding tools
+/// to a nonexistent dir). The returned descriptor propagates to subagents — see
+/// the deliberate-isolation note at the call site.
+pub(crate) fn derive_profile_workspace_descriptor(
+    action_dir: &std::path::Path,
+    profile: Option<&crate::openhuman::agent::profiles::AgentProfile>,
+) -> Option<tinyagents::harness::workspace::WorkspaceDescriptor> {
+    let (profile_id, dir) = profile.and_then(|p| {
+        crate::openhuman::agent::profiles::dedicated_workspace_dir(action_dir, p)
+            .map(|dir| (p.id.clone(), dir))
+    })?;
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(
+            profile_id = %profile_id,
+            dir = %dir.display(),
+            error = %e,
+            "[profiles] failed to create dedicated workspace dir — \
+             falling back to the shared action_dir cwd for this session"
+        );
+        // Return None so callers fall back to the shared action_dir rather than
+        // binding every acting tool (shell/file/git) to a cwd that doesn't exist.
+        return None;
+    }
+    tracing::debug!(
+        profile_id = %profile_id,
+        dir = %dir.display(),
+        "[profiles] session bound to dedicated workspace as default cwd"
+    );
+    Some(
+        tinyagents::harness::workspace::WorkspaceDescriptor::new(dir).with_policy_id(
+            crate::openhuman::agent::profiles::workspace_policy_id(&profile_id),
+        ),
+    )
+}
+
+fn build_profile_security(
+    config: &crate::openhuman::config::Config,
+    profile: Option<&crate::openhuman::agent::profiles::AgentProfile>,
+) -> SecurityPolicy {
+    let base =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    match profile {
+        Some(profile) => base.with_active_profile(profile.id.clone(), config.action_dir.clone()),
+        None => base,
+    }
+}
+
+/// Section D — per-profile dedicated-workspace descriptor seam.
+///
+/// These tests exercise the **production** [`derive_profile_workspace_descriptor`]
+/// directly (the same function the session builder calls), so they cannot drift
+/// from the real seam. They pin that the descriptor root points at
+/// `<action_dir>/profiles/<id>` for an opted-in profile, and that shared/legacy
+/// profiles produce no descriptor (so the shared `action_dir` cwd is preserved).
+#[cfg(test)]
+mod profile_workspace_descriptor_tests {
+    use super::{build_profile_security, derive_profile_workspace_descriptor};
+    use crate::openhuman::agent::profiles::store::built_in_default_profile;
+
+    fn profile(
+        id: &str,
+        dedicated_workspace: bool,
+    ) -> crate::openhuman::agent::profiles::AgentProfile {
+        let mut p = built_in_default_profile();
+        p.id = id.to_string();
+        p.name = id.to_string();
+        p.built_in = false;
+        p.is_master = false;
+        p.memory_dir_suffix = None;
+        p.dedicated_workspace = dedicated_workspace;
+        p
+    }
+
+    #[test]
+    fn dedicated_workspace_profile_roots_descriptor_at_profile_dir() {
+        // Real temp action_dir: the production fn creates the profile dir as a
+        // side effect, so assert against the resolved path suffix.
+        let action = tempfile::tempdir().expect("action tempdir");
+        let p = profile("alice", true);
+        let desc = derive_profile_workspace_descriptor(action.path(), Some(&p))
+            .expect("dedicated_workspace profile yields a descriptor");
+        let expected = action.path().join("profiles").join("alice");
+        assert_eq!(desc.root.as_path(), expected.as_path());
+        // The production path really created the dir.
+        assert!(desc.root.is_dir());
+    }
+
+    #[test]
+    fn shared_profile_yields_no_descriptor() {
+        let action = tempfile::tempdir().expect("action tempdir");
+        let p = profile("bob", false);
+        assert!(derive_profile_workspace_descriptor(action.path(), Some(&p)).is_none());
+    }
+
+    #[test]
+    fn none_profile_yields_no_descriptor() {
+        let action = tempfile::tempdir().expect("action tempdir");
+        assert!(derive_profile_workspace_descriptor(action.path(), None).is_none());
+    }
+
+    #[test]
+    fn legacy_invalid_id_yields_no_descriptor_even_when_opted_in() {
+        let action = tempfile::tempdir().expect("action tempdir");
+        // An id that fails validation can't mint a workspace path → no descriptor,
+        // so the session falls back to the shared action_dir cwd.
+        let p = profile("Bad Id", true);
+        assert!(derive_profile_workspace_descriptor(action.path(), Some(&p)).is_none());
+    }
+
+    #[test]
+    fn create_dir_failure_yields_no_descriptor() {
+        // Point `action_dir` at a regular file so `profiles/…` can't be created.
+        // The function must fall back to `None` (shared action_dir cwd) rather
+        // than hand tools a descriptor rooted at a nonexistent dir.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let action_file = tmp.path().join("not-a-dir");
+        std::fs::write(&action_file, b"x").expect("write file");
+        let p = profile("alice", true);
+        assert!(
+            derive_profile_workspace_descriptor(&action_file, Some(&p)).is_none(),
+            "a create_dir_all failure must fall back to None"
+        );
+    }
+
+    #[test]
+    fn shared_profile_still_arms_cross_profile_guard() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut config = crate::openhuman::config::Config::default();
+        config.action_dir = temp.path().join("actions");
+        config.workspace_dir = temp.path().join("state");
+        let profile = profile("default", false);
+
+        let security = build_profile_security(&config, Some(&profile));
+
+        let guard = security
+            .active_profile
+            .expect("every active profile must arm the guard");
+        assert_eq!(guard.profile_id, "default");
+        assert_eq!(guard.action_dir, config.action_dir);
+    }
+
+    #[test]
+    fn profile_less_session_leaves_cross_profile_guard_disarmed() {
+        let config = crate::openhuman::config::Config::default();
+        assert!(build_profile_security(&config, None)
+            .active_profile
+            .is_none());
     }
 }

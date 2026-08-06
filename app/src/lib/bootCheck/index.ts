@@ -157,7 +157,7 @@ type VersionCheckResult = 'match' | 'outdated' | 'noVersionMethod' | 'unreachabl
 async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<VersionCheckResult> {
   try {
     // `openhuman.update_version` is wrapped by RpcOutcome::single_log
-    // (see src/openhuman/update/ops.rs + src/rpc/mod.rs::into_cli_compatible_json):
+    // (see src/openhuman/platform/update/ops.rs + src/rpc/mod.rs::into_cli_compatible_json):
     // when logs are present the response shape is `{ result: VersionInfo, logs }`,
     // and VersionInfo is `{ version, target_triple, asset_prefix }`. Earlier
     // attempts read `result.version_info.version` (no such field) and then

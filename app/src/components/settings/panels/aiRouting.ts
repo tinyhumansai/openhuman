@@ -77,7 +77,7 @@ export function isChatSelectableLocalModel(model: { chat_capable?: boolean | nul
 }
 
 /** A locally-installed model mapped to the picker shape consumed by the LLM/chat selectors. */
-export interface SelectableChatModel {
+interface SelectableChatModel {
   id: string;
   sizeBytes: number;
   family: string;

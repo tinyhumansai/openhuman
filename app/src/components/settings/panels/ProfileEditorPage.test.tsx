@@ -19,10 +19,6 @@ vi.mock('react-router-dom', async importOriginal => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
-
 const mockUpsert = vi.mocked(agentProfilesApi.upsert);
 
 function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -139,5 +135,63 @@ describe('ProfileEditorPage', () => {
     fireEvent.click(screen.getByText('Create'));
     await waitFor(() => expect(mockUpsert).toHaveBeenCalled());
     expect(mockUpsert.mock.calls[0][0].includeAgentConversations).toBe(false);
+  });
+
+  it('defaults the dedicated memory/workspace toggles to off and dispatches them true when flipped', async () => {
+    renderAt('/settings/profiles/new');
+    const dedicatedMemory = screen.getByLabelText('Dedicated memory');
+    const dedicatedWorkspace = screen.getByLabelText('Dedicated workspace');
+    expect(dedicatedMemory).toHaveAttribute('aria-checked', 'false');
+    expect(dedicatedWorkspace).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Isolated' } });
+    fireEvent.click(dedicatedMemory);
+    fireEvent.click(dedicatedWorkspace);
+    expect(screen.getByLabelText('Dedicated memory')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Dedicated workspace')).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByText('Create'));
+
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalled());
+    expect(mockUpsert.mock.calls[0][0].dedicatedMemory).toBe(true);
+    expect(mockUpsert.mock.calls[0][0].dedicatedWorkspace).toBe(true);
+  });
+
+  it('edit mode hydrates the dedicated toggles and shows the resolved read-only paths', () => {
+    renderAt('/settings/profiles/edit/writer', [
+      profile({
+        id: 'writer',
+        name: 'Writer',
+        dedicatedMemory: true,
+        dedicatedWorkspace: true,
+        soulMdFile: '/workspace/personalities/writer/SOUL.md',
+        workspaceDir: '/action/profiles/writer',
+      }),
+    ]);
+    expect(screen.getByLabelText('Dedicated memory')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Dedicated workspace')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('/workspace/personalities/writer/SOUL.md')).toBeInTheDocument();
+    expect(screen.getByText('/action/profiles/writer')).toBeInTheDocument();
+  });
+
+  it('hides the resolved read-only path rows when the profile has none', () => {
+    renderAt('/settings/profiles/edit/writer', [profile({ id: 'writer' })]);
+    expect(screen.queryByText('SOUL.md file')).not.toBeInTheDocument();
+    expect(screen.queryByText('Workspace directory')).not.toBeInTheDocument();
+    expect(screen.queryByText('Skills directory')).not.toBeInTheDocument();
+  });
+
+  it('shows the resolved skills directory path and hint when present', () => {
+    renderAt('/settings/profiles/edit/writer', [
+      profile({
+        id: 'writer',
+        name: 'Writer',
+        skillsDir: '/workspace/personalities/writer/skills',
+      }),
+    ]);
+    expect(screen.getByText('Skills directory')).toBeInTheDocument();
+    expect(screen.getByText('/workspace/personalities/writer/skills')).toBeInTheDocument();
+    expect(
+      screen.getByText('SKILL.md files placed here are private to this profile.')
+    ).toBeInTheDocument();
   });
 });

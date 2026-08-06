@@ -2,8 +2,8 @@ use super::*;
 use crate::openhuman::channels::email_channel::EmailConfig;
 use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
 use crate::openhuman::config::schema::{DiscordConfig, IMessageConfig};
-use crate::openhuman::memory_store::chunks::store as memory_tree_store;
-use crate::openhuman::memory_store::chunks::types::{
+use crate::openhuman::memory::store::chunks::store as memory_tree_store;
+use crate::openhuman::memory::store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
 use chrono::{TimeZone, Utc};
@@ -367,7 +367,7 @@ async fn channel_status_reports_managed_dm_credential_as_connected() {
     // Simulate the post-link state: `telegram_login_check` stored a
     // credential marker under `channel:telegram:managed_dm` with no
     // corresponding `channels_config.telegram` block.
-    crate::openhuman::credentials::ops::store_provider_credentials(
+    crate::openhuman::security::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -460,7 +460,10 @@ async fn channel_status_surfaces_live_listener_error() {
     });
 
     // Simulate the supervisor reporting the listener as failed.
-    crate::openhuman::health::mark_component_error("channel:discord", "gateway closed (4004)");
+    crate::openhuman::platform::health::mark_component_error(
+        "channel:discord",
+        "gateway closed (4004)",
+    );
 
     let result = channel_status(&config, Some("discord"))
         .await
@@ -485,7 +488,7 @@ async fn channel_status_surfaces_live_listener_error() {
 
     // Recovery: once the supervisor marks the listener healthy, status flips
     // back to connected with the error cleared.
-    crate::openhuman::health::mark_component_ok("channel:discord");
+    crate::openhuman::platform::health::mark_component_ok("channel:discord");
     let recovered = channel_status(&config, Some("discord"))
         .await
         .expect("channel_status should succeed");
@@ -572,7 +575,7 @@ async fn connected_channel_slugs_merges_credentials_and_config() {
     });
 
     // Layer 2: credential-only channel (telegram managed_dm).
-    crate::openhuman::credentials::ops::store_provider_credentials(
+    crate::openhuman::security::credentials::ops::store_provider_credentials(
         &config,
         "channel:telegram:managed_dm",
         None,
@@ -605,7 +608,7 @@ async fn connected_channel_slugs_dedupes_when_both_layers_present() {
     });
 
     // Same slug appears in both layers — should collapse to one entry.
-    crate::openhuman::credentials::ops::store_provider_credentials(
+    crate::openhuman::security::credentials::ops::store_provider_credentials(
         &config,
         "channel:discord:managed_dm",
         None,
@@ -757,7 +760,7 @@ async fn connect_yuanbao_persists_when_credentials_valid() {
     );
 
     // The credentials store should contain the secret so startup can recover it.
-    let auth = crate::openhuman::credentials::AuthService::from_config(&config);
+    let auth = crate::openhuman::security::credentials::AuthService::from_config(&config);
     let profile = auth
         .get_profile("channel:yuanbao:api_key", None)
         .expect("credentials lookup succeeds")

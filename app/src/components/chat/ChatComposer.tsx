@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ChatSendError } from '../../chat/chatSendError';
 import type { Attachment } from '../../lib/attachments';
@@ -7,6 +7,14 @@ import AttachmentPreview from './AttachmentPreview';
 
 /** Max composer height ≈ 8 lines of text-sm + padding. */
 const COMPOSER_MAX_HEIGHT = 192;
+
+/**
+ * Render-loop guard threshold: if the component re-renders this many times
+ * within a single microtick, we log a warning to help diagnose "Maximum update
+ * depth exceeded" issues (TAURI-REACT-2G). React's own limit is 50; we warn at
+ * a lower threshold so developers catch it before the crash.
+ */
+const RENDER_LOOP_WARN_THRESHOLD = 30;
 
 export interface ChatComposerProps {
   inputValue: string;
@@ -100,6 +108,25 @@ export default function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useT();
   const [isDragging, setIsDragging] = useState(false);
+
+  // Render-loop detection guard: tracks re-renders within a single microtick
+  // and warns when the count exceeds a safe threshold, helping diagnose
+  // "Maximum update depth exceeded" issues (TAURI-REACT-2G).
+  const renderCountRef = useRef(0);
+  const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  renderCountRef.current += 1;
+  if (renderCountRef.current >= RENDER_LOOP_WARN_THRESHOLD) {
+    console.warn(
+      `[ChatComposer] Render-loop detected: ${renderCountRef.current} renders in a single tick. ` +
+        'Check whether a parent onChange/setState cycle is causing cascading re-renders.'
+    );
+  }
+  if (renderTimerRef.current === null) {
+    renderTimerRef.current = setTimeout(() => {
+      renderCountRef.current = 0;
+      renderTimerRef.current = null;
+    }, 0);
+  }
 
   // While a turn streams (`allowParallelSend`) the composer stays usable for a
   // queued follow-up / parallel branch, so the in-flight `isSending` spinner

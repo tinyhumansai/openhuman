@@ -221,4 +221,39 @@ describe('threadApi', () => {
       params: { runId: 'sub-1', afterSequence: 0 },
     });
   });
+
+  it('fetches the derived transcript page with pagination controls', async () => {
+    const pageData = {
+      threadId: 'thread-1',
+      items: [{ kind: 'turnBoundary', requestId: 'req-1' }],
+      total: 1,
+      hasMore: false,
+      hasTranscript: true,
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: pageData });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.getDerivedTranscript('thread-1', { cursor: '10', limit: 50 });
+
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.threads_transcript_get',
+      params: { thread_id: 'thread-1', cursor: '10', limit: 50 },
+    });
+    expect(result).toEqual(pageData);
+  });
+
+  it('fetches the derived transcript with default (undefined) pagination when omitted', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      data: { threadId: 'thread-1', items: [], total: 0, hasMore: false, hasTranscript: false },
+    });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.getDerivedTranscript('thread-1');
+
+    expect(mockCallCoreRpc).toHaveBeenLastCalledWith({
+      method: 'openhuman.threads_transcript_get',
+      params: { thread_id: 'thread-1', cursor: undefined, limit: undefined },
+    });
+    expect(result.hasTranscript).toBe(false);
+  });
 });

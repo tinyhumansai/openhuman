@@ -29,20 +29,12 @@ async function seedDeveloperMode(page: Page): Promise<void> {
 }
 
 async function openMemory(page: Page): Promise<void> {
-  // Phase 3: Memory moved out of /activity entirely — it now lives at
-  // /settings/intelligence (the full Intelligence dev surface).  The Memory tab
-  // there is not dev-gated (only "council" is), so no developer mode seeding
-  // is required for the tab itself; seedDeveloperMode is still called so any
-  // code that checks developerMode elsewhere behaves consistently.
+  // Memory sources and graph controls are first-class Brain tabs now.
   await seedDeveloperMode(page);
-  await bootAuthenticatedPage(page, 'pw-intelligence-memory-ui', '/settings/intelligence');
+  await bootAuthenticatedPage(page, 'pw-intelligence-memory-ui', '/brain?tab=sources');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  const memoryTab = page.getByRole('tab', { name: /^Memory$/ });
-  if (await memoryTab.isVisible().catch(() => false)) {
-    await memoryTab.click();
-  }
-  await expect(page.getByTestId('memory-workspace')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('memory-sources')).toBeVisible({ timeout: 20_000 });
 }
 
 async function addFolderSource(label: string): Promise<string> {
@@ -69,11 +61,7 @@ test.describe('Intelligence memory UI', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    const memoryTab = page.getByRole('tab', { name: /^Memory$/ });
-    if (await memoryTab.isVisible().catch(() => false)) {
-      await memoryTab.click();
-    }
-    await expect(page.getByTestId('memory-workspace')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('memory-sources')).toBeVisible({ timeout: 20_000 });
 
     const row = page.getByTestId('memory-source-row-folder').filter({ hasText: label });
     await expect(row).toBeVisible({ timeout: 20_000 });
@@ -84,6 +72,8 @@ test.describe('Intelligence memory UI', () => {
     await row.getByTitle('Disable').click();
     await expect(row.getByTitle('Enable')).toBeVisible({ timeout: 15_000 });
 
+    await page.goto('/#/brain?tab=graph');
+    await waitForAppReady(page);
     await page.getByTestId('memory-graph-mode-contacts').click();
     await expect(page.getByTestId('memory-graph-mode-contacts')).toHaveAttribute(
       'aria-selected',
@@ -103,7 +93,10 @@ test.describe('Intelligence memory UI', () => {
     await page.getByTestId('memory-reset-tree').click();
     await expect(page.getByTestId('memory-reset-tree')).toBeEnabled();
 
-    await row.getByTitle('Remove').click();
-    await expect(row).toHaveCount(0);
+    await page.goto('/#/brain?tab=sources');
+    await waitForAppReady(page);
+    const refreshedRow = page.getByTestId('memory-source-row-folder').filter({ hasText: label });
+    await refreshedRow.getByTitle('Remove').click();
+    await expect(refreshedRow).toHaveCount(0);
   });
 });

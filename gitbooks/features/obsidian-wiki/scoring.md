@@ -10,7 +10,7 @@ icon: scale
 
 Not every chunk deserves a place in the Memory Tree. A "thanks!" reply, an email footer, or a calendar auto-notification carry almost no signal, and folding them into summary trees only dilutes the result and burns LLM tokens. Scoring is the gate: a per-chunk pass that runs **after chunking and before the chunk is appended to the L0 buffer**, deciding whether the chunk is worth keeping, enriching it with extracted entities, and indexing it for retrieval.
 
-The entry point is `score_chunk` in [`src/openhuman/memory_tree/score/mod.rs`](../../../src/openhuman/memory_tree/score/mod.rs). It is a pure function - it computes a result but does not touch the store; callers persist based on `ScoreResult::kept`.
+The entry point is `score_chunk` in [`src/openhuman/memory/tree/score/mod.rs`](../../../src/openhuman/memory/tree/score/mod.rs). It is a pure function - it computes a result but does not touch the store; callers persist based on `ScoreResult::kept`.
 
 ***
 
@@ -25,7 +25,7 @@ Two goals, both in service of a dense, relevant tree:
 
 ## The signals
 
-`score_chunk` computes a bag of independent signals, each normalised to `[0.0, 1.0]`, defined in [`score/signals/`](../../../src/openhuman/memory_tree/score/signals/). They are combined into a single weighted total and stored alongside it in `mem_tree_score` so every admit/drop decision stays auditable.
+`score_chunk` computes a bag of independent signals, each normalised to `[0.0, 1.0]`, defined in [`score/signals/`](../../../src/openhuman/memory/tree/score/signals/). They are combined into a single weighted total and stored alongside it in `mem_tree_score` so every admit/drop decision stays auditable.
 
 | Signal            | What it measures                                                                                  | Default weight |
 | ----------------- | ------------------------------------------------------------------------------------------------- | -------------- |
@@ -37,7 +37,7 @@ Two goals, both in service of a dense, relevant tree:
 | `entity_density`  | Distinct entities per token, capped at ~1 entity / 100 tokens. More entities → more substantive.  | 1.0 |
 | `llm_importance`  | LLM-derived importance rating in `[0.0, 1.0]`. Off by default; weight `2.0` once an LLM extractor is wired in. | 0.0 |
 
-`interaction` is deliberately the strongest signal - direct user engagement is the clearest proxy for "this mattered to a human." Weights live in `SignalWeights` ([`signals/types.rs`](../../../src/openhuman/memory_tree/score/signals/types.rs)); `combine` / `combine_cheap_only` in [`signals/ops.rs`](../../../src/openhuman/memory_tree/score/signals/ops.rs) produce the normalised total (the cheap variant excludes the `llm_importance` term).
+`interaction` is deliberately the strongest signal - direct user engagement is the clearest proxy for "this mattered to a human." Weights live in `SignalWeights` ([`signals/types.rs`](../../../src/openhuman/memory/tree/score/signals/types.rs)); `combine` / `combine_cheap_only` in [`signals/ops.rs`](../../../src/openhuman/memory/tree/score/signals/ops.rs) produce the normalised total (the cheap variant excludes the `llm_importance` term).
 
 ***
 
@@ -75,18 +75,18 @@ Dropped chunks still get a score row written for diagnostics, with a `drop_reaso
 
 ## Entity extraction
 
-Extraction enriches a chunk and feeds both the `entity_density` / `llm_importance` signals and the index. It is pluggable via the `EntityExtractor` trait in [`score/extract/`](../../../src/openhuman/memory_tree/score/extract/), and runs in two stages:
+Extraction enriches a chunk and feeds both the `entity_density` / `llm_importance` signals and the index. It is pluggable via the `EntityExtractor` trait in [`score/extract/`](../../../src/openhuman/memory/tree/score/extract/), and runs in two stages:
 
 * **`RegexEntityExtractor`** - always on, deterministic, cheap. Once-compiled patterns pull mechanical identifiers: email, URL, handle (`@alice` and Discord-style `alice#1234`), and hashtag. UTF-8 safe (spans are char offsets).
 * **`LlmEntityExtractor`** - consulted only on borderline chunks. A single structured-JSON call asks the model for semantic NER (Person / Organization / Location / Topic / …) plus an importance rating, with span recovery and a soft warn-and-empty fallback on transport failure.
 
-The two are chained by **`CompositeExtractor`**, which runs a sequence of extractors and tolerates per-extractor failures. Outputs are merged (`ExtractedEntities::merge` deduplicates entities and takes the max importance), then **canonicalised** by [`resolver.rs`](../../../src/openhuman/memory_tree/score/resolver.rs) - lowercasing emails, stripping leading `@`/`#`, and assigning stable `canonical_id` strings - so the same person or topic resolves to one identity across chunks.
+The two are chained by **`CompositeExtractor`**, which runs a sequence of extractors and tolerates per-extractor failures. Outputs are merged (`ExtractedEntities::merge` deduplicates entities and takes the max importance), then **canonicalised** by [`resolver.rs`](../../../src/openhuman/memory/tree/score/resolver.rs) - lowercasing emails, stripping leading `@`/`#`, and assigning stable `canonical_id` strings - so the same person or topic resolves to one identity across chunks.
 
 ***
 
 ## The entity index & graph
 
-Canonical entities for each kept chunk are written to **`mem_tree_entity_index`**, an inverted index mapping `entity_id → node_id` ([`store.rs`](../../../src/openhuman/memory_tree/score/store.rs)). This is the connective tissue the rest of the Memory Tree reads from:
+Canonical entities for each kept chunk are written to **`mem_tree_entity_index`**, an inverted index mapping `entity_id → node_id` ([`store.rs`](../../../src/openhuman/memory/tree/score/store.rs)). This is the connective tissue the rest of the Memory Tree reads from:
 
 * **Retrieval** resolves a query's entities against the index to find candidate nodes.
 * **Topic routing** uses entity hotness to decide which entities deserve their own topic tree.
@@ -96,9 +96,9 @@ Canonical entities for each kept chunk are written to **`mem_tree_entity_index`*
 
 ## Embeddings for semantic recall
 
-Scoring also produces vectors. The embedder in [`score/embed/`](../../../src/openhuman/memory_tree/score/embed/) turns each chunk (and later, summary) into a fixed `EMBEDDING_DIM = 1024`-float `Vec<f32>`, packed into a SQLite BLOB, so retrieval can rerank candidates by cosine similarity rather than relying on the entity index alone.
+Scoring also produces vectors. The embedder in [`score/embed/`](../../../src/openhuman/memory/tree/score/embed/) turns each chunk (and later, summary) into a fixed `EMBEDDING_DIM = 1024`-float `Vec<f32>`, packed into a SQLite BLOB, so retrieval can rerank candidates by cosine similarity rather than relying on the entity index alone.
 
-The active embedder is selected by `build_embedder_from_config` ([`embed/factory.rs`](../../../src/openhuman/memory_tree/score/embed/factory.rs)) walking a resolution ladder, identical for read and write paths:
+The active embedder is selected by `build_embedder_from_config` ([`embed/factory.rs`](../../../src/openhuman/memory/tree/score/embed/factory.rs)) walking a resolution ladder, identical for read and write paths:
 
 1. **Explicit Ollama override** (`memory_tree.embedding_endpoint` + `embedding_model`) - power users / E2E rigs.
 2. **Local Ollama** via the unified `embeddings` workload setting - the "Memory embeddings" checkbox in [Local AI](../model-routing/local-ai.md) Settings.

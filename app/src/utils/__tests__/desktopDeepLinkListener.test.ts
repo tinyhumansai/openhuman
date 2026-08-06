@@ -2,6 +2,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { confirmWaitlistDownload } from '../../services/api/waitlistApi';
 import { clearCoreRpcTokenCache, clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import {
   completeDeepLinkAuthProcessing,
@@ -12,9 +13,12 @@ import { getStoredCoreMode } from '../configPersistence';
 import {
   authStoreFailureUserMessage,
   classifyAuthStoreFailure,
+  handleDeepLinkUrls,
   registerAuthDeepLinkState,
   setupDesktopDeepLinkListener,
 } from '../desktopDeepLinkListener';
+import { BILLING_DASHBOARD_URL } from '../links';
+import { openUrl } from '../openUrl';
 import { storeSession } from '../tauriCommands';
 
 vi.mock('../configPersistence', () => ({ getStoredCoreMode: vi.fn() }));
@@ -22,6 +26,8 @@ vi.mock('../../services/coreRpcClient', () => ({
   clearCoreRpcUrlCache: vi.fn(),
   clearCoreRpcTokenCache: vi.fn(),
 }));
+vi.mock('../openUrl', () => ({ openUrl: vi.fn() }));
+vi.mock('../../services/api/waitlistApi', () => ({ confirmWaitlistDownload: vi.fn() }));
 
 // Build an `openhuman://auth` deep link bound to a freshly registered state
 // nonce, mirroring how the real OAuth button registers the loopback/deep-link
@@ -83,10 +89,79 @@ describe('desktopDeepLinkListener', () => {
     vi.mocked(getStoredCoreMode).mockReturnValue(null);
     vi.mocked(clearCoreRpcUrlCache).mockClear();
     vi.mocked(clearCoreRpcTokenCache).mockClear();
+    vi.mocked(openUrl).mockReset();
+    vi.mocked(openUrl).mockResolvedValue(undefined);
+    vi.mocked(confirmWaitlistDownload).mockReset();
+    vi.mocked(confirmWaitlistDownload).mockResolvedValue(undefined);
     windowControls.show.mockClear();
     windowControls.unminimize.mockClear();
     windowControls.setFocus.mockClear();
     completeDeepLinkAuthProcessing();
+  });
+
+  it('returns successful payment deep links to the billing dashboard', async () => {
+    await handleDeepLinkUrls(['openhuman://payment/success?session_id=checkout-session']);
+
+    expect(openUrl).toHaveBeenCalledWith(BILLING_DASHBOARD_URL);
+    expect(BILLING_DASHBOARD_URL).toBe('https://tinyhumans.ai/dashboard');
+  });
+
+  it('returns cancelled payment deep links to the billing dashboard', async () => {
+    await handleDeepLinkUrls(['openhuman://payment/cancel']);
+
+    expect(openUrl).toHaveBeenCalledWith(BILLING_DASHBOARD_URL);
+  });
+
+  it('confirms the download and focuses the window for a waitlist deep link', async () => {
+    await handleDeepLinkUrls(['openhuman://waitlist?token=dl-token-123']);
+
+    expect(confirmWaitlistDownload).toHaveBeenCalledWith('dl-token-123');
+    expect(windowControls.setFocus).toHaveBeenCalled();
+  });
+
+  it('still opens the app when the confirmation fails', async () => {
+    // Startup must survive an offline launch: the reward is idempotent and the
+    // next open retries it, but the window has to appear either way.
+    vi.mocked(confirmWaitlistDownload).mockRejectedValue({ success: false, error: 'offline' });
+
+    await expect(
+      handleDeepLinkUrls(['openhuman://waitlist?token=dl-token-123'])
+    ).resolves.toBeUndefined();
+    expect(windowControls.setFocus).toHaveBeenCalled();
+  });
+
+  it('does not call the backend when the waitlist link carries no token', async () => {
+    await handleDeepLinkUrls(['openhuman://waitlist']);
+
+    expect(confirmWaitlistDownload).not.toHaveBeenCalled();
+    expect(windowControls.setFocus).toHaveBeenCalled();
+  });
+
+  it('keeps the download token out of the logs on failure', async () => {
+    // The token in the message is the point: a rejection on this path can carry
+    // the credential, and `sanitizeError` would have preserved it.
+    vi.mocked(confirmWaitlistDownload).mockRejectedValue(new Error('super-secret-token'));
+
+    await handleDeepLinkUrls(['openhuman://waitlist?token=super-secret-token']);
+
+    // Reads the suite-wide console spy from `src/test/setup.ts` rather than
+    // installing its own. A local spy would have to be restored, and restoring
+    // it un-spies `console.warn` for every test that runs after this one —
+    // `restoreMocks` is off, so nothing puts it back.
+    expect(console.warn).toHaveBeenCalledWith('[DeepLink][waitlist] Could not confirm download');
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain('super-secret-token');
+  });
+
+  it('waits for the core before confirming, and skips the call when it never comes up', async () => {
+    // Cold open from a download link runs before BootCheckGate starts the core,
+    // and the backend base resolves through it — confirming early would post to
+    // nothing and be swallowed as an ordinary failure.
+    waitForOAuthAuthReadiness.mockResolvedValue({ ready: false, reason: 'core_unreachable' });
+
+    await handleDeepLinkUrls(['openhuman://waitlist?token=dl-token-123']);
+
+    expect(confirmWaitlistDownload).not.toHaveBeenCalled();
+    expect(windowControls.setFocus).toHaveBeenCalled();
   });
 
   it('turns Twitter OAuth error deep links into actionable UI and event diagnostics', async () => {
@@ -106,6 +181,8 @@ describe('desktopDeepLinkListener', () => {
     expect(windowControls.setFocus).toHaveBeenCalledTimes(1);
     expect(getDeepLinkAuthState()).toEqual({
       isProcessing: false,
+      // Literal copy, not a key: only the localized failures carry one.
+      errorMessageKey: null,
       errorMessage:
         'Twitter/X sign-in failed before OpenHuman received authorization. Check the Twitter Developer Portal app settings: OAuth 2.0 must be enabled, callback URL must match the backend redirect URL exactly, and the client ID, client secret, and requested scopes must match the OpenHuman backend configuration.',
       requiresAppDataReset: false,
@@ -185,8 +262,40 @@ describe('desktopDeepLinkListener', () => {
     expect(storeSession).toHaveBeenCalledWith(
       'web-token',
       {},
-      { allowPendingBackendValidation: true }
+      { allowPendingBackendValidation: true, timeoutMs: 25_000 }
     );
+  });
+
+  it('retries storeSession on timeout then succeeds on second attempt', async () => {
+    vi.mocked(storeSession)
+      .mockReset()
+      .mockRejectedValueOnce(new Error('timed out'))
+      .mockResolvedValueOnce(undefined);
+
+    const state = registerAuthDeepLinkState();
+    const url = `openhuman://auth?token=retry-token&key=auth&state=${state}`;
+
+    vi.mocked(getCurrent).mockResolvedValue([url]);
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    expect(storeSession).toHaveBeenCalledTimes(2);
+    expect(getDeepLinkAuthState().errorMessage).toBeNull();
+  });
+
+  it('does NOT retry storeSession on non-timeout error', async () => {
+    vi.mocked(storeSession).mockReset().mockRejectedValueOnce(new Error('network down'));
+
+    const state = registerAuthDeepLinkState();
+    const url = `openhuman://auth?token=no-retry-token&key=auth&state=${state}`;
+
+    vi.mocked(getCurrent).mockResolvedValue([url]);
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    // Non-timeout errors should not be retried — only one call expected.
+    expect(storeSession).toHaveBeenCalledTimes(1);
+    expect(getDeepLinkAuthState().errorMessage).not.toBeNull();
   });
 
   it('rejects an auth deep link whose state nonce does not match a pending one', async () => {
@@ -211,7 +320,11 @@ describe('desktopDeepLinkListener', () => {
     vi.mocked(getCurrent).mockResolvedValue([url]);
     await setupDesktopDeepLinkListener();
     await waitForAuthSettled();
-    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+    expect(storeSession).toHaveBeenCalledWith(
+      'abc',
+      {},
+      { allowPendingBackendValidation: true, timeoutMs: 25_000 }
+    );
 
     // Replay the exact same deep link — the nonce was consumed, so it fails.
     vi.mocked(storeSession).mockClear();
@@ -230,7 +343,34 @@ describe('desktopDeepLinkListener', () => {
 
     const state = getDeepLinkAuthState();
     expect(state.requiresAppDataReset).toBe(false);
-    expect(state.errorMessage).toBe('Sign-in failed. Please try again.');
+    expect(state.errorMessage).toContain('did not respond');
+    expect(state.errorMessage).toContain('restart');
+    expect(state.errorMessageKey).toBeNull();
+  });
+
+  // The core cannot read its own config.toml: permanent, host-side, and
+  // identical for every config-dependent RPC. It previously fell through to the
+  // generic "Please try again", which is advice that can never work. The copy is
+  // localized, and this module cannot call useT(), so it hands the rendering
+  // component an i18n key instead of a literal.
+  it('surfaces an unreadable core config as a translatable key, not a retry prompt', async () => {
+    vi.mocked(storeSession).mockRejectedValueOnce(
+      new Error(
+        'Failed to read config file: /home/openhuman/.openhuman/config.toml ' +
+          '[config owner mismatch] (file uid=0 gid=0 mode=0600; process euid=10001 egid=10001): ' +
+          'Permission denied (os error 13)'
+      )
+    );
+
+    vi.mocked(getCurrent).mockResolvedValue([authDeepLinkWithState('token=abc&key=auth')]);
+
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    const state = getDeepLinkAuthState();
+    expect(state.errorMessageKey).toBe('welcome.coreConfigUnreadable');
+    expect(state.errorMessage).not.toBe('Sign-in failed. Please try again.');
+    expect(state.requiresAppDataReset).toBe(false);
   });
 
   it('injection #1: store-time /auth/me failure bounces to signin — no session applied, no /home nav', async () => {
@@ -256,14 +396,18 @@ describe('desktopDeepLinkListener', () => {
       await waitForAuthSettled();
 
       // store WAS attempted (we reached the persistence call)...
-      expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+      expect(storeSession).toHaveBeenCalledWith(
+        'abc',
+        {},
+        { allowPendingBackendValidation: true, timeoutMs: 25_000 }
+      );
       // ...but it FAILED, so the session-applied event was never dispatched...
       expect(sessionTokenUpdated).not.toHaveBeenCalled();
       // ...and we never navigated to /home (ProtectedRoute/PublicRoute keep signin).
       expect(window.location.hash).not.toBe('#/home');
       // Surfaced as the generic toast; processing cleared.
       const state = getDeepLinkAuthState();
-      expect(state.errorMessage).toBe('Sign-in failed. Please try again.');
+      expect(state.errorMessage).toContain('did not respond');
       expect(state.isProcessing).toBe(false);
     } finally {
       window.removeEventListener('core-state:session-token-updated', sessionTokenUpdated);
@@ -296,7 +440,11 @@ describe('desktopDeepLinkListener', () => {
     resolveReadiness({ ready: true });
     await waitForAuthSettled();
 
-    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+    expect(storeSession).toHaveBeenCalledWith(
+      'abc',
+      {},
+      { allowPendingBackendValidation: true, timeoutMs: 25_000 }
+    );
     expect(getDeepLinkAuthState().isProcessing).toBe(false);
   });
 
@@ -329,7 +477,11 @@ describe('desktopDeepLinkListener', () => {
 
     expect(clearCoreRpcUrlCache).toHaveBeenCalledTimes(1);
     expect(clearCoreRpcTokenCache).toHaveBeenCalledTimes(1);
-    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+    expect(storeSession).toHaveBeenCalledWith(
+      'abc',
+      {},
+      { allowPendingBackendValidation: true, timeoutMs: 25_000 }
+    );
   });
 
   it('does NOT bust RPC caches before storeSession in local mode', async () => {
@@ -341,7 +493,11 @@ describe('desktopDeepLinkListener', () => {
 
     expect(clearCoreRpcUrlCache).not.toHaveBeenCalled();
     expect(clearCoreRpcTokenCache).not.toHaveBeenCalled();
-    expect(storeSession).toHaveBeenCalledWith('abc', {}, { allowPendingBackendValidation: true });
+    expect(storeSession).toHaveBeenCalledWith(
+      'abc',
+      {},
+      { allowPendingBackendValidation: true, timeoutMs: 25_000 }
+    );
   });
 
   it('dispatches suppress-reauth before storeSession and clears it after in cloud mode', async () => {
@@ -396,6 +552,19 @@ describe('classifyAuthStoreFailure', () => {
     expect(classifyAuthStoreFailure(bare)).toBe('auth_me_other');
     expect(classifyAuthStoreFailure(bare)).not.toBe('other');
   });
+
+  // A core that cannot read its own config.toml fails EVERY config-dependent
+  // RPC the same way. Bucketing it as 'other' surfaced "Sign-in failed. Please
+  // try again." for a fault no amount of retrying clears.
+  it('classifies an unreadable core config as its own permanent kind', () => {
+    const reported =
+      'Failed to read config file: /home/openhuman/.openhuman/config.toml ' +
+      '[config owner mismatch] (file uid=0 gid=0 mode=0600; process euid=10001 egid=10001): ' +
+      'Permission denied (os error 13)';
+
+    expect(classifyAuthStoreFailure(reported)).toBe('config_unreadable');
+    expect(classifyAuthStoreFailure(reported)).not.toBe('other');
+  });
 });
 
 describe('authStoreFailureUserMessage (issue #3025)', () => {
@@ -407,11 +576,13 @@ describe('authStoreFailureUserMessage (issue #3025)', () => {
     'other',
   ];
 
-  // Local / unset mode always keeps the plain retry message — the failure there
-  // is a transient embedded-core/backend blip that retrying can clear.
+  // Local / unset mode should mention the retry attempt so the user knows
+  // the system tried before giving up (issue #5166).
   it.each(['local', null] as const)('stays generic for mode=%s', mode => {
     for (const kind of CLOUD_KINDS) {
-      expect(authStoreFailureUserMessage(kind, mode)).toBe('Sign-in failed. Please try again.');
+      const msg = authStoreFailureUserMessage(kind, mode);
+      expect(msg).toContain('retry');
+      expect(msg).not.toContain('remote');
     }
   });
 

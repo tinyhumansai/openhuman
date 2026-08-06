@@ -1,21 +1,21 @@
 //! Fully hermetic FULL-STACK e2e: the REAL gate + REAL long-lived session
-//! run against a **mocked LLM provider** — no network, no Ollama, no real
-//! model anywhere (cloud and local provider funnels are both overridden).
+//! run against a **mocked LLM model** — no network, no Ollama, no real model
+//! anywhere (cloud and local model funnels are both overridden).
 //!
 //! Unlike `subconscious_conversation_e2e.rs` (which injects scripted Gate /
-//! SessionExecutor *above* the model), this test mocks at the *provider*
+//! SessionExecutor *above* the model), this test mocks at the crate model
 //! layer, so the production code paths run for real:
-//!   - `GatePass::evaluate` → `agent::triage::run_triage` → real provider
+//!   - `GatePass::evaluate` → `agent::triage::run_triage` → real model
 //!     funnel → mock → real triage parse → real promote/drop mapping.
 //!   - `LongLivedSession::process_promoted` → `Agent::from_config` (the real
 //!     orchestrator agent + tool loop) → mock → real reserved-thread persistence.
 //!
 //! The mock is installed via the factory's `test_provider_override` seam,
-//! which both provider funnels consult first.
+//! which both model funnels consult first.
 //!
 //! Gated on the off-by-default `e2e-test-support` feature (the seam is only
 //! compiled then). Run with:
-//! `cargo test --features e2e-test-support --test subconscious_fullstack_e2e -- --nocapture`
+//! `RUST_MIN_STACK=16777216 cargo test --features e2e-test-support --test subconscious_fullstack_e2e -- --nocapture`
 #![cfg(feature = "e2e-test-support")]
 
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -26,15 +26,14 @@ use openhuman_core::core::event_bus::{init_global, DomainEvent};
 use openhuman_core::openhuman::agent::harness::AgentDefinitionRegistry;
 use openhuman_core::openhuman::config::schema::SubconsciousMode;
 use openhuman_core::openhuman::inference::provider::factory::test_provider_override;
-use openhuman_core::openhuman::inference::provider::traits::{
-    ChatRequest, ChatResponse, ProviderCapabilities, ToolCall,
-};
-use openhuman_core::openhuman::inference::provider::Provider;
+use openhuman_core::openhuman::subconscious::triggers::{normalize, GatePass};
 use openhuman_core::openhuman::subconscious::LongLivedSession;
-use openhuman_core::openhuman::subconscious_triggers::{normalize, GatePass};
+use tinyagents::harness::message::AssistantMessage;
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock LLM provider — deterministic, content-routed, no network.
+// Mock LLM model — deterministic, content-routed, no network.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Records every prompt the mock saw, and answers deterministically:
@@ -46,6 +45,7 @@ struct MockLlm {
     /// When set, the orchestrator turn emits a real `spawn_subagent` tool
     /// call so the harness runs an actual sub-agent (native tool mode).
     spawn: bool,
+    profile: ModelProfile,
 }
 
 const SUBAGENT_MARKER: &str = "SUBAGENT_TASK";
@@ -53,15 +53,22 @@ const RESEARCHER_FINDINGS: &str = "Researcher findings: Q3 numbers look healthy.
 
 impl MockLlm {
     fn new() -> Arc<Self> {
+        let mut profile = ModelProfile::default();
+        profile.tool_calling = false;
         Arc::new(Self {
             seen: StdMutex::new(Vec::new()),
             spawn: false,
+            profile,
         })
     }
     fn with_spawning() -> Arc<Self> {
+        let mut profile = ModelProfile::default();
+        profile.tool_calling = true;
+        profile.parallel_tool_calls = true;
         Arc::new(Self {
             seen: StdMutex::new(Vec::new()),
             spawn: true,
+            profile,
         })
     }
 
@@ -78,7 +85,7 @@ impl MockLlm {
         }
     }
 
-    fn respond(&self, joined: &str) -> ChatResponse {
+    fn respond(&self, joined: &str) -> ModelResponse {
         self.seen.lock().unwrap().push(joined.to_string());
         let is_triage = joined.contains("DISPLAY_LABEL:") && joined.contains("PAYLOAD:");
 
@@ -96,31 +103,31 @@ impl MockLlm {
         } else if self.spawn {
             // Orchestrator's first turn → delegate via a real spawn_subagent
             // tool call.
-            return ChatResponse {
-                text: Some("Delegating to the researcher.".to_string()),
-                tool_calls: vec![ToolCall {
-                    id: "call-1".to_string(),
-                    name: "spawn_subagent".to_string(),
-                    arguments: serde_json::json!({
+            return ModelResponse {
+                message: AssistantMessage {
+                    id: None,
+                    content: Vec::new(),
+                    tool_calls: vec![ToolCall::new(
+                        "call-1",
+                        "spawn_subagent",
+                        serde_json::json!({
                         "agent_id": "researcher",
                         "prompt": format!("{SUBAGENT_MARKER}: investigate the Q3 numbers"),
-                    })
-                    .to_string(),
-                    extra_content: None,
-                }],
+                        }),
+                    )],
+                    usage: None,
+                },
                 usage: None,
-                reasoning_content: None,
+                finish_reason: Some("tool_calls".to_string()),
+                raw: None,
+                resolved_model: None,
+                continue_turn: None,
             };
         } else {
             "Mock orchestrator handled the promoted trigger.".to_string()
         };
 
-        ChatResponse {
-            text: Some(text),
-            tool_calls: Vec::new(),
-            usage: None,
-            reasoning_content: None,
-        }
+        ModelResponse::assistant(text)
     }
 
     fn triage_turns(&self) -> usize {
@@ -138,36 +145,20 @@ impl MockLlm {
 }
 
 #[async_trait]
-impl Provider for MockLlm {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            // Native tools only when we want to emit a spawn tool call.
-            native_tool_calling: self.spawn,
-            vision: false,
-        }
+impl ChatModel<()> for MockLlm {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        let joined = format!("{}\n{message}", system_prompt.unwrap_or(""));
-        Ok(self.respond(&joined).text.unwrap_or_default())
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         let joined = request
             .messages
             .iter()
-            .map(|m| format!("{}: {}", m.role, m.content))
+            .map(|message| message.text())
             .collect::<Vec<_>>()
             .join("\n");
         Ok(self.respond(&joined))
@@ -175,11 +166,11 @@ impl Provider for MockLlm {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hermetic harness: temp HOME + config + globals + installed mock provider.
+// Hermetic harness: temp HOME + config + globals + installed mock model.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Serializes these tests: they mutate process-global env + install a
-/// process-global provider override.
+/// process-global model override.
 fn serial() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| StdMutex::new(()))
@@ -223,7 +214,7 @@ struct Harness {
 }
 
 fn write_config(openhuman_dir: &std::path::Path) {
-    // api_url is never dialed — the provider override intercepts creation
+    // api_url is never dialed — the model override intercepts creation
     // before any URL is used — but config must parse and disable local AI so
     // nothing reaches Ollama either.
     let cfg = r#"api_url = "http://127.0.0.1:9"
@@ -273,8 +264,8 @@ fn harness_with(mock: Arc<MockLlm>) -> Harness {
     openhuman_core::openhuman::agent::bus::register_agent_handlers();
     let _ = AgentDefinitionRegistry::init_global_builtins();
 
-    // Install the mock LLM — both provider funnels consult this first.
-    let install = test_provider_override::install(mock.clone());
+    // Install the mock LLM — both model funnels consult this first.
+    let install = test_provider_override::install_model(mock.clone());
 
     Harness {
         workspace,
@@ -373,7 +364,7 @@ async fn fullstack_session_runs_real_agent_and_persists() {
     );
 
     // Real reserved-thread persistence: the user turn + agent reply landed.
-    let msgs = openhuman_core::openhuman::memory_conversations::get_messages(
+    let msgs = openhuman_core::openhuman::memory::conversations::get_messages(
         h.workspace.clone(),
         "subconscious:orchestrator",
     )
@@ -393,7 +384,7 @@ async fn fullstack_session_runs_real_agent_and_persists() {
 // Full chain: human → subconscious session → REAL sub-agent → back → human.
 // The mock makes the orchestrator emit a real `spawn_subagent` tool call, so
 // the harness runs an actual researcher sub-agent (inheriting the mock
-// provider), whose output is merged by the orchestrator's follow-up turn.
+// model), whose output is merged by the orchestrator's follow-up turn.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]

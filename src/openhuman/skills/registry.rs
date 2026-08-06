@@ -13,6 +13,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::openhuman::skills::WorkflowScope;
 
 /// One declared input — a parameter the skill needs, with a human description.
 /// `required` inputs must be supplied at run time; `kind` is an optional type
@@ -73,7 +74,7 @@ pub struct WorkflowDefinition {
     /// Optional GitHub preflight gate. When `Some(..)` with
     /// `required = true`, the preflight runs before the orchestrator
     /// boots — see
-    /// [`crate::openhuman::skill_runtime::spawn_workflow_run_background`].
+    /// [`crate::openhuman::skills::runtime::spawn_workflow_run_background`].
     #[serde(default)]
     pub github: Option<WorkflowGithubConfig>,
 }
@@ -148,17 +149,36 @@ pub fn prune_legacy_default_workflows(workspace_dir: &Path) {
 /// `run_workflow`) returned "unknown workflow" for anything created via the UI.
 ///
 /// Per dir: `skill.toml` (id / `when_to_use` / `[[inputs]]` / `[github]`)
-/// + the `SKILL.md` body as the inline system prompt; or, when there's no
-/// `skill.toml`, a synthesized SKILL.md-only definition so a bare workflow is
+/// + the `SKILL.md` body as the inline system prompt.
+///
+/// Without `skill.toml`, a synthesized SKILL.md-only definition means a bare workflow is
 /// still runnable. A bad `skill.toml` falls back to the SKILL.md-only form.
 pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
+    load_workflows_with_profile(workspace_dir, None)
+}
+
+/// Like [`load_workflows`], but additionally resolves the active profile's
+/// private skills (`<workspace>/personalities/<id>/skills/`) when
+/// `profile_skills_root` is supplied.
+///
+/// The profile root is threaded straight into
+/// [`super::ops_discover::discover_workflows_with_profile`], so profile-local
+/// skills become runnable/describable for their owner and win same-name
+/// collisions against global skills (via [`WorkflowScope::Profile`] precedence).
+/// `None` reproduces [`load_workflows`] byte-for-byte — other profiles and the
+/// profile-less session never see these skills. No global registry state is
+/// mutated, so concurrent sessions under different profiles stay isolated.
+pub fn load_workflows_with_profile(
+    workspace_dir: &Path,
+    profile_skills_root: Option<&Path>,
+) -> Vec<WorkflowDefinition> {
     // Prune any legacy bundled skills an older build left behind so discover's
     // legacy scan no longer surfaces them (idempotent).
     prune_legacy_default_workflows(workspace_dir);
 
     let mut workflows: Vec<WorkflowDefinition> = Vec::new();
 
-    if let Ok(builtins) = crate::openhuman::agent_registry::agents::load_builtins() {
+    if let Ok(builtins) = crate::openhuman::agent::registry::agents::load_builtins() {
         for definition in builtins {
             workflows.push(WorkflowDefinition {
                 definition,
@@ -172,8 +192,12 @@ pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
     // discovery the create/list path uses, then load each one's definition.
     let home = dirs::home_dir();
     let trusted = super::ops_discover::is_workspace_trusted(workspace_dir);
-    for wf in super::ops_discover::discover_workflows(home.as_deref(), Some(workspace_dir), trusted)
-    {
+    for wf in super::ops_discover::discover_workflows_with_profile(
+        home.as_deref(),
+        Some(workspace_dir),
+        profile_skills_root,
+        trusted,
+    ) {
         let Some(skill_md) = wf.location.as_ref() else {
             continue;
         };
@@ -250,9 +274,54 @@ fn load_workflow_definition(
 
 /// Look up one skill by id across the registry.
 pub fn get_workflow(workspace_dir: &Path, id: &str) -> Option<WorkflowDefinition> {
-    load_workflows(workspace_dir)
+    get_workflow_with_profile(workspace_dir, id, None)
+}
+
+/// Like [`get_workflow`], but resolves the active profile's private skills too
+/// (`<workspace>/personalities/<id>/skills/`) when `profile_skills_root` is
+/// supplied. This is the resolution seam behind `describe_workflow` /
+/// `run_workflow`: a profile-local skill is runnable/describable for its owner
+/// and wins same-name collisions; `None` is byte-identical to [`get_workflow`].
+pub fn get_workflow_with_profile(
+    workspace_dir: &Path,
+    id: &str,
+    profile_skills_root: Option<&Path>,
+) -> Option<WorkflowDefinition> {
+    let workflows = load_workflows_with_profile(workspace_dir, profile_skills_root);
+    // Built-ins are prepended and discovered workflows follow them. Search in
+    // reverse so the scope-resolved discovered entry (profile wins over global)
+    // also wins over a built-in with the same runnable id.
+    if let Some(exact) = workflows.iter().rev().find(|s| s.definition.id == id) {
+        return Some(exact.clone());
+    }
+
+    // Profile lists advertise the frontmatter display name as well as the
+    // directory slug. Resolve that name back to the canonical runnable slug so
+    // a private workflow admitted by the profile-local allow set can actually
+    // be described and run. Keep the legacy profile-less lookup id-only: global
+    // display names have never been runnable ids and may collide with builtins.
+    let home = dirs::home_dir();
+    let trusted = super::ops_discover::is_workspace_trusted(workspace_dir);
+    let slug = super::ops_discover::discover_workflows_with_profile(
+        home.as_deref(),
+        Some(workspace_dir),
+        profile_skills_root,
+        trusted,
+    )
+    .into_iter()
+    .find(|workflow| workflow.scope == WorkflowScope::Profile && workflow.name == id)
+    .map(|workflow| {
+        if workflow.dir_name.is_empty() {
+            workflow.name
+        } else {
+            workflow.dir_name
+        }
+    })?;
+
+    workflows
         .into_iter()
-        .find(|s| s.definition.id == id)
+        .rev()
+        .find(|workflow| workflow.definition.id == slug)
 }
 
 #[cfg(test)]
@@ -317,6 +386,117 @@ mod tests {
         .unwrap();
         assert_eq!(i.kind.as_deref(), Some("integer"));
         assert!(i.required);
+    }
+
+    /// Seed a runnable WORKFLOW.md bundle under `root/slug/` with a distinct
+    /// body marker so the resolved definition can be traced back to its source.
+    fn seed_runnable(root: &std::path::Path, slug: &str, body_marker: &str) {
+        seed_runnable_with_name(root, slug, slug, body_marker);
+    }
+
+    fn seed_runnable_with_name(root: &std::path::Path, slug: &str, name: &str, body_marker: &str) {
+        let dir = root.join(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("WORKFLOW.md"),
+            format!("---\nname: {name}\ndescription: {name} desc\n---\n\n{body_marker}\n"),
+        )
+        .unwrap();
+    }
+
+    fn resolved_body(def: &WorkflowDefinition) -> String {
+        match &def.definition.system_prompt {
+            PromptSource::Inline(p) => p.clone(),
+            other => panic!("expected inline prompt, got {other:?}"),
+        }
+    }
+
+    /// The resolution seam behind `describe_workflow` / `run_workflow`
+    /// (`get_workflow_with_profile`) resolves a profile's private skills for the
+    /// owner only, resolves collisions to the profile-local copy, keeps
+    /// profile-local skills invisible to other profiles / the profile-less
+    /// session, and leaves global-only skills resolvable everywhere.
+    #[test]
+    fn get_workflow_with_profile_resolution_matrix() {
+        // Unique-ish ids so a developer's real ~/.openhuman/skills can't collide.
+        let ws = tempfile::TempDir::new().unwrap();
+        let profile_root = tempfile::TempDir::new().unwrap();
+        let other_root = tempfile::TempDir::new().unwrap(); // a different profile
+
+        // A global skill under the legacy `<ws>/skills/` root (no trust marker
+        // needed), and a private skill under the profile root.
+        seed_runnable(&ws.path().join("skills"), "zzglobalonly7788", "GLOBAL_BODY");
+        seed_runnable(profile_root.path(), "zzlocalonly7788", "LOCAL_BODY");
+        // Collision: same id in both the global legacy root and the profile root.
+        seed_runnable(&ws.path().join("skills"), "zzcollide7788", "GLOBAL_COLLIDE");
+        seed_runnable(profile_root.path(), "zzcollide7788", "PROFILE_COLLIDE");
+
+        let get = |id: &str, root: Option<&std::path::Path>| {
+            get_workflow_with_profile(ws.path(), id, root)
+        };
+
+        // Owner resolves its profile-local skill.
+        assert!(
+            get("zzlocalonly7788", Some(profile_root.path())).is_some(),
+            "owner must resolve its profile-local skill"
+        );
+        // Profile-less session and a different profile cannot resolve it.
+        assert!(
+            get("zzlocalonly7788", None).is_none(),
+            "profile-less session must not resolve a profile-local skill"
+        );
+        assert!(
+            get("zzlocalonly7788", Some(other_root.path())).is_none(),
+            "a different profile must not resolve another profile's private skill"
+        );
+
+        // Global-only skill resolves everywhere (with/without a profile root).
+        assert!(get("zzglobalonly7788", None).is_some());
+        assert!(get("zzglobalonly7788", Some(profile_root.path())).is_some());
+        assert!(get("zzglobalonly7788", Some(other_root.path())).is_some());
+
+        // Collision: the owner resolves the profile-local copy; everyone else
+        // resolves the global copy.
+        assert_eq!(
+            resolved_body(&get("zzcollide7788", Some(profile_root.path())).unwrap()),
+            "---\nname: zzcollide7788\ndescription: zzcollide7788 desc\n---\n\nPROFILE_COLLIDE\n",
+            "owner must resolve the profile-local copy on collision"
+        );
+        assert_eq!(
+            resolved_body(&get("zzcollide7788", None).unwrap()),
+            "---\nname: zzcollide7788\ndescription: zzcollide7788 desc\n---\n\nGLOBAL_COLLIDE\n",
+            "profile-less session resolves the global copy on collision"
+        );
+    }
+
+    #[test]
+    fn get_profile_workflow_resolves_distinct_display_name() {
+        let ws = tempfile::TempDir::new().unwrap();
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_runnable_with_name(
+            profile_root.path(),
+            "mail-helper",
+            "Inbox Assistant",
+            "PROFILE_NAME_BODY",
+        );
+
+        let resolved =
+            get_workflow_with_profile(ws.path(), "Inbox Assistant", Some(profile_root.path()))
+                .expect("display name must resolve for the owning profile");
+        assert_eq!(resolved.definition.id, "mail-helper");
+        assert!(resolved_body(&resolved).contains("PROFILE_NAME_BODY"));
+        assert!(get_workflow_with_profile(ws.path(), "Inbox Assistant", None).is_none());
+    }
+
+    #[test]
+    fn profile_workflow_exact_id_overrides_builtin() {
+        let ws = tempfile::TempDir::new().unwrap();
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_runnable(profile_root.path(), "critic", "PROFILE_CRITIC_BODY");
+
+        let resolved = get_workflow_with_profile(ws.path(), "critic", Some(profile_root.path()))
+            .expect("profile critic resolves");
+        assert!(resolved_body(&resolved).contains("PROFILE_CRITIC_BODY"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Tool: `update_check` — surface the orchestrator's view of the
 //! self-update domain.
 //!
-//! Read-only wrapper around [`crate::openhuman::update::rpc::update_check`].
+//! Read-only wrapper around [`crate::openhuman::platform::update::rpc::update_check`].
 //! Lets the orchestrator answer "is there a new version?" in chat without
 //! routing the user to Settings → Developer Options. Implementation is a
 //! thin pass-through — release URL discovery and version comparison stay
@@ -10,8 +10,8 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::openhuman::platform::update;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
-use crate::openhuman::update;
 
 pub struct UpdateCheckTool;
 

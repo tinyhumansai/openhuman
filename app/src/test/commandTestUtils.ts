@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 
-export interface PressKeyOptions {
+interface PressKeyOptions {
   key: string;
   mod?: boolean;
   shift?: boolean;

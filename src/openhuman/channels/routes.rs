@@ -5,7 +5,7 @@ use super::context::{
 };
 use super::traits;
 use super::{Channel, ChannelSendExt, SendMessage};
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
 use serde::Deserialize;
 use std::fmt::Write;
 use std::path::Path;
@@ -166,16 +166,18 @@ fn load_cached_model_preview(workspace_dir: &Path, provider_name: &str) -> Vec<S
         .unwrap_or_default()
 }
 
-pub(crate) async fn get_or_create_provider(
+pub(crate) async fn get_or_create_turn_model_source(
     ctx: &ChannelRuntimeContext,
     provider_name: &str,
-) -> anyhow::Result<Arc<dyn Provider>> {
+) -> anyhow::Result<crate::openhuman::agent::tinyagents::TurnModelSource> {
     if provider_name == ctx.default_provider.as_str() {
-        return Ok(Arc::clone(&ctx.provider));
+        return ctx.turn_model_source.as_ref().cloned().ok_or_else(|| {
+            anyhow::anyhow!("no injected channel model source for '{provider_name}'")
+        });
     }
 
     if let Some(existing) = ctx
-        .provider_cache
+        .turn_model_source_cache
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(provider_name)
@@ -184,30 +186,9 @@ pub(crate) async fn get_or_create_provider(
         return Ok(existing);
     }
 
-    let (inference_url, backend_url) = if provider_name == ctx.default_provider.as_str() {
-        (ctx.inference_url.as_deref(), ctx.api_url.as_deref())
-    } else {
-        (None, None)
-    };
-
-    let provider = provider::create_resilient_provider_with_options(
-        inference_url,
-        backend_url,
-        None,
-        &ctx.reliability,
-        &ctx.provider_runtime_options,
-    )?;
-    let provider: Arc<dyn Provider> = Arc::from(provider);
-
-    if let Err(err) = provider.warmup().await {
-        tracing::warn!(provider = provider_name, "Provider warmup failed: {err}");
-    }
-
-    let mut cache = ctx.provider_cache.lock().unwrap_or_else(|e| e.into_inner());
-    let cached = cache
-        .entry(provider_name.to_string())
-        .or_insert_with(|| Arc::clone(&provider));
-    Ok(Arc::clone(cached))
+    anyhow::bail!(
+        "no injected channel model source for '{provider_name}'; production routes use crate-native model sources"
+    )
 }
 
 fn build_models_help_response(current: &ChannelRouteSelection, workspace_dir: &Path) -> String {
@@ -291,26 +272,21 @@ pub(crate) async fn handle_runtime_command_if_needed(
         ChannelRuntimeCommand::ShowProviders => build_providers_help_response(&current),
         ChannelRuntimeCommand::SetProvider(raw_provider) => {
             match resolve_provider_alias(&raw_provider) {
-                Some(provider_name) => match get_or_create_provider(ctx, &provider_name).await {
-                    Ok(_) => {
-                        if provider_name != current.provider {
-                            current.provider = provider_name.clone();
-                            set_route_selection(ctx, &sender_key, current.clone());
-                            clear_sender_history(ctx, &sender_key);
-                        }
-
-                        format!(
-                            "Provider switched to `{provider_name}` for this sender session. Current model is `{}`.\nUse `/model <model-id>` to set a provider-compatible model.",
-                            current.model
-                        )
+                Some(provider_name) => {
+                    tracing::debug!(
+                        provider = %provider_name,
+                        "[channels] validated crate-native provider route from catalog"
+                    );
+                    if provider_name != current.provider {
+                        current.provider = provider_name.clone();
+                        set_route_selection(ctx, &sender_key, current.clone());
+                        clear_sender_history(ctx, &sender_key);
                     }
-                    Err(err) => {
-                        let safe_err = provider::sanitize_api_error(&err.to_string());
-                        format!(
-                            "Failed to initialize provider `{provider_name}`. Route unchanged.\nDetails: {safe_err}"
-                        )
-                    }
-                },
+                    format!(
+                        "Provider switched to `{provider_name}` for this sender session. Current model is `{}`.\nUse `/model <model-id>` to set a provider-compatible model.",
+                        current.model
+                    )
+                }
                 None => format!(
                     "Unknown provider `{raw_provider}`. Use `/models` to list valid providers."
                 ),

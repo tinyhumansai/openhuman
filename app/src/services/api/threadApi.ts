@@ -1,6 +1,10 @@
 import debug from 'debug';
 
 import type {
+  DerivedTranscriptGetOptions,
+  DerivedTranscriptPage,
+} from '../../types/derivedTranscript';
+import type {
   PurgeResultData,
   Thread,
   ThreadDeleteData,
@@ -268,6 +272,27 @@ export const threadApi = {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.threads_update_title',
       params: { thread_id: threadId, title },
+    });
+    return unwrapEnvelope(response);
+  },
+
+  /**
+   * Transcript-derived view (Phase B/C): project the thread's append-only
+   * `session_raw/*.jsonl` source of truth into typed display items for the
+   * settled-turn restore path. Newest-first paginated; `cursor` comes from a
+   * prior page's `nextCursor`, `limit` defaults to 50 (core-clamped to 500).
+   *
+   * A thread with no persisted transcript yet returns an empty page with
+   * `hasTranscript: false` (not an error) — the caller then falls back to the
+   * legacy `turn_state_history` hydration.
+   */
+  getDerivedTranscript: async (
+    threadId: string,
+    options?: DerivedTranscriptGetOptions
+  ): Promise<DerivedTranscriptPage> => {
+    const response = await callCoreRpc<Envelope<DerivedTranscriptPage>>({
+      method: 'openhuman.threads_transcript_get',
+      params: { thread_id: threadId, cursor: options?.cursor, limit: options?.limit },
     });
     return unwrapEnvelope(response);
   },

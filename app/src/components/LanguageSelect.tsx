@@ -11,7 +11,7 @@ interface LocaleOption {
   label: string;
 }
 
-export const LOCALE_OPTIONS: LocaleOption[] = [
+const LOCALE_OPTIONS: LocaleOption[] = [
   { value: 'en', flag: '🇬🇧', label: 'English' },
   { value: 'ko', flag: '🇰🇷', label: '한국어' },
   { value: 'zh-CN', flag: '🇨🇳', label: '简体中文' },

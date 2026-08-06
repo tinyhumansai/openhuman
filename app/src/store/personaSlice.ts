@@ -20,7 +20,7 @@ import { resetUserScopedState } from './resetActions';
 export const MAX_PERSONA_DISPLAY_NAME_LEN = 80;
 export const MAX_PERSONA_DESCRIPTION_LEN = 500;
 
-export interface PersonaState {
+interface PersonaState {
   /** User-facing name for the assistant persona, or `''` when unset. */
   displayName: string;
   /** Short free-text description of the persona, or `''` when unset. */
@@ -88,5 +88,4 @@ export const selectPersonaDisplayName = (state: { persona: PersonaState }): stri
 export const selectPersonaDescription = (state: { persona: PersonaState }): string =>
   state.persona.description;
 
-export { personaSlice };
 export default personaSlice.reducer;

@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard, TaskCardStatus};
 use crate::openhuman::config::Config;
-use crate::openhuman::todos::ops::{self, BoardLocation, USER_TASKS_THREAD_ID};
-use crate::openhuman::todos::runs::{self, RunLimits};
+use crate::openhuman::threads::todos::ops::{self, BoardLocation, USER_TASKS_THREAD_ID};
+use crate::openhuman::threads::todos::runs::{self, RunLimits};
 
 use super::dispatch::dispatch_card;
 
@@ -123,7 +123,7 @@ pub(crate) async fn poll_once() -> Result<bool, String> {
     // permit immediately is fine: this is a "may background work start now"
     // check; the run itself is detached. No capacity → an idle tick (returns
     // `false` so the caller backs off, #4090).
-    let Some(_permit) = crate::openhuman::scheduler_gate::wait_for_capacity().await else {
+    let Some(_permit) = crate::openhuman::cron::scheduler_gate::wait_for_capacity().await else {
         tracing::debug!("[task_dispatcher:poller] scheduler gate denied capacity; idle tick");
         return Ok(false);
     };
@@ -145,7 +145,8 @@ pub(crate) async fn poll_once() -> Result<bool, String> {
         boards.push((
             BoardLocation::Thread {
                 workspace_dir: config.workspace_dir.clone(),
-                thread_id: crate::openhuman::task_sources::TASK_SOURCES_THREAD_ID.to_string(),
+                thread_id: crate::openhuman::integrations::task_sources::TASK_SOURCES_THREAD_ID
+                    .to_string(),
             },
             false,
         ));
@@ -176,7 +177,7 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
     // Reclaim stale/wedged runs before looking for new work. Reclaimed
     // cards move back to `todo` (re-dispatchable) so they appear in the
     // snapshot below and can be picked up in the same tick.
-    match runs::reclaim_stale(location, &RunLimits::default()) {
+    match runs::reclaim_stale(location, &RunLimits::default()).await {
         Ok(result) if result.reclaimed_count > 0 || result.blocked_count > 0 => {
             tracing::info!(
                 thread_id = ?location.thread_id(),
@@ -195,7 +196,7 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
         _ => {}
     }
 
-    let snapshot = ops::list(location)?;
+    let snapshot = ops::list(location).await?;
 
     // `enforce_single_in_progress` caps the board at one running card, so if
     // one is already in progress there's nothing for this tick to claim.

@@ -58,7 +58,7 @@ export interface CatalogEntry {
   license: string | null;
 }
 
-export interface RegistryInstallResult {
+interface RegistryInstallResult {
   url: string;
   stdout: string;
   stderr: string;
@@ -72,7 +72,7 @@ interface RawRegistryInstallResult {
   new_skills: string[];
 }
 
-export interface RegistryUninstallResult {
+interface RegistryUninstallResult {
   name: string;
   removedPath: string;
   scope: string;
@@ -84,7 +84,7 @@ interface RawRegistryUninstallResult {
   scope: string;
 }
 
-export interface ControllerSchemaSummary {
+interface ControllerSchemaSummary {
   namespace: string;
   function: string;
   description: string;

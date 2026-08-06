@@ -18,7 +18,14 @@
 /// secret encrypted at rest and scoped to the active user workspace.
 pub const EXTERNAL_OPENAI_COMPAT_PROVIDER: &str = "external-openai-compat";
 
+// The `/v1/*` axum router lives here and is exclusive to the `http-server`
+// feature (#5048). CARVE-OUT: `EXTERNAL_OPENAI_COMPAT_PROVIDER` (above) and
+// `types` stay UNGATED — `core::auth` consumes the provider id (and its inert
+// request/response types are dep-free) in ALL builds, so only the axum
+// `server`/`router` surface is gated.
+#[cfg(feature = "http-server")]
 pub mod server;
 pub mod types;
 
+#[cfg(feature = "http-server")]
 pub use server::router;

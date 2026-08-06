@@ -1,40 +1,24 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use openhuman_core::openhuman::agent::context::prompt::SystemPromptBuilder;
 use openhuman_core::openhuman::agent::dispatcher::XmlToolDispatcher;
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::context::prompt::SystemPromptBuilder;
-use openhuman_core::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider};
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 use openhuman_core::openhuman::tools::{Tool, ToolResult};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
-struct StubProvider;
+struct StubModel;
 
 #[async_trait]
-impl Provider for StubProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for StubModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("ok".into())
-    }
-
-    async fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
-        Ok(ChatResponse {
-            text: Some("ok".into()),
-            tool_calls: Vec::new(),
-            usage: None,
-            reasoning_content: None,
-        })
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(ModelResponse::assistant("ok"))
     }
 }
 
@@ -126,7 +110,7 @@ impl Memory for StubMemory {
 
 fn base_builder() -> openhuman_core::openhuman::agent::AgentBuilder {
     Agent::builder()
-        .provider(Box::new(StubProvider))
+        .chat_model(Arc::new(StubModel))
         .tools(vec![
             Box::new(StubTool("alpha")),
             Box::new(StubTool("beta")),
@@ -151,7 +135,7 @@ fn builder_validates_required_fields() {
     assert!(err.to_string().contains("provider is required"));
 
     let err = Agent::builder()
-        .provider(Box::new(StubProvider))
+        .chat_model(Arc::new(StubModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
         .err()
@@ -159,7 +143,7 @@ fn builder_validates_required_fields() {
     assert!(err.to_string().contains("memory is required"));
 
     let err = Agent::builder()
-        .provider(Box::new(StubProvider))
+        .chat_model(Arc::new(StubModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .memory(Arc::new(StubMemory))
         .build()

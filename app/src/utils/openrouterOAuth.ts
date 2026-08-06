@@ -16,7 +16,7 @@ interface OpenRouterExchangeResponse {
   error?: { message?: string } | string;
 }
 
-export interface OpenRouterOAuthDeps {
+interface OpenRouterOAuthDeps {
   startLoopbackListener?: (options?: StartLoopbackOptions) => Promise<LoopbackHandle | null>;
   openExternalUrl?: (url: string) => Promise<void>;
   fetchImpl?: typeof fetch;

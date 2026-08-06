@@ -15,7 +15,7 @@ const KNOWN_MINTS: Record<string, string> = {
 };
 
 /** Decimals per known symbol. USDC/CASH = 6, SOL/WSOL = 9, others = 0. */
-export function decimalsForSymbol(symbol: string | undefined): number {
+function decimalsForSymbol(symbol: string | undefined): number {
   const up = (symbol ?? '').toUpperCase();
   if (up === 'USDC' || up === 'CASH') return 6;
   if (up === 'SOL' || up === 'WSOL') return 9;

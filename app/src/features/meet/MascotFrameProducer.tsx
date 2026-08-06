@@ -494,5 +494,3 @@ const MascotStage: FC<{
     />
   );
 };
-
-export default MascotFrameProducer;

@@ -1,0 +1,1020 @@
+//! # Memory Trait Implementation
+//!
+//! This module implements the core `Memory` trait for the `UnifiedMemory`
+//! struct. This allows `UnifiedMemory` to be used as a generic memory backend
+//! within the OpenHuman system.
+//!
+//! Callers pass an explicit `namespace` on `store`/`get`/`forget` and via
+//! `RecallOpts` on `recall`. When a `namespace` is omitted on `recall`/`list`,
+//! the implementation falls back to `GLOBAL_NAMESPACE` (legacy behavior), which
+//! Phase B/C will tighten once the memory tools pass namespace explicitly.
+
+use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
+use rusqlite::{params, OptionalExtension};
+use serde_json::json;
+
+use crate::openhuman::memory::store::namespace_store::fts5;
+use crate::openhuman::memory::store::types::{NamespaceDocumentInput, GLOBAL_NAMESPACE};
+use crate::openhuman::memory::traits::{
+    Memory, MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
+};
+use anyhow::Context;
+
+use super::namespace_store::UnifiedMemory;
+
+/// Convert a UNIX timestamp (f64) to RFC3339 string.
+fn timestamp_to_rfc3339(ts: f64) -> String {
+    let secs = ts.trunc() as i64;
+    let nanos = ((ts.fract()) * 1_000_000_000.0).round() as u32;
+    Utc.timestamp_opt(secs, nanos.min(999_999_999))
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| format!("{ts}"))
+}
+
+/// Normalize a namespace value: trim whitespace and fall back to
+/// `GLOBAL_NAMESPACE` for `None` or blank/whitespace-only inputs. This ensures
+/// that `recall`/`list` calls derived from user or RPC input never silently
+/// receive an empty string that misses the global namespace.
+fn normalize_namespace(namespace: Option<&str>) -> &str {
+    namespace
+        .map(str::trim)
+        .filter(|ns| !ns.is_empty())
+        .unwrap_or(GLOBAL_NAMESPACE)
+}
+
+/// Helper to convert a raw string category from the database into a `MemoryCategory`.
+///
+/// The store persists a category via its `Display` form, and the current
+/// TinyCortex format renders `Custom(name)` as `custom:{name}` (so `Custom("core")`
+/// stays distinct from `Core`). Parse back through `FromStr` — the true inverse of
+/// `Display` — so the `custom:` prefix is stripped symmetrically. Wrapping the raw
+/// string in `Custom(_)` instead (the previous behaviour) double-prefixed on
+/// read-back once the wire format gained the prefix. An empty stored value has no
+/// `FromStr` mapping, so it falls back to an empty `Custom` (matching the prior
+/// catch-all for that degenerate case).
+fn memory_category_from_stored(raw: &str) -> MemoryCategory {
+    raw.parse().unwrap_or_else(|error| {
+        tracing::debug!(
+            category_chars = raw.chars().count(),
+            reason = %error,
+            "[memory_store] invalid stored category; preserving as custom"
+        );
+        MemoryCategory::Custom(raw.to_string())
+    })
+}
+
+#[async_trait]
+impl Memory for UnifiedMemory {
+    fn name(&self) -> &str {
+        "namespace"
+    }
+
+    async fn store(
+        &self,
+        namespace: &str,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        // The default `store` entry point is user-driven; ingest paths
+        // come in via `store_with_taint`.
+        self.store_with_taint(
+            namespace,
+            key,
+            content,
+            category,
+            session_id,
+            MemoryTaint::Internal,
+        )
+        .await
+    }
+
+    async fn store_with_taint(
+        &self,
+        namespace: &str,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+        taint: MemoryTaint,
+    ) -> anyhow::Result<()> {
+        let ns = if namespace.trim().is_empty() {
+            GLOBAL_NAMESPACE.to_string()
+        } else {
+            namespace.to_string()
+        };
+        self.upsert_document(NamespaceDocumentInput {
+            namespace: ns,
+            key: key.to_string(),
+            title: key.to_string(),
+            content: content.to_string(),
+            source_type: "chat".to_string(),
+            priority: "medium".to_string(),
+            tags: Vec::new(),
+            metadata: json!({}),
+            category: category.to_string(),
+            session_id: session_id.map(str::to_string),
+            document_id: None,
+            taint,
+        })
+        .await
+        .map(|_| ())
+        .map_err(anyhow::Error::msg)
+    }
+
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        opts: RecallOpts<'_>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let namespace = normalize_namespace(opts.namespace);
+
+        // Self-echo guard (agent-agnostic): when this recall runs inside a
+        // live chat turn, the harness has an ambient "current thread" id
+        // (set by the web channel around `agent.run_single`, see
+        // `tinyagents::thread_context`) and the turn's own user
+        // message was just auto-saved as a `[conversation]` document tagged
+        // with that same id (`agent::harness::session::turn::core`). Exclude
+        // it here so the agent's own on-demand `memory_recall` never surfaces
+        // the very request that triggered it. Outside a chat turn (cron,
+        // CLI, tests, standalone) the ambient id is `None` and this is a
+        // no-op — behavior is byte-for-byte unchanged.
+        let exclude_session_id =
+            crate::openhuman::agent::tinyagents::thread_context::current_thread_id();
+        if let Some(ref excluded) = exclude_session_id {
+            tracing::debug!(
+                "[memory-trait] recall applying same-session exclusion namespace={namespace} \
+                 exclude_session_id={excluded}"
+            );
+        }
+        let ranked = self
+            .query_namespace_ranked_excluding_session(
+                namespace,
+                query,
+                limit as u32,
+                exclude_session_id.as_deref(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+
+        let min_score = opts.min_score.unwrap_or(f64::NEG_INFINITY);
+        let mut out: Vec<MemoryEntry> = ranked
+            .into_iter()
+            .enumerate()
+            .filter(|(_, r)| r.score >= min_score)
+            .map(|(idx, r)| MemoryEntry {
+                id: format!("{namespace}:{idx}"),
+                key: r.key,
+                content: r.content,
+                namespace: Some(namespace.to_string()),
+                category: memory_category_from_stored(&r.category),
+                timestamp: Utc::now().to_rfc3339(),
+                session_id: None,
+                score: Some(r.score),
+                // Surface the real taint persisted on `memory_docs` so the
+                // subconscious gate can decide whether to escalate the
+                // turn origin to `SubconsciousTainted` when this entry
+                // lands in a tick's context window.
+                taint: r.taint,
+            })
+            .collect();
+
+        if let Some(ref cat) = opts.category {
+            let want = cat.to_string();
+            out.retain(|e| e.category.to_string() == want);
+        }
+
+        if let Some(sid) = opts.session_id {
+            let episodic_entries = match fts5::episodic_session_entries(&self.conn, sid) {
+                Ok(entries) => {
+                    tracing::debug!(
+                        "[memory-trait] loaded {} episodic entries for session={sid}",
+                        entries.len()
+                    );
+                    entries
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[memory-trait] failed to load episodic entries for session={sid}: {e}"
+                    );
+                    Vec::new()
+                }
+            };
+
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            for entry in episodic_entries {
+                let content_lower = entry.content.to_lowercase();
+                let matched_count = query_terms
+                    .iter()
+                    .filter(|term| content_lower.contains(*term))
+                    .count();
+                if matched_count == 0 {
+                    continue;
+                }
+                let match_score = matched_count as f64 / query_terms.len().max(1) as f64;
+                if match_score < min_score {
+                    continue;
+                }
+                let ts_rfc3339 = timestamp_to_rfc3339(entry.timestamp);
+
+                out.push(MemoryEntry {
+                    id: format!("episodic:{}", entry.id.unwrap_or(0)),
+                    key: format!("{}:{}", entry.session_id, entry.role),
+                    content: entry.content,
+                    namespace: Some(namespace.to_string()),
+                    category: MemoryCategory::Conversation,
+                    timestamp: ts_rfc3339,
+                    session_id: Some(entry.session_id),
+                    score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
+                });
+            }
+        }
+
+        // ── Cross-session episodic recall (#1505) ────────────────────────
+        //
+        // When the caller asks for cross-session memory, pull FTS5-ranked
+        // hits from every other session in the same workspace. Workspace
+        // isolation is enforced by the SQLite DB path itself (one DB per
+        // workspace == one DB per user) so this can never leak across
+        // users. The current `session_id` (if any) is excluded so the
+        // caller doesn't double-count its own chat history — those rows
+        // already came in via the same-session path above.
+        if opts.cross_session {
+            let exclude = opts.session_id;
+            let cross_entries = match fts5::episodic_cross_session_search(
+                &self.conn, query, limit, exclude,
+            ) {
+                Ok(entries) => {
+                    tracing::debug!(
+                            "[memory-trait] cross-session episodic recall returned {} entries (exclude={:?})",
+                            entries.len(),
+                            exclude
+                        );
+                    entries
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[memory-trait] cross-session episodic recall failed (non-fatal): {e}"
+                    );
+                    Vec::new()
+                }
+            };
+
+            // Normalise FTS5 rank into a [0..1] keyword-style score by
+            // reusing the same matched-terms heuristic as the same-session
+            // branch. This keeps the score scale consistent across hits so
+            // the downstream sort doesn't preferentially up-rank one branch
+            // over the other.
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            for entry in cross_entries {
+                let content_lower = entry.content.to_lowercase();
+                let matched_count = query_terms
+                    .iter()
+                    .filter(|term| content_lower.contains(*term))
+                    .count();
+                if matched_count == 0 {
+                    // FTS5 surfaced a porter-stemmed match with zero
+                    // literal query-term overlap. Drop it — the previous
+                    // `0.1_f64.max(min_score)` floor defeated the
+                    // downstream `score >= min_relevance_score` gate
+                    // (when min_score==0.4 the floor also became 0.4),
+                    // so those rows always survived. Skip outright.
+                    continue;
+                }
+                let match_score = matched_count as f64 / query_terms.len().max(1) as f64;
+                if match_score < min_score {
+                    continue;
+                }
+                let ts_rfc3339 = timestamp_to_rfc3339(entry.timestamp);
+                out.push(MemoryEntry {
+                    id: format!("episodic-cross:{}", entry.id.unwrap_or(0)),
+                    key: format!("{}:{}", entry.session_id, entry.role),
+                    content: entry.content,
+                    namespace: Some(namespace.to_string()),
+                    category: MemoryCategory::Conversation,
+                    timestamp: ts_rfc3339,
+                    session_id: Some(entry.session_id),
+                    score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
+                });
+            }
+        }
+
+        if opts.session_id.is_some() || opts.cross_session {
+            out.sort_by(|a, b| {
+                b.score
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.score.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            out.truncate(limit);
+        }
+
+        Ok(out)
+    }
+
+    async fn recall_relevant_by_vector(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+        min_vector_similarity: f64,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let hits = self
+            .query_namespace_hits(namespace, query, limit as u32)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(hits
+            .into_iter()
+            .filter(|h| h.score_breakdown.vector_similarity >= min_vector_similarity)
+            .filter(|h| !h.content.trim().is_empty())
+            .map(|h| (h.key, h.content))
+            .collect())
+    }
+
+    async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        // Address the row the way `store` wrote it: `upsert_document` stores
+        // `sanitize_namespace(namespace)` and `canonical_document_key(key)`, so
+        // looking up the raw caller values misses whenever either transform
+        // changed anything — the caller then reads the row as absent and stores
+        // it again, which is the retry loop behind #5164.
+        let ns = UnifiedMemory::sanitize_namespace(namespace);
+        let key = crate::openhuman::memory::store::safety::canonical_document_key(key);
+        let conn = self.conn.lock();
+        let row: Option<(String, String, String, f64, String, String)> = conn
+            .query_row(
+                "SELECT document_id, key, content, updated_at, category, taint
+                 FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
+                params![ns, key],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(row.map(
+            |(id, key, content, updated_at, category, taint_str)| MemoryEntry {
+                id,
+                key,
+                content,
+                namespace: Some(ns.clone()),
+                category: memory_category_from_stored(&category),
+                timestamp: timestamp_to_rfc3339(updated_at),
+                session_id: None,
+                score: None,
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(&taint_str),
+            },
+        ))
+    }
+
+    async fn list(
+        &self,
+        namespace: Option<&str>,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let ns = UnifiedMemory::sanitize_namespace(normalize_namespace(namespace));
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT document_id, key, content, category, session_id, updated_at, taint
+             FROM memory_docs WHERE namespace = ?1 ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![ns], |row| {
+            let stored_category: String = row.get(3)?;
+            Ok(MemoryEntry {
+                id: row.get(0)?,
+                key: row.get(1)?,
+                content: row.get(2)?,
+                namespace: Some(ns.clone()),
+                category: memory_category_from_stored(&stored_category),
+                session_id: row.get(4)?,
+                timestamp: timestamp_to_rfc3339(row.get(5)?),
+                score: None,
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(
+                    &row.get::<_, String>(6)?,
+                ),
+            })
+        })?;
+        let mut entries = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if let Some(category) = category {
+            entries.retain(|entry| &entry.category == category);
+        }
+        if let Some(session_id) = session_id {
+            entries.retain(|entry| entry.session_id.as_deref() == Some(session_id));
+        }
+        Ok(entries)
+    }
+
+    async fn forget(&self, namespace: &str, key: &str) -> anyhow::Result<bool> {
+        // Same write/read symmetry as `get` above (#5164): a `forget` that
+        // addresses the raw caller identifiers can never delete a row whose
+        // namespace or key was canonicalized on the way in.
+        let ns = UnifiedMemory::sanitize_namespace(namespace);
+        let key = crate::openhuman::memory::store::safety::canonical_document_key(key);
+        let row: Option<String> = {
+            let conn = self.conn.lock();
+            conn.query_row(
+                "SELECT document_id FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
+                params![ns, key],
+                |row| row.get(0),
+            )
+            .optional()?
+        };
+        let Some(document_id) = row else {
+            return Ok(false);
+        };
+        self.delete_document(&ns, &document_id)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        Ok(true)
+    }
+
+    async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT namespace, COUNT(*) AS n, MAX(updated_at) AS last
+             FROM memory_docs
+             GROUP BY namespace
+             ORDER BY namespace",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let ns: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            let last: Option<f64> = row.get(2)?;
+            Ok((ns, count, last))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (ns, count, last) = r?;
+            out.push(NamespaceSummary {
+                namespace: ns,
+                count: usize::try_from(count).unwrap_or(0),
+                last_updated: last.map(timestamp_to_rfc3339),
+            });
+        }
+        Ok(out)
+    }
+
+    async fn count(&self) -> anyhow::Result<usize> {
+        let conn = self.conn.lock();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_docs", [], |row| row.get(0))?;
+        usize::try_from(count).context("negative count")
+    }
+
+    async fn health_check(&self) -> bool {
+        self.workspace_dir.exists() && self.db_path.exists()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::inference::embeddings::NoopEmbedding;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn fresh_mem() -> (TempDir, UnifiedMemory) {
+        let tmp = TempDir::new().unwrap();
+        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        (tmp, mem)
+    }
+
+    #[tokio::test]
+    async fn store_and_get_are_namespace_scoped() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store("ns_a", "k1", "value in a", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+
+        let hit = mem.get("ns_a", "k1").await.unwrap();
+        assert!(hit.is_some(), "same-namespace get should return entry");
+        assert_eq!(hit.unwrap().content, "value in a");
+
+        let miss = mem.get("ns_b", "k1").await.unwrap();
+        assert!(miss.is_none(), "cross-namespace get must not leak");
+    }
+
+    #[tokio::test]
+    async fn list_and_forget_are_namespace_scoped() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store("ns_a", "k1", "a", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        mem.store("ns_b", "k1", "b", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+
+        let in_b = mem.list(Some("ns_b"), None, None).await.unwrap();
+        assert_eq!(in_b.len(), 1);
+        assert_eq!(in_b[0].content, "b");
+        assert!(in_b.iter().all(|e| e.namespace.as_deref() == Some("ns_b")));
+
+        // Forget in ns_a must not delete ns_b's row
+        assert!(mem.forget("ns_a", "k1").await.unwrap());
+        assert!(mem.get("ns_b", "k1").await.unwrap().is_some());
+        assert!(mem.get("ns_a", "k1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_stored_fields_and_applies_category_and_session_filters() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "rules",
+            "core",
+            "core body",
+            MemoryCategory::Core,
+            Some("session-a"),
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "rules",
+            "procedure",
+            "procedure body",
+            MemoryCategory::Daily,
+            Some("session-b"),
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .list(
+                Some("rules"),
+                Some(&MemoryCategory::Daily),
+                Some("session-b"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "procedure");
+        assert_eq!(entries[0].content, "procedure body");
+        assert_eq!(entries[0].category, MemoryCategory::Daily);
+        assert_eq!(entries[0].session_id.as_deref(), Some("session-b"));
+        assert!(!entries[0].timestamp.starts_with("idx-"));
+    }
+
+    #[tokio::test]
+    async fn namespace_summaries_counts_per_namespace() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store("alpha", "k1", "x", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        mem.store("alpha", "k2", "y", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+        mem.store("beta", "k1", "z", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+
+        let summaries = mem.namespace_summaries().await.unwrap();
+        let alpha = summaries.iter().find(|s| s.namespace == "alpha").unwrap();
+        let beta = summaries.iter().find(|s| s.namespace == "beta").unwrap();
+        assert_eq!(alpha.count, 2);
+        assert_eq!(beta.count, 1);
+        assert!(alpha.last_updated.is_some());
+    }
+
+    #[tokio::test]
+    async fn legacy_namespace_migration_splits_and_is_idempotent() {
+        use rusqlite::params;
+
+        let tmp = TempDir::new().unwrap();
+        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Seed a legacy-shape row: GLOBAL namespace, key="ns_x/real_key".
+        {
+            let conn = mem.conn.lock();
+            conn.execute(
+                "INSERT INTO memory_docs (
+                    document_id, namespace, key, title, content, source_type,
+                    priority, tags_json, metadata_json, category, session_id,
+                    created_at, updated_at, markdown_rel_path
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'chat', 'medium', '[]', '{}', 'core', NULL, 0.0, 0.0, '')",
+                params![
+                    "legacy-doc-1",
+                    GLOBAL_NAMESPACE,
+                    "ns_x/real_key",
+                    "ns_x/real_key",
+                    "legacy value"
+                ],
+            )
+            .unwrap();
+        }
+
+        drop(mem);
+
+        // Re-open so the startup migration runs again.
+        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let hit = mem.get("ns_x", "real_key").await.unwrap();
+        assert!(hit.is_some(), "migration should promote ns_x");
+        assert_eq!(hit.unwrap().content, "legacy value");
+
+        // Re-open again — migration must be a no-op (no duplicate / crash).
+        drop(mem);
+        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let still = mem.get("ns_x", "real_key").await.unwrap();
+        assert!(still.is_some());
+        assert_eq!(mem.count().await.unwrap(), 1);
+    }
+
+    // ── Cross-session recall (#1505) ─────────────────────────────────────
+
+    fn seed_episodic(mem: &UnifiedMemory, session_id: &str, ts: f64, content: &str) {
+        fts5::episodic_insert(
+            &mem.conn,
+            &fts5::EpisodicEntry {
+                id: None,
+                session_id: session_id.into(),
+                timestamp: ts,
+                role: "user".into(),
+                content: content.into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_surfaces_other_chat_facts() {
+        let (_tmp, mem) = fresh_mem();
+        // Chat A — durable user fact dropped here
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres for new services");
+        // Chat B — current chat (no relevant content yet)
+        seed_episodic(&mem, "chat-b", 2000.0, "Hello there");
+
+        // Recall from chat B with cross_session=true should surface chat A's fact
+        let opts = RecallOpts {
+            session_id: Some("chat-b"),
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem.recall("Postgres", 10, opts).await.unwrap();
+
+        assert!(
+            hits.iter()
+                .any(|h| h.content.to_lowercase().contains("postgres")
+                    && h.session_id.as_deref() == Some("chat-a")),
+            "cross-session recall must surface chat-a's Postgres fact, got hits={hits:#?}"
+        );
+        assert!(
+            hits.iter()
+                .all(|h| h.session_id.as_deref() != Some("chat-b")
+                    || !h.id.starts_with("episodic-cross:")),
+            "current chat-b session must be excluded from the cross-session sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_disabled_by_default_no_other_chat_leak() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres for new services");
+        seed_episodic(&mem, "chat-b", 2000.0, "Hello there");
+
+        // Default RecallOpts (cross_session=false) — no episodic content
+        // because no session_id is set either, so this exercises the
+        // pre-#1505 baseline behaviour: documents only.
+        let hits = mem
+            .recall("Postgres", 10, RecallOpts::default())
+            .await
+            .unwrap();
+
+        assert!(
+            !hits.iter().any(|h| h.id.starts_with("episodic-cross:")),
+            "cross_session=false must never surface episodic-cross hits, got {hits:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_preserves_provenance_via_session_id() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-source-1", 1000.0, "Use Postgres in prod");
+        seed_episodic(&mem, "chat-source-2", 1100.0, "Postgres timezone is UTC");
+
+        let opts = RecallOpts {
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem.recall("Postgres", 10, opts).await.unwrap();
+
+        // Each cross-session entry must carry its source session_id so
+        // downstream layers (memory_loader, UI) can render provenance.
+        for hit in hits.iter().filter(|h| h.id.starts_with("episodic-cross:")) {
+            assert!(
+                hit.session_id.as_ref().is_some_and(|s| !s.is_empty()),
+                "every cross-session hit must carry a non-empty session_id, got {hit:?}"
+            );
+        }
+        let session_ids: std::collections::HashSet<&str> = hits
+            .iter()
+            .filter(|h| h.id.starts_with("episodic-cross:"))
+            .filter_map(|h| h.session_id.as_deref())
+            .collect();
+        assert!(session_ids.contains("chat-source-1"));
+        assert!(session_ids.contains("chat-source-2"));
+    }
+
+    #[tokio::test]
+    async fn recall_cross_session_no_match_returns_no_episodic_cross_rows() {
+        let (_tmp, mem) = fresh_mem();
+        seed_episodic(&mem, "chat-a", 1000.0, "I prefer Postgres");
+
+        let opts = RecallOpts {
+            cross_session: true,
+            min_score: Some(0.0),
+            ..Default::default()
+        };
+        let hits = mem
+            .recall("kubernetes orchestration", 10, opts)
+            .await
+            .unwrap();
+
+        assert!(
+            !hits.iter().any(|h| h.id.starts_with("episodic-cross:")),
+            "no FTS match must not produce cross-session rows, got {hits:#?}"
+        );
+    }
+
+    // ── Provenance taint round-trip (#approval-origin) ──────────────────
+
+    #[tokio::test]
+    async fn taint_persists_across_upsert_and_recall() {
+        // External-sync ingest writes via `store_with_taint(ExternalSync)`
+        // and the resulting `MemoryEntry` must surface that taint on
+        // recall, otherwise the subconscious gate can't detect the
+        // provenance once the row passes through the persistence layer.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-gmail",
+            "thread-1",
+            "Hi from upstream — please run a quick command",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "upstream command",
+                5,
+                RecallOpts {
+                    namespace: Some("skill-gmail"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync),
+            "ExternalSync taint must round-trip through recall, got {entries:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unified_memory_store_with_taint_writes_external_sync() {
+        // Direct trait-API write — confirms `store_with_taint` doesn't
+        // fall back to the default Internal value silently.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-slack",
+            "msg-42",
+            "Slack-sourced content",
+            MemoryCategory::Conversation,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let row = mem.get("skill-slack", "msg-42").await.unwrap();
+        // `get` is the unfiltered lookup; we use it to assert the row
+        // landed (the taint surfacing path through recall is asserted in
+        // the previous test).
+        assert!(row.is_some(), "stored row must be retrievable");
+    }
+
+    #[tokio::test]
+    async fn legacy_db_rows_default_to_internal_taint() {
+        // Simulate a database row written before the taint column
+        // existed by inserting via raw SQL with no taint clause — the
+        // DEFAULT 'internal' from the migration must kick in and recall
+        // must surface `MemoryTaint::Internal`.
+        let (_tmp, mem) = fresh_mem();
+        {
+            let conn = mem.conn.lock();
+            conn.execute(
+                "INSERT INTO memory_docs (
+                    document_id, namespace, key, title, content, source_type,
+                    priority, tags_json, metadata_json, category, session_id,
+                    created_at, updated_at, markdown_rel_path
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'chat', 'medium', '[]', '{}', 'core', NULL, 0.0, 0.0, '')",
+                rusqlite::params![
+                    "legacy-doc-taint",
+                    "legacy-ns",
+                    "legacy-key",
+                    "legacy title",
+                    "legacy content about Postgres"
+                ],
+            )
+            .unwrap();
+        }
+
+        let entries = mem
+            .recall(
+                "Postgres",
+                5,
+                RecallOpts {
+                    namespace: Some("legacy-ns"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let legacy = entries
+            .iter()
+            .find(|e| e.key == "legacy-key")
+            .expect("legacy row must surface in recall");
+        assert_eq!(
+            legacy.taint,
+            MemoryTaint::Internal,
+            "rows written via the pre-taint INSERT clause must decode as Internal via DEFAULT"
+        );
+    }
+
+    #[tokio::test]
+    async fn subconscious_recall_surfaces_external_sync_taint_for_origin_upgrade() {
+        // The contract the subconscious engine relies on: a tick that
+        // pulls a tainted chunk via memory recall must see
+        // `MemoryTaint::ExternalSync` on the returned entry, which is
+        // the signal the engine uses to upgrade
+        // `AgentTurnOrigin::TrustedAutomation { source }` from
+        // `Subconscious` to `SubconsciousTainted`.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-notion",
+            "page-1",
+            "Tainted Notion page contents",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "skill-notion",
+            "user-note",
+            "User-driven note about the same page",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "page",
+                10,
+                RecallOpts {
+                    namespace: Some("skill-notion"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let any_tainted = entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync);
+        let any_internal = entries.iter().any(|e| e.taint == MemoryTaint::Internal);
+        assert!(
+            any_tainted,
+            "ExternalSync row must surface for the engine's upgrade check"
+        );
+        assert!(
+            any_internal,
+            "user-driven row must keep its Internal label so mixed contexts don't over-escalate"
+        );
+    }
+
+    // ── Same-session self-echo exclusion, via the ambient thread scope ────
+    //
+    // `Memory::recall` (backing the agent's `memory_recall` tool) reads the
+    // ambient chat-thread id set by `tinyagents::thread_context`
+    // around a live turn, and excludes documents tagged with that same id —
+    // guarding against the harness's own `user_msg:<uuid>` autosave being
+    // recalled as the top "relevant" result for the very request that
+    // triggered the search. See `agent::harness::session::turn::core`
+    // (autosave tagging) and `query::query_namespace_hits_excluding_session`
+    // (the exclusion mechanism).
+
+    #[tokio::test]
+    async fn recall_excludes_document_from_ambient_current_thread() {
+        use crate::openhuman::agent::tinyagents::thread_context::with_thread_id;
+
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "global",
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            MemoryCategory::Conversation,
+            Some("thread-current"),
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "global",
+            "fact:jordan-rivera-platform-id",
+            "Jordan Rivera's chat platform user ID is U0000042.",
+            MemoryCategory::Conversation,
+            Some("thread-other"),
+        )
+        .await
+        .unwrap();
+
+        let entries = with_thread_id("thread-current", async {
+            mem.recall(
+                "Jordan Rivera chat platform user ID",
+                10,
+                RecallOpts {
+                    namespace: Some("global"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+        })
+        .await;
+
+        assert!(
+            !entries.iter().any(|e| e.key == "user_msg:current-turn"),
+            "recall inside the ambient current-thread scope must exclude that thread's own \
+             autosaved request, got {entries:#?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.key == "fact:jordan-rivera-platform-id"),
+            "an unrelated document from a different session must still be recalled, got {entries:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_outside_any_thread_scope_is_unaffected() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "global",
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            MemoryCategory::Conversation,
+            Some("thread-current"),
+        )
+        .await
+        .unwrap();
+
+        // No `with_thread_id(...)` scope active — mirrors cron, CLI,
+        // standalone, and any pre-existing caller. `current_thread_id()`
+        // returns `None`, so no exclusion applies and behavior is
+        // byte-for-byte the same as before this fix.
+        let entries = mem
+            .recall(
+                "Jordan Rivera chat platform user ID",
+                10,
+                RecallOpts {
+                    namespace: Some("global"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.key == "user_msg:current-turn"),
+            "with no ambient thread scope, recall must return the document exactly as before \
+             this fix, got {entries:#?}"
+        );
+    }
+}

@@ -19,8 +19,9 @@ vi.mock('../AgentWorldShell', () => ({
   apiClient: {
     directory: { reverse: vi.fn() },
     follows: { stats: vi.fn() },
-    registry: { export: vi.fn(), assignPrimary: vi.fn() },
+    registry: { export: vi.fn(), assignPrimary: vi.fn(), transfer: vi.fn() },
     graphql: { user: vi.fn() },
+    users: { get: vi.fn(), updateProfile: vi.fn() },
   },
 }));
 vi.mock('../../services/walletApi', () => ({ fetchWalletStatus: vi.fn() }));
@@ -31,6 +32,8 @@ const followStats = vi.mocked(apiClient.follows.stats);
 const registryExport = vi.mocked(apiClient.registry.export);
 const assignPrimary = vi.mocked(apiClient.registry.assignPrimary);
 const graphqlUser = vi.mocked(apiClient.graphql.user);
+const usersGet = vi.mocked(apiClient.users.get);
+const updateProfile = vi.mocked(apiClient.users.updateProfile);
 
 const SOLANA_ADDR = 'WaLLetSoLanaAddr0123456789';
 
@@ -51,6 +54,26 @@ beforeEach(() => {
   graphqlUser.mockResolvedValue(null);
   reverse.mockResolvedValue({ cryptoId: SOLANA_ADDR, identities: [] });
   followStats.mockResolvedValue({ agentId: '', followerCount: 0, followingCount: 0 });
+  // Own-profile edit path (#4930): users.get seeds the writable fields, and
+  // updateProfile echoes back the saved User.
+  usersGet.mockResolvedValue({
+    cryptoId: SOLANA_ADDR,
+    actorType: 'agent',
+    displayName: 'Test Agent',
+    bio: '',
+    emailVerified: false,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  } as unknown as Awaited<ReturnType<typeof apiClient.users.get>>);
+  updateProfile.mockResolvedValue({
+    cryptoId: SOLANA_ADDR,
+    actorType: 'agent',
+    displayName: 'Test Agent',
+    bio: '',
+    emailVerified: false,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  } as unknown as Awaited<ReturnType<typeof apiClient.users.updateProfile>>);
 });
 
 // ── Loading ───────────────────────────────────────────────────────────────────
@@ -339,6 +362,74 @@ function makeProfile(overrides: Partial<GqlProfile> = {}): GqlProfile {
   };
 }
 
+// GH-4929: a non-primary owned handle offers an enabled Transfer action that
+// opens the destructive-confirm modal. #4998 M3: a primary (active) handle now
+// renders a DISABLED Transfer control with an explanation (make another handle
+// active first) instead of silently omitting it. A handle with no explicit
+// primary flag (unknown state) shows no Transfer control at all.
+describe('handle transfer action', () => {
+  test('opens the transfer confirm modal for a non-primary owned handle', async () => {
+    graphqlUser.mockResolvedValueOnce(
+      makeProfile({
+        displayName: 'Owner',
+        identities: [
+          { ...minimalIdentity, username: 'primaryhandle', cryptoId: SOLANA_ADDR, primary: true },
+          { ...minimalIdentity, username: 'giftme', cryptoId: SOLANA_ADDR, primary: false },
+        ],
+      })
+    );
+    render(<ProfilesSection />);
+
+    // Both handles render a Transfer control (#4998 M3): the non-primary one is
+    // enabled, the primary one disabled. Pick the enabled one — it opens the modal.
+    const transferButtons = await screen.findAllByRole('button', { name: 'Transfer' });
+    const enabled = transferButtons.find(b => !(b as HTMLButtonElement).disabled);
+    expect(enabled, 'the non-primary handle must expose an enabled Transfer control').toBeDefined();
+    fireEvent.click(enabled!);
+
+    // The destructive-confirm modal opens with its explicit confirm control.
+    expect(await screen.findByTestId('transfer-handle-modal')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Transfer handle' })).toBeInTheDocument();
+  });
+
+  test('shows a disabled Transfer control with an explanation for a primary handle (#4998 M3)', async () => {
+    graphqlUser.mockResolvedValueOnce(
+      makeProfile({
+        displayName: 'Owner',
+        identities: [
+          { ...minimalIdentity, username: 'onlyprimary', cryptoId: SOLANA_ADDR, primary: true },
+        ],
+      })
+    );
+    render(<ProfilesSection />);
+
+    // Rendered, but disabled and explained — not an invisible dead end.
+    const transferButton = await screen.findByRole('button', { name: 'Transfer' });
+    expect(transferButton).toBeDisabled();
+    expect(transferButton).toHaveAttribute(
+      'title',
+      'A primary handle cannot be transferred. Make another handle active first.'
+    );
+
+    // Clicking the locked control must NOT open the destructive modal.
+    fireEvent.click(transferButton);
+    expect(screen.queryByTestId('transfer-handle-modal')).not.toBeInTheDocument();
+  });
+
+  test('shows no Transfer control when the primary flag is absent (unknown state)', async () => {
+    graphqlUser.mockResolvedValueOnce(
+      makeProfile({
+        displayName: 'Owner',
+        identities: [{ ...minimalIdentity, username: 'unknownstate', cryptoId: SOLANA_ADDR }],
+      })
+    );
+    render(<ProfilesSection />);
+
+    expect(await screen.findByRole('button', { name: 'Make active' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Transfer' })).not.toBeInTheDocument();
+  });
+});
+
 describe('graphql-enriched profile card', () => {
   test('renders rich profile from graphql.user when available', async () => {
     graphqlUser.mockResolvedValueOnce(
@@ -481,5 +572,122 @@ describe('graphql-enriched profile card', () => {
     expect(await screen.findByText('No attestations here')).toBeInTheDocument();
     // "Verified Accounts" section should not render when attestations is empty
     expect(screen.queryByText('Verified Accounts')).not.toBeInTheDocument();
+  });
+});
+
+// ── Own-profile editing (#4930) ──────────────────────────────────────────────
+
+describe('own-profile editing', () => {
+  test('offers an Edit profile button on the own graphql profile', async () => {
+    graphqlUser.mockResolvedValueOnce(makeProfile({ displayName: 'Agent Alice', bio: 'Old bio' }));
+    render(<ProfilesSection />);
+    expect(await screen.findByText('Agent Alice')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit profile/i })).toBeInTheDocument();
+  });
+
+  test('saves name + bio via users.updateProfile, then refetches so saved values show', async () => {
+    graphqlUser
+      .mockResolvedValueOnce(makeProfile({ displayName: 'Agent Alice', bio: 'Old bio' }))
+      .mockResolvedValue(makeProfile({ displayName: 'Agent Alice v2', bio: 'New bio' }));
+    usersGet.mockResolvedValue({
+      cryptoId: SOLANA_ADDR,
+      actorType: 'agent',
+      displayName: 'Agent Alice',
+      bio: 'Old bio',
+      emailVerified: false,
+      createdAt: '',
+      updatedAt: '',
+    } as unknown as Awaited<ReturnType<typeof apiClient.users.get>>);
+
+    render(<ProfilesSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit profile/i }));
+
+    const nameInput = await screen.findByRole('textbox', { name: /display name/i });
+    // Prefilled from users.get (the authoritative writable record).
+    await waitFor(() => expect(nameInput).toHaveValue('Agent Alice'));
+    const bioInput = screen.getByRole('textbox', { name: /^bio$/i });
+
+    fireEvent.change(nameInput, { target: { value: 'Agent Alice v2' } });
+    fireEvent.change(bioInput, { target: { value: 'New bio' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(updateProfile).toHaveBeenCalledWith(
+        SOLANA_ADDR,
+        expect.objectContaining({ displayName: 'Agent Alice v2', bio: 'New bio' })
+      )
+    );
+    // Refetch renders the saved values.
+    expect(await screen.findByText('Agent Alice v2')).toBeInTheDocument();
+  });
+
+  test('a late prefill fetch does not clobber what the user already typed (#4930)', async () => {
+    graphqlUser.mockResolvedValue(makeProfile({ displayName: 'Agent Alice', bio: 'Old bio' }));
+    // Defer users.get so it resolves AFTER the user has started editing.
+    let resolveGet!: (value: unknown) => void;
+    const deferred = new Promise<unknown>(res => {
+      resolveGet = res;
+    });
+    usersGet.mockReturnValue(deferred as unknown as ReturnType<typeof apiClient.users.get>);
+
+    render(<ProfilesSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit profile/i }));
+
+    const nameInput = await screen.findByRole('textbox', { name: /display name/i });
+    // User types before the prefill lands.
+    fireEvent.change(nameInput, { target: { value: 'My New Name' } });
+
+    // Prefill resolves late with the authoritative (different) record.
+    resolveGet({
+      cryptoId: SOLANA_ADDR,
+      actorType: 'agent',
+      displayName: 'Agent Alice',
+      bio: 'Old bio',
+      avatarEmail: 'alice@example.com',
+      emailVerified: false,
+      createdAt: '',
+      updatedAt: '',
+    });
+
+    // The user's edit survives; the prefill must not overwrite the touched field.
+    await waitFor(() => expect(nameInput).toHaveValue('My New Name'));
+  });
+
+  test('keeps the form open and surfaces an error when save fails', async () => {
+    graphqlUser.mockResolvedValue(makeProfile({ displayName: 'Agent Alice', bio: 'Old bio' }));
+    updateProfile.mockRejectedValueOnce(new Error('network down'));
+
+    render(<ProfilesSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit profile/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }));
+
+    expect(await screen.findByText(/could not save your profile/i)).toBeInTheDocument();
+    expect(screen.getByTestId('profile-edit-form')).toBeInTheDocument();
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+  });
+
+  test('will not save an empty display name (guards against blanking it)', async () => {
+    graphqlUser.mockResolvedValue(makeProfile({ displayName: 'Agent Alice', bio: 'Old bio' }));
+    usersGet.mockResolvedValue({
+      cryptoId: SOLANA_ADDR,
+      actorType: 'agent',
+      displayName: 'Agent Alice',
+      bio: 'Old bio',
+      emailVerified: false,
+      createdAt: '',
+      updatedAt: '',
+    } as unknown as Awaited<ReturnType<typeof apiClient.users.get>>);
+
+    render(<ProfilesSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit profile/i }));
+    const nameInput = await screen.findByRole('textbox', { name: /display name/i });
+    await waitFor(() => expect(nameInput).toHaveValue('Agent Alice'));
+
+    // Clear the name → Save is disabled and never blanks the profile.
+    fireEvent.change(nameInput, { target: { value: '   ' } });
+    const saveBtn = screen.getByRole('button', { name: /^save$/i });
+    expect(saveBtn).toBeDisabled();
+    fireEvent.click(saveBtn);
+    expect(updateProfile).not.toHaveBeenCalled();
   });
 });

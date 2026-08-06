@@ -53,4 +53,20 @@ describe('i18n coverage', () => {
     const extra = Object.keys(flat).filter(k => !(k in enFlat));
     expect(extra).toEqual([]);
   });
+
+  it.each(['en', ...LOCALES])('locale %s contains no em dashes', locale => {
+    const flat = locale === 'en' ? enFlat : loadLocale(locale);
+    const keysWithEmDashes = Object.entries(flat)
+      .filter(([, value]) => value.includes('\u2014'))
+      .map(([key]) => key);
+    expect(keysWithEmDashes).toEqual([]);
+  });
+
+  // The OpenHuman Managed search option must name the provider behind it, so
+  // the managed path does not read as an unattributed black box (#5136). The
+  // provider name is a proper noun, so it stays literal in every locale.
+  it.each(['en', ...LOCALES])('locale %s names Exa in the managed search copy', locale => {
+    const flat = locale === 'en' ? enFlat : loadLocale(locale);
+    expect(flat['settings.search.engineManagedDesc']).toContain('Exa');
+  });
 });

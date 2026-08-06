@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::state_dir_from_config;
+use crate::openhuman::security::credentials::state_dir_from_config;
 
 use super::config::{codex_oauth_config, REDIRECT_URI};
 use super::store::{
@@ -204,8 +204,8 @@ pub fn import_openai_oauth_from_codex_cli(config: &Config) -> Result<serde_json:
 }
 
 pub fn openai_oauth_status(config: &Config) -> Result<OpenAiOAuthStatusResult, String> {
-    use crate::openhuman::credentials::profiles::AuthProfileKind;
-    use crate::openhuman::credentials::AuthService;
+    use crate::openhuman::security::credentials::profiles::AuthProfileKind;
+    use crate::openhuman::security::credentials::AuthService;
 
     let auth = AuthService::from_config(config);
     let profile = auth
@@ -239,7 +239,7 @@ pub fn openai_oauth_status(config: &Config) -> Result<OpenAiOAuthStatusResult, S
 }
 
 pub fn disconnect_openai_oauth(config: &Config) -> Result<serde_json::Value, String> {
-    use crate::openhuman::credentials::AuthService;
+    use crate::openhuman::security::credentials::AuthService;
 
     let auth = AuthService::from_config(config);
     let removed = auth

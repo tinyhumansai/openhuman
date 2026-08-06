@@ -22,14 +22,14 @@
 use chrono::{TimeZone, Utc};
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory::ingest_pipeline::{ingest_chat, ingest_email};
-use openhuman_core::openhuman::memory::jobs::drain_until_idle;
-use openhuman_core::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use openhuman_core::openhuman::memory_sync::canonicalize::email::{EmailMessage, EmailThread};
+use openhuman_core::openhuman::memory::queue::drain_until_idle;
 use openhuman_core::openhuman::tools::{
     MemoryTreeFetchLeavesTool, MemoryTreeSearchEntitiesTool, Tool,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
+use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
+use tinycortex::memory::ingest::canonicalize::email::{EmailMessage, EmailThread};
 
 /// Build a Config rooted at `tmp/workspace`. The nested `workspace` dir
 /// matches what `resolve_config_dir_for_workspace` would derive when
@@ -159,7 +159,7 @@ fn alice_phoenix_thread() -> EmailThread {
 /// most turns don't need a deep tree walk).
 #[test]
 fn orchestrator_reaches_memory_agent_on_demand() {
-    let toml = include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
+    let toml = include_str!("../src/openhuman/agent/registry/agents/orchestrator/agent.toml");
     // Eager pre-fetch must be gone.
     assert!(
         !toml
@@ -186,11 +186,29 @@ fn orchestrator_reaches_memory_agent_on_demand() {
         !has_call_memory_agent,
         "orchestrator agent.toml must not expose the 'call_memory_agent' tool"
     );
-    // Verify all superseded tool names are gone.
+    // Simple recall/store operations stay direct so they do not pay an agentic
+    // round-trip; deep retrieval still routes through the memory subagent.
+    for direct_name in [
+        "memory_recall",
+        "memory_store",
+        "save_preference",
+        "update_memory_md",
+    ] {
+        let entry = format!("\"{direct_name}\"");
+        let entry_comma = format!("\"{direct_name}\",");
+        let direct_tool_present = toml
+            .lines()
+            .map(str::trim)
+            .any(|line| line == entry || line == entry_comma);
+        assert!(
+            direct_tool_present,
+            "orchestrator agent.toml must list direct memory tool '{direct_name}'"
+        );
+    }
+    // Verify the superseded tree/query tool names are gone.
     for old_name in [
         "memory_tree",
         "query_memory",
-        "memory_recall",
         "memory_tree_search_entities",
         "memory_tree_query_topic",
         "memory_tree_query_source",
@@ -206,7 +224,7 @@ fn orchestrator_reaches_memory_agent_on_demand() {
             .any(|line| line == entry || line == entry_comma);
         assert!(
             !old_tool_present,
-            "orchestrator agent.toml must NOT list '{old_name}' — superseded by 'call_memory_agent'"
+            "orchestrator agent.toml must NOT list legacy memory tool '{old_name}'"
         );
     }
 }
@@ -378,9 +396,9 @@ async fn fetch_leaves_hydrates_source_ref_for_cited_chunks() {
     let _ws_guard = set_workspace_env(&tmp);
 
     // List the ingested chunks directly to get leaf chunk ids with their refs.
-    let chunks = openhuman_core::openhuman::memory_store::chunks::store::list_chunks(
+    let chunks = openhuman_core::openhuman::memory::store::chunks::store::list_chunks(
         &cfg,
-        &openhuman_core::openhuman::memory_store::chunks::store::ListChunksQuery::default(),
+        &openhuman_core::openhuman::memory::store::chunks::store::ListChunksQuery::default(),
     )
     .expect("list_chunks must not error");
 

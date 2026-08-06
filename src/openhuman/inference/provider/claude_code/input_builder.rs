@@ -13,7 +13,7 @@
 
 use serde_json::{json, Value};
 
-use crate::openhuman::inference::provider::traits::ChatMessage;
+use crate::openhuman::agent::messages::ChatMessage;
 
 /// Build the bytes to write to claude's stdin. Returns an empty `Vec`
 /// when there is nothing to send (caller should abort).

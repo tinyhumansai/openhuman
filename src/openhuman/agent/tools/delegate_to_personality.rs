@@ -3,8 +3,8 @@
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
-use crate::openhuman::profiles::AgentProfileStore;
-use crate::openhuman::profiles::PersonalityContext;
+use crate::openhuman::agent::profiles::AgentProfileStore;
+use crate::openhuman::agent::profiles::PersonalityContext;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;

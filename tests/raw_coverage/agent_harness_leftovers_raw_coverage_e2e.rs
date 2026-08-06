@@ -8,20 +8,16 @@ use openhuman_core::openhuman::agent::harness::{
     ParentExecutionContext, PromptSource, SandboxMode, SubagentRunOptions, ToolScope,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::{
+use openhuman_core::openhuman::agent::context::prompt::{
     render_ambient_environment, render_subagent_system_prompt, render_tools, render_user_files,
     ConnectedIntegration, CuratedMemoryPromptSnapshot, LearnedContextData, NamespaceSummary,
     PersonalityRosterEntry, PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder,
     ToolCallFormat, UserIdentity,
 };
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
-};
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolContent, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -29,25 +25,27 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<CapturedRequest>>,
-    native_tools: bool,
 }
 
 #[derive(Clone)]
 struct CapturedRequest {
-    messages: Vec<ChatMessage>,
+    messages: Vec<Message>,
     tool_names: Vec<String>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             requests: Mutex::new(Vec::new()),
-            native_tools: true,
         })
     }
 
@@ -57,41 +55,31 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: self.native_tools,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::OnceLock<ModelProfile> = std::sync::OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("round19".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("checkpoint:{message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         self.requests.lock().push(CapturedRequest {
-            messages: request.messages.to_vec(),
-            tool_names: request
-                .tools
-                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
-                .unwrap_or_default(),
+            messages: request.messages,
+            tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
         });
         self.responses
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -232,51 +220,34 @@ fn tool(name: &'static str) -> Box<dyn Tool> {
     })
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
-        usage: Some(UsageInfo {
-            input_tokens: 11,
-            output_tokens: 5,
-            context_window: 8_192,
-            cached_input_tokens: 3,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.002,
-        }),
-        reasoning_content: None,
-    }
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(11, 5);
+    usage.cache_read_tokens = 3;
+    ModelResponse::assistant(text).with_usage(usage)
 }
 
-fn empty_response() -> ChatResponse {
-    ChatResponse {
-        text: None,
-        tool_calls: Vec::new(),
-        usage: None,
-        reasoning_content: None,
-    }
+fn empty_response() -> ModelResponse {
+    ModelResponse::assistant("")
 }
 
-fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some("using tool".to_string()),
-        tool_calls: vec![ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
-        usage: Some(UsageInfo {
-            input_tokens: 7,
-            output_tokens: 2,
-            context_window: 8_192,
-            cached_input_tokens: 1,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.001,
-        }),
-        reasoning_content: Some("because tool".to_string()),
+fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ModelResponse {
+    let mut usage = Usage::new(7, 2);
+    usage.cache_read_tokens = 1;
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("using tool".to_string()),
+                ContentBlock::thinking("because tool"),
+            ],
+            tool_calls: vec![ToolCall::new(id, name, arguments)],
+            usage: Some(usage),
+        },
+        usage: Some(usage),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -290,11 +261,11 @@ fn agent_config(max_tool_iterations: usize) -> AgentConfig {
 
 fn build_agent(
     workspace: &Path,
-    provider: Arc<ScriptedProvider>,
+    provider: Arc<ScriptedModel>,
     tools: Vec<Box<dyn Tool>>,
 ) -> Result<Agent> {
     let mut agent = Agent::builder()
-        .provider_arc(provider)
+        .chat_model(provider)
         .tools(tools)
         .memory(Arc::new(StubMemory::default()))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
@@ -340,6 +311,8 @@ fn prompt_context<'a>(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: Vec::new(),
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -378,7 +351,7 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
     }
 }
 
-fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools = vec![tool("echo")];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -390,10 +363,13 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            provider,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round19-parent".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
@@ -416,7 +392,7 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> Parent
 #[tokio::test]
 async fn turn_rejects_empty_final_response_and_keeps_history_nonfinal() -> Result<()> {
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![empty_response()]);
+    let provider = ScriptedModel::new(vec![empty_response()]);
     let mut agent = build_agent(tmp.path(), provider, vec![tool("echo")])?;
 
     let err = agent.turn("return an empty response").await.unwrap_err();
@@ -425,7 +401,7 @@ async fn turn_rejects_empty_final_response_and_keeps_history_nonfinal() -> Resul
     assert!(agent
         .history()
         .iter()
-        .any(|message| matches!(message, openhuman_core::openhuman::inference::provider::ConversationMessage::Chat(chat) if chat.role == "user")));
+        .any(|message| matches!(message, openhuman_core::openhuman::agent::messages::ConversationMessage::Chat(chat) if chat.role == "user")));
     Ok(())
 }
 
@@ -433,8 +409,11 @@ async fn turn_rejects_empty_final_response_and_keeps_history_nonfinal() -> Resul
 async fn turn_dedups_visible_tool_specs_and_preserves_reasoning_metadata() -> Result<()> {
     let tmp = TempDir::new()?;
     let mut first = text_response("first final");
-    first.reasoning_content = Some("private reasoning trace".to_string());
-    let provider = ScriptedProvider::new(vec![first, text_response("second final")]);
+    first
+        .message
+        .content
+        .push(ContentBlock::thinking("private reasoning trace"));
+    let provider = ScriptedModel::new(vec![first, text_response("second final")]);
     let mut agent = build_agent(
         tmp.path(),
         provider.clone(),
@@ -446,19 +425,18 @@ async fn turn_dedups_visible_tool_specs_and_preserves_reasoning_metadata() -> Re
 
     let requests = provider.requests();
     assert_eq!(requests[0].tool_names, vec!["echo"]);
-    assert!(requests[1].messages.iter().any(|message| message
-        .extra_metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("reasoning_content"))
-        .and_then(serde_json::Value::as_str)
-        == Some("private reasoning trace")));
+    assert!(requests[1].messages.iter().any(|message| {
+        matches!(message, Message::Assistant(assistant) if assistant.content.iter().any(
+            |block| matches!(block, ContentBlock::Thinking { text, .. } if text == "private reasoning trace")
+        ))
+    }));
     Ok(())
 }
 
 #[tokio::test]
 async fn seed_resume_bounds_unknown_roles_and_drops_current_tail() -> Result<()> {
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![text_response("resumed final")]);
+    let provider = ScriptedModel::new(vec![text_response("resumed final")]);
     let mut agent = build_agent(tmp.path(), provider.clone(), vec![tool("echo")])?;
 
     agent.seed_resume_from_messages(
@@ -476,7 +454,15 @@ async fn seed_resume_bounds_unknown_roles_and_drops_current_tail() -> Result<()>
     let sent = first_request
         .messages
         .iter()
-        .map(|message| format!("{}:{}", message.role, message.content))
+        .map(|message| {
+            let role = match message {
+                Message::System(_) => "system",
+                Message::User(_) => "user",
+                Message::Assistant(_) => "assistant",
+                Message::Tool(_) => "tool",
+            };
+            format!("{role}:{}", message.text())
+        })
         .collect::<Vec<_>>()
         .join("\n");
     assert!(sent.contains("user:unknown sender becomes user"));
@@ -488,7 +474,7 @@ async fn seed_resume_bounds_unknown_roles_and_drops_current_tail() -> Result<()>
 #[tokio::test]
 async fn builder_reports_missing_required_fields_in_validation_order() -> Result<()> {
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![text_response("unused")]);
+    let provider = ScriptedModel::new(vec![text_response("unused")]);
 
     let err = match Agent::builder().build() {
         Ok(_) => panic!("builder without tools should fail"),
@@ -504,7 +490,7 @@ async fn builder_reports_missing_required_fields_in_validation_order() -> Result
 
     let err = match Agent::builder()
         .tools(Vec::new())
-        .provider_arc(provider)
+        .chat_model(provider)
         .workspace_dir(tmp.path().to_path_buf())
         .build()
     {
@@ -518,7 +504,7 @@ async fn builder_reports_missing_required_fields_in_validation_order() -> Result
 #[tokio::test]
 async fn subagent_run_truncates_capped_final_output_after_parent_context_run() -> Result<()> {
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![text_response("abcdef")]);
+    let provider = ScriptedModel::new(vec![text_response("abcdef")]);
     let parent = parent_context(tmp.path().to_path_buf(), provider);
 
     let outcome = with_parent_context(parent, async {
@@ -550,7 +536,7 @@ async fn subagent_repeated_unknown_tool_recovers_and_bounds_at_cap() -> Result<(
     // anti-infinite-loop guarantee is preserved by the budget bound, and the
     // model still sees a corrective error each round.
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![
+    let provider = ScriptedModel::new(vec![
         tool_response("call-1", "missing_tool", json!({"same": true})),
         tool_response("call-2", "missing_tool", json!({"same": true})),
         tool_response("call-3", "missing_tool", json!({"same": true})),
@@ -581,7 +567,7 @@ async fn subagent_repeated_unknown_tool_recovers_and_bounds_at_cap() -> Result<(
         .into_iter()
         .flat_map(|request| request.messages)
         .any(|message| {
-            message.content.contains("unknown tool") && message.content.contains("missing_tool")
+            message.text().contains("unknown tool") && message.text().contains("missing_tool")
         });
     assert!(
         recovered,
@@ -590,7 +576,7 @@ async fn subagent_repeated_unknown_tool_recovers_and_bounds_at_cap() -> Result<(
             .requests()
             .into_iter()
             .flat_map(|r| r.messages)
-            .map(|m| m.content)
+            .map(|m| m.text().to_string())
             .collect::<Vec<_>>()
     );
     Ok(())

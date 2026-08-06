@@ -27,9 +27,22 @@ import { ToolFailureLines } from './ToolFailureLines';
 export function ProcessingTranscriptView({
   transcript,
   entries,
+  renderSubagent,
 }: {
   transcript: ProcessingTranscriptItem[];
   entries: ToolTimelineEntry[];
+  /**
+   * Renders a delegated sub-agent's nested activity (its own child tool calls,
+   * transcript and thoughts) under the row that spawned it.
+   *
+   * Injected rather than imported because `SubagentActivityBlock` lives in
+   * `ToolTimelineBlock`, which imports THIS component for the inline rail —
+   * importing it back would be a cycle. Without this, a `subagent:*` row
+   * rendered as a bare one-line step and every child tool call it made was
+   * invisible, even though the entry carries them. Omit it and rows degrade to
+   * that one-line form rather than breaking.
+   */
+  renderSubagent?: (subagent: NonNullable<ToolTimelineEntry['subagent']>) => React.ReactNode;
 }) {
   const blocks = buildProcessingBlocks(transcript, entries);
   if (blocks.length === 0) return null;
@@ -50,7 +63,14 @@ export function ProcessingTranscriptView({
         if (block.kind === 'thinking') {
           return <ThinkingBlock key={block.key} text={block.text} />;
         }
-        return <ToolGroupBlock key={block.key} summary={block.summary} entries={block.entries} />;
+        return (
+          <ToolGroupBlock
+            key={block.key}
+            summary={block.summary}
+            entries={block.entries}
+            renderSubagent={renderSubagent}
+          />
+        );
       })}
     </div>
   );
@@ -84,7 +104,15 @@ function ThinkingBlock({ text }: { text: string }) {
 }
 
 /** A collapsible group of consecutive tool rows under a human summary. */
-function ToolGroupBlock({ summary, entries }: { summary: string; entries: ToolTimelineEntry[] }) {
+function ToolGroupBlock({
+  summary,
+  entries,
+  renderSubagent,
+}: {
+  summary: string;
+  entries: ToolTimelineEntry[];
+  renderSubagent?: (subagent: NonNullable<ToolTimelineEntry['subagent']>) => React.ReactNode;
+}) {
   const { t } = useT();
   const allSettled = entries.every(e => e.status !== 'running');
   const anyError = entries.some(e => e.status === 'error');
@@ -98,7 +126,7 @@ function ToolGroupBlock({ summary, entries }: { summary: string; entries: ToolTi
       </summary>
       <ul className="mt-1 ml-1 space-y-1 border-l border-line pl-3">
         {entries.map(entry => (
-          <ToolRow key={entry.id} entry={entry} />
+          <ToolRow key={entry.id} entry={entry} renderSubagent={renderSubagent} />
         ))}
         {allSettled ? (
           <li className="flex items-center gap-1.5 pt-0.5">
@@ -114,24 +142,42 @@ function ToolGroupBlock({ summary, entries }: { summary: string; entries: ToolTi
 }
 
 /** One tool step: type icon + human sentence + contextual detail chip. */
-function ToolRow({ entry }: { entry: ToolTimelineEntry }) {
+function ToolRow({
+  entry,
+  renderSubagent,
+}: {
+  entry: ToolTimelineEntry;
+  renderSubagent?: (subagent: NonNullable<ToolTimelineEntry['subagent']>) => React.ReactNode;
+}) {
   const { title, detail } = formatTimelineEntry(entry);
   return (
-    <li className="flex items-start gap-1.5" data-testid="processing-tool-row">
-      <span className="mt-0.5 shrink-0 text-content-faint">
-        <CategoryIcon category={categorizeTool(entry.name)} />
-      </span>
-      <span className="min-w-0 text-[12px] text-content-secondary">
-        {title}
-        {detail ? (
-          <span className="ml-1 rounded bg-surface-subtle px-1 py-px font-mono text-[10px] text-content-muted">
-            {detail}
-          </span>
-        ) : null}
-        {entry.status === 'error' && entry.failure ? (
-          <ToolFailureLines failure={entry.failure} />
-        ) : null}
-      </span>
+    <li className="flex flex-col gap-1" data-testid="processing-tool-row">
+      <div className="flex items-start gap-1.5">
+        <span className="mt-0.5 shrink-0 text-content-faint">
+          <CategoryIcon category={categorizeTool(entry.name)} />
+        </span>
+        <span className="min-w-0 text-[12px] text-content-secondary">
+          {title}
+          {detail ? (
+            <span className="ml-1 rounded bg-surface-subtle px-1 py-px font-mono text-[10px] text-content-muted">
+              {detail}
+            </span>
+          ) : null}
+          {entry.status === 'error' && entry.failure ? (
+            <ToolFailureLines failure={entry.failure} />
+          ) : null}
+        </span>
+      </div>
+      {/* A delegated sub-agent's own tool calls hang off the parent entry, so
+          without this the whole child run collapsed into this single line.
+          Rendered as a `<div>` SIBLING under the `<li>` (indented past the
+          icon), not nested inside the label `<span>` — SubagentActivityBlock
+          renders a `<div>`, and `<div>`-inside-`<span>` is invalid nesting. */}
+      {entry.subagent && renderSubagent ? (
+        <div className="ml-5" data-testid="processing-subagent">
+          {renderSubagent(entry.subagent)}
+        </div>
+      ) : null}
     </li>
   );
 }

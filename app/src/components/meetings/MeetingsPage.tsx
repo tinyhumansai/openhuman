@@ -27,7 +27,7 @@ const log = debug('meetings:page');
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
-export interface MeetingsPageProps {
+interface MeetingsPageProps {
   onToast?: (toast: Toast) => void;
 }
 

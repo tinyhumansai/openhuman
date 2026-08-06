@@ -10,7 +10,7 @@
 //!   1. the **crate-owned substrate** the `tinycortex` chunk DB creates
 //!      (`init_db` → `chunks/schema.rs`), and
 //!   2. the **host-retained `UnifiedMemory` namespace-document tier**
-//!      (`memory_store/unified/*`),
+//!      (`memory_store/namespace_store/*`),
 //!
 //! coexisting without collision (parity checklist P3/P5/P11/P12 — the W3 gate).
 //! A store/tree cutover that reshaped, renamed, or dropped a table would strand
@@ -24,11 +24,30 @@
 //! - The crate chunk-DB init is additionally forced via
 //!   `tinycortex::memory::chunks::with_connection` so the substrate schema is
 //!   deterministic regardless of which subsystems the op flow happened to touch.
-//! - `vectors` / `store_meta` / `kv_*` are created by other crate subsystems on
-//!   their own first touch (the chunk/embed pipeline) rather than by the minimal
-//!   doc-put + recall flow; they are reported in the run's schema dump and left
-//!   to a follow-up that widens the flow, so this harness stays green and useful
-//!   today without a fragile dependence on ingest internals.
+//! - The crate KV tier (`kv_global` / `kv_namespace`, crate `store/kv.rs`)
+//!   attaches to the host `UnifiedMemory` connection via
+//!   `KvStore::from_shared_connection`. These two table *names* are pinned as
+//!   [`CRATE_KV_TABLES`], but a name-presence check alone is **not** a cutover
+//!   guard: the host `UnifiedMemory::new` (`namespace_store/init.rs`) also
+//!   `CREATE TABLE IF NOT EXISTS`es both names unconditionally on every workspace
+//!   open, so the names would survive even if the crate KV store cut over to
+//!   differently-named tables and stranded a user's persisted preferences. The
+//!   real guard is therefore **functional**: [`assert_crate_kv_interop`] drives
+//!   the production KV surface (`memory::ops::kv_{set,get}`, crate-backed via
+//!   `KvStore::from_shared_connection`) for the global and namespace scopes,
+//!   asserts the value round-trips, and asserts via read-only SQL that the write
+//!   physically landed in the pinned `kv_global` / `kv_namespace` tables. A
+//!   cutover that renamed or dropped the crate KV tables strands the write
+//!   outside the pinned names and fails here.
+//! - The standalone `VectorStore` tables (`vectors` / `store_meta`, crate
+//!   `store/vectors/store.rs`) are deliberately **not** pinned: nothing on the
+//!   host's live path opens that store — `VectorStore::open` has no non-test
+//!   caller in either the crate or the host, and the live embedding path instead
+//!   uses `mem_tree_chunk_embeddings` (crate substrate) plus the host
+//!   `vector_chunks` tier — so those tables never appear in a real workspace.
+//!   Pinning them would assert schema the shipped product never creates. Add
+//!   them here only if the host ever wires the standalone vector store onto a
+//!   workspace.
 //!
 //! Run with: `cargo test --test memory_golden_parity_e2e`
 
@@ -40,10 +59,11 @@ use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory::ops::{
-    doc_put, memory_recall_context, memory_recall_memories, PutDocParams,
+    doc_put, kv_get, kv_set, memory_recall_context, memory_recall_memories, KvGetDeleteParams,
+    KvSetParams, PutDocParams,
 };
 use openhuman_core::openhuman::memory::rpc_models::{RecallContextRequest, RecallMemoriesRequest};
-use openhuman_core::openhuman::tinycortex::memory_config_from;
+use openhuman_core::openhuman::memory::tinycortex::memory_config_from;
 
 // ── Env isolation (mirrors memory_roundtrip_e2e) ─────────────────────────────
 
@@ -105,7 +125,7 @@ const CRATE_CHUNK_SCHEMA_TABLES: &[&str] = &[
 ];
 
 /// The host-retained `UnifiedMemory` namespace-document tier
-/// (`memory_store/unified/*`) — stays host, coexists in the shared workspace.
+/// (`memory_store/namespace_store/*`) — stays host, coexists in the shared workspace.
 const HOST_UNIFIED_TABLES: &[&str] = &[
     "memory_docs",
     "graph_global",
@@ -118,6 +138,15 @@ const HOST_UNIFIED_TABLES: &[&str] = &[
     "vector_chunks",
     "user_profile",
 ];
+
+/// The crate KV tier (`kv_global` + `kv_namespace`, crate `store/kv.rs`) that
+/// rides the host `UnifiedMemory` connection via `KvStore::from_shared_connection`.
+/// These names are the *targets* the production KV write path must land in;
+/// [`assert_crate_kv_interop`] is what proves it does. The harness guards against
+/// these tables being **renamed or dropped** by the crate KV store — not against
+/// arbitrary in-place schema reshaping (a column/index change that preserves the
+/// names and the `key` / `value_json` columns the API reads would still pass).
+const CRATE_KV_TABLES: &[&str] = &["kv_global", "kv_namespace"];
 
 // ── Schema scan helpers (path-agnostic, read-only) ───────────────────────────
 
@@ -161,6 +190,118 @@ fn tables_in_workspace(ws: &Path) -> BTreeSet<String> {
         }
     }
     tables
+}
+
+/// Read-only: does any `*.db` under `ws` hold a row keyed `key` in `table`?
+///
+/// Used to prove that a production KV write physically landed in a *pinned* table
+/// name rather than one the crate KV store may have cut over to. `table` and
+/// `key` are harness constants (never external input), so the interpolated
+/// `table` name carries no injection surface. A missing table or unreadable DB
+/// counts as "not present" and the scan moves on.
+fn kv_row_present(ws: &Path, table: &str, key: &str) -> bool {
+    let mut dbs = Vec::new();
+    collect_db_files(ws, &mut dbs);
+    for db in dbs {
+        let Ok(conn) =
+            rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            continue;
+        };
+        let sql = format!("SELECT COUNT(*) FROM \"{table}\" WHERE key = ?1");
+        if let Ok(count) = conn.query_row(&sql, [key], |row| row.get::<_, i64>(0)) {
+            if count > 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The crate KV tier's real cutover guard (see the module-level design note and
+/// [`CRATE_KV_TABLES`]). A name-presence check alone cannot detect a crate KV
+/// cutover because the host `UnifiedMemory::new` recreates `kv_global` /
+/// `kv_namespace` unconditionally; this instead drives the production KV surface
+/// (crate-backed via `KvStore::from_shared_connection`) for the global and
+/// namespace scopes, asserts the value round-trips, and asserts via read-only SQL
+/// that each write physically landed in the pinned tables. A cutover that renamed
+/// or dropped the crate KV tables strands the write outside the pinned names and
+/// trips one of these asserts.
+async fn assert_crate_kv_interop(workspace: &Path, namespace: &str, tables: &BTreeSet<String>) {
+    eprintln!(
+        "[golden-parity][kv] validating crate KV interop over pinned tables {:?}",
+        CRATE_KV_TABLES
+    );
+
+    // Cheap coexistence pre-check: the pinned tables materialised at all.
+    let missing_kv: Vec<&str> = CRATE_KV_TABLES
+        .iter()
+        .copied()
+        .filter(|t| !tables.contains(*t))
+        .collect();
+    assert!(
+        missing_kv.is_empty(),
+        "crate KV-tier tables missing from the workspace: {missing_kv:?}; found: {tables:?}"
+    );
+
+    let key = "golden-parity-kv-canary";
+    let value = serde_json::json!({ "pref": "golden-parity", "v": 1 });
+
+    // ── Global scope: write via production kv_set, read back, prove it landed
+    //    in the pinned `kv_global` table. ──
+    eprintln!("[golden-parity][kv] global-scope write via production kv_set");
+    kv_set(KvSetParams {
+        namespace: None,
+        key: key.to_string(),
+        value: value.clone(),
+    })
+    .await
+    .expect("crate KV global set");
+    let got_global = kv_get(KvGetDeleteParams {
+        namespace: None,
+        key: key.to_string(),
+    })
+    .await
+    .expect("crate KV global get");
+    assert_eq!(
+        got_global.value,
+        Some(value.clone()),
+        "crate KV global round-trip lost the value (adapter cannot read back its own write)"
+    );
+    assert!(
+        kv_row_present(workspace, "kv_global", key),
+        "crate KV global write did not land in the pinned `kv_global` table — the KV store cut over to a differently-named table and would strand existing preferences"
+    );
+
+    // ── Namespace scope: same, against the pinned `kv_namespace` table. ──
+    eprintln!("[golden-parity][kv] namespace-scope write via production kv_set");
+    kv_set(KvSetParams {
+        namespace: Some(namespace.to_string()),
+        key: key.to_string(),
+        value: value.clone(),
+    })
+    .await
+    .expect("crate KV namespace set");
+    let got_ns = kv_get(KvGetDeleteParams {
+        namespace: Some(namespace.to_string()),
+        key: key.to_string(),
+    })
+    .await
+    .expect("crate KV namespace get");
+    assert_eq!(
+        got_ns.value,
+        Some(value.clone()),
+        "crate KV namespace round-trip lost the value (adapter cannot read back its own write)"
+    );
+    assert!(
+        kv_row_present(workspace, "kv_namespace", key),
+        "crate KV namespace write did not land in the pinned `kv_namespace` table — the KV store cut over to a differently-named table and would strand existing preferences"
+    );
+
+    eprintln!(
+        "[golden-parity][kv] crate KV interop verified — round-trip ok and writes landed in {:?}",
+        CRATE_KV_TABLES
+    );
 }
 
 fn put_params(ns: &str) -> PutDocParams {
@@ -255,6 +396,11 @@ async fn golden_workspace_composes_substrate_and_unified_tiers() {
         missing_unified.is_empty(),
         "host UnifiedMemory tables missing from the workspace: {missing_unified:?}; found: {tables:?}"
     );
+
+    // Crate KV tier: a functional interop guard, not a name-presence check.
+    // (Name presence alone is satisfied by the host `UnifiedMemory::new` init and
+    // cannot detect a crate KV cutover — see [`assert_crate_kv_interop`].)
+    assert_crate_kv_interop(&workspace, "golden-parity-e2e", &tables).await;
 
     // Coexistence: both tiers are present in the same workspace (P12).
     assert!(

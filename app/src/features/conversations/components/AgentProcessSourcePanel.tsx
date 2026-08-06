@@ -168,7 +168,15 @@ export function AgentProcessSourcePanel({
               )
             ) : transcript.length > 0 ? (
               // Hermes-style interleaved narration + grouped, human-labeled steps.
-              <ProcessingTranscriptView transcript={transcript} entries={entries} />
+              // `renderSubagent` restores the nested child-run activity the
+              // legacy fallback below always had — without it a delegated
+              // sub-agent collapsed to a single line here, hiding every tool
+              // call it made.
+              <ProcessingTranscriptView
+                transcript={transcript}
+                entries={entries}
+                renderSubagent={subagent => <SubagentActivityBlock subagent={subagent} />}
+              />
             ) : entries.length > 0 ? (
               // Legacy snapshot (no transcript): fall back to the tool timeline,
               // which already nests each sub-agent's full activity inline.

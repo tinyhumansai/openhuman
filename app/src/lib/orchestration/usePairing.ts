@@ -16,13 +16,13 @@ import { type PairingSnapshot, PaymentRequiredError } from '../agentworld/invoke
 
 const debug = debugFactory('orchestration:pairing');
 
-export type PairingState =
+type PairingState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'payment_required' }
   | { status: 'ok'; snapshot: PairingSnapshot };
 
-export interface UsePairingResult {
+interface UsePairingResult {
   state: PairingState;
   /** Re-fetch the pairing snapshot. */
   reload: () => Promise<void>;

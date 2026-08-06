@@ -75,7 +75,7 @@ export function dayOfMonth(isoDate: string): string {
  * is invoked with a string key and is expected to return the localised
  * value (or the key itself when no translation is available).
  */
-export type RelativeTimeTranslator = (key: string, fallback?: string) => string;
+type RelativeTimeTranslator = (key: string, fallback?: string) => string;
 
 /**
  * Human-friendly relative-time string for the "updated Ns ago" pill.

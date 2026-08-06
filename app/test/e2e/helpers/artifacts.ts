@@ -176,12 +176,3 @@ export function saveMockRequestLog(label: string, log: unknown[]): string {
   console.log(`[artifacts] mock log "${label}" (${log.length} req) → ${path.basename(file)}`);
   return file;
 }
-
-/**
- * Reset helper for tests that create multiple runs in one process.
- */
-export function resetArtifactRun(): void {
-  runDir = null;
-  meta = null;
-  checkpointIndex = 0;
-}

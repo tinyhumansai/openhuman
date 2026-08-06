@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::openhuman::wallet;
+use crate::openhuman::web3::wallet;
 
 use super::types::{ExecuteQuoteParams, UnsignedTx, Web3QuoteKind};
 
@@ -35,7 +35,7 @@ struct QuoteOwner {
 }
 
 fn current_owner() -> Option<QuoteOwner> {
-    crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+    crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT
         .try_with(|ctx| QuoteOwner {
             thread_id: ctx.thread_id.clone(),
             client_id: ctx.client_id.clone(),

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ToastContainer } from '../../components/intelligence/Toast';
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
 import { ModalShell } from '../../components/ui/ModalShell';
 import {
   type Bounty,
@@ -27,11 +28,16 @@ import {
   type RegistrationChallenge,
   type RegistryWalletBalance,
 } from '../../lib/agentworld/invokeApiClient';
-import { fetchWalletStatus } from '../../services/walletApi';
 import type { ToastNotification } from '../../types/intelligence';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../assets';
+import ExpandableResourceRow from '../components/ExpandableResourceRow';
+import FormActions from '../components/FormActions';
+import FormField from '../components/FormField';
+import StatusBlock from '../components/StatusBlock';
 import X402ConfirmDialog, { formatUnits } from '../components/X402ConfirmDialog';
+import { useMyAgentId } from '../hooks/useMyAgentId';
+import { relativeTime } from './relativeTime';
 
 // ── State types ───────────────────────────────────────────────────────────────
 
@@ -41,17 +47,6 @@ type BountiesState =
   | { status: 'ok'; bounties: Bounty[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 /** Group the integer part of a numeric amount with thousands separators. */
 function formatAmount(amount: string): string {
@@ -78,31 +73,6 @@ function formatReward(amount: string, asset: string): string {
   const decimals = decimalsForAsset(asset);
   const display = decimals > 0 ? formatUnits(amount, decimals) : amount;
   return `${formatAmount(display)} ${resolveAssetSymbol(asset)}`;
-}
-
-/** Centered status message for loading / error / info states. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
-  return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-      <p className={`text-base font-medium ${tone}`}>{title}</p>
-      {body && <p className="max-w-md text-sm text-content-muted">{body}</p>}
-    </div>
-  );
-}
-
-// ── useMyAgentId ──────────────────────────────────────────────────────────────
-
-function useMyAgentId(): string | null {
-  const [agentId, setAgentId] = useState<string | null>(null);
-  useEffect(() => {
-    void fetchWalletStatus()
-      .then(status => {
-        const solana = (status.accounts ?? []).find(a => a.chain === 'solana');
-        if (solana?.address) setAgentId(solana.address);
-      })
-      .catch(() => {});
-  }, []);
-  return agentId;
 }
 
 // ── BountyStatusBadge ─────────────────────────────────────────────────────────
@@ -174,17 +144,19 @@ function BountyRow({
   }, [expanded, bounty.bountyId]);
 
   return (
-    <div
+    <ExpandableResourceRow
+      id={`bounty-${bounty.bountyId}`}
+      expanded={expanded}
+      onToggle={onToggle}
       className={`overflow-hidden rounded-lg border bg-surface transition-colors ${
         expanded
-          ? 'border-primary-300 dark:border-primary-700 sm:col-span-2'
+          ? 'border-primary-300 dark:border-primary-700'
           : 'border-line hover:border-line-strong dark:hover:border-line-strong'
-      }`}>
-      {/* Summary (card header) */}
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50">
+      }`}
+      expandedClassName="sm:col-span-2"
+      summaryClassName="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-muted dark:hover:bg-surface-muted/50"
+      detailClassName="border-t border-line-subtle bg-surface-muted/50 px-4 pb-4 pt-3 dark:bg-surface/50"
+      summary={
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-content">{bounty.title}</span>
@@ -207,129 +179,78 @@ function BountyRow({
             <span>{relativeTime(bounty.createdAt)}</span>
           </div>
         </div>
-        <svg
-          className={`mt-0.5 h-4 w-4 shrink-0 text-content-faint transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+      }>
+      {detailLoading && (
+        <p className="animate-pulse text-xs text-content-faint">Loading details…</p>
+      )}
 
-      {/* Detail panel */}
-      {expanded && (
-        <div className="border-t border-line-subtle bg-surface-muted/50 px-4 pb-4 pt-3 dark:bg-surface/50">
-          {detailLoading && (
-            <p className="animate-pulse text-xs text-content-faint">Loading details…</p>
+      {/* Description */}
+      <p className="mb-3 whitespace-pre-wrap text-sm text-content-secondary">
+        {bounty.description}
+      </p>
+
+      {/* Reward detail */}
+      <div className="mb-3 flex flex-wrap gap-4 text-xs">
+        <div>
+          <span className="font-medium text-content-secondary">Reward: </span>
+          <span className="text-content">
+            {formatReward(bounty.reward.amount, bounty.reward.asset)}
+          </span>
+          {bounty.reward.network && (
+            <span className="ml-1 text-content-faint"> ({bounty.reward.network})</span>
           )}
-
-          {/* Description */}
-          <p className="mb-3 whitespace-pre-wrap text-sm text-content-secondary">
-            {bounty.description}
-          </p>
-
-          {/* Reward detail */}
-          <div className="mb-3 flex flex-wrap gap-4 text-xs">
-            <div>
-              <span className="font-medium text-content-secondary">Reward: </span>
-              <span className="text-content">
-                {formatReward(bounty.reward.amount, bounty.reward.asset)}
-              </span>
-              {bounty.reward.network && (
-                <span className="ml-1 text-content-faint"> ({bounty.reward.network})</span>
-              )}
-            </div>
-            {bounty.deadline && (
-              <div>
-                <span className="font-medium text-content-secondary">Deadline: </span>
-                <span className="text-content">{new Date(bounty.deadline).toLocaleString()}</span>
-              </div>
-            )}
-            <div>
-              <span className="font-medium text-content-secondary">Created: </span>
-              <span className="text-content">{new Date(bounty.createdAt).toLocaleString()}</span>
-            </div>
+        </div>
+        {bounty.deadline && (
+          <div>
+            <span className="font-medium text-content-secondary">Deadline: </span>
+            <span className="text-content">{new Date(bounty.deadline).toLocaleString()}</span>
           </div>
+        )}
+        <div>
+          <span className="font-medium text-content-secondary">Created: </span>
+          <span className="text-content">{new Date(bounty.createdAt).toLocaleString()}</span>
+        </div>
+      </div>
 
-          {/* Council section */}
-          {bounty.council && (
-            <div className="mb-3 rounded border border-line bg-surface p-3">
-              <p className="mb-1 text-xs font-semibold text-content-secondary">Council</p>
-              <div className="flex flex-wrap gap-3 text-xs">
-                <span className="text-content-secondary">
-                  Status: <span className="font-medium">{bounty.council.status}</span>
-                </span>
-                {bounty.council.winnerSubmissionId && (
-                  <span className="text-content-secondary">
-                    Winner:{' '}
-                    <span className="font-mono">{abbrev(bounty.council.winnerSubmissionId)}</span>
-                  </span>
-                )}
-              </div>
-              {bounty.council.reasoning && (
-                <p className="mt-1 text-xs text-content-secondary line-clamp-3">
-                  {bounty.council.reasoning}
-                </p>
-              )}
-              {bounty.council.votes && bounty.council.votes.length > 0 && (
-                <div className="mt-2">
-                  <p className="mb-1 text-xs font-medium text-content-muted">Votes</p>
-                  <div className="space-y-1">
-                    {bounty.council.votes.map((vote, i) => (
-                      <div
-                        key={i}
-                        className="rounded border border-line-subtle bg-surface-muted px-2 py-1 text-xs dark:border-line-strong">
-                        <span className="font-mono text-content-secondary">
-                          {vote.model ?? 'judge'}
-                        </span>
-                        {vote.winnerSubmissionId && (
-                          <span className="ml-2 text-content-secondary">
-                            → {abbrev(vote.winnerSubmissionId)}
-                          </span>
-                        )}
-                        {vote.reasoning && (
-                          <p className="mt-0.5 text-content-muted dark:text-content-faint line-clamp-1">
-                            {vote.reasoning}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+      {/* Council section */}
+      {bounty.council && (
+        <div className="mb-3 rounded border border-line bg-surface p-3">
+          <p className="mb-1 text-xs font-semibold text-content-secondary">Council</p>
+          <div className="flex flex-wrap gap-3 text-xs">
+            <span className="text-content-secondary">
+              Status: <span className="font-medium">{bounty.council.status}</span>
+            </span>
+            {bounty.council.winnerSubmissionId && (
+              <span className="text-content-secondary">
+                Winner:{' '}
+                <span className="font-mono">{abbrev(bounty.council.winnerSubmissionId)}</span>
+              </span>
+            )}
+          </div>
+          {bounty.council.reasoning && (
+            <p className="mt-1 text-xs text-content-secondary line-clamp-3">
+              {bounty.council.reasoning}
+            </p>
           )}
-
-          {/* Submissions section */}
-          {submissions.length > 0 && (
-            <div className="mb-3">
-              <p className="mb-1 text-xs font-semibold text-content-secondary">
-                Submissions ({submissions.length})
-              </p>
+          {bounty.council.votes && bounty.council.votes.length > 0 && (
+            <div className="mt-2">
+              <p className="mb-1 text-xs font-medium text-content-muted">Votes</p>
               <div className="space-y-1">
-                {submissions.map(sub => (
+                {bounty.council.votes.map((vote, i) => (
                   <div
-                    key={sub.submissionId}
-                    className="rounded border border-line bg-surface p-2 text-xs">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-content-secondary">
-                        {abbrev(sub.submitter)}
+                    key={i}
+                    className="rounded border border-line-subtle bg-surface-muted px-2 py-1 text-xs dark:border-line-strong">
+                    <span className="font-mono text-content-secondary">
+                      {vote.model ?? 'judge'}
+                    </span>
+                    {vote.winnerSubmissionId && (
+                      <span className="ml-2 text-content-secondary">
+                        → {abbrev(vote.winnerSubmissionId)}
                       </span>
-                      <span className="text-content-muted dark:text-content-faint">
-                        {sub.status}
-                      </span>
-                    </div>
-                    {sub.title && <p className="mt-0.5 font-medium text-content">{sub.title}</p>}
-                    <a
-                      href={sub.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-0.5 block truncate text-primary-600 hover:underline dark:text-primary-400">
-                      {sub.url}
-                    </a>
-                    {sub.note && (
-                      <p className="mt-0.5 text-content-muted dark:text-content-faint line-clamp-2">
-                        {sub.note}
+                    )}
+                    {vote.reasoning && (
+                      <p className="mt-0.5 text-content-muted dark:text-content-faint line-clamp-1">
+                        {vote.reasoning}
                       </p>
                     )}
                   </div>
@@ -337,98 +258,125 @@ function BountyRow({
               </div>
             </div>
           )}
+        </div>
+      )}
 
-          {/* Comments section */}
-          {comments.length > 0 && (
-            <div className="mb-3">
-              <p className="mb-1 text-xs font-semibold text-content-secondary">
-                Comments ({comments.length})
-              </p>
-              <div className="space-y-1">
-                {comments.map(c => (
-                  <div
-                    key={c.commentId}
-                    className="rounded border border-line bg-surface p-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-content-secondary">{abbrev(c.author)}</span>
-                      <span className="text-content-faint">{relativeTime(c.createdAt)}</span>
-                    </div>
-                    <p className="mt-0.5 text-content-secondary">{c.body}</p>
-                  </div>
-                ))}
+      {/* Submissions section */}
+      {submissions.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1 text-xs font-semibold text-content-secondary">
+            Submissions ({submissions.length})
+          </p>
+          <div className="space-y-1">
+            {submissions.map(sub => (
+              <div
+                key={sub.submissionId}
+                className="rounded border border-line bg-surface p-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-content-secondary">{abbrev(sub.submitter)}</span>
+                  <span className="text-content-muted dark:text-content-faint">{sub.status}</span>
+                </div>
+                {sub.title && <p className="mt-0.5 font-medium text-content">{sub.title}</p>}
+                <a
+                  href={sub.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-0.5 block truncate text-primary-600 hover:underline dark:text-primary-400">
+                  {sub.url}
+                </a>
+                {sub.note && (
+                  <p className="mt-0.5 text-content-muted dark:text-content-faint line-clamp-2">
+                    {sub.note}
+                  </p>
+                )}
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Comments section */}
+      {comments.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1 text-xs font-semibold text-content-secondary">
+            Comments ({comments.length})
+          </p>
+          <div className="space-y-1">
+            {comments.map(c => (
+              <div key={c.commentId} className="rounded border border-line bg-surface p-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-content-secondary">{abbrev(c.author)}</span>
+                  <span className="text-content-faint">{relativeTime(c.createdAt)}</span>
+                </div>
+                <p className="mt-0.5 text-content-secondary">{c.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* On-chain section */}
+      {(bounty.escrowAddress ?? bounty.fundingTxSig ?? bounty.payoutTxSig) && (
+        <div className="mb-3 rounded border border-line bg-surface p-3 text-xs">
+          <p className="mb-1 font-semibold text-content-secondary">On-chain</p>
+          {bounty.escrowAddress && (
+            <div>
+              <span className="text-content-muted">Escrow: </span>
+              <span className="font-mono text-content-secondary">
+                {abbrev(bounty.escrowAddress)}
+              </span>
             </div>
           )}
-
-          {/* On-chain section */}
-          {(bounty.escrowAddress ?? bounty.fundingTxSig ?? bounty.payoutTxSig) && (
-            <div className="mb-3 rounded border border-line bg-surface p-3 text-xs">
-              <p className="mb-1 font-semibold text-content-secondary">On-chain</p>
-              {bounty.escrowAddress && (
-                <div>
-                  <span className="text-content-muted">Escrow: </span>
-                  <span className="font-mono text-content-secondary">
-                    {abbrev(bounty.escrowAddress)}
-                  </span>
-                </div>
-              )}
-              {bounty.fundingTxSig && (
-                <div>
-                  <span className="text-content-muted">Funding tx: </span>
-                  <span className="font-mono text-content-secondary">
-                    {abbrev(bounty.fundingTxSig)}
-                  </span>
-                </div>
-              )}
-              {bounty.payoutTxSig && (
-                <div>
-                  <span className="text-content-muted">Payout tx: </span>
-                  <span className="font-mono text-content-secondary">
-                    {abbrev(bounty.payoutTxSig)}
-                  </span>
-                </div>
-              )}
+          {bounty.fundingTxSig && (
+            <div>
+              <span className="text-content-muted">Funding tx: </span>
+              <span className="font-mono text-content-secondary">
+                {abbrev(bounty.fundingTxSig)}
+              </span>
             </div>
           )}
-
-          {/* Action buttons (wallet-gated) */}
-          {myAgentId ? (
-            <div className="flex flex-wrap gap-2">
-              {/* Submit Work: non-creator + open status */}
-              {!isCreator && bounty.status === 'open' && (
-                <Button type="button" onClick={() => onSubmit(bounty.bountyId)} disabled={mutating}>
-                  Submit Work
-                </Button>
-              )}
-              {/* Comment: any authenticated user */}
-              <Button type="button" onClick={() => onComment(bounty.bountyId)} disabled={mutating}>
-                Comment
-              </Button>
-              {/* Run Council: creator + open status */}
-              {isCreator && bounty.status === 'open' && (
-                <Button
-                  type="button"
-                  onClick={() => onRunCouncil(bounty.bountyId)}
-                  disabled={mutating}>
-                  Run Council
-                </Button>
-              )}
-              {/* Cancel: creator + draft or open status */}
-              {isCreator && (bounty.status === 'draft' || bounty.status === 'open') && (
-                <Button type="button" onClick={() => onCancel(bounty.bountyId)} disabled={mutating}>
-                  Cancel
-                </Button>
-              )}
-              {/* TODO: surface Approve when admin role detection is available */}
+          {bounty.payoutTxSig && (
+            <div>
+              <span className="text-content-muted">Payout tx: </span>
+              <span className="font-mono text-content-secondary">{abbrev(bounty.payoutTxSig)}</span>
             </div>
-          ) : (
-            <p className="mt-2 text-xs text-content-faint">
-              Unlock your wallet to interact with this bounty.
-            </p>
           )}
         </div>
       )}
-    </div>
+
+      {/* Action buttons (wallet-gated) */}
+      {myAgentId ? (
+        <div className="flex flex-wrap gap-2">
+          {/* Submit Work: non-creator + open status */}
+          {!isCreator && bounty.status === 'open' && (
+            <Button type="button" onClick={() => onSubmit(bounty.bountyId)} disabled={mutating}>
+              Submit Work
+            </Button>
+          )}
+          {/* Comment: any authenticated user */}
+          <Button type="button" onClick={() => onComment(bounty.bountyId)} disabled={mutating}>
+            Comment
+          </Button>
+          {/* Run Council: creator + open status */}
+          {isCreator && bounty.status === 'open' && (
+            <Button type="button" onClick={() => onRunCouncil(bounty.bountyId)} disabled={mutating}>
+              Run Council
+            </Button>
+          )}
+          {/* Cancel: creator + draft or open status */}
+          {isCreator && (bounty.status === 'draft' || bounty.status === 'open') && (
+            <Button type="button" onClick={() => onCancel(bounty.bountyId)} disabled={mutating}>
+              Cancel
+            </Button>
+          )}
+          {/* TODO: surface Approve when admin role detection is available */}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-content-faint">
+          Unlock your wallet to interact with this bounty.
+        </p>
+      )}
+    </ExpandableResourceRow>
   );
 }
 
@@ -577,20 +525,16 @@ function CreateBountyModal({
           void handleSubmit(e);
         }}
         className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Title *</label>
-          <input
+        <FormField id="create-bounty-title" label="Title *">
+          <Input
             type="text"
+            inputSize="sm"
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Bounty title"
-            className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">
-            Description *
-          </label>
+        </FormField>
+        <FormField id="create-bounty-description" label="Description *">
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
@@ -598,68 +542,60 @@ function CreateBountyModal({
             rows={4}
             className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
+        </FormField>
         <div className="flex gap-2">
-          <div className="flex-1">
-            <label className="mb-1 block text-xs font-medium text-content-secondary">
-              Amount *
-            </label>
-            <input
+          <FormField id="create-bounty-amount" label="Amount *" className="flex-1">
+            <Input
               type="number"
+              inputSize="sm"
               min="0"
               step="any"
               value={amount}
               onChange={e => setAmount(e.target.value)}
               placeholder="5"
-              className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
             />
-          </div>
-          <div className="w-28">
-            <label className="mb-1 block text-xs font-medium text-content-secondary">Asset</label>
-            <input
+          </FormField>
+          <FormField id="create-bounty-asset" label="Asset" className="w-28">
+            <Input
               type="text"
+              inputSize="sm"
               value={asset}
               onChange={e => setAsset(e.target.value)}
               placeholder="USDC"
-              className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
             />
-          </div>
+          </FormField>
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">
-            Deadline (optional)
-          </label>
-          <input
+        <FormField id="create-bounty-deadline" label="Deadline (optional)">
+          <Input
             type="date"
+            inputSize="sm"
             value={deadline}
             min={minDeadline}
             onChange={e => setDeadline(e.target.value)}
-            className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">
-            Duration (days, alternative to deadline)
-          </label>
-          <input
+        </FormField>
+        <FormField
+          id="create-bounty-duration-days"
+          label="Duration (days, alternative to deadline)">
+          <Input
             type="number"
+            inputSize="sm"
             min="1"
             step="1"
             value={durationDays}
             onChange={e => setDurationDays(e.target.value)}
             placeholder="14"
-            className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
+        </FormField>
         {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
+        <FormActions className="pt-1">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Creating…' : 'Create Bounty'}
           </Button>
-        </div>
+        </FormActions>
       </form>
     </ModalShell>
   );
@@ -712,32 +648,25 @@ function SubmitWorkModal({
           void handleSubmit(e);
         }}
         className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">URL *</label>
-          <input
+        <FormField id="submit-work-url" label="URL *">
+          <Input
             type="text"
+            inputSize="sm"
             value={url}
             onChange={e => setUrl(e.target.value)}
             placeholder="https://github.com/…"
-            className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">
-            Title (optional)
-          </label>
-          <input
+        </FormField>
+        <FormField id="submit-work-title" label="Title (optional)">
+          <Input
             type="text"
+            inputSize="sm"
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="My submission"
-            className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">
-            Note (optional)
-          </label>
+        </FormField>
+        <FormField id="submit-work-note" label="Note (optional)">
           <textarea
             value={note}
             onChange={e => setNote(e.target.value)}
@@ -745,16 +674,16 @@ function SubmitWorkModal({
             rows={3}
             className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
+        </FormField>
         {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
+        <FormActions className="pt-1">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Submitting…' : 'Submit Work'}
           </Button>
-        </div>
+        </FormActions>
       </form>
     </ModalShell>
   );
@@ -800,26 +729,23 @@ function CommentModal({
           void handleSubmit(e);
         }}
         className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-content-secondary">Comment *</label>
+        <FormField id="add-comment-body" label="Comment *" required error={error}>
           <textarea
             value={body}
             onChange={e => setBody(e.target.value)}
             placeholder="Your comment…"
-            required
             rows={4}
             className="w-full rounded border border-line-strong bg-surface px-3 py-1.5 text-sm text-content focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-neutral-600"
           />
-        </div>
-        {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
+        </FormField>
+        <FormActions className="pt-1">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Posting…' : 'Post Comment'}
           </Button>
-        </div>
+        </FormActions>
       </form>
     </ModalShell>
   );
@@ -828,7 +754,8 @@ function CommentModal({
 // ── BountiesSection ───────────────────────────────────────────────────────────
 
 export default function BountiesSection() {
-  const myAgentId = useMyAgentId();
+  const myAgent = useMyAgentId();
+  const myAgentId = myAgent.status === 'ready' ? myAgent.agentId : null;
   const [state, setState] = useState<BountiesState>({ status: 'loading' });
   const [expandedBountyId, setExpandedBountyId] = useState<string | null>(null);
   const [mutating, setMutating] = useState(false);
@@ -898,17 +825,11 @@ export default function BountiesSection() {
       </div>
     );
   } else if (state.status === 'error') {
-    body = (
-      <StatusBlock
-        tone="text-red-600 dark:text-red-400"
-        title="Failed to load bounties"
-        body={state.message}
-      />
-    );
+    body = <StatusBlock tone="danger" title="Failed to load bounties" body={state.message} />;
   } else if (state.bounties.length === 0) {
     body = (
       <StatusBlock
-        tone="text-content-muted"
+        tone="neutral"
         title="No bounties found"
         body="No bounties have been posted yet. Create one to get started."
       />

@@ -1,8 +1,6 @@
 import { getVersion } from '@tauri-apps/api/app';
 
 import {
-  type OAuthAuthReadinessFailure,
-  type OAuthAuthReadinessResult,
   oauthAuthReadinessUserMessage,
   prepareOAuthLoginLaunch,
   waitForOAuthAuthReadiness,
@@ -11,15 +9,9 @@ import { LATEST_APP_DOWNLOAD_URL, MINIMUM_SUPPORTED_APP_VERSION } from './config
 import { isVersionAtLeast, parseSemverParts } from './semver';
 import { isTauri } from './tauriCommands/common';
 
-export {
-  oauthAuthReadinessUserMessage,
-  prepareOAuthLoginLaunch,
-  waitForOAuthAuthReadiness,
-  type OAuthAuthReadinessFailure,
-  type OAuthAuthReadinessResult,
-};
+export { oauthAuthReadinessUserMessage, prepareOAuthLoginLaunch, waitForOAuthAuthReadiness };
 
-export type OAuthAppVersionGateResult =
+type OAuthAppVersionGateResult =
   | { ok: true }
   | { ok: false; current: string; minimum: string; downloadUrl: string };
 

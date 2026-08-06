@@ -1,10 +1,11 @@
 /**
  * useFlowRunPoller (issue B3b) — poll-until-terminal contract.
  *
- * Asserts: initial loading→resolved, 2s poll cadence while `running` /
+ * Asserts: initial loading→resolved, 3s poll cadence while `running` /
  * `pending_approval`, stop on `completed`/`failed`, stop when `runId` goes
- * `null`, error surfaced (and no further poll) on rejection, and effect
- * cleanup on unmount.
+ * `null`, error surfaced (and no further poll) on rejection, effect cleanup
+ * on unmount, and (issue B35 follow-up) an immediate out-of-cadence tick
+ * forced by a matching `FlowRunFinished` socket event.
  */
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,30 @@ import { useFlowRunPoller } from '../useFlowRunPoller';
 
 const getFlowRun = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({ getFlowRun }));
+
+const handlers = vi.hoisted(() => new Map<string, Set<(data: unknown) => void>>());
+const socketOn = vi.hoisted(() =>
+  vi.fn((event: string, cb: (data: unknown) => void) => {
+    const set = handlers.get(event) ?? new Set();
+    set.add(cb);
+    handlers.set(event, set);
+  })
+);
+const socketOff = vi.hoisted(() =>
+  vi.fn((event: string, cb: (data: unknown) => void) => {
+    handlers.get(event)?.delete(cb);
+  })
+);
+vi.mock('../../services/socketService', () => ({
+  socketService: { on: socketOn, off: socketOff },
+}));
+
+function emitFinished(
+  event: 'flow:run_finished' | 'flow_run_finished',
+  payload: { flow_id: string; run_id: string; status: string }
+) {
+  for (const cb of handlers.get(event) ?? []) cb(payload);
+}
 
 function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
   return {
@@ -31,6 +56,7 @@ function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
 describe('useFlowRunPoller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    handlers.clear();
     vi.useFakeTimers();
   });
 
@@ -54,7 +80,7 @@ describe('useFlowRunPoller', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('polls every 2s while the run is running', async () => {
+  it('polls every 3s while the run is running', async () => {
     getFlowRun.mockResolvedValue(makeRun({ status: 'running' }));
     renderHook(() => useFlowRunPoller('thread-1'));
 
@@ -64,12 +90,12 @@ describe('useFlowRunPoller', () => {
     expect(getFlowRun).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(3000);
     });
     expect(getFlowRun).toHaveBeenCalledTimes(2);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(3000);
     });
     expect(getFlowRun).toHaveBeenCalledTimes(3);
   });
@@ -85,7 +111,7 @@ describe('useFlowRunPoller', () => {
     expect(getFlowRun).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(3000);
     });
     expect(getFlowRun).toHaveBeenCalledTimes(2);
   });
@@ -136,6 +162,30 @@ describe('useFlowRunPoller', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(result.current.run?.status).toBe('cancelled');
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops polling once the run is interrupted', async () => {
+    // Bug B42: an `interrupted` run (reconciled after being dropped mid-flight)
+    // is terminal — the poller must not loop forever on it.
+    getFlowRun.mockResolvedValue(
+      makeRun({
+        status: 'interrupted',
+        error: 'Run interrupted before completion',
+        finished_at: '2026-01-01T00:01:00Z',
+      })
+    );
+    const { result } = renderHook(() => useFlowRunPoller('thread-1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.run?.status).toBe('interrupted');
     expect(getFlowRun).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -229,5 +279,65 @@ describe('useFlowRunPoller', () => {
     expect(result.current.loading).toBe(false);
     expect(result.current.run).toBeNull();
     expect(getFlowRun).not.toHaveBeenCalled();
+  });
+
+  // ── FlowRunFinished-forced immediate tick (issue B35 follow-up) ─────────
+
+  it('forces an immediate out-of-cadence tick and stops polling when a matching FlowRunFinished event arrives', async () => {
+    getFlowRun.mockResolvedValueOnce(makeRun({ status: 'running' }));
+    const { result } = renderHook(() => useFlowRunPoller('thread-1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+    expect(result.current.run?.status).toBe('running');
+
+    getFlowRun.mockResolvedValueOnce(
+      makeRun({ status: 'completed', finished_at: '2026-01-01T00:01:00Z' })
+    );
+
+    // Fires well before the next scheduled (3s) poll tick would.
+    await act(async () => {
+      emitFinished('flow:run_finished', {
+        flow_id: 'flow-1',
+        run_id: 'thread-1',
+        status: 'completed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(getFlowRun).toHaveBeenCalledTimes(2);
+    expect(result.current.run?.status).toBe('completed');
+
+    // The scheduled poll from the first tick must have been cancelled by the
+    // forced tick — no further calls once terminal, even well past 3s.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a FlowRunFinished event for a different run', async () => {
+    getFlowRun.mockResolvedValue(makeRun({ status: 'running' }));
+    renderHook(() => useFlowRunPoller('thread-1'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      emitFinished('flow_run_finished', {
+        flow_id: 'flow-2',
+        run_id: 'thread-2',
+        status: 'completed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // No forced tick for an unrelated run — the regular 3s cadence still
+    // governs.
+    expect(getFlowRun).toHaveBeenCalledTimes(1);
   });
 });

@@ -158,5 +158,3 @@ export const PlanReviewCard: React.FC<Props> = ({ threadId, review }) => {
     </div>
   );
 };
-
-export default PlanReviewCard;

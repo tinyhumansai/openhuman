@@ -3,7 +3,7 @@
 //! This module is the canonical home for all inference concerns:
 //! - `local/`    — Ollama / LM Studio / Whisper / Piper runtime management
 //!                 (was `src/openhuman/local_ai/`)
-//! - `provider/` — cloud + local provider trait, routing, reliability
+//! - `provider/` — native chat models, cloud/local routing, auth and errors
 //!                 (was `src/openhuman/providers/`)
 //! - `voice/`    — transcription (STT) and TTS inference implementations
 //!                 (moved from `src/openhuman/voice/`)
@@ -12,7 +12,17 @@
 //! The RPC surface is `inference.*`; old `local_ai_*` RPC names are resolved
 //! by the legacy alias layer for backwards compatibility.
 
+/// `true` when the crate was compiled with the `inference` feature (the
+/// default), i.e. the in-process whisper.cpp STT engine and the `cpal` audio
+/// probe are linked. Lets tests and callers distinguish a slim/headless build
+/// from the desktop build without naming gated symbols. When `false`,
+/// `whisper-rs` and `cpal` are dropped from the dependency graph (verify with
+/// `cargo tree -i whisper-rs` / `cargo tree -i cpal`).
+pub const INFERENCE_COMPILED_IN: bool = cfg!(feature = "inference");
+
+pub mod auth_error_registry;
 pub mod device;
+pub mod embeddings;
 pub mod http;
 pub mod local;
 pub mod model_context;
@@ -25,7 +35,10 @@ pub mod presets;
 pub mod provider;
 mod schemas;
 pub mod sentiment;
+pub mod temperature;
+pub mod tokenjuice;
 pub mod types;
+pub mod vision_models;
 pub mod voice;
 
 pub use ops as rpc;

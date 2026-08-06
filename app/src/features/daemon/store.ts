@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type DaemonStatus = 'starting' | 'stopping' | 'running' | 'error' | 'disconnected';
+type DaemonStatus = 'starting' | 'stopping' | 'running' | 'error' | 'disconnected';
 export type ComponentStatus = 'ok' | 'error' | 'starting';
 
 export interface ComponentHealth {
@@ -18,7 +18,7 @@ export interface HealthSnapshot {
   components: Record<string, ComponentHealth>;
 }
 
-export interface DaemonUserState {
+interface DaemonUserState {
   status: DaemonStatus;
   healthSnapshot: HealthSnapshot | null;
   components: {
@@ -70,14 +70,14 @@ const updateUserState = (
   emitChange();
 };
 
-export const subscribeDaemonStore = (listener: () => void): (() => void) => {
+const subscribeDaemonStore = (listener: () => void): (() => void) => {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 };
 
-export const getDaemonUserState = (userId?: string): DaemonUserState =>
+const getDaemonUserState = (userId?: string): DaemonUserState =>
   currentUserState(userId || '__pending__');
 
 export const useDaemonUserState = (userId?: string): DaemonUserState =>

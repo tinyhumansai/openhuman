@@ -14,7 +14,7 @@ import { CoreRpcError } from '../services/coreRpcClient';
 import type { CurrentPlanData, PlanTier } from '../types/api';
 import { subscribeUsageRefresh } from './usageRefresh';
 
-export interface UsageState {
+interface UsageState {
   teamUsage: TeamUsage | null;
   currentPlan: CurrentPlanData | null;
   currentTier: PlanTier;

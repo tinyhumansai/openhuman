@@ -400,6 +400,21 @@ class Gradient {
       e(this, 'maxCssVarRetries', 200),
       e(this, 'angle', 0),
       e(this, 'isLoadedClass', !1),
+      /*
+       * Teardown bookkeeping (#5160). A Gradient owns three async chains that
+       * outlive the canvas: the `waitForCssVars` rAF retry loop (up to 200
+       * frames), the `animate` rAF loop, and the 3s `isLoaded` timeout. React
+       * unmounts `<MeshGradient />` on every theme switch / backdrop change, so
+       * those callbacks used to run against a canvas that was already detached
+       * and dereference `this.el.parentElement.classList` — the source of the
+       * "Cannot read properties of null (reading 'classList')" family. Every
+       * async entry point now records its handle here and bails on `destroyed`,
+       * and `disconnect()` cancels all of them.
+       */
+      e(this, 'destroyed', !1),
+      e(this, 'isLoadedTimeout', void 0),
+      e(this, 'cssVarsRaf', 0),
+      e(this, 'animateRaf', 0),
       e(this, 'isScrolling', !1),
       /*e(this, "isStatic", o.disableAmbientAnimations()),*/ e(this, 'scrollingTimeout', void 0),
       e(this, 'scrollingRefreshDelay', 200),
@@ -441,6 +456,10 @@ class Gradient {
         ((this.isScrolling = !1), this.isIntersecting && this.play());
       }),
       e(this, 'resize', () => {
+        if (this.destroyed || !this.minigl || !this.mesh) {
+          console.debug('[MeshGradient] resize ignored — gradient not live');
+          return;
+        }
         ((this.width = window.innerWidth),
           (this.height = window.innerHeight),
           this.minigl.setSize(this.width, this.height),
@@ -455,12 +474,17 @@ class Gradient {
         this.isGradientLegendVisible &&
           ((this.isMetaKey = e.metaKey),
           (this.isMouseDown = !0),
-          !1 === this.conf.playing && requestAnimationFrame(this.animate));
+          !1 === this.conf.playing && (this.animateRaf = requestAnimationFrame(this.animate)));
       }),
       e(this, 'handleMouseUp', () => {
         this.isMouseDown = !1;
       }),
       e(this, 'animate', e => {
+        this.animateRaf = 0;
+        if (this.destroyed) {
+          console.debug('[MeshGradient] animate frame dropped — gradient disconnected');
+          return;
+        }
         if (!this.shouldSkipFrame(e) || this.isMouseDown) {
           if (((this.t += Math.min(e - this.last, 1e3 / 15)), (this.last = e), this.isMouseDown)) {
             let e = 160;
@@ -470,21 +494,44 @@ class Gradient {
         }
         if (0 !== this.last && this.isStatic) return (this.minigl.render(), void this.disconnect());
         /*this.isIntersecting && */ (this.conf.playing || this.isMouseDown) &&
-          requestAnimationFrame(this.animate);
+          (this.animateRaf = requestAnimationFrame(this.animate));
       }),
       e(this, 'addIsLoadedClass', () => {
-        /*this.isIntersecting && */ !this.isLoadedClass &&
-          ((this.isLoadedClass = !0),
-          this.el.classList.add('isLoaded'),
-          setTimeout(() => {
-            this.el.parentElement.classList.add('isLoaded');
-          }, 3e3));
+        /*this.isIntersecting && */
+        if (this.destroyed || this.isLoadedClass) return;
+        ((this.isLoadedClass = !0),
+          this.el && this.el.classList.add('isLoaded'),
+          // Deferred so the canvas has faded in before the wrapper is marked
+          // loaded. The handle is retained because React can unmount the canvas
+          // well inside these 3s (#5160) — `disconnect()` clears it, and the
+          // detached-node checks below cover a teardown we did not observe.
+          (this.isLoadedTimeout = setTimeout(() => {
+            this.isLoadedTimeout = void 0;
+            const parent = this.destroyed ? null : this.el && this.el.parentElement;
+            if (!parent) {
+              console.debug('[MeshGradient] isLoaded skipped — canvas detached before timeout', {
+                destroyed: this.destroyed,
+                hasEl: Boolean(this.el),
+              });
+              return;
+            }
+            parent.classList.add('isLoaded');
+          }, 3e3)));
       }),
       e(this, 'pause', () => {
-        this.conf.playing = false;
+        // `conf` only exists once connect() ran, and the React wrapper calls
+        // pause() right after disconnect() on a gradient whose WebGL init may
+        // have bailed early — so never assume it is there.
+        (this.conf && (this.conf.playing = false),
+          this.animateRaf && cancelAnimationFrame(this.animateRaf),
+          (this.animateRaf = 0));
       }),
       e(this, 'play', () => {
-        (requestAnimationFrame(this.animate), (this.conf.playing = true));
+        if (this.destroyed) {
+          console.debug('[MeshGradient] play ignored — gradient disconnected');
+          return;
+        }
+        ((this.animateRaf = requestAnimationFrame(this.animate)), (this.conf.playing = true));
       }),
       e(this, 'initGradient', selector => {
         this.el = document.querySelector(selector);
@@ -519,10 +566,13 @@ class Gradient {
         ? console.log('DID NOT LOAD HERO STRIPE CANVAS')
         : ((this.minigl = new MiniGl(this.el, null, null, !0)),
           this.minigl.gl
-            ? requestAnimationFrame(() => {
-                this.el &&
-                  ((this.computedCanvasStyle = getComputedStyle(this.el)), this.waitForCssVars());
-              })
+            ? (this.cssVarsRaf = requestAnimationFrame(() => {
+                ((this.cssVarsRaf = 0),
+                  !this.destroyed &&
+                    this.el &&
+                    ((this.computedCanvasStyle = getComputedStyle(this.el)),
+                    this.waitForCssVars()));
+              }))
             : console.warn('[MeshGradient] MiniGl has no GL context — gradient disabled')));
     /*
         this.scrollObserver = await s.create(.1, !1),
@@ -534,7 +584,32 @@ class Gradient {
             window.addEventListener("scroll", this.handleScroll), window.addEventListener("mousedown", this.handleMouseDown), window.addEventListener("mouseup", this.handleMouseUp), window.addEventListener("keydown", this.handleKeyDown), this.isIntersecting = !0, this.addIsLoadedClass(), this.play()
         })*/
   }
+  /*
+   * Tears the gradient down for good. Cancels every pending async chain
+   * (`waitForCssVars` retries, the animation loop, the deferred `isLoaded`
+   * class, the scroll-end debounce) and latches `destroyed` so anything already
+   * queued in the current frame/task bails instead of touching a canvas React
+   * has removed from the document (#5160). Safe to call more than once.
+   */
   disconnect() {
+    this.destroyed = !0;
+    if (this.conf) this.conf.playing = !1;
+    if (this.isLoadedTimeout) {
+      clearTimeout(this.isLoadedTimeout);
+      this.isLoadedTimeout = void 0;
+    }
+    if (this.scrollingTimeout) {
+      clearTimeout(this.scrollingTimeout);
+      this.scrollingTimeout = void 0;
+    }
+    if (this.cssVarsRaf) {
+      cancelAnimationFrame(this.cssVarsRaf);
+      this.cssVarsRaf = 0;
+    }
+    if (this.animateRaf) {
+      cancelAnimationFrame(this.animateRaf);
+      this.animateRaf = 0;
+    }
     (this.scrollObserver &&
       (window.removeEventListener('scroll', this.handleScroll),
       window.removeEventListener('mousedown', this.handleMouseDown),
@@ -542,6 +617,7 @@ class Gradient {
       window.removeEventListener('keydown', this.handleKeyDown),
       this.scrollObserver.disconnect()),
       window.removeEventListener('resize', this.resize));
+    console.debug('[MeshGradient] disconnected — pending frames and timers cancelled');
   }
   initMaterial() {
     this.uniforms = {
@@ -623,18 +699,26 @@ class Gradient {
   }
   showGradientLegend() {
     this.width > this.minWidth &&
-      ((this.isGradientLegendVisible = !0), document.body.classList.add('isGradientLegendVisible'));
+      ((this.isGradientLegendVisible = !0),
+      document.body && document.body.classList.add('isGradientLegendVisible'));
   }
   hideGradientLegend() {
     ((this.isGradientLegendVisible = !1),
-      document.body.classList.remove('isGradientLegendVisible'));
+      document.body && document.body.classList.remove('isGradientLegendVisible'));
   }
   init() {
+    if (this.destroyed) {
+      console.debug('[MeshGradient] init skipped — gradient already disconnected');
+      return;
+    }
     try {
       (this.initGradientColors(),
         this.initMesh(),
         this.resize(),
-        requestAnimationFrame(this.animate),
+        // Track this first frame like every other one: `disconnect()` only
+        // cancels `animateRaf`, so leaving this handle unstored let the opening
+        // frame outlive teardown — the exact leak this change set closes.
+        (this.animateRaf = requestAnimationFrame(this.animate)),
         window.addEventListener('resize', this.resize));
     } catch (err) {
       console.warn('[MeshGradient] init failed, gradient disabled:', err);
@@ -645,6 +729,10 @@ class Gradient {
    * Using default colors assigned below if no variables have been found after maxCssVarRetries
    */
   waitForCssVars() {
+    if (this.destroyed) {
+      console.debug('[MeshGradient] waitForCssVars stopped — gradient disconnected');
+      return;
+    }
     if (
       this.computedCanvasStyle &&
       -1 !== this.computedCanvasStyle.getPropertyValue('--gradient-color-1').indexOf('#')
@@ -657,7 +745,9 @@ class Gradient {
           void this.init()
         );
       }
-      requestAnimationFrame(() => this.waitForCssVars());
+      this.cssVarsRaf = requestAnimationFrame(() => {
+        ((this.cssVarsRaf = 0), this.waitForCssVars());
+      });
     }
   }
   /*

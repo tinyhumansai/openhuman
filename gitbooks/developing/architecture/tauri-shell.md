@@ -51,9 +51,8 @@ app/src-tauri/src/
 ├── webview_apis/           # WS bridge for webview-side APIs
 ├── discord_scanner/ … whatsapp_scanner/ …   # Per-provider scanners (slack, telegram, wechat,
 │                                            # gmessages, imessage, meet, …) driving CDP
-├── meet_audio/ meet_call/ meet_video/       # Google Meet call window + media capture
+├── meet_audio/ meet_call/ meet_video/       # Google Meet call window + media integration
 ├── fake_camera/            # Virtual camera support
-├── screen_capture/         # Screen share picker sessions (getDisplayMedia shim backend)
 ├── mascot_native_window.rs / notch_window.rs / window_state.rs
 ├── dictation_hotkeys.rs / ptt_hotkeys.rs / ptt_overlay.rs / companion_commands.rs
 ├── native_notifications/ notification_settings/
@@ -167,16 +166,6 @@ Hide-to-tray / reopen behavior is **not** an IPC command — it lives in the `Ru
 | `mcp_resolve_binary_path` / `mcp_open_client_config` | MCP client helpers (`mcp_commands.rs`) |
 | `start_loopback_oauth_listener` / `stop_loopback_oauth_listener` | Localhost OAuth redirect listener (`loopback_oauth.rs`) |
 | `claude_code_login_launch` | Launch the Claude Code login flow (`claude_code.rs`) |
-
-### Screen share picker (CEF / macOS)
-
-From **`screen_capture/mod.rs`**. Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
-
-| Command                         | Purpose                                                                                                                                                               |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `screen_share_begin_session`    | Open a 30s session from an account webview, after a `navigator.userActivation.isActive` gesture. Returns `{ token, sources }`. Rate-limited to 10/minute per account. |
-| `screen_share_thumbnail`        | Capture a single source's thumbnail as base64 PNG. Requires a live token and an `id` that the session was issued for. macOS only; other platforms return an error.    |
-| `screen_share_finalize_session` | Close the session. Called by the shim on Share or Cancel; safe to call with an unknown/expired token (no-op).                                                         |
 
 ### Workspace file links
 

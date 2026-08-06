@@ -7,9 +7,8 @@
  * Windows). Every session exposes the full DOM and supports W3C
  * `executeScript`, so the legacy branching collapses to a single backend.
  *
- * These functions are kept (rather than deleted) as a shim so the ~40
- * existing specs that branch on `isTauriDriver()` / `isMac2()` still pass:
- * they always take the DOM-capable code path now.
+ * The remaining detection functions are kept as a shim for specs that still
+ * branch on DOM execution support; they always take the DOM-capable path now.
  */
 
 /**
@@ -19,14 +18,6 @@
  */
 export function isTauriDriver(): boolean {
   return true;
-}
-
-/**
- * Always false. The Mac2 accessibility-tree backend is retired; macOS now
- * speaks CDP just like Linux/Windows.
- */
-export function isMac2(): boolean {
-  return false;
 }
 
 /**

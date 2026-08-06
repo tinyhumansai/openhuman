@@ -52,7 +52,7 @@ None on disk. Running servers are held in a process-global `HostedDirRegistry` (
 ## Dependencies
 
 - `crate::openhuman::config` — `load_config_with_timeout` to resolve the active config when deriving the default Basic-auth username (`auth.rs`).
-- `crate::openhuman::credentials::session_support` — `build_session_state` to read the active user identity for the default auth username (`auth.rs`).
+- `crate::openhuman::security::credentials::session_support` — `build_session_state` to read the active user identity for the default auth username (`auth.rs`).
 - `crate::core::shutdown` — `register` a one-time hook so all hosted servers stop when the core shuts down (`ops.rs`).
 - `crate::core::all` — `ControllerFuture`, `RegisteredController` for controller registration (`schemas.rs`).
 - `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — controller schema types (`schemas.rs`).

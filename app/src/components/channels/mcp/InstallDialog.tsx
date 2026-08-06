@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
+import { mcpRegistryErrorMessage } from './mcpRegistryErrorMessage';
 import { deriveAuthor } from './McpServerCard';
 import type { InstalledServer, SmitheryServerDetail } from './types';
 
@@ -74,7 +75,7 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
       })
       .catch(err => {
         if (latestQualifiedNameRef.current !== requestedName) return;
-        const msg = err instanceof Error ? err.message : t('mcp.install.failedDetail');
+        const msg = mcpRegistryErrorMessage(err, t, 'mcp.install.failedDetail');
         log('detail error: %s', msg);
         setDetailError(msg);
       })
@@ -144,7 +145,7 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
       }
       onSuccess(server);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t('mcp.install.failedInstall');
+      const msg = mcpRegistryErrorMessage(err, t, 'mcp.install.failedInstall');
       log('install error: %s', msg);
       setInstallError(msg);
     } finally {
@@ -182,7 +183,7 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
           size="sm"
           onClick={onCancel}
           className="text-content-muted hover:underline">
-          {t('mcp.install.back')}
+          {t('mcp.installed.browseCatalog')}
         </Button>
       </div>
     );

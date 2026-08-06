@@ -20,7 +20,7 @@ use tempfile::TempDir;
 use openhuman_core::openhuman::agent::progress::AgentProgress;
 use openhuman_core::openhuman::agent::task_board::{TaskBoard, TaskBoardCard, TaskCardStatus};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::embeddings::NoopEmbedding;
+use openhuman_core::openhuman::inference::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::query::{
     MemoryQueryTool, MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool,
     MemoryTreeIngestDocumentTool, MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
@@ -52,61 +52,61 @@ use openhuman_core::openhuman::memory::{
     util::redact::{redact, redact_endpoint},
     MemoryIngestionConfig, MemoryIngestionRequest,
 };
-use openhuman_core::openhuman::memory_queue::types::ReembedBackfillPayload;
-use openhuman_core::openhuman::memory_queue::{
-    self, AppendBufferPayload, AppendTarget, ExtractChunkPayload, FlushStalePayload, JobKind,
+use openhuman_core::openhuman::memory::queue::types::ReembedBackfillPayload;
+use openhuman_core::openhuman::memory::queue::{
+    self as memory_queue, AppendBufferPayload, AppendTarget, ExtractChunkPayload, FlushStalePayload, JobKind,
     JobStatus, NewJob, NodeRef, SealPayload, DEFAULT_LOCK_DURATION_MS,
 };
-use openhuman_core::openhuman::memory_sources::readers::reader_for;
-use openhuman_core::openhuman::memory_sources::registry;
-use openhuman_core::openhuman::memory_sources::rpc as memory_sources_rpc;
-use openhuman_core::openhuman::memory_sources::status::{source_status, FreshnessLabel};
-use openhuman_core::openhuman::memory_sources::sync::sync_source;
-use openhuman_core::openhuman::memory_sources::types::{
+use openhuman_core::openhuman::memory::sources::readers::reader_for;
+use openhuman_core::openhuman::memory::sources::registry;
+use openhuman_core::openhuman::memory::sources::rpc as memory_sources_rpc;
+use openhuman_core::openhuman::memory::sources::status::{source_status, FreshnessLabel};
+use openhuman_core::openhuman::memory::sources::sync::sync_source;
+use openhuman_core::openhuman::memory::sources::types::{
     ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind,
 };
-use openhuman_core::openhuman::memory_sources::{
+use openhuman_core::openhuman::memory::sources::{
     all_memory_sources_controller_schemas, all_memory_sources_registered_controllers,
 };
-use openhuman_core::openhuman::memory_store::chunks::store::{upsert_chunks, with_connection};
-use openhuman_core::openhuman::memory_store::chunks::types::{
+use openhuman_core::openhuman::memory::store::chunks::store::{upsert_chunks, with_connection};
+use openhuman_core::openhuman::memory::store::chunks::types::{
     approx_token_count, chunk_id, Chunk, DataSource, Metadata, SourceKind as ChunkSourceKind,
     SourceRef,
 };
-use openhuman_core::openhuman::memory_store::trees::types::{
+use openhuman_core::openhuman::memory::store::trees::types::{
     SummaryNode, Tree, TreeKind, TreeStatus as StoredTreeStatus,
 };
-use openhuman_core::openhuman::memory_store::{
+use openhuman_core::openhuman::memory::store::{
     MemoryClient, NamespaceDocumentInput, UnifiedMemory,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::chat::{
+use tinycortex::memory::ingest::canonicalize::chat::{
     canonicalise as canonicalise_chat, ChatBatch, ChatMessage,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::document::{
+use tinycortex::memory::ingest::canonicalize::document::{
     canonicalise as canonicalise_document, DocumentInput,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::email::{
+use tinycortex::memory::ingest::canonicalize::email::{
     canonicalise as canonicalise_email, EmailMessage, EmailThread,
 };
-use openhuman_core::openhuman::memory_sync::canonicalize::email_clean;
-use openhuman_core::openhuman::memory_sync::composio;
-use openhuman_core::openhuman::memory_sync::composio::providers::profile::{
+use tinycortex::memory::ingest::canonicalize::email_clean;
+use openhuman_core::openhuman::memory::sync::composio;
+use openhuman_core::openhuman::memory::sync::composio::providers::profile::{
     canonicalize, delete_connected_identity_facets, is_self_identity, is_self_identity_any_toolkit,
     load_connected_identities, render_connected_identities_section, ConnectedIdentity,
     IdentityKind,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::profile_md::{
+use openhuman_core::openhuman::memory::sync::composio::providers::profile_md::{
     block_end, block_start, merge_provider_into_profile_md, remove_provider_from_profile_md,
     replace_managed_block,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
+use openhuman_core::openhuman::memory::sync::composio::providers::slack::{
     post_process as slack_post_process, schemas as slack_memory_schemas,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::sync_state::{
+use openhuman_core::openhuman::memory::sync::composio::providers::sync_state::{
     extract_item_id, DailyBudget, SyncState, DEFAULT_DAILY_REQUEST_LIMIT,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::user_scopes;
-use openhuman_core::openhuman::memory_sync::composio::providers::{
+use openhuman_core::openhuman::memory::sync::composio::providers::user_scopes;
+use openhuman_core::openhuman::memory::sync::composio::providers::{
     agent_ready_toolkits, all_providers as all_composio_providers, capability_matrix,
     catalog_for_toolkit, classify_unknown, curated_scope_for, find_curated, get_provider,
     init_default_providers as init_default_composio_providers, is_action_visible_with_pref,
@@ -114,42 +114,40 @@ use openhuman_core::openhuman::memory_sync::composio::providers::{
     NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome as ComposioSyncOutcome,
     SyncReason, TaskFetchFilter, ToolScope, UserScopePref,
 };
-use openhuman_core::openhuman::memory_sync::sync_status::{
+use openhuman_core::openhuman::memory::sync::sync_status::{
     rpc as memory_sync_status_rpc, schemas as memory_sync_status_schemas,
 };
-use openhuman_core::openhuman::memory_sync::traits::{
-    SyncOutcome as PipelineSyncOutcome, SyncPipeline, SyncPipelineKind,
+use tinycortex::memory::sync::{SyncOutcome as PipelineSyncOutcome, SyncPipelineKind};
+use openhuman_core::openhuman::memory::tool_memory::tools::{MemoryToolsListTool, MemoryToolsPutTool};
+use openhuman_core::openhuman::memory::tool_memory::{
+    render_tool_memory_rules, tool_memory_namespace, tool_memory_store, ToolMemoryPriority,
+    ToolMemoryRule, ToolMemoryRulesSection, ToolMemorySource, TOOL_MEMORY_HEADING,
+    TOOL_MEMORY_PROMPT_CAP,
 };
-use openhuman_core::openhuman::memory_tools::tools::{MemoryToolsListTool, MemoryToolsPutTool};
-use openhuman_core::openhuman::memory_tools::{
-    render_tool_memory_rules, tool_memory_namespace, ToolMemoryPriority, ToolMemoryRule,
-    ToolMemoryRulesSection, ToolMemorySource, TOOL_MEMORY_HEADING, TOOL_MEMORY_PROMPT_CAP,
-};
-use openhuman_core::openhuman::memory_tools::tool_memory_store;
-use openhuman_core::openhuman::memory_tree::score::embed::Embedder;
-use openhuman_core::openhuman::memory_tree::score::extract::{
+use openhuman_core::openhuman::memory::tree::score::embed::Embedder;
+use openhuman_core::openhuman::memory::tree::score::extract::{
     CompositeExtractor, EntityExtractor, EntityKind, ExtractedEntities, ExtractedEntity,
     ExtractedTopic,
 };
-use openhuman_core::openhuman::memory_tree::score::resolver::CanonicalEntity;
-use openhuman_core::openhuman::memory_tree::score::signals::{
+use openhuman_core::openhuman::memory::tree::score::resolver::CanonicalEntity;
+use openhuman_core::openhuman::memory::tree::score::signals::{
     combine, combine_cheap_only, compute as compute_score_signals, entity_density_score,
     interaction, metadata_weight, source_weight, token_count, unique_words, ScoreSignals,
     SignalWeights,
 };
-use openhuman_core::openhuman::memory_tree::score::store as score_store;
-use openhuman_core::openhuman::memory_tree::score::{resolver, ScoringConfig};
-use openhuman_core::openhuman::memory_tree::summarise::{
+use openhuman_core::openhuman::memory::tree::score::store as score_store;
+use openhuman_core::openhuman::memory::tree::score::{resolver, ScoringConfig};
+use openhuman_core::openhuman::memory::tree::summarise::{
     fallback_summary, SummaryContext, SummaryInput,
 };
-use openhuman_core::openhuman::memory_tree::tree::bucket_seal::LeafRef;
-use openhuman_core::openhuman::memory_tree::tree_runtime::store as tree_runtime_store;
-use openhuman_core::openhuman::memory_tree::tree_runtime::{
+use openhuman_core::openhuman::memory::tree::tree::bucket_seal::LeafRef;
+use openhuman_core::openhuman::memory::tree::tree_runtime::store as tree_runtime_store;
+use openhuman_core::openhuman::memory::tree::tree_runtime::{
     all_tree_summarizer_controller_schemas, all_tree_summarizer_registered_controllers,
     derive_node_ids, derive_parent_id, estimate_tokens, level_from_node_id, node_id_to_path,
     NodeLevel, TreeNode,
 };
-use openhuman_core::openhuman::memory_tree::{retrieval, score::embed};
+use openhuman_core::openhuman::memory::tree::{retrieval, score::embed};
 use openhuman_core::openhuman::security::{AutonomyLevel, SecurityPolicy};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::title::{
@@ -1094,7 +1092,7 @@ fn memory_tree_policy_and_source_registry_write_metadata_mirror() {
         0.0
     );
 
-    let stats = openhuman_core::openhuman::memory_store::trees::types::EntityIndexStats {
+    let stats = openhuman_core::openhuman::memory::store::trees::types::EntityIndexStats {
         mention_count_30d: 9,
         distinct_sources: 4,
         last_seen_ms: Some(now - 4 * 86_400_000),
@@ -1165,6 +1163,7 @@ fn thread_title_error_and_turn_state_helpers_cover_wire_shapes() {
         source_tool_name: Some("memory.search".into()),
         subagent: None,
         output: None,
+        seq: None,
     });
     let wire = serde_json::to_value(GetTurnStateResponse {
         turn_state: Some(state.clone()),
@@ -1400,7 +1399,7 @@ fn memory_tree_scoring_signal_helpers_cover_boundaries_and_serialization() {
     assert!(!EntityKind::Person.is_mechanical());
     assert!(EntityKind::parse("unknown").is_err());
 
-    let regex_entities = openhuman_core::openhuman::memory_tree::score::extract::regex::extract(
+    let regex_entities = openhuman_core::openhuman::memory::tree::score::extract::regex::extract(
         "Alice emailed bob@example.com from https://example.test and mentioned #coverage.",
     );
     assert!(regex_entities
@@ -1601,11 +1600,18 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
 
     let summaries = tree_runtime_store::collect_root_summaries_with_caps(tmp.path(), 10, 12);
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].0, "slack_#eng");
+    let stored_namespace = tree_runtime_store::tree_dir(&config, namespace)
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("sanitized namespace directory")
+        .to_string();
+    assert!(stored_namespace.starts_with("slack_#eng-"));
+    assert_eq!(summaries[0].0, stored_namespace);
     assert!(summaries[0].1.contains("[... truncated]"));
     assert_eq!(
         tree_runtime_store::list_namespaces_with_root(&config).unwrap(),
-        vec!["slack_#eng".to_string()]
+        vec![stored_namespace]
     );
 
     let ts = Utc.with_ymd_and_hms(2026, 5, 29, 13, 0, 0).unwrap();
@@ -1679,12 +1685,12 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         0
     );
 
-    let source_factory = openhuman_core::openhuman::memory_tree::tree::TreeFactory::source(
+    let source_factory = openhuman_core::openhuman::memory::tree::tree::TreeFactory::source(
         "gmail:alice@example.com|bob@example.com",
     );
     assert_eq!(
         source_factory.profile(),
-        openhuman_core::openhuman::memory_tree::tree::TreeProfile::Source
+        openhuman_core::openhuman::memory::tree::tree::TreeProfile::Source
     );
     assert_eq!(
         source_factory.scope_slug(),
@@ -1694,26 +1700,26 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         .get_or_create(&config)
         .expect("source tree from factory");
     assert_eq!(
-        openhuman_core::openhuman::memory_tree::tree::TreeFactory::from_tree(&source_tree).kind(),
+        openhuman_core::openhuman::memory::tree::tree::TreeFactory::from_tree(&source_tree).kind(),
         TreeKind::Source
     );
     let topic_factory =
-        openhuman_core::openhuman::memory_tree::tree::TreeFactory::topic("email:alice@example.com");
+        openhuman_core::openhuman::memory::tree::tree::TreeFactory::topic("email:alice@example.com");
     assert!(matches!(
         topic_factory.summary_tree_kind(),
-        openhuman_core::openhuman::memory_store::content::SummaryTreeKind::Topic
+        openhuman_core::openhuman::memory::store::content::SummaryTreeKind::Topic
     ));
     let topic_tree = topic_factory
         .get_or_create(&config)
         .expect("topic tree from factory");
     assert_ne!(source_tree.id, topic_tree.id);
     assert!(
-        openhuman_core::openhuman::memory_tree::tree::new_tree_id(TreeKind::Global)
+        openhuman_core::openhuman::memory::tree::tree::new_tree_id(TreeKind::Global)
             .starts_with("global:")
     );
-    assert!(openhuman_core::openhuman::memory_tree::tree::new_summary_id(2).contains(":L2-"));
+    assert!(openhuman_core::openhuman::memory::tree::tree::new_summary_id(2).contains(":L2-"));
     assert!(
-        openhuman_core::openhuman::memory_tree::tree::registry::is_unique_violation(
+        openhuman_core::openhuman::memory::tree::tree::registry::is_unique_violation(
             &anyhow::anyhow!("UNIQUE constraint failed: mem_trees.kind, mem_trees.scope")
         )
     );
@@ -1721,7 +1727,7 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         .archive(&config)
         .expect("archive source tree");
     assert_eq!(
-        openhuman_core::openhuman::memory_tree::tree::store::get_tree_by_scope(
+        openhuman_core::openhuman::memory::tree::tree::store::get_tree_by_scope(
             &config,
             TreeKind::Source,
             "gmail:alice@example.com|bob@example.com"
@@ -1876,8 +1882,8 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
         .value
         .expect("score breakdown");
     assert!(breakdown.kept);
-    assert!(breakdown.llm_consulted);
-    assert!(breakdown
+    assert!(!breakdown.llm_consulted);
+    assert!(!breakdown
         .signals
         .iter()
         .any(|signal| signal.name == "llm_importance" && signal.weight == 2.0));
@@ -1921,15 +1927,18 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
         tree_kind: TreeKind::Global,
         target_level: 1,
         token_budget: 100,
+        input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+        overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+        ask: None,
     };
     let empty =
-        openhuman_core::openhuman::memory_tree::summarise::summarise(&config, &[], &empty_ctx)
+        openhuman_core::openhuman::memory::tree::summarise::summarise(&config, &[], &empty_ctx)
             .await
             .expect("empty summarise avoids provider");
     assert_eq!(empty.token_count, 0);
 
     let embedder =
-        openhuman_core::openhuman::memory_tree::score::embed::factory::build_embedder_from_config(
+        openhuman_core::openhuman::memory::tree::score::embed::factory::build_embedder_from_config(
             &config,
         )
         .expect("inert embedder");
@@ -1967,6 +1976,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
         id: "tree-1".into(),
         kind: TreeKind::Topic,
         scope: "topic:coverage".into(),
+        ask: None,
         root_id: Some("sum-1".into()),
         max_level: 2,
         status: StoredTreeStatus::Active,
@@ -2071,7 +2081,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
         score: Some(0.9),
         taint: Default::default(),
     };
-    assert_eq!(entry.category.to_string(), "testing");
+    assert_eq!(entry.category.to_string(), "custom:testing");
     let opts = RecallOpts {
         namespace: Some("default"),
         category: Some(MemoryCategory::Conversation),
@@ -2160,43 +2170,12 @@ async fn memory_preferences_remember_redaction_and_pipeline_traits_cover_public_
         "localhost:11434"
     );
 
-    #[derive(Default)]
-    struct RawPipeline;
-
-    #[async_trait::async_trait]
-    impl SyncPipeline for RawPipeline {
-        fn id(&self) -> &str {
-            "workspace:raw-coverage"
-        }
-
-        fn kind(&self) -> SyncPipelineKind {
-            SyncPipelineKind::Workspace
-        }
-
-        async fn init(&self, _config: &Config) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn tick(&self, _config: &Config) -> anyhow::Result<PipelineSyncOutcome> {
-            Ok(PipelineSyncOutcome {
-                records_ingested: 2,
-                more_pending: false,
-                note: Some("covered".into()),
-            })
-        }
-    }
-
-    let pipeline = RawPipeline;
-    assert_eq!(pipeline.id(), "workspace:raw-coverage");
-    assert_eq!(pipeline.kind().as_str(), "workspace");
-    pipeline
-        .init(&config_in(&tmp))
-        .await
-        .expect("pipeline init");
-    let outcome = pipeline
-        .tick(&config_in(&tmp))
-        .await
-        .expect("pipeline tick");
+    let outcome = PipelineSyncOutcome {
+        records_ingested: 2,
+        more_pending: false,
+        note: Some("covered".into()),
+        ..PipelineSyncOutcome::default()
+    };
     assert_eq!(outcome.records_ingested, 2);
     assert_eq!(serde_json::to_value(outcome).unwrap()["note"], "covered");
     assert_eq!(PipelineSyncOutcome::default().records_ingested, 0);
@@ -2306,7 +2285,7 @@ async fn memory_tools_and_user_scope_prefs_cover_public_execution_paths() {
     assert!(!forgot.is_error);
     assert!(forgot.output().contains("Forgot memory"));
 
-    let scoped_client: openhuman_core::openhuman::memory_store::MemoryClientRef =
+    let scoped_client: openhuman_core::openhuman::memory::store::MemoryClientRef =
         Arc::new(MemoryClient::from_workspace_dir(tmp.path().join("scope-prefs")).unwrap());
     assert_eq!(
         user_scopes::load(&scoped_client, " GMAIL ").await,
@@ -2685,7 +2664,7 @@ async fn memory_source_sync_entrypoint_rejects_disabled_and_ingests_folder_items
 #[test]
 fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     let now = Utc.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap();
-    let payload = openhuman_core::openhuman::memory_tree::io::TreeLeafPayload {
+    let payload = openhuman_core::openhuman::memory::tree::io::TreeLeafPayload {
         chunk_id: "chunk-contract-1".into(),
         token_count: 42,
         timestamp: now,
@@ -2698,12 +2677,12 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(leaf_ref.chunk_id, payload.chunk_id);
     assert_eq!(leaf_ref.entities, payload.entities);
     let round_trip =
-        openhuman_core::openhuman::memory_tree::io::TreeLeafPayload::from(leaf_ref.clone());
+        openhuman_core::openhuman::memory::tree::io::TreeLeafPayload::from(leaf_ref.clone());
     assert_eq!(round_trip.content, payload.content);
     assert_eq!(round_trip.score, payload.score);
 
     let write_default_json = serde_json::to_value(
-        openhuman_core::openhuman::memory_tree::io::TreeWriteRequest {
+        openhuman_core::openhuman::memory::tree::io::TreeWriteRequest {
             tree_id: "tree-contract".into(),
             tree_kind: TreeKind::Source,
             leaf: round_trip.clone(),
@@ -2715,7 +2694,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(write_default_json["label_strategy"], "inherit");
     assert_eq!(write_default_json["deferred"], false);
 
-    let decoded_write: openhuman_core::openhuman::memory_tree::io::TreeWriteRequest =
+    let decoded_write: openhuman_core::openhuman::memory::tree::io::TreeWriteRequest =
         serde_json::from_value(json!({
             "tree_id": "tree-contract",
             "tree_kind": "global",
@@ -2732,12 +2711,12 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(decoded_write.tree_kind, TreeKind::Global);
     assert_eq!(
         decoded_write.label_strategy,
-        openhuman_core::openhuman::memory_tree::io::TreeLabelStrategy::Empty
+        openhuman_core::openhuman::memory::tree::io::TreeLabelStrategy::Empty
     );
     assert!(decoded_write.leaf.entities.is_empty());
     assert!(decoded_write.deferred);
 
-    let outcome = openhuman_core::openhuman::memory_tree::io::TreeWriteOutcome {
+    let outcome = openhuman_core::openhuman::memory::tree::io::TreeWriteOutcome {
         new_summary_ids: vec!["summary-1".into()],
         seal_pending: true,
     };
@@ -2745,7 +2724,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(outcome_json["new_summary_ids"][0], "summary-1");
     assert_eq!(outcome_json["seal_pending"], true);
 
-    let read_request: openhuman_core::openhuman::memory_tree::io::TreeReadRequest =
+    let read_request: openhuman_core::openhuman::memory::tree::io::TreeReadRequest =
         serde_json::from_value(json!({
             "tree_id": "tree-contract",
             "max_depth": 2,
@@ -2757,14 +2736,14 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(read_request.max_depth, 2);
     assert_eq!(read_request.limit, Some(3));
 
-    let hit = openhuman_core::openhuman::memory_tree::io::TreeReadHit {
+    let hit = openhuman_core::openhuman::memory::tree::io::TreeReadHit {
         node_id: "summary-1".into(),
         node_kind: "summary".into(),
         level: 1,
         content: "Summary text".into(),
         score: 0.42,
     };
-    let result = openhuman_core::openhuman::memory_tree::io::TreeReadResult {
+    let result = openhuman_core::openhuman::memory::tree::io::TreeReadResult {
         hits: vec![hit],
         total: 4,
         tree_id: "tree-contract".into(),
@@ -2777,13 +2756,14 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
         id: "empty-tree".into(),
         kind: TreeKind::Source,
         scope: "source:contract".into(),
+        ask: None,
         root_id: None,
         max_level: 0,
         status: StoredTreeStatus::Active,
         created_at: now,
         last_sealed_at: None,
     };
-    let empty = openhuman_core::openhuman::memory_tree::io::TreeReadResult::empty(&tree);
+    let empty = openhuman_core::openhuman::memory::tree::io::TreeReadResult::empty(&tree);
     assert_eq!(empty.tree_id, "empty-tree");
     assert!(empty.hits.is_empty());
 }
@@ -2872,7 +2852,7 @@ fn memory_sync_profile_identity_helpers_cover_public_no_client_paths_and_renderi
 #[test]
 fn gmail_post_processor_and_provider_registry_cover_public_edges() {
     let gmail_provider =
-        openhuman_core::openhuman::memory_sync::composio::providers::gmail::GmailProvider::new();
+        openhuman_core::openhuman::memory::sync::composio::providers::gmail::GmailProvider::new();
     let mut raw_html_passthrough = json!({
         "messages": [{ "messageId": "m-raw", "messageText": "<b>keep raw</b>" }]
     });
@@ -2999,22 +2979,6 @@ impl ComposioProvider for RawCoverageProvider {
         }
     }
 
-    async fn sync(
-        &self,
-        _ctx: &ProviderContext,
-        reason: SyncReason,
-    ) -> Result<ComposioSyncOutcome, String> {
-        Ok(ComposioSyncOutcome {
-            toolkit: "raw_coverage".into(),
-            connection_id: Some("conn-1".into()),
-            reason: reason.as_str().into(),
-            items_ingested: 1,
-            started_at_ms: 10,
-            finished_at_ms: 25,
-            summary: "synced".into(),
-            details: json!({ "reason": reason.as_str() }),
-        })
-    }
 }
 
 struct EmptySlugProvider;
@@ -3032,22 +2996,6 @@ impl ComposioProvider for EmptySlugProvider {
         Ok(ProviderUserProfile::default())
     }
 
-    async fn sync(
-        &self,
-        _ctx: &ProviderContext,
-        reason: SyncReason,
-    ) -> Result<ComposioSyncOutcome, String> {
-        Ok(ComposioSyncOutcome {
-            toolkit: String::new(),
-            connection_id: None,
-            reason: reason.as_str().into(),
-            items_ingested: 0,
-            started_at_ms: 0,
-            finished_at_ms: 0,
-            summary: String::new(),
-            details: Value::Null,
-        })
-    }
 }
 
 #[tokio::test]
@@ -3362,24 +3310,24 @@ fn memory_sync_profile_markdown_and_status_helpers_are_idempotent() {
 
     let now = 1_700_000_000_000_i64;
     assert_eq!(
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::from_age_ms(
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::from_age_ms(
             Some(now - 30_000),
             now
         ),
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::Active
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::Active
     );
     assert_eq!(
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::from_age_ms(
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::from_age_ms(
             Some(now - 30_001),
             now
         ),
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::Recent
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::Recent
     );
     assert_eq!(
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::from_age_ms(
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::from_age_ms(
             None, now
         ),
-        openhuman_core::openhuman::memory_sync::sync_status::types::FreshnessLabel::Idle
+        openhuman_core::openhuman::memory::sync::sync_status::types::FreshnessLabel::Idle
     );
 }
 
@@ -3498,6 +3446,7 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
             transcript: vec![],
         }),
         output: None,
+        seq: None,
     });
     let second = TurnState::started("thread/b", "request-2", 2, "2026-05-29T12:01:00Z");
 
@@ -3842,7 +3791,7 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
     );
     assert_eq!(schemas.len(), controllers.len());
     assert_eq!(
-        openhuman_core::openhuman::memory_sources::schemas::schemas("read_item").function,
+        openhuman_core::openhuman::memory::sources::schemas::schemas("read_item").function,
         "read_item"
     );
 
@@ -3983,8 +3932,7 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
         patch: serde_json::from_value(json!({
             "label": "Disabled folder",
             "enabled": false,
-            "glob": "**/*.md",
-            "max_items": 2
+            "glob": "**/*.md"
         }))
         .expect("patch"),
     })
@@ -4431,13 +4379,13 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
     let config = config_in(&tmp);
 
     let schemas =
-        openhuman_core::openhuman::memory_tree::retrieval::schemas::all_controller_schemas();
+        openhuman_core::openhuman::memory::tree::retrieval::schemas::all_controller_schemas();
     let controllers =
-        openhuman_core::openhuman::memory_tree::retrieval::schemas::all_registered_controllers();
+        openhuman_core::openhuman::memory::tree::retrieval::schemas::all_registered_controllers();
     assert_eq!(schemas.len(), 5);
     assert_eq!(schemas.len(), controllers.len());
     assert_eq!(
-        openhuman_core::openhuman::memory_tree::retrieval::schemas::schemas("missing").function,
+        openhuman_core::openhuman::memory::tree::retrieval::schemas::schemas("missing").function,
         "unknown"
     );
     assert!(schemas
@@ -4447,9 +4395,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
         .description
         .contains("Batch-fetch"));
 
-    let source = openhuman_core::openhuman::memory_tree::retrieval::rpc::query_source_rpc(
+    let source = openhuman_core::openhuman::memory::tree::retrieval::rpc::query_source_rpc(
         &config,
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::QuerySourceRequest {
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::QuerySourceRequest {
             source_id: Some("slack:#raw".into()),
             source_kind: Some("chat".into()),
             time_window_days: Some(7),
@@ -4463,9 +4411,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
     assert!(source.logs[0].contains("has_source_id=true"));
     assert!(!source.logs[0].contains("slack:#raw"));
     assert!(
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::query_source_rpc(
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::query_source_rpc(
             &config,
-            openhuman_core::openhuman::memory_tree::retrieval::rpc::QuerySourceRequest {
+            openhuman_core::openhuman::memory::tree::retrieval::rpc::QuerySourceRequest {
                 source_id: None,
                 source_kind: Some("bogus".into()),
                 time_window_days: None,
@@ -4478,9 +4426,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
         .contains("unknown source kind")
     );
 
-    let search = openhuman_core::openhuman::memory_tree::retrieval::rpc::search_entities_rpc(
+    let search = openhuman_core::openhuman::memory::tree::retrieval::rpc::search_entities_rpc(
         &config,
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::SearchEntitiesRequest {
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::SearchEntitiesRequest {
             query: "alice".into(),
             kinds: Some(vec!["email".into()]),
             limit: Some(10),
@@ -4491,9 +4439,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
     assert!(search.value.matches.is_empty());
     assert!(search.logs[0].contains("has_kinds=true"));
     assert!(
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::search_entities_rpc(
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::search_entities_rpc(
             &config,
-            openhuman_core::openhuman::memory_tree::retrieval::rpc::SearchEntitiesRequest {
+            openhuman_core::openhuman::memory::tree::retrieval::rpc::SearchEntitiesRequest {
                 query: "alice".into(),
                 kinds: Some(vec!["missing".into()]),
                 limit: None,
@@ -4504,9 +4452,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
         .contains("unknown entity kind")
     );
 
-    let drill = openhuman_core::openhuman::memory_tree::retrieval::rpc::drill_down_rpc(
+    let drill = openhuman_core::openhuman::memory::tree::retrieval::rpc::drill_down_rpc(
         &config,
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::DrillDownRequest {
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::DrillDownRequest {
             node_id: "summary:source:redacted".into(),
             max_depth: None,
             query: None,
@@ -4519,9 +4467,9 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
     assert!(drill.logs[0].contains("node_kind=summary"));
     assert!(!drill.logs[0].contains("redacted"));
 
-    let fetch = openhuman_core::openhuman::memory_tree::retrieval::rpc::fetch_leaves_rpc(
+    let fetch = openhuman_core::openhuman::memory::tree::retrieval::rpc::fetch_leaves_rpc(
         &config,
-        openhuman_core::openhuman::memory_tree::retrieval::rpc::FetchLeavesRequest {
+        openhuman_core::openhuman::memory::tree::retrieval::rpc::FetchLeavesRequest {
             chunk_ids: vec!["missing-1".into(), "missing-2".into()],
         },
     )
@@ -4592,18 +4540,18 @@ async fn memory_query_backend_and_tree_flush_wrappers_cover_public_edges() {
     assert!(leaves.is_empty());
 
     let no_stale =
-        openhuman_core::openhuman::memory_tree::tree::flush::flush_stale_buffers_default(
+        openhuman_core::openhuman::memory::tree::tree::flush::flush_stale_buffers_default(
             &config,
-            &openhuman_core::openhuman::memory_tree::tree::LabelStrategy::Empty,
+            &openhuman_core::openhuman::memory::tree::tree::LabelStrategy::Empty,
         )
         .await
         .expect("flush empty buffers");
     assert_eq!(no_stale, 0);
-    let missing_flush = openhuman_core::openhuman::memory_tree::tree::flush::force_flush_tree(
+    let missing_flush = openhuman_core::openhuman::memory::tree::tree::flush::force_flush_tree(
         &config,
         "tree:missing",
         None,
-        &openhuman_core::openhuman::memory_tree::tree::LabelStrategy::Empty,
+        &openhuman_core::openhuman::memory::tree::tree::LabelStrategy::Empty,
     )
     .await
     .unwrap_err();
@@ -4617,7 +4565,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     config.local_ai.runtime_enabled = false;
 
     let empty_content =
-        openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_ingest(
+        openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_ingest(
             &config, "ops_ns", "   ", None, None,
         )
         .await
@@ -4625,7 +4573,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     assert!(empty_content.contains("content must not be empty"));
 
     let ts = Utc.with_ymd_and_hms(2026, 5, 29, 17, 0, 0).unwrap();
-    let ingest = openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_ingest(
+    let ingest = openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_ingest(
         &config,
         " ops_ns ",
         "buffered raw content for summarizer ops",
@@ -4638,7 +4586,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     assert_eq!(ingest.value["namespace"], "ops_ns");
     assert_eq!(ingest.value["has_metadata"], true);
 
-    let status = openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_status(
+    let status = openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_status(
         &config, "ops_ns",
     )
     .await
@@ -4648,7 +4596,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
 
     let node = tree_node("ops_ns", "root", "Root summary from ops");
     tree_runtime_store::write_node(&config, &node).expect("write ops node");
-    let query = openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_query(
+    let query = openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_query(
         &config, "ops_ns", None,
     )
     .await
@@ -4656,7 +4604,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     assert_eq!(query.value["node"]["node_id"], "root");
     assert!(query.logs[0].contains("queried node 'root'"));
 
-    let missing = openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_query(
+    let missing = openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_query(
         &config,
         "ops_ns",
         Some("2026/05/29/17"),
@@ -4666,7 +4614,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     assert!(missing.contains("node '2026/05/29/17' not found"));
 
     let provider_guard =
-        openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_run(
+        openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_run(
             &config, "ops_ns",
         )
         .await
@@ -4675,7 +4623,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     // local-AI remediation in user-facing prose ("enable local AI ...").
     assert!(provider_guard.contains("local AI"));
     let rebuild_guard =
-        openhuman_core::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_rebuild(
+        openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_rebuild(
             &config, "ops_ns",
         )
         .await
@@ -4689,7 +4637,7 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let _config = Config::load_or_init().await.expect("init isolated config");
-    openhuman_core::openhuman::memory_sources::reconcile::ensure_composio_sources().await;
+    openhuman_core::openhuman::memory::sources::reconcile::ensure_composio_sources().await;
 
     let decoded_default: MemorySourceEntry = serde_json::from_value(json!({
         "id": "src_default",
@@ -4730,17 +4678,15 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
     let patch: registry::MemorySourcePatch = serde_json::from_value(json!({
         "label": "Updated repo",
         "enabled": false,
-        "toolkit": "github",
-        "connection_id": "conn_repo",
-        "path": "/tmp/repo",
-        "glob": "**/*.md",
         "url": "https://github.com/tinyhumansai/openhuman-skills",
         "branch": "main",
         "paths": ["skills", "README.md"],
-        "query": "is:open",
-        "since_days": 14,
-        "max_items": 9,
-        "selector": "main"
+        "max_tokens_per_sync": 1000,
+        "max_cost_per_sync_usd": 0.5,
+        "sync_depth_days": 30,
+        "max_commits": 5,
+        "max_issues": 6,
+        "max_prs": 7
     }))
     .expect("patch");
     let updated = registry::update_source("src_repo", patch)
@@ -4748,26 +4694,25 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
         .expect("update repo source");
     assert_eq!(updated.label, "Updated repo");
     assert!(!updated.enabled);
-    assert_eq!(updated.toolkit.as_deref(), Some("github"));
-    assert_eq!(updated.connection_id.as_deref(), Some("conn_repo"));
-    assert_eq!(updated.path.as_deref(), Some("/tmp/repo"));
-    assert_eq!(updated.glob.as_deref(), Some("**/*.md"));
     assert_eq!(
         updated.url.as_deref(),
         Some("https://github.com/tinyhumansai/openhuman-skills")
     );
     assert_eq!(updated.branch.as_deref(), Some("main"));
     assert_eq!(updated.paths, vec!["skills", "README.md"]);
-    assert_eq!(updated.query.as_deref(), Some("is:open"));
-    assert_eq!(updated.since_days, Some(14));
-    assert_eq!(updated.max_items, Some(9));
-    assert_eq!(updated.selector.as_deref(), Some("main"));
+    assert_eq!(updated.max_tokens_per_sync, Some(1000));
+    assert_eq!(updated.max_cost_per_sync_usd, Some(0.5));
+    assert_eq!(updated.sync_depth_days, Some(30));
+    assert_eq!(updated.max_commits, Some(5));
+    assert_eq!(updated.max_issues, Some(6));
+    assert_eq!(updated.max_prs, Some(7));
 
     let memory = Arc::new(
         MemoryClient::from_workspace_dir(tmp.path().join("memory-sync-state"))
             .expect("memory client"),
     );
-    let fresh = SyncState::load(&memory, "gmail", "conn-raw")
+    let adapter = openhuman_core::openhuman::memory::tinycortex::HostSyncAdapter::new(memory.clone());
+    let fresh = SyncState::load(&adapter, "gmail", "conn-raw")
         .await
         .expect("fresh state");
     assert_eq!(fresh.toolkit, "gmail");
@@ -4778,9 +4723,9 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
     saved.mark_synced("msg-1");
     saved.daily_budget.date = "2000-01-01".into();
     saved.daily_budget.requests_used = DEFAULT_DAILY_REQUEST_LIMIT;
-    saved.save(&memory).await.expect("save state");
+    saved.save(&adapter).await.expect("save state");
 
-    let loaded = SyncState::load(&memory, "gmail", "conn-raw")
+    let loaded = SyncState::load(&adapter, "gmail", "conn-raw")
         .await
         .expect("load saved state");
     assert_eq!(loaded.cursor.as_deref(), Some("cursor-raw"));
@@ -4790,16 +4735,18 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
 
     memory
         .kv_set(
-            Some("composio-sync-state"),
-            "gmail:bad-json",
+            Some(openhuman_core::openhuman::memory::tinycortex::HOST_SYNC_STATE_NAMESPACE),
+            "composio-sync-state:gmail:bad-json",
             &json!("not a sync state"),
         )
         .await
         .expect("write bad state");
-    assert!(SyncState::load(&memory, "gmail", "bad-json")
+    let recovered = SyncState::load(&adapter, "gmail", "bad-json")
         .await
-        .unwrap_err()
-        .contains("deserialize failed"));
+        .expect("malformed state recovers to defaults");
+    assert_eq!(recovered.toolkit, "gmail");
+    assert_eq!(recovered.connection_id, "bad-json");
+    assert!(recovered.cursor.is_none());
 }
 
 #[test]

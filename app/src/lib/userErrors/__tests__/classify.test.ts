@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyUserActionableError, userErrorId } from '../classify';
+import {
+  classifyMemoryPipelineFailure,
+  classifyUserActionableError,
+  userErrorId,
+} from '../classify';
 
 const BUDGET_MSG = 'OpenHuman API error (400): Insufficient budget';
 const CREDITS_MSG = 'OpenRouter: this request requires more credits';
@@ -60,6 +64,50 @@ describe('classifyUserActionableError', () => {
     expect(classifyUserActionableError({ message: 'Incorrect API key provided' })).toBeNull();
   });
 
+  it('classifies an unusable local model runtime (memory user_error kind token)', () => {
+    // Core's memory embedder health gate emits the stable kind token with
+    // error_source=memory (#5354); socketService maps that to the memory scope.
+    const a = classifyUserActionableError({
+      errorType: 'local_model_unavailable',
+      scope: 'memory',
+      sourceDomain: 'memory',
+    });
+    expect(a?.kind).toBe('local_model_unavailable');
+    expect(a?.scope).toBe('memory');
+    expect(a?.action).toBe('open_provider_settings');
+    expect(a?.titleKey).toBe('userErrors.localModelUnavailable.title');
+    expect(a?.bodyKey).toBe('userErrors.localModelUnavailable.body');
+    expect(a?.id).toBe(userErrorId('local_model_unavailable', 'memory', undefined));
+
+    // …and every prose shape the local embedder / health gate / doctor
+    // produce. Both Rust-side shapes are covered so the two classifiers stay
+    // symmetric — daemon-not-listening AND model-never-pulled.
+    for (const msg of [
+      'ollama embed request failed (is Ollama running at http://localhost:11434?)',
+      'Ollama embedding model `bge-m3` is not installed at http://localhost:11434. Run `ollama pull bge-m3`',
+      'Ollama daemon unreachable at http://localhost:11434',
+      'ollama embeddings opted-in but daemon unreachable at http://localhost:11434',
+    ]) {
+      expect(classifyUserActionableError({ message: msg })?.kind).toBe('local_model_unavailable');
+    }
+  });
+
+  it('does NOT promote a bare "daemon unreachable" from another domain', () => {
+    // Backend connection-health logs use this phrase too. Matching it loosely
+    // would tell a user with a flaky backend link to install Ollama. The Rust
+    // matcher anchors on the full producer wording for the same reason.
+    expect(
+      classifyUserActionableError({ message: 'backend daemon unreachable at api.tinyhumans.ai' })
+    ).toBeNull();
+  });
+
+  it('keeps billing remediation for a credits error that also names Ollama', () => {
+    // The local-runtime rule is last on purpose: an out-of-credits provider
+    // must not be told to install Ollama.
+    const a = classifyUserActionableError({ message: 'ollama proxy requires more credits' });
+    expect(a?.kind).toBe('insufficient_credits');
+  });
+
   it('returns null for generic / non-actionable errors and empty input', () => {
     expect(classifyUserActionableError({ message: GENERIC_MSG })).toBeNull();
     expect(classifyUserActionableError({ message: '', errorType: 'inference' })).toBeNull();
@@ -73,5 +121,54 @@ describe('classifyUserActionableError', () => {
     });
     expect(a?.scope).toBe('chat');
     expect(a?.id).toBe(userErrorId('insufficient_credits', 'chat', 'openrouter'));
+  });
+});
+
+// ── #5324: memory pipeline budget exhaustion ────────────────────────────────
+
+describe('classifyMemoryPipelineFailure', () => {
+  it('promotes a budget-exhausted memory pipeline to a user-actionable error', () => {
+    const d = classifyMemoryPipelineFailure('budget_exhausted');
+    expect(d).not.toBeNull();
+    expect(d!.kind).toBe('memory_budget_exhausted');
+    expect(d!.scope).toBe('workspace');
+    expect(d!.sourceDomain).toBe('memory_tree');
+  });
+
+  it('routes the CTA to embeddings settings, not billing', () => {
+    // Adding credits does not fix a memory outage — pointing embeddings at a
+    // local or BYO provider does. Sending the user to billing would be a dead
+    // end.
+    expect(classifyMemoryPipelineFailure('budget_exhausted')!.action).toBe(
+      'open_embeddings_settings'
+    );
+  });
+
+  it('dedupes separately from the chat-scoped budget error', () => {
+    // One exhausted budget can break both chat and memory at once; they need
+    // different fixes, so they must not collapse into one panel entry.
+    const memory = classifyMemoryPipelineFailure('budget_exhausted')!;
+    const chat = classifyUserActionableError({ message: 'Insufficient budget' })!;
+    expect(memory.id).not.toBe(chat.id);
+  });
+
+  it('ignores every other failure code', () => {
+    for (const code of [
+      'auth_missing',
+      'auth_invalid',
+      'embeddings_unconfigured',
+      'embedding_dim_mismatch',
+      'local_model_unavailable',
+      'extraction_timeout',
+      'storage_unavailable',
+      'transient',
+    ]) {
+      expect(classifyMemoryPipelineFailure(code)).toBeNull();
+    }
+  });
+
+  it('is null-safe for an absent cause', () => {
+    expect(classifyMemoryPipelineFailure(null)).toBeNull();
+    expect(classifyMemoryPipelineFailure(undefined)).toBeNull();
   });
 });

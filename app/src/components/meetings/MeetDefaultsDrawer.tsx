@@ -27,7 +27,7 @@ import {
 
 const log = debug('meetings:defaults-drawer');
 
-export interface MeetDefaultsDrawerProps {
+interface MeetDefaultsDrawerProps {
   open: boolean;
   onClose: () => void;
 }

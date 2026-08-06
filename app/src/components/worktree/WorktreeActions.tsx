@@ -19,7 +19,7 @@ import { revealPath } from '../../utils/openUrl';
 
 const log = debug('worktree:actions');
 
-export interface WorktreeActionsProps {
+interface WorktreeActionsProps {
   /** Absolute worktree checkout path. */
   path: string;
   /** Whether the worktree has uncommitted changes. */

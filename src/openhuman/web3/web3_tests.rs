@@ -1,6 +1,6 @@
 use super::store::{self, execute_quote};
 use super::types::{chain_family, ChainFamily, ExecuteQuoteParams, UnsignedTx, Web3QuoteKind};
-use crate::openhuman::wallet::EvmNetwork;
+use crate::openhuman::web3::wallet::EvmNetwork;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 

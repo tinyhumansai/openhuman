@@ -9,7 +9,7 @@
  */
 import type { MascotFace } from '../Ghosty';
 import { faceToPose, toRiveVisemeCode } from '../riveMaps';
-import type { MascotManifestEntry, MascotStateEngine } from './types';
+import type { MascotStateEngine } from './types';
 
 /** Every pose value this mascot's state machine accepts (cycle + logical states). */
 export function availablePoses(engine: MascotStateEngine): Set<string> {
@@ -76,9 +76,4 @@ export function initialChannelValues(engine: MascotStateEngine): Record<string, 
     out[channel.key] = channel.default ?? channel.values[0];
   }
   return out;
-}
-
-/** Convenience: pull a mascot entry's state engine. */
-export function stateEngineOf(entry: MascotManifestEntry): MascotStateEngine {
-  return entry.stateEngine;
 }

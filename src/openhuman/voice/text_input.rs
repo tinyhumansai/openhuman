@@ -12,7 +12,7 @@ use log::{debug, info, warn};
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-use crate::openhuman::accessibility;
+use crate::openhuman::desktop::accessibility;
 use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 

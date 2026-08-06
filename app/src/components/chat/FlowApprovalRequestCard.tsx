@@ -20,7 +20,9 @@ import React, { useState } from 'react';
 import type { FlowApprovalRequest } from '../../hooks/useFlowApprovalRequests';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type ApprovalDecision, decideApproval } from '../../services/api/approvalApi';
-import Button from '../ui/Button';
+import ApprovalDecisionCard, {
+  type ApprovalDecisionAction,
+} from '../approvals/ApprovalDecisionCard';
 
 const log = debug('openhuman:chat:flow-approval-card');
 
@@ -33,6 +35,33 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
   const { t } = useT();
   const [deciding, setDeciding] = useState<ApprovalDecision | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const actionDecisions: Record<string, ApprovalDecision> = {
+    'flow-approval-request-approve': 'approve_once',
+    'flow-approval-request-always': 'approve_always_for_flow',
+    'flow-approval-request-deny': 'deny',
+  };
+  const actions: ApprovalDecisionAction[] = [
+    {
+      id: 'flow-approval-request-approve',
+      label: t('chat.flowApproval.approve'),
+      busyLabel: t('chat.flowApproval.deciding'),
+      variant: 'primary',
+    },
+    {
+      id: 'flow-approval-request-always',
+      label: t('chat.flowApproval.approveAlways'),
+      busyLabel: t('chat.flowApproval.deciding'),
+      variant: 'secondary',
+      title: t('chat.flowApproval.approveAlwaysHint'),
+    },
+    {
+      id: 'flow-approval-request-deny',
+      label: t('chat.flowApproval.deny'),
+      busyLabel: t('chat.flowApproval.deciding'),
+      variant: 'secondary',
+    },
+  ];
 
   const decide = async (decision: ApprovalDecision) => {
     if (deciding) return;
@@ -49,23 +78,27 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
     }
   };
 
+  const busyActionId = deciding
+    ? actions.find(action => actionDecisions[action.id] === deciding)?.id
+    : null;
+
   return (
-    <div
-      role="alertdialog"
-      aria-label={t('chat.flowApproval.title')}
-      data-testid="flow-approval-request-card"
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-700 dark:bg-amber-950">
-      <div className="flex items-start gap-2">
-        <span aria-hidden className="text-base leading-none text-amber-700 dark:text-amber-200">
-          🔒
-        </span>
-        <div className="min-w-0 flex-1">
+    <ApprovalDecisionCard
+      ariaLabel={t('chat.flowApproval.title')}
+      testId="flow-approval-request-card"
+      className="text-sm"
+      summary={
+        <>
           <p className="font-semibold text-amber-900 dark:text-amber-100">
             {t('chat.flowApproval.title')}
           </p>
           <p className="mt-1 break-words text-amber-800/90 dark:text-amber-200/90">
             {request.summary || t('chat.flowApproval.fallback')}
           </p>
+        </>
+      }
+      metadata={
+        <>
           <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
             {t('chat.flowApproval.tool')}{' '}
             <span className="font-mono text-amber-950 dark:text-amber-100">
@@ -78,42 +111,14 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
           </p>
 
           {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button
-              variant="primary"
-              size="sm"
-              data-testid="flow-approval-request-approve"
-              onClick={() => void decide('approve_once')}
-              disabled={deciding !== null}>
-              {deciding === 'approve_once'
-                ? t('chat.flowApproval.deciding')
-                : t('chat.flowApproval.approve')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid="flow-approval-request-always"
-              onClick={() => void decide('approve_always_for_flow')}
-              disabled={deciding !== null}
-              title={t('chat.flowApproval.approveAlwaysHint')}>
-              {deciding === 'approve_always_for_flow'
-                ? t('chat.flowApproval.deciding')
-                : t('chat.flowApproval.approveAlways')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid="flow-approval-request-deny"
-              onClick={() => void decide('deny')}
-              disabled={deciding !== null}>
-              {deciding === 'deny' ? t('chat.flowApproval.deciding') : t('chat.flowApproval.deny')}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+      actions={actions}
+      busyActionId={busyActionId}
+      onAction={actionId => {
+        const decision = actionDecisions[actionId];
+        if (decision) void decide(decision);
+      }}
+    />
   );
 };
-
-export default FlowApprovalRequestCard;

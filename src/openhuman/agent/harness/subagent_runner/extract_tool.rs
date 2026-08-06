@@ -32,8 +32,8 @@ use super::handoff::{chunk_content, ResultHandoffCache, HANDOFF_MAX_ENTRIES};
 use crate::openhuman::agent::harness::session::transcript::{
     resolve_keyed_transcript_path, write_transcript, MessageUsage, TranscriptMeta, TurnUsage,
 };
-use crate::openhuman::inference::provider::ChatMessage;
-use crate::openhuman::tinyagents::TurnModelSource;
+use crate::openhuman::agent::messages::ChatMessage;
+use crate::openhuman::agent::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolResult};
 use tinyagents::harness::message::Message;
 use tinyagents::harness::model::ModelRequest;
@@ -285,7 +285,7 @@ impl Tool for ExtractFromResultTool {
         // carries the messages.
         let chat = self
             .source
-            .build_summarizer(&self.model, EXTRACT_TEMPERATURE);
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?;
         // Model id for the per-chunk transcript metadata (the chat call itself
         // bakes it into `chat`).
         let model = self.model.clone();
@@ -415,7 +415,7 @@ impl ExtractFromResultTool {
         let call_seq = self.next_call_seq();
         let provider_result = self
             .source
-            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?
             .invoke(
                 &(),
                 ModelRequest::new(vec![
@@ -571,7 +571,7 @@ fn write_extract_transcript(
         output_tokens: 0,
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
-        thread_id: crate::openhuman::inference::provider::thread_context::current_thread_id(),
+        thread_id: crate::openhuman::agent::tinyagents::thread_context::current_thread_id(),
         task_id: None,
     };
 

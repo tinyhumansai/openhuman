@@ -2,6 +2,7 @@ import debugFactory from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
 import Button from '../components/ui/Button';
+import { useClipboardFeedback } from '../hooks/useClipboardFeedback';
 import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
 import { inviteApi } from '../services/api/inviteApi';
@@ -13,15 +14,9 @@ type RedeemStatus = 'idle' | 'loading' | 'success' | 'error';
 
 const CodeRow = ({ invite }: { invite: InviteCode }) => {
   const { t } = useT();
-  const [copied, setCopied] = useState(false);
+  const clipboard = useClipboardFeedback();
   const claimed = invite.currentUses >= invite.maxUses;
   const claimedUser = invite.usageHistory[0]?.userId;
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(invite.code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const displayName = claimedUser?.username
     ? `@${claimedUser.username}`
@@ -51,10 +46,10 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
           iconOnly
           variant="tertiary"
           size="sm"
-          onClick={handleCopy}
+          onClick={() => void clipboard.copy(invite.code)}
           aria-label={t('common.copy')}
           title={t('common.copy')}>
-          {copied ? (
+          {clipboard.status === 'copied' ? (
             <svg
               className="w-4 h-4 text-sage-500"
               fill="none"

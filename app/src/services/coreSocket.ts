@@ -14,7 +14,7 @@ import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket
 
 import { getCoreRpcToken } from './coreRpcClient';
 
-export interface CoreSocketOptions {
+interface CoreSocketOptions {
   /**
    * Per-process core bearer (from `getCoreRpcToken()`). When `null` the
    * factory passes an empty string — the server will reject the
@@ -50,7 +50,7 @@ export function createCoreSocket(baseUrl: string, opts: CoreSocketOptions): Sock
   return io(baseUrl, { ...DEFAULT_OPTIONS, ...(opts.overrides ?? {}), auth });
 }
 
-export interface ConnectCoreSocketOptions {
+interface ConnectCoreSocketOptions {
   /** Resolves the Socket.IO base URL (no trailing `/rpc`). */
   getBaseUrl: () => Promise<string>;
   /**

@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::openhuman::threads::turn_state::types::{
-    ToolTimelineEntry, ToolTimelineStatus, TurnLifecycle, TurnState,
+    SubagentActivity, SubagentToolCall, SubagentTranscriptItem, ToolTimelineEntry,
+    ToolTimelineStatus, TurnLifecycle, TurnState,
 };
 use tempfile::tempdir;
 
@@ -44,11 +45,113 @@ fn put_then_get_roundtrips_state() {
         subagent: None,
         failure: None,
         output: None,
+        seq: Some(0),
     });
 
     store.put(&state).expect("put");
     let loaded = store.get("thread-abc").expect("get").expect("present");
     assert_eq!(loaded, state);
+}
+
+#[test]
+fn roundtrips_subagent_interleaved_transcript_with_full_fidelity() {
+    // A settled turn whose subagent streamed reasoning, called a tool, then
+    // narrated — the interleaved transcript (not just the flat tool rows) plus
+    // the per-row `seq` ordering keys must survive a disk round-trip verbatim,
+    // so a reopened transcript rehydrates without losing the subagent's
+    // reasoning (the gap SubagentDrawer/chatRuntimeSlice documented).
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut state = sample_state("thread-sub");
+    state.lifecycle = TurnLifecycle::Completed;
+
+    let activity = SubagentActivity {
+        task_id: "sub-1".into(),
+        agent_id: "researcher".into(),
+        status: Some("completed".into()),
+        mode: Some("typed".into()),
+        dedicated_thread: Some(false),
+        child_iteration: Some(1),
+        child_max_iterations: Some(8),
+        iterations: Some(2),
+        elapsed_ms: Some(1234),
+        output_chars: Some(42),
+        worker_thread_id: Some("worker-thread-9".into()),
+        tool_calls: vec![SubagentToolCall {
+            call_id: "c1".into(),
+            tool_name: "search".into(),
+            status: ToolTimelineStatus::Success,
+            iteration: Some(1),
+            elapsed_ms: Some(12),
+            output_chars: Some(6),
+            display_name: Some("Searching".into()),
+            detail: None,
+            failure: None,
+            output: Some("3 hits".into()),
+        }],
+        transcript: vec![
+            SubagentTranscriptItem::Thinking {
+                iteration: Some(1),
+                text: "let me search.".into(),
+            },
+            SubagentTranscriptItem::Tool {
+                iteration: Some(1),
+                call_id: "c1".into(),
+                tool_name: "search".into(),
+                status: ToolTimelineStatus::Success,
+                elapsed_ms: Some(12),
+                output_chars: Some(6),
+                display_name: Some("Searching".into()),
+                detail: None,
+            },
+            SubagentTranscriptItem::Text {
+                iteration: Some(1),
+                text: "Found it.".into(),
+            },
+        ],
+    };
+
+    state.tool_timeline.push(ToolTimelineEntry {
+        id: "subagent:sub-1".into(),
+        name: "subagent:researcher".into(),
+        round: 1,
+        status: ToolTimelineStatus::Success,
+        args_buffer: None,
+        display_name: Some("Researcher".into()),
+        detail: None,
+        source_tool_name: Some("spawn_subagent".into()),
+        subagent: Some(activity),
+        failure: None,
+        output: None,
+        seq: Some(3),
+    });
+
+    store.put(&state).expect("put");
+    let loaded = store.get("thread-sub").expect("get").expect("present");
+    // Structural equality proves nothing in the interleaved transcript,
+    // subagent activity, or the `seq` ordering keys was dropped or reordered.
+    assert_eq!(loaded, state);
+
+    // Spot-check the interleaving explicitly so a future regression that keeps
+    // the fields but loses the ordering still fails here.
+    let activity = loaded.tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("subagent activity restored");
+    assert_eq!(activity.transcript.len(), 3);
+    assert!(matches!(
+        activity.transcript[0],
+        SubagentTranscriptItem::Thinking { .. }
+    ));
+    assert!(matches!(
+        activity.transcript[1],
+        SubagentTranscriptItem::Tool { .. }
+    ));
+    assert!(matches!(
+        activity.transcript[2],
+        SubagentTranscriptItem::Text { .. }
+    ));
+    assert_eq!(loaded.tool_timeline[0].seq, Some(3));
 }
 
 #[test]

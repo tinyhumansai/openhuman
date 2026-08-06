@@ -114,12 +114,12 @@ fn run_tick(args: &[String]) -> Result<()> {
         let _ = crate::openhuman::memory::global::init(config.workspace_dir.clone());
 
         // Init scheduler gate so is_signed_out() works
-        crate::openhuman::scheduler_gate::init_global(&config);
+        crate::openhuman::cron::scheduler_gate::init_global(&config);
 
         // Seed signed_out from session token
         match crate::api::jwt::get_session_token(&config) {
             Ok(Some(_)) => {
-                crate::openhuman::scheduler_gate::set_signed_out(false);
+                crate::openhuman::cron::scheduler_gate::set_signed_out(false);
                 eprintln!("[subconscious] session token found — provider available");
             }
             Ok(None) => {

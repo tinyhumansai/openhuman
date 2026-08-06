@@ -16,13 +16,13 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use openhuman_core::openhuman::learning::cache::{class_prefix, FacetCache};
-use openhuman_core::openhuman::learning::candidate::{
+use openhuman_core::openhuman::agent::learning::cache::{class_prefix, FacetCache};
+use openhuman_core::openhuman::agent::learning::candidate::{
     self as candidate, CueFamily, EvidenceRef, FacetClass, LearningCandidate,
 };
-use openhuman_core::openhuman::learning::profile_md_renderer::ProfileMdRenderer;
-use openhuman_core::openhuman::learning::stability_detector::StabilityDetector;
-use openhuman_core::openhuman::memory_store::profile::{
+use openhuman_core::openhuman::agent::learning::profile_md_renderer::ProfileMdRenderer;
+use openhuman_core::openhuman::agent::learning::stability_detector::StabilityDetector;
+use openhuman_core::openhuman::memory::store::profile::{
     FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
 };
 use parking_lot::Mutex;

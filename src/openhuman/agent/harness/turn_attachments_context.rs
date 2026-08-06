@@ -8,7 +8,7 @@
 //! vision sub-agent via `analyze_image`, the sub-agent only receives the
 //! orchestrator's text task — not the conversation history. This task-local
 //! surfaces the current user message's placeholders to
-//! [`crate::openhuman::agent_orchestration::tools::dispatch`], which prepends
+//! [`crate::openhuman::agent::orchestration::tools::dispatch`], which prepends
 //! them to the sub-agent prompt so the (vision-capable) sub-agent's turn
 //! rehydrates the image from the on-disk sidecar.
 //!

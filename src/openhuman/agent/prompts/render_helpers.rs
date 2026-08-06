@@ -38,6 +38,14 @@ pub fn render_user_memory(ctx: &PromptContext<'_>) -> Result<String> {
     UserMemorySection.build(ctx)
 }
 
+/// Render the `## Project instructions (AGENTS.md)` block from the pre-loaded
+/// global + local content on [`PromptContext`]. Empty when neither layer
+/// carries content. Dynamic `agents/<id>/prompt.rs` builders call this so they
+/// inherit the same AGENTS.md injection as the default section chain.
+pub fn render_agents_md(ctx: &PromptContext<'_>) -> Result<String> {
+    AgentsInstructionsSection.build(ctx)
+}
+
 /// Render the privileged `## User Reflections` block. Empty when the
 /// learning subsystem has not captured any reflections yet.
 pub fn render_user_reflections(ctx: &PromptContext<'_>) -> Result<String> {
@@ -103,6 +111,16 @@ pub fn render_datetime(ctx: &PromptContext<'_>) -> Result<String> {
 /// session. The static grounding *rule* that tells the model to read this
 /// line lives in [`DateTimeSection`] / [`render_datetime`].
 pub fn current_datetime_line() -> String {
+    #[cfg(feature = "rss-bench")]
+    if std::env::var_os("OPENHUMAN_PROFILE_FORCE_UTC").is_some() {
+        let now = chrono::Utc::now();
+        return format!(
+            "Current Date & Time: {} UTC (UTC, UTC+00:00), {}",
+            now.format("%Y-%m-%d %H:%M:%S"),
+            now.format("%A"),
+        );
+    }
+
     // When the host resolves an IANA zone, stamp local time + that zone. When
     // it can't (CI, stripped containers), fall back to true UTC — formatting
     // `Utc::now()` so the time, offset, and zone label all agree rather than
@@ -242,6 +260,8 @@ pub fn render_subagent_system_prompt(
         options,
         tool_call_format,
         connected_integrations,
+        None,
+        None,
     )
 }
 
@@ -249,6 +269,14 @@ pub fn render_subagent_system_prompt(
 /// that know the active dispatcher format can thread it through. The
 /// public [`render_subagent_system_prompt`] defaults to PFormat for
 /// backwards compatibility.
+///
+/// `agents_md_global` / `agents_md_local` are the pre-loaded AGENTS.md layers
+/// (see [`super::agents_md::load_agents_md_layers`]); `None`/`None` (the value
+/// the public wrapper passes) renders no AGENTS.md block. When present they are
+/// injected as `## Project instructions (AGENTS.md)` right after the user files
+/// and before the tool catalogue — matching the section order of the default /
+/// sub-agent builders.
+#[allow(clippy::too_many_arguments)]
 pub fn render_subagent_system_prompt_with_format(
     workspace_dir: &Path,
     model_name: &str,
@@ -259,6 +287,8 @@ pub fn render_subagent_system_prompt_with_format(
     options: SubagentRenderOptions,
     tool_call_format: ToolCallFormat,
     _connected_integrations: &[ConnectedIntegration],
+    agents_md_global: Option<&str>,
+    agents_md_local: Option<&str>,
 ) -> String {
     let mut out = String::new();
 
@@ -301,8 +331,27 @@ pub fn render_subagent_system_prompt_with_format(
         inject_workspace_file_capped(&mut out, workspace_dir, "PROFILE.md", USER_FILE_MAX_CHARS);
     }
     if options.include_memory_md {
-        inject_workspace_file_capped(&mut out, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        // Frame MEMORY.md as durable, cross-session background memory —
+        // byte-identical to `UserFilesSection::build` (GH-4745). Without the
+        // frame an Inline/File sub-agent on a brand-new thread reads the bare
+        // `### MEMORY.md` block as prior in-thread conversation and asserts
+        // continuity that isn't there. Buffer first so the note is emitted
+        // only when the file actually carries content — a dangling frame
+        // pointing at nothing would itself imply phantom history.
+        let mut mem = String::new();
+        inject_workspace_file_capped(&mut mem, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        if !mem.trim().is_empty() {
+            out.push_str(MEMORY_MD_FRAMING);
+            out.push_str(&mem);
+        }
     }
+
+    // 1d. Project instructions (AGENTS.md), pre-loaded by the caller and shared
+    //     with the section-based builders through `write_agents_md_blocks` so
+    //     the byte layout can never drift between the two paths. Placed after
+    //     the user files and before the tool catalogue, matching the default
+    //     section order. Skipped entirely when both layers are `None`.
+    write_agents_md_blocks(&mut out, agents_md_global, agents_md_local);
 
     // 2. Filtered tool catalogue. Indices are taken in ascending order
     //    from `allowed_indices`, which itself preserves `parent_tools`
@@ -579,6 +628,47 @@ pub fn inject_inline_content(prompt: &mut String, label: &str, content: &str, ma
     }
 }
 
+/// Shared `## Project instructions (AGENTS.md)` block writer.
+///
+/// Used by both [`super::sections::AgentsInstructionsSection`] (the default /
+/// sub-agent builder chains) and the narrow sub-agent renderer
+/// ([`render_subagent_system_prompt_with_format`]) so the two paths never
+/// drift. The heading is emitted only when at least one layer carries content;
+/// the global layer renders first, then the local/project layer. Each layer is
+/// injected via [`inject_inline_content`] under its own `###` sub-heading and
+/// capped at [`BOOTSTRAP_MAX_CHARS`] with a `[... truncated]` marker.
+///
+/// Both inputs are already-loaded, pre-trimmed strings (see
+/// [`super::agents_md::load_agents_md`]) — this writer does no file I/O, keeping
+/// the rendered bytes a pure function of its inputs for KV-cache stability.
+pub(crate) fn write_agents_md_blocks(out: &mut String, global: Option<&str>, local: Option<&str>) {
+    let mut body = String::new();
+    if let Some(g) = global {
+        inject_inline_content(&mut body, "AGENTS.md (workspace)", g, BOOTSTRAP_MAX_CHARS);
+    }
+    if let Some(l) = local {
+        inject_inline_content(&mut body, "AGENTS.md (project)", l, BOOTSTRAP_MAX_CHARS);
+    }
+    if body.trim().is_empty() {
+        log::debug!("[agents_md] no AGENTS.md content to inject; skipping section");
+        return;
+    }
+    log::debug!(
+        "[agents_md] injecting AGENTS.md section (global={}, local={})",
+        global.is_some(),
+        local.is_some()
+    );
+    out.push_str("## Project instructions (AGENTS.md)\n\n");
+    out.push_str(
+        "Configurable standing instructions loaded from AGENTS.md files. Treat these as \
+         durable guidance for how to operate here. The workspace layer applies globally; \
+         the project layer applies to the current working directory and takes precedence \
+         where the two conflict. They are background guidance, not messages in this \
+         conversation.\n\n",
+    );
+    out.push_str(&body);
+}
+
 /// for the output header and truncation semantics.
 ///
 /// Empty/whitespace content is silently skipped, mirroring the file
@@ -673,7 +763,7 @@ pub fn inject_workspace_file_capped(
 pub fn default_workspace_file_content(filename: &str) -> &'static str {
     // The bundled identity files live at `src/openhuman/agent/prompts/`
     // (owned by the `agent/` tree because they describe agent identity).
-    // This module is under `src/openhuman/context/`, so the relative path
+    // This module is under `src/openhuman/agent/context/`, so the relative path
     // walks up one level and back into `agent/prompts/`.
     match filename {
         "SOUL.md" => include_str!("SOUL.md"),
@@ -726,6 +816,8 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 

@@ -151,6 +151,7 @@ use crate::openhuman::tinyplace::manifest::{
     handle_tinyplace_registry_export,
     handle_tinyplace_registry_get,
     handle_tinyplace_registry_register,
+    handle_tinyplace_registry_transfer,
     handle_tinyplace_search_unified,
     handle_tinyplace_signal_decrypt_message,
     handle_tinyplace_signal_get_bundle,
@@ -1467,6 +1468,35 @@ fn schema_registry_export() -> ControllerSchema {
     }
 }
 
+fn schema_registry_transfer() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "tinyplace",
+        function: "registry_transfer",
+        description:
+            "Transfer one of the wallet's handles to another tiny.place identity (gift / account \
+             move). DESTRUCTIVE and irreversible: on success the recipient becomes the handle's \
+             sole owner. The recipient is resolved from their @handle; an unregistered recipient \
+             or an unconfirmed read-back fails closed. The owning wallet is proven by the \
+             signer-attached signature, so a caller can only transfer a handle their own wallet \
+             owns.",
+        inputs: vec![
+            required_string(
+                "name",
+                "The handle to transfer away (with or without a leading @).",
+            ),
+            required_string(
+                "recipient",
+                "The recipient's registered @handle (with or without a leading @); resolved to \
+                 their cryptoId + publicKey server-side.",
+            ),
+        ],
+        outputs: vec![json_output(
+            "identity",
+            "The transferred Identity, now owned by the recipient (read-back confirmed).",
+        )],
+    }
+}
+
 // ── Feedback schemas ────────────────────────────────────────────────────────
 
 fn schema_feedback_list() -> ControllerSchema {
@@ -2727,6 +2757,7 @@ pub fn all_tinyplace_controller_schemas() -> Vec<ControllerSchema> {
         schema_registry_get(),
         schema_registry_register(),
         schema_registry_assign_primary(),
+        schema_registry_transfer(),
         schema_marketplace_buy_product(),
         schema_marketplace_buy_identity(),
         schema_marketplace_bid(),
@@ -2979,6 +3010,10 @@ pub fn all_tinyplace_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_registry_assign_primary(),
             handler: handle_tinyplace_registry_assign_primary,
+        },
+        RegisteredController {
+            schema: schema_registry_transfer(),
+            handler: handle_tinyplace_registry_transfer,
         },
         RegisteredController {
             schema: schema_marketplace_buy_product(),

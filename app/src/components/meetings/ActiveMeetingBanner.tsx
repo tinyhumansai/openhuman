@@ -41,7 +41,7 @@ type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: stri
  */
 export const LEAVE_SAFETY_TIMEOUT_MS = 10_000;
 
-export interface ActiveMeetingBannerProps {
+interface ActiveMeetingBannerProps {
   onToast?: (toast: Toast) => void;
 }
 

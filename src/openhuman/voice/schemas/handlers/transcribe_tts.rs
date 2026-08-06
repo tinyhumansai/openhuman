@@ -20,6 +20,15 @@ pub(crate) fn handle_voice_status(_params: Map<String, Value>) -> ControllerFutu
     })
 }
 
+/// Mint a realtime voice-agent signed WebSocket URL (#5399). Takes no params —
+/// the agent is server-configured; the desktop only asks for a fresh signed URL.
+pub(crate) fn handle_voice_agent_signed_url(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::voice::realtime::mint_voice_agent_signed_url(&config).await?)
+    })
+}
+
 pub(crate) fn handle_voice_transcribe(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;

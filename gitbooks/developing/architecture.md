@@ -16,7 +16,7 @@ OpenHuman is a cross-platform communication and automation platform purpose-buil
 | Path                    | Contents                                                                                                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **`app/`**              | pnpm workspace **`openhuman-app`**: Vite/React UI (`app/src/`), Tauri shell (`app/src-tauri/`), Vitest tests                                                       |
-| **Repo root `src/`**    | Rust **`openhuman_core`** library + **`openhuman-core`** CLI binary - core server, JSON-RPC, first-class JavaScript runtime (`src/openhuman/javascript/`) backed by a managed Node.js implementation, channels, memory, etc. |
+| **Repo root `src/`**    | Rust **`openhuman_core`** library + **`openhuman-core`** CLI binary - core server, JSON-RPC, first-class JavaScript runtime (`src/openhuman/runtime/javascript/`) backed by a managed Node.js implementation, channels, memory, etc. |
 | **`Cargo.toml`** (root) | Builds the `openhuman-core` binary (`cargo build --bin openhuman-core`) staged into `app/src-tauri/binaries/` for the desktop bundle                                 |
 | **`src/openhuman/skills/`** | **Metadata-only** skill helpers (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`, `schemas`, `types`). The legacy QuickJS / `rquickjs` skill execution runtime was removed; skills now contribute metadata + tool descriptors that get injected into agent prompts, while tool execution flows through native Rust handlers and Node-backed helpers via `runtime_node`. |
 | **`docs/`**             | This book + per-tree guides (`docs/src/`, `docs/src-tauri/`)                                                                                                       |
@@ -145,8 +145,8 @@ Responsibilities are split across three domains:
 | Domain                            | Role |
 | --------------------------------- | ---- |
 | `src/openhuman/skills/`           | Skill metadata: create/discover/install/parse `SKILL.md`, inject descriptors into agent prompts (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`). |
-| `src/openhuman/skill_registry/`   | Registry of installed skills. |
-| `src/openhuman/skill_runtime/`    | Execution of installed `SKILL.md` workflows: starts/cancels runs, reads run metadata/logs, resolves language runtimes, hosts the built-in `skill_executor` agent. |
+| `src/openhuman/skills/catalog/`   | Registry of installed skills. |
+| `src/openhuman/skills/runtime/`    | Execution of installed `SKILL.md` workflows: starts/cancels runs, reads run metadata/logs, resolves language runtimes, hosts the built-in `skill_executor` agent. |
 
 **Skill discovery** uses `SKILL.md` plus optional bundled resources:
 
@@ -240,7 +240,7 @@ Memory encryption keys derive from user credentials via Argon2id, ensuring memor
 - **Auth handoff**: Web-to-desktop authentication uses single-use login tokens with 5-minute TTL, exchanged via Rust HTTP client (bypasses CORS)
 - **Network TLS**: All WebSocket and HTTP connections use rustls, no dependency on platform OpenSSL
 - **State management**: Sensitive data lives in Redux (memory) and OS keychain (persistent). No localStorage for credentials or tokens
-- **Prompt injection guard**: User prompts are normalized/scored and enforced server-side (`allow | review | block`) before model/tool execution. See `src/openhuman/prompt_injection/`
+- **Prompt injection guard**: User prompts are normalized/scored and enforced server-side (`allow | review | block`) before model/tool execution. See `src/openhuman/security/prompt_injection/`
 
 ---
 
@@ -291,12 +291,12 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 
 ## Vendored crate family & recent shifts
 
-Core subsystems are being re-platformed onto published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinycortex`, `tinychannels`, `tinyjuice`, `tinyplace`) so crate changes can be tested in-tree before publishing. The major ongoing shifts:
+Core subsystems run on published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinycortex`, `tinychannels`, `tinyjuice`, `tinyplace`) so crate changes can be tested in-tree before publishing. The major ownership boundaries are:
 
-- **Agent engine on tinyagents** — every agent turn runs through the `tinyagents` crate harness via the seam in `src/openhuman/tinyagents/`; see [Agent Harness](architecture/agent-harness.md).
-- **Memory on tinycortex** — memory modules (`memory_diff`, `memory_conversations`, `memory_queue`, …) are being deleted or shimmed onto the `tinycortex` crate engine (W7 migration; #4785–#4788).
+- **Agent engine on tinyagents** — every agent turn runs through the `tinyagents` crate harness via the seam in `src/openhuman/agent/tinyagents/`; see [Agent Harness](architecture/agent-harness.md).
+- **Memory on tinycortex** — the generic store/tree/queue/retrieval/sync engine is crate-owned. OpenHuman keeps RPC, tools, scheduling, credentials, security/event policy, worker orchestration, and the host namespace-document store; `src/openhuman/memory/tinycortex/` implements those seams. Concrete embedding transports are shared through `tinyagents::harness::embeddings`.
 - **Inference on the crate ModelRouter** — host workload-tier model routing and cloud provider slugs now use the crate-native `ModelRouter`/`OpenAiModel` (#4782, #4783).
-- **Hosted-only brain** — the client-local orchestration graph engine (`src/openhuman/orchestration/graph/`) was retired (#4738); the client is a thin hosted-brain participant (pushers, effect/tool executors, wire allowlist — #4725) surfaced in the `/orchestration` and `/brain/tinyplace-orchestration` routes.
+- **Hosted-only brain** — the client-local orchestration graph engine (`src/openhuman/hosted/orchestration/graph/`) was retired (#4738); the client is a thin hosted-brain participant (pushers, effect/tool executors, wire allowlist — #4725) surfaced in the `/orchestration` and `/brain/tinyplace-orchestration` routes.
 
 ---
 
@@ -355,7 +355,7 @@ Transport is selected by `ConnectionProfile` stored in secure storage. On pairin
 
 | Path | Purpose |
 | --- | --- |
-| `src/openhuman/devices/` | Rust devices domain (pairing, store, crypto, event bus) |
+| `src/openhuman/security/devices/` | Rust devices domain (pairing, store, crypto, event bus) |
 | `app/src/services/transport/` | TS transport strategies + manager |
 | `app/src/lib/tunnel/` | TS tunnel crypto (X25519 + XChaCha20-Poly1305) |
 | `app/src/pages/ios/` | iOS-specific screens (PairScreen, MascotScreen) |

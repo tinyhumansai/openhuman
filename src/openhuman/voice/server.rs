@@ -9,14 +9,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-#[cfg(target_os = "macos")]
-use crate::openhuman::accessibility;
 use crate::openhuman::config::Config;
+#[cfg(target_os = "macos")]
+use crate::openhuman::desktop::accessibility;
 
 use super::audio_capture::{self, RecordingHandle};
 use super::hotkey::{self, ActivationMode, HotkeyEvent};
@@ -394,7 +394,7 @@ impl VoiceServer {
                             deferred_stop_deadline = None;
                             pending_expected_app = None;
                             pending_generation = None;
-                            error!("{LOG_PREFIX} failed to start recording: {e}");
+                            warn!("{LOG_PREFIX} failed to start recording: {e}");
                             *self.state.lock().await = ServerState::Idle;
                             *self.last_error.lock().await = Some(e);
                         }
@@ -403,7 +403,7 @@ impl VoiceServer {
                             deferred_stop_deadline = None;
                             pending_expected_app = None;
                             pending_generation = None;
-                            error!("{LOG_PREFIX} recording setup task dropped");
+                            warn!("{LOG_PREFIX} recording setup task dropped");
                             *self.state.lock().await = ServerState::Idle;
                         }
                     }
@@ -566,6 +566,10 @@ fn start_hotkey_listener(
     // Non-macOS: rdev-based listener for all keys.
     #[cfg(not(target_os = "macos"))]
     {
+        // `server_cancel` is only consumed by the macOS Swift-globe listener
+        // branch above; the rdev listener manages its own lifecycle, so bind it
+        // here to keep the shared signature warning-free on non-macOS.
+        let _ = server_cancel;
         let combo = hotkey::parse_hotkey(hotkey_str)?;
         let (handle, rx) = hotkey::start_listener(combo, mode)?;
         Ok((HotkeyListenerKind::Rdev(handle), rx))
@@ -585,7 +589,7 @@ fn start_globe_hotkey_listener(
     ),
     String,
 > {
-    use crate::openhuman::accessibility::{globe_listener_poll, globe_listener_start};
+    use crate::openhuman::desktop::accessibility::{globe_listener_poll, globe_listener_start};
 
     info!("{LOG_PREFIX} hotkey is Fn on macOS — using Swift globe listener instead of rdev");
 
@@ -904,7 +908,7 @@ async fn process_recording_bg(
                         } else {
                             let insert_started = Instant::now();
                             if let Err(e) = text_input::insert_text(text, expected_app.as_deref()) {
-                                error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_paste FAILED: {e}");
+                                warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_paste FAILED: {e}");
                                 *last_error.lock().await = Some(e);
                             } else {
                                 let insert_elapsed = insert_started.elapsed();
@@ -921,13 +925,20 @@ async fn process_recording_bg(
                     }
                 }
                 Err(e) => {
-                    error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcribe FAILED: {e}");
+                    // Windows DLL-not-found errors are classified at the
+                    // subprocess layer and logged with a 5-minute backoff.
+                    // Demote to warn! so they don't flood Sentry (issue #5168).
+                    if e.contains("STATUS_DLL_NOT_FOUND") {
+                        warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcribe DLL_UNAVAILABLE: {e}");
+                    } else {
+                        warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcribe FAILED: {e}");
+                    }
                     *last_error.lock().await = Some(e);
                 }
             }
         }
         Err(e) => {
-            error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=stop_recording FAILED: {e}");
+            warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=stop_recording FAILED: {e}");
             *last_error.lock().await = Some(e);
         }
     }
@@ -1031,7 +1042,7 @@ pub async fn start_if_enabled(app_config: &Config) {
     let server_for_err = server.clone();
     tokio::spawn(async move {
         if let Err(e) = server.run(&config_for_run).await {
-            error!("{LOG_PREFIX} embedded voice server exited with error: {e}");
+            warn!("{LOG_PREFIX} embedded voice server exited with error: {e}");
             server_for_err.set_last_error(&e).await;
         }
     });

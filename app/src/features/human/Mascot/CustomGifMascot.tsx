@@ -1,6 +1,6 @@
 import type { MascotFace } from './Ghosty';
 
-export interface CustomGifMascotProps {
+interface CustomGifMascotProps {
   src: string;
   face?: MascotFace;
 }

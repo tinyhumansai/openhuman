@@ -1,29 +1,9 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::local::ollama::{
-    ns_to_tps, ollama_base_url, ollama_base_url_from_config, redact_ollama_base_url,
-    OllamaGenerateOptions, OllamaGenerateRequest,
-};
-use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
 use crate::openhuman::inference::model_ids;
 use crate::openhuman::inference::parse::sanitize_inline_completion;
+use tinyagents::harness::message::Message;
 
 use super::LocalAiService;
-
-fn external_ollama_request_error_with_url(
-    prefix: &str,
-    error: &reqwest::Error,
-    base_url: &str,
-) -> String {
-    let safe_base_url = redact_ollama_base_url(base_url);
-    format!(
-        "{prefix}: OpenHuman routes inference through an external Ollama endpoint. \
-         Make sure Ollama is already running and reachable at {safe_base_url} ({error})"
-    )
-}
-
-fn external_ollama_request_error(prefix: &str, error: &reqwest::Error) -> String {
-    external_ollama_request_error_with_url(prefix, error, &ollama_base_url())
-}
 
 impl LocalAiService {
     pub async fn summarize(
@@ -271,134 +251,49 @@ impl LocalAiService {
         }
 
         let _gate_permit = if gated {
-            crate::openhuman::scheduler_gate::wait_for_capacity().await
+            crate::openhuman::cron::scheduler_gate::wait_for_capacity().await
         } else {
             None
         };
 
-        if provider_from_config(config) == LocalAiProvider::LmStudio {
-            let started = std::time::Instant::now();
-            let lm_messages = messages
-                .into_iter()
-                .map(
-                    |message| crate::openhuman::inference::local::lm_studio::LmStudioChatMessage {
-                        role: message.role,
-                        content: message.content,
-                    },
-                )
-                .collect();
-            let outcome = self
-                .lm_studio_chat_completion(
-                    config,
-                    lm_messages,
-                    max_tokens,
-                    config.default_temperature as f32,
-                    false,
-                )
-                .await?;
-            let elapsed_ms = started.elapsed().as_millis() as u64;
-            {
-                let mut status = self.status.lock();
-                status.state = "ready".to_string();
-                status.last_latency_ms = Some(elapsed_ms);
-                status.prompt_toks_per_sec = None;
-                status.gen_toks_per_sec = None;
-                status.warning = None;
-            }
-            tracing::debug!(
-                elapsed_ms,
-                prompt_tokens = ?outcome.prompt_tokens,
-                completion_tokens = ?outcome.completion_tokens,
-                reply_len = outcome.reply.len(),
-                "[local_ai:chat] lm studio /v1/chat/completions done"
-            );
-            return Ok(outcome.reply);
-        }
-
-        tracing::debug!(
-            message_count = messages.len(),
-            model = %crate::openhuman::inference::model_ids::effective_chat_model_id(config),
-            "[local_ai:chat] sending to ollama /api/chat"
-        );
-
         let started = std::time::Instant::now();
-
-        let body = crate::openhuman::inference::local::ollama::OllamaChatRequest {
-            model: crate::openhuman::inference::model_ids::effective_chat_model_id(config),
+        let messages = messages
+            .into_iter()
+            .map(|message| match message.role.as_str() {
+                "system" => Message::system(message.content),
+                "assistant" => Message::assistant(message.content),
+                _ => Message::user(message.content),
+            })
+            .collect();
+        let outcome = super::model_rpc::invoke(
+            config,
+            self.http.clone(),
             messages,
-            stream: false,
-            options: Some(
-                crate::openhuman::inference::local::ollama::OllamaGenerateOptions {
-                    temperature: Some(config.default_temperature as f32),
-                    top_k: Some(40),
-                    top_p: Some(0.9),
-                    num_predict: max_tokens.map(|v| v as i32),
-                },
-            ),
-        };
-
-        let base_url = ollama_base_url_from_config(config);
-        let response = self
-            .http
-            .post(format!("{base_url}/api/chat"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                external_ollama_request_error_with_url("ollama chat request failed", &e, &base_url)
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let detail = body.trim();
-            return Err(format!(
-                "ollama chat failed with status {}{}",
-                status,
-                if detail.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {detail}")
-                }
-            ));
-        }
-
-        let payload: crate::openhuman::inference::local::ollama::OllamaChatResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("ollama chat response parse failed: {e}"))?;
+            max_tokens,
+            config.default_temperature as f32,
+            false,
+        )
+        .await?;
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let prompt_tps = payload
-            .prompt_eval_count
-            .zip(payload.prompt_eval_duration)
-            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
-        let gen_tps = payload
-            .eval_count
-            .zip(payload.eval_duration)
-            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
 
         {
             let mut status = self.status.lock();
             status.state = "ready".to_string();
             status.last_latency_ms = Some(elapsed_ms);
-            status.prompt_toks_per_sec = prompt_tps;
-            status.gen_toks_per_sec = gen_tps;
+            status.prompt_toks_per_sec = outcome.prompt_toks_per_sec;
+            status.gen_toks_per_sec = outcome.gen_toks_per_sec;
             status.warning = None;
         }
 
         tracing::debug!(
             elapsed_ms,
-            reply_len = payload.message.content.len(),
-            "[local_ai:chat] ollama /api/chat done"
+            prompt_tokens = ?outcome.prompt_tokens,
+            completion_tokens = ?outcome.completion_tokens,
+            reply_len = outcome.reply.len(),
+            "[local_ai:chat] tinyagents local model RPC done"
         );
-
-        let reply = payload.message.content.trim().to_string();
-        if reply.is_empty() {
-            Err("ollama returned empty reply".to_string())
-        } else {
-            Ok(reply)
-        }
+        Ok(outcome.reply)
     }
 
     pub(crate) async fn inference(
@@ -514,7 +409,7 @@ impl LocalAiService {
         // skips this via `gated = false` from
         // `inline_complete_interactive`.
         let _gate_permit = if gated {
-            crate::openhuman::scheduler_gate::wait_for_capacity().await
+            crate::openhuman::cron::scheduler_gate::wait_for_capacity().await
         } else {
             None
         };
@@ -545,115 +440,38 @@ impl LocalAiService {
             system.to_string()
         };
 
-        if provider_from_config(config) == LocalAiProvider::LmStudio {
-            let messages = vec![
-                crate::openhuman::inference::local::lm_studio::LmStudioChatMessage {
-                    role: "system".to_string(),
-                    content: effective_system,
-                },
-                crate::openhuman::inference::local::lm_studio::LmStudioChatMessage {
-                    role: "user".to_string(),
-                    content: prompt.to_string(),
-                },
-            ];
-            let outcome = self
-                .lm_studio_chat_completion(config, messages, max_tokens, temperature, allow_empty)
-                .await?;
-            let elapsed_ms = started.elapsed().as_millis() as u64;
-            {
-                let mut status = self.status.lock();
-                status.state = "ready".to_string();
-                status.last_latency_ms = Some(elapsed_ms);
-                status.prompt_toks_per_sec = None;
-                status.gen_toks_per_sec = None;
-                status.warning = None;
-            }
-            tracing::debug!(
-                elapsed_ms,
-                prompt_tokens = ?outcome.prompt_tokens,
-                completion_tokens = ?outcome.completion_tokens,
-                reply_len = outcome.reply.len(),
-                "[local_ai:infer] lm studio /v1/chat/completions done"
-            );
-            return Ok(outcome.reply);
-        }
-
-        let body = OllamaGenerateRequest {
-            model: model_id,
-            prompt: prompt.to_string(),
-            system: Some(effective_system),
-            images: None,
-            stream: false,
-            options: Some(OllamaGenerateOptions {
-                temperature: Some(temperature),
-                top_k: Some(40),
-                top_p: Some(0.9),
-                num_predict: max_tokens.map(|v| v as i32),
-            }),
-        };
-
-        let base_url = ollama_base_url_from_config(config);
-        log::debug!(
-            "[local_ai:infer] inference_with_temperature_internal: using base_url={}",
-            redact_ollama_base_url(&base_url)
-        );
-        let response = self
-            .http
-            .post(format!("{base_url}/api/generate"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                external_ollama_request_error_with_url("ollama request failed", &e, &base_url)
-            })?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            let detail = body.trim();
-            return Err(format!(
-                "ollama request failed with status {}{}",
-                status,
-                if detail.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {detail}")
-                }
-            ));
-        }
-
-        let payload: crate::openhuman::inference::local::ollama::OllamaGenerateResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("ollama response parse failed: {e}"))?;
+        let outcome = super::model_rpc::invoke(
+            config,
+            self.http.clone(),
+            vec![
+                Message::system(effective_system),
+                Message::user(prompt.to_owned()),
+            ],
+            max_tokens,
+            temperature,
+            allow_empty,
+        )
+        .await?;
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let prompt_tps = payload
-            .prompt_eval_count
-            .zip(payload.prompt_eval_duration)
-            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
-        let gen_tps = payload
-            .eval_count
-            .zip(payload.eval_duration)
-            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
 
         {
             let mut status = self.status.lock();
             status.state = "ready".to_string();
             status.last_latency_ms = Some(elapsed_ms);
-            status.prompt_toks_per_sec = prompt_tps;
-            status.gen_toks_per_sec = gen_tps;
+            status.prompt_toks_per_sec = outcome.prompt_toks_per_sec;
+            status.gen_toks_per_sec = outcome.gen_toks_per_sec;
             status.warning = None;
         }
 
-        if payload.response.trim().is_empty() {
-            if allow_empty {
-                Ok(String::new())
-            } else {
-                Err("ollama returned empty content".to_string())
-            }
-        } else {
-            Ok(payload.response)
-        }
+        tracing::debug!(
+            elapsed_ms,
+            prompt_tokens = ?outcome.prompt_tokens,
+            completion_tokens = ?outcome.completion_tokens,
+            reply_len = outcome.reply.len(),
+            "[local_ai:infer] tinyagents local model RPC done"
+        );
+        Ok(outcome.reply)
     }
 }
 

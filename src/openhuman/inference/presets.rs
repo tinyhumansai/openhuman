@@ -157,28 +157,57 @@ pub fn all_presets() -> Vec<ModelPreset> {
             label: "8-16 GB",
             description: "Balanced Gemma multimodal preset with bundled vision support.",
             chat_model_id: "gemma3:4b-it-qat",
+            // Gemma 3 is multimodal from 4B upward, so one model covers chat
+            // and vision here. (The 270M and 1B builds are text-only.)
             vision_model_id: "gemma3:4b-it-qat",
-            embedding_model_id: "nomic-embed-text:latest",
+            // bge-m3 (1024 dims). nomic-embed-text is 768 dims and fails the
+            // memory tree's post-call dimension validator; the embedding
+            // allowlist already rewrote it to bge-m3 at resolution time, so
+            // naming bge-m3 here only makes the preset honest about what is
+            // actually pulled.
+            embedding_model_id: "bge-m3",
             quantization: "qat",
             vision_mode: VisionMode::Bundled,
             supports_screen_summary: true,
             target_ram_gb: 8,
             min_ram_gb: 8,
-            approx_download_gb: 4.3,
+            // gemma3:4b-it-qat (4.0 GB) + bge-m3 (1.2 GB)
+            approx_download_gb: 5.2,
         },
         ModelPreset {
             tier: ModelTier::Ram16PlusGb,
             label: "16 GB+",
             description: "Best local quality with Gemma 4 on higher-end devices.",
-            chat_model_id: "gemma4:e4b",
-            vision_model_id: "gemma4:e4b",
-            embedding_model_id: "nomic-embed-text:latest",
-            quantization: "qat",
+            // GH #5055 moved this tier off `gemma4:e4b` because no `gemma4`
+            // namespace existed on the Ollama library at the time, and landed
+            // on `gemma3n:e4b-it-q8_0`. Two things have changed (#5146 §1.3):
+            //
+            //  1. Gemma 4 has since been published, and `gemma4:e4b-it-q8_0`
+            //     resolves (11.6 GB, 128K context).
+            //  2. Gemma 3n is **text-only** on Ollama, so using it as the
+            //     `vision_model_id` of a `Bundled` vision tier pointed every
+            //     vision request at a model with no vision encoder. Ollama
+            //     accepts the `images` array against such a model, discards
+            //     it, and answers from the prompt text — a hallucinated
+            //     description rather than an error.
+            //
+            // Gemma 4 is multimodal at every published size, so this tier is
+            // back to one model serving both chat and vision, matching how the
+            // 8-16 GB tier uses `gemma3:4b-it-qat`.
+            chat_model_id: "gemma4:e4b-it-q8_0",
+            vision_model_id: "gemma4:e4b-it-q8_0",
+            // bge-m3 (1024 dims) — see the 8-16 GB tier note above.
+            embedding_model_id: "bge-m3",
+            // The other tiers ship QAT builds; this one is q8_0. The field is a
+            // display label (`effective_quantization`) and does not take part in
+            // resolving the model tag, but it should still match what is pulled.
+            quantization: "q8_0",
             vision_mode: VisionMode::Bundled,
             supports_screen_summary: true,
             target_ram_gb: 16,
             min_ram_gb: 16,
-            approx_download_gb: 9.9,
+            // gemma4:e4b-it-q8_0 (11.6 GB) + bge-m3 (1.2 GB)
+            approx_download_gb: 12.8,
         },
     ]
 }
@@ -422,5 +451,97 @@ mod tests {
 
         apply_preset_to_config(&mut config, ModelTier::Ram16PlusGb);
         assert_eq!(vision_mode_for_config(&config), VisionMode::Bundled);
+    }
+
+    /// GH #5055 / #5146 §1.3: every preset must name a model that actually
+    /// exists on the Ollama library and is fully qualified, so `ollama pull`
+    /// can fetch it and the allowlist does not silently redirect the user.
+    ///
+    /// The original #5055 form of this test asserted the narrower fact "no id
+    /// may start with `gemma4:`", because no `gemma4` namespace existed then.
+    /// Gemma 4 has since been published (`gemma4:e4b-it-q8_0` resolves against
+    /// `registry.ollama.ai`), so that assertion encoded a fact that expired.
+    /// The durable invariant is the shape check below plus the
+    /// `preset_chat_models_are_allowlisted_and_resolve_unchanged` cross-check
+    /// in `model_ids`.
+    #[test]
+    fn preset_model_ids_are_fully_qualified() {
+        for preset in all_presets() {
+            for (field, id) in [
+                ("chat", preset.chat_model_id),
+                ("vision", preset.vision_model_id),
+                ("embedding", preset.embedding_model_id),
+            ] {
+                if id.is_empty() {
+                    // Only `vision` is legitimately empty (vision disabled).
+                    assert_eq!(
+                        field, "vision",
+                        "preset {:?} {field} model must not be empty",
+                        preset.tier
+                    );
+                    continue;
+                }
+                // `bge-m3` is deliberately exempt rather than retagged to
+                // `bge-m3:latest` (greptile, #5253). The bare id is the
+                // canonical spelling across the embedding stack: it is the
+                // entry in `model_ids::MVP_ALLOWED_EMBEDDING_MODELS`, the
+                // `embeddings::catalog` id, and what `normalize_embed_model_id`
+                // collapses `bge-m3:latest` *to*. Retagging the preset alone
+                // would be silently rewritten back by
+                // `enforce_mvp_embedding_allowlist`; retagging all of them is a
+                // cross-cutting rename that must also migrate configs already
+                // persisting `bge-m3` - disproportionate to a cosmetic tag.
+                assert!(
+                    id.contains(':') || id == "bge-m3",
+                    "preset {:?} {field} model `{id}` must be a fully-qualified \
+                     `<model>:<tag>` id",
+                    preset.tier
+                );
+            }
+        }
+    }
+
+    /// #5146 §Part 1: a preset that declares a vision mode must name a model
+    /// that can actually accept images.
+    ///
+    /// The 16 GB+ tier previously used `gemma3n:e4b-it-q8_0` as its
+    /// `vision_model_id`. Gemma 3n is text-only on Ollama, and Ollama does not
+    /// reject an `images` array sent to a text-only model — it drops the
+    /// images and answers from the prompt alone, so the user got a fluent,
+    /// fabricated description of an image the model never saw.
+    #[test]
+    fn preset_vision_models_are_vision_capable() {
+        use crate::openhuman::inference::vision_models::is_vision_capable;
+
+        for preset in all_presets() {
+            match preset.vision_mode {
+                VisionMode::Disabled => assert!(
+                    preset.vision_model_id.is_empty(),
+                    "preset {:?} disables vision but names `{}`",
+                    preset.tier,
+                    preset.vision_model_id
+                ),
+                VisionMode::Ondemand | VisionMode::Bundled => assert!(
+                    is_vision_capable(preset.vision_model_id),
+                    "preset {:?} routes vision at `{}`, which is not vision-capable",
+                    preset.tier,
+                    preset.vision_model_id
+                ),
+            }
+        }
+    }
+
+    /// The 16 GB+ tier must name an allowlisted chat model, so selecting the
+    /// preset is not immediately redirected back to the default by
+    /// `enforce_mvp_chat_allowlist`, and that model must be multimodal so the
+    /// tier's `Bundled` vision mode is real rather than nominal.
+    #[test]
+    fn high_tier_preset_uses_one_multimodal_build_for_chat_and_vision() {
+        use crate::openhuman::inference::vision_models::is_vision_capable;
+
+        let preset = preset_for_tier(ModelTier::Ram16PlusGb).expect("16 GB+ preset");
+        assert_eq!(preset.chat_model_id, "gemma4:e4b-it-q8_0");
+        assert_eq!(preset.vision_model_id, preset.chat_model_id);
+        assert!(is_vision_capable(preset.vision_model_id));
     }
 }

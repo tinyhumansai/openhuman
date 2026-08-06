@@ -1,4 +1,4 @@
-use crate::openhuman::mcp_client::{McpRegistrySource, McpServerRegistry};
+use crate::openhuman::mcp::config_servers::{McpRegistrySource, McpServerRegistry};
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;

@@ -15,38 +15,6 @@ interface PresetMeta {
   hint: string;
 }
 
-/**
- * Plain-language framing for each preset. The actual character budgets
- * live in the Rust core (`MemoryContextWindow::limits` in
- * `src/openhuman/config/schema/agent.rs`) — these strings only describe
- * the UX tradeoff so users can pick without doing math.
- */
-// NOTE: MEMORY_WINDOW_PRESET_META is now built inside the component using t() so labels/badges/hints
-// are translated. The exported constant is kept for backwards-compat but callers that need
-// localised strings should use the hook.
-export const MEMORY_WINDOW_PRESET_META: Record<MemoryContextWindow, PresetMeta> = {
-  minimal: {
-    label: 'Minimal',
-    badge: 'Cheapest',
-    hint: 'Smallest memory window. Cheapest, fastest, least continuity between runs.',
-  },
-  balanced: {
-    label: 'Balanced',
-    badge: 'Recommended',
-    hint: 'Sensible default — good continuity without burning extra tokens on every run.',
-  },
-  extended: {
-    label: 'Extended',
-    badge: 'More context',
-    hint: 'More long-term memory injected into each run. Higher token cost per turn.',
-  },
-  maximum: {
-    label: 'Maximum',
-    badge: 'Highest cost',
-    hint: 'The largest safe window. Best continuity, meaningfully higher token bill on every run.',
-  },
-};
-
 const isMemoryContextWindow = (value: unknown): value is MemoryContextWindow =>
   typeof value === 'string' && (MEMORY_CONTEXT_WINDOWS as readonly string[]).includes(value);
 

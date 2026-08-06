@@ -6,7 +6,7 @@
 //! exactly once in the file (so the model can't accidentally edit
 //! every match). Set `replace_all` to override.
 
-use crate::openhuman::file_state;
+use crate::openhuman::agent::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;

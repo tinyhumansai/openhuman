@@ -11,13 +11,13 @@ use super::super::context::{
 use super::super::runtime::process_channel_message;
 use super::super::traits;
 use super::super::{Channel, SendMessage};
-use super::common::{NoopMemory, SlowProvider};
+use super::common::{NoopMemory, SlowModel};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -58,43 +58,34 @@ impl Channel for FullRecordingChannel {
     }
 }
 
-/// Provider that immediately returns a fixed response string.
-struct FixedResponseProvider {
+/// Model that immediately returns a fixed response string.
+struct FixedResponseModel {
     response: &'static str,
 }
 
 #[async_trait::async_trait]
-impl Provider for FixedResponseProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for FixedResponseModel {
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(self.response.to_string())
-    }
-
-    async fn chat_with_history(
-        &self,
-        _messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        Ok(self.response.to_string())
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        Ok(ModelResponse::assistant(self.response))
     }
 }
 
 fn make_test_context(
     channel: Arc<dyn Channel>,
-    provider: Arc<dyn Provider>,
+    model: Arc<dyn ChatModel<()>>,
 ) -> Arc<ChannelRuntimeContext> {
     let mut channels = HashMap::new();
     channels.insert(channel.name().to_string(), channel);
 
     Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels),
-        provider,
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -105,7 +96,7 @@ fn make_test_context(
         max_tool_iterations: 1,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -116,6 +107,7 @@ fn make_test_context(
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     })
 }
 
@@ -128,7 +120,7 @@ async fn inbound_thread_ts_is_forwarded_to_channel_send() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(FullRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider { response: "pong" });
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel { response: "pong" });
     let ctx = make_test_context(channel, provider);
 
     process_channel_message(
@@ -165,7 +157,7 @@ async fn no_thread_ts_on_inbound_message_results_in_none_on_send() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(FullRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider { response: "ok" });
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel { response: "ok" });
     let ctx = make_test_context(channel, provider);
 
     process_channel_message(
@@ -200,7 +192,7 @@ async fn reaction_marker_in_llm_response_is_passed_to_channel_send() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(FullRecordingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel {
         response: "[REACTION:👍]",
     });
     let ctx = make_test_context(channel, provider);
@@ -251,7 +243,7 @@ async fn typing_indicator_starts_and_stops_once_per_message() {
     // Must be non-zero: the first typing interval fires at t=0 but the
     // cancellation only arrives after the provider returns.  A tiny delay
     // ensures the tick wins the race reliably.
-    let provider: Arc<dyn Provider> = Arc::new(SlowProvider {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(SlowModel {
         delay: Duration::from_millis(20),
     });
     let ctx = make_test_context(channel, provider);
@@ -375,7 +367,7 @@ async fn telegram_threaded_inbound_emits_ack_reaction_then_reply() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let recorder = Arc::new(TelegramReactingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
-    let provider: Arc<dyn Provider> = Arc::new(FixedResponseProvider { response: "pong" });
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(FixedResponseModel { response: "pong" });
     let ctx = make_test_context(channel, provider);
 
     process_channel_message(
@@ -480,7 +472,7 @@ async fn telegram_dispatch_routes_through_agent_run_turn_bus_handler() {
     let recorder = Arc::new(TelegramReactingChannel::default());
     let channel: Arc<dyn Channel> = recorder.clone();
     // Minimal provider — never invoked because the stub short-circuits.
-    let ctx = make_test_context(channel, Arc::new(super::common::DummyProvider));
+    let ctx = make_test_context(channel, Arc::new(super::common::DummyModel));
 
     process_channel_message(
         ctx,

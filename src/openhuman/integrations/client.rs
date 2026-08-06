@@ -4,6 +4,7 @@ use super::types::{BackendResponse, IntegrationPricing};
 use std::error::Error as _;
 use std::sync::Arc;
 use std::time::Duration;
+use tinyhumans_sdk::{Error as SdkError, TinyHumansClient};
 
 /// Maximum length (in bytes) of backend error body included in propagated
 /// errors. Keep this bounded — error messages flow through tracing/Sentry and
@@ -41,6 +42,21 @@ fn managed_budget_applies_to_path(path: &str) -> bool {
     path != "/agent-integrations/pricing" && path.starts_with("/agent-integrations/")
 }
 
+fn reject_backend_webhook_path(method: &str, path: &str) -> anyhow::Result<()> {
+    let route = path.split('?').next().unwrap_or(path);
+    if route
+        .split('/')
+        .any(|segment| segment.eq_ignore_ascii_case("webhooks"))
+    {
+        anyhow::bail!(
+            "route is intentionally not exposed by the SDK: {} {}",
+            method,
+            route
+        );
+    }
+    Ok(())
+}
+
 /// Handle a `401 Unauthorized` from the OpenHuman backend's
 /// `/agent-integrations/*` routes.
 ///
@@ -53,7 +69,7 @@ fn managed_budget_applies_to_path(path: &str) -> bool {
 /// that JWT is expired / revoked / rotated server-side — see the identical
 /// envelope pinned in `inference/provider/config_rejection.rs` and the socket
 /// reconnect loop's `"Invalid token"` handling in
-/// `openhuman::socket::ws_loop`. A *third-party* integration's auth failure
+/// `openhuman::platform::socket::ws_loop`. A *third-party* integration's auth failure
 /// never reaches this arm:
 ///
 /// - **Composio backend mode** (the default that routes through this client):
@@ -240,13 +256,43 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
     None
 }
 
+/// Build the egress descriptor for a managed-backend round-trip. The query
+/// string is stripped so only the endpoint (the "to where") is described, never
+/// any data carried in the query.
+fn backend_egress_descriptor(path: &str) -> crate::openhuman::security::egress::EgressDescriptor {
+    let endpoint = path.split('?').next().unwrap_or(path);
+    crate::openhuman::security::egress::EgressDescriptor::integration(endpoint)
+}
+
+/// Egress spine (privacy epic S2, #4436): disclose an OpenHuman managed-backend
+/// round-trip before it leaves the device. Fire-and-forget — never fails the
+/// caller.
+fn emit_backend_egress(path: &str) {
+    crate::openhuman::security::egress::emit_external_transfer(backend_egress_descriptor(path));
+}
+
+/// Local-only enforcement (privacy epic S7, #4441): refuse a managed-backend
+/// round-trip that ships user data when the live policy is `LocalOnly`. Returns
+/// `Ok(())` for control-plane paths (session / team / billing / integration
+/// connection-management + catalog) even under `LocalOnly` — blocking those
+/// would break sign-in and the Connections UI for no privacy benefit. See
+/// [`is_control_plane`](crate::openhuman::security::egress). Call before
+/// [`emit_backend_egress`] so a blocked call is neither disclosed nor sent.
+fn enforce_backend_egress(path: &str) -> anyhow::Result<()> {
+    crate::openhuman::security::egress::enforce_egress(&backend_egress_descriptor(path))
+}
+
 /// Shared client for all integration tools. Holds backend URL, auth token,
 /// a reusable `reqwest::Client`, and a lazily-fetched pricing cache.
 pub struct IntegrationClient {
     pub backend_url: String,
     pub auth_token: String,
     budget_config: Option<Arc<crate::openhuman::config::Config>>,
-    http_client: reqwest::Client,
+    sdk: TinyHumansClient,
+    // Temporary compatibility exception: the SDK's binary primitive returns
+    // bytes only, while file storage also consumes Content-Type and
+    // Content-Disposition. Remove when the SDK exposes response metadata.
+    download_client: reqwest::Client,
     pricing: tokio::sync::OnceCell<IntegrationPricing>,
 }
 
@@ -280,22 +326,32 @@ impl IntegrationClient {
         // to fix up the input so the regression is observable in logs.
         let backend_url = sanitize_backend_url(&backend_url);
 
-        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
+        // Platform-appropriate TLS backend — see [`crate::openhuman::util::tls`].
         // Windows uses schannel (native-tls) to honor the OS cert store;
         // macOS / Linux keep rustls which avoids the OpenSSL runtime dep and
         // has historically been more reliable on staging TLS handshakes.
-        let http_client = crate::openhuman::tls::tls_client_builder()
+        let http_client = crate::openhuman::util::tls::tls_client_builder()
             .http1_only()
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(15))
             .build()
             .expect("failed to build integration HTTP client");
+        let sdk = TinyHumansClient::new(&backend_url)
+            .with_token(Some(auth_token.clone()))
+            .with_http_client(http_client.clone());
+        let download_client = crate::openhuman::util::tls::tls_client_builder()
+            .http1_only()
+            .timeout(Duration::from_secs(15 * 60))
+            .connect_timeout(Duration::from_secs(15))
+            .build()
+            .expect("failed to build integration download HTTP client");
 
         Self {
             backend_url,
             auth_token,
             budget_config,
-            http_client,
+            sdk,
+            download_client,
             pricing: tokio::sync::OnceCell::new(),
         }
     }
@@ -305,7 +361,7 @@ impl IntegrationClient {
             return Ok(());
         }
         if let Some(config) = &self.budget_config {
-            if crate::openhuman::team::managed_tool_budget_exhausted(config).await {
+            if crate::openhuman::hosted::team::managed_tool_budget_exhausted(config).await {
                 anyhow::bail!(
                     "Managed cloud tools are disabled because your OpenHuman AI credits are exhausted. Add credits or route the task to user-supplied providers."
                 );
@@ -320,190 +376,13 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        self.ensure_budget_available(path).await?;
-        let url = crate::api::config::api_url(&self.backend_url, path);
-        tracing::debug!("[integrations] POST {}", url);
-
-        let resp = self
-            .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
+        self.request_json(reqwest::Method::POST, path, Some(body))
             .await
-            .map_err(|e| {
-                // Log the full error source chain so the caller gets
-                // something useful instead of reqwest's top-level
-                // "error sending request for url (…)" which hides the
-                // real cause (DNS / TLS / connect / timeout).
-                let mut chain = format!("{e}");
-                let mut src: Option<&(dyn std::error::Error + 'static)> = e.source();
-                while let Some(s) = src {
-                    chain.push_str(" → ");
-                    chain.push_str(&s.to_string());
-                    src = s.source();
-                }
-                // Use `report_error_or_expected` so transport-level shapes
-                // ("error sending request for url", "tls handshake eof",
-                // "connection refused/reset", …) are classified as
-                // `NetworkUnreachable` and skip Sentry — user-environment
-                // problems (VPN drop, captive portal, ISP block, TLS MITM)
-                // that no retry on our side can resolve (OPENHUMAN-TAURI-2G).
-                crate::core::observability::report_error_or_expected(
-                    chain.as_str(),
-                    "integrations",
-                    "post",
-                    &[("path", path), ("failure", "transport")],
-                );
-                anyhow::anyhow!("POST {} failed: {}", url, chain)
-            })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
-            let status_str = status.as_u16().to_string();
-            // A 401 is the backend's auth middleware rejecting our app-session
-            // JWT (not a third-party provider 401 — see
-            // `handle_session_jwt_unauthorized` for the full
-            // session-JWT-vs-provider argument). Route it into the
-            // session-expiry recovery flow: demote from Sentry AND publish
-            // `SessionExpired` so re-login fires even though the autonomous
-            // agent loop swallows the propagated error (TAURI-RUST-84E). This
-            // must come BEFORE the generic non-2xx branch so the 401 doesn't
-            // fall through to a plain `BackendUserError` that only demotes.
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                let message = handle_session_jwt_unauthorized("POST", path, &url, &detail);
-                anyhow::bail!("{message}");
-            }
-            // Route through `report_error_or_expected` so 4xx user-input /
-            // auth-state failures (e.g. OPENHUMAN-TAURI-BC: SharePoint
-            // authorize 400 because the user didn't fill in the required
-            // Tenant Name field) demote to a warn breadcrumb instead of
-            // firing a Sentry event. 5xx and non-transient 4xx still
-            // surface — see `is_backend_user_error_message` for the exact
-            // status set classified as expected.
-            crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for POST {url}: {detail}").as_str(),
-                "integrations",
-                "post",
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-            anyhow::bail!("Backend returned {status} for POST {url}: {detail}");
-        }
-
-        let envelope: BackendResponse<T> = resp.json().await?;
-        if !envelope.success {
-            let msg = envelope
-                .error
-                .unwrap_or_else(|| "unknown backend error".into());
-            // Route through `report_error_or_expected` so user-state envelope
-            // failures the backend wraps as 2xx + `success: false` (composio
-            // "Toolkit X is not enabled", "Trigger type … not found",
-            // "Missing required fields: …" — OPENHUMAN-TAURI-3R / -3S / -34 /
-            // -97) demote to an info breadcrumb instead of firing a Sentry
-            // event. Genuine backend bugs (unknown envelope shapes, internal
-            // panics) still surface.
-            crate::core::observability::report_error_or_expected(
-                msg.as_str(),
-                "integrations",
-                "post",
-                &[("path", path), ("failure", "envelope_error")],
-            );
-            anyhow::bail!("Backend error for POST {}: {}", url, msg);
-        }
-        envelope
-            .data
-            .ok_or_else(|| anyhow::anyhow!("Backend returned success but no data for POST {}", url))
     }
 
     /// GET from a backend endpoint and parse the response `data` field.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.ensure_budget_available(path).await?;
-        let url = crate::api::config::api_url(&self.backend_url, path);
-        tracing::debug!("[integrations] GET {}", url);
-
-        let resp = self
-            .http_client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .send()
-            .await
-            .map_err(|e| {
-                let mut chain = format!("{e}");
-                let mut src: Option<&(dyn std::error::Error + 'static)> = e.source();
-                while let Some(s) = src {
-                    chain.push_str(" → ");
-                    chain.push_str(&s.to_string());
-                    src = s.source();
-                }
-                // Mirrors the post() transport site — classify reqwest
-                // transport-level failures as NetworkUnreachable so they
-                // skip Sentry. OPENHUMAN-TAURI-2G: TLS handshake EOF
-                // against api.tinyhumans.ai from a SG user.
-                crate::core::observability::report_error_or_expected(
-                    chain.as_str(),
-                    "integrations",
-                    "get",
-                    &[("path", path), ("failure", "transport")],
-                );
-                anyhow::anyhow!("GET {} failed: {}", url, chain)
-            })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
-            let status_str = status.as_u16().to_string();
-            // Mirrors the post() session-JWT 401 arm — a 401 here is the
-            // backend rejecting our session JWT, so drive re-login (publish
-            // SessionExpired) and demote from Sentry, before the generic
-            // non-2xx branch. See `handle_session_jwt_unauthorized`.
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                let message = handle_session_jwt_unauthorized("GET", path, &url, &detail);
-                anyhow::bail!("{message}");
-            }
-            // Mirrors the post() site — see OPENHUMAN-TAURI-BC. 4xx
-            // user-input / auth-state shapes demote to a warn breadcrumb
-            // via the observability classifier; 5xx and non-transient 4xx
-            // still surface.
-            crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for GET {url}: {detail}").as_str(),
-                "integrations",
-                "get",
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-            anyhow::bail!("Backend returned {status} for GET {url}: {detail}");
-        }
-
-        let envelope: BackendResponse<T> = resp.json().await?;
-        if !envelope.success {
-            let msg = envelope
-                .error
-                .unwrap_or_else(|| "unknown backend error".into());
-            // Mirrors the post() envelope-error site — see the comment there
-            // for OPENHUMAN-TAURI-3R/-3S/-34/-97 rationale. User-state
-            // envelope failures demote; genuine backend bugs still surface.
-            crate::core::observability::report_error_or_expected(
-                msg.as_str(),
-                "integrations",
-                "get",
-                &[("path", path), ("failure", "envelope_error")],
-            );
-            anyhow::bail!("Backend error for GET {}: {}", url, msg);
-        }
-        envelope
-            .data
-            .ok_or_else(|| anyhow::anyhow!("Backend returned success but no data for GET {}", url))
+        self.request_json(reqwest::Method::GET, path, None).await
     }
 
     /// Render a reqwest transport error with its full source chain (mirrors
@@ -532,43 +411,53 @@ impl IntegrationClient {
         anyhow::anyhow!("{} {} failed: {}", method.to_uppercase(), url, chain)
     }
 
-    /// Shared non-2xx / 401 / envelope handling for the newer HTTP verbs
-    /// (`patch`, `delete`, `upload_multipart`). Mirrors the [`Self::post`]
-    /// error classification: 401 → session-expiry recovery flow, other
-    /// non-2xx → demoted/classified generic error, then `BackendResponse<T>`
-    /// envelope parsing with `success:false` classification.
-    async fn parse_json_response<T: serde::de::DeserializeOwned>(
+    fn map_sdk_error(error: SdkError, method: &str, path: &str, url: &str) -> anyhow::Error {
+        let method_upper = method.to_uppercase();
+        match error {
+            SdkError::Http(error) => Self::report_transport_error(error, method, path, url),
+            SdkError::Status { status, body } => {
+                let body_text = match body {
+                    serde_json::Value::String(text) => text,
+                    value => value.to_string(),
+                };
+                let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
+                if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
+                    return anyhow::anyhow!(handle_session_jwt_unauthorized(
+                        &method_upper,
+                        path,
+                        url,
+                        &detail
+                    ));
+                }
+                let status_text = reqwest::StatusCode::from_u16(status)
+                    .map(|status| status.to_string())
+                    .unwrap_or_else(|_| status.to_string());
+                let status_code = status.to_string();
+                crate::core::observability::report_error_or_expected(
+                    format!("Backend returned {status_text} for {method_upper} {url}: {detail}")
+                        .as_str(),
+                    "integrations",
+                    method,
+                    &[
+                        ("path", path),
+                        ("status", status_code.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+                anyhow::anyhow!("Backend returned {status_text} for {method_upper} {url}: {detail}")
+            }
+            other => anyhow::anyhow!("{method_upper} {url} failed: {other}"),
+        }
+    }
+
+    fn parse_envelope<T: serde::de::DeserializeOwned>(
         method: &str,
         path: &str,
         url: &str,
-        resp: reqwest::Response,
+        value: serde_json::Value,
     ) -> anyhow::Result<T> {
-        let status = resp.status();
         let method_upper = method.to_uppercase();
-        if !status.is_success() {
-            let body_text = resp.text().await.unwrap_or_default();
-            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
-            let status_str = status.as_u16().to_string();
-            // Session-JWT rejection — same argument as in post()/get(): the
-            // backend auth middleware is the only 401 source on these routes.
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                let message = handle_session_jwt_unauthorized(&method_upper, path, url, &detail);
-                anyhow::bail!("{message}");
-            }
-            crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for {method_upper} {url}: {detail}").as_str(),
-                "integrations",
-                method,
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-            anyhow::bail!("Backend returned {status} for {method_upper} {url}: {detail}");
-        }
-
-        let envelope: BackendResponse<T> = resp.json().await?;
+        let envelope: BackendResponse<T> = serde_json::from_value(value)?;
         if !envelope.success {
             let msg = envelope
                 .error
@@ -590,6 +479,28 @@ impl IntegrationClient {
         })
     }
 
+    async fn request_json<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> anyhow::Result<T> {
+        reject_backend_webhook_path(method.as_str(), path)?;
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
+        self.ensure_budget_available(path).await?;
+        let url = crate::api::config::api_url(&self.backend_url, path);
+        let method_name = method.as_str().to_ascii_lowercase();
+        tracing::debug!("[integrations] {} {}", method.as_str(), url);
+        let value = self
+            .sdk
+            .raw()
+            .send(method, path, &[], body, false)
+            .await
+            .map_err(|error| Self::map_sdk_error(error, &method_name, path, &url))?;
+        Self::parse_envelope(&method_name, path, &url, value)
+    }
+
     /// PATCH JSON to a backend endpoint and parse the response `data` field.
     /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
     /// classification).
@@ -598,40 +509,15 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        self.ensure_budget_available(path).await?;
-        let url = crate::api::config::api_url(&self.backend_url, path);
-        tracing::debug!("[integrations] PATCH {}", url);
-
-        let resp = self
-            .http_client
-            .patch(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
+        self.request_json(reqwest::Method::PATCH, path, Some(body))
             .await
-            .map_err(|e| Self::report_transport_error(e, "patch", path, &url))?;
-
-        Self::parse_json_response("patch", path, &url, resp).await
     }
 
     /// DELETE a backend resource and parse the response `data` field.
     /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
     /// classification).
     pub async fn delete<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.ensure_budget_available(path).await?;
-        let url = crate::api::config::api_url(&self.backend_url, path);
-        tracing::debug!("[integrations] DELETE {}", url);
-
-        let resp = self
-            .http_client
-            .delete(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .send()
-            .await
-            .map_err(|e| Self::report_transport_error(e, "delete", path, &url))?;
-
-        Self::parse_json_response("delete", path, &url, resp).await
+        self.request_json(reqwest::Method::DELETE, path, None).await
     }
 
     /// POST a `multipart/form-data` body to a backend endpoint and parse the
@@ -643,20 +529,26 @@ impl IntegrationClient {
         path: &str,
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
+        reject_backend_webhook_path("POST", path)?;
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST(multipart) {}", url);
 
-        let resp = self
-            .http_client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .multipart(form)
-            .send()
+        let value = self
+            .sdk
+            .raw()
+            .post_multipart(path, form)
             .await
-            .map_err(|e| Self::report_transport_error(e, "post_multipart", path, &url))?;
-
-        Self::parse_json_response("post_multipart", path, &url, resp).await
+            .map_err(|error| Self::map_sdk_error(error, "post_multipart", path, &url))?;
+        // The SDK unwraps successful `{success,data}` responses. Preserve
+        // compatibility with endpoints that return their payload directly,
+        // while still recognizing a `success:false` envelope.
+        if value.get("success") == Some(&serde_json::Value::Bool(false)) {
+            return Self::parse_envelope("post_multipart", path, &url, value);
+        }
+        Ok(serde_json::from_value(value)?)
     }
 
     /// Authenticated GET returning the raw response body plus content-type and
@@ -669,55 +561,56 @@ impl IntegrationClient {
         &self,
         path: &str,
     ) -> anyhow::Result<(bytes::Bytes, Option<String>, Option<String>)> {
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
+        let route = path.split('?').next().unwrap_or(path);
+        let segments = route.trim_matches('/').split('/').collect::<Vec<_>>();
+        let is_file_download = matches!(
+            segments.as_slice(),
+            ["agent-integrations", "file-storage", "files", _, "download"]
+        );
+        if !is_file_download {
+            anyhow::bail!("route is intentionally not exposed by the SDK: GET {route}");
+        }
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] GET(bytes) {}", url);
 
         let resp = self
-            .http_client
+            .download_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
             .await
-            .map_err(|e| Self::report_transport_error(e, "get_bytes", path, &url))?;
-
+            .map_err(|error| Self::report_transport_error(error, "get_bytes", path, &url))?;
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            let detail = extract_error_detail(&body_text, MAX_ERROR_BODY_LEN);
-            let status_str = status.as_u16().to_string();
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                let message = handle_session_jwt_unauthorized("GET", path, &url, &detail);
-                anyhow::bail!("{message}");
-            }
-            crate::core::observability::report_error_or_expected(
-                format!("Backend returned {status} for GET {url}: {detail}").as_str(),
-                "integrations",
+            let body =
+                serde_json::from_str(&body_text).unwrap_or(serde_json::Value::String(body_text));
+            return Err(Self::map_sdk_error(
+                SdkError::Status {
+                    status: status.as_u16(),
+                    body,
+                },
                 "get_bytes",
-                &[
-                    ("path", path),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-            anyhow::bail!("Backend returned {status} for GET {url}: {detail}");
+                path,
+                &url,
+            ));
         }
-
         let content_type = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let filename = resp
             .headers()
             .get(reqwest::header::CONTENT_DISPOSITION)
-            .and_then(|v| v.to_str().ok())
+            .and_then(|value| value.to_str().ok())
             .and_then(parse_content_disposition_filename);
-
-        let body = resp
-            .bytes()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to read response body for GET {}: {}", url, e))?;
+        let body = resp.bytes().await.map_err(|error| {
+            anyhow::anyhow!("failed to read response body for GET {url}: {error}")
+        })?;
         tracing::debug!(
             "[integrations] GET(bytes) {} → {} bytes (content_type={:?})",
             url,

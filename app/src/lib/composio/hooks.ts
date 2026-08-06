@@ -60,7 +60,7 @@ async function fetchLegWithRetries<T>(
 
 // ── useComposioIntegrations ───────────────────────────────────────
 
-export interface UseComposioIntegrationsResult {
+interface UseComposioIntegrationsResult {
   /** Toolkit slugs enabled on the backend allowlist. */
   toolkits: string[];
   /**
@@ -351,7 +351,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
 
 // ── useAgentReadyComposioToolkits ─────────────────────────────────
 
-export interface UseAgentReadyComposioToolkitsResult {
+interface UseAgentReadyComposioToolkitsResult {
   /** Lowercased slugs of toolkits that ship an agent-ready catalog. */
   agentReady: ReadonlySet<string>;
   /** Whether the initial fetch is still in flight. */

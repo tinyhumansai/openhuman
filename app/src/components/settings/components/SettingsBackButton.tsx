@@ -9,8 +9,8 @@ interface SettingsBackButtonProps {
 }
 
 /**
- * Route-aware back button shared by {@link SettingsHeader} and panels built on
- * {@link PanelScaffold}. Encapsulates the visibility rules so both render the
+ * Route-aware back button shared by settings panels built on
+ * {@link PanelScaffold}. Encapsulates the visibility rules so they render the
  * exact same affordance:
  *
  * - Hidden entirely when there's no `onBack`, or when a panel is embedded

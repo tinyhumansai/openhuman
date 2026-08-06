@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import WhatLeavesMyComputerSheet from './WhatLeavesMyComputerSheet';
 
-export interface WhatLeavesLinkProps {
+interface WhatLeavesLinkProps {
   label?: string;
   className?: string;
 }

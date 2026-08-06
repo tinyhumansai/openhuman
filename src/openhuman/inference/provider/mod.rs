@@ -1,45 +1,37 @@
-//! Unified provider abstraction — cloud + local chat, embedding, and streaming.
+//! Native chat-model construction plus cloud/local inference policy and DTOs.
 //!
 //! This module was previously `src/openhuman/providers/`. It now lives under
 //! `inference/provider/` so all inference concerns (local runtime, cloud
 //! providers, HTTP endpoint) share a single domain root.
 
-pub mod auth_error_registry;
+pub mod auth;
 pub mod billing_error;
+/// Chat-template rejections from local serving runtimes (issue #5291).
+pub mod chat_template;
 pub mod claude_agent_sdk;
 pub mod claude_code;
-pub mod compatible;
-pub mod compatible_dump;
-pub mod compatible_parse;
-pub mod compatible_stream;
-pub mod compatible_types;
 pub mod config_rejection;
 /// Crate-native OpenAI-compatible client construction (issue #4727, Motion B).
 pub mod crate_openai;
 pub mod error_classify;
 pub mod error_code;
 pub mod factory;
-mod openai_codex;
-pub mod openhuman_backend;
+/// Actionable diagnostics for background-workload provider fallback (#5146 §2.1).
+pub(crate) mod fallback_diagnostics;
+pub(crate) mod openai_codex;
 /// Crate-native managed OpenHuman backend as a host `ChatModel` (issue #4727).
 pub mod openhuman_backend_model;
 pub mod ops;
-pub mod reliable;
-pub mod resolved_route;
-pub mod router;
 pub mod schemas;
-pub mod temperature;
-pub mod thread_context;
-pub mod traits;
+pub mod types;
 
 #[allow(unused_imports)]
-pub use traits::{
-    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, PromptCacheCapabilities, Provider,
-    ProviderCapabilityError, ProviderDelta, ToolCall, ToolResultMessage, UsageInfo,
-    AGENT_TURN_MAX_OUTPUT_TOKENS,
+pub use types::{
+    ChatRequest, ChatResponse, ProviderDelta, ToolCall, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS,
 };
 
 pub use billing_error::is_budget_exhausted_message;
+pub use chat_template::is_chat_template_rejection_message;
 pub use config_rejection::{
     is_openai_compatible_unknown_model_message, is_provider_config_rejection_message,
 };
@@ -49,14 +41,12 @@ pub use error_code::{
     is_backend_malformed_bad_request, is_managed_backend_envelope, managed_error_skips_sentry,
     BackendErrorCode,
 };
-pub(crate) use factory::chat_model_from_provider;
+#[cfg(feature = "flows")]
 pub(crate) use factory::is_raw_passthrough_model;
 pub use factory::{
-    create_chat_model, create_chat_model_from_string, create_chat_model_with_model_id,
-    create_chat_provider, provider_for_role, role_for_model_tier, BYOK_INCOMPLETE_SENTINEL,
+    create_chat_model, create_chat_model_from_string, create_chat_model_from_string_with_model_id,
+    create_chat_model_with_model_id, probe_inference_readiness, provider_for_role,
+    role_for_model_tier, BYOK_INCOMPLETE_SENTINEL,
 };
+pub use openhuman_backend_model::{OpenHumanBackendModel, PROVIDER_LABEL};
 pub use ops::*;
-pub use resolved_route::{
-    current_resolved_provider_route, current_route_slot, record_resolved_provider_route,
-    with_resolved_provider_route_scope, with_route_slot, ResolvedProviderRoute, RouteSlot,
-};

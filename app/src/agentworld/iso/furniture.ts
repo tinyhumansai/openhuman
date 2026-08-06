@@ -150,7 +150,7 @@ function tableBlueprint(options: {
   };
 }
 
-export const FURNITURE_BLUEPRINTS: Record<string, FurnitureBlueprint> = {
+const FURNITURE_BLUEPRINTS: Record<string, FurnitureBlueprint> = {
   pokerTable: {
     footprintWidth: 3,
     footprintHeight: 2,

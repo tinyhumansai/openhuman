@@ -37,6 +37,20 @@ const MIN_VOICE_BYTES: u64 = 30 * 1024 * 1024;
 /// a 404 HTML response masquerading as JSON.
 const MIN_VOICE_JSON_BYTES: u64 = 256;
 
+/// Binaries shipped inside the Piper release archive that must carry the
+/// executable bit for the engine to start.
+///
+/// The upstream macOS tarballs ship `espeak-ng` with mode `0644` (#5045).
+/// `tar::Archive::unpack` faithfully reproduces the archived mode, so a
+/// plain extraction leaves the file non-executable and Piper fails when it
+/// shells out to phonemize. Extraction must therefore repair the bit
+/// rather than trust the archive.
+///
+/// Unix-only: Windows has no executable bit, so the const would be dead
+/// code there.
+#[cfg(unix)]
+const PIPER_EXECUTABLES: [&str; 3] = ["piper", "piper_phonemize", "espeak-ng"];
+
 /// Result of resolving the Piper binary archive URL for the host OS.
 struct BinaryAsset {
     url: String,
@@ -75,11 +89,20 @@ fn binary_download_asset() -> Option<BinaryAsset> {
     if cfg!(target_os = "macos") {
         // Two assets exist (`piper_macos_x64.tar.gz` and
         // `piper_macos_aarch64.tar.gz`). Pick based on the host arch.
+        //
+        // NOTE (#5045): as of the pinned upstream release `2023.11.14-2`
+        // the two macOS assets are byte-identical x86_64 builds — the
+        // `aarch64` name is a mislabel — and neither ships the
+        // `@rpath` dylibs `piper` links against. Selecting the arm64
+        // asset here is still correct, but it cannot make Piper run on
+        // Apple Silicon until upstream republishes the bundle. The arch
+        // is logged below so a bad asset is diagnosable from user logs.
         let arch = std::env::consts::ARCH;
         let suffix = match arch {
             "aarch64" | "arm64" => "macos_aarch64",
             _ => "macos_x64",
         };
+        log::info!("{LOG_PREFIX} host arch={arch} selecting asset=piper_{suffix}.tar.gz");
         return Some(BinaryAsset {
             url: format!("{base}/piper_{suffix}.tar.gz"),
             kind: ArchiveKind::TarGz,
@@ -218,6 +241,14 @@ pub async fn install_piper(
 
     if !force_reinstall && installed_artifacts_ok(config, &voice) {
         log::debug!("{LOG_PREFIX} short-circuit: artifacts already present");
+        // Repair permissions on the EXISTING install before reporting success.
+        // Users hit by #5045 already extracted the affected archive, so they
+        // reach this branch on every launch and would never run the repair that
+        // only lived on the fresh-install path — they would keep seeing TTS
+        // failures until they manually forced a reinstall. `ensure_executable_bits`
+        // is a no-op when the bits are already set, so this costs a stat per
+        // executable on the happy path.
+        ensure_executable_bits(&paths::workspace_piper_dir(config));
         let snapshot = VoiceInstallStatus {
             engine: ENGINE_PIPER.to_string(),
             state: VoiceInstallState::Installed,
@@ -369,10 +400,83 @@ async fn run_install(config: &Config, voice: &str) -> Result<(), String> {
         ArchiveKind::Zip => extract_zip(&archive_path, &dest)?,
         ArchiveKind::TarGz => extract_tar_gz(&archive_path, &dest)?,
     }
-    let _ = std::fs::remove_file(&archive_path);
+    ensure_executable_bits(&dest);
+    if let Err(e) = std::fs::remove_file(&archive_path) {
+        log::warn!(
+            "{LOG_PREFIX} could not remove archive {}: {e}",
+            archive_path.display()
+        );
+    }
 
     Ok(())
 }
+
+/// Directories under the install root where an extracted Piper binary can
+/// land. Mirrors the layouts probed by
+/// [`paths::workspace_piper_binary_candidates`]: the macOS/Linux tarballs
+/// nest under `piper/`, some builds flatten to the root, and a few use
+/// `bin/`. Bounded on purpose — a recursive walk would descend into
+/// `espeak-ng-data/` and `voices/` (which holds a ~60 MB `.onnx`) for no
+/// benefit.
+#[cfg(unix)]
+fn executable_search_dirs(dest_dir: &std::path::Path) -> [PathBuf; 3] {
+    [
+        dest_dir.to_path_buf(),
+        dest_dir.join("piper"),
+        dest_dir.join("bin"),
+    ]
+}
+
+/// Repair the executable bit on the binaries extracted from the Piper
+/// archive.
+///
+/// Upstream ships `espeak-ng` as mode `0644` inside both macOS tarballs
+/// (#5045) and `tar::Archive::unpack` reproduces the archived mode
+/// verbatim, so the extracted tree is left with a non-executable
+/// `espeak-ng`. Rather than trust archive metadata, set `0o755` on every
+/// binary we know Piper needs.
+///
+/// Best-effort by design: a `chmod` failure is logged but does not fail
+/// the install, since the caller may still have a working engine on
+/// `PATH` (`PIPER_BIN`) and a hard error here would regress that path.
+#[cfg(unix)]
+fn ensure_executable_bits(dest_dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for dir in executable_search_dirs(dest_dir) {
+        for name in PIPER_EXECUTABLES {
+            let path = dir.join(name);
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let mode = meta.permissions().mode();
+            // Any of user/group/other execute already set → leave it be.
+            if mode & 0o111 != 0 {
+                log::debug!(
+                    "{LOG_PREFIX} {} already executable (mode {:o})",
+                    path.display(),
+                    mode & 0o777
+                );
+                continue;
+            }
+            match std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)) {
+                Ok(()) => log::info!(
+                    "{LOG_PREFIX} repaired execute bit on {} (was mode {:o})",
+                    path.display(),
+                    mode & 0o777
+                ),
+                Err(e) => log::warn!("{LOG_PREFIX} could not chmod +x {}: {e}", path.display()),
+            }
+        }
+    }
+}
+
+/// Windows has no executable bit — extraction is sufficient there.
+#[cfg(not(unix))]
+fn ensure_executable_bits(_dest_dir: &std::path::Path) {}
 
 fn update_stage(stage: String) {
     let mut current = read_status(ENGINE_PIPER);
@@ -469,21 +573,137 @@ fn inflate_gzip(compressed: &[u8]) -> Result<Vec<u8>, String> {
 pub(crate) fn find_workspace_piper_binary(config: &Config) -> Option<PathBuf> {
     let candidates = paths::workspace_piper_binary_candidates(config);
     for candidate in candidates {
-        if candidate.is_file() {
-            log::debug!(
-                "{LOG_PREFIX} found workspace piper binary at {}",
+        if !candidate.is_file() {
+            continue;
+        }
+        // A file we cannot execute is not a usable candidate. Returning it
+        // anyway would pin resolution to the broken workspace copy and make the
+        // `PIPER_BIN` / PATH fallback unreachable, which is exactly what
+        // happens when the `chmod` repair fails (denied, or a filesystem with
+        // no execute bit). Skipping lets resolution continue to a working
+        // engine instead of failing at launch.
+        if !is_executable_file(&candidate) {
+            log::warn!(
+                "{LOG_PREFIX} skipping non-executable workspace piper binary {} — falling back to PIPER_BIN/PATH",
                 candidate.display()
             );
-            return Some(candidate);
+            continue;
         }
+        log::debug!(
+            "{LOG_PREFIX} found workspace piper binary at {}",
+            candidate.display()
+        );
+        return Some(candidate);
     }
     None
+}
+
+/// Whether `path` carries an execute bit for anybody.
+///
+/// Windows has no execute bit, so every regular file qualifies there.
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(_path: &std::path::Path) -> bool {
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::inference::local::voice_install_common::reset_status;
+
+    /// Point [`paths::shared_root_dir`] at a test's own `TempDir`.
+    ///
+    /// `shared_root_dir` only honours `config.workspace_dir` when
+    /// `OPENHUMAN_WORKSPACE` is set; without it every write below lands in the
+    /// developer's real `~/.openhuman/bin/piper` and the cleanup deletes their
+    /// installed Piper (CodeRabbit, #5253). Setting the variable for the
+    /// duration keeps writes *and* cleanup inside the `TempDir`, so the
+    /// `TempDir`'s own `Drop` is the cleanup and it runs on unwind too: a
+    /// failing assertion can no longer leave a stub binary behind for the next
+    /// test to trip over.
+    ///
+    /// Callers must already hold [`shared_install_lock`] — this mutates
+    /// process-wide environment state.
+    ///
+    /// `#[cfg(unix)]` because its only consumer is the unix-only permissions
+    /// test; unconditional would be dead code on Windows, where clippy runs
+    /// with `-D warnings`.
+    #[cfg(unix)]
+    struct SharedRootOverride {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl SharedRootOverride {
+        fn set(root: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", root);
+            Self { previous }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SharedRootOverride {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(previous) => std::env::set_var("OPENHUMAN_WORKSPACE", previous),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_executable_workspace_binary_is_skipped_so_path_can_win() {
+        // #5045 review (Codex P2): when the chmod repair fails, returning the
+        // 0644 workspace copy anyway pins resolution to a binary that cannot
+        // launch and makes the PIPER_BIN/PATH fallback unreachable.
+        //
+        // This test must hold the module lock: it mutates OPENHUMAN_WORKSPACE,
+        // which is process-wide, and `reset_status`/install state is shared
+        // with every sibling install_piper / install_whisper / paths test.
+        //
+        // `workspace_piper_binary_candidates` resolves through
+        // `paths::shared_root_dir`, which ignores `config.workspace_dir` unless
+        // OPENHUMAN_WORKSPACE is set and otherwise returns the real
+        // `~/.openhuman/bin/piper`. `SharedRootOverride` sets it to this test's
+        // TempDir so the stub written below, and its cleanup, stay inside the
+        // TempDir instead of touching a developer's installed Piper.
+        use std::os::unix::fs::PermissionsExt;
+        let _g = shared_install_lock();
+        let (_dir, config) = temp_config();
+        let _root = SharedRootOverride::set(&config.workspace_dir);
+        wipe_shared_install_dir(&config);
+        let candidates = paths::workspace_piper_binary_candidates(&config);
+        let candidate = candidates.first().expect("at least one candidate").clone();
+        std::fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        std::fs::write(&candidate, b"#!/bin/sh\n").unwrap();
+
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            find_workspace_piper_binary(&config).is_none(),
+            "a non-executable workspace binary must not be resolved"
+        );
+
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            find_workspace_piper_binary(&config).as_deref(),
+            Some(candidate.as_path()),
+            "an executable workspace binary is still preferred"
+        );
+
+        // No tail cleanup: it would only run when every assertion above passed.
+        // `_dir` (TempDir) and `_root` (SharedRootOverride) clean up on drop,
+        // which happens on the panic path too.
+    }
 
     fn temp_config() -> (tempfile::TempDir, Config) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -655,6 +875,15 @@ mod tests {
         let target = paths::workspace_piper_binary_candidates(&config)[0].clone();
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(&target, b"stub").unwrap();
+        // "Present" now means present AND executable: a 0644 file is not a
+        // usable binary, and resolving it would pin us to a copy that cannot
+        // launch (see `non_executable_workspace_binary_is_skipped_so_path_can_win`).
+        // `std::fs::write` creates 0644, so grant the bit explicitly.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let found = find_workspace_piper_binary(&config).expect("should find binary");
         assert_eq!(found, target);
         wipe_shared_install_dir(&config);
@@ -666,5 +895,102 @@ mod tests {
         let (_tmp, config) = temp_config();
         wipe_shared_install_dir(&config);
         assert!(find_workspace_piper_binary(&config).is_none());
+    }
+
+    /// Regression tests for #5045: the upstream macOS tarballs ship
+    /// `espeak-ng` as mode 0644 and `tar::Archive::unpack` reproduces the
+    /// archived mode verbatim, leaving Piper unable to phonemize.
+    #[cfg(unix)]
+    mod executable_bits {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn mode_of(path: &std::path::Path) -> u32 {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        }
+
+        fn write_with_mode(path: &std::path::Path, mode: u32) {
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, b"stub").expect("write");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        }
+
+        /// The headline bug: a 0644 `espeak-ng` in the nested `piper/`
+        /// layout the macOS tarball actually produces.
+        #[test]
+        fn repairs_non_executable_espeak_ng_in_nested_layout() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let espeak = tmp.path().join("piper").join("espeak-ng");
+            write_with_mode(&espeak, 0o644);
+            assert_eq!(mode_of(&espeak), 0o644, "precondition: not executable");
+
+            ensure_executable_bits(tmp.path());
+
+            assert_eq!(
+                mode_of(&espeak),
+                0o755,
+                "espeak-ng must be executable after extraction"
+            );
+        }
+
+        /// Some builds flatten the archive to the install root rather than
+        /// nesting under `piper/`; both layouts must be repaired.
+        #[test]
+        fn repairs_binaries_in_flat_layout() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let espeak = tmp.path().join("espeak-ng");
+            write_with_mode(&espeak, 0o644);
+
+            ensure_executable_bits(tmp.path());
+
+            assert_eq!(mode_of(&espeak), 0o755);
+        }
+
+        /// `piper` and `piper_phonemize` already ship 0755 upstream — the
+        /// repair must not widen or otherwise rewrite a good mode.
+        #[test]
+        fn leaves_already_executable_binaries_untouched() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let piper = tmp.path().join("piper").join("piper");
+            // Deliberately narrower than 0755 to prove we don't rewrite.
+            write_with_mode(&piper, 0o700);
+
+            ensure_executable_bits(tmp.path());
+
+            assert_eq!(
+                mode_of(&piper),
+                0o700,
+                "an already-executable binary must keep its mode"
+            );
+        }
+
+        /// Data files shipped alongside the binaries (`libtashkeel_model.ort`,
+        /// the `.onnx` voices) must not become executable.
+        #[test]
+        fn does_not_touch_non_binary_payloads() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let data = tmp.path().join("piper").join("libtashkeel_model.ort");
+            write_with_mode(&data, 0o644);
+
+            ensure_executable_bits(tmp.path());
+
+            assert_eq!(
+                mode_of(&data),
+                0o644,
+                "data payloads must not gain the execute bit"
+            );
+        }
+
+        /// A missing install directory is the common case on a fresh
+        /// workspace — the repair must be a silent no-op, not a panic.
+        #[test]
+        fn is_a_no_op_when_nothing_was_extracted() {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            ensure_executable_bits(&tmp.path().join("does-not-exist"));
+        }
     }
 }

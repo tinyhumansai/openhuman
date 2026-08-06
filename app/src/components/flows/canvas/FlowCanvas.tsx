@@ -9,25 +9,46 @@
  *    {@link EditableFlowCanvas}, which lifts nodes/edges into controlled state
  *    and wires drag/connect/add/delete/save on top.
  *
- * The `editable` prop defaults to `false` so every existing read-only consumer
- * (the `/flows/:id` viewer) keeps its exact behavior — only the builder opts in.
+ * The `editable` prop defaults to `false`, but as of the F-m5 audit
+ * (`my_docs/flows_review_2026-07-30.md`) there is exactly one production
+ * consumer — `FlowCanvasPage.tsx` — and it always passes `editable`. The
+ * `/flows/:id` route this doc block used to claim as the read-only viewer's
+ * consumer IS `FlowCanvasPage`, and it is NOT read-only. `ReadonlyFlowCanvas`
+ * below is therefore currently unreachable in the shipped app; it's kept
+ * (rather than deleted) because it's small, self-contained, and covered by
+ * its own smoke tests (`__tests__/FlowCanvas.test.tsx`) — a future
+ * share/embed/public-viewer surface is a plausible reason to want a
+ * non-editable render path again. Delete both it and its tests together if
+ * no such consumer materializes.
  */
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow } from '@xyflow/react';
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type Viewport,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { memo, useMemo } from 'react';
+import { forwardRef, memo, useMemo } from 'react';
 
 import {
   FLOW_NODE_TYPE,
   type FlowEdge,
   type FlowNode,
+  stepNumbersForFlow,
   type WorkflowGraphMeta,
 } from '../../../lib/flows/graphAdapter';
 import type { WorkflowGraph } from '../../../lib/flows/types';
-import EditableFlowCanvas from './EditableFlowCanvas';
+import EditableFlowCanvas, {
+  type EditableFlowCanvasHandle,
+  type EditorSaveMeta,
+} from './EditableFlowCanvas';
 import './flowCanvasStyles.css';
 import FlowNodeComponent from './FlowNodeComponent';
+import { StepNumberContext } from './stepNumbers';
 
-export interface FlowCanvasProps {
+interface FlowCanvasProps {
   nodes: FlowNode[];
   edges: FlowEdge[];
   /**
@@ -59,6 +80,22 @@ export interface FlowCanvasProps {
    * proposal) doesn't silently clear unsaved state.
    */
   initialDirty?: boolean;
+  /**
+   * Show the drag-and-drop node palette ("Legend") overlay (editable only).
+   * Driven by the canvas header's Copilot | Legend toggle. Defaults to `true`
+   * so non-toggling consumers keep the palette visible.
+   */
+  showPalette?: boolean;
+  /** Reports Save-button state up so the host header can render Save/Discard. */
+  onSaveMetaChange?: (meta: EditorSaveMeta) => void;
+  /**
+   * The viewport (pan/zoom) to restore on mount (editable only, F4/F5 fix) —
+   * see `EditableFlowCanvas`'s `savedViewport` doc comment. Not threaded to
+   * the read-only viewer, which keeps its unconditional `fitView`.
+   */
+  savedViewport?: Viewport | null;
+  /** Fired on every viewport change (editable only, F4/F5 fix). */
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 const NODE_TYPES = { [FLOW_NODE_TYPE]: FlowNodeComponent };
@@ -80,20 +117,26 @@ function ReadonlyFlowCanvas({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEd
     []
   );
 
+  // Same derivation as the editable canvas, so a read-only graph numbers its
+  // cards identically. See `stepNumbers.ts` for why this is not node `data`.
+  const stepNumberMap = useMemo(() => stepNumbersForFlow(nodes, edges), [nodes, edges]);
+
   return (
     <div className="flow-canvas h-full w-full" data-testid="flow-canvas">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={NODE_TYPES}
-        fitView
-        panOnScroll
-        zoomOnScroll
-        {...interactionProps}>
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-        <MiniMap pannable zoomable />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+      <StepNumberContext.Provider value={stepNumberMap}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={NODE_TYPES}
+          fitView
+          panOnScroll
+          zoomOnScroll
+          {...interactionProps}>
+          <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+          <MiniMap pannable zoomable />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </StepNumberContext.Provider>
     </div>
   );
 }
@@ -102,38 +145,52 @@ function ReadonlyFlowCanvas({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEd
  * Fills its parent's box (`h-full w-full` — the page decides how tall/wide
  * that is; `FlowCanvasPage` gives it the full panel body).
  */
-function FlowCanvas({
-  nodes,
-  edges,
-  editable = false,
-  meta,
-  onSave,
-  onDirtyChange,
-  activeRunId,
-  onGraphChange,
-  addedNodeIds,
-  removedNodeIds,
-  saveDisabled,
-  initialDirty,
-}: FlowCanvasProps) {
-  if (editable) {
-    return (
-      <EditableFlowCanvas
-        nodes={nodes}
-        edges={edges}
-        meta={meta ?? DEFAULT_META}
-        onSave={onSave}
-        onDirtyChange={onDirtyChange}
-        activeRunId={activeRunId}
-        onGraphChange={onGraphChange}
-        addedNodeIds={addedNodeIds}
-        removedNodeIds={removedNodeIds}
-        saveDisabled={saveDisabled}
-        initialDirty={initialDirty}
-      />
-    );
+const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
+  (
+    {
+      nodes,
+      edges,
+      editable = false,
+      meta,
+      onSave,
+      onDirtyChange,
+      activeRunId,
+      onGraphChange,
+      addedNodeIds,
+      removedNodeIds,
+      saveDisabled,
+      initialDirty,
+      showPalette = true,
+      onSaveMetaChange,
+      savedViewport,
+      onViewportChange,
+    }: FlowCanvasProps,
+    ref
+  ) => {
+    if (editable) {
+      return (
+        <EditableFlowCanvas
+          ref={ref}
+          nodes={nodes}
+          edges={edges}
+          meta={meta ?? DEFAULT_META}
+          onSave={onSave}
+          onDirtyChange={onDirtyChange}
+          activeRunId={activeRunId}
+          onGraphChange={onGraphChange}
+          addedNodeIds={addedNodeIds}
+          removedNodeIds={removedNodeIds}
+          saveDisabled={saveDisabled}
+          initialDirty={initialDirty}
+          showPalette={showPalette}
+          onSaveMetaChange={onSaveMetaChange}
+          savedViewport={savedViewport}
+          onViewportChange={onViewportChange}
+        />
+      );
+    }
+    return <ReadonlyFlowCanvas nodes={nodes} edges={edges} />;
   }
-  return <ReadonlyFlowCanvas nodes={nodes} edges={edges} />;
-}
+);
 
 export default memo(FlowCanvas);

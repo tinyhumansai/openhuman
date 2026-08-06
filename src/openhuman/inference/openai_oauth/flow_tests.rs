@@ -4,9 +4,6 @@ use super::{
     complete_openai_oauth, disconnect_openai_oauth, openai_oauth_status, start_openai_oauth,
 };
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::profiles::{
-    AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
-};
 use crate::openhuman::inference::openai_oauth::store::{
     import_codex_cli_auth_from_path, OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
 };
@@ -14,6 +11,9 @@ use crate::openhuman::inference::openai_oauth::{
     lookup_openai_bearer_token, lookup_openai_oauth_credentials,
 };
 use crate::openhuman::inference::provider::factory::lookup_key_for_slug;
+use crate::openhuman::security::credentials::profiles::{
+    AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
+};
 use chrono::{Duration, Utc};
 use motosan_ai_oauth::{OAuthConfig, StateStrategy, TokenBodyFormat};
 use tempfile::tempdir;
@@ -577,6 +577,83 @@ fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
     // OAuth fallback only fires when no API key is present.
     let token = lookup_key_for_slug("openai", &config).unwrap();
     assert_eq!(token, "sk-api-key");
+}
+
+#[test]
+fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation() {
+    // #5353: routing keys on *which credential is stored*, not on comparing two
+    // independently-resolved OAuth tokens. Near expiry each read refreshes the
+    // token and OpenAI mints a new one, so the old `access_token == bearer_key`
+    // check spuriously failed and fell back to api.openai.com (HTTP 400 "Stream
+    // must be set to true"). With only OAuth stored, routing must reach the Codex
+    // backend regardless of the bearer string passed in — here a deliberately
+    // *different* token, standing in for a post-refresh rotation.
+    use crate::openhuman::inference::provider::factory::openai_bearer_is_oauth;
+    use crate::openhuman::inference::provider::openai_codex::resolve_openai_codex_routing;
+
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    store
+        .upsert_profile(
+            AuthProfile::new_oauth(
+                OPENAI_PROVIDER_KEY,
+                OPENAI_OAUTH_PROFILE_NAME,
+                TokenSet {
+                    access_token: "oauth-access-current".into(),
+                    refresh_token: Some("refresh".into()),
+                    id_token: None,
+                    expires_at: Some(Utc::now() + Duration::hours(1)),
+                    token_type: Some("Bearer".into()),
+                    scope: None,
+                },
+            ),
+            true,
+        )
+        .unwrap();
+    assert!(
+        openai_bearer_is_oauth(&config),
+        "OAuth is the only openai credential, so the bearer is OAuth"
+    );
+
+    let routing = resolve_openai_codex_routing(
+        &config,
+        "openai",
+        "https://api.openai.com/v1",
+        // A stale bearer that does NOT equal the stored access token: the pre-fix
+        // equality check mis-routed on exactly this.
+        "oauth-access-stale",
+        openai_bearer_is_oauth(&config),
+    )
+    .unwrap();
+    assert!(routing.using_oauth, "OAuth-only openai must route to Codex");
+    assert_ne!(
+        routing.endpoint, "https://api.openai.com/v1",
+        "must re-target the Codex backend, not standard OpenAI"
+    );
+
+    // Once an API key is stored and made active, the user's key wins and routing
+    // stays standard — the existing precedence is preserved.
+    store
+        .upsert_profile(
+            AuthProfile::new_token("provider:openai", "default", "sk-api-key".into()),
+            true,
+        )
+        .unwrap();
+    assert!(!openai_bearer_is_oauth(&config));
+    let routing = resolve_openai_codex_routing(
+        &config,
+        "openai",
+        "https://api.openai.com/v1",
+        "sk-api-key",
+        openai_bearer_is_oauth(&config),
+    )
+    .unwrap();
+    assert!(
+        !routing.using_oauth,
+        "a stored API key routes to standard OpenAI"
+    );
+    assert_eq!(routing.endpoint, "https://api.openai.com/v1");
 }
 
 #[test]

@@ -101,12 +101,3 @@ export function annualSavings(
 export function isUpgrade(targetTier: PlanTier, currentTier: PlanTier): boolean {
   return tierIndex(targetTier) > tierIndex(currentTier);
 }
-
-export function getPlanMeta(tier: PlanTier): PlanMeta | undefined {
-  return PLANS.find(plan => plan.tier === tier);
-}
-
-export function formatUsdAmount(amount: number): string {
-  if (Number.isInteger(amount)) return `$${amount}`;
-  return `$${amount.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
-}

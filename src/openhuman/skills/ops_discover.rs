@@ -66,7 +66,30 @@ pub fn init_workflows_dir(workspace_dir: &Path) -> Result<(), String> {
 pub fn load_workflow_metadata(workspace_dir: &Path) -> Vec<Workflow> {
     let trusted = is_workspace_trusted(workspace_dir);
     let home = dirs::home_dir();
-    discover_workflows_inner(home.as_deref(), Some(workspace_dir), trusted)
+    discover_workflows_inner(home.as_deref(), Some(workspace_dir), None, trusted)
+}
+
+/// Like [`load_workflow_metadata`], but additionally scans a profile-local
+/// skills root (`<workspace>/personalities/<id>/skills/`) when one is supplied.
+///
+/// Callers pass the active profile's root (resolved via
+/// `profiles::profile_skills_root`) so the returned catalog carries that
+/// profile's private skills. `None` reproduces [`load_workflow_metadata`]
+/// byte-for-byte, so the profile-less session and every other profile are
+/// unaffected. Profile-local skills win same-name collisions against global
+/// scopes (see [`WorkflowScope::Profile`]).
+pub fn load_workflow_metadata_for_profile(
+    workspace_dir: &Path,
+    profile_skills_root: Option<&Path>,
+) -> Vec<Workflow> {
+    let trusted = is_workspace_trusted(workspace_dir);
+    let home = dirs::home_dir();
+    discover_workflows_inner(
+        home.as_deref(),
+        Some(workspace_dir),
+        profile_skills_root,
+        trusted,
+    )
 }
 
 /// Discover skills from every supported location.
@@ -84,7 +107,26 @@ pub fn discover_workflows(
     workspace_dir: Option<&Path>,
     trusted: bool,
 ) -> Vec<Workflow> {
-    discover_workflows_inner(home_dir, workspace_dir, trusted)
+    discover_workflows_inner(home_dir, workspace_dir, None, trusted)
+}
+
+/// Discover skills including a profile-local root, for a turn running under a
+/// specific agent profile.
+///
+/// `profile_skills_root` is `<workspace>/personalities/<id>/skills/` (resolved
+/// via `profiles::profile_skills_root`, which validates the id). It is scanned
+/// unconditionally — no trust marker is required, since the directory is
+/// core-managed under `workspace_dir` — and its bundles win same-name collisions
+/// against every global scope for this profile. `None` is identical to
+/// [`discover_workflows`], so other profiles and the default session never see
+/// these skills.
+pub fn discover_workflows_with_profile(
+    home_dir: Option<&Path>,
+    workspace_dir: Option<&Path>,
+    profile_skills_root: Option<&Path>,
+    trusted: bool,
+) -> Vec<Workflow> {
+    discover_workflows_inner(home_dir, workspace_dir, profile_skills_root, trusted)
 }
 
 /// Whether the workspace has opted into loading project-scope skills.
@@ -116,9 +158,16 @@ const WORKFLOW_ROOT_KINDS: &[RootKind] = &[RootKind::Workflow];
 pub(crate) fn discover_workflows_inner(
     home_dir: Option<&Path>,
     workspace_dir: Option<&Path>,
+    profile_skills_root: Option<&Path>,
     trusted: bool,
 ) -> Vec<Workflow> {
-    discover_filtered(home_dir, workspace_dir, trusted, ALL_ROOT_KINDS)
+    discover_filtered(
+        home_dir,
+        workspace_dir,
+        profile_skills_root,
+        trusted,
+        ALL_ROOT_KINDS,
+    )
 }
 
 /// Discover only *automation* bundles — those under the `workflows/` roots —
@@ -143,7 +192,7 @@ pub fn discover_automations(
         has_workspace = workspace_dir.is_some(),
         "[workflows] discover:automations:enter"
     );
-    discover_filtered(home_dir, workspace_dir, trusted, WORKFLOW_ROOT_KINDS)
+    discover_filtered(home_dir, workspace_dir, None, trusted, WORKFLOW_ROOT_KINDS)
 }
 
 /// Shared discovery core. `kinds` selects which root categories to scan,
@@ -152,6 +201,7 @@ pub fn discover_automations(
 fn discover_filtered(
     home_dir: Option<&Path>,
     workspace_dir: Option<&Path>,
+    profile_skills_root: Option<&Path>,
     trusted: bool,
     kinds: &[RootKind],
 ) -> Vec<Workflow> {
@@ -159,6 +209,7 @@ fn discover_filtered(
         trusted,
         has_home = home_dir.is_some(),
         has_workspace = workspace_dir.is_some(),
+        has_profile_root = profile_skills_root.is_some(),
         include_skills = kinds.contains(&RootKind::Skill),
         include_workflows = kinds.contains(&RootKind::Workflow),
         "[workflows] discover:enter"
@@ -210,6 +261,33 @@ fn discover_filtered(
         }
     }
 
+    // Profile-local skills (`<workspace>/personalities/<id>/skills/`) are a skill
+    // root scoped to the *active* profile: scanned last and at the highest
+    // precedence so a profile-local bundle wins any same-name collision against
+    // the global scopes for its owner (see [`precedence`]). Excluded from the
+    // automations-only view for the same reason as the legacy skill root. No
+    // trust marker is consulted — the directory is core-managed under
+    // `workspace_dir`, seeded by `ensure_profile_home`.
+    if let Some(profile_root) = profile_skills_root {
+        if kinds.contains(&RootKind::Skill) {
+            tracing::debug!(
+                root = %profile_root.display(),
+                scope = ?WorkflowScope::Profile,
+                "[profiles] discover:branch:profile-local skills"
+            );
+            let before = by_name.len();
+            absorb(
+                &mut by_name,
+                scan_root(profile_root, WorkflowScope::Profile),
+            );
+            tracing::debug!(
+                names_before = before,
+                names_after = by_name.len(),
+                "[profiles] profile-local skills absorbed (profile scope wins same-name collisions)"
+            );
+        }
+    }
+
     let mut out: Vec<Workflow> = by_name.into_values().collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     tracing::debug!(discovered_count = out.len(), "[workflows] discover:exit");
@@ -245,35 +323,63 @@ fn project_roots(workspace: &Path) -> Vec<(PathBuf, RootKind)> {
 fn absorb(by_name: &mut HashMap<String, Workflow>, incoming: Vec<Workflow>) {
     for mut skill in incoming {
         let key = skill.name.clone();
-        if let Some(existing) = by_name.remove(&key) {
-            // Higher-precedence scope wins; lower loses and is dropped.
-            let (winner, loser) = if precedence(skill.scope) >= precedence(existing.scope) {
-                (&mut skill, existing)
-            } else {
-                // Put existing back; discard incoming.
-                let mut kept = existing;
-                kept.warnings.push(format!(
-                    "name '{}' also declared in {:?} scope at {} (ignored)",
-                    kept.name,
-                    skill.scope,
-                    skill
+        // A workflow's runnable identity is `dir_name`, while `name` is only
+        // display metadata. Collapse on either so a profile-local `foo/` also
+        // shadows a global `foo/` whose frontmatter happens to use a different
+        // display name. Otherwise registry lookup by slug could nondeterministically
+        // select the global copy.
+        let collision_keys: Vec<String> = by_name
+            .iter()
+            .filter(|(existing_name, existing)| {
+                existing_name.as_str() == key || existing.dir_name == skill.dir_name
+            })
+            .map(|(existing_name, _)| existing_name.clone())
+            .collect();
+
+        if let Some((_, highest_name, highest_scope)) = collision_keys
+            .iter()
+            .filter_map(|collision_key| by_name.get(collision_key))
+            .map(|existing| {
+                (
+                    precedence(existing.scope),
+                    existing.name.clone(),
+                    existing.scope,
+                )
+            })
+            .max_by_key(|(rank, _, _)| *rank)
+        {
+            if precedence(skill.scope) < precedence(highest_scope) {
+                if let Some(kept) = by_name.get_mut(&highest_name) {
+                    kept.warnings.push(format!(
+                        "workflow id '{}' or name '{}' also declared in {:?} scope at {} (ignored)",
+                        skill.dir_name,
+                        skill.name,
+                        skill.scope,
+                        skill
+                            .location
+                            .as_deref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    ));
+                }
+                continue;
+            }
+        }
+
+        for collision_key in collision_keys {
+            if let Some(loser) = by_name.remove(&collision_key) {
+                skill.warnings.push(format!(
+                    "shadowed {:?}-scope skill '{}' (workflow id '{}') at {}",
+                    loser.scope,
+                    loser.name,
+                    loser.dir_name,
+                    loser
                         .location
                         .as_deref()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| "<unknown>".to_string())
                 ));
-                by_name.insert(key, kept);
-                continue;
-            };
-            winner.warnings.push(format!(
-                "shadowed {:?}-scope skill at {} with same name",
-                loser.scope,
-                loser
-                    .location
-                    .as_deref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<unknown>".to_string())
-            ));
+            }
         }
         by_name.insert(key, skill);
     }
@@ -284,6 +390,8 @@ fn precedence(scope: WorkflowScope) -> u8 {
         WorkflowScope::Legacy => 0,
         WorkflowScope::User => 1,
         WorkflowScope::Project => 2,
+        // Profile-local skills win against every global scope for their owner.
+        WorkflowScope::Profile => 3,
     }
 }
 
@@ -399,10 +507,49 @@ pub fn read_workflow_resource(
     skill_id: &str,
     relative_path: &Path,
 ) -> Result<String, String> {
+    read_workflow_resource_with_profile(workspace_dir, skill_id, relative_path, None)
+}
+
+/// The dir_name/name set of skills discovered under a profile-local skills root.
+///
+/// Used by the `describe_workflow` / `read_workflow_resource` / `run_workflow`
+/// tools to treat a profile's private skills as implicitly allowed for their
+/// owner (they bypass the `allowed_skills` allowlist, mirroring `list_workflows`).
+/// Empty when no profile root is active, so the profile-less session and other
+/// profiles are unaffected.
+pub fn profile_local_skill_ids(
+    profile_skills_root: Option<&Path>,
+) -> std::collections::HashSet<String> {
+    let Some(root) = profile_skills_root else {
+        return std::collections::HashSet::new();
+    };
+    scan_root(root, WorkflowScope::Profile)
+        .into_iter()
+        .flat_map(|w| {
+            let mut ids = vec![w.name];
+            if !w.dir_name.is_empty() {
+                ids.push(w.dir_name);
+            }
+            ids
+        })
+        .collect()
+}
+
+/// Like [`read_workflow_resource`], but resolves the skill against the active
+/// profile's private skills root too (`<workspace>/personalities/<id>/skills/`)
+/// when `profile_skills_root` is supplied. `None` is byte-identical to
+/// [`read_workflow_resource`].
+pub fn read_workflow_resource_with_profile(
+    workspace_dir: &Path,
+    skill_id: &str,
+    relative_path: &Path,
+    profile_skills_root: Option<&Path>,
+) -> Result<String, String> {
     tracing::debug!(
         skill_id = %skill_id,
         relative_path = %relative_path.display(),
         workspace = %workspace_dir.display(),
+        has_profile_root = profile_skills_root.is_some(),
         "[skills] read_workflow_resource: entry"
     );
 
@@ -434,10 +581,14 @@ pub fn read_workflow_resource(
     }
 
     // Resolve the skill by running the standard discovery pipeline. We reuse
-    // `load_workflow_metadata` (which honors both user and workspace roots plus the
-    // trust marker) so the resource read is scoped to the exact same set of
-    // skills the UI would already have shown the user.
-    let skill = resolve_workflow_for_resource(load_workflow_metadata(workspace_dir), skill_id)?;
+    // `load_workflow_metadata_for_profile` (which honors both user and workspace
+    // roots plus the trust marker, and the active profile's private root when
+    // supplied) so the resource read is scoped to the exact same set of skills
+    // the owner would already have seen listed.
+    let skill = resolve_workflow_for_resource(
+        load_workflow_metadata_for_profile(workspace_dir, profile_skills_root),
+        skill_id,
+    )?;
     let skill_root = skill
         .location
         .as_deref()
@@ -611,5 +762,259 @@ mod include_skills_tests {
             vec!["installed-skill", "my-automation"],
             "discover_workflows must include `skills/`-root installs"
         );
+    }
+}
+
+#[cfg(test)]
+mod profile_scope_tests {
+    use super::*;
+
+    /// Write a minimal `WORKFLOW.md` bundle under `root/slug/`.
+    fn seed_bundle(root: &Path, slug: &str) {
+        seed_bundle_with_name(root, slug, slug);
+    }
+
+    fn seed_bundle_with_name(root: &Path, slug: &str, name: &str) {
+        let dir = root.join(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("WORKFLOW.md"),
+            format!("---\nname: {name}\ndescription: {name} desc\n---\n\n{name} body\n"),
+        )
+        .unwrap();
+    }
+
+    /// Profile-local skills appear ONLY when their root is passed, and never for
+    /// the profile-less session or a *different* profile's root (2a scoping
+    /// matrix).
+    #[test]
+    fn profile_local_skills_scoped_to_their_owner() {
+        let home = tempfile::TempDir::new().unwrap();
+        // A global user-scope skill everyone sees.
+        seed_bundle(
+            &home.path().join(".openhuman").join("skills"),
+            "global-skill",
+        );
+
+        // Two distinct profile roots (alice / bob), each with a private skill.
+        let alice_root = tempfile::TempDir::new().unwrap();
+        seed_bundle(alice_root.path(), "alice-only");
+        let bob_root = tempfile::TempDir::new().unwrap();
+        seed_bundle(bob_root.path(), "bob-only");
+
+        let names = |workflows: Vec<Workflow>| {
+            let mut n: Vec<String> = workflows.into_iter().map(|w| w.name).collect();
+            n.sort();
+            n
+        };
+
+        // No profile: only the global skill.
+        let none = names(discover_workflows_with_profile(
+            Some(home.path()),
+            None,
+            None,
+            false,
+        ));
+        assert_eq!(none, vec!["global-skill"]);
+
+        // Alice's turn: global + alice-only, never bob-only.
+        let alice = names(discover_workflows_with_profile(
+            Some(home.path()),
+            None,
+            Some(alice_root.path()),
+            false,
+        ));
+        assert_eq!(alice, vec!["alice-only", "global-skill"]);
+
+        // Bob's turn: global + bob-only, never alice-only.
+        let bob = names(discover_workflows_with_profile(
+            Some(home.path()),
+            None,
+            Some(bob_root.path()),
+            false,
+        ));
+        assert_eq!(bob, vec!["bob-only", "global-skill"]);
+    }
+
+    /// A profile-local skill named the same as a global skill wins for its owner
+    /// (highest precedence) and is tagged `WorkflowScope::Profile` (2a collision
+    /// precedence).
+    #[test]
+    fn profile_local_wins_same_name_collision() {
+        let home = tempfile::TempDir::new().unwrap();
+        seed_bundle(
+            &home.path().join(".openhuman").join("skills"),
+            "shared-name",
+        );
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_bundle(profile_root.path(), "shared-name");
+
+        let workflows = discover_workflows_with_profile(
+            Some(home.path()),
+            None,
+            Some(profile_root.path()),
+            false,
+        );
+        let winner = workflows
+            .iter()
+            .find(|w| w.name == "shared-name")
+            .expect("shared-name resolved");
+        // Exactly one entry for the name, and it is the profile-local copy.
+        assert_eq!(
+            workflows.iter().filter(|w| w.name == "shared-name").count(),
+            1,
+            "collision must collapse to a single winner"
+        );
+        assert_eq!(
+            winner.scope,
+            WorkflowScope::Profile,
+            "profile-local skill must win the same-name collision"
+        );
+        // The winner resolves under the profile root, not the global one.
+        let canon_profile = std::fs::canonicalize(profile_root.path()).unwrap();
+        let loc = std::fs::canonicalize(winner.location.as_ref().unwrap()).unwrap();
+        assert!(
+            loc.starts_with(&canon_profile),
+            "winning skill must live under the profile root, got {}",
+            loc.display()
+        );
+    }
+
+    #[test]
+    fn profile_local_wins_same_runnable_id_with_different_display_name() {
+        let home = tempfile::TempDir::new().unwrap();
+        seed_bundle_with_name(
+            &home.path().join(".openhuman").join("skills"),
+            "shared-slug",
+            "Global display name",
+        );
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_bundle_with_name(profile_root.path(), "shared-slug", "Profile display name");
+
+        let workflows = discover_workflows_with_profile(
+            Some(home.path()),
+            None,
+            Some(profile_root.path()),
+            false,
+        );
+        let by_slug: Vec<_> = workflows
+            .iter()
+            .filter(|workflow| workflow.dir_name == "shared-slug")
+            .collect();
+        assert_eq!(by_slug.len(), 1, "runnable ids must be unique");
+        assert_eq!(by_slug[0].scope, WorkflowScope::Profile);
+        assert_eq!(by_slug[0].name, "Profile display name");
+    }
+
+    /// `WorkflowScope::Profile` outranks every global scope in the precedence
+    /// ladder (the mechanism the collision test relies on).
+    #[test]
+    fn profile_scope_has_highest_precedence() {
+        assert!(precedence(WorkflowScope::Profile) > precedence(WorkflowScope::Project));
+        assert!(precedence(WorkflowScope::Profile) > precedence(WorkflowScope::User));
+        assert!(precedence(WorkflowScope::Profile) > precedence(WorkflowScope::Legacy));
+    }
+
+    /// Seed a runnable bundle with a bundled resource under `references/`.
+    fn seed_bundle_with_resource(root: &Path, slug: &str, resource_body: &str) {
+        let dir = root.join(slug);
+        std::fs::create_dir_all(dir.join("references")).unwrap();
+        std::fs::write(
+            dir.join("WORKFLOW.md"),
+            format!("---\nname: {slug}\ndescription: {slug} desc\n---\n\n{slug} body\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("references").join("note.md"), resource_body).unwrap();
+    }
+
+    /// `read_workflow_resource_with_profile` (the `read_workflow_resource` tool's
+    /// seam) resolves a profile's private skill resources for the owner only,
+    /// resolves collisions to the profile-local copy, hides them from other
+    /// profiles / the profile-less session, and leaves global-only resources
+    /// readable everywhere.
+    #[test]
+    fn read_workflow_resource_with_profile_resolution_matrix() {
+        let ws = tempfile::TempDir::new().unwrap();
+        let profile_root = tempfile::TempDir::new().unwrap();
+        let other_root = tempfile::TempDir::new().unwrap();
+
+        // Global (legacy) skill + resource, private skill + resource, and a
+        // collision under both.
+        seed_bundle_with_resource(&ws.path().join("skills"), "resglobal7788", "GLOBAL_RES");
+        seed_bundle_with_resource(profile_root.path(), "reslocal7788", "LOCAL_RES");
+        seed_bundle_with_resource(&ws.path().join("skills"), "rescollide7788", "GLOBAL_RES");
+        seed_bundle_with_resource(profile_root.path(), "rescollide7788", "PROFILE_RES");
+
+        let rel = Path::new("references/note.md");
+        let read = |id: &str, root: Option<&Path>| {
+            read_workflow_resource_with_profile(ws.path(), id, rel, root)
+        };
+
+        // Owner reads its private skill's resource.
+        assert_eq!(
+            read("reslocal7788", Some(profile_root.path())).unwrap(),
+            "LOCAL_RES"
+        );
+        // Profile-less + other profile cannot resolve the private skill at all.
+        assert!(read("reslocal7788", None).is_err());
+        assert!(read("reslocal7788", Some(other_root.path())).is_err());
+
+        // Global-only resource is readable with or without a profile root.
+        assert_eq!(read("resglobal7788", None).unwrap(), "GLOBAL_RES");
+        assert_eq!(
+            read("resglobal7788", Some(profile_root.path())).unwrap(),
+            "GLOBAL_RES"
+        );
+
+        // Collision: owner reads the profile-local resource; everyone else the global.
+        assert_eq!(
+            read("rescollide7788", Some(profile_root.path())).unwrap(),
+            "PROFILE_RES"
+        );
+        assert_eq!(read("rescollide7788", None).unwrap(), "GLOBAL_RES");
+    }
+
+    /// `profile_local_skill_ids` returns both runnable names and directory slugs
+    /// under the profile root (the implicit-allow set the describe/read/run tools
+    /// consult), and is empty for the profile-less session.
+    #[test]
+    fn profile_local_skill_ids_lists_only_the_profile_root() {
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_bundle(profile_root.path(), "priv-a");
+        seed_bundle(profile_root.path(), "priv-b");
+
+        let ids = profile_local_skill_ids(Some(profile_root.path()));
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("priv-a"));
+        assert!(ids.contains("priv-b"));
+
+        assert!(
+            profile_local_skill_ids(None).is_empty(),
+            "profile-less session has no implicitly-allowed profile-local ids"
+        );
+    }
+
+    #[test]
+    fn profile_local_skill_ids_include_distinct_name_and_slug() {
+        let profile_root = tempfile::TempDir::new().unwrap();
+        seed_bundle_with_name(profile_root.path(), "mail-helper", "Inbox Assistant");
+
+        let ids = profile_local_skill_ids(Some(profile_root.path()));
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("mail-helper"));
+        assert!(ids.contains("Inbox Assistant"));
+    }
+
+    /// A `None` profile root reproduces `load_workflow_metadata` byte-for-byte —
+    /// the back-compat guarantee for the profile-less session.
+    #[test]
+    fn none_profile_root_matches_plain_discovery() {
+        let home = tempfile::TempDir::new().unwrap();
+        seed_bundle(&home.path().join(".openhuman").join("skills"), "a-skill");
+        let with_none = discover_workflows_with_profile(Some(home.path()), None, None, false);
+        let plain = discover_workflows(Some(home.path()), None, false);
+        let names: Vec<&str> = with_none.iter().map(|w| w.name.as_str()).collect();
+        let plain_names: Vec<&str> = plain.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, plain_names);
     }
 }

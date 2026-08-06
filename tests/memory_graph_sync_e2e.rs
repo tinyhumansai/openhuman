@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde_json::json;
 use tempfile::tempdir;
 
-use openhuman_core::openhuman::embeddings::NoopEmbedding;
+use openhuman_core::openhuman::inference::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::{
     MemoryClient, MemoryIngestionConfig, MemoryIngestionRequest, NamespaceDocumentInput,
     UnifiedMemory,

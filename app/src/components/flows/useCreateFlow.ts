@@ -25,7 +25,7 @@ const log = createDebug('app:flows:create');
 /** Sentinel `busyKey` for the "start from scratch" path (not a template id). */
 export const BLANK_FLOW_KEY = 'blank';
 
-export interface UseCreateFlow {
+interface UseCreateFlow {
   /** Persist `graph` under `name`, then navigate into its canvas. `key` tags the busy affordance. */
   create: (key: string, name: string, graph: WorkflowGraph) => Promise<void>;
   /** The `key` of the create currently in flight, or `null`. */

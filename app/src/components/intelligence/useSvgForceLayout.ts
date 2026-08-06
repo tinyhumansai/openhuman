@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 
-export interface SvgLayoutNode {
+interface SvgLayoutNode {
   x: number;
   y: number;
 }

@@ -25,12 +25,12 @@ fn migration_flag() -> &'static AtomicBool {
 /// from persisting indefinitely (see audit C8). Reading existing `enc:` values
 /// still succeeds throughout the migration.
 fn decrypt_optional_secret(
-    store: &crate::openhuman::keyring::SecretStore,
+    store: &crate::openhuman::security::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
+        if crate::openhuman::security::keyring::SecretStore::is_encrypted(&raw) {
             // Legacy `enc:` values are migrated to `enc2:` on read so they are
             // rewritten on the next config save instead of lingering forever.
             match store.decrypt_and_migrate(&raw) {
@@ -53,7 +53,7 @@ fn decrypt_optional_secret(
                     log::warn!(
                         "[config] Failed to decrypt {field_name} — field cleared (key inaccessible): {e}"
                     );
-                    crate::openhuman::keyring_consent::policy::notify_decrypt_failure(
+                    crate::openhuman::security::keyring_consent::policy::notify_decrypt_failure(
                         field_name,
                         &e.to_string(),
                     );
@@ -66,12 +66,12 @@ fn decrypt_optional_secret(
 }
 
 fn encrypt_optional_secret(
-    store: &crate::openhuman::keyring::SecretStore,
+    store: &crate::openhuman::security::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if !crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
+        if !crate::openhuman::security::keyring::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .encrypt(&raw)
@@ -98,7 +98,7 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
     }
     // Reset the per-pass migration flag before decrypting any field.
     migration_flag().store(false, Ordering::Relaxed);
-    let store = crate::openhuman::keyring::SecretStore::new(openhuman_dir, true);
+    let store = crate::openhuman::security::keyring::SecretStore::new(openhuman_dir, true);
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
@@ -117,6 +117,7 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
         &mut config.search.querit.api_key,
         "search.querit.api_key",
     )?;
+    decrypt_optional_secret(&store, &mut config.search.exa.api_key, "search.exa.api_key")?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -201,7 +202,7 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         .config_path
         .parent()
         .context("Config path must have a parent directory")?;
-    let store = crate::openhuman::keyring::SecretStore::new(parent_dir, true);
+    let store = crate::openhuman::security::keyring::SecretStore::new(parent_dir, true);
 
     encrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
@@ -220,6 +221,7 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         &mut config.search.querit.api_key,
         "search.querit.api_key",
     )?;
+    encrypt_optional_secret(&store, &mut config.search.exa.api_key, "search.exa.api_key")?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {

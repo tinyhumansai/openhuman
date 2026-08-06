@@ -23,10 +23,6 @@ vi.mock('react-router-dom', async importOriginal => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <h1>{title}</h1>,
-}));
-
 const mockGet = vi.mocked(agentRegistryApi.get);
 const mockAvailableTools = vi.mocked(agentRegistryApi.availableTools);
 const mockCreate = vi.mocked(agentRegistryApi.createCustom);

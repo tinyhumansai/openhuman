@@ -1,4 +1,4 @@
-export interface PrivacyLeaveItem {
+interface PrivacyLeaveItem {
   id: string;
   title: string;
   body: string;

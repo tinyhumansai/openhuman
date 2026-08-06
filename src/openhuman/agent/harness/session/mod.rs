@@ -10,7 +10,7 @@
 //!
 //! The model/tool iteration loop itself is **not** here: `turn` routes every
 //! chat turn through `turn::graph` into
-//! [`crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`], the
+//! [`crate::openhuman::agent::tinyagents::run_turn_via_tinyagents_shared`], the
 //! shared TinyAgents harness assembly. What this module keeps is the
 //! OpenHuman product shell around that loop — transcript persistence and
 //! legacy-format compatibility ([`transcript`], [`migration`]), prompt

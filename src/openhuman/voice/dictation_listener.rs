@@ -152,7 +152,7 @@ async fn start_rdev_listener(hotkey_str: String, config: &Config) {
     let combo = match hotkey::parse_hotkey(&normalized) {
         Ok(c) => c,
         Err(e) => {
-            log::error!("{LOG_PREFIX} failed to parse hotkey '{normalized}': {e}");
+            log::warn!("{LOG_PREFIX} failed to parse hotkey '{normalized}': {e}");
             return;
         }
     };
@@ -160,7 +160,7 @@ async fn start_rdev_listener(hotkey_str: String, config: &Config) {
     let (listener_handle, mut hotkey_rx) = match hotkey::start_listener(combo, mode) {
         Ok(pair) => pair,
         Err(e) => {
-            log::error!("{LOG_PREFIX} failed to start hotkey listener: {e}");
+            log::warn!("{LOG_PREFIX} failed to start hotkey listener: {e}");
             return;
         }
     };

@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import PanelScaffold from '../../../components/layout/PanelScaffold';
+import { useLatestAsync } from '../../../hooks/useLatestAsync';
 import {
   type AgentCard,
   type ExplorerOverview,
@@ -28,9 +29,15 @@ import {
 import { useT } from '../../../lib/i18n/I18nContext';
 import { apiClient } from '../../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../../assets';
+import StatusBlock from '../../components/StatusBlock';
 import { formatUnits } from '../../components/X402ConfirmDialog';
+import { relativeTime } from '../relativeTime';
 
 const debug = debugFactory('agentworld:explore');
+
+function errorType(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
 
 // ── Shared card style ─────────────────────────────────────────────────────────
 
@@ -107,15 +114,16 @@ type SectionState<T> =
 
 function useExploreCommunities(): SectionState<GroupMetadata> {
   const [state, setState] = useState<SectionState<GroupMetadata>>({ status: 'loading' });
+  const { begin, isLatest } = useLatestAsync();
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = begin();
     debug('fetching explore communities');
 
     void apiClient.groups
       .list({ limit: 12 })
       .then(raw => {
-        if (cancelled) return;
+        if (!isLatest(generation)) return;
         // Sort client-side by memberCount desc (no server-side sort param).
         const sorted = [...raw].sort((a, b) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
         if (sorted.length === 0) {
@@ -127,15 +135,11 @@ function useExploreCommunities(): SectionState<GroupMetadata> {
         }
       })
       .catch(err => {
-        if (cancelled) return;
-        debug('communities fetch failed: %s', String(err));
+        if (!isLatest(generation)) return;
+        debug('communities fetch failed error_type=%s', errorType(err));
         setState({ status: 'error' });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [begin, isLatest]);
 
   return state;
 }
@@ -144,15 +148,16 @@ function useExploreCommunities(): SectionState<GroupMetadata> {
 
 function useExploreJobs(): SectionState<GqlJobPosting> {
   const [state, setState] = useState<SectionState<GqlJobPosting>>({ status: 'loading' });
+  const { begin, isLatest } = useLatestAsync();
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = begin();
     debug('fetching explore jobs');
 
     void apiClient.graphql
       .jobs({ status: 'OPEN', limit: 6 })
       .then(result => {
-        if (cancelled) return;
+        if (!isLatest(generation)) return;
         const jobs = result.jobs ?? [];
         if (jobs.length === 0) {
           debug('jobs section: empty, hiding');
@@ -163,15 +168,11 @@ function useExploreJobs(): SectionState<GqlJobPosting> {
         }
       })
       .catch(err => {
-        if (cancelled) return;
-        debug('jobs fetch failed: %s', String(err));
+        if (!isLatest(generation)) return;
+        debug('jobs fetch failed error_type=%s', errorType(err));
         setState({ status: 'error' });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [begin, isLatest]);
 
   return state;
 }
@@ -180,15 +181,16 @@ function useExploreJobs(): SectionState<GqlJobPosting> {
 
 function useExploreBounties(): SectionState<GqlBounty> {
   const [state, setState] = useState<SectionState<GqlBounty>>({ status: 'loading' });
+  const { begin, isLatest } = useLatestAsync();
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = begin();
     debug('fetching explore bounties');
 
     void apiClient.graphql
       .bounties({ status: 'open', limit: 6 })
       .then(result => {
-        if (cancelled) return;
+        if (!isLatest(generation)) return;
         // Client-side filter to open status in case the server ignores the param.
         const open = (result ?? []).filter(b => b.status === 'open');
         if (open.length === 0) {
@@ -200,15 +202,11 @@ function useExploreBounties(): SectionState<GqlBounty> {
         }
       })
       .catch(err => {
-        if (cancelled) return;
-        debug('bounties fetch failed: %s', String(err));
+        if (!isLatest(generation)) return;
+        debug('bounties fetch failed error_type=%s', errorType(err));
         setState({ status: 'error' });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [begin, isLatest]);
 
   return state;
 }
@@ -217,15 +215,16 @@ function useExploreBounties(): SectionState<GqlBounty> {
 
 function useExploreAgents(): SectionState<AgentCard> {
   const [state, setState] = useState<SectionState<AgentCard>>({ status: 'loading' });
+  const { begin, isLatest } = useLatestAsync();
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = begin();
     debug('fetching explore agents');
 
     void apiClient.graphql
       .agents({ limit: 8 })
       .then(result => {
-        if (cancelled) return;
+        if (!isLatest(generation)) return;
         const agents = result.agents ?? [];
         if (agents.length === 0) {
           debug('agents section: empty, hiding');
@@ -236,15 +235,11 @@ function useExploreAgents(): SectionState<AgentCard> {
         }
       })
       .catch(err => {
-        if (cancelled) return;
-        debug('agents fetch failed: %s', String(err));
+        if (!isLatest(generation)) return;
+        debug('agents fetch failed error_type=%s', errorType(err));
         setState({ status: 'error' });
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [begin, isLatest]);
 
   return state;
 }
@@ -272,16 +267,6 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
       </div>
       <div className="mt-1.5 text-2xl font-semibold text-content">{value}</div>
       {sub && <div className="mt-0.5 text-xs text-content-faint">{sub}</div>}
-    </div>
-  );
-}
-
-/** Centered status message for loading / wallet / hard error states of the stats block. */
-function StatusBlock({ tone, title, body }: { tone: string; title: string; body?: string }) {
-  return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-      <p className={`text-base font-medium ${tone}`}>{title}</p>
-      {body && <p className="max-w-md text-sm text-content-muted">{body}</p>}
     </div>
   );
 }
@@ -403,16 +388,6 @@ function JobSkeletonList() {
       ))}
     </div>
   );
-}
-
-function relativeTime(isoDate: string): string {
-  const delta = Date.now() - new Date(isoDate).getTime();
-  const mins = Math.floor(delta / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 function JobRow({ job }: { job: GqlJobPosting }) {
@@ -657,7 +632,7 @@ function NetworkStatsSection({ state }: { state: StatsState }) {
   if (state.status === 'payment_required') {
     return (
       <StatusBlock
-        tone="text-amber-600 dark:text-amber-400"
+        tone="warning"
         title="Access requires payment"
         body="Your wallet will be used to fulfill the x402 payment challenge."
       />
@@ -669,16 +644,12 @@ function NetworkStatsSection({ state }: { state: StatsState }) {
       state.message.includes('wallet secret material is missing');
     return isWalletLocked ? (
       <StatusBlock
-        tone="text-content-secondary"
+        tone="neutral"
         title="Unlock your wallet to use Agent World"
         body="Agent World uses your wallet identity. Import your recovery phrase in Settings to continue."
       />
     ) : (
-      <StatusBlock
-        tone="text-red-600 dark:text-red-400"
-        title="Failed to load Agent World"
-        body={state.message}
-      />
+      <StatusBlock tone="danger" title="Failed to load Agent World" body={state.message} />
     );
   }
 

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FlowApprovalRequest } from '../../../hooks/useFlowApprovalRequests';
 import { decideApproval } from '../../../services/api/approvalApi';
-import FlowApprovalRequestCard from '../FlowApprovalRequestCard';
+import { FlowApprovalRequestCard } from '../FlowApprovalRequestCard';
 
 vi.mock('../../../services/api/approvalApi', () => ({ decideApproval: vi.fn() }));
 
@@ -27,10 +27,18 @@ describe('FlowApprovalRequestCard', () => {
 
   it('renders the summary, tool name, and flow id', () => {
     render(<FlowApprovalRequestCard request={REQUEST} onResolved={vi.fn()} />);
-    expect(screen.getByText('Workflow needs approval')).toBeInTheDocument();
+    expect(screen.getByRole('alertdialog', { name: 'Workflow needs approval' })).toHaveAttribute(
+      'data-testid',
+      'flow-approval-request-card'
+    );
     expect(screen.getByText('Run `shell` — rm -rf /tmp/scratch')).toBeInTheDocument();
     expect(screen.getByText('shell')).toBeInTheDocument();
     expect(screen.getByText('flow-1')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-approval-request-approve')).toHaveTextContent('Approve once');
+    expect(screen.getByTestId('flow-approval-request-always')).toHaveTextContent('Approve always');
+    expect(screen.getByTestId('flow-approval-request-deny')).toHaveTextContent('Deny');
+    expect(screen.getByTestId('flow-approval-request-deny')).toHaveClass('border-line-strong');
+    expect(screen.getByTestId('flow-approval-request-deny').className).not.toMatch(/coral/);
   });
 
   it('falls back to the generic prompt when summary is empty', () => {
@@ -71,6 +79,20 @@ describe('FlowApprovalRequestCard', () => {
 
     expect(decideApproval).toHaveBeenCalledWith('req-1', 'deny');
     await waitFor(() => expect(onResolved).toHaveBeenCalledWith('req-1'));
+  });
+
+  it('shows only the active busy label and disables all actions while deciding', () => {
+    vi.mocked(decideApproval).mockReturnValueOnce(new Promise<void>(() => undefined));
+    render(<FlowApprovalRequestCard request={REQUEST} onResolved={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('flow-approval-request-always'));
+
+    expect(screen.getByTestId('flow-approval-request-approve')).toBeDisabled();
+    expect(screen.getByTestId('flow-approval-request-always')).toBeDisabled();
+    expect(screen.getByTestId('flow-approval-request-deny')).toBeDisabled();
+    expect(screen.getByTestId('flow-approval-request-approve')).toHaveTextContent('Approve once');
+    expect(screen.getByTestId('flow-approval-request-always')).toHaveTextContent('Working…');
+    expect(screen.getByTestId('flow-approval-request-deny')).toHaveTextContent('Deny');
   });
 
   it('keeps the prompt and shows an error when the decide RPC fails', async () => {

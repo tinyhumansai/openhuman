@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use log::{debug, error, info};
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use rdev::{listen, Event, EventType, Key};
 use tokio::sync::mpsc;
@@ -221,7 +221,7 @@ pub fn start_listener(
             };
 
             if let Err(e) = listen(callback) {
-                error!("{LOG_PREFIX} rdev listen error: {e:?}");
+                warn!("{LOG_PREFIX} rdev listen error: {e:?}");
             }
         })
         .map_err(|e| format!("failed to spawn hotkey listener thread: {e}"))?;

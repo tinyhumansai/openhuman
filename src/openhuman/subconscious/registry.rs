@@ -93,7 +93,7 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
         "[subconscious] instances initialized against per-user workspace"
     );
 
-    let heartbeat = crate::openhuman::heartbeat::engine::HeartbeatEngine::new(
+    let heartbeat = crate::openhuman::subconscious::heartbeat::engine::HeartbeatEngine::new(
         config.heartbeat.clone(),
         config.workspace_dir.clone(),
     );
@@ -128,7 +128,7 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
 /// Spawn the background trigger orchestrator (event loop) and register its
 /// bus subscriber. Idempotent via the orchestrator's process-global slot.
 fn bootstrap_trigger_orchestrator(config: &crate::openhuman::config::Config) {
-    use crate::openhuman::subconscious_triggers::{
+    use crate::openhuman::subconscious::triggers::{
         init_orchestrator, register_subconscious_triggers_subscriber, OrchestratorConfig,
         TriggerOrchestrator,
     };
@@ -172,8 +172,8 @@ pub async fn stop_heartbeat_loop() {
     // every stop (disable, mode change, user switch) so a stale session/loop
     // never keeps routing trigger work after the pipeline is turned off or the
     // workspace changes. A subsequent bootstrap re-creates them when enabled.
-    crate::openhuman::subconscious_triggers::shutdown_orchestrator();
-    crate::openhuman::subconscious_triggers::unregister_subconscious_triggers_subscriber();
+    crate::openhuman::subconscious::triggers::shutdown_orchestrator();
+    crate::openhuman::subconscious::triggers::unregister_subconscious_triggers_subscriber();
 
     BOOTSTRAPPED.store(false, Ordering::SeqCst);
 }

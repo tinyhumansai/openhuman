@@ -5,7 +5,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import ChartTooltip from './ChartTooltip';
 import { dayOfMonth, formatTokens, longDateLabel, shortDayLabel } from './formatCurrency';
 
-export interface TokenUsageChartProps {
+interface TokenUsageChartProps {
   days: CostDashboardDay[];
 }
 

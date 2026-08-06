@@ -36,7 +36,7 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 |                                    |                                                                                                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **LLM calls**                      | Proxied through the backend under one subscription, then forwarded to the underlying provider (Anthropic / OpenAI / Google / etc.) per the [model router](model-routing/). |
-| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) uses the backend proxy by default so you don't carry a search API key. If you call the optional SearXNG tool, that query goes to your configured SearXNG instance instead. |
+| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) uses the backend proxy by default, currently powered by [Exa](https://exa.ai), so you don't carry a search API key. With your own Exa, Brave, or Querit key, queries go directly to that provider; Parallel remains routed through the OpenHuman backend. If you call the optional SearXNG tool, that query goes to your configured SearXNG instance instead. |
 | **Integration OAuth & tool proxy** | Token storage and rate-limited request brokering for [118+ integrations](integrations/README.md).                                                                                 |
 | **TTS streaming**                  | Hosted [text-to-speech](native-tools/voice.md) audio streams. Audio is generated and discarded - not retained.                                                                          |
 
@@ -44,7 +44,7 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 ## Permissions and access control
 
-OpenHuman accesses an integration only after you complete its OAuth flow. Each connection has its own scope; you can revoke any of them at any time from the Skills tab.
+OpenHuman accesses an integration only after you complete its OAuth flow. Each connection has its own scope; you can revoke any of them at any time from the **Connections** page.
 
 [Auto-fetch](obsidian-wiki/auto-fetch.md) does run continuously while a connection is active, that is the whole point. But it is bound by:
 

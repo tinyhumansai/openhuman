@@ -19,14 +19,38 @@
 //! - [`ops`]     — pure validation helpers (URL + display-name)
 //! - [`rpc`]     — async JSON-RPC handler functions
 //! - [`schemas`] — controller schema definitions and registered handler wrappers
+//! - [`agent`]       — the live in-call STT/LLM/TTS loop (was `meet_agent`)
+//! - [`backend_bot`] — the backend-delegated Meet bot (was `agent_meetings`)
+//!
+//! ## Gating
+//!
+//! This module is the `meet` family **facade**: `pub mod meet;` in
+//! `src/openhuman/mod.rs` is always compiled, and every submodule below carries
+//! its own `#[cfg(feature = "meet")]`. The parent has to stay ungated because
+//! [`backend_bot`] is a facade+stub domain — three always-compiled callers (the
+//! heartbeat planner and two subscriber registrations) resolve its stub in a
+//! `meet`-less build. The set of items that compiles in each configuration is
+//! unchanged from when `meet`/`meet_agent`/`agent_meetings` were three
+//! top-level modules; only their paths moved.
 
+#[cfg(feature = "meet")]
 pub mod ops;
+#[cfg(feature = "meet")]
 pub mod rpc;
+#[cfg(feature = "meet")]
 pub mod schemas;
+#[cfg(feature = "meet")]
 pub mod types;
 
+// Both carry their own per-submodule gating (and, for `backend_bot`, a
+// `#[cfg(not(feature = "meet"))]` stub), so they are declared unconditionally.
+pub mod agent;
+pub mod backend_bot;
+
+#[cfg(feature = "meet")]
 pub use schemas::{
     all_controller_schemas as all_meet_controller_schemas,
     all_registered_controllers as all_meet_registered_controllers,
 };
+#[cfg(feature = "meet")]
 pub use types::*;

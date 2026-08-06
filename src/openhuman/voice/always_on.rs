@@ -238,11 +238,34 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     // The cpal stream is `!Send`, so it lives on a dedicated thread that pushes
     // 16 kHz mono frames over a channel to the async processor below.
+    // `spawn_capture_thread` blocks on a synchronous readiness handshake while
+    // the OS builds the input stream — cold WASAPI init on Windows can take a
+    // while — so run it on the blocking pool. This function is polled
+    // concurrently with the other login-gated services (#3490), and blocking an
+    // async worker here would stall them.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
-    if let Err(e) = spawn_capture_thread(tx) {
-        log::error!("{LOG_PREFIX} could not start microphone capture: {e}");
-        RUNNING.store(false, Ordering::SeqCst);
-        return;
+    log::debug!(
+        "{LOG_PREFIX} starting microphone capture (blocking readiness handshake on the blocking pool)"
+    );
+    // Distinguish a Tokio join failure (the blocking task itself panicked) from a
+    // `spawn_capture_thread` setup error (e.g. no input device), so the log points
+    // at the right layer instead of flattening both into one message.
+    match tokio::task::spawn_blocking(move || spawn_capture_thread(tx)).await {
+        Ok(Ok(())) => {
+            log::debug!("{LOG_PREFIX} microphone capture stream ready");
+        }
+        Ok(Err(e)) => {
+            log::warn!("{LOG_PREFIX} could not start microphone capture: {e}");
+            RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+        Err(join_err) => {
+            log::error!(
+                "{LOG_PREFIX} microphone capture setup task failed to join (panicked): {join_err}"
+            );
+            RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
     }
 
     // Privacy hook: pause capture while the screen is locked.
@@ -349,8 +372,8 @@ pub fn stop() {
 /// `overlay:attention` channel. The notch maps "Listening" / "Processing" to the
 /// right icon; when the message expires it falls back to "Ready". Fire-and-forget.
 fn notch_status(status: &str, ttl_ms: u32) {
-    let _ = crate::openhuman::overlay::publish_attention(
-        crate::openhuman::overlay::OverlayAttentionEvent::new(status)
+    let _ = crate::openhuman::desktop::overlay::publish_attention(
+        crate::openhuman::desktop::overlay::OverlayAttentionEvent::new(status)
             .with_source("voice")
             .with_ttl_ms(ttl_ms),
     );
@@ -482,33 +505,18 @@ async fn deliver_command(config: &Config, cmd: String) {
 }
 
 /// Execute a fast-path [`VoiceIntent`] directly (no LLM). Media transport and
-/// volume go through `osascript`; app launch reuses the `launch_app` platform
-/// launcher; "play X" runs the `automate` Music fast-path.
+/// volume go through `osascript`. App launch and "play X" have no local
+/// fast-path (the desktop-control automation backend was removed); those
+/// intents return `Err` so the caller defers to the agent (the LLM fallback) —
+/// routing can only *shortcut*, never *block*.
 async fn execute_intent(
-    config: &Config,
+    _config: &Config,
     intent: crate::openhuman::voice::command_router::VoiceIntent,
 ) -> Result<String, String> {
     use crate::openhuman::voice::command_router::VoiceIntent as VI;
     match intent {
-        VI::Play { query } => {
-            let backend =
-                crate::openhuman::accessibility::automate::RealBackend::new(config.clone());
-            let out = crate::openhuman::accessibility::automate::run(
-                "Music",
-                &format!("play {query}"),
-                &backend,
-                crate::openhuman::accessibility::automate::AutomateOptions::default(),
-            )
-            .await;
-            if out.success {
-                Ok(out.summary)
-            } else {
-                Err(out.summary)
-            }
-        }
-        VI::OpenApp { app } => {
-            crate::openhuman::tools::implementations::system::launch_platform(&app).await
-        }
+        VI::Play { .. } => Err("play has no local fast-path; defer to agent".to_string()),
+        VI::OpenApp { .. } => Err("app launch has no local fast-path; defer to agent".to_string()),
         VI::Pause => osa("tell application \"Music\" to pause")
             .await
             .map(|_| "Paused".to_string()),
@@ -666,7 +674,7 @@ fn spawn_capture_thread(tx: tokio::sync::mpsc::UnboundedSender<Vec<f32>>) -> Res
         .name("voice-always-on".into())
         .spawn(move || {
             if let Err(e) = capture_on_thread(tx, &setup_tx) {
-                log::error!("{LOG_PREFIX} capture thread error: {e}");
+                log::warn!("{LOG_PREFIX} capture thread error: {e}");
                 let _ = setup_tx.send(Err(e));
             }
         })
@@ -684,7 +692,7 @@ fn capture_on_thread(
     tx: tokio::sync::mpsc::UnboundedSender<Vec<f32>>,
     setup_tx: &std::sync::mpsc::SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
-    use crate::openhuman::accessibility::{detect_microphone_permission, PermissionState};
+    use crate::openhuman::desktop::accessibility::{detect_microphone_permission, PermissionState};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{SampleFormat, StreamConfig};
 
@@ -694,7 +702,7 @@ fn capture_on_thread(
     let permission = detect_microphone_permission();
     log::info!("{LOG_PREFIX} microphone permission: {permission:?}");
     if matches!(permission, PermissionState::Denied) {
-        log::error!("{LOG_PREFIX} microphone permission denied — always-on cannot capture audio");
+        log::warn!("{LOG_PREFIX} microphone permission denied — always-on cannot capture audio");
         return Err("microphone permission denied".to_string());
     }
 

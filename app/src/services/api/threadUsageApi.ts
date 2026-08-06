@@ -1,7 +1,7 @@
 import { callCoreRpc } from '../coreRpcClient';
 
 /** One sub-agent archetype's contribution within a thread. */
-export interface ThreadSubagentUsage {
+interface ThreadSubagentUsage {
   agentId: string;
   inputTokens: number;
   outputTokens: number;
@@ -10,7 +10,7 @@ export interface ThreadSubagentUsage {
 }
 
 /** Camel-cased per-thread usage totals consumed by the composer footer. */
-export interface ThreadTokenUsage {
+interface ThreadTokenUsage {
   threadId: string;
   inputTokens: number;
   outputTokens: number;

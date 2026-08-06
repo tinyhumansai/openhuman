@@ -1,22 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { coerceWorkflowProposal } from '../../lib/workflows/workflowProposal';
 import {
   buildWorkflow,
   discoverWorkflows,
   dismissSuggestion,
+  flowsBuildCancel,
   type FlowSuggestion,
+  getApprovalManifest,
   getFlowRun,
+  listAllFlowRuns,
   listFlowRuns,
   listFlows,
   listSuggestions,
   markSuggestionBuilt,
   resumeFlow,
   runFlow,
+  runFlowDetached,
   setFlowEnabled,
 } from './flowsApi';
 
 const mockCallCoreRpc = vi.fn();
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: (...a: unknown[]) => mockCallCoreRpc(...a) }));
+vi.mock('../../lib/workflows/workflowProposal', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../lib/workflows/workflowProposal')>();
+  return { ...actual, coerceWorkflowProposal: vi.fn(actual.coerceWorkflowProposal) };
+});
 
 /** Every `flows_*` handler wraps its payload via `RpcOutcome::single_log`. */
 function cliEnvelope<T>(
@@ -29,6 +38,7 @@ function cliEnvelope<T>(
 describe('flowsApi', () => {
   beforeEach(() => {
     mockCallCoreRpc.mockReset();
+    vi.mocked(coerceWorkflowProposal).mockClear();
   });
 
   describe('resumeFlow', () => {
@@ -72,6 +82,43 @@ describe('flowsApi', () => {
       await expect(resumeFlow('flow-1', 't1', ['wrong-node'])).rejects.toThrow(
         'no pending approval matches'
       );
+    });
+  });
+
+  describe('flowsBuildCancel', () => {
+    it('calls openhuman.flows_build_cancel with thread_id + null request_id and returns cancelled', async () => {
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope({ cancelled: true }));
+
+      const cancelled = await flowsBuildCancel('t1');
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_build_cancel',
+        params: { thread_id: 't1', request_id: null },
+      });
+      expect(cancelled).toBe(true);
+    });
+
+    it('scopes the cancel with request_id when given', async () => {
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope({ cancelled: false }));
+
+      const cancelled = await flowsBuildCancel('t1', 'req-9');
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_build_cancel',
+        params: { thread_id: 't1', request_id: 'req-9' },
+      });
+      // `false` is not an error — it just means nothing was in flight to cancel.
+      expect(cancelled).toBe(false);
+    });
+
+    it('defaults to false when the payload omits `cancelled`', async () => {
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope({}));
+      await expect(flowsBuildCancel('t1')).resolves.toBe(false);
+    });
+
+    it('propagates rejection from callCoreRpc', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('rpc down'));
+      await expect(flowsBuildCancel('t1')).rejects.toThrow('rpc down');
     });
   });
 
@@ -123,6 +170,50 @@ describe('flowsApi', () => {
       mockCallCoreRpc.mockRejectedValue(new Error('boom'));
 
       await expect(listFlowRuns('flow-1')).rejects.toThrow('boom');
+    });
+  });
+
+  describe('listAllFlowRuns', () => {
+    it('calls openhuman.flows_list_all_runs with no params by default', async () => {
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope([]));
+
+      await listAllFlowRuns();
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_list_all_runs',
+        params: {},
+      });
+    });
+
+    it('passes limit when provided and unwraps the envelope', async () => {
+      const runs = [
+        {
+          id: 't1',
+          flow_id: 'flow-1',
+          thread_id: 't1',
+          status: 'failed' as const,
+          started_at: '2026-01-01T00:00:00Z',
+          finished_at: null,
+          steps: [],
+          pending_approvals: [],
+          error: 'boom',
+        },
+      ];
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope(runs));
+
+      const result = await listAllFlowRuns(50);
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_list_all_runs',
+        params: { limit: 50 },
+      });
+      expect(result).toEqual(runs);
+    });
+
+    it('propagates rejection from callCoreRpc', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('rpc down'));
+
+      await expect(listAllFlowRuns()).rejects.toThrow('rpc down');
     });
   });
 
@@ -234,7 +325,7 @@ describe('flowsApi', () => {
 
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_run',
-        params: { id: 'flow-1', input: null },
+        params: { id: 'flow-1', input: null, inputs: null },
         timeoutMs: 610_000,
       });
       expect(result).toEqual({ output: { nodes: {} }, pending_approvals: [], thread_id: 't1' });
@@ -249,7 +340,21 @@ describe('flowsApi', () => {
 
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_run',
-        params: { id: 'flow-1', input: { trigger: 'manual' } },
+        params: { id: 'flow-1', input: { trigger: 'manual' }, inputs: null },
+        timeoutMs: 610_000,
+      });
+    });
+
+    it('passes declared workflow inputs alongside the trigger payload', async () => {
+      mockCallCoreRpc.mockResolvedValue(
+        cliEnvelope({ output: null, pending_approvals: [], thread_id: 't3' })
+      );
+
+      await runFlow('flow-1', {}, { repo: 'acme/api', depth: 3 });
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_run',
+        params: { id: 'flow-1', input: {}, inputs: { repo: 'acme/api', depth: 3 } },
         timeoutMs: 610_000,
       });
     });
@@ -267,6 +372,95 @@ describe('flowsApi', () => {
       mockCallCoreRpc.mockRejectedValue(new Error('flow disabled'));
 
       await expect(runFlow('flow-1')).rejects.toThrow('flow disabled');
+    });
+  });
+
+  // F-M1/F-M2: `flows_run_detached` registers the run and returns immediately
+  // — it must NOT share `runFlow`'s extended `FLOW_RESUME_TIMEOUT_MS` budget,
+  // since (unlike `runFlow`) it never waits for the engine.
+  describe('runFlowDetached', () => {
+    it('calls openhuman.flows_run_detached with id/input and the DEFAULT timeout (no timeoutMs override)', async () => {
+      mockCallCoreRpc.mockResolvedValue(
+        cliEnvelope({
+          run_id: 'flow:flow-1:t1',
+          flow_id: 'flow-1',
+          status: 'running',
+          detached: true,
+        })
+      );
+
+      const result = await runFlowDetached('flow-1');
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_run_detached',
+        params: { id: 'flow-1', input: null, inputs: null },
+      });
+      // No `timeoutMs` key at all — asserted structurally above via
+      // `toHaveBeenCalledWith` (an object with an extra `timeoutMs` key would
+      // NOT match), rather than a brittle `not.toHaveProperty` on the mock
+      // call args.
+      expect(result).toEqual({
+        run_id: 'flow:flow-1:t1',
+        flow_id: 'flow-1',
+        status: 'running',
+        detached: true,
+      });
+    });
+
+    it('passes a supplied input payload through', async () => {
+      mockCallCoreRpc.mockResolvedValue(
+        cliEnvelope({
+          run_id: 'flow:flow-1:t2',
+          flow_id: 'flow-1',
+          status: 'running',
+          detached: true,
+        })
+      );
+
+      await runFlowDetached('flow-1', { trigger: 'manual' });
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_run_detached',
+        params: { id: 'flow-1', input: { trigger: 'manual' }, inputs: null },
+      });
+    });
+
+    it('passes declared workflow inputs — the only way a parameterized flow runs from the UI', async () => {
+      mockCallCoreRpc.mockResolvedValue(
+        cliEnvelope({
+          run_id: 'flow:flow-1:t4',
+          flow_id: 'flow-1',
+          status: 'running',
+          detached: true,
+        })
+      );
+
+      await runFlowDetached('flow-1', {}, { repo: 'acme/api' });
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_run_detached',
+        params: { id: 'flow-1', input: {}, inputs: { repo: 'acme/api' } },
+      });
+    });
+
+    it('unwraps the { result, logs } envelope', async () => {
+      const payload = {
+        run_id: 'flow:flow-1:t3',
+        flow_id: 'flow-1',
+        status: 'running',
+        detached: true,
+      };
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope(payload));
+
+      const result = await runFlowDetached('flow-1');
+
+      expect(result).toEqual(payload);
+    });
+
+    it('propagates rejection from callCoreRpc', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('flow disabled'));
+
+      await expect(runFlowDetached('flow-1')).rejects.toThrow('flow disabled');
     });
   });
 
@@ -295,7 +489,7 @@ describe('flowsApi', () => {
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_discover',
         params: {},
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
       expect(result).toEqual([suggestion]);
     });
@@ -308,7 +502,7 @@ describe('flowsApi', () => {
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_discover',
         params: { thread_id: 'scout-thread-1' },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
     });
 
@@ -393,7 +587,7 @@ describe('flowsApi', () => {
           error: null,
           failing_node_ids: [],
         },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
       expect(result.assistantText).toBe('here you go');
       expect(result.proposal?.name).toBe('Digest');
@@ -419,8 +613,109 @@ describe('flowsApi', () => {
           failing_node_ids: [],
           thread_id: 'builder-thread-9',
         },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
     });
+
+    it.each([
+      ['a malformed payload', { type: 'not_a_workflow_proposal' }, null],
+      [
+        'missing require_approval',
+        { type: 'workflow_proposal', name: 'Default approval', graph: {} },
+        {
+          name: 'Default approval',
+          graph: {},
+          requireApproval: true,
+          summary: { trigger: '', steps: [] },
+        },
+      ],
+      [
+        'invalid summary steps',
+        {
+          type: 'workflow_proposal',
+          name: 'Mixed steps',
+          graph: {},
+          summary: {
+            trigger: 42,
+            steps: [null, 'invalid', { kind: 7, name: false, config_hint: [] }],
+          },
+        },
+        {
+          name: 'Mixed steps',
+          graph: {},
+          requireApproval: true,
+          summary: { trigger: '', steps: [{ kind: 'unknown', name: '', config_hint: undefined }] },
+        },
+      ],
+      [
+        'explicit false approval',
+        { type: 'workflow_proposal', name: 'No approval', graph: {}, require_approval: false },
+        {
+          name: 'No approval',
+          graph: {},
+          requireApproval: false,
+          summary: { trigger: '', steps: [] },
+        },
+      ],
+    ])('coerces %s through the canonical proposal mapper', async (_label, raw, expected) => {
+      mockCallCoreRpc.mockResolvedValue(
+        cliEnvelope({ proposal: raw, assistant_text: '', error: null })
+      );
+
+      const result = await buildWorkflow({ mode: 'create', instruction: 'build it' });
+
+      expect(coerceWorkflowProposal).toHaveBeenCalledWith(raw);
+      expect(result.proposal).toEqual(expected);
+    });
+  });
+});
+
+describe('getApprovalManifest', () => {
+  beforeEach(() => mockCallCoreRpc.mockReset());
+
+  const manifest = {
+    entries: [
+      { kind: 'approvable', node_id: 'n1', tool_name: 'flows_http_request', label: 'Call API' },
+    ],
+    missing: ['flows_http_request'],
+    already_trusted: ['GMAIL_SEND_EMAIL'],
+    gate_installed: true,
+  };
+
+  it('targets a saved flow by id', async () => {
+    mockCallCoreRpc.mockResolvedValue(cliEnvelope(manifest));
+
+    const result = await getApprovalManifest({ id: 'flow-1' });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.flows_approval_manifest',
+      params: { id: 'flow-1' },
+    });
+    expect(result).toEqual(manifest);
+  });
+
+  it('targets a candidate graph when no id exists yet', async () => {
+    mockCallCoreRpc.mockResolvedValue(cliEnvelope(manifest));
+
+    await getApprovalManifest({ graph: { nodes: [], edges: [] } });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.flows_approval_manifest',
+      params: { graph: { nodes: [], edges: [] } },
+    });
+  });
+
+  it('defaults every field when the envelope payload is sparse', async () => {
+    mockCallCoreRpc.mockResolvedValue(cliEnvelope({}));
+
+    const result = await getApprovalManifest({ id: 'flow-1' });
+
+    expect(result).toEqual({ entries: [], missing: [], already_trusted: [], gate_installed: true });
+  });
+
+  it('propagates rejection from callCoreRpc', async () => {
+    mockCallCoreRpc.mockRejectedValueOnce(new Error('manifest down'));
+
+    await expect(getApprovalManifest({ id: 'flow-1' })).rejects.toThrow('manifest down');
   });
 });

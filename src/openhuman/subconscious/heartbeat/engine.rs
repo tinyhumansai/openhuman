@@ -103,7 +103,8 @@ impl HeartbeatEngine {
             {
                 let cfg = config.clone();
                 tokio::spawn(async move {
-                    crate::openhuman::thread_goals::continuation::run_continuation_tick(&cfg).await;
+                    crate::openhuman::threads::goals::continuation::run_continuation_tick(&cfg)
+                        .await;
                 });
             }
 

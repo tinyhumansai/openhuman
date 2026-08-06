@@ -126,8 +126,8 @@ Triggers follow the same boundary as the rest of the product (see [Privacy & Sec
 
 - Triage agent: `src/openhuman/agent/agents/trigger_triage/`
 - Reactor agent: `src/openhuman/agent/agents/trigger_reactor/`
-- Composio bus subscriber: `src/openhuman/composio/bus.rs` (`ComposioTriggerSubscriber`)
-- Trigger history persistence: `src/openhuman/composio/trigger_history.rs`
+- Composio bus subscriber: `src/openhuman/integrations/composio/bus.rs` (`ComposioTriggerSubscriber`)
+- Trigger history persistence: `src/openhuman/integrations/composio/trigger_history.rs`
 - Domain events: `DomainEvent::ComposioTriggerReceived`, `DomainEvent::TriggerEscalated` in `src/core/event_bus/events.rs`
 - Trigger settings RPC: `update_composio_trigger_settings` / `get_composio_trigger_settings` in `src/openhuman/config/`
 

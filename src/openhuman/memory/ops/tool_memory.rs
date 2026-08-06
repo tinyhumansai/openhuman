@@ -1,5 +1,5 @@
 //! RPC handlers for the tool-scoped memory layer (see
-//! [`crate::openhuman::memory_tools`]).
+//! [`crate::openhuman::memory::tool_memory`]).
 //!
 //! All handlers go through [`active_memory_client`] so they hit the
 //! same `UnifiedMemory` backend the rest of the memory RPCs use, and
@@ -9,7 +9,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::openhuman::memory_tools::{
+use crate::openhuman::memory::tool_memory::{
     tool_memory_store, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
 };
 use crate::rpc::RpcOutcome;
@@ -151,7 +151,7 @@ pub async fn tool_rules_for_prompt(
             .then_with(|| a.tool_name.cmp(&b.tool_name))
             .then_with(|| a.rule.cmp(&b.rule))
     });
-    let rendered = crate::openhuman::memory_tools::render_tool_memory_rules(&flat);
+    let rendered = crate::openhuman::memory::tool_memory::render_tool_memory_rules(&flat);
     Ok(RpcOutcome::single_log(
         ToolRulesForPromptResult {
             rendered,
@@ -178,7 +178,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::openhuman::memory_tools::ToolMemoryPriority;
+    use crate::openhuman::memory::tool_memory::ToolMemoryPriority;
 
     fn ensure_memory_client() {
         crate::openhuman::memory::ops::ensure_shared_memory_client();
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(stored.priority, ToolMemoryPriority::Normal);
         assert_eq!(
             stored.source,
-            crate::openhuman::memory_tools::ToolMemorySource::Programmatic
+            crate::openhuman::memory::tool_memory::ToolMemorySource::Programmatic
         );
         assert_eq!(stored.tags, vec!["safety".to_string()]);
         assert!(

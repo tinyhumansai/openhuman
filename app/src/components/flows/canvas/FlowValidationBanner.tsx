@@ -20,7 +20,7 @@ import { memo } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { FlowValidation } from '../../../services/api/flowsApi';
 
-export interface FlowValidationBannerProps {
+interface FlowValidationBannerProps {
   validation: FlowValidation | null;
   /** Message from a failed `flows_update` Save, shown as a distinct error row. */
   saveError?: string | null;

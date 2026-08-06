@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 
 import Button from '../../ui/Button';
 
-export interface SettingsListItemProps {
+interface SettingsListItemProps {
   label: string;
   badge?: ReactNode;
   onRemove?: () => void;

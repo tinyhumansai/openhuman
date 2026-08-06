@@ -23,7 +23,7 @@
  *
  * The orchestrator's `continue_subagent` call needs a real `task_id`
  * (`sub-<uuid>` generated at delegate time in
- * `src/openhuman/agent_orchestration/tools/dispatch.rs`). Tests can't
+ * `src/openhuman/agent/orchestration/tools/dispatch.rs`). Tests can't
  * know it ahead of time, so the mock substitutes `{{DYNAMIC_TASK_ID}}` /
  * `{{DYNAMIC_AGENT_ID}}` from the latest `[SUBAGENT_AWAITING_USER]`
  * envelope in the message history (see
@@ -71,7 +71,7 @@ const CANARY_FINAL = 'subagent-continue-canary-9bc3f';
 //
 // ORDER MATTERS: the researcher's resumed probe includes both the framing
 // `[User's answer to your clarification question]` prepended by
-// `src/openhuman/agent_orchestration/tools/continue_subagent.rs` AND the raw
+// `src/openhuman/agent/orchestration/tools/continue_subagent.rs` AND the raw
 // user answer text (`wisteria-tag`). Its rule must appear BEFORE the
 // orchestrator-continue rule (keyed on `wisteria-tag`) so the researcher's
 // resumed call hits the researcher rule first.

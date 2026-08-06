@@ -14,11 +14,11 @@ import { type ButtonHTMLAttributes, forwardRef, type ReactNode } from 'react';
  * Use `iconOnly` for icon-only affordances (close / refresh / add); it squares
  * the padding — always pass an `aria-label` in that case.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'tertiary';
-export type ButtonTone = 'default' | 'danger';
-export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+type ButtonVariant = 'primary' | 'secondary' | 'tertiary';
+type ButtonTone = 'default' | 'danger';
+type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   tone?: ButtonTone;
   size?: ButtonSize;
@@ -26,6 +26,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   iconOnly?: boolean;
   leadingIcon?: ReactNode;
   trailingIcon?: ReactNode;
+  /** Stable, content-free identifier consumed by the app-wide analytics tracker. */
+  analyticsId?: string;
 }
 
 const BASE =
@@ -84,6 +86,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     iconOnly = false,
     leadingIcon,
     trailingIcon,
+    analyticsId,
     className,
     type,
     children,
@@ -96,7 +99,12 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     .join(' ');
 
   return (
-    <button ref={ref} type={type ?? 'button'} className={classes} {...rest}>
+    <button
+      ref={ref}
+      type={type ?? 'button'}
+      className={classes}
+      data-analytics-id={analyticsId}
+      {...rest}>
       {leadingIcon}
       {children}
       {trailingIcon}

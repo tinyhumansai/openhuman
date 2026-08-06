@@ -16,7 +16,8 @@ export type ChatSendErrorCode =
   | 'usage_limit_reached'
   | 'prompt_blocked'
   | 'prompt_review'
-  | 'attachment_invalid';
+  | 'attachment_invalid'
+  | 'create_thread_failed';
 
 export interface ChatSendError {
   code: ChatSendErrorCode;

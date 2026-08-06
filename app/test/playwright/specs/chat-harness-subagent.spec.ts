@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { agentMessageText } from '../helpers/chat-locators';
 import {
   bootAuthenticatedPage,
   dismissWalkthroughIfPresent,
@@ -309,7 +310,7 @@ test.describe('Chat Harness - Subagent', () => {
     // so this is the full sequence — no extra calls should consume keyword
     // rules out from under the next-expected matcher.
     await expect.poll(completionRequestCount, { timeout: 90_000 }).toBeGreaterThanOrEqual(3);
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 30_000 });
+    await expect(agentMessageText(page, CANARY_FINAL)).toBeVisible({ timeout: 30_000 });
 
     const runtimeSnapshot = await diagnosticsSnapshot(page);
     expect(
@@ -323,6 +324,6 @@ test.describe('Chat Harness - Subagent', () => {
 
     // Re-assert after the runtime probe so the persisted message survives the
     // turn-completion store transition rather than only being visible mid-stream.
-    await expect(page.getByText(CANARY_FINAL)).toBeVisible({ timeout: 15_000 });
+    await expect(agentMessageText(page, CANARY_FINAL)).toBeVisible({ timeout: 15_000 });
   });
 });

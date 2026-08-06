@@ -137,7 +137,7 @@ function makeJob(overrides: Partial<Record<string, unknown>> = {}) {
 
 async function importBody() {
   const mod = await import('../WorkflowRunnerBody');
-  return mod.WorkflowRunnerBody;
+  return mod.default;
 }
 
 /**

@@ -15,7 +15,7 @@
  */
 import { applyPersonaField } from './personaSections';
 
-export interface PersonaTemplate {
+interface PersonaTemplate {
   id: string;
   labelKey: string;
   descriptionKey: string;

@@ -43,9 +43,11 @@ The router wraps several pre-created providers (Anthropic, OpenAI, Google, Groq,
 
 The exact mappings are configurable; the defaults ship sensible per-provider routes.
 
-## One subscription
+## One subscription, or your own
 
-Routing happens behind a single OpenHuman subscription. You don't hold separate API keys for Anthropic, OpenAI, Google etc., the backend brokers access, and the router picks the right one per task. That's the "one subscription, many providers" promise from the README, made concrete.
+Routing happens behind a single OpenHuman subscription by default. You don't hold separate API keys for Anthropic, OpenAI, Google etc., the backend brokers access, and the router picks the right one per task. That's the "one subscription, many providers" promise from the README, made concrete.
+
+The subscription is the default, not a requirement. The same router works against **your own provider key** or a **fully local model**, per workload, and you can mix all three. See [Local models & bring your own key](local-and-byok-models.md) for setup and for what each route supports for chat, vision, and embeddings.
 
 ## Overriding routes
 
@@ -97,4 +99,5 @@ Routing isn't a UI dropdown. The agent loop itself emits hints based on what it'
 
 - [Smart Token Compression](../token-compression.md). what makes large reasoning calls affordable.
 - [Native Tools](../native-tools/README.md). different tool calls hint at different routes.
+- [Local models & bring your own key](local-and-byok-models.md). run on your own key or fully on-device.
 - [Local AI (optional)](local-ai.md). lightweight chat hints can run on-device.

@@ -1,20 +1,20 @@
 # inference
 
-Unified inference domain: the canonical home for everything LLM/STT/TTS/embedding-related. It owns the local-runtime manager (Ollama / LM Studio / Whisper / Piper), the unified cloud + local provider abstraction (trait, factory, router, reliability/retry wrapper), voice transcription and TTS inference, OpenAI/Codex subscription OAuth, and an OpenAI-compatible `/v1/chat/completions` HTTP endpoint. It consolidates the previously separate `local_ai/`, `providers/`, and inference parts of `voice/` under one domain root. The RPC surface is `inference.*`; older `local_ai_*` method names are compatibility aliases in `src/core/legacy_aliases.rs`.
+Unified inference domain: the canonical home for everything LLM/STT/TTS/embedding-related. It owns the local-runtime manager (Ollama / LM Studio / Whisper / Piper), native TinyAgents `ChatModel` construction for managed/cloud/local/CLI routes, host credential and access policy, voice transcription and TTS inference, OpenAI/Codex subscription OAuth, and an OpenAI-compatible `/v1/chat/completions` HTTP endpoint. It consolidates the previously separate `local_ai/`, `providers/`, and inference parts of `voice/` under one domain root. The RPC surface is `inference.*`; older `local_ai_*` method names are compatibility aliases in `src/core/legacy_aliases.rs`.
 
 ## Responsibilities
 
-- Resolve workload names (`chat`, `reasoning`, `agentic`, `coding`, `memory`, `embeddings`, `heartbeat`, `learning`, `subconscious`, etc.) and provider strings (`openhuman`, `cloud`, `ollama:<model>`, `lmstudio:<model>`, `claude_agent_sdk:<model>`, `<slug>:<model>[@<temp>]`) to a concrete `Box<dyn Provider>` + model id.
+- Resolve workload names (`chat`, `reasoning`, `agentic`, `coding`, `memory`, `embeddings`, `heartbeat`, `learning`, `subconscious`, etc.) and provider strings (`openhuman`, `cloud`, `ollama:<model>`, `lmstudio:<model>`, `claude_agent_sdk:<model>`, `<slug>:<model>[@<temp>]`) to a concrete `Arc<dyn tinyagents::ChatModel<()>>` + model id.
 - Manage the local AI runtime: detect/spawn/adopt `ollama serve` and LM Studio, install/run Whisper (STT) and Piper (TTS), track download progress, and enforce a minimum-context-window floor.
 - Provide chat, vision (multimodal), summarization, embeddings, sentiment, and "should react" inference operations.
-- Wrap providers with retry/backoff and config-rejection/billing-error classification (`reliable`, `config_rejection`, `billing_error`).
-- Multi-model routing via a hint table (`RouterProvider`) keyed off abstract tier model names (`reasoning-v1`, `agentic-v1`, `coding-v1`, etc.).
+- Preserve config-rejection, billing, authentication, and retry classification while TinyAgents owns model-call retry execution.
+- Resolve abstract tier names (`reasoning-v1`, `agentic-v1`, `coding-v1`, etc.) through the TinyAgents `ModelRouter` in `openhuman/tinyagents/routes.rs` and the provider factory here.
 - Run ChatGPT/Codex OAuth (PKCE) for the `openai` cloud slug and persist tokens in the encrypted auth-profile store.
 - Expose an OpenAI-compatible `/v1/*` HTTP endpoint guarded by a stable user-managed external bearer.
 - Detect device hardware profile and recommend/apply local model presets/tiers.
 - Maintain the built-in BYOK provider preset catalog used by Connections → API keys → LLM.
-  The current matrix lives in `docs/inference-provider-catalog.md`; credentials
-  are stored under `provider:<slug>` in the auth-profile store.
+  The current matrix is `config/schema/cloud_providers.rs`; credentials are
+  stored under `provider:<slug>` in the auth-profile store.
 
 ## Key files
 
@@ -38,16 +38,15 @@ Unified inference domain: the canonical home for everything LLM/STT/TTS/embeddin
 | `local/install*.rs`, `local/voice_install_common.rs`                              | Whisper/Piper install + shared download logic.                                                                                                                                                                                                     |
 | `local/model_requirements.rs`                                                     | `MIN_CONTEXT_TOKENS`, `evaluate_context`, `ContextEligibility`.                                                                                                                                                                                    |
 | `local/service/`                                                                  | `LocalAiService` impl split: `bootstrap`, `ollama_admin`, `public_infer`, `speech`, `vision_embed`, `whisper_engine`, `assets`, `spawn_marker`.                                                                                                    |
-| `provider/`                                                                       | Unified provider abstraction (was `providers/`).                                                                                                                                                                                                   |
-| `provider/traits.rs`                                                              | `Provider` trait + `ChatMessage`/`ChatRequest`/`ChatResponse`/`ToolCall`/`UsageInfo`/`ProviderDelta` etc.                                                                                                                                          |
-| `provider/factory.rs`                                                             | `create_chat_provider`, `provider_for_role`, provider-string grammar, local/cloud construction; `BYOK_INCOMPLETE_SENTINEL`.                                                                                                                        |
-| `provider/router.rs`                                                              | `RouterProvider` hint-based multi-model routing.                                                                                                                                                                                                   |
-| `provider/reliable.rs`                                                            | Retry/backoff wrapper.                                                                                                                                                                                                                             |
-| `provider/compatible*.rs`                                                         | OpenAI-compatible provider (request dump/parse/stream/types).                                                                                                                                                                                      |
-| `provider/openhuman_backend.rs`                                                   | Managed OpenHuman backend provider (session JWT).                                                                                                                                                                                                  |
+| `provider/`                                                                       | Native TinyAgents model construction plus host provider configuration, auth, error taxonomy, DTOs, and RPC helpers (was `providers/`).                                                                                                             |
+| `provider/types.rs`                                                               | Host request/response, streaming delta, tool-call, and usage DTOs retained at product/RPC boundaries.                                                                                                                                              |
+| `provider/factory.rs`                                                             | `create_chat_model*`, `provider_for_role`, provider-string grammar, access gates, and local/cloud/CLI model construction; `BYOK_INCOMPLETE_SENTINEL`.                                                                                              |
+| `provider/crate_openai.rs`                                                        | TinyAgents OpenAI-compatible model builders for managed, BYOK, and local endpoints.                                                                                                                                                                |
+| `provider/openhuman_backend_model.rs`                                             | Managed OpenHuman backend `ChatModel` with session JWT, billing metadata, and thread context.                                                                                                                                                      |
+| `provider/openai_codex.rs`                                                        | Codex OAuth/Responses transport as a host `ChatModel`.                                                                                                                                                                                             |
 | `provider/claude_agent_sdk/`                                                      | Claude Agent SDK subprocess provider (`protocol.rs`, `subprocess.rs`).                                                                                                                                                                             |
 | `provider/config_rejection.rs`, `provider/billing_error.rs`                       | Error classifiers (unknown-model / config rejection / budget exhausted).                                                                                                                                                                           |
-| `provider/temperature.rs`, `provider/thread_context.rs`                           | Per-workload temperature override; thread context plumbing.                                                                                                                                                                                        |
+| `temperature.rs`, `tinyagents/thread_context.rs`                                  | Per-workload temperature policy and ambient thread-context plumbing.                                                                                                                                                                               |
 | `provider/ops.rs`                                                                 | `list_configured_models`, SessionExpired publishing on auth failure.                                                                                                                                                                               |
 | `provider/schemas.rs`                                                             | Provider-layer schemas.                                                                                                                                                                                                                            |
 | `voice/`                                                                          | Inference implementations imported by `crate::openhuman::voice`.                                                                                                                                                                                   |
@@ -68,7 +67,7 @@ From `mod.rs` re-exports:
 - `local::all_local_inference_controller_schemas` / `local::all_local_inference_registered_controllers` (legacy export names; registered schemas are in the `inference` namespace)
 - `rpc` (alias for `ops`) and `all_inference_controller_schemas` / `all_inference_registered_controllers`
 
-Provider-layer (via `provider::`): `Provider`, `ChatMessage`, `ChatRequest`, `ChatResponse`, `create_chat_provider`, `provider_for_role`, `BYOK_INCOMPLETE_SENTINEL`, plus error classifiers. Local runtime: `local::{global, try_global}` → `Arc<LocalAiService>`.
+Provider-layer (via `provider::`): `ChatRequest`, `ChatResponse`, `ProviderDelta`, `ToolCall`, `UsageInfo`, `create_chat_model*`, `provider_for_role`, `BYOK_INCOMPLETE_SENTINEL`, `OpenHumanBackendModel`, plus error classifiers. Local runtime: `local::{global, try_global}` → `Arc<LocalAiService>`.
 
 ## RPC / controllers
 
@@ -95,11 +94,11 @@ Also exposes a non-RPC HTTP router (`http::router()`) nested at `/v1` by `src/co
 ## Dependencies
 
 - `crate::openhuman::config` — `Config`, `config::rpc` (load/save, `ModelSettingsPatch`, `LocalAiSettingsPatch`), cloud-provider schema (`AuthStyle`, slug reservation, id generation), abstract tier model constants. Heaviest dependency.
-- `crate::openhuman::credentials` — `AuthService`, `AuthProfilesStore`/`AuthProfile`/`TokenSet`, state dir — for OAuth token storage and provider auth resolution.
-- `crate::openhuman::tools` — `ToolSpec`/`ToolCall` types used in provider chat requests (agent tool plumbing).
-- `crate::openhuman::agent` — agent harness types referenced by provider/thread-context paths.
+- `crate::openhuman::security::credentials` — `AuthService`, `AuthProfilesStore`/`AuthProfile`/`TokenSet`, state dir — for OAuth token storage and provider auth resolution.
+- `crate::openhuman::tools` — tool schemas and product tool metadata projected into TinyAgents requests.
+- `crate::openhuman::agent::tinyagents` — native model, route, message, usage, and thread-context seams used by the agent harness.
 - `crate::openhuman::voice` — voice RPC/audio layer that imports these inference STT/TTS implementations (also a consumer).
-- `crate::openhuman::prompt_injection` — prompt-injection handling on the inference path.
+- `crate::openhuman::security::prompt_injection` — prompt-injection handling on the inference path.
 - `crate::openhuman::util` — small shared helpers.
 - `crate::core::all` — `ControllerFuture`, `RegisteredController` (controller registry).
 - `crate::core::types` — `ControllerSchema`, `FieldSchema`, `TypeSchema`.
@@ -111,7 +110,7 @@ Also exposes a non-RPC HTTP router (`http::router()`) nested at `/v1` by `src/co
 
 ## Used by
 
-Widely depended on (74 internal `use` sites + many external). Top consumers (by file count) are the agent layer (`agent/harness`, `agent/harness/session`, `agent/tools`, `agent/triage`, `agent/harness/subagent_runner`), `context`, `voice`, `routing`, `memory_tree/tree_runtime`, `learning` (+ `learning/transcript_ingest`), `channels`, `embeddings`, `subconscious`, `screen_intelligence`, `threads`, and `migrations`/`config/schema`.
+Widely depended on by the agent layer (`agent/harness`, `agent/harness/session`, `agent/tools`, `agent/triage`, `agent/harness/subagent_runner`), `context`, `voice`, `memory_tree/tree_runtime`, `learning` (+ `learning/transcript_ingest`), `channels`, `embeddings`, `subconscious`, `threads`, and `migrations`/`config/schema`.
 
 ## Notes / gotchas
 

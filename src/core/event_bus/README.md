@@ -32,11 +32,11 @@ In-process pub/sub plus typed request/response. Owns the global `EventBus` singl
 - `src/openhuman/memory/conversations/bus.rs` — conversation persistence subscriber.
 - `src/openhuman/channels/bus.rs` — `ChannelInboundSubscriber`.
 - `src/openhuman/cron/{bus,scheduler}.rs` — `CronDeliverySubscriber` + `CronJobTriggered` emission.
-- `src/openhuman/webhooks/bus.rs` — `WebhookRequestSubscriber`.
-- `src/openhuman/health/bus.rs` — health-event subscriber.
-- `src/openhuman/update/scheduler.rs` — update-cycle events.
+- `src/openhuman/skills/webhooks/bus.rs` — `WebhookRequestSubscriber`.
+- `src/openhuman/platform/health/bus.rs` — health-event subscriber.
+- `src/openhuman/platform/update/scheduler.rs` — update-cycle events.
 - `src/openhuman/tree_summarizer/{engine,bus}.rs` — async summarisation triggers.
-- `src/openhuman/composio/bus.rs`, `notifications/`, `learning/` — analytics fan-out.
+- `src/openhuman/integrations/composio/bus.rs`, `notifications/`, `learning/` — analytics fan-out.
 
 ## Emission policy (tinyagents migration, 05.3)
 

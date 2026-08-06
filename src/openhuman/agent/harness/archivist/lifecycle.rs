@@ -5,13 +5,13 @@ use super::helpers::{extract_profile_key, uuid_v4};
 use super::types::ArchivistHook;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::chat::ChatProvider;
-use crate::openhuman::memory_store::events::{self, EventRecord, EventType};
-use crate::openhuman::memory_store::fts5::EpisodicEntry;
-use crate::openhuman::memory_store::profile::{self, FacetType};
-use crate::openhuman::memory_store::segments::{
+use crate::openhuman::memory::store::events::{self, EventRecord, EventType};
+use crate::openhuman::memory::store::fts5::EpisodicEntry;
+use crate::openhuman::memory::store::profile::{self, FacetType};
+use crate::openhuman::memory::store::segments::{
     self, BoundaryConfig, BoundaryDecision, ConversationSegment,
 };
-use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, Embedder};
+use crate::openhuman::memory::tree::score::embed::{build_embedder_from_config, Embedder};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::sync::Arc;
@@ -426,7 +426,7 @@ impl ArchivistHook {
                     "Recent conversation recap (segment {}):\n\n{}",
                     segment.segment_id, summary
                 );
-                crate::openhuman::memory_goals::spawn_enrich_goals(
+                crate::openhuman::memory::goals::spawn_enrich_goals(
                     cfg.clone(),
                     cfg.workspace_dir.clone(),
                     context,

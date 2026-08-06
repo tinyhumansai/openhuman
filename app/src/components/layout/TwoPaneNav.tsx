@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 
-export interface TwoPaneNavItem {
+interface TwoPaneNavItem {
   value: string;
   label: string;
   icon?: ReactNode;
 }
 
-export interface TwoPaneNavGroup {
+interface TwoPaneNavGroup {
   /** Optional uppercase sub-header above the group's items. */
   label?: string;
   items: TwoPaneNavItem[];

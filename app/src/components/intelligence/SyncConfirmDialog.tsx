@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../services/coreRpcClient';
-import Button from '../ui/Button';
+import { ConfirmDialog } from '../ui';
 
 interface SyncEstimate {
   item_count: number;
@@ -54,48 +54,42 @@ export default function SyncConfirmDialog({
     : '';
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onCancel}>
-      <div
-        className="bg-surface rounded-xl shadow-xl border border-line w-full max-w-sm mx-4 p-5"
-        onClick={e => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-content mb-3">{t('syncConfirm.title')}</h3>
+    <ConfirmDialog
+      title={t('syncConfirm.title')}
+      body={
+        <>
+          {!estimate && !error && (
+            <p className="text-sm text-content-muted">{t('syncConfirm.estimating')}</p>
+          )}
 
-        {!estimate && !error && (
-          <p className="text-sm text-content-muted">{t('syncConfirm.estimating')}</p>
-        )}
+          {error && <p className="text-sm text-coral-600">{error}</p>}
 
-        {error && <p className="text-sm text-coral-600">{error}</p>}
-
-        {estimate && (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-content-secondary">
-              {t('syncConfirm.message')
-                .replace('{items}', String(estimate.item_count))
-                .replace('{tokens}', tokenStr)
-                .replace('{cost}', estimate.estimated_cost_usd.toFixed(4))}
-            </p>
-            {estimate.budget_max_cost_usd != null && (
-              <p className="text-xs text-content-muted">
-                {t('syncConfirm.budgetNote').replace(
-                  '{max}',
-                  estimate.budget_max_cost_usd.toFixed(2)
-                )}
+          {estimate && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-content-secondary">
+                {t('syncConfirm.message')
+                  .replace('{items}', String(estimate.item_count))
+                  .replace('{tokens}', tokenStr)
+                  .replace('{cost}', estimate.estimated_cost_usd.toFixed(4))}
               </p>
-            )}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="tertiary" size="sm" onClick={onCancel}>
-            {t('syncConfirm.cancel')}
-          </Button>
-          <Button variant="primary" size="sm" onClick={onConfirm} disabled={!estimate}>
-            {t('syncConfirm.proceed')}
-          </Button>
-        </div>
-      </div>
-    </div>
+              {estimate.budget_max_cost_usd != null && (
+                <p className="text-xs text-content-muted">
+                  {t('syncConfirm.budgetNote').replace(
+                    '{max}',
+                    estimate.budget_max_cost_usd.toFixed(2)
+                  )}
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      }
+      confirmLabel={t('syncConfirm.proceed')}
+      cancelLabel={t('syncConfirm.cancel')}
+      confirmDisabled={!estimate}
+      destructive={false}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }

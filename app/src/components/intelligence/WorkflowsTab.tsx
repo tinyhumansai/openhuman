@@ -26,7 +26,6 @@ import type { ToastNotification } from '../../types/intelligence';
 import SettingsPanel from '../settings/layout/SettingsPanel';
 import CreateSkillModal from '../skills/CreateSkillModal';
 import UnifiedSkillCard from '../skills/SkillCard';
-import { BUILT_IN_SKILL_ICONS } from '../skills/skillIcons';
 import UninstallSkillConfirmDialog from '../skills/UninstallSkillConfirmDialog';
 import Button from '../ui/Button';
 import { ToastContainer } from './Toast';
@@ -181,7 +180,7 @@ export default function WorkflowsTab({ asSettingsPanel = false }: WorkflowsTabPr
               return (
                 <UnifiedSkillCard
                   key={wf.id}
-                  icon={BUILT_IN_SKILL_ICONS.screenIntelligence}
+                  icon={null}
                   title={wf.name}
                   description={wf.description}
                   statusLabel={scopeLabel}

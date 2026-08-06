@@ -1,6 +1,6 @@
 # web3
 
-High-level web3 surface built **on top of** the [`wallet`](../wallet/README.md)
+High-level web3 surface built **on top of** the [`wallet`](wallet/README.md)
 module. The wallet stays basic (keys, balances, transfers, tx inspection); this
 module focuses on EVM/Solana(/BTC) dapp interactions: **swaps**, **bridges**, and
 generic **dapp contract calls**.
@@ -61,9 +61,9 @@ rejected at quote time.
 
 ## Dependencies
 
-- [`crate::openhuman::wallet`] — `sign_and_broadcast_evm` / `sign_and_broadcast_solana` (crate-internal), `status` for address resolution, `EvmNetwork` / `WalletChain`.
+- [`crate::openhuman::web3::wallet`] — `sign_and_broadcast_evm` / `sign_and_broadcast_solana` (crate-internal), `status` for address resolution, `EvmNetwork` / `WalletChain`.
 - [`crate::openhuman::integrations`] (`IntegrationClient`, `build_client`) — backend auth + transport.
-- `crate::openhuman::approval::APPROVAL_CHAT_CONTEXT` — quote-owner binding.
+- `crate::openhuman::security::approval::APPROVAL_CHAT_CONTEXT` — quote-owner binding.
 - `crate::core::all` / `crate::core` — RPC controller registry wiring.
 
 ## Notes / gotchas

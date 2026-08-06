@@ -3,6 +3,35 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
+// The shipped desktop app must always embed the real voice domain. Cargo
+// features are per-crate, so `#[cfg(feature = "voice")]` here would test THIS
+// crate's features, not the core's — a voice-less core is only observable via
+// the core's own always-compiled facade. Without this assert the failure is
+// silent and runtime-only: every `openhuman.voice_*` RPC answers "unknown
+// method" and the UI blames a stale sidecar (#4901). Keep `voice` in the
+// `openhuman_core` feature list in Cargo.toml to satisfy this.
+const _: () = assert!(
+    openhuman_core::openhuman::voice::VOICE_COMPILED_IN,
+    "openhuman_core must be built with the `voice` feature: the desktop app ships voice, \
+     and without it every openhuman.voice_* controller is unregistered (#4901). \
+     Add \"voice\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
+);
+
+// The shell talks to the in-process core only over http://127.0.0.1:<port>/rpc,
+// so the core MUST embed the HTTP + Socket.IO transport (#5048). Same failure
+// class as #4901: with `http-server` dropped the core never binds a listener
+// and every RPC is unreachable — silent and runtime-only. The marker lives in
+// the core's always-compiled facade (`core::http_server_status`) precisely so
+// this assert can observe the core's feature state (a dependent's own
+// `#[cfg(feature = ...)]` would test THIS crate's features, not the core's).
+const _: () = assert!(
+    openhuman_core::core::http_server_status::HTTP_SERVER_COMPILED_IN,
+    "openhuman_core must be built with the `http-server` feature: the desktop app reaches \
+     the core only over http://127.0.0.1:<port>/rpc, and without it the core binds no \
+     listener so every RPC is unreachable (#5048). \
+     Add \"http-server\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
+);
+
 mod app_update;
 // Artifact export commands (#2779, #3162) — both cross-platform
 // (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
@@ -28,6 +57,7 @@ mod cef_singleton_wait;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod cef_stale_reap;
 mod claude_code;
+mod companion;
 mod companion_commands;
 mod core_process;
 mod core_rpc;
@@ -64,13 +94,13 @@ mod ptt_hotkeys;
 mod ptt_overlay;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
-mod screen_capture;
 mod slack_scanner;
 mod stderr_panic_hook;
 mod telegram_scanner;
 mod webview_accounts;
 mod webview_apis;
 mod wechat_scanner;
+mod whatsapp_data;
 mod whatsapp_scanner;
 mod window_state;
 mod workspace_paths;
@@ -399,9 +429,7 @@ async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     perform_early_teardown_async(&app).await;
     log::info!("[app] restart_app — early teardown complete, restarting");
 
-    app.restart();
-    // restart() does not return, but we must satisfy the signature
-    Ok(())
+    app.restart()
 }
 
 /// Read the authoritative active user id from `active_user.toml` so the
@@ -1183,7 +1211,7 @@ fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return mascot_native_window::show(&app);
+        mascot_native_window::show(&app)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1214,7 +1242,7 @@ fn mascot_native_window_is_open() -> bool {
     mascot_native_window::is_open()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 fn mascot_native_window_is_open() -> bool {
     false
 }
@@ -1246,11 +1274,11 @@ fn notch_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |app| {
+        dispatch_notch_on_main(app, |app| {
             if let Err(e) = notch_window::show(app) {
                 log::warn!("[notch-window] show failed: {e}");
             }
-        });
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1265,7 +1293,7 @@ fn notch_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] hide requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |_app| notch_window::hide());
+        dispatch_notch_on_main(app, |_app| notch_window::hide())
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1292,13 +1320,12 @@ fn set_main_window_hidden(hide: bool) {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
-        SW_SHOW,
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, ShowWindow,
     };
 
     struct EnumCtx {
         target_pid: u32,
-        action: i32,
+        hide: bool,
         require_visible: bool,
         matched: u32,
     }
@@ -1324,15 +1351,20 @@ fn set_main_window_hidden(hide: bool) {
         if class != "Chrome_WidgetWin_1" {
             return 1;
         }
-        unsafe { ShowWindow(hwnd, ctx.action) };
+        // Choose the restore command per frame: a minimized frame needs
+        // SW_RESTORE to un-minimize, but a hidden-but-maximized frame must be
+        // shown with SW_SHOW so it stays maximized (#4818). IsIconic is only
+        // consulted on the restore path.
+        let is_iconic = !ctx.hide && unsafe { IsIconic(hwnd) } != 0;
+        let action = window_show_command(ctx.hide, is_iconic);
+        unsafe { ShowWindow(hwnd, action) };
         ctx.matched += 1;
         1
     }
 
-    let action = if hide { SW_HIDE } else { SW_SHOW };
     let mut ctx = EnumCtx {
         target_pid: std::process::id(),
-        action,
+        hide,
         // Hide path: only touch currently-visible frames. Show path: also
         // pick up frames already in the SW_HIDE state.
         require_visible: hide,
@@ -1341,10 +1373,47 @@ fn set_main_window_hidden(hide: bool) {
     unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
     log::info!(
         "[window-hide] EnumWindows: action={} matched={} pid={}",
-        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        if hide {
+            "SW_HIDE"
+        } else {
+            "restore(SW_RESTORE/SW_SHOW)"
+        },
         ctx.matched,
         ctx.target_pid,
     );
+}
+
+/// `ShowWindow` command for [`set_main_window_hidden`], chosen per frame.
+///
+/// Restore is *not* a single command — it depends on whether the frame is
+/// iconic (minimized):
+///
+/// - **Minimized frame** (`is_iconic`): `SW_RESTORE`. `SW_SHOW` displays a
+///   window in its *current* state, so a minimized `Chrome_WidgetWin_1` frame
+///   stays minimized — clicking the desktop shortcut / taskbar entry while the
+///   app was minimized did nothing, because the second-instance callback ran a
+///   no-op `SW_SHOW` and then `WebviewWindow::unminimize()`, which the vendored
+///   CEF runtime routes to the internal `cef::Window` proxy handle rather than
+///   the visible top-level frame (#1607), so neither un-minimized the OS window
+///   (#4809). `SW_RESTORE` un-minimizes AND un-hides.
+/// - **Hidden-but-not-minimized frame** (the plain hide-to-tray case, which may
+///   be **maximized**): `SW_SHOW`. `SW_RESTORE` would force a maximized frame
+///   back to its normal size, so a window closed to the tray while maximized
+///   would come back un-maximized. `SW_SHOW` displays it in its current state,
+///   preserving the maximized geometry (chatgpt-codex review on #4809/#4818).
+///
+/// Split out as a pure `i32`-returning helper so the command selection is unit
+/// testable without driving real windows.
+#[cfg(target_os = "windows")]
+const fn window_show_command(hide: bool, is_iconic: bool) -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, SW_SHOW};
+    if hide {
+        SW_HIDE
+    } else if is_iconic {
+        SW_RESTORE
+    } else {
+        SW_SHOW
+    }
 }
 
 /// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
@@ -1807,7 +1876,9 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_async — early teardown complete");
 }
 
-/// Explicitly winds down CEF and Tauri before an app.exit(0)
+/// Explicitly wind down CEF and the core before exiting from desktop-owned
+/// quit actions. Linux does not build the tray or macOS application menu.
+#[cfg(not(target_os = "linux"))]
 fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     log::info!("[app] shutdown_app_sync — starting early teardown");
     perform_early_teardown_sync_once(app_handle, "shutdown_app_sync");
@@ -2220,8 +2291,13 @@ fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
 /// in PR #2032 but blocks any actual use of the app on a Wayland host).
 ///
 /// XSetErrorHandler is a process-global registration; safe to install before
-/// any X display is opened. libX11 is already a runtime dep (verified via
-/// ldd of the compiled OpenHuman binary).
+/// any X display is opened. libX11 is only pulled in transitively at *runtime*
+/// (via GTK/WebKit), so the `extern` block must carry an explicit
+/// `#[link(name = "X11")]` — otherwise `rust-lld` can't resolve the symbol at
+/// link time and the full desktop build fails with `undefined symbol:
+/// XSetErrorHandler` (only surfaces in the CI-Full / release bundle link step,
+/// not CI-Lite). libX11 is present on every Linux desktop host, so linking it
+/// directly is safe.
 #[cfg(target_os = "linux")]
 fn install_silent_x_error_handler() {
     use std::ffi::c_void;
@@ -2240,6 +2316,7 @@ fn install_silent_x_error_handler() {
     }
 
     type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    #[link(name = "X11")]
     unsafe extern "C" {
         fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
     }
@@ -2326,6 +2403,7 @@ pub fn run() {
         let custom_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
+            .max_blocking_threads(openhuman_core::core::runtime::MAX_BLOCKING_THREADS)
             .build()
             .expect("build custom tokio runtime for tauri async surface");
         let handle = custom_runtime.handle().clone();
@@ -2485,6 +2563,24 @@ pub fn run() {
                 );
                 return None;
             }
+            // Defense-in-depth: drop Windows `ERROR_FILE_SYSTEM_LIMITATION`
+            // (os error 665) — a persistent host-filesystem condition with
+            // zero local lever and no Sentry remediation path. The Tauri
+            // shell is a separate crate from the core, so the core's emit-site
+            // classifier (`expected_error_kind`) can only catch events that
+            // originate inside the core binary. Any filesystem-error event
+            // that starts in the shell (e.g. file_logging, window_state,
+            // CEF profile I/O) bypasses the core classifier and lands here;
+            // this filter is the only net for those events (TAURI-RUST-QT0:
+            // 6,050 events / 1 user).
+            if openhuman_core::core::observability::is_windows_file_system_limitation_event(&event)
+            {
+                log::debug!(
+                    "[sentry-fs-limitation-filter] dropping Windows file-system-limitation event (os error 665) event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Strip server_name (hostname) to avoid leaking machine identity.
             event.server_name = None;
             // Attach the cached account uid so Sentry can count unique users
@@ -2503,7 +2599,7 @@ pub fn run() {
             // (the original userCount=0 root cause).
             if event.user.is_none() {
                 event.user =
-                    openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                    openhuman_core::openhuman::desktop::app_state::peek_cached_current_user_identity()
                         .and_then(|identity| identity.id)
                         .map(|id| sentry::User {
                             id: Some(id),
@@ -2513,6 +2609,9 @@ pub fn run() {
             Some(event)
         })),
         sample_rate: 1.0,
+        transport: Some(std::sync::Arc::new(
+            openhuman_core::core::sentry_transport::factory,
+        )),
         ..sentry::ClientOptions::default()
     });
     // Tag every Sentry event with CPU architecture and OS so Intel-specific
@@ -3032,7 +3131,6 @@ pub fn run() {
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     let builder = builder.manage(wechat_scanner::ScannerRegistry::new());
-    let builder = builder.manage(screen_capture::ScreenShareState::new());
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
@@ -3043,6 +3141,16 @@ pub fn run() {
             // concrete `Webview<Cef>` (which `send_dev_tools_message`
             // requires) from generic `<R: Runtime>` call sites.
             cdp::set_cef_app_handle(app.handle().clone());
+
+            // Install the app handle for the desktop companion so its session
+            // state machine can emit `companion://state_changed` events.
+            companion::setup(app.handle());
+
+            // Structured WhatsApp Web data store lives shell-side. Register the
+            // in-process native handlers so the core agent tools (list/search)
+            // and the scanner ingest path can reach the SQLite store over the
+            // native request bus. No handler = graceful degradation core-side.
+            whatsapp_data::register_native_handlers();
 
             #[cfg(windows)]
             {
@@ -3184,7 +3292,7 @@ pub fn run() {
                             // after the <key>ProgramArguments</key> marker. The
                             // service installer always writes it as an absolute
                             // path to the openhuman-core binary (see
-                            // src/openhuman/service/macos.rs).
+                            // src/openhuman/platform/service/macos.rs).
                             let after_key = contents.split("<key>ProgramArguments</key>").nth(1)?;
                             let start = after_key.find("<string>")? + "<string>".len();
                             let rest = &after_key[start..];
@@ -3277,6 +3385,16 @@ pub fn run() {
             // / `center: false` for the main window so the placement
             // happens before the first paint and there's no jump.
             if let Some(window) = app.get_webview_window("main") {
+                // Layout first: mixed-DPI placement bugs (#5041) are not
+                // diagnosable from a user report without it, and logging
+                // before placement captures the pre-clamp state.
+                window_state::log_monitor_layout(&window);
+                // Installed before placement so a scale change triggered
+                // by our own cross-monitor move is caught too — on
+                // Windows that arrives via the message loop after
+                // `setup()` returns, which is why clamping here alone is
+                // not enough.
+                window_state::install_dpi_guard(&window);
                 if !window_state::restore_main(&window) {
                     window_state::center_main(&window);
                 }
@@ -3406,48 +3524,6 @@ pub fn run() {
             // whenever the Settings toggle flips. Showing it unconditionally
             // here would flash the pill on every launch even with always-on
             // listening disabled (the default).
-
-            // Synthetic-input main-thread executor. enigo's macOS keyboard-layout
-            // lookup (TSMGetInputSourceProperty) MUST run on the app main thread
-            // or it traps (`_dispatch_assert_queue_fail`/EXC_BREAKPOINT) and
-            // crashes the CEF host (Change 1.15, confirmed via crash report). The
-            // keyboard/mouse tools run on tokio workers, so they dispatch their
-            // enigo ops here via the native registry; we run each on the real
-            // main thread through `run_on_main_thread`.
-            {
-                use openhuman_core::core::event_bus::register_native_global;
-                use openhuman_core::openhuman::tools::{
-                    MainThreadInputOp, INPUT_ON_MAIN_THREAD_METHOD,
-                };
-                let input_app = app.handle().clone();
-                register_native_global::<MainThreadInputOp, Result<String, String>, _, _>(
-                    INPUT_ON_MAIN_THREAD_METHOD,
-                    move |req| {
-                        let input_app = input_app.clone();
-                        async move {
-                            let (tx, rx) = tokio::sync::oneshot::channel();
-                            let run = req.run;
-                            input_app
-                                .run_on_main_thread(move || {
-                                    // Catch an enigo FFI panic so it can't unwind
-                                    // across the app main thread (which would be
-                                    // UB / abort). Convert it to a clean Err.
-                                    let result = std::panic::catch_unwind(
-                                        std::panic::AssertUnwindSafe(run),
-                                    )
-                                    .unwrap_or_else(|_| {
-                                        Err("synthetic input panicked on the main thread".to_string())
-                                    });
-                                    let _ = tx.send(result);
-                                })
-                                .map_err(|e| format!("run_on_main_thread dispatch failed: {e}"))?;
-                            rx.await
-                                .map_err(|_| "main-thread input op was cancelled".to_string())
-                        }
-                    },
-                );
-                log::info!("[computer] registered main-thread synthetic-input executor");
-            }
 
             // Tray icon setup moved to RunEvent::Ready (see below) — GTK is only
             // initialized after the event loop starts, so we must delay tray creation
@@ -3768,6 +3844,10 @@ pub fn run() {
             // and the Save-As fallback needs it there (CodeRabbit on #4127).
             artifact_commands::save_artifact_via_dialog,
             artifact_commands::download_artifact_to_downloads,
+            // Structured WhatsApp data (store lives shell-side).
+            whatsapp_data::whatsapp_data_list_chats,
+            whatsapp_data::whatsapp_data_list_messages,
+            whatsapp_data::whatsapp_data_search_messages,
             check_core_update,
             apply_core_update,
             check_app_update,
@@ -3805,9 +3885,6 @@ pub fn run() {
             webview_accounts::webview_set_focused_account,
             notification_settings::notification_settings_get,
             notification_settings::notification_settings_set,
-            screen_capture::screen_share_begin_session,
-            screen_capture::screen_share_thumbnail,
-            screen_capture::screen_share_finalize_session,
             native_notifications::notification_permission_state,
             native_notifications::notification_permission_request,
             activate_main_window,
@@ -3827,6 +3904,11 @@ pub fn run() {
             companion_commands::register_companion_hotkey,
             companion_commands::unregister_companion_hotkey,
             companion_commands::companion_activate,
+            companion::companion_start_session,
+            companion::companion_stop_session,
+            companion::companion_status,
+            companion::companion_config_get,
+            companion::companion_config_set,
             mcp_commands::mcp_resolve_binary_path,
             mcp_commands::mcp_open_client_config,
             loopback_oauth::start_loopback_oauth_listener,
@@ -3905,6 +3987,19 @@ pub fn run() {
                     "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
+                // Persist geometry now, while the window handle is still
+                // reachable. On Windows the hide below is a raw SW_HIDE on the
+                // OS frame, after which `get_webview_window("main")` returns
+                // `None` until the window is shown again (#1607). If the user
+                // then picks tray "Quit" while hidden, the ExitRequested save
+                // finds no window and nothing is persisted, so the next launch
+                // falls back to the default geometry (#4810). Saving here
+                // captures the last on-screen size/position before it becomes
+                // unreachable; ExitRequested still saves for the shown-window
+                // quit paths (`save_main` is best-effort and idempotent).
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Hide the OS top-level Chrome_WidgetWin_1 frame via
                 // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
                 // intended. `window.hide()` and `window.minimize()` through
@@ -3925,6 +4020,18 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                // Persist the main window's geometry on every clean quit
+                // (Cmd+Q, tray "Quit", dock quit, or the frontend
+                // `app_quit` command) so the next launch restores the
+                // user's size + position. Previously `save_main` ran only
+                // on the identity-flip `restart_app` path (#900): a normal
+                // quit never saved, so the window always reopened at the
+                // default small centered size (#4810). `save_main` is
+                // best-effort and idempotent — safe to also run here even
+                // though `restart_app` saves before it triggers exit.
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Run our cleanup BEFORE CEF's own Exit handler does
                 // `close_all_windows() → cef::shutdown()`. Doing this in
                 // RunEvent::Exit instead races CEF's teardown and the

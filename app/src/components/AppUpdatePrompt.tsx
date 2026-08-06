@@ -123,7 +123,7 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
             <>
               <p className="text-xs text-content-faint leading-relaxed">
                 {newVersion
-                  ? t('app.update.versionReady').replace('{version}', newVersion)
+                  ? t('app.update.versionReady').replace('{newVersion}', newVersion)
                   : t('app.update.newVersionReady')}
                 {currentVersion && (
                   <span className="text-content-muted">

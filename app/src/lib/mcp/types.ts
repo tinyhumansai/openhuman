@@ -2,29 +2,6 @@
  * MCP (Model Context Protocol) shared types
  */
 
-export interface MCPServerConfig {
-  name: string;
-  version: string;
-}
-
-export interface MCPToolInputSchema {
-  type: 'object';
-  properties: Record<string, unknown>;
-  required?: string[];
-}
-
-export interface MCPTool {
-  name: string;
-  description: string;
-  inputSchema: MCPToolInputSchema;
-  toHumanReadableAction?: (action: Record<string, unknown>) => unknown;
-}
-
-export interface MCPToolCall {
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
 export interface MCPToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;

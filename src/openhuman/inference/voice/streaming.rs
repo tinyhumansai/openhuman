@@ -304,7 +304,7 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
         match whisper_engine::transcribe_pcm_i16(&service.whisper, &final_samples, None, None) {
             Ok(result) => result.text,
             Err(e) => {
-                log::error!("{LOG_PREFIX} final inference error: {e}");
+                log::warn!("{LOG_PREFIX} final inference error: {e}");
                 let msg = serde_json::json!({
                     "type": "error",
                     "message": format!("Transcription failed: {e}"),

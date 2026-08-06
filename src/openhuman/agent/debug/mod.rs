@@ -27,15 +27,15 @@ use anyhow::{anyhow, Context, Result};
 pub mod dump_writer;
 pub use dump_writer::{write_prompt_dumps, DumpWriteSummary};
 
+use crate::openhuman::agent::context::prompt::{
+    LearnedContextData, PromptContext, PromptTool, ToolCallFormat,
+};
 use crate::openhuman::agent::harness::definition::{
     AgentDefinition, AgentDefinitionRegistry, PromptSource,
 };
 use crate::openhuman::agent::harness::session::Agent;
-use crate::openhuman::composio::ComposioActionTool;
 use crate::openhuman::config::Config;
-use crate::openhuman::context::prompt::{
-    LearnedContextData, PromptContext, PromptTool, ToolCallFormat,
-};
+use crate::openhuman::integrations::composio::ComposioActionTool;
 use crate::openhuman::tools::{Tool, ToolCategory};
 
 // ---------------------------------------------------------------------------
@@ -281,7 +281,9 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // `fetch_toolkit_actions` round-trip; direct mode skips the
     // refresh (no backend allowlist to consult) and keeps the cached
     // catalogue, mirroring `ComposioListToolsTool`'s short-circuit.
-    use crate::openhuman::composio::client::{create_composio_client, ComposioClientKind};
+    use crate::openhuman::integrations::composio::client::{
+        create_composio_client, ComposioClientKind,
+    };
     let client_kind = create_composio_client(config)
         .map_err(|e| anyhow!("composio client unavailable — is the user signed in? ({e})"))?;
 
@@ -294,7 +296,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // rather than blanking it.
     match &client_kind {
         ComposioClientKind::Backend(composio_client) => {
-            match crate::openhuman::composio::fetch_toolkit_actions(
+            match crate::openhuman::integrations::composio::fetch_toolkit_actions(
                 composio_client,
                 &integration.toolkit,
                 None,
@@ -432,6 +434,8 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     let mut text = build(&ctx)

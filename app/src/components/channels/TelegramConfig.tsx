@@ -372,12 +372,16 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                 <input
                   type="checkbox"
                   checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
-                  onChange={event =>
-                    setClearMemoryOnDisconnect(prev => ({
-                      ...prev,
-                      [compositeKey]: event.currentTarget.checked,
-                    }))
-                  }
+                  onChange={event => {
+                    // Read `checked` here, not inside the updater. React resets
+                    // `currentTarget` to null as soon as the handler returns,
+                    // and a functional updater is invoked later while React
+                    // processes the update queue — so reading it in there threw
+                    // "Cannot read properties of null (reading 'checked')"
+                    // (#5161).
+                    const { checked } = event.currentTarget;
+                    setClearMemoryOnDisconnect(prev => ({ ...prev, [compositeKey]: checked }));
+                  }}
                   className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                 />
                 <span className="min-w-0">

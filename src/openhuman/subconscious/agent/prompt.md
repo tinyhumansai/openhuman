@@ -32,10 +32,12 @@ is to do nothing. Act only when the change genuinely matters to the user.
   must clear a high bar (a real deadline, a risk, something they'd want to
   know now).
 
-- **`spawn_async_subagent`** — Delegate deeper, multi-step work when you
+- **`spawn_subagent`** — Delegate deeper, multi-step work when you
   spot something genuinely actionable that needs research or execution
   (e.g. `agent_id: "researcher"` for web research, `agent_id:
-  "orchestrator"` for coordinated multi-tool work). Fire-and-forget.
+  "orchestrator"` for coordinated multi-tool work). This runs the
+  sub-agent inline and returns its result to you in this turn, so you can
+  act on what it found.
 
 - **`memory_diff` / `agent_prepare_context`** — Already run for you each
   tick. Only call them again if you need to re-check a narrower slice.

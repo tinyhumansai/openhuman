@@ -1,4 +1,4 @@
-import { type Location, Navigate, Route, Routes } from 'react-router-dom';
+import { type Location, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import AgentWorldShell from './agentworld/AgentWorldShell';
 import AgentWorld from './agentworld/pages/AgentWorld';
@@ -9,6 +9,7 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import Activity from './pages/Activity';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
 import Feedback from './pages/Feedback';
@@ -17,7 +18,6 @@ import FlowsPage from './pages/FlowsPage';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
-import OrchestrationPage from './pages/OrchestrationPage';
 import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
 import Skills from './pages/Skills';
@@ -33,6 +33,54 @@ interface AppRoutesProps {
    * everywhere else (router uses the ambient location).
    */
   location?: Location | string;
+}
+
+/**
+ * Redirects the retired `/orchestration` route to its new home under Brain
+ * (`/brain?tab=orchestration`), mapping the legacy `?tab=`/`?sub=` query onto
+ * Brain's `?ov=`/`?sub=` scheme so old deep links land on the same view:
+ *   - `?tab=connections|discover|usage` → `?ov=network&sub=<that>`
+ *   - `?tab=agent|overview|tasks|network|medulla` → `?ov=<that>`
+ *   - `?session=` is preserved for the agent chat.
+ */
+const NETWORK_SUBS = ['connections', 'discover', 'usage'];
+const ORCH_VIEWS = ['medulla', 'agent', 'overview', 'tasks', 'network'];
+
+export function OrchestrationRedirect() {
+  const { search } = useLocation();
+  const legacy = new URLSearchParams(search);
+  const tab = legacy.get('tab');
+  // Privacy-safe: only the allowlisted branch id and whether a session param was
+  // present are logged — never the session value or any raw query string.
+  console.debug(
+    '[routes] orchestration-redirect: entry tab=%s',
+    tab && ORCH_VIEWS.includes(tab) ? tab : tab && NETWORK_SUBS.includes(tab) ? tab : '<unmapped>'
+  );
+
+  const next = new URLSearchParams();
+  next.set('tab', 'orchestration');
+  let branch: string;
+  if (tab && NETWORK_SUBS.includes(tab)) {
+    next.set('ov', 'network');
+    next.set('sub', tab);
+    branch = 'network-sub';
+  } else {
+    if (tab && ORCH_VIEWS.includes(tab)) next.set('ov', tab);
+    const sub = legacy.get('sub');
+    if (sub && NETWORK_SUBS.includes(sub)) next.set('sub', sub);
+    branch = tab && ORCH_VIEWS.includes(tab) ? 'view' : 'default';
+  }
+  const session = legacy.get('session');
+  if (session) next.set('session', session);
+
+  console.debug(
+    '[routes] orchestration-redirect: exit branch=%s ov=%s hasSub=%s hasSession=%s',
+    branch,
+    next.get('ov') ?? '<none>',
+    next.has('sub'),
+    next.has('session')
+  );
+  return <Navigate to={`/brain?${next.toString()}`} replace />;
 }
 
 const AppRoutes = ({ location }: AppRoutesProps = {}) => {
@@ -99,12 +147,13 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
       {/* Workflows — the `flows::` domain's discoverable list hub (issue
           B5a) plus the read-only Workflow Canvas (issue B5b.1) at
           `/flows/:id`. Distinct from the legacy SKILL.md `/workflows/*`
-          Skill routes below (create/run) and their `/workflows` →
-          `/settings/automations` back-compat redirect, which stay untouched.
-          Not a tab-level route (unlike `/flows` itself, `/flows/:id` isn't
-          reached from the BottomTabBar), so `navigation.spec.ts`'s ROUTES
-          table needs no change. Full editing (B5b.2+) and the agent-proposal
-          surface (B4) are separate, later work. */}
+          Skill routes below (create/run); the bare `/workflows` and
+          `/routines` slugs now redirect here (to `/flows`) since Workflows is
+          a first-level module. Not a tab-level route (unlike `/flows` itself,
+          `/flows/:id` isn't reached from the BottomTabBar), so
+          `navigation.spec.ts`'s ROUTES table needs no change. Full editing
+          (B5b.2+) and the agent-proposal surface (B4) are separate, later
+          work. */}
       <Route
         path="/flows"
         element={
@@ -135,21 +184,16 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
         }
       />
 
-      {/* Orchestration — TinyPlace multi-agent coordination surface, promoted
-          from a Brain sub-tab into a first-class sidebar destination (sits
-          right after Workflows). */}
-      <Route
-        path="/orchestration"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <OrchestrationPage />
-          </ProtectedRoute>
-        }
-      />
-      {/* Back-compat: the old Brain deep link → the promoted top-level tab. */}
+      {/* Orchestration folded back under Brain (`/brain?tab=orchestration`).
+          The old first-class `/orchestration` route and the even older Brain
+          deep link both redirect there; `<OrchestrationRedirect>` maps the
+          legacy `?tab=`/`?sub=` query onto Brain's `?ov=`/`?sub=` scheme so
+          deep links (e.g. `/orchestration?tab=tasks`) keep landing on the same
+          view. */}
+      <Route path="/orchestration" element={<OrchestrationRedirect />} />
       <Route
         path="/brain/tinyplace-orchestration"
-        element={<Navigate to="/orchestration" replace />}
+        element={<Navigate to="/brain?tab=orchestration" replace />}
       />
 
       {/* Back-compat: /activity and /intelligence → settings notifications page. */}
@@ -226,10 +270,9 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
         }
       />
 
-      {/* Back-compat: /routines was an orphaned dead page (superseded by the
-          Cron Jobs settings panel).  Redirect to Activity → Automations so
-          any surviving deep links land somewhere sensible. */}
-      <Route path="/routines" element={<Navigate to="/settings/automations" replace />} />
+      {/* Back-compat: /routines was an orphaned dead page. Workflows is now a
+          first-level module — redirect surviving deep links to /flows. */}
+      <Route path="/routines" element={<Navigate to="/flows" replace />} />
 
       <Route
         path="/rewards"
@@ -240,9 +283,19 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
         }
       />
 
-      <Route path="/workflows" element={<Navigate to="/settings/automations" replace />} />
+      {/* Installed SKILL.md workflows remain a separate runtime surface from
+          visual Flows. Keep the legacy top-level hub reachable. */}
+      <Route
+        path="/workflows"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Activity />
+          </ProtectedRoute>
+        }
+      />
 
-      <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
+      {/* Webhooks retired from the UI — land on the Integrations settings. */}
+      <Route path="/webhooks" element={<Navigate to="/settings/integrations" replace />} />
 
       {/* Desktop Settings renders as a modal overlay mounted by AppShellDesktop
           (App.tsx) using the backgroundLocation pattern — it is no longer an

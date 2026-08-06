@@ -77,6 +77,8 @@ const ProfileEditorPage = () => {
   const [composioIntegrations, setComposioIntegrations] = useState<Allowlist>(null);
   const [allowedSkills, setAllowedSkills] = useState<Allowlist>(null);
   const [allowedMcpServers, setAllowedMcpServers] = useState<Allowlist>(null);
+  const [dedicatedMemory, setDedicatedMemory] = useState(false);
+  const [dedicatedWorkspace, setDedicatedWorkspace] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +122,8 @@ const ProfileEditorPage = () => {
     setComposioIntegrations(existing.composioIntegrations ?? null);
     setAllowedSkills(existing.allowedSkills ?? null);
     setAllowedMcpServers(existing.allowedMcpServers ?? null);
+    setDedicatedMemory(existing.dedicatedMemory ?? false);
+    setDedicatedWorkspace(existing.dedicatedWorkspace ?? false);
   }, [existing, isCreate, profiles.length]);
 
   const handleName = (value: string) => {
@@ -159,6 +163,8 @@ const ProfileEditorPage = () => {
       composioIntegrations,
       allowedSkills,
       allowedMcpServers,
+      dedicatedMemory,
+      dedicatedWorkspace,
       builtIn: existing?.builtIn ?? false,
     };
     try {
@@ -346,6 +352,66 @@ const ProfileEditorPage = () => {
               value={memorySources}
               onChange={setMemorySources}
             />
+          </SettingsSection>
+
+          {/* Isolation */}
+          <SettingsSection>
+            <SettingsRow
+              label={t('settings.profiles.editor.dedicatedMemory')}
+              description={t('settings.profiles.editor.dedicatedMemoryHint')}
+              control={
+                <SettingsSwitch
+                  id="profile-dedicated-memory"
+                  checked={dedicatedMemory}
+                  onCheckedChange={setDedicatedMemory}
+                  aria-label={t('settings.profiles.editor.dedicatedMemory')}
+                />
+              }
+            />
+            <SettingsRow
+              label={t('settings.profiles.editor.dedicatedWorkspace')}
+              description={t('settings.profiles.editor.dedicatedWorkspaceHint')}
+              control={
+                <SettingsSwitch
+                  id="profile-dedicated-workspace"
+                  checked={dedicatedWorkspace}
+                  onCheckedChange={setDedicatedWorkspace}
+                  aria-label={t('settings.profiles.editor.dedicatedWorkspace')}
+                />
+              }
+            />
+            {existing?.soulMdFile && (
+              <SettingsRow
+                label={t('settings.profiles.editor.soulMdFile')}
+                control={
+                  <code className="font-mono text-xs text-content-muted break-all">
+                    {existing.soulMdFile}
+                  </code>
+                }
+              />
+            )}
+            {existing?.workspaceDir && (
+              <SettingsRow
+                label={t('settings.profiles.editor.workspaceDir')}
+                control={
+                  <code className="font-mono text-xs text-content-muted break-all">
+                    {existing.workspaceDir}
+                  </code>
+                }
+              />
+            )}
+            {existing?.skillsDir && (
+              <SettingsRow
+                label={t('settings.profiles.editor.skillsDir')}
+                description={t('settings.profiles.editor.skillsDirHint')}
+                stacked
+                control={
+                  <code className="font-mono text-xs text-content-muted break-all">
+                    {existing.skillsDir}
+                  </code>
+                }
+              />
+            )}
           </SettingsSection>
 
           {/* Capabilities */}

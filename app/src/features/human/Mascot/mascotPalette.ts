@@ -1,6 +1,6 @@
 export type MascotColor = 'yellow' | 'burgundy' | 'black' | 'navy' | 'custom';
 
-export interface MascotPalette {
+interface MascotPalette {
   armHighlightMatrix: string;
   armShadowMatrix: string;
   bodyFill: string;

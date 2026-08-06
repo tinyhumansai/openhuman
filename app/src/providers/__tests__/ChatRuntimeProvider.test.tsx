@@ -1018,7 +1018,15 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(streaming?.content).toBe('bbb');
     });
 
-    it('persists interim narration as a bubble and clears it from the live preview', async () => {
+    // Narration is NOT promoted to a chat message. It used to be persisted via
+    // `addInferenceResponse({ isInterim: true })`, which gave it a lifetime no
+    // other progress signal has — thinking is wiped at `chat_done` and tool rows
+    // collapse, but narration bubbles stayed in the thread forever, between the
+    // question and the answer that superseded them. It reaches the UI through
+    // the processing transcript instead (written by `streamDeltaReceived`, and
+    // persisted core-side as `TranscriptItem::Narration`), which the inline rail
+    // and the Agent Process Source panel both render.
+    it('records interim narration in the transcript, not as a message, and clears the preview', async () => {
       const listeners = renderProvider();
 
       // Round-0 narration streams into the live preview…
@@ -1033,6 +1041,11 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
         'Let me check your calendar first.'
       );
+      // …and is already captured as a narration transcript item by the delta
+      // reducer — this is what the rail renders.
+      expect(store.getState().chatRuntime.processingByThread['t-interim']).toEqual([
+        expect.objectContaining({ kind: 'narration', text: 'Let me check your calendar first.' }),
+      ]);
 
       // …then a tool call closes the round → interim flush.
       act(() => {
@@ -1044,30 +1057,49 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         });
       });
 
-      // The narration is persisted as its own bubble…
-      await waitFor(() =>
-        expect(threadApi.appendMessage).toHaveBeenCalledWith(
-          't-interim',
-          expect.objectContaining({ content: 'Let me check your calendar first.', sender: 'agent' })
-        )
-      );
-      // …and cleared from the live preview so it isn't shown twice.
+      // No message is appended for narration.
+      expect(threadApi.appendMessage).not.toHaveBeenCalled();
+      // The preview is still cleared, so the rail and the preview don't both
+      // show the same text for the duration of the tool call.
       expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
         ''
       );
     });
 
-    it('dedupes a re-delivered interim event by round', async () => {
+    // The round dedup key outlives the message-promotion it was written for:
+    // it now guards the streaming-preview reset. A replayed frame must not wipe
+    // text the agent streamed AFTER the original flush.
+    it('dedupes a re-delivered interim event by round', () => {
       const listeners = renderProvider();
+      const streamingContent = () =>
+        store.getState().chatRuntime.streamingAssistantByThread['t-interim-dup']?.content;
 
       act(() => {
+        listeners.onTextDelta?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          delta: 'Working on it now — pulling the data.',
+        });
         listeners.onInterim?.({
           thread_id: 't-interim-dup',
           request_id: 'r1',
           round: 1,
           full_response: 'Working on it now — pulling the data.',
         });
-        // Reconnect/replay re-delivers the same round.
+      });
+      // First delivery flushes the round and clears the preview.
+      expect(streamingContent()).toBe('');
+
+      act(() => {
+        // The agent streams the next chunk…
+        listeners.onTextDelta?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          delta: 'Here is what I found.',
+        });
+        // …and a reconnect/replay re-delivers the SAME round.
         listeners.onInterim?.({
           thread_id: 't-interim-dup',
           request_id: 'r1',
@@ -1076,7 +1108,11 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         });
       });
 
-      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+      // Deduped: the replay is ignored, so the newer text survives. Without the
+      // guard the preview would have been cleared a second time.
+      expect(streamingContent()).toBe('Here is what I found.');
+      // And narration still never becomes a message, on either delivery.
+      expect(threadApi.appendMessage).not.toHaveBeenCalled();
     });
 
     it('sets inference status to thinking on inference_start and clears it on chat_done', () => {
@@ -1489,6 +1525,88 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         requireApproval: true,
         summary: { trigger: 'signup.created' },
       });
+    });
+
+    // Regression (#4876 fallout): `edit_workflow` is the prompt-preferred way
+    // to iterate on an existing draft, and returns the identical
+    // `{ type: "workflow_proposal", ... }` payload as `propose_workflow` /
+    // `revise_workflow`. Proposal recognition is content-based (on the
+    // payload's `type`), not gated on a fixed tool-name allowlist, so this
+    // must surface a proposal exactly like the other two tools do — a
+    // name-based allowlist previously dropped it silently.
+    it('surfaces a workflow proposal from the main-agent edit_workflow tool', () => {
+      const listeners = renderProvider();
+      const threadId = 't-edit-workflow';
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'edit_workflow',
+          skill_id: 'flows',
+          args: {},
+          tool_call_id: 'call-edit-1',
+        });
+        listeners.onToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'edit_workflow',
+          skill_id: 'flows',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Digest patch',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            draft_id: 'draft-42',
+            summary: { trigger: 'manual', steps: [] },
+          }),
+          tool_call_id: 'call-edit-1',
+        });
+      });
+
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({ name: 'Digest patch', requireApproval: true });
+    });
+
+    // Any future tool that returns `{ type: "workflow_proposal" }` must be
+    // recognised too — the gate is the payload shape, not a tool-name list.
+    it('surfaces a workflow proposal from an unrecognised future tool name', () => {
+      const listeners = renderProvider();
+      const threadId = 't-future-tool';
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'some_future_builder_tool',
+          skill_id: 'flows',
+          args: {},
+          tool_call_id: 'call-future-1',
+        });
+        listeners.onToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'some_future_builder_tool',
+          skill_id: 'flows',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Future proposal',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            summary: { trigger: 'manual', steps: [] },
+          }),
+          tool_call_id: 'call-future-1',
+        });
+      });
+
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({ name: 'Future proposal' });
     });
   });
 

@@ -1,7 +1,7 @@
 //! Controller schema definitions and registered handlers for the `meet`
 //! domain.
 //!
-//! Mirrors the pattern used by `src/openhuman/notifications/schemas.rs`.
+//! Mirrors the pattern used by `src/openhuman/desktop/notifications/schemas.rs`.
 
 use serde_json::{Map, Value};
 

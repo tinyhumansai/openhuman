@@ -96,10 +96,29 @@ describe('FlowRunInspectorDrawer', () => {
     renderDrawer('thread-1', vi.fn());
 
     expect(screen.getByTestId('flow-run-status-pill')).toHaveTextContent('Running');
+    expect(screen.getByTestId('flow-run-status-pill')).toHaveClass('bg-ocean-50');
+    expect(screen.getByTestId('flow-run-status-dot')).toHaveClass('bg-ocean-500', 'animate-pulse');
     expect(screen.getByTestId('flow-run-steps')).toBeInTheDocument();
     expect(screen.getByText('fetch-data')).toBeInTheDocument();
     expect(screen.getByText('branch')).toBeInTheDocument();
     expect(screen.getByTestId('flow-run-step-port-1')).toHaveTextContent('true');
+  });
+
+  it('falls back to a humanized label instead of "undefined" for an unrecognized status (F-m8)', () => {
+    // Run payloads are cast, never validated — a future/unknown status the
+    // frontend doesn't recognize yet must not index the accent/dot/key maps
+    // with `undefined`.
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ status: 'archived' as FlowRun['status'] }),
+      loading: false,
+      error: null,
+    });
+    renderDrawer('thread-1', vi.fn());
+
+    const pill = screen.getByTestId('flow-run-status-pill');
+    expect(pill).toHaveTextContent('archived');
+    expect(pill.className).not.toContain('undefined');
+    expect(screen.getByTestId('flow-run-status-dot').className).not.toContain('undefined');
   });
 
   it('expands a step to reveal its output in the per-item data browser', () => {
@@ -108,7 +127,7 @@ describe('FlowRunInspectorDrawer', () => {
 
     // Data browser lives inside a collapsed <details> until expanded.
     expect(screen.queryByTestId('flow-run-step-0-data-browser')).not.toBeVisible();
-    fireEvent.click(screen.getAllByText('Output')[0]);
+    fireEvent.click(screen.getAllByText('Show raw output')[0]);
 
     // Default table view shows the `rows` column and its value.
     const browser = screen.getByTestId('flow-run-step-0-data-browser');
@@ -119,6 +138,83 @@ describe('FlowRunInspectorDrawer', () => {
     // Toggling to JSON shows the pretty-printed payload.
     fireEvent.click(screen.getByTestId('flow-run-step-0-view-json'));
     expect(screen.getByTestId('flow-run-step-0-json').textContent).toContain('"rows": 3');
+  });
+
+  // Issue B20 — a plain-language summary is the always-visible primary view;
+  // raw Composio/tool JSON (costUsd, labelIds, markdownFormatted, …) and the
+  // full flow:/run: ids stay behind "Show raw output" / hover-only.
+  it('shows a plain-language success summary without raw technical fields, hidden behind "Show raw output"', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({
+        steps: [
+          {
+            node_id: 'send-summary',
+            status: 'success',
+            output: {
+              summary: 'Sent your daily email summary — no new emails today.',
+              has_important: false,
+              costUsd: 0.0004,
+              labelIds: ['INBOX'],
+              markdownFormatted: '**no new emails**',
+            },
+          },
+        ],
+      }),
+      loading: false,
+      error: null,
+    });
+    renderDrawer('thread-1', vi.fn());
+
+    // Primary view: the human summary, visible without any interaction.
+    expect(screen.getByTestId('flow-run-step-summary-0')).toHaveTextContent(
+      'Sent your daily email summary — no new emails today.'
+    );
+    // Technical/internal fields exist only inside the collapsed raw-output
+    // disclosure — not visible in the always-visible primary view.
+    expect(screen.getByText('costUsd')).not.toBeVisible();
+    expect(screen.getByText('labelIds')).not.toBeVisible();
+    expect(screen.getByText('markdownFormatted')).not.toBeVisible();
+
+    // Raw output (with the technical fields) only appears once expanded.
+    expect(screen.queryByTestId('flow-run-step-0-data-browser')).not.toBeVisible();
+    fireEvent.click(screen.getAllByText('Show raw output')[0]);
+    fireEvent.click(screen.getByTestId('flow-run-step-0-view-json'));
+    expect(screen.getByTestId('flow-run-step-0-json').textContent).toContain('costUsd');
+  });
+
+  it('shows a plain-language failure summary for a failed step', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({
+        steps: [
+          {
+            node_id: 'send-email',
+            status: 'success',
+            output: { data: null, successful: false, error: 'recipient address invalid' },
+          },
+        ],
+      }),
+      loading: false,
+      error: null,
+    });
+    renderDrawer('thread-1', vi.fn());
+
+    expect(screen.getByTestId('flow-run-step-summary-0')).toHaveTextContent(
+      "Couldn't complete: recipient address invalid"
+    );
+  });
+
+  it('shows short-form run/flow ids in the header, full value only on hover title', () => {
+    useFlowRunPoller.mockReturnValue({
+      run: makeRun({ flow_id: 'flow-abcdefgh12345', thread_id: 'thread-abcdefgh12345' }),
+      loading: false,
+      error: null,
+    });
+    renderDrawer('thread-1', vi.fn());
+
+    expect(screen.queryByText('flow-abcdefgh12345')).not.toBeInTheDocument();
+    expect(screen.queryByText('thread-abcdefgh12345')).not.toBeInTheDocument();
+    expect(screen.getByTitle('flow-abcdefgh12345')).toHaveTextContent('flow-abc');
+    expect(screen.getByTitle('thread-abcdefgh12345')).toHaveTextContent('thread-a');
   });
 
   it('shows an error state when the poller reports an error', () => {

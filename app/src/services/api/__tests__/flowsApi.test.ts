@@ -6,7 +6,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { importFlow } from '../flowsApi';
+import { parseWorkflowProposal } from '../../../lib/workflows/workflowProposal';
+import { buildWorkflow, importFlow } from '../flowsApi';
 
 vi.mock('../../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
@@ -54,5 +55,34 @@ describe('flowsApi.importFlow', () => {
     vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('missing trigger'));
 
     await expect(importFlow({ bad: true })).rejects.toThrow('missing trigger');
+  });
+});
+
+describe('flowsApi.buildWorkflow proposal parity', () => {
+  beforeEach(async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  it('returns the same proposal object as the string parser for a valid payload', async () => {
+    const { callCoreRpc } = await import('../../coreRpcClient');
+    const proposal = {
+      type: 'workflow_proposal',
+      name: 'Daily digest',
+      graph: { schema_version: 1, name: 'digest', nodes: [], edges: [] },
+      require_approval: false,
+      summary: {
+        trigger: 'schedule: 0 9 * * *',
+        steps: [{ kind: 'tool_call', name: 'Fetch updates', config_hint: 'SEARCH' }],
+      },
+    };
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      result: { proposal, assistant_text: 'Ready', error: null },
+      logs: ['workflow built'],
+    });
+
+    const apiResult = await buildWorkflow({ mode: 'create', instruction: 'Make a digest' });
+
+    expect(apiResult.proposal).toEqual(parseWorkflowProposal(JSON.stringify(proposal)));
   });
 });

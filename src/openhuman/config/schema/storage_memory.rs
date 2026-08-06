@@ -366,7 +366,13 @@ pub struct MemoryTreeConfig {
 }
 
 fn default_memory_tree_spacy_enabled() -> bool {
-    true
+    // Opt-in (#5056). Default OFF so a fresh install never provisions the spaCy
+    // venv + `en_core_web_sm` model on first launch, and the runtime Python
+    // server is not spawned on every boot when no local NLP is configured.
+    // Query-entity extraction degrades to the in-Rust regex+LLM extractor
+    // (`score::extract`); operators opt in via config or
+    // `OPENHUMAN_MEMORY_TREE_SPACY_ENABLED=1`.
+    false
 }
 
 /// Returns `None` so that existing installs that never opted into Phase 4
@@ -511,6 +517,15 @@ mod tests {
             Some(DEFAULT_CLOUD_LLM_MODEL)
         );
         assert_eq!(DEFAULT_CLOUD_LLM_MODEL, "summarization-v1");
+    }
+
+    /// #5056: spaCy is opt-in — a fresh install must never provision the
+    /// spaCy venv / `en_core_web_sm` model, nor spawn the runtime Python
+    /// server, without an explicit config or env-var opt-in.
+    #[test]
+    fn spacy_enabled_defaults_to_false() {
+        assert!(!MemoryTreeConfig::default().spacy_enabled);
+        assert!(!default_memory_tree_spacy_enabled());
     }
 
     #[test]

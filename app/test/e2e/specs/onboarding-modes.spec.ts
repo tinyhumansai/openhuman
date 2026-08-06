@@ -228,7 +228,9 @@ async function waitForHome(timeout = 20_000): Promise<boolean> {
   return false;
 }
 
-describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
+describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', function () {
+  this.timeout(90_000);
+
   before(async function beforeSuite() {
     // Reset + auth + onboarding bootstrap can exceed the default 30s hook budget.
     this.timeout(90_000);
@@ -266,7 +268,9 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', () => {
 
     // Step 1 — Runtime choice. The card is preselected to Cloud, so simply
     // clicking the next button continues the cloud path.
-    const choiceVisible = await testIdExists('onboarding-runtime-choice-step', 10_000);
+    // The Windows CEF runner can take more than 10 seconds to commit the
+    // route transition after a cold auth/onboarding bootstrap.
+    const choiceVisible = await testIdExists('onboarding-runtime-choice-step', 20_000);
     expect(choiceVisible).toBe(true);
     const cloudCardVisible = await testIdExists('onboarding-runtime-choice-cloud', 5_000);
     expect(cloudCardVisible).toBe(true);

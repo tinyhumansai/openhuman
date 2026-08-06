@@ -1,7 +1,7 @@
 use super::{
     backend_api_body_shape, flatten_authed_error, is_announcements_latest_path,
-    key_bytes_from_string, parse_message_path, sanitize_client_version, BackendApiError,
-    BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
+    is_unmatched_route_404, key_bytes_from_string, parse_message_path, sanitize_client_version,
+    BackendApiError, BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -215,6 +215,67 @@ async fn backend_client_sends_x_core_version_on_auth_requests() {
         version,
         sanitize_client_version(env!("CARGO_PKG_VERSION")).unwrap()
     );
+    assert_eq!(
+        request_headers
+            .get("x-sdk-client")
+            .and_then(|value| value.to_str().ok()),
+        Some("tinyhumans-rust"),
+        "typed auth requests must be sent by the TinyHumans SDK transport"
+    );
+}
+
+#[tokio::test]
+async fn authed_json_uses_sdk_transport_with_bearer_and_host_headers() {
+    let (base_url, captured) = spawn_header_capture_server().await;
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let response = client
+        .authed_json("sdk-cutover-token", Method::GET, "/probe", None)
+        .await
+        .unwrap();
+    assert_eq!(response, json!({ "ok": true }));
+
+    let headers = captured.take();
+    let request_headers = headers.last().unwrap();
+    assert_eq!(
+        request_headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer sdk-cutover-token")
+    );
+    assert_eq!(
+        request_headers
+            .get("x-sdk-client")
+            .and_then(|value| value.to_str().ok()),
+        Some("tinyhumans-rust")
+    );
+    assert!(
+        request_headers.get("x-core-version").is_some(),
+        "OpenHuman host metadata must survive the SDK cutover"
+    );
+}
+
+#[tokio::test]
+async fn authed_json_cannot_bypass_sdk_admin_or_webhook_exclusions() {
+    let client = BackendOAuthClient::new("http://127.0.0.1:9").unwrap();
+
+    for (method, path) in [
+        (Method::POST, "/admin/announcements"),
+        (Method::GET, "/webhooks/core"),
+    ] {
+        let err = client
+            .authed_json("token", method, path, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.chain().any(|source| {
+                let message = source.to_string();
+                message.contains("intentionally not exposed")
+                    || message.contains("webhook routes are not exposed")
+            }),
+            "{path} must be rejected locally by the SDK: {err:#}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -833,15 +894,18 @@ fn is_announcements_latest_path_rejects_other_paths() {
 #[tokio::test]
 async fn authed_json_patch_404_with_base_path_prefix_does_not_report() {
     // Regression for TAURI-R7: if the resolved URL has a base-path prefix,
-    // authed_json must still suppress the 404 (either via parse_message_path
-    // sliding-window match → MessageNotFound, or via the defense-in-depth
-    // inline check) — NOT call report_error.
+    // authed_json must still suppress the 404 — NOT call report_error.
     //
     // Since BackendOAuthClient strips the base path in `new()`, the path
     // passed to authed_json is always joined against the stripped base. We
-    // verify that a PATCH 404 returns an error without panicking and that
-    // it is NOT classified as a code bug (no BackendApiError::MessageNotFound
-    // wrapping for the generic bail! path, but no Sentry event either).
+    // verify that a PATCH 404 returns an error without panicking and that it
+    // is not classified as a code bug (no Sentry event).
+    //
+    // #5230: the classification is `ChannelEditUnsupported`, NOT
+    // `MessageNotFound`. The backend implements no `PATCH
+    // /channels/:channel/messages/:messageId`, so this 404 is route absence.
+    // Reporting it as a missing *message* made `bus.rs` forget a message id it
+    // still owned, orphaning the streaming draft and the "💭 Thinking:" bubble.
     let app = axum::Router::new().route(
         "/channels/telegram/messages/9999",
         axum::routing::any(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
@@ -855,7 +919,6 @@ async fn authed_json_patch_404_with_base_path_prefix_does_not_report() {
     let base_url = format!("http://{addr}");
     let client = BackendOAuthClient::new(&base_url).unwrap();
 
-    // Standard path — must be classified as MessageNotFound (sliding-window parse).
     let err = client
         .authed_json(
             "mock-jwt",
@@ -866,6 +929,245 @@ async fn authed_json_patch_404_with_base_path_prefix_does_not_report() {
         .await
         .unwrap_err();
     let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    let BackendApiError::ChannelEditUnsupported {
+        provider,
+        message_id,
+    } = typed
+    else {
+        panic!("expected ChannelEditUnsupported, got {typed:?}");
+    };
+    assert_eq!(provider, "telegram");
+    assert_eq!(message_id, "9999");
+}
+
+#[tokio::test]
+async fn send_channel_edit_404_is_route_absence_not_a_missing_message() {
+    // #5230 root-cause pin, driven through the real client method rather than
+    // `authed_json` directly: the deployed backend serves only
+    // `POST /channels/:channel/messages` and
+    // `DELETE /channels/:channel/messages/:messageId`, so every edit hits the
+    // unmatched-route 404. It must NOT surface as `MessageNotFound` — that
+    // variant means "this message is gone", and acting on it discards a
+    // message id that is still live.
+    // POST + DELETE only — deliberately mirrors the real backend router. The
+    // explicit `fallback` reproduces Express's behaviour for an unmatched
+    // method+path pair: it falls through to the app's 404 handler rather than
+    // answering 405 (which is what axum would do on its own).
+    let app = Router::new().route(
+        "/channels/telegram/messages/1103",
+        post(|| async { (axum::http::StatusCode::OK, "{\"success\":true}") })
+            .delete(|| async { (axum::http::StatusCode::OK, "{\"success\":true}") })
+            .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .send_channel_edit("telegram", "1103", "mock-jwt", serde_json::json!({}))
+        .await
+        .unwrap_err();
+
+    let typed = err
+        .downcast_ref::<BackendApiError>()
+        .expect("edit 404 must carry a typed BackendApiError");
+    assert!(
+        matches!(typed, BackendApiError::ChannelEditUnsupported { .. }),
+        "edit 404 must be ChannelEditUnsupported, got {typed:?}"
+    );
+    assert!(
+        !matches!(typed, BackendApiError::MessageNotFound { .. }),
+        "a missing edit route must never masquerade as a deleted message"
+    );
+}
+
+#[tokio::test]
+async fn channel_edit_404_from_a_real_handler_stays_a_missing_message() {
+    // #5230 review: the twin of the test above, for the world where the edit
+    // route DOES exist (staging, a custom backend, or after the backend PR
+    // lands). A handler answering "that message is gone" returns a JSON
+    // envelope, exactly as `DELETE /channels/:channel/messages/:messageId`
+    // already does. Classifying that as `ChannelEditUnsupported` would make
+    // `bus.rs` call `mark_channel_edits_unsupported` and switch progressive
+    // edits off for the whole provider for the rest of the process — because
+    // one message expired.
+    let app = Router::new().route(
+        "/channels/telegram/messages/1103",
+        axum::routing::patch(|| async {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                "{\"success\":false,\"error\":\"message not found\"}",
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .send_channel_edit("telegram", "1103", "mock-jwt", serde_json::json!({}))
+        .await
+        .unwrap_err();
+
+    let typed = err
+        .downcast_ref::<BackendApiError>()
+        .expect("edit 404 must carry a typed BackendApiError");
+    assert!(
+        matches!(typed, BackendApiError::MessageNotFound { .. }),
+        "a handler-level edit 404 must stay per-message, got {typed:?}"
+    );
+    assert!(
+        !matches!(typed, BackendApiError::ChannelEditUnsupported { .. }),
+        "one missing message must not disable edits for the whole provider"
+    );
+}
+
+#[tokio::test]
+async fn channel_edit_404_on_a_prefixed_path_keeps_the_parsed_ids() {
+    // A `BACKEND_URL` with a base-path prefix plus a trailing segment. The
+    // sliding window in `parse_message_path` still finds
+    // `[channels, telegram, messages, 9999]`, so this must be classified as
+    // route absence for PATCH *and* carry the parsed ids — not fall through to
+    // the generic untyped bail! that the DELETE branch uses.
+    let app = axum::Router::new().route(
+        "/api/v1/channels/telegram/messages/9999/extra",
+        axum::routing::any(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::PATCH,
+            "/api/v1/channels/telegram/messages/9999/extra",
+            None,
+        )
+        .await
+        .unwrap_err();
+
+    let typed = err
+        .downcast_ref::<BackendApiError>()
+        .expect("prefixed edit path must still carry a typed error");
+    match typed {
+        BackendApiError::ChannelEditUnsupported {
+            provider,
+            message_id,
+        } => {
+            assert_eq!(provider, "telegram");
+            assert_eq!(message_id, "9999");
+        }
+        other => panic!("expected ChannelEditUnsupported, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn channel_edit_404_on_an_undecomposable_path_falls_back_to_unknown_ids() {
+    // The case that actually exercises `authed_json`'s
+    // `unwrap_or_else(("unknown", "unknown"))`: an empty message-id segment.
+    // `parse_message_path` drops empty segments, so this yields only
+    // `[channels, telegram, messages]` — no 4-window, hence `None` — while the
+    // path still satisfies the `/channels/` + `/messages/` substring guard, so
+    // the PATCH branch is entered with nothing parsed.
+    let app = axum::Router::new().route(
+        "/channels/telegram/messages/",
+        axum::routing::any(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::PATCH,
+            "/channels/telegram/messages/",
+            None,
+        )
+        .await
+        .unwrap_err();
+
+    let typed = err
+        .downcast_ref::<BackendApiError>()
+        .expect("undecomposable edit path must still carry a typed error");
+    match typed {
+        BackendApiError::ChannelEditUnsupported {
+            provider,
+            message_id,
+        } => {
+            assert_eq!(provider, "unknown");
+            assert_eq!(message_id, "unknown");
+        }
+        other => panic!("expected ChannelEditUnsupported, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn channel_delete_404_still_means_the_message_is_gone() {
+    // The fix must not widen: `DELETE` keeps `MessageNotFound`, whose
+    // provider-side-deletion semantics are exactly what its caller
+    // (`delete_channel_message`) wants — "already gone, nothing to clean up".
+    let app = Router::new().route(
+        "/channels/telegram/messages/1103",
+        axum::routing::delete(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .send_channel_delete("telegram", "1103", "mock-jwt")
+        .await
+        .unwrap_err();
+
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(
+        matches!(typed, BackendApiError::MessageNotFound { .. }),
+        "DELETE 404 must stay MessageNotFound, got {typed:?}"
+    );
+}
+
+// The channel methods below now reach the backend through the vendored
+// `tinyhumans-sdk` transport instead of `authed_json`. The routes they call
+// still classify expected backend states the same way — a route must not
+// change its Sentry or session-expiry behaviour just because it moved onto a
+// typed SDK method. These pin that equivalence.
+
+#[tokio::test]
+async fn sdk_backed_channel_delete_surfaces_message_not_found_on_404() {
+    let app = Router::new().route(
+        "/channels/telegram/messages/1103",
+        axum::routing::delete(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .send_channel_delete("telegram", "1103", "mock-jwt")
+        .await
+        .unwrap_err();
+
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
     let BackendApiError::MessageNotFound {
         provider,
         message_id,
@@ -874,5 +1176,106 @@ async fn authed_json_patch_404_with_base_path_prefix_does_not_report() {
         panic!("expected MessageNotFound, got {typed:?}");
     };
     assert_eq!(provider, "telegram");
-    assert_eq!(message_id, "9999");
+    assert_eq!(message_id, "1103");
+}
+
+#[tokio::test]
+async fn sdk_backed_channel_typing_surfaces_unauthorized_on_401() {
+    let app = Router::new().route(
+        "/channels/telegram/typing",
+        post(|| async { (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .send_channel_typing("telegram", "mock-jwt")
+        .await
+        .unwrap_err();
+
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    let BackendApiError::Unauthorized { method, path } = typed else {
+        panic!("expected Unauthorized, got {typed:?}");
+    };
+    assert_eq!(method, "POST");
+    assert_eq!(path, "/channels/telegram/typing");
+    // The session-expiry sentinel must still be derivable, so the dispatcher
+    // keeps routing this to re-sign-in rather than to Sentry.
+    assert!(flatten_authed_error(err).starts_with("SESSION_EXPIRED:"));
+}
+
+// The SDK transport must inherit this crate's client, so the version headers
+// and timeouts apply to SDK-backed calls exactly as they do to `authed_json`.
+#[tokio::test]
+async fn sdk_backed_calls_send_the_core_version_header() {
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let app = Router::new()
+        .route(
+            "/channels/telegram/typing",
+            post(
+                |State(state): State<Arc<Mutex<Option<String>>>>, headers: HeaderMap| async move {
+                    *state.lock().unwrap() = headers
+                        .get("x-core-version")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    Json(json!({"success": true, "data": {}}))
+                },
+            ),
+        )
+        .with_state(seen.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    client
+        .send_channel_typing("telegram", "mock-jwt")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        seen.lock().unwrap().as_deref(),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+// ── is_unmatched_route_404 (#5230 review) ──────────────────────────────────
+//
+// A PATCH 404 becomes `ChannelEditUnsupported`, which disables progressive edits
+// for the whole provider for the rest of the process. That is only correct when
+// the *route* is absent. Once the backend implements the route, a handler-level
+// "that message is gone" 404 has to stay a per-message `MessageNotFound`, or one
+// deleted message would switch edits off for everyone.
+
+#[test]
+fn unmatched_route_404_is_expresss_html_page() {
+    // Express's built-in finalhandler — what the backend returns today, since it
+    // registers no catch-all 404 and implements no PATCH route.
+    assert!(is_unmatched_route_404(
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<title>Error</title>\n</head>\n<body>\n         <pre>Cannot PATCH /channels/telegram/messages/1103</pre>\n</body>\n</html>"
+    ));
+}
+
+#[test]
+fn unmatched_route_404_covers_empty_and_plain_text_bodies() {
+    // Ambiguous shapes default to route absence, preserving today's behaviour.
+    assert!(is_unmatched_route_404(""));
+    assert!(is_unmatched_route_404("   "));
+    assert!(is_unmatched_route_404("Not Found"));
+}
+
+#[test]
+fn handler_level_404_json_envelope_is_not_route_absence() {
+    // The shape `DELETE /channels/:channel/messages/:messageId` already returns,
+    // and the one a future PATCH handler would mirror.
+    assert!(!is_unmatched_route_404(
+        r#"{"success": false, "error": "message not found"}"#
+    ));
+    assert!(!is_unmatched_route_404(r#"{"error":"gone"}"#));
 }

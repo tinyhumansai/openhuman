@@ -18,7 +18,7 @@ function isEditableTarget(e: KeyboardEvent): boolean {
   return false;
 }
 
-export interface HotkeyManager {
+interface HotkeyManager {
   init: () => void;
   teardown: () => void;
   pushFrame: (kind: ScopeKind, id: string) => symbol;

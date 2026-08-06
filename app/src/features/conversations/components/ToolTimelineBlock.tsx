@@ -1,6 +1,10 @@
+import createDebug from 'debug';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type {
+  ProcessingTranscriptItem,
   SubagentActivity,
   ToolFailureExplanation,
   ToolTimelineEntry,
@@ -15,6 +19,7 @@ import {
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { BubbleMarkdown } from './AgentMessageBubble';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
+import { ProcessingTranscriptView } from './ProcessingTranscriptView';
 import { ToolFailureLines } from './ToolFailureLines';
 import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
 
@@ -389,7 +394,7 @@ interface CoalescedRow {
  * same status, no unique body (result/detail/sub-agent/failure), and never the
  * live `running` row — so no information is lost, only duplication.
  */
-export function coalesceTimelineEntries(entries: ToolTimelineEntry[]): CoalescedRow[] {
+function coalesceTimelineEntries(entries: ToolTimelineEntry[]): CoalescedRow[] {
   const rows: CoalescedRow[] = [];
   for (const entry of entries) {
     const mergeable = entry.status !== 'running' && !entryHasUniqueBody(entry);
@@ -422,6 +427,8 @@ function RepeatCount({ count }: { count: number }) {
   );
 }
 
+const log = createDebug('app:conversations:tool-timeline');
+
 /**
  * Neutral surface tones for an expanded row's body (worker-thread card,
  * detail bubble, code block). Per the Figma "Agentic task insights"
@@ -442,6 +449,18 @@ const BODY_SURFACE = 'bg-surface-muted';
  * collapsible "⚙️ Working… / Agentic task insights" header so the user can
  * fold the live activity away.
  */
+/**
+ * Height of the in-flight timeline viewport. While a turn is active the row
+ * list is windowed to this height and auto-follows the newest activity, so a
+ * long run (dozens of steps, each able to expand) can no longer grow without
+ * bound and shove the composer + message list around mid-turn. Settled turns
+ * are untouched — they still collapse to the group summary as before.
+ */
+const TIMELINE_VIEWPORT_CLASS = 'max-h-64 overflow-y-auto overscroll-contain';
+
+/** Distance from the bottom (px) still treated as "pinned to the live edge". */
+const STICK_TO_BOTTOM_SLACK_PX = 24;
+
 export function ToolTimelineBlock({
   entries,
   onViewSubagent,
@@ -449,6 +468,8 @@ export function ToolTimelineBlock({
   onViewWholeRun,
   expandAllRows = false,
   liveResponse,
+  turnActive,
+  transcript,
 }: {
   entries: ToolTimelineEntry[];
   /** Opens the full-transcript drawer for a subagent row. When omitted,
@@ -474,13 +495,173 @@ export function ToolTimelineBlock({
    * Omitted/empty once the turn settles — the final answer is the message
    * bubble. */
   liveResponse?: string;
+  /** Whether a turn is in flight on this thread's lifecycle
+   * (`inferenceTurnLifecycleByThread`), the same signal the chat threads page
+   * uses. When provided, the sticky `userOverrideOpen` reset fires on THIS
+   * value's true→false edge — once per USER TURN — instead of on `isRunning`'s
+   * edge, which flips once PER SUB-AGENT within a single turn (each
+   * subagent spawn→settle) and made the panel flicker open/closed as
+   * sub-agents ran (regression from #5008). Falls back to `isRunning` when
+   * omitted, which is correct for a settled/past-turn render (there is no
+   * turn left to track). */
+  turnActive?: boolean;
+  /** The turn's interleaved processing transcript (narration + thinking + tool
+   * pointers, in stream order). When non-empty the rail renders it through
+   * {@link ProcessingTranscriptView} — the SAME component the Agent Process
+   * Source panel uses — so the agent's prose and its tool steps appear in one
+   * surface instead of narration living in the chat stream and thinking in a
+   * separate bubble. Omitted/empty falls back to the tool-row list, which is
+   * still correct for legacy snapshots that predate the transcript. */
+  transcript?: ProcessingTranscriptItem[];
 }) {
   const { t } = useT();
-  const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
 
-  if (entries.length === 0) return null;
+  // Sticky override for the outer "Agentic task insights" group: `null` means
+  // the user hasn't explicitly toggled it on THIS mount yet, so the group
+  // falls back to the auto rule below (open while running, collapsed once
+  // settled). Once the user clicks the summary, this pins their choice —
+  // including across later turns that stream onto the SAME mounted block
+  // (e.g. the workflow copilot's dedicated thread, whose `ToolTimelineBlock`
+  // stays mounted for the life of the conversation while `entries` keeps
+  // growing turn over turn) — so a new turn's activity landing no longer
+  // involuntarily re-collapses (or re-expands) a choice the user already
+  // made ("Agentic task insights keeps collapsing on every new feedback").
+  // Deliberately component-local state, not lifted to Redux:
+  // the block never remounts mid-conversation in the one place this bug was
+  // reported (`WorkflowCopilotPanel` renders it at a stable JSX position
+  // with entries accumulating in `toolTimelineByThread`, not reset per
+  // turn), so a plain `useState` already survives every turn it needs to.
+  const [userOverrideOpen, setUserOverrideOpen] = useState<boolean | null>(null);
 
-  const isRunning = latestRunningEntryId != null;
+  // Whether *any* entry is currently running — computed here (ahead of the
+  // `entries.length === 0` early return below) purely so the render-time
+  // reset adjustment that follows runs every render; order doesn't matter for
+  // this existence check, unlike `latestRunningEntryId` further down, which
+  // needs the seq-sorted order to pick a specific "latest" row.
+  const isRunning = entries.some(entry => entry.status === 'running');
+
+  // The signal the reset below watches for a "turn just settled" edge. Prefer
+  // the real TURN lifecycle (`turnActive`, sourced from
+  // `inferenceTurnLifecycleByThread` — the same signal the chat threads page
+  // uses) when the caller supplies it: it flips true→false exactly once per
+  // USER TURN. `isRunning` is only a fallback for callers with no turn
+  // lifecycle to hand (e.g. a settled/past-turn render, where entries never
+  // change again anyway) — used directly it flips once PER SUB-AGENT within a
+  // single turn (each subagent spawn→settle), which reset the override (and
+  // so auto-collapsed the panel) repeatedly within one turn and made it
+  // flicker open/closed as sub-agents ran (#5008 regression).
+  const settleSignal = turnActive ?? isRunning;
+
+  // Reset the user's manual open/close override on the settleSignal's
+  // true→false edge (a turn just finished) so the auto-collapse applies to
+  // the just-settled turn. The override only sticks WITHIN a turn —
+  // preventing involuntary mid-feedback collapse (#4942) — not permanently
+  // across turns.
+  //
+  // Done as a render-time adjustment (comparing against `prevSettleSignal`
+  // state and calling both setters synchronously in the render body), not a
+  // `useEffect`, per React's documented pattern for resetting state on a prop
+  // transition: it bails out and re-renders with the reset applied before
+  // paint, instead of committing a stale (still-collapsed/expanded) frame
+  // and only correcting it a tick later once the effect runs.
+  const [prevSettleSignal, setPrevSettleSignal] = useState(settleSignal);
+  if (prevSettleSignal !== settleSignal) {
+    if (prevSettleSignal && !settleSignal) {
+      log('agent-task-insights: turn settled (running→done), resetting user override');
+      setUserOverrideOpen(null);
+    }
+    setPrevSettleSignal(settleSignal);
+  }
+
+  // ── In-flight viewport: fixed height + auto-follow ──────────────────────
+  // Windowed ONLY while the turn is in flight, and never under
+  // `expandAllRows` (the Agent Process Source panel wants the full list, not
+  // a 16rem porthole).
+  //
+  // Keyed off `turnActive` directly rather than `settleSignal` — the latter
+  // falls back to `isRunning`, which flips once per SUB-AGENT inside a single
+  // turn and would re-window + re-pin the viewport repeatedly mid-turn (the
+  // same failure class as the #5008 collapse flicker). Callers that pass no
+  // `turnActive` (settled/past-turn renders) never window at all, so nothing
+  // about historical turns changes.
+  const windowed = turnActive === true && !expandAllRows;
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  // Whether to keep pinning to the newest activity. A plain ref, not state:
+  // no render output depends on it, and mutating it from the scroll handler
+  // must not trigger a re-render on every wheel tick.
+  const followTailRef = useRef(true);
+
+  // Re-pin whenever a new turn starts windowing, so a user who scrolled up
+  // during the previous turn isn't stuck detached for the next one.
+  useEffect(() => {
+    if (windowed) followTailRef.current = true;
+  }, [windowed]);
+
+  // Detach on scroll-up so reading an earlier step doesn't get yanked back
+  // down by the next tool event; re-attach when they return to the bottom.
+  const handleViewportScroll = () => {
+    const el = viewportRef.current;
+    if (!el) return;
+    followTailRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_SLACK_PX;
+  };
+
+  // Follow the live edge. A ResizeObserver on the row list (rather than an
+  // effect keyed on row count) catches every way the content grows: a new row
+  // arriving, the running row auto-expanding, and `tool_args_delta` streaming
+  // into an already-expanded row — the last of which changes no React key at
+  // all and would otherwise silently stop following mid-tool.
+  //
+  // Attached via a CALLBACK REF, not a `useEffect([windowed])`. The effect
+  // version never attached in a real turn: `windowed` flips true at the START
+  // of the turn, when there is nothing to show yet, so the component returned
+  // null, `viewportRef.current` was null, and the effect bailed. Rows arriving
+  // afterwards re-rendered the viewport but did not change `windowed`, so the
+  // effect never re-ran and no observer was ever created. A callback ref fires
+  // whenever the node itself mounts or changes, which is exactly the event we
+  // care about, and is immune to that ordering entirely.
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const windowedRef = useRef(windowed);
+  windowedRef.current = windowed;
+  const attachViewport = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    viewportRef.current = node;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    // Children are in the DOM by the time a parent's ref callback runs.
+    const inner = node.firstElementChild;
+    if (!inner) return;
+    const observer = new ResizeObserver(() => {
+      // Read the live values through refs so the observer survives a settle →
+      // re-arm without being torn down and rebuilt.
+      if (!windowedRef.current || !followTailRef.current) return;
+      // `auto`, not `smooth`: streaming deltas fire these back-to-back, and
+      // queued smooth scrolls visibly lag behind the content.
+      node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(inner);
+    observerRef.current = observer;
+  }, []);
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+
+  // Render whenever there is EITHER a tool row or transcript prose. Gating on
+  // `entries` alone blanked the rail for the opening stretch of every turn —
+  // narration streams before the first tool call — and hid a tool-less turn
+  // (pure reasoning/narration) completely.
+  if (entries.length === 0 && !(transcript && transcript.length > 0)) return null;
+
+  // The rows + the parent's streaming response — shared by both the collapsible
+  // (in-flight) and static (settled) header layouts below.
+  // Sort by issue order (`seq`), not arrival order: a `tool_args_delta` for a
+  // later parallel call can reach the store before an earlier call's own
+  // event, which would otherwise create rows in the wrong order.
+  // Sort a copy — `entries` may be a state slice other callers still rely on.
+  const ordered = [...entries].sort((a, b) => a.seq - b.seq);
+  // "Latest running" must be derived from the same seq-ordered list the rows
+  // render from — not raw arrival order — or a running row that arrived late
+  // but sorts earlier (e.g. seq [2, 0, 1]) gets treated as "latest" and the
+  // wrong step stays expanded/linked in compact chat mode.
+  const latestRunningEntryId = [...ordered].reverse().find(entry => entry.status === 'running')?.id;
 
   const titleLabel = (
     <span className="text-[13px] font-medium text-content-muted">
@@ -505,123 +686,159 @@ export function ToolTimelineBlock({
     </button>
   ) : null;
 
-  // The rows + the parent's streaming response — shared by both the collapsible
-  // (in-flight) and static (settled) header layouts below.
   // Coalesce runs of identical, body-less rows (e.g. a retry loop that spawns
   // the same integrations step 25×) into single `×N` rows before rendering.
-  const rows = coalesceTimelineEntries(entries);
+  const rows = coalesceTimelineEntries(ordered);
 
   const body = (
     <>
-      <div className="text-sm text-content-faint">
-        {rows.map(({ entry, count }, index) => {
-          const formatted = formatTimelineEntry(entry);
-          const detailContent =
-            normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
-          const workerRef = parseWorkerThreadRef(formatted.detail ?? entry.detail);
-          const subagent = entry.subagent;
-          const resultContent = normalizeToolBody(entry.result);
-          // A subagent row should always render the expandable details so
-          // its live activity is visible — even when there is no prompt
-          // detail to show. Mirrors the rule that a non-subagent row only
-          // expands when it has detail content (or a result to show).
-          const expandable = detailContent != null || subagent != null || resultContent != null;
-          const isLatestRunning = latestRunningEntryId != null && latestRunningEntryId === entry.id;
-          const shouldAutoExpand = expandAllRows || isLatestRunning;
-          const nameTone = agentNameTone(entry.status);
-          // Chat mode: the currently-running step stays expanded inline in the
-          // main UI; finished steps collapse to a compact "View details →" link
-          // (their full activity lives in the side panel).
-          const compact = onViewDetails != null && !isLatestRunning;
+      {/* Viewport wrapper. Stays in the tree in both modes so the row list is
+          never remounted (and its <details> state never reset) when a turn
+          settles — only the height/scroll classes toggle. */}
+      <div
+        ref={attachViewport}
+        onScroll={windowed ? handleViewportScroll : undefined}
+        data-testid="tool-timeline-viewport"
+        data-windowed={windowed ? 'true' : 'false'}
+        className={windowed ? TIMELINE_VIEWPORT_CLASS : undefined}>
+        {transcript && transcript.length > 0 ? (
+          <ProcessingTranscriptView
+            transcript={transcript}
+            entries={ordered}
+            renderSubagent={subagent => (
+              <SubagentActivityBlock
+                subagent={subagent}
+                onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
+              />
+            )}
+          />
+        ) : (
+          <div className="text-sm text-content-faint">
+            {rows.map(({ entry, count }, index) => {
+              const formatted = formatTimelineEntry(entry);
+              const detailContent =
+                normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
+              const workerRef = parseWorkerThreadRef(formatted.detail ?? entry.detail);
+              const subagent = entry.subagent;
+              const resultContent = normalizeToolBody(entry.result);
+              // A subagent row should always render the expandable details so
+              // its live activity is visible — even when there is no prompt
+              // detail to show. Mirrors the rule that a non-subagent row only
+              // expands when it has detail content (or a result to show).
+              const expandable = detailContent != null || subagent != null || resultContent != null;
+              const isLatestRunning =
+                latestRunningEntryId != null && latestRunningEntryId === entry.id;
+              const shouldAutoExpand = expandAllRows || isLatestRunning;
+              const nameTone = agentNameTone(entry.status);
+              // Chat mode: the currently-running step stays expanded inline in the
+              // main UI; finished steps collapse to a compact "View details →" link
+              // (their full activity lives in the side panel).
+              const compact = onViewDetails != null && !isLatestRunning;
 
-          return (
-            <AgentTimelineRail
-              key={entry.id}
-              isFirst={index === 0}
-              isLast={index === rows.length - 1}>
-              {compact ? (
-                // Collapsed step: the whole label is the link — "Run Code →"
-                // opens the full-run panel scoped to this step. A collapsed row
-                // is backgrounded, so it never pulses — only the single active
-                // (expanded) step blinks. Strip `animate-pulse` from the tone.
-                <div className="space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => onViewDetails(entry)}
-                    data-testid="view-details"
-                    className="group/details flex items-center gap-1.5 text-left">
-                    <span
-                      className={`text-[13px] font-medium ${nameTone.replace('animate-pulse ', '')} group-hover/details:underline`}>
-                      {formatted.title}
-                    </span>
-                    <RepeatCount count={count} />
-                    <span className="text-[13px] font-medium text-primary-600 dark:text-primary-300">
-                      →
-                    </span>
-                  </button>
-                  {resultContent ? (
-                    <pre
-                      data-testid="tool-result-output"
-                      className={`max-h-40 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
-                      {resultContent}
-                    </pre>
-                  ) : null}
-                </div>
-              ) : expandable ? (
-                <details open={shouldAutoExpand} className="group/row">
-                  <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
-                    <span className={`text-[13px] font-medium ${nameTone}`}>{formatted.title}</span>
-                    <span className="text-[11px] text-content-faint transition-transform group-open/row:rotate-90 dark:text-neutral-600">
-                      ▶
-                    </span>
-                  </summary>
-                  {workerRef ? (
-                    <div
-                      className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
-                      {workerRef.before}
-                      <WorkerThreadRefCard
-                        ref={workerRef.ref}
-                        status={workerStatusFromEntry(entry.status)}
-                      />
-                      {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
+              return (
+                <AgentTimelineRail
+                  key={entry.id}
+                  isFirst={index === 0}
+                  isLast={index === rows.length - 1}>
+                  {compact ? (
+                    // Collapsed step: the whole label is the link — "Run Code →"
+                    // opens the full-run panel scoped to this step. A collapsed row
+                    // is backgrounded, so it never pulses — only the single active
+                    // (expanded) step blinks. Strip `animate-pulse` from the tone.
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => onViewDetails(entry)}
+                        data-testid="view-details"
+                        className="group/details flex items-center gap-1.5 text-left">
+                        <span
+                          className={`text-[13px] font-medium ${nameTone.replace('animate-pulse ', '')} group-hover/details:underline`}>
+                          {formatted.title}
+                        </span>
+                        <RepeatCount count={count} />
+                        <span className="text-[13px] font-medium text-primary-600 dark:text-primary-300">
+                          →
+                        </span>
+                      </button>
+                      {/* Output stays inline for FAILED steps only. On a success
+                        the agent's final answer is already the compression of
+                        what the tool returned, so repeating the raw result here
+                        just duplicates it — and a multi-tool turn stacked a
+                        scrollable <pre> per step above the answer. A failure is
+                        the case where the answer is least trustworthy (or may
+                        not mention the failure at all), so the evidence earns
+                        its space. Successful output is still one click away via
+                        this row's "→" and "View full agent process Source", and
+                        expanded rows / the process panel are unchanged. */}
+                      {resultContent && entry.status === 'error' ? (
+                        <pre
+                          data-testid="tool-result-output"
+                          className={`max-h-40 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
+                          {resultContent}
+                        </pre>
+                      ) : null}
                     </div>
-                  ) : formatted.detail ? (
-                    <div
-                      className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
-                      {formatted.detail}
+                  ) : expandable ? (
+                    <details open={shouldAutoExpand} className="group/row">
+                      <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+                        <span className={`text-[13px] font-medium ${nameTone}`}>
+                          {formatted.title}
+                        </span>
+                        <span className="text-[11px] text-content-faint transition-transform group-open/row:rotate-90 dark:text-neutral-600">
+                          ▶
+                        </span>
+                      </summary>
+                      {workerRef ? (
+                        <div
+                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
+                          {workerRef.before}
+                          <WorkerThreadRefCard
+                            ref={workerRef.ref}
+                            status={workerStatusFromEntry(entry.status)}
+                          />
+                          {workerRef.after ? <div className="mt-1">{workerRef.after}</div> : null}
+                        </div>
+                      ) : formatted.detail ? (
+                        <div
+                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
+                          {formatted.detail}
+                        </div>
+                      ) : detailContent ? (
+                        <pre
+                          className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
+                          {detailContent}
+                        </pre>
+                      ) : null}
+                      {resultContent ? (
+                        // What the tool returned (size-capped upstream). Scrolls
+                        // inside its own box so a long result never floods the
+                        // timeline.
+                        <pre
+                          data-testid="tool-result-output"
+                          className={`mt-1 max-h-40 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
+                          {resultContent}
+                        </pre>
+                      ) : null}
+                      {subagent ? (
+                        <SubagentActivityBlock
+                          subagent={subagent}
+                          onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
+                        />
+                      ) : null}
+                    </details>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[13px] font-medium ${nameTone}`}>
+                        {formatted.title}
+                      </span>
+                      <RepeatCount count={count} />
                     </div>
-                  ) : detailContent ? (
-                    <pre
-                      className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
-                      {detailContent}
-                    </pre>
-                  ) : null}
-                  {resultContent ? (
-                    // What the tool returned (size-capped upstream). Scrolls
-                    // inside its own box so a long result never floods the
-                    // timeline.
-                    <pre
-                      data-testid="tool-result-output"
-                      className={`mt-1 max-h-40 overflow-y-auto rounded px-2 py-1 font-mono text-[12px] whitespace-pre-wrap break-all text-content-secondary ${BODY_SURFACE}`}>
-                      {resultContent}
-                    </pre>
-                  ) : null}
-                  {subagent ? (
-                    <SubagentActivityBlock
-                      subagent={subagent}
-                      onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
-                    />
-                  ) : null}
-                </details>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[13px] font-medium ${nameTone}`}>{formatted.title}</span>
-                  <RepeatCount count={count} />
-                </div>
-              )}
-            </AgentTimelineRail>
-          );
-        })}
+                  )}
+                </AgentTimelineRail>
+              );
+            })}
+          </div>
+        )}
       </div>
       {liveResponse ? <LiveResponseBlock text={liveResponse} /> : null}
     </>
@@ -629,20 +846,49 @@ export function ToolTimelineBlock({
 
   // The group header is a static section label — the live "working" state is
   // conveyed by the pulsing agent-name rows, so it never repeats a "Working…"
-  // string. The group is always collapsible: while the run is in flight it is
-  // open so the live activity is visible; once it settles it collapses to a
-  // single-line opener by default so a finished run (which can be dozens of
-  // steps) never dominates the conversation — the rows stay one click away, and
-  // the whole-run side panel is still reachable via the header link. The full
-  // "Agent Process Source" panel forces every row open via `expandAllRows`.
-  const open = isRunning || expandAllRows;
+  // string. Absent a user override, the group is auto-driven: open while the
+  // run is in flight so the live activity is visible; collapsed once it
+  // settles so a finished run (which can be dozens of steps) never dominates
+  // the conversation. The full "Agent Process Source" panel forces every row
+  // open via `expandAllRows`. Once the user has explicitly toggled the group
+  // (see `userOverrideOpen` above), THAT choice wins over the auto rule —
+  // otherwise a new turn streaming onto an already-mounted block (settling,
+  // or starting a fresh run) would silently flip `open` out from under the
+  // user's manual choice on every turn.
+  //
+  // Driven by `settleSignal` (i.e. `turnActive` when the caller supplies it),
+  // NOT by `isRunning`. `isRunning` means "a tool is executing *this instant*",
+  // which goes false in every gap BETWEEN tools — while the agent reasons about
+  // a result before issuing the next call. Keyed off that, the group snapped
+  // shut a beat after each tool result and reopened when the next call started,
+  // so a multi-tool turn flickered and a just-delivered result looked like it
+  // had been wiped. #5008 already established `turnActive` as the correct
+  // whole-turn signal and applied it to the override reset above; `autoOpen`
+  // was left behind on `isRunning`. Same signal now drives both, so the group
+  // stays open for the WHOLE turn and collapses once, at settle.
+  const autoOpen = settleSignal || expandAllRows;
+  const open = userOverrideOpen ?? autoOpen;
+
+  // Fully own the disclosure via React state rather than letting the browser
+  // toggle the native `open` attribute itself — `preventDefault` stops the
+  // native toggle so there is exactly one source of truth (`open` above),
+  // never a race between the DOM's own uncontrolled state and the next
+  // render's `open` prop.
+  const handleSummaryClick = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    const next = !open;
+    log('agent-task-insights: user toggled open=%s (auto would be %s)', next, autoOpen);
+    setUserOverrideOpen(next);
+  };
 
   return (
     <details
       open={open}
       className="group/insights mb-2 px-1 py-0"
       data-testid="agent-task-insights">
-      <summary className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+      <summary
+        onClick={handleSummaryClick}
+        className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
         {titleLabel}
         <span className="text-[11px] text-content-faint transition-transform group-open/insights:rotate-90">
           ▶

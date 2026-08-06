@@ -5,7 +5,7 @@
 //! label policy) is centralized here so per-flavor modules don't each own
 //! their own scattered constants and arithmetic.
 
-use crate::openhuman::memory_store::trees::types::{
+use crate::openhuman::memory::store::trees::types::{
     EntityIndexStats, TOPIC_ARCHIVE_THRESHOLD, TOPIC_CREATION_THRESHOLD, TOPIC_RECHECK_EVERY,
 };
 
@@ -93,7 +93,7 @@ impl TreePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_store::trees::types::EntityIndexStats;
+    use crate::openhuman::memory::store::trees::types::EntityIndexStats;
 
     const DAY_MS: i64 = 86_400_000;
     const NOW_MS: i64 = 1_700_000_000_000;

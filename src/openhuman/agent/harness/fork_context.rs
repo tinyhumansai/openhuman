@@ -11,10 +11,10 @@
 //! rather than a full copy.
 
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tinyagents::TurnModelSource;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::skills::Workflow;
-use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -54,15 +54,16 @@ pub struct ParentExecutionContext {
     /// provider for prefix-cache reuse.
     pub all_tool_specs: Arc<Vec<ToolSpec>>,
 
-    /// Names of the tools the parent actually advertises and will execute
-    /// this turn (the visibility-filtered subset of `all_tools`, including
-    /// runtime-synthesised `delegate_*` tools). Tools call sites that need
-    /// to reason about what the parent can *actually* invoke — e.g.
-    /// `agent_prepare_context` recommending next tool calls — must consult
-    /// this, not `all_tool_specs` (which is the full registry, including
-    /// hidden direct-exec/spawn tools the parent never advertises). Empty
-    /// means "unknown" — callers should treat that as "no restriction".
+    /// Names of the tools the parent actually advertises and will execute this
+    /// turn. Consumers that recommend or directly invoke parent tools consult
+    /// this role-specific surface.
     pub visible_tool_names: std::collections::HashSet<String>,
+
+    /// Explicit profile/channel ceiling inherited by child agents. This is not
+    /// the parent's role-specific visible surface: an orchestrator may delegate
+    /// file writes to a code specialist without advertising `file_write`
+    /// itself. Empty means no inherited restriction.
+    pub subagent_tool_ceiling_names: std::collections::HashSet<String>,
 
     /// Model name the parent is currently using (after classification).
     pub model_name: String,
@@ -107,7 +108,7 @@ pub struct ParentExecutionContext {
     pub channel: String,
 
     /// Active Composio integrations the parent has fetched.
-    pub connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    pub connected_integrations: Vec<crate::openhuman::agent::context::prompt::ConnectedIntegration>,
 
     /// The parent's active tool-call format (Native / PFormat / Json).
     /// Sub-agents render their system prompts with this format so the
@@ -116,7 +117,7 @@ pub struct ParentExecutionContext {
     /// this, sub-agents inherit a hardcoded PFormat default while the
     /// runtime uses native function-calling, and the model emits
     /// uncallable P-Format tool_call blocks.
-    pub tool_call_format: crate::openhuman::context::prompt::ToolCallFormat,
+    pub tool_call_format: crate::openhuman::agent::context::prompt::ToolCallFormat,
 
     /// Parent's own session-transcript key, formatted as
     /// `"{unix_ts}_{agent_id}"`. Sub-agents chain this (plus any

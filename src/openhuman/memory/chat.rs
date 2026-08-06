@@ -53,7 +53,7 @@ pub trait ChatProvider: Send + Sync {
     /// that don't thread usage keep compiling unchanged. The production
     /// `InferenceChatProvider` overrides this to route through the
     /// inference `Provider::chat` API, which already parses usage out of
-    /// the backend response (see `compatible::extract_usage`).
+    /// the backend response.
     async fn chat_for_text_with_usage(
         &self,
         prompt: &ChatPrompt,
@@ -130,7 +130,7 @@ impl InferenceChatProvider {
         }
         // Recover the full host usage (real token counts + backend-charged USD +
         // context window) the adapter round-tripped through the response (G1).
-        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
+        let usage = crate::openhuman::agent::tinyagents::model::usage_info_from_response(&response);
 
         log::debug!(
             "[memory::chat] provider={} kind={} response_chars={} usage_present={} input_tokens={} output_tokens={} charged_usd={}",

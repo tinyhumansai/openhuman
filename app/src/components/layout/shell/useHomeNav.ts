@@ -3,7 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { setActiveAccount } from '../../../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { createNewThread, loadThreadMessages, setSelectedThread } from '../../../store/threadSlice';
+import {
+  createNewThread,
+  formatThreadCreateError,
+  loadThreadMessages,
+  setSelectedThread,
+} from '../../../store/threadSlice';
 import { AGENT_ACCOUNT_ID } from '../../../utils/accountsFullscreen';
 import { chatThreadPath } from '../../../utils/chatRoutes';
 
@@ -46,6 +51,14 @@ export function useHomeNav(): () => void {
         void dispatch(loadThreadMessages(thr.id));
         navigate(chatThreadPath(thr.id));
       })
-      .catch(() => {});
+      .catch(err => {
+        // The rejection MUST stay consumed here — unconsumed it becomes
+        // `UnhandledRejection: Core RPC openhuman.threads_create_new timed out
+        // after 30000ms` (#5156). Swallowing it silently was the other half of
+        // that bug: Home did nothing and said nothing. The user-visible surface
+        // is `thread.createThreadError`, which the chat page renders; this log
+        // keeps the cause diagnosable.
+        console.error('[home-nav] createNewThread failed', formatThreadCreateError(err));
+      });
   }, [navigate, location.pathname, dispatch, threads]);
 }

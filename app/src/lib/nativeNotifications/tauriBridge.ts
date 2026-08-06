@@ -11,13 +11,13 @@ const errLog = debug('native-notifications:bridge:error');
 
 export type NotificationPermissionState = 'not_tauri' | 'granted' | 'denied' | 'prompt' | 'unknown';
 
-export interface ShowNativeNotificationArgs {
+interface ShowNativeNotificationArgs {
   title: string;
   body: string;
   tag?: string;
 }
 
-export interface ShowNativeNotificationResult {
+interface ShowNativeNotificationResult {
   delivered: boolean;
   reason?: 'not_tauri' | 'send_failed';
   error?: string;

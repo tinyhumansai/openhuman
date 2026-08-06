@@ -1,8 +1,8 @@
 //! Inference provider end-to-end tests using wiremock.
 //!
 //! These tests spin up a wiremock HTTP server on a random port and verify
-//! that `OpenAiCompatibleProvider` sends correct request bodies and correctly
-//! interprets responses for the major provider shapes (OpenAI-compat,
+//! that TinyAgents' crate-native `OpenAiModel` sends correct request bodies
+//! and correctly interprets responses for the major provider shapes (OpenAI-compat,
 //! Anthropic auth, streaming, temperature suppression, Ollama endpoint).
 //!
 //! The `/v1/chat/completions` and `/v1/models` HTTP endpoint tests verify the
@@ -22,10 +22,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
-use openhuman_core::openhuman::inference::provider::compatible::{
-    AuthStyle, OpenAiCompatibleProvider,
-};
-use openhuman_core::openhuman::inference::provider::traits::{ChatMessage, Provider};
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelStreamItem};
+use tinyagents::harness::providers::openai::{AuthStyle, OpenAiModel};
 
 // ── Environment serialisation lock ───────────────────────────────────────────
 //
@@ -75,6 +74,32 @@ fn openai_chat_response(content: &str) -> Value {
     })
 }
 
+fn openai_model(provider: &str, endpoint: &str, api_key: &str, auth: AuthStyle) -> OpenAiModel {
+    OpenAiModel::new(api_key)
+        .with_provider(provider)
+        .with_base_url(endpoint)
+        .with_auth_style(auth)
+}
+
+fn model_request(prompt: &str, model: &str, temperature: f64) -> ModelRequest {
+    ModelRequest::new(vec![Message::user(prompt)])
+        .with_model(model)
+        .with_temperature(temperature)
+}
+
+async fn invoke_text(
+    model_client: &OpenAiModel,
+    prompt: &str,
+    model: &str,
+    temperature: f64,
+) -> String {
+    model_client
+        .invoke(&(), model_request(prompt, model, temperature))
+        .await
+        .expect("model invocation should succeed")
+        .text()
+}
+
 // ── Helper: build an env-isolated Config pointing at tempdir ─────────────────
 
 /// Sets OPENHUMAN_WORKSPACE to `dir` and returns an `EnvVarGuard` that
@@ -115,18 +140,14 @@ async fn openai_compat_chat_returns_canned_text() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("test-key"),
+        "test-key",
         AuthStyle::Bearer,
     );
 
-    let messages = vec![ChatMessage::user("hi")];
-    let result = provider
-        .chat_with_history(&messages, "gpt-4o-mini", 0.7)
-        .await
-        .expect("chat_with_history should succeed");
+    let result = invoke_text(&model, "hi", "gpt-4o-mini", 0.7).await;
 
     assert_eq!(result, "Hello!");
 }
@@ -143,17 +164,14 @@ async fn openai_compat_temperature_present_for_normal_model() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("key"),
+        "key",
         AuthStyle::Bearer,
     );
 
-    provider
-        .chat_with_history(&[ChatMessage::user("hi")], "gpt-4o-mini", 0.7)
-        .await
-        .expect("should succeed");
+    invoke_text(&model, "hi", "gpt-4o-mini", 0.7).await;
 
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
@@ -177,18 +195,15 @@ async fn openai_compat_omits_temperature_for_o1_models() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("key"),
+        "key",
         AuthStyle::Bearer,
     )
     .with_temperature_unsupported_models(vec!["o1*".to_string()]);
 
-    provider
-        .chat_with_history(&[ChatMessage::user("reason")], "o1-preview", 0.7)
-        .await
-        .expect("should succeed");
+    invoke_text(&model, "reason", "o1-preview", 0.7).await;
 
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
@@ -212,10 +227,10 @@ async fn openai_compat_omits_temperature_for_gpt5_models() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model_client = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("key"),
+        "key",
         AuthStyle::Bearer,
     )
     .with_temperature_unsupported_models(vec![
@@ -233,10 +248,7 @@ async fn openai_compat_omits_temperature_for_gpt5_models() {
             .mount(&server)
             .await;
 
-        provider
-            .chat_with_history(&[ChatMessage::user("test")], model, 0.7)
-            .await
-            .expect("should succeed");
+        invoke_text(&model_client, "test", model, 0.7).await;
 
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 1, "model={model}");
@@ -262,17 +274,14 @@ async fn openai_compat_anthropic_auth_uses_x_api_key_header() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "anthropic",
         &format!("{}/v1", server.uri()),
-        Some("sk-ant-test"),
+        "sk-ant-test",
         AuthStyle::Anthropic,
     );
 
-    let result = provider
-        .chat_with_history(&[ChatMessage::user("hello")], "claude-3-haiku", 0.5)
-        .await
-        .expect("Anthropic auth chat should succeed");
+    let result = invoke_text(&model, "hello", "claude-3-haiku", 0.5).await;
 
     assert_eq!(result, "hi");
 
@@ -304,35 +313,36 @@ async fn openai_compat_streaming_returns_ordered_deltas() {
         .and(path("/v1/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(sse_body),
+                .set_body_raw(sse_body.as_bytes().to_vec(), "text/event-stream"),
         )
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("key"),
+        "key",
         AuthStyle::Bearer,
     );
 
-    // stream_chat_with_system is the implemented streaming method on this provider.
-    let options = openhuman_core::openhuman::inference::provider::traits::StreamOptions::new(true);
     use futures_util::StreamExt;
-    let mut stream = provider.stream_chat_with_system(
-        Some("You are helpful."),
-        "Say Hello!",
-        "gpt-4o-mini",
-        0.7,
-        options,
-    );
+    let request = ModelRequest::new(vec![
+        Message::system("You are helpful."),
+        Message::user("Say Hello!"),
+    ])
+    .with_model("gpt-4o-mini")
+    .with_temperature(0.7);
+    let mut stream = model
+        .stream(&(), request)
+        .await
+        .expect("stream should open");
 
     let mut deltas = Vec::new();
-    while let Some(result) = stream.next().await {
-        let chunk = result.expect("stream chunk should be Ok");
-        if !chunk.delta.is_empty() {
-            deltas.push(chunk.delta);
+    while let Some(item) = stream.next().await {
+        if let ModelStreamItem::MessageDelta(delta) = item {
+            if !delta.text.is_empty() {
+                deltas.push(delta.text);
+            }
         }
     }
 
@@ -356,15 +366,12 @@ async fn ollama_compat_chat_via_openai_v1_endpoint() {
         .mount(&server)
         .await;
 
-    // Factory builds Ollama provider via OpenAiCompatibleProvider at /v1.
+    // Factory builds Ollama via the crate-native OpenAI-compatible client at /v1.
     let base = server.uri();
     let endpoint = format!("{}/v1", base.trim_end_matches('/'));
-    let provider = OpenAiCompatibleProvider::new("ollama", &endpoint, None, AuthStyle::None);
+    let model = openai_model("ollama", &endpoint, "", AuthStyle::None);
 
-    let result = provider
-        .chat_with_history(&[ChatMessage::user("Bonjour?")], "llama3", 0.7)
-        .await
-        .expect("Ollama compat chat should succeed");
+    let result = invoke_text(&model, "Bonjour?", "llama3", 0.7).await;
 
     assert_eq!(result, "Bonjour!");
 }
@@ -497,17 +504,14 @@ async fn openai_compat_request_body_contains_correct_model() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("key"),
+        "key",
         AuthStyle::Bearer,
     );
 
-    provider
-        .chat_with_history(&[ChatMessage::user("hi")], "claude-3-sonnet", 0.5)
-        .await
-        .expect("should succeed");
+    invoke_text(&model, "hi", "claude-3-sonnet", 0.5).await;
 
     let requests = server.received_requests().await.unwrap();
     let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
@@ -527,17 +531,14 @@ async fn openai_compat_bearer_auth_sends_authorization_header() {
         .mount(&server)
         .await;
 
-    let provider = OpenAiCompatibleProvider::new(
+    let model = openai_model(
         "test",
         &format!("{}/v1", server.uri()),
-        Some("secret-key"),
+        "secret-key",
         AuthStyle::Bearer,
     );
 
-    let result = provider
-        .chat_with_history(&[ChatMessage::user("hi")], "gpt-4o", 0.7)
-        .await
-        .expect("should succeed");
+    let result = invoke_text(&model, "hi", "gpt-4o", 0.7).await;
 
     assert_eq!(result, "ok");
 }
@@ -547,7 +548,7 @@ async fn openai_compat_bearer_auth_sends_authorization_header() {
 #[test]
 fn temperature_helper_suppresses_o1_by_default_config() {
     use openhuman_core::openhuman::config::Config;
-    use openhuman_core::openhuman::inference::provider::temperature::temperature_for_model;
+    use openhuman_core::openhuman::inference::temperature::temperature_for_model;
 
     let config = Config::default();
 

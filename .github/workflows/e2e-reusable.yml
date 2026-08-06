@@ -199,7 +199,9 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 30
+    # Cold platform caches can take longer than 30 minutes to compile and
+    # package the unified app before the fanout shards start.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -289,7 +291,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -651,7 +654,9 @@ jobs:
     if: inputs.run_macos && inputs.full
     name: Build (macOS full)
     runs-on: macos-latest
-    timeout-minutes: 30
+    # A cold macOS build regularly reaches the final app link after the old
+    # 30-minute ceiling; allow the build-once job to finish for its shards.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -723,6 +728,9 @@ jobs:
       - name: Build E2E app
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
+      - name: Clippy (macOS-gated Rust)
+        run: bash scripts/ci-cancel-aware.sh pnpm rust:clippy
+
       - name: Package build artifact
         run: |
           # Stage the same runner-visible layout Linux/Windows use. The .app is
@@ -761,7 +769,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -873,7 +882,9 @@ jobs:
     name: Build (Windows full)
     # Keep the full-suite build on the same stable image as the smoke lane.
     runs-on: windows-2022
-    timeout-minutes: 30
+    # Match the macOS cold-cache allowance. The build is shared by every
+    # Windows shard, so timing it out discards all downstream E2E coverage.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -970,7 +981,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

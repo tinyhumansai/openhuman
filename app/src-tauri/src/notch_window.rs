@@ -61,10 +61,6 @@ thread_local! {
     static NOTCH: RefCell<Option<NotchPanel>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn is_open() -> bool {
-    NOTCH.with(|cell| cell.borrow().is_some())
-}
-
 pub(crate) fn hide() {
     NOTCH.with(|cell| {
         if let Some(existing) = cell.borrow_mut().take() {
@@ -262,7 +258,7 @@ unsafe fn build_webview(
         // Auto-resize to fill the panel content view.
         let _: () = msg_send![&*webview, setAutoresizingMask: 18u64]; // width|height
 
-        let webview_ref: &objc2::runtime::AnyObject = &*webview;
+        let webview_ref: &objc2::runtime::AnyObject = &webview;
         let webview_view = webview_ref as *const _ as *mut objc2::runtime::AnyObject;
         let _: () = msg_send![panel, setContentView: webview_view];
 

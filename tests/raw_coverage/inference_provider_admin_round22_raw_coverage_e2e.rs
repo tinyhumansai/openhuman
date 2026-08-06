@@ -6,42 +6,30 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex, OnceLock,
-};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use async_trait::async_trait;
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 
 use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::inference::local::LocalAiService;
-use openhuman_core::openhuman::inference::provider::compatible::{
-    AuthStyle as CompatibleAuthStyle, OpenAiCompatibleProvider,
-};
 use openhuman_core::openhuman::inference::provider::factory::{
-    auth_key_for_slug, create_chat_provider_from_string,
+    auth_key_for_slug, create_chat_model_from_string_with_model_id,
 };
-use openhuman_core::openhuman::inference::provider::reliable::ReliableProvider;
-use openhuman_core::openhuman::inference::provider::traits::{
-    StreamChunk, StreamError, StreamOptions, StreamResult,
-};
-use openhuman_core::openhuman::inference::provider::{
-    list_configured_models, ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall,
-};
+use openhuman_core::openhuman::inference::provider::list_configured_models;
 
 #[derive(Clone, Default)]
 struct MockState {
@@ -108,122 +96,6 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-}
-
-#[tokio::test]
-async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edges() {
-    let _env = env_lock();
-    let (base, state) = serve_mock().await;
-
-    let fallback = OpenAiCompatibleProvider::new(
-        "round22-compatible",
-        &format!("{base}/fallback/v1"),
-        Some("sk-round22"),
-        CompatibleAuthStyle::Bearer,
-    );
-    let text = fallback
-        .chat_with_history(
-            &[
-                ChatMessage::system("policy one"),
-                ChatMessage::user("use responses fallback"),
-            ],
-            "fallback-model",
-            0.7,
-        )
-        .await
-        .expect("responses fallback");
-    assert_eq!(text, "round22 responses text");
-
-    let no_fallback = OpenAiCompatibleProvider::new_no_responses_fallback(
-        "round22-no-fallback",
-        &format!("{base}/fallback/v1"),
-        None,
-        CompatibleAuthStyle::None,
-    );
-    let err = no_fallback
-        .chat_with_history(&[ChatMessage::user("no fallback")], "fallback-model", 0.2)
-        .await
-        .expect_err("404 without responses fallback");
-    assert!(err
-        .to_string()
-        .contains("check that your endpoint URL is correct"));
-
-    let system_only_err = fallback
-        .chat_with_history(
-            &[ChatMessage::system("only instructions")],
-            "fallback-model",
-            0.2,
-        )
-        .await
-        .expect_err("responses fallback requires input");
-    assert!(system_only_err
-        .to_string()
-        .contains("requires at least one non-system message"));
-
-    let merged = OpenAiCompatibleProvider::new_merge_system_into_user(
-        "minimax",
-        &format!("{base}/merge/v1"),
-        Some("x-api-secret"),
-        CompatibleAuthStyle::XApiKey,
-    );
-    let merged_text = merged
-        .chat_with_history(
-            &[
-                ChatMessage::system("system policy"),
-                ChatMessage::user("hello"),
-            ],
-            "merge-model",
-            0.1,
-        )
-        .await
-        .expect("merge system into user");
-    assert_eq!(merged_text, "merged ok");
-
-    let custom = OpenAiCompatibleProvider::new_with_user_agent(
-        "custom-auth",
-        &format!("{base}/custom-auth/v1"),
-        Some("custom-secret"),
-        CompatibleAuthStyle::Custom("x-custom-auth".to_string()),
-        "Round22UA/1",
-    );
-    assert_eq!(
-        custom
-            .chat_with_system(Some("custom policy"), "custom hello", "custom-model", 0.3)
-            .await
-            .expect("custom auth"),
-        "custom auth ok"
-    );
-
-    let seen = state.requests.lock().expect("requests");
-    let responses = seen
-        .iter()
-        .find(|req| req.path == "/fallback/v1/responses")
-        .expect("responses request");
-    assert_eq!(responses.auth.as_deref(), Some("Bearer sk-round22"));
-    assert_eq!(responses.body["instructions"], "policy one");
-    assert_eq!(responses.body["input"][0]["role"], "user");
-
-    let merged_body = seen
-        .iter()
-        .find(|req| req.path == "/merge/v1/chat/completions")
-        .expect("merge request")
-        .body
-        .clone();
-    assert_eq!(merged_body["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(merged_body["messages"][0]["role"], "user");
-    assert!(merged_body["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("system policy"));
-    assert!(seen
-        .iter()
-        .any(|req| req.path == "/merge/v1/chat/completions"
-            && req.auth.as_deref() == Some("x-api-secret")));
-    assert!(seen
-        .iter()
-        .any(|req| req.path == "/custom-auth/v1/chat/completions"
-            && req.auth.as_deref() == Some("custom-secret")
-            && req.user_agent.as_deref() == Some("Round22UA/1")));
 }
 
 #[tokio::test]
@@ -351,29 +223,48 @@ async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
     .expect("store app session");
     let _workspace = EnvVarGuard::set("OPENHUMAN_WORKSPACE", config.config_path.parent().unwrap());
 
-    let (legacy, legacy_model) =
-        create_chat_provider_from_string("chat", "legacy:requested-model", &config)
-            .expect("legacy direct provider");
+    let (legacy, legacy_model) = create_chat_model_from_string_with_model_id(
+        "chat",
+        "legacy:requested-model",
+        &config,
+        0.4,
+    )
+    .expect("legacy direct model");
     assert_eq!(legacy_model, "requested-model");
+    let legacy_response = legacy
+        .invoke(
+            &(),
+            ModelRequest::new(vec![Message::user("hello")]).with_model(&legacy_model),
+        )
+        .await
+        .expect("legacy chat");
     assert_eq!(
-        legacy
-            .chat_with_system(None, "hello", &legacy_model, 0.4)
-            .await
-            .expect("legacy chat"),
+        legacy_response.text(),
         "legacy direct ok"
     );
 
-    let (other, other_model) =
-        create_chat_provider_from_string("chat", "other:other-model", &config)
-            .expect("other provider");
-    let other_err = other
-        .chat_with_system(None, "hello", &other_model, 0.4)
+    let (other, other_model) = create_chat_model_from_string_with_model_id(
+        "chat",
+        "other:other-model",
+        &config,
+        0.4,
+    )
+    .expect("other model");
+    let other_text = other
+        .invoke(
+            &(),
+            ModelRequest::new(vec![Message::user("hello")]).with_model(&other_model),
+        )
         .await
-        .expect_err("other provider should not inherit legacy direct key");
-    assert!(other_err.to_string().contains("API key not set"));
+        .expect("other model dispatches without inheriting the legacy key");
+    assert_eq!(other_text.text(), "other no key ok");
 
-    let abstract_err =
-        match create_chat_provider_from_string("reasoning", "abstract:reasoning-v1", &config) {
+    let abstract_err = match create_chat_model_from_string_with_model_id(
+        "reasoning",
+        "abstract:reasoning-v1",
+        &config,
+        0.4,
+    ) {
             Ok(_) => panic!("expected abstract tier error"),
             Err(err) => err,
         };
@@ -386,130 +277,13 @@ async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
         .iter()
         .any(|req| req.path == "/legacy/v1/chat/completions"
             && req.auth.as_deref() == Some("Bearer sk-legacy-direct")));
-    assert!(!seen
+    assert!(seen
         .iter()
-        .any(|req| req.path == "/other/v1/chat/completions"));
-}
-
-#[tokio::test]
-async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() {
-    let _env = env_lock();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let provider = ReliableProvider::new(
-        vec![(
-            "primary".to_string(),
-            Box::new(Round22Provider {
-                calls: Arc::clone(&calls),
-                mode: Round22Mode::FailsThenSucceeds,
-            }) as Box<dyn Provider>,
-        )],
-        1,
-        50,
-    );
-    let response = provider
-        .chat(
-            ChatRequest {
-                messages: &[ChatMessage::user("retry me")],
-                tools: None,
-                stream: None,
-                max_tokens: None,
-            },
-            "retry-model",
-            0.2,
-        )
-        .await
-        .expect("chat retry");
-    assert_eq!(response.text.as_deref(), Some("chat recovered"));
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-
-    let tool_provider = ReliableProvider::new(
-        vec![(
-            "tools".to_string(),
-            Box::new(Round22Provider {
-                calls: Arc::new(AtomicUsize::new(0)),
-                mode: Round22Mode::ToolsOk,
-            }) as Box<dyn Provider>,
-        )],
-        0,
-        50,
-    );
-    let tools = tool_provider
-        .chat_with_tools(&[ChatMessage::user("tool")], &[], "tool-model", 0.0)
-        .await
-        .expect("tools");
-    assert!(tools.has_tool_calls());
-    assert_eq!(tools.tool_calls[0].name, "round22_tool");
-
-    let context_provider = ReliableProvider::new(
-        vec![(
-            "context".to_string(),
-            Box::new(Round22Provider {
-                calls: Arc::new(AtomicUsize::new(0)),
-                mode: Round22Mode::ContextExceeded,
-            }) as Box<dyn Provider>,
-        )],
-        2,
-        50,
-    );
-    let context_err = context_provider
-        .chat_with_history(&[ChatMessage::user("too long")], "tiny-context", 0.0)
-        .await
-        .expect_err("context is non-retryable bail");
-    assert!(context_err
-        .to_string()
-        .contains("Request exceeds model context window"));
-
-    let disabled_stream = tool_provider
-        .stream_chat_with_system(
-            None,
-            "disabled",
-            "stream-model",
-            0.0,
-            StreamOptions::new(false),
-        )
-        .collect::<Vec<_>>()
-        .await;
-    assert!(matches!(
-        &disabled_stream[0],
-        Err(StreamError::Provider(message)) if message == "Streaming disabled"
-    ));
-
-    let streaming = ReliableProvider::new(
-        vec![
-            (
-                "bad-stream".to_string(),
-                Box::new(Round22Provider {
-                    calls: Arc::new(AtomicUsize::new(0)),
-                    mode: Round22Mode::StreamNonRetryable,
-                }) as Box<dyn Provider>,
-            ),
-            (
-                "good-stream".to_string(),
-                Box::new(Round22Provider {
-                    calls: Arc::new(AtomicUsize::new(0)),
-                    mode: Round22Mode::StreamOk,
-                }) as Box<dyn Provider>,
-            ),
-        ],
-        0,
-        50,
-    );
-    let chunks = streaming
-        .stream_chat_with_system(
-            None,
-            "stream",
-            "stream-model",
-            0.0,
-            StreamOptions::new(true),
-        )
-        .collect::<Vec<_>>()
-        .await;
-    assert!(chunks
-        .iter()
-        .any(|chunk| chunk.as_ref().is_ok_and(|c| c.delta == "stream ok")));
-    assert!(chunks
-        .iter()
-        .any(|chunk| chunk.as_ref().is_ok_and(|c| c.is_final)));
+        .any(|req| req.path == "/other/v1/chat/completions"
+            && !req
+                .auth
+                .as_deref()
+                .is_some_and(|auth| auth.contains("sk-legacy-direct"))));
 }
 
 #[tokio::test]
@@ -521,7 +295,7 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
     config.local_ai.runtime_enabled = true;
     config.local_ai.opt_in_confirmed = true;
     config.local_ai.base_url = Some(base.clone());
-    config.local_ai.chat_model_id = "gemma4:e4b-it-q8_0".to_string();
+    config.local_ai.chat_model_id = "gemma3n:e4b-it-q8_0".to_string();
     config.local_ai.embedding_model_id = "all-minilm:latest".to_string();
     config.local_ai.selected_tier = Some("custom".to_string());
     config.local_ai.preload_embedding_model = true;
@@ -551,7 +325,7 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
     assert!(issues.iter().any(|issue| issue
         .as_str()
         .unwrap()
-        .contains("Chat model `gemma4:e4b-it-q8_0`")));
+        .contains("Chat model `gemma3n:e4b-it-q8_0`")));
     assert!(issues.iter().any(|issue| issue
         .as_str()
         .unwrap()
@@ -585,128 +359,6 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
     assert!(service.has_owned_ollama());
     service.shutdown_owned_ollama(&config).await;
     assert!(!service.has_owned_ollama());
-}
-
-#[derive(Clone, Copy)]
-enum Round22Mode {
-    FailsThenSucceeds,
-    ToolsOk,
-    ContextExceeded,
-    StreamNonRetryable,
-    StreamOk,
-}
-
-struct Round22Provider {
-    calls: Arc<AtomicUsize>,
-    mode: Round22Mode,
-}
-
-#[async_trait]
-impl Provider for Round22Provider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        match self.mode {
-            Round22Mode::ContextExceeded => {
-                anyhow::bail!("400 context_length_exceeded: maximum context length")
-            }
-            _ => Ok("system ok".to_string()),
-        }
-    }
-
-    async fn chat_with_history(
-        &self,
-        _messages: &[ChatMessage],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        match self.mode {
-            Round22Mode::ContextExceeded => {
-                anyhow::bail!("400 context_length_exceeded: maximum context length")
-            }
-            _ => Ok("history ok".to_string()),
-        }
-    }
-
-    async fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
-        match self.mode {
-            Round22Mode::FailsThenSucceeds => {
-                let attempt = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-                if attempt == 1 {
-                    anyhow::bail!("503 service unavailable Retry-After: 0")
-                }
-                Ok(ChatResponse {
-                    text: Some("chat recovered".to_string()),
-                    ..ChatResponse::default()
-                })
-            }
-            Round22Mode::ContextExceeded => {
-                anyhow::bail!("400 context_length_exceeded: maximum context length")
-            }
-            _ => Ok(ChatResponse {
-                text: Some("chat ok".to_string()),
-                ..ChatResponse::default()
-            }),
-        }
-    }
-
-    async fn chat_with_tools(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<ChatResponse> {
-        Ok(ChatResponse {
-            text: Some("tool response".to_string()),
-            tool_calls: vec![ToolCall {
-                id: "round22-call".to_string(),
-                name: "round22_tool".to_string(),
-                arguments: "{}".to_string(),
-                extra_content: None,
-            }],
-            usage: None,
-            reasoning_content: None,
-        })
-    }
-
-    fn supports_streaming(&self) -> bool {
-        matches!(
-            self.mode,
-            Round22Mode::StreamNonRetryable | Round22Mode::StreamOk
-        )
-    }
-
-    fn stream_chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-        _options: StreamOptions,
-    ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
-        match self.mode {
-            Round22Mode::StreamNonRetryable => {
-                stream::once(async { Err(StreamError::Provider("invalid api key".to_string())) })
-                    .boxed()
-            }
-            Round22Mode::StreamOk => stream::iter(vec![
-                Ok(StreamChunk::delta("stream ok")),
-                Ok(StreamChunk::final_chunk()),
-            ])
-            .boxed(),
-            _ => stream::empty().boxed(),
-        }
-    }
 }
 
 async fn serve_mock() -> (String, MockState) {

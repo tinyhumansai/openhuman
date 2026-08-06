@@ -81,6 +81,21 @@ describe('useSubconscious', () => {
     expect(result.current.status).not.toBeNull();
   });
 
+  it('does not fetch or poll when disabled', async () => {
+    const { subconsciousStatus, openhumanHeartbeatSettingsGet } =
+      await import('../../utils/tauriCommands');
+    const { result } = renderHook(() => useSubconscious(false));
+
+    await act(async () => {
+      // Advance well past the 5s poll interval — still no RPCs.
+      await vi.advanceTimersByTimeAsync(12000);
+    });
+
+    expect(subconsciousStatus).not.toHaveBeenCalled();
+    expect(openhumanHeartbeatSettingsGet).not.toHaveBeenCalled();
+    expect(result.current.status).toBeNull();
+  });
+
   it('setMode calls heartbeat settings set', async () => {
     const { openhumanHeartbeatSettingsSet } = await import('../../utils/tauriCommands');
     const { result } = renderHook(() => useSubconscious());

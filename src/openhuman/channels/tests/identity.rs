@@ -1,5 +1,5 @@
 use super::common::make_workspace;
-use crate::openhuman::context::channels_prompt::build_system_prompt;
+use crate::openhuman::agent::context::channels_prompt::build_system_prompt;
 
 /// `build_system_prompt` loads OpenClaw markdown identity files from the
 /// workspace and inlines their contents into the Project Context section.

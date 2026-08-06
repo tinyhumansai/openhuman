@@ -27,6 +27,7 @@ import chatRuntimeReducer from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
 import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
+import githubStarReducer from './githubStarSlice';
 import layoutReducer from './layoutSlice';
 import localeReducer from './localeSlice';
 import mascotReducer from './mascotSlice';
@@ -160,14 +161,15 @@ const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer
 const layoutPersistConfig = { key: 'layout', storage, whitelist: ['panels'] };
 const persistedLayoutReducer = persistReducer(layoutPersistConfig, layoutReducer);
 
-// Persist the mascot appearance fields, the custom GIF override, and the
-// selected mascot id (so the chosen GitHub-manifest mascot survives a reload —
-// the slice's REHYDRATE guard re-validates it). Other mascot fields stay as
+// Persist the mascot appearance fields, the custom GIF override, the selected
+// mascot id (so the chosen GitHub-manifest mascot survives a reload — the
+// slice's REHYDRATE guard re-validates it), and the chosen voice mode (so
+// realtime doesn't reset to classic on restart). Other mascot fields stay as
 // runtime state.
 const mascotPersistConfig = {
   key: 'mascot',
   storage,
-  whitelist: ['color', 'voiceId', 'customMascotGifUrl', 'selectedMascotId'],
+  whitelist: ['color', 'voiceId', 'customMascotGifUrl', 'selectedMascotId', 'voiceMode'],
 };
 const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
 
@@ -219,6 +221,11 @@ const persistedChatRuntimeReducer = persistReducer(chatRuntimePersistConfig, cha
 const announcementPersistConfig = { key: 'announcement', storage, whitelist: ['shownIds'] };
 const persistedAnnouncementReducer = persistReducer(announcementPersistConfig, announcementReducer);
 
+// Persist whether this user dismissed/acted on the "Star us on GitHub" CTA
+// (#5005) so the nudge never reappears once handled (user-scoped, durable).
+const githubStarPersistConfig = { key: 'githubStar', storage, whitelist: ['dismissed'] };
+const persistedGithubStarReducer = persistReducer(githubStarPersistConfig, githubStarReducer);
+
 export const store = configureStore({
   reducer: {
     backendMeet: backendMeetReducer,
@@ -240,6 +247,7 @@ export const store = configureStore({
     theme: persistedThemeReducer,
     ptt: persistedPttReducer,
     announcement: persistedAnnouncementReducer,
+    githubStar: persistedGithubStarReducer,
     // In-memory only (not persisted): survives route changes / background-job
     // completion, resets on restart + user switch. Durable storage is a #3931
     // follow-up.

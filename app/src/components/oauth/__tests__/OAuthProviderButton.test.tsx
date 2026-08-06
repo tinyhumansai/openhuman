@@ -67,6 +67,7 @@ describe('OAuthProviderButton', () => {
     vi.mocked(getDeepLinkAuthState).mockReturnValue({
       isProcessing: false,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
   });
@@ -123,6 +124,7 @@ describe('OAuthProviderButton', () => {
     vi.mocked(getDeepLinkAuthState).mockReturnValue({
       isProcessing: true,
       errorMessage: null,
+      errorMessageKey: null,
       requiresAppDataReset: false,
     });
 

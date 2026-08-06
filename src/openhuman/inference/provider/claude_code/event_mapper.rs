@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::stream_parser::ClaudeCodeEvent;
-use crate::openhuman::inference::provider::traits::{
+use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
 

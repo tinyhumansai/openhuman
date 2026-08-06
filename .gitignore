@@ -1,3 +1,6 @@
+worktrees/*
+!worktrees/.gitkeep
+
 # Workflow docs (local only)
 workflow
 create_issue
@@ -130,3 +133,8 @@ distribution.cer
 CHANGELOG.preview.md
 *.profraw
 *.diff
+
+.claude/worktrees/
+
+# Python bytecode from scripts/dep-sim.py
+__pycache__/

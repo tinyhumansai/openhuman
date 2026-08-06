@@ -195,6 +195,7 @@ fn seed_morning_briefing(config: &Config) -> Result<()> {
         false, // recurring — do not delete after run
         Some(MORNING_BRIEFING_JOB_NAME.to_string()),
         false, // enabled=false — opt-in, created disabled atomically
+        None,  // no profile attribution for the seeded briefing
     )?;
 
     tracing::debug!(
@@ -255,6 +256,7 @@ fn seed_tinyplace_autopilot(config: &Config) -> Result<()> {
         // Runs the single tiny.place agent autonomously (no dedicated agent def).
         Some("tinyplace_agent".to_string()),
         false, // enabled=false — opt-in, created disabled atomically
+        None,  // no profile attribution for the seeded autopilot
     )?;
 
     tracing::debug!(
@@ -488,6 +490,7 @@ mod tests {
             true,
             Some(LEGACY_WELCOME_JOB_NAME.to_string()),
             true, // enabled
+            None, // no profile attribution
         )
         .expect("seed legacy welcome");
         assert_eq!(list_jobs(&config).unwrap().len(), 1);

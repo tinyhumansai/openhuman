@@ -7,7 +7,7 @@ import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import type { TeamMember, TeamRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
-import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from '../../ui';
+import { CenteredLoadingState, ConfirmDialog, ErrorBanner, InlineLoadingStatus } from '../../ui';
 import Button from '../../ui/Button';
 import { SettingsBadge, SettingsEmptyState, SettingsSection, SettingsSelect } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
@@ -238,17 +238,11 @@ const TeamMembersPanel = () => {
 
       {/* Remove Member Confirmation Modal */}
       {memberToRemove && (
-        <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
-            <h3 className="text-sm font-semibold text-content mb-4">{t('team.removeTitle')}</h3>
-
-            {error && (
-              <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                <p className="text-xs text-coral-400">{error}</p>
-              </div>
-            )}
-
+        <ConfirmDialog
+          title={t('team.removeTitle')}
+          body={
             <div className="space-y-4">
+              {error && <ErrorBanner message={error} />}
               <div className="text-sm text-content-muted">
                 <p>
                   {t('team.removePromptPrefix')}{' '}
@@ -257,46 +251,25 @@ const TeamMembersPanel = () => {
                 </p>
                 <p className="mt-2 text-coral-400">{t('team.removeWarning')}</p>
               </div>
-
-              <div className="flex gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="md"
-                  className="flex-1"
-                  onClick={() => setMemberToRemove(null)}
-                  disabled={removingId === memberToRemove._id}>
-                  {t('common.cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="primary"
-                  tone="danger"
-                  size="md"
-                  className="flex-1"
-                  onClick={() => void confirmRemoveMember()}
-                  disabled={removingId === memberToRemove._id}>
-                  {removingId === memberToRemove._id ? t('team.removing') : t('team.removeAction')}
-                </Button>
-              </div>
             </div>
-          </div>
-        </div>
+          }
+          confirmLabel={t('team.removeAction')}
+          cancelLabel={t('common.cancel')}
+          busy={removingId === memberToRemove._id}
+          busyLabel={t('team.removing')}
+          destructive
+          onConfirm={() => void confirmRemoveMember()}
+          onCancel={() => setMemberToRemove(null)}
+        />
       )}
 
       {/* Change Role Confirmation Modal */}
       {roleChangeConfirmation && (
-        <div className="fixed inset-0 bg-neutral-900/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-2xl p-6 w-full max-w-md border border-line">
-            <h3 className="text-sm font-semibold text-content mb-4">{t('team.changeRoleTitle')}</h3>
-
-            {error && (
-              <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                <p className="text-xs text-coral-400">{error}</p>
-              </div>
-            )}
-
+        <ConfirmDialog
+          title={t('team.changeRoleTitle')}
+          body={
             <div className="space-y-4">
+              {error && <ErrorBanner message={error} />}
               <div className="text-sm text-content-muted">
                 <p>
                   {t('team.changeRolePrompt')
@@ -311,32 +284,16 @@ const TeamMembersPanel = () => {
                   <p className="mt-2 text-coral-400">{t('team.changeRoleAdminRemove')}</p>
                 )}
               </div>
-
-              <div className="flex gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="md"
-                  className="flex-1"
-                  onClick={() => setRoleChangeConfirmation(null)}
-                  disabled={changingRoleId === roleChangeConfirmation.member._id}>
-                  {t('common.cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="md"
-                  className="flex-1"
-                  onClick={() => void confirmChangeRole()}
-                  disabled={changingRoleId === roleChangeConfirmation.member._id}>
-                  {changingRoleId === roleChangeConfirmation.member._id
-                    ? t('team.changing')
-                    : t('team.changeRoleAction')}
-                </Button>
-              </div>
             </div>
-          </div>
-        </div>
+          }
+          confirmLabel={t('team.changeRoleAction')}
+          cancelLabel={t('common.cancel')}
+          busy={changingRoleId === roleChangeConfirmation.member._id}
+          busyLabel={t('team.changing')}
+          destructive={false}
+          onConfirm={() => void confirmChangeRole()}
+          onCancel={() => setRoleChangeConfirmation(null)}
+        />
       )}
     </SettingsPanel>
   );

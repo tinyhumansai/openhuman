@@ -357,13 +357,6 @@ async function run(args) {
       return { backend: 'playwright', action: 'get_title', title: await current.title() };
     case 'get_url':
       return { backend: 'playwright', action: 'get_url', url: current.url() };
-    case 'screenshot': {
-      const png = await current.screenshot({ fullPage: Boolean(args.full_page) });
-      if (args.path) {
-        throw new Error('Playwright screenshot path writes require Rust-side path validation and are disabled');
-      }
-      return { backend: 'playwright', action: 'screenshot', png_base64: png.toString('base64'), bytes: png.length };
-    }
     case 'wait':
       if (args.selector) await current.locator(await selectorFor(args.selector)).first().waitFor();
       else if (args.text) await current.getByText(args.text).first().waitFor();

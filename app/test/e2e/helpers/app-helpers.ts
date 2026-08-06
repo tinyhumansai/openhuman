@@ -68,7 +68,7 @@ const BOOT_CHECK_GATE_PICKER_HEADING_REGEX = /Select a Runtime|Connect to Your R
  * "Local" is pre-selected on desktop builds, so a single Continue click is
  * enough — no need to fill cloud URL/token.
  */
-export async function dismissBootCheckGate(timeout: number = 5_000): Promise<void> {
+async function dismissBootCheckGate(timeout: number = 5_000): Promise<void> {
   if (!isTauriDriver()) return;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -206,28 +206,4 @@ export async function waitForAuthBootstrap(timeout: number = 20_000): Promise<vo
     await browser.pause(300);
   }
   throw new Error(`waitForAuthBootstrap timed out after ${timeout}ms: no authenticated user`);
-}
-
-/**
- * Check if any element matching the predicate exists.
- *
- * - Mac2: `predicate` is an iOS predicate string (e.g. `elementType == 56`)
- * - tauri-driver: `predicate` is a CSS selector (e.g. `button`, `#root`)
- *
- * For cross-platform specs, prefer the helpers in element-helpers.ts
- * (hasAppChrome, textExists, etc.) over calling this directly.
- */
-export async function elementExists(predicate: string): Promise<boolean> {
-  try {
-    if (isTauriDriver()) {
-      // Treat predicate as a CSS selector on Linux
-      const el = await browser.$(predicate);
-      return await el.isExisting();
-    }
-
-    const el = await browser.$(`-ios predicate string:${predicate}`);
-    return await el.isExisting();
-  } catch {
-    return false;
-  }
 }

@@ -195,6 +195,160 @@ fn tool_call_completed_persists_capped_output() {
 }
 
 #[test]
+fn tool_timeline_entries_carry_monotonic_seq() {
+    // Every timeline row is stamped with a per-turn monotonic `seq` at creation
+    // so a rehydrated snapshot can order rows identically to the live stream
+    // (conversations-timeline-refactor, Phase 4 amendment). Cover the three
+    // creation paths: a normal tool start, an args-delta placeholder, and a
+    // sub-agent spawn.
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::IterationStarted {
+        iteration: 1,
+        max_iterations: 25,
+    });
+    m.observe(&AgentProgress::ToolCallStarted {
+        call_id: "tc-1".into(),
+        tool_name: "shell".into(),
+        arguments: serde_json::json!({}),
+        iteration: 1,
+        display_label: None,
+        display_detail: None,
+    });
+    // Placeholder-first path (args delta before start) for a second call.
+    m.observe(&AgentProgress::ToolCallArgsDelta {
+        call_id: "tc-2".into(),
+        tool_name: "shell".into(),
+        delta: "{".into(),
+        iteration: 1,
+    });
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: None,
+    });
+
+    let seqs: Vec<u64> = m
+        .snapshot()
+        .tool_timeline
+        .iter()
+        .map(|e| e.seq.expect("every row is seq-stamped"))
+        .collect();
+    assert_eq!(seqs.len(), 3);
+    // Strictly increasing in creation order.
+    assert!(
+        seqs.windows(2).all(|w| w[0] < w[1]),
+        "tool timeline seqs must be strictly increasing, got {seqs:?}"
+    );
+
+    // A later `ToolCallStarted` that reuses the args-delta placeholder must NOT
+    // restamp the row's seq (the row keeps its original creation order).
+    let tc2_seq_before = m
+        .snapshot()
+        .tool_timeline
+        .iter()
+        .find(|e| e.id == "tc-2")
+        .and_then(|e| e.seq)
+        .expect("placeholder seq");
+    m.observe(&AgentProgress::ToolCallStarted {
+        call_id: "tc-2".into(),
+        tool_name: "shell".into(),
+        arguments: serde_json::json!({}),
+        iteration: 1,
+        display_label: None,
+        display_detail: None,
+    });
+    let tc2_seq_after = m
+        .snapshot()
+        .tool_timeline
+        .iter()
+        .find(|e| e.id == "tc-2")
+        .and_then(|e| e.seq)
+        .expect("placeholder seq after reuse");
+    assert_eq!(
+        tc2_seq_before, tc2_seq_after,
+        "reusing a placeholder must not restamp its seq"
+    );
+}
+
+#[test]
+fn subagent_prose_item_is_size_capped() {
+    // A runaway reasoning stream must not grow a single transcript item without
+    // bound (the snapshot is rewritten in full at every flush). Streaming far
+    // past the per-item cap coalesces into one item that stays bounded and
+    // carries a truncation marker.
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::IterationStarted {
+        iteration: 1,
+        max_iterations: 25,
+    });
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: None,
+    });
+    // 40 KiB of reasoning in same-iteration chunks — must coalesce and cap.
+    for _ in 0..40 {
+        m.observe(&AgentProgress::SubagentThinkingDelta {
+            agent_id: "researcher".into(),
+            task_id: "sub-1".into(),
+            delta: "x".repeat(1024),
+            iteration: 1,
+        });
+    }
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    assert_eq!(
+        activity.transcript.len(),
+        1,
+        "same-iteration prose coalesces"
+    );
+    match &activity.transcript[0] {
+        SubagentTranscriptItem::Thinking { text, .. } => {
+            assert!(
+                text.len() <= super::MAX_PERSISTED_TRANSCRIPT_ITEM + 64,
+                "capped prose item stays bounded, got {} bytes",
+                text.len()
+            );
+            assert!(text.contains("truncated"), "capped item carries a marker");
+        }
+        other => panic!("expected thinking, got {other:?}"),
+    }
+}
+
+#[test]
+fn parent_transcript_prose_item_is_size_capped() {
+    let (_d, mut m) = fresh("t");
+    for _ in 0..40 {
+        m.observe(&AgentProgress::ThinkingDelta {
+            delta: "y".repeat(1024),
+            iteration: 1,
+        });
+    }
+    let s = m.snapshot();
+    assert_eq!(s.transcript.len(), 1);
+    match &s.transcript[0] {
+        TranscriptItem::Thinking { text, .. } => {
+            assert!(text.len() <= super::MAX_PERSISTED_TRANSCRIPT_ITEM + 64);
+            assert!(text.contains("truncated"));
+        }
+        other => panic!("expected thinking, got {other:?}"),
+    }
+}
+
+#[test]
 fn args_delta_arriving_before_start_creates_placeholder() {
     let (_d, mut m) = fresh("t");
     let flushed = m.observe(&AgentProgress::ToolCallArgsDelta {
@@ -519,4 +673,139 @@ fn subagent_transcript_persists_interleaved_prose_and_tools() {
         !json.contains("\"tool_name\""),
         "no snake_case fields on the wire"
     );
+}
+
+// ── Interrupted-partial → session transcript wiring (Task 1) ──────────
+
+use crate::openhuman::agent::harness::session::transcript::{
+    self, read_transcript, read_transcript_display, DisplayRecord, TranscriptMeta,
+};
+use crate::openhuman::agent::messages::ChatMessage;
+
+fn seed_root_transcript(workspace: &std::path::Path, thread_id: &str) -> std::path::PathBuf {
+    let stem = "100_orchestrator".to_string();
+    let path = transcript::resolve_keyed_transcript_path(workspace, &stem).expect("resolve path");
+    let meta = TranscriptMeta {
+        agent_name: "orchestrator".into(),
+        agent_id: None,
+        agent_type: Some("root".into()),
+        dispatcher: "native".into(),
+        provider: None,
+        model: None,
+        created: "2026-07-21T00:00:00Z".into(),
+        updated: "2026-07-21T00:00:00Z".into(),
+        turn_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: Some(thread_id.to_string()),
+        task_id: None,
+    };
+    transcript::write_transcript(&path, &[ChatMessage::user("hello there")], &meta, None)
+        .expect("seed transcript");
+    path
+}
+
+/// When a streaming turn is interrupted and a root transcript already exists,
+/// `finish()` appends the partial streamed answer (display-only) to the file.
+#[test]
+fn finish_appends_interrupted_partial_to_existing_transcript() {
+    let dir = tempdir().expect("tempdir");
+    let thread_id = "thr_abc";
+    let path = seed_root_transcript(dir.path(), thread_id);
+
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, thread_id, "req-9");
+    m.observe(&AgentProgress::IterationStarted {
+        iteration: 2,
+        max_iterations: 25,
+    });
+    m.observe(&AgentProgress::ThinkingDelta {
+        delta: "hmm".into(),
+        iteration: 2,
+    });
+    m.observe(&AgentProgress::TextDelta {
+        delta: "half an ".into(),
+        iteration: 2,
+    });
+    m.observe(&AgentProgress::TextDelta {
+        delta: "answer".into(),
+        iteration: 2,
+    });
+    // No TurnCompleted — the bridge exits, marking the turn interrupted.
+    m.finish();
+
+    // Model context must NOT carry the partial.
+    let model = read_transcript(&path).expect("read model context");
+    assert!(
+        !model
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("half an answer")),
+        "interrupted partial must be excluded from the model context"
+    );
+
+    // Display projection carries the flagged partial with request_id + thinking.
+    let display = read_transcript_display(&path).expect("read display");
+    let partial = display
+        .records
+        .iter()
+        .find_map(|r| match r {
+            DisplayRecord::Message(msg) if msg.interrupted => Some(msg),
+            _ => None,
+        })
+        .expect("display must include the interrupted partial");
+    assert_eq!(partial.message.content, "half an answer");
+    assert_eq!(partial.request_id.as_deref(), Some("req-9"));
+    assert_eq!(partial.iteration, Some(2));
+    assert_eq!(partial.reasoning_content.as_deref(), Some("hmm"));
+}
+
+/// A completed turn never writes an interrupted partial.
+#[test]
+fn finish_after_completion_writes_no_partial() {
+    let dir = tempdir().expect("tempdir");
+    let thread_id = "thr_done";
+    let path = seed_root_transcript(dir.path(), thread_id);
+
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, thread_id, "req-done");
+    m.observe(&AgentProgress::TextDelta {
+        delta: "final answer".into(),
+        iteration: 1,
+    });
+    m.observe(&AgentProgress::TurnCompleted { iterations: 1 });
+    m.finish();
+
+    let display = read_transcript_display(&path).expect("read display");
+    assert!(
+        !display
+            .records
+            .iter()
+            .any(|r| matches!(r, DisplayRecord::Message(msg) if msg.interrupted)),
+        "a completed turn must not append an interrupted partial"
+    );
+}
+
+/// An interrupted FIRST turn (no root transcript file yet) is a no-op — the
+/// partial stays in the turn_state snapshot only, and finish() does not panic.
+#[test]
+fn finish_first_turn_without_transcript_is_noop() {
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, "thr_new", "req-first");
+    m.observe(&AgentProgress::TextDelta {
+        delta: "orphan partial".into(),
+        iteration: 1,
+    });
+    // Must not panic even though no session_raw transcript exists.
+    m.finish();
+    // The snapshot itself still records the interrupted turn.
+    let listed = TurnStateStore::new(dir.path().to_path_buf())
+        .get("thr_new")
+        .expect("get")
+        .expect("snapshot present");
+    assert_eq!(listed.lifecycle, TurnLifecycle::Interrupted);
+    assert_eq!(listed.streaming_text, "orphan partial");
 }

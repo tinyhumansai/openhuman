@@ -56,7 +56,7 @@ Skipping this produces shallow reviews that miss architectural issues.
 
 **UX / UI** (frontend) — accessibility, keyboard nav, loading/error/empty states, mobile responsiveness.
 
-**Documentation** — rustdoc/comments match new behavior; `AGENTS.md` / architecture docs updated for rule changes; capability catalog (`src/openhuman/about_app/`) updated for user-facing feature changes.
+**Documentation** — rustdoc/comments match new behavior; `AGENTS.md` / architecture docs updated for rule changes; capability catalog (`src/openhuman/platform/about_app/`) updated for user-facing feature changes.
 
 ## 4. Classify findings
 

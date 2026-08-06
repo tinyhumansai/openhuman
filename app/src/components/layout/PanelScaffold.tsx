@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import PanelHeader, { DEFAULT_PANEL_HEADER_BG, DEFAULT_PANEL_HEADER_CLASS } from './PanelHeader';
 
-export interface PanelScaffoldProps {
+interface PanelScaffoldProps {
   /** Primary title rendered in the fixed header (optional; see {@link PanelHeader}). */
   title?: ReactNode;
   /** Fixed sub-title rendered in a muted tone, below the title. */

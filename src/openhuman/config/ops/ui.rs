@@ -1,4 +1,4 @@
-//! UI-facing config operations: browser, screen intelligence, analytics, meet,
+//! UI-facing config operations: browser, analytics, meet,
 //! search, dictation, voice server, onboarding flags.
 
 use std::collections::HashMap;
@@ -7,7 +7,6 @@ use serde_json::json;
 
 use crate::openhuman::config::schema::CalendarProvider;
 use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy, Config};
-use crate::openhuman::screen_intelligence;
 use crate::rpc::RpcOutcome;
 
 use super::loader::{fallback_workspace_dir, load_config_with_timeout, snapshot_config_json};
@@ -16,20 +15,6 @@ use super::loader::{fallback_workspace_dir, load_config_with_timeout, snapshot_c
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
     pub backend: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ScreenIntelligenceSettingsPatch {
-    pub enabled: Option<bool>,
-    pub capture_policy: Option<String>,
-    pub policy_mode: Option<String>,
-    pub baseline_fps: Option<f32>,
-    pub vision_enabled: Option<bool>,
-    pub autocomplete_enabled: Option<bool>,
-    pub use_vision_model: Option<bool>,
-    pub keep_screenshots: Option<bool>,
-    pub allowlist: Option<Vec<String>>,
-    pub denylist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,7 +48,7 @@ pub struct MeetSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit`.
+    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` | `exa`.
     /// Empty/unknown values are rejected by `apply_search_settings`.
     /// Runtime fallback to `managed` applies only to persisted/legacy config
     /// values resolved by `SearchConfig::effective_engine()`.
@@ -78,6 +63,8 @@ pub struct SearchSettingsPatch {
     pub brave_api_key: Option<String>,
     /// Querit API key. An empty string clears the stored key.
     pub querit_api_key: Option<String>,
+    /// Exa API key (BYOK). An empty string clears the stored key.
+    pub exa_api_key: Option<String>,
     /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
     /// host allowlist. Entries are exact hosts (`reuters.com`), which also
     /// match their subdomains, or `"*"` for all public sites. Empty list
@@ -160,65 +147,6 @@ pub async fn load_and_apply_browser_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_browser_settings(&mut config, update).await
-}
-
-/// Updates the screen intelligence settings in the configuration.
-pub async fn apply_screen_intelligence_settings(
-    config: &mut Config,
-    update: ScreenIntelligenceSettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if let Some(enabled) = update.enabled {
-        config.screen_intelligence.enabled = enabled;
-    }
-    if let Some(capture_policy) = update.capture_policy {
-        config.screen_intelligence.capture_policy = capture_policy;
-    }
-    if let Some(policy_mode) = update.policy_mode {
-        config.screen_intelligence.policy_mode = policy_mode;
-    }
-    if let Some(baseline_fps) = update.baseline_fps {
-        config.screen_intelligence.baseline_fps = baseline_fps.clamp(0.2, 30.0);
-    }
-    if let Some(vision_enabled) = update.vision_enabled {
-        config.screen_intelligence.vision_enabled = vision_enabled;
-    }
-    if let Some(autocomplete_enabled) = update.autocomplete_enabled {
-        config.screen_intelligence.autocomplete_enabled = autocomplete_enabled;
-    }
-    if let Some(use_vision_model) = update.use_vision_model {
-        config.screen_intelligence.use_vision_model = use_vision_model;
-    }
-    if let Some(keep_screenshots) = update.keep_screenshots {
-        config.screen_intelligence.keep_screenshots = keep_screenshots;
-    }
-    if let Some(allowlist) = update.allowlist {
-        config.screen_intelligence.allowlist = allowlist;
-    }
-    if let Some(denylist) = update.denylist {
-        config.screen_intelligence.denylist = denylist;
-    }
-
-    config.save().await.map_err(|e| e.to_string())?;
-    let _ = screen_intelligence::global_engine()
-        .apply_config(config.screen_intelligence.clone())
-        .await;
-
-    let snapshot = snapshot_config_json(config)?;
-    Ok(RpcOutcome::new(
-        snapshot,
-        vec![format!(
-            "screen intelligence settings saved to {}",
-            config.config_path.display()
-        )],
-    ))
-}
-
-/// Loads the configuration, applies screen intelligence settings updates, and saves it.
-pub async fn load_and_apply_screen_intelligence_settings(
-    update: ScreenIntelligenceSettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_screen_intelligence_settings(&mut config, update).await
 }
 
 /// Updates the analytics-related settings in the configuration.
@@ -308,12 +236,12 @@ pub async fn apply_search_settings(
     if let Some(engine) = update.engine {
         let trimmed = engine.trim();
         match trimmed {
-            "disabled" | "managed" | "parallel" | "brave" | "querit" => {
+            "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" => {
                 config.search.engine = trimmed.to_string();
             }
             other => {
                 return Err(format!(
-                    "engine must be one of disabled/managed/parallel/brave/querit (got {other:?})"
+                    "engine must be one of disabled/managed/parallel/brave/querit/exa (got {other:?})"
                 ));
             }
         }
@@ -351,6 +279,14 @@ pub async fn apply_search_settings(
     if let Some(raw) = update.querit_api_key {
         let trimmed = raw.trim();
         config.search.querit.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.exa_api_key {
+        let trimmed = raw.trim();
+        config.search.exa.api_key = if trimmed.is_empty() {
             None
         } else {
             Some(trimmed.to_string())
@@ -418,12 +354,14 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
             crate::openhuman::config::SearchEngine::Parallel => "parallel",
             crate::openhuman::config::SearchEngine::Brave => "brave",
             crate::openhuman::config::SearchEngine::Querit => "querit",
+            crate::openhuman::config::SearchEngine::Exa => "exa",
         },
         "max_results": config.search.max_results,
         "timeout_secs": config.search.timeout_secs,
         "parallel_configured": config.search.parallel.has_key(),
         "brave_configured": config.search.brave.has_key(),
         "querit_configured": config.search.querit.has_key(),
+        "exa_configured": config.search.exa.has_key(),
         "allowed_domains": config.http_request.allowed_domains,
         "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
     });

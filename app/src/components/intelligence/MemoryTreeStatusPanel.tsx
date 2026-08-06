@@ -20,16 +20,21 @@
  * `settings/panels/AIPanel.tsx` (switch markup).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { reportMemoryPipelineFailure } from '../../lib/userErrors/report';
+import { useAppDispatch } from '../../store/hooks';
 import type { ToastNotification } from '../../types/intelligence';
 import {
   memorySyncStatusList,
   type MemorySyncStatusRow,
   memoryTreePipelineStatus,
   type MemoryTreePipelineStatus,
+  memoryTreeRetryFailed,
   memoryTreeSetEnabled,
 } from '../../utils/tauriCommands';
+import { trackAnalyticsEvent } from '../analytics';
 import Button from '../ui/Button';
 
 /** Translator function shape exposed by `useT()`. */
@@ -205,7 +210,7 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
  * current data; per-provider failure attribution needs new core work and
  * is filed as a follow-up to issue #2763.
  */
-export type IntegrationHealth = 'active' | 'stale';
+type IntegrationHealth = 'active' | 'stale';
 
 /** Map the wire `freshness` enum to the two-state UI classification. */
 export function classifyIntegration(
@@ -216,7 +221,7 @@ export function classifyIntegration(
 
 /**
  * Built-in glyph for each known provider key from `memory_sync_status_list`.
- * Source: `MemorySyncStatus.provider` in `src/openhuman/memory_sync/sync_status/types.rs`
+ * Source: `MemorySyncStatus.provider` in `src/openhuman/memory/sync/sync_status/types.rs`
  * — that file's doc comment enumerates the providers ("slack", "gmail",
  * "discord", "telegram", "whatsapp", "notion", "meeting_notes",
  * "drive_docs", etc.). Anything not in this map falls back to a generic
@@ -331,8 +336,31 @@ function IntegrationHealthStrip({
  */
 export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const { t } = useT();
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const { status, integrations, loading, error, refresh } = useMemoryTreeStatus();
   const [toggleBusy, setToggleBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
+
+  // #002 (FR-004): the single first blocking cause. Prefer the explicit
+  // `first_blocking_cause`; fall back to the active degradation cause so older
+  // payload shapes still surface something actionable. Derived ONCE here so the
+  // escalation, the status label, the CTA, and the banner all key off the same
+  // cause — a payload that carries only `degraded.cause` (and no
+  // `first_blocking_cause`) must not render the banner one way while the
+  // escalation and budget label read a different, empty cause.
+  const blockingCause = status?.first_blocking_cause ?? status?.degraded?.cause ?? null;
+
+  // #5324: this panel was the ONLY place a budget-exhausted memory pipeline
+  // was ever surfaced, so users who never opened it experienced weeks of
+  // silently broken memory. Escalate the typed cause into the shell-mounted
+  // UserErrorCenter, which stays visible across routes and after the panel
+  // unmounts. The store dedupes on descriptor id, so polling re-reports bump
+  // the recurrence count rather than stacking entries.
+  const blockingCauseCode = blockingCause?.code ?? null;
+  useEffect(() => {
+    reportMemoryPipelineFailure(dispatch, blockingCauseCode);
+  }, [dispatch, blockingCauseCode]);
 
   const handleToggle = useCallback(async () => {
     if (!status || toggleBusy) return;
@@ -351,8 +379,62 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
     }
   }, [status, toggleBusy, refresh, onToast, t]);
 
+  /**
+   * Requeue every terminally-failed job.
+   *
+   * An unrecoverable failure (auth, budget, dimension mismatch) is terminal by
+   * design — the worker never retries it — so a batch that failed under a
+   * since-fixed config stays parked forever and pins this panel on `error`.
+   * The `memory_tree_retry_failed` RPC existed for exactly this, but had no
+   * caller anywhere in the app, leaving the user with a permanent error state
+   * and no way to clear it.
+   */
+  const handleRetryFailed = useCallback(async () => {
+    if (retryBusy) {
+      console.debug('[ui-flow][memory-tree-status] retryFailed: skipped busy=true');
+      return;
+    }
+    console.debug('[ui-flow][memory-tree-status] retryFailed: entry');
+    setRetryBusy(true);
+    console.debug('[ui-flow][memory-tree-status] retryFailed: busy=true rpc:start');
+    try {
+      const { requeued } = await memoryTreeRetryFailed();
+      console.debug('[ui-flow][memory-tree-status] retryFailed: rpc:ok requeued=%d', requeued);
+      // Record the successful domain outcome (not just the click). Privacy-safe:
+      // a non-identifying count only, no ids or user text.
+      trackAnalyticsEvent('memory_tree_retry_succeeded', { count: requeued });
+      onToast?.({
+        type: 'success',
+        title: t('memoryTree.status.retryFailedDone'),
+        message: t('memoryTree.status.retryFailedCount').replace('{count}', String(requeued)),
+      });
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[ui-flow][memory-tree-status] retryFailed: error %s', message);
+      onToast?.({ type: 'error', title: t('memoryTree.status.retryFailedError'), message });
+    } finally {
+      console.debug('[ui-flow][memory-tree-status] retryFailed: busy=false exit');
+      setRetryBusy(false);
+    }
+  }, [retryBusy, refresh, onToast, t]);
+
   const statusKind = status?.status ?? 'idle';
+  // #5324: "Error — 936 unrecoverable failures need action" told the user
+  // nothing they could act on. When the blocking cause is a spent embedding
+  // budget, name that state exactly. Derived here rather than as a new wire
+  // status so older clients keep deserialising the payload unchanged and the
+  // existing `status` precedence rules stay untouched.
+  //
+  // Scoped to the states the budget actually explains. `first_blocking_cause`
+  // reports the most recent failed job even when the user has since paused the
+  // tree themselves, so without this guard a manually-paused tree carrying an
+  // old budget failure would be relabelled and hide the real reason it stopped.
+  const isBudgetExhausted =
+    blockingCause?.code === 'budget_exhausted' &&
+    (statusKind === 'error' || statusKind === 'degraded');
   const statusLabel: string = (() => {
+    if (isBudgetExhausted) return t('memoryTree.status.statusBudgetExhausted');
     switch (statusKind) {
       case 'running':
         return t('memoryTree.status.statusRunning');
@@ -370,12 +452,15 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
     }
   })();
 
-  // #002 (FR-004): the single first blocking cause, rendered verbatim with a
-  // localized remediation. Prefer the explicit `first_blocking_cause`; fall
-  // back to the active degradation cause so older payload shapes still surface
-  // something actionable.
-  const blockingCause = status?.first_blocking_cause ?? status?.degraded?.cause ?? null;
+  // `blockingCause` (derived above) is rendered verbatim in the banner below
+  // with a localized remediation.
   const degraded = status?.degraded;
+
+  // Parked failures are the one panel state the user can act on directly, and
+  // the affordance is keyed off the counter rather than off the blocking-cause
+  // banner: a failure the pipeline has already worked past no longer surfaces a
+  // remediation, but its rows still sit in `failed` and still need clearing.
+  const failedJobs = status?.pipeline_jobs.failed ?? 0;
 
   const checked = !(status?.is_paused ?? false);
 
@@ -419,6 +504,23 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           <div className="font-medium" data-testid="memory-tree-blocking-cause-remediation">
             {t(blockingCause.remediation_key, t('memory.health.remediation.unknown'))}
           </div>
+          {/* #5324: the remediation text names the fix ("set up local Ollama
+              embeddings or add your own key") but left the user to find that
+              screen themselves. One click, no embeddings knowledge required. */}
+          {isBudgetExhausted ? (
+            <div className="mt-2">
+              <Button
+                variant="secondary"
+                size="xs"
+                data-testid="memory-tree-budget-cta"
+                analyticsId="memory-tree-budget-configure-embeddings"
+                onClick={() => {
+                  navigate('/connections?tab=embeddings');
+                }}>
+                {t('userErrors.action.openEmbeddingsSettings')}
+              </Button>
+            </div>
+          ) : null}
           {degraded?.semantic_recall || degraded?.structure ? (
             <div className="mt-1 flex flex-wrap gap-1.5" data-testid="memory-tree-degraded-badges">
               {degraded?.semantic_recall ? (
@@ -459,6 +561,23 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
               </div>
               {status.reason ? (
                 <div className="mt-0.5 text-[11px] text-content-muted">{status.reason}</div>
+              ) : null}
+              {failedJobs > 0 ? (
+                <div className="mt-2">
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    disabled={retryBusy}
+                    data-testid="memory-tree-retry-failed"
+                    analyticsId="memory-tree-retry-failed-jobs"
+                    onClick={() => {
+                      void handleRetryFailed();
+                    }}>
+                    {retryBusy
+                      ? t('memoryTree.status.retryFailedBusy')
+                      : t('memoryTree.status.retryFailed')}
+                  </Button>
+                </div>
               ) : null}
             </>
           )}
@@ -551,7 +670,3 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
     </div>
   );
 }
-
-// Re-export the hook so unit tests can opt into the polling subscription
-// directly without re-implementing it.
-export { useMemoryTreeStatus };

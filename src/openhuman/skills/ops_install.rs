@@ -168,7 +168,7 @@ pub(crate) async fn install_workflow_from_url_with_home(
 
     let trusted_before = is_workspace_trusted(workspace_dir);
     let before: std::collections::HashSet<String> =
-        discover_workflows_inner(home, Some(workspace_dir), trusted_before)
+        discover_workflows_inner(home, Some(workspace_dir), None, trusted_before)
             .into_iter()
             .map(|s| s.name)
             .collect();
@@ -371,7 +371,7 @@ pub(crate) async fn install_workflow_from_url_with_home(
     }
 
     let trusted_after = is_workspace_trusted(workspace_dir);
-    let after = discover_workflows_inner(home, Some(workspace_dir), trusted_after);
+    let after = discover_workflows_inner(home, Some(workspace_dir), None, trusted_after);
     let new_skills: Vec<String> = after
         .into_iter()
         .map(|s| s.name)

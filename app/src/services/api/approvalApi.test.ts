@@ -5,6 +5,7 @@ import {
   decideApproval,
   fetchPendingApprovals,
   fetchRecentApprovalDecisions,
+  preauthorizeFlow,
   unwrapRows,
 } from './approvalApi';
 
@@ -119,5 +120,50 @@ describe('decideApproval', () => {
       method: 'openhuman.approval_decide',
       params: { request_id: 'req-1', decision: 'approve_always_for_flow' },
     });
+  });
+});
+
+describe('preauthorizeFlow', () => {
+  beforeEach(() => mockCallCoreRpc.mockReset());
+
+  it('batch-grants the given trust keys for one flow', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        flow_id: 'flow-1',
+        granted: ['flows_http_request'],
+        already_trusted: ['GMAIL_SEND_EMAIL'],
+        gate_installed: true,
+      },
+      logs: ['granted'],
+    });
+
+    const result = await preauthorizeFlow('flow-1', ['flows_http_request', 'GMAIL_SEND_EMAIL']);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.approval_preauthorize_flow',
+      params: { flow_id: 'flow-1', tool_names: ['flows_http_request', 'GMAIL_SEND_EMAIL'] },
+    });
+    expect(result.granted).toEqual(['flows_http_request']);
+    expect(result.already_trusted).toEqual(['GMAIL_SEND_EMAIL']);
+    expect(result.gate_installed).toBe(true);
+  });
+
+  it('defaults sparse payloads instead of throwing (gate-absent core)', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: null, logs: [] });
+
+    const result = await preauthorizeFlow('flow-1', ['x']);
+
+    expect(result).toEqual({
+      flow_id: 'flow-1',
+      granted: [],
+      already_trusted: [],
+      gate_installed: true,
+    });
+  });
+
+  it('propagates rejection from callCoreRpc', async () => {
+    mockCallCoreRpc.mockRejectedValueOnce(new Error('rpc down'));
+
+    await expect(preauthorizeFlow('flow-1', ['x'])).rejects.toThrow('rpc down');
   });
 });

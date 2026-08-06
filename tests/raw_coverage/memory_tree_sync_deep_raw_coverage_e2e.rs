@@ -19,29 +19,29 @@ use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::{Config, SchedulerGateMode};
 use openhuman_core::openhuman::memory::chat::{ChatPrompt, ChatProvider};
-use openhuman_core::openhuman::memory_queue as jobs;
-use openhuman_core::openhuman::memory_queue::types::ReembedBackfillPayload;
-use openhuman_core::openhuman::memory_queue::{ExtractChunkPayload, NewJob};
-use openhuman_core::openhuman::memory_store::chunks::store::{
+use openhuman_core::openhuman::memory::queue as jobs;
+use openhuman_core::openhuman::memory::queue::types::ReembedBackfillPayload;
+use openhuman_core::openhuman::memory::queue::{ExtractChunkPayload, NewJob};
+use openhuman_core::openhuman::memory::store::chunks::store::{
     set_chunk_embedding, upsert_chunks, with_connection,
 };
-use openhuman_core::openhuman::memory_store::chunks::types::{
+use openhuman_core::openhuman::memory::store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
-use openhuman_core::openhuman::memory_store::trees::types::{SummaryNode, Tree, TreeKind};
-use openhuman_core::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
-use openhuman_core::openhuman::memory_tree::score::extract::{
+use openhuman_core::openhuman::memory::store::trees::types::{SummaryNode, Tree, TreeKind};
+use openhuman_core::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
+use openhuman_core::openhuman::memory::tree::score::extract::{
     EntityExtractor, EntityKind, ExtractedEntities, LlmEntityExtractor, LlmExtractorConfig,
 };
-use openhuman_core::openhuman::memory_tree::score::resolver::{canonicalise, CanonicalEntity};
-use openhuman_core::openhuman::memory_tree::score::store::{index_entity, lookup_entity};
-use openhuman_core::openhuman::memory_tree::tree::rpc::{
+use openhuman_core::openhuman::memory::tree::score::resolver::{canonicalise, CanonicalEntity};
+use openhuman_core::openhuman::memory::tree::score::store::{index_entity, lookup_entity};
+use openhuman_core::openhuman::memory::tree::tree::rpc::{
     backfill_status_rpc, get_chunk_rpc, ingest_rpc, list_chunks_rpc, pipeline_status_rpc,
     set_enabled_rpc, GetChunkRequest, IngestRequest, ListChunksRequest, SetEnabledRequest,
 };
-use openhuman_core::openhuman::memory_tree::tree::set_summary_embedding;
-use openhuman_core::openhuman::memory_tree::tree::store as tree_store;
-use openhuman_core::openhuman::memory_tree::tree::TreeStatus;
+use openhuman_core::openhuman::memory::tree::tree::set_summary_embedding;
+use openhuman_core::openhuman::memory::tree::tree::store as tree_store;
+use openhuman_core::openhuman::memory::tree::tree::TreeStatus;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -169,6 +169,7 @@ fn seed_topic_summary(
         id: format!("tree:{summary_id}"),
         kind: TreeKind::Topic,
         scope: entity_id.to_string(),
+        ask: None,
         root_id: Some(summary_id.to_string()),
         max_level: 2,
         status: TreeStatus::Active,

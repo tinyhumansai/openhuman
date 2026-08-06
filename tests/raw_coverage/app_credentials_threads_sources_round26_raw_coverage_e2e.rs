@@ -12,14 +12,14 @@ use filetime::FileTime;
 use serde_json::Value;
 use tempfile::{Builder, TempDir};
 
-use openhuman_core::openhuman::app_state::{snapshot, update_local_state, StoredAppStatePatch};
+use openhuman_core::openhuman::desktop::app_state::{snapshot, update_local_state, StoredAppStatePatch};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
+use openhuman_core::openhuman::security::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use openhuman_core::openhuman::memory::{
     AppendConversationMessageRequest, ConversationMessageRecord, CreateConversationThreadRequest,
     GenerateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
-use openhuman_core::openhuman::memory_sources::reconcile::ensure_composio_sources;
+use openhuman_core::openhuman::memory::sources::reconcile::ensure_composio_sources;
 use openhuman_core::openhuman::threads::ops::{
     message_append, thread_create_new, thread_generate_title, thread_upsert,
 };

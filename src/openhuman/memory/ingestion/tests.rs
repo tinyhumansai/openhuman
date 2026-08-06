@@ -6,9 +6,9 @@ use std::sync::Arc;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::openhuman::embeddings::NoopEmbedding;
+use crate::openhuman::inference::embeddings::NoopEmbedding;
+use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
 use crate::openhuman::memory::{MemoryIngestionConfig, MemoryIngestionRequest};
-use crate::openhuman::memory_store::{NamespaceDocumentInput, UnifiedMemory};
 
 /// Test config for the heuristic-only ingestion pipeline.
 fn ci_safe_config() -> MemoryIngestionConfig {
@@ -111,7 +111,7 @@ async fn gmail_fixture_ingestion_recovers_required_signals() {
     assert!(memories.iter().any(|hit| hit.content.contains("JSON-RPC")));
     assert!(memories.iter().any(|hit| matches!(
         hit.kind,
-        crate::openhuman::memory_store::MemoryItemKind::Document
+        crate::openhuman::memory::store::MemoryItemKind::Document
     )));
     assert!(memories
         .iter()
@@ -208,7 +208,7 @@ async fn notion_fixture_ingestion_recovers_required_signals() {
         .any(|hit| hit.content.contains("OpenHuman") || hit.content.contains("core-first")));
     assert!(memories.iter().any(|hit| matches!(
         hit.kind,
-        crate::openhuman::memory_store::MemoryItemKind::Document
+        crate::openhuman::memory::store::MemoryItemKind::Document
     )));
     assert!(memories
         .iter()

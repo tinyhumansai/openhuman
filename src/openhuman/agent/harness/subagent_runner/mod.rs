@@ -13,7 +13,7 @@
 //!    definition asks to omit (`omit_identity`, `omit_memory_context`,
 //!    `omit_safety_preamble`, `omit_skills_catalog`).
 //! 5. Runs the child turn on the TinyAgents harness (`ops::graph` →
-//!    [`crate::openhuman::tinyagents::run_turn_via_tinyagents_shared`]) using
+//!    [`crate::openhuman::agent::tinyagents::run_turn_via_tinyagents_shared`]) using
 //!    the parent's [`crate::openhuman::inference::provider::Provider`], then
 //!    mirrors the child transcript/progress and returns one compact tool result
 //!    to the parent.
@@ -22,8 +22,8 @@
 //! run: definition lookup/allowlists, archetype prompt assembly, toolkit
 //! filtering, sandbox/action-root narrowing, checkpoint/handback, and
 //! worker-thread transcript mirroring. Mapping it onto TinyAgents
-//! `SubAgent`/`SubAgentSession`/subgraph primitives is tracked in
-//! `docs/tinyagents-full-migration-plan/07-subagents/`.
+//! `SubAgent`/`SubAgentSession`/subgraph primitives is tracked in WP-5 of
+//! `docs/tinyagents-migration-plan-2026-07-22.md`.
 //!
 //! ## Layout
 //!
@@ -64,7 +64,7 @@ pub(crate) use tool_prep::build_text_mode_tool_instructions;
 // `ResultHandoffCache` with the `extract_from_result` tool.
 pub(crate) use handoff::{apply_handoff, ResultHandoffCache};
 pub(crate) use ops::run_agent_turn_request_via_default_graph;
-pub(crate) use ops::{append_subagent_role_contract, resolve_subagent_provider};
+pub(crate) use ops::{append_subagent_role_contract, resolve_subagent_source};
 
 // `user_is_signed_in_to_composio` is the mode-aware "can the user call
 // composio at all?" probe added in Wave 2 (#1710). Re-exported here so

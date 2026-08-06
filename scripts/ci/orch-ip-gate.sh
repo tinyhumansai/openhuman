@@ -15,9 +15,9 @@ note() {
 }
 
 # 1. The local wake/reasoning graph and its per-agent packages.
-[ -d src/openhuman/orchestration/graph ] && note "orchestration/graph/ (local wake graph) present"
+[ -d src/openhuman/hosted/orchestration/graph ] && note "orchestration/graph/ (local wake graph) present"
 for d in reasoning_agent frontend_agent master_agent master_reporter; do
-  [ -d "src/openhuman/orchestration/$d" ] && note "orchestration/$d agent package present"
+  [ -d "src/openhuman/hosted/orchestration/$d" ] && note "orchestration/$d agent package present"
 done
 
 # 2. The retired tiny.place subconscious steering profile.
@@ -25,18 +25,18 @@ done
   note "tinyplace subconscious profile present"
 
 # 3. Any orchestration prompt.md asset (the proprietary prompt IP).
-if find src/openhuman/orchestration -name 'prompt.md' -print -quit 2>/dev/null | grep -q .; then
+if find src/openhuman/hosted/orchestration -name 'prompt.md' -print -quit 2>/dev/null | grep -q .; then
   note "orchestration prompt.md asset present"
 fi
 
 # 4. Local wake-graph / reasoning-runtime symbols.
 if grep -rqE 'ProductionRuntime|run_orchestration_graph|OrchestrationRuntime|orchestration_graph_topology' \
-  src/openhuman/orchestration 2>/dev/null; then
+  src/openhuman/hosted/orchestration 2>/dev/null; then
   note "local wake-graph symbol present in orchestration/"
 fi
 
 # 5. Per-agent model-selection / tier-routing metadata.
-if grep -rqE 'agent_tier|^\s*\[model\]' src/openhuman/orchestration --include='*.toml' 2>/dev/null; then
+if grep -rqE 'agent_tier|^\s*\[model\]' src/openhuman/hosted/orchestration --include='*.toml' 2>/dev/null; then
   note "model-selection metadata (agent_tier / [model]) in orchestration/*.toml"
 fi
 

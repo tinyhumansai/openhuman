@@ -23,21 +23,21 @@ use openhuman_core::openhuman::memory::{
     GenerateConversationThreadTitleRequest, UpdateConversationMessageRequest,
     UpdateConversationThreadLabelsRequest, UpdateConversationThreadTitleRequest,
 };
-use openhuman_core::openhuman::memory_conversations::{
+use openhuman_core::openhuman::memory::conversations::{
     ensure_thread, list_threads, CreateConversationThread,
 };
-use openhuman_core::openhuman::memory_store::chunks::store::{upsert_chunks, with_connection};
-use openhuman_core::openhuman::memory_store::chunks::types::{
+use openhuman_core::openhuman::memory::store::chunks::store::{upsert_chunks, with_connection};
+use openhuman_core::openhuman::memory::store::chunks::types::{
     approx_token_count, chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
-use openhuman_core::openhuman::memory_store::content;
-use openhuman_core::openhuman::memory_store::trees::store as tree_store;
-use openhuman_core::openhuman::memory_store::trees::types::{SummaryNode, TreeKind};
-use openhuman_core::openhuman::memory_tree::score::embed::pack_embedding;
-use openhuman_core::openhuman::memory_tree::score::extract::EntityKind;
-use openhuman_core::openhuman::memory_tree::score::resolver::CanonicalEntity;
-use openhuman_core::openhuman::memory_tree::score::signals::ScoreSignals;
-use openhuman_core::openhuman::memory_tree::score::store::{index_entity, upsert_score, ScoreRow};
+use openhuman_core::openhuman::memory::store::content;
+use openhuman_core::openhuman::memory::store::trees::store as tree_store;
+use openhuman_core::openhuman::memory::store::trees::types::{SummaryNode, TreeKind};
+use openhuman_core::openhuman::memory::tree::score::embed::pack_embedding;
+use openhuman_core::openhuman::memory::tree::score::extract::EntityKind;
+use openhuman_core::openhuman::memory::tree::score::resolver::CanonicalEntity;
+use openhuman_core::openhuman::memory::tree::score::signals::ScoreSignals;
+use openhuman_core::openhuman::memory::tree::score::store::{index_entity, upsert_score, ScoreRow};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::turn_state::{
     self, ClearTurnStateRequest, GetTurnStateRequest, TurnLifecycle, TurnStateMirror,
@@ -367,7 +367,10 @@ async fn memory_read_rpc_filters_graphs_scores_reset_and_wipe_seeded_rows() {
         .value
         .unwrap();
     assert!(score.kept);
-    assert!(score.llm_consulted);
+    assert!(
+        !score.llm_consulted,
+        "TinyCortex does not persist admission-time LLM importance"
+    );
 
     let tree_graph = read_rpc::graph_export_rpc(&cfg, GraphMode::Tree)
         .await

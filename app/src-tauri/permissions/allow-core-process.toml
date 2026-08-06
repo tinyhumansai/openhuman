@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Privileged desktop permissions for core process control, service management, dictation, account webview, window/UI, screen share, notifications, Gmail CDP, log access, Meet, and CEF/profile maintenance"
+description = "Privileged desktop permissions for core process control, service management, dictation, account webview, window/UI, notifications, Gmail CDP, log access, Meet, and CEF/profile maintenance"
 
 [permission.commands]
 
@@ -22,6 +22,17 @@ allow = [
     # found" and the boot gate stalls.
     "start_core_process",
     "restart_core_process",
+    # `reset_local_data` is the "Clear App Data" command (Settings → Account,
+    # and the Welcome-screen decryption-recovery flow). It stops the embedded
+    # core, deletes the signed-in user's data dir + active markers, then
+    # restarts the core. It replaced the old two-step
+    # `callCoreRpc('config_reset_local_data') + restartCoreProcess()` dance
+    # (which reached Rust via the ACL-permitted `relay_http_rpc`), but the new
+    # dedicated command was never added here — so the invoke was rejected with
+    # "reset_local_data not allowed. Command not found" and Clear App Data
+    # silently did nothing (#4950). Without this allow entry the ACL denies it
+    # before it reaches Rust.
+    "reset_local_data",
     # `restart_app` triggers `app.restart()` so CEF re-initializes against
     # the active user's `users/<id>/cef` profile after an identity flip
     # (#900). Without this allow entry, the invoke is silently denied by
@@ -63,6 +74,30 @@ allow = [
     "show_ptt_overlay",
 
     # =========================
+    # DESKTOP COMPANION
+    # =========================
+    # The desktop companion moved from core RPC into the Tauri shell. Its
+    # settings panel and hotkey bridge invoke these commands directly, so each
+    # one must be present in the main-window capability.
+    "register_companion_hotkey",
+    "unregister_companion_hotkey",
+    "companion_activate",
+    "companion_start_session",
+    "companion_stop_session",
+    "companion_status",
+    "companion_config_get",
+    "companion_config_set",
+
+    # =========================
+    # STRUCTURED WHATSAPP DATA
+    # =========================
+    # The SQLite store moved from the core into the Tauri shell. Intelligence
+    # views now query it through these read-only invoke commands.
+    "whatsapp_data_list_chats",
+    "whatsapp_data_list_messages",
+    "whatsapp_data_search_messages",
+
+    # =========================
     # ACCOUNT WEBVIEW
     # =========================
     "webview_account_open",
@@ -84,13 +119,6 @@ allow = [
     # rejected with "Command not found" and the notch never shows/hides.
     "notch_window_show",
     "notch_window_hide",
-
-    # =========================
-    # SCREEN SHARE
-    # =========================
-    "screen_share_begin_session",
-    "screen_share_thumbnail",
-    "screen_share_finalize_session",
 
     # =========================
     # NOTIFICATIONS

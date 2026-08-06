@@ -18,7 +18,7 @@
 /** The AC3 budget: complex skill tool chains should finish within this. */
 export const SKILL_TOOL_CHAIN_TARGET_MS = 60_000;
 
-export interface ToolChainMeasurement {
+interface ToolChainMeasurement {
   /** Thread the chain ran on. */
   threadId: string;
   /** Wall-clock from the first tool call to turn completion, in ms. */
@@ -32,7 +32,7 @@ export interface ToolChainMeasurement {
   ok: boolean;
 }
 
-export interface SkillToolChainLatencyTracker {
+interface SkillToolChainLatencyTracker {
   /**
    * Record a tool call on a thread. The first call starts the chain timer; each
    * subsequent call increments the tool count. No-op shape until the next

@@ -152,30 +152,91 @@ Do not attempt to run them with `run_skill` — they have been removed. Tell the
 }
 
 /// Wrapper around
-/// [`crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps`]
+/// [`crate::openhuman::memory::tree::tree_runtime::store::collect_root_summaries_with_caps`]
 /// that takes user-resolved per-namespace and total caps. The actual
 /// limits are derived from the active
 /// [`crate::openhuman::config::schema::agent::MemoryContextWindow`]
 /// preset by [`crate::openhuman::config::schema::agent::AgentConfig::resolved_memory_limits`].
 pub(super) fn collect_tree_root_summaries(
     workspace_dir: &std::path::Path,
+    memory_subdir: &str,
     per_namespace_cap: usize,
     total_cap: usize,
-) -> Vec<crate::openhuman::context::prompt::NamespaceSummary> {
-    crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps(
-        workspace_dir,
-        per_namespace_cap,
-        total_cap,
-    )
-    .into_iter()
-    .map(
-        |(namespace, body, updated_at)| crate::openhuman::context::prompt::NamespaceSummary {
-            namespace,
-            body,
-            updated_at,
-        },
-    )
-    .collect()
+) -> Vec<crate::openhuman::agent::context::prompt::NamespaceSummary> {
+    let rows = if memory_subdir == "memory" {
+        crate::openhuman::memory::tree::tree_runtime::store::collect_root_summaries_with_caps(
+            workspace_dir,
+            per_namespace_cap,
+            total_cap,
+        )
+    } else {
+        collect_profile_tree_root_summaries(
+            &workspace_dir.join(memory_subdir),
+            per_namespace_cap,
+            total_cap,
+        )
+    };
+    rows.into_iter()
+        .map(|(namespace, body, updated_at)| {
+            crate::openhuman::agent::context::prompt::NamespaceSummary {
+                namespace,
+                body,
+                updated_at,
+            }
+        })
+        .collect()
+}
+
+/// Read TinyCortex root summaries from an already-resolved `memory-*` subtree.
+/// TinyCortex's compatibility helper hardcodes `<workspace>/memory`; dedicated
+/// profiles instead supply `<workspace>/memory-<id>`, so scan that equivalent
+/// namespace layout directly rather than falling back to shared memory.
+fn collect_profile_tree_root_summaries(
+    memory_dir: &std::path::Path,
+    per_namespace_cap: usize,
+    total_cap: usize,
+) -> Vec<(String, String, chrono::DateTime<chrono::Utc>)> {
+    let Ok(entries) = std::fs::read_dir(memory_dir.join("namespaces")) else {
+        return Vec::new();
+    };
+    let mut roots: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let namespace = entry.file_name().to_string_lossy().into_owned();
+            let raw = std::fs::read_to_string(entry.path().join("tree").join("root.md")).ok()?;
+            let node = tinycortex::memory::tree::runtime::store::parse_node_markdown_pub(
+                &raw, &namespace, "root",
+            )
+            .ok()?;
+            Some((namespace, node))
+        })
+        .collect();
+    roots.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut total_chars = 0usize;
+    let mut out = Vec::new();
+    for (namespace, node) in roots {
+        if total_chars >= total_cap {
+            break;
+        }
+        let body = node.summary.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let remaining = total_cap.saturating_sub(total_chars);
+        let cap = per_namespace_cap.min(remaining);
+        let body_chars = body.chars().count();
+        let rendered = if body_chars > cap {
+            let mut clipped: String = body.chars().take(cap).collect();
+            clipped.push_str("\n\n[... truncated]");
+            clipped
+        } else {
+            body.to_string()
+        };
+        total_chars += rendered.chars().count();
+        out.push((namespace, rendered, node.updated_at));
+    }
+    out
 }
 
 /// Sanitize a learned memory entry before injecting into the system prompt.
@@ -206,7 +267,7 @@ pub(crate) use super::turn_checkpoint::assistant_message_has_tool_calls;
 #[cfg(test)]
 pub(crate) use super::types::Agent;
 #[cfg(test)]
-pub(crate) use crate::openhuman::context::prompt::LearnedContextData;
+pub(crate) use crate::openhuman::agent::context::prompt::LearnedContextData;
 #[cfg(test)]
 pub(crate) use anyhow::Result;
 

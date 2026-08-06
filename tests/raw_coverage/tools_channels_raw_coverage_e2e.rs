@@ -49,12 +49,10 @@ use openhuman_core::openhuman::tools::generated::{
     admit_generated_tool_definitions, generated_tools_from_definitions, GeneratedToolAdapter,
     GeneratedToolAdmissionConfig, GeneratedToolDefinition, GeneratedToolRisk,
 };
-use openhuman_core::openhuman::tools::local_cli::tools_wrappers_list_json;
 use openhuman_core::openhuman::tools::{
     all_tools, all_tools_controller_schemas, all_tools_registered_controllers,
-    decode_data_url_bytes, default_tools, extract_data_url, extract_saved_path,
-    write_bytes_to_path, DefaultToolPolicy, PermissionLevel, PolicyDecision, ToolCategory,
-    ToolPolicy, ToolResult, ToolScope,
+    default_tools, DefaultToolPolicy, PermissionLevel, PolicyDecision, ToolCategory, ToolPolicy,
+    ToolResult, ToolScope,
 };
 
 #[path = "tools_approval_channels_raw_coverage_e2e.rs"]
@@ -384,29 +382,6 @@ fn tool_registries_schemas_and_local_helpers_cover_safe_branches() {
         .map(|registered| registered.schema.function)
         .collect::<BTreeSet<_>>();
     assert_eq!(schema_names, registered_names);
-
-    let wrappers = tools_wrappers_list_json();
-    assert_eq!(wrappers["result"]["wrappers"][0]["name"], "screenshot");
-    assert_eq!(wrappers["logs"][0], "tools wrappers listed");
-
-    let raw = "Screenshot saved to: /tmp/shot.png\ndata:image/png;base64,aGVsbG8=";
-    assert_eq!(
-        extract_saved_path(raw).unwrap().display().to_string(),
-        "/tmp/shot.png"
-    );
-    assert_eq!(
-        extract_data_url(raw).as_deref(),
-        Some("data:image/png;base64,aGVsbG8=")
-    );
-    assert_eq!(
-        decode_data_url_bytes("data:image/png;base64,aGVsbG8=").unwrap(),
-        b"hello"
-    );
-    assert!(decode_data_url_bytes("data:text/plain;base64,aGVsbG8=").is_err());
-
-    let out = config.workspace_dir.join("nested").join("bytes.bin");
-    write_bytes_to_path(&out, b"abc").expect("write bytes");
-    assert_eq!(std::fs::read(out).expect("read bytes"), b"abc");
 
     let policy = DefaultToolPolicy;
     assert_eq!(

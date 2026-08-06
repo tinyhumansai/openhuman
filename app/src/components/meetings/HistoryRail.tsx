@@ -212,7 +212,7 @@ function formatRelativeTime(ms: number, t: (key: string) => string): string {
   }
 }
 
-export function HistoryRail({
+function HistoryRail({
   groups,
   selectedId,
   onSelect,

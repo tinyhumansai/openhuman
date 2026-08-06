@@ -15,11 +15,11 @@ import {
 test('release notes args default to the latest GitHub release as the start ref', () => {
   assert.equal(parseArgs([]).from, 'latest-release');
 
-  const parsed = parseArgs(['--from', 'v1.0.0', '--to', 'main', '--no-ai', '--max-prs', '5']);
+  const parsed = parseArgs(['--from', 'v1.0.0', '--to', 'main', '--no-ai']);
   assert.equal(parsed.from, 'v1.0.0');
   assert.equal(parsed.to, 'main');
   assert.equal(parsed.noAi, true);
-  assert.equal(parsed.maxPrs, 5);
+  assert.equal(parsed.maxPrs, undefined);
 });
 
 test('GitHub repo is inferred from ssh and https remotes', () => {
@@ -58,6 +58,31 @@ test('OpenAI request contains required release sections and compare payload', ()
   assert.match(request.input[1].content, /one or two short paragraphs maximum/);
   assert.match(request.input[1].content, /Do not add a "## Pull Requests" section/);
   assert.match(request.input[1].content, /https:\/\/github\.com\/tinyhumansai\/openhuman\/compare\/v1\.0\.0\.\.\.main/);
+});
+
+test('OpenAI request compacts release ranges larger than the prompt budget', () => {
+  const pullRequests = Array.from({ length: 300 }, (_, index) => ({
+    number: index + 1,
+    title: `Release improvement ${index + 1}`,
+    url: `https://github.com/tinyhumansai/openhuman/pull/${index + 1}`,
+    author: `contributor-${index + 1}`,
+    labels: ['enhancement'],
+    body: 'x'.repeat(700),
+    commits: [{ sha: `${index + 1}`, subject: `Release improvement ${index + 1}` }],
+  }));
+  const payload = buildReleasePayload({
+    from: 'v1.0.0',
+    to: 'main',
+    resolvedTo: 'main',
+    repo: 'tinyhumansai/openhuman',
+    commits: [],
+    contributors: [],
+    pullRequests,
+  });
+
+  const request = buildOpenAiRequest({ model: 'gpt-5.2', title: 'Large release', payload });
+  assert.match(request.input[1].content, /Release improvement 300/);
+  assert.doesNotMatch(request.input[1].content, /x{700}/);
 });
 
 test('release payload omits contributor emails before AI summarization', () => {

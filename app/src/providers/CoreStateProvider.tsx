@@ -9,12 +9,14 @@ import {
   useState,
 } from 'react';
 
+import { maybeSurfaceConfigRecovery } from '../lib/configRecoveryNotice';
 import {
   type CoreAppSnapshot,
   type CoreState,
   getCoreStateSnapshot,
   setCoreStateSnapshot,
 } from '../lib/coreState/store';
+import { useT } from '../lib/i18n/I18nContext';
 import { syncAnalyticsConsent } from '../services/analytics';
 import type { AuthExpiredReason } from '../services/coreRpcClient';
 import {
@@ -24,6 +26,7 @@ import {
   listTeams,
   updateCoreLocalState,
 } from '../services/coreStateApi';
+import { daemonHealthService } from '../services/daemonHealthService';
 import { socketService } from '../services/socketService';
 import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
@@ -48,6 +51,14 @@ const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
 const SUPPRESS_POLL_WARNING_AT = MAX_BOOTSTRAP_RETRIES + 1;
 const BACKOFF_POLL_MS = 10_000;
+// Once the app has finished bootstrapping and is authenticated, the snapshot
+// (auth, onboarding, service/local-AI state) changes rarely and mostly through
+// event-driven refreshes (deep-link, settings toggles) that fire immediately
+// regardless of this cadence. `app_state_snapshot` is expensive server-side
+// (rebuilds the runtime snapshot, reloads config + local state), so steady-state
+// polling backs off from POLL_MS to this slower cadence rather than hammering
+// every 2s for the life of the session.
+const STABLE_POLL_MS = 5000;
 
 /** Extract only non-sensitive fields from an RPC/fetch error. */
 function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
@@ -231,12 +242,7 @@ function normalizeSnapshot(
       activeMode: 'os_keyring',
       backendName: 'os',
     },
-    runtime: {
-      screenIntelligence: result.runtime?.screenIntelligence ?? null,
-      localAi: result.runtime?.localAi ?? null,
-      autocomplete: result.runtime?.autocomplete ?? null,
-      service: result.runtime?.service ?? null,
-    },
+    runtime: { localAi: result.runtime?.localAi ?? null, service: result.runtime?.service ?? null },
   };
 }
 
@@ -260,6 +266,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const isMountedRef = useRef(true);
+  // Translator for user-visible strings dispatched outside JSX (e.g. the
+  // config-recovery notice below). Read here so `refreshCore` can localize the
+  // notice via the active locale rather than hardcoding English (#5167).
+  const { t } = useT();
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
     if (!isMountedRef.current) {
       return;
@@ -283,10 +293,16 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
   const refreshCore = useCallback(async () => {
     const requestId = ++snapshotRequestIdRef.current;
-    const snapshot = normalizeSnapshot(await fetchCoreAppSnapshot());
+    const rawSnapshot = await fetchCoreAppSnapshot();
+    const snapshot = normalizeSnapshot(rawSnapshot);
     if (!isMountedRef.current) {
       return;
     }
+    // Raise a one-shot notice if the core recovered a corrupted config.toml
+    // this session (#5167). Placed after the mount guard so a superseded or
+    // unmounted refresh doesn't dispatch; the core latches configRecovered, so
+    // the next live poll still surfaces it. Guarded internally against re-fire.
+    maybeSurfaceConfigRecovery(rawSnapshot.configRecovered, t);
     if (!snapshot.sessionToken) {
       logoutGuardUntilRef.current = 0;
     }
@@ -340,6 +356,31 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         teamInvitesById: shouldClearScopedCaches ? {} : previous.teamInvitesById,
       };
     });
+
+    // Feed the folded health payload to the daemon-health store (replaces the
+    // former standalone health_snapshot poll). Done AFTER the commit and only
+    // when this refresh is still current. The resolved `sessionToken` for THIS
+    // refresh is passed explicitly: `commitState` writes the non-React snapshot
+    // store inside a (deferred) React `setState` updater, so reading identity
+    // from that store here would still see the pre-commit token and, during a
+    // login/identity flip, write health under the prior or `__pending__` user.
+    if (requestId === snapshotRequestIdRef.current) {
+      // Privacy-safe: log presence/shape only, never the payload/tokens.
+      log(
+        'health ingest: requestId=%d current=%d hasHealth=%s components=%d',
+        requestId,
+        snapshotRequestIdRef.current,
+        rawSnapshot.health != null,
+        rawSnapshot.health ? Object.keys(rawSnapshot.health.components ?? {}).length : 0
+      );
+      daemonHealthService.ingestHealthSnapshot(rawSnapshot.health, nextSnapshot.sessionToken);
+    } else {
+      log(
+        'health ingest skipped: superseded refresh requestId=%d current=%d',
+        requestId,
+        snapshotRequestIdRef.current
+      );
+    }
 
     // When the authenticated identity changes without a full restart-driven
     // flip (e.g. same-process session attach or web where `restartApp` is a
@@ -423,7 +464,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         console.warn('[core-state] memory client sync failed during refresh:', error);
       }
     }
-  }, [commitState]);
+  }, [commitState, t]);
 
   /** Serialized refresh — all callers share the same in-flight promise. */
   const refresh = useCallback(async () => {
@@ -521,11 +562,31 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       }
     };
 
+    // Arm a baseline disconnect watchdog before the first snapshot lands, so a
+    // core whose snapshots never succeed still falls back to `disconnected`
+    // instead of sticking at a probe-set `running`. Each successful ingest
+    // re-arms it.
+    daemonHealthService.ensureWatchdogArmed();
+
     void load();
     let timeoutId: number | null = null;
+    const computePollDelay = (): { delay: number; reason: string } => {
+      // Repeated bootstrap failures → slowest cadence to avoid log/CPU churn.
+      if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
+        return { delay: BACKOFF_POLL_MS, reason: 'failure-backoff' };
+      }
+      // Booted and authenticated → steady state; back off the expensive snapshot
+      // poll. Still-bootstrapping or unauthenticated stays fast so login / boot
+      // transitions surface promptly.
+      const state = getCoreStateSnapshot();
+      if (!state.isBootstrapping && state.snapshot.auth.isAuthenticated) {
+        return { delay: STABLE_POLL_MS, reason: 'authenticated' };
+      }
+      return { delay: POLL_MS, reason: 'bootstrap' };
+    };
     const scheduleNext = () => {
-      const delay =
-        bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES ? BACKOFF_POLL_MS : POLL_MS;
+      const { delay, reason } = computePollDelay();
+      log('poll scheduled: delay=%dms reason=%s', delay, reason);
       timeoutId = window.setTimeout(async () => {
         await doRefresh();
         if (!cancelled) {

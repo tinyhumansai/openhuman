@@ -64,9 +64,3 @@ export const useIntelligenceSocketManager = () => {
 
   return { connect, disconnect, isConnected, isReady: Boolean(token) && isConnected };
 };
-
-export const useIntelligenceEvents = () => ({
-  onAgentResponse: () => () => {},
-  onExecutionProgress: () => () => {},
-  onExecutionComplete: () => () => {},
-});

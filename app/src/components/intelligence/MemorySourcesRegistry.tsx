@@ -10,6 +10,7 @@
  */
 import debug from 'debug';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { CoreStateContext } from '../../providers/coreStateContext';
@@ -35,10 +36,19 @@ import {
   openhumanGetMemorySyncSettings,
   openhumanUpdateMemorySyncSettings,
 } from '../../utils/tauriCommands/config';
-import { memoryTreeFlushSource } from '../../utils/tauriCommands/memoryTree';
+import {
+  memoryTreeFlushSource,
+  memoryTreePipelineStatus,
+  type MemoryTreePipelineStatus,
+} from '../../utils/tauriCommands/memoryTree';
 import Button from '../ui/Button';
 import { AddMemorySourceDialog } from './AddMemorySourceDialog';
 import { ConfirmationModal } from './ConfirmationModal';
+import {
+  deriveSourcePipelineHealth,
+  pipelineIssueMessageKey,
+  type SourcePipelineHealth,
+} from './sourcePipelineStatus';
 import { SourceSettingsPanel } from './SourceSettingsPanel';
 
 const log = debug('intelligence:memory-sync');
@@ -72,7 +82,7 @@ interface SyncResult {
  * Per-stage fallback percentages so the progress bar always advances even
  * when no numeric "N/M" ratio is present in the detail string (RC#4, #3295).
  */
-export const STAGE_FALLBACK_PERCENT: Record<string, number> = {
+const STAGE_FALLBACK_PERCENT: Record<string, number> = {
   requested: 2,
   fetching: 5,
   stored: 15,
@@ -124,6 +134,7 @@ export function MemorySourcesRegistry({
   pollIntervalMs = 5000,
 }: MemorySourcesRegistryProps) {
   const { t } = useT();
+  const navigate = useNavigate();
   // Read the core snapshot directly (not via the throwing `useCoreState`
   // hook) so this component still renders in unit tests that mount it
   // without a CoreStateProvider — there `ctx` is null and `isAuthenticated`
@@ -132,6 +143,11 @@ export function MemorySourcesRegistry({
   const isAuthenticated = coreState?.snapshot.auth.isAuthenticated ?? false;
   const [sources, setSources] = useState<MemorySourceEntry[]>([]);
   const [statuses, setStatuses] = useState<SourceStatus[]>([]);
+  // Global downstream pipeline health (GH-4690) — the same snapshot the
+  // Brain > Memory > Sync panel renders. Folded into each row so a source that
+  // ingested but failed embeddings/extraction/tree-build shows a warning rather
+  // than a clean synced badge. `null` until the first poll resolves.
+  const [pipeline, setPipeline] = useState<MemoryTreePipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   // RC#1 (#3295): use a Set so multiple sources can show "syncing" concurrently.
@@ -268,7 +284,7 @@ export function MemorySourcesRegistry({
 
   const refresh = useCallback(async () => {
     try {
-      const [list, stats] = await Promise.all([
+      const [list, stats, health] = await Promise.all([
         listMemorySources().catch(err => {
           console.warn('[ui-flow][memory-sources] list failed', err);
           return [] as MemorySourceEntry[];
@@ -277,9 +293,17 @@ export function MemorySourcesRegistry({
           console.warn('[ui-flow][memory-sources] status_list failed', err);
           return [] as SourceStatus[];
         }),
+        // GH-4690: downstream pipeline health. Best-effort — a failure here
+        // must never hide the source list, so we fall back to `null` (rows then
+        // rely on the precise per-source pending-chunk signal alone).
+        memoryTreePipelineStatus().catch(err => {
+          console.warn('[ui-flow][memory-sources] pipeline_status failed', err);
+          return null;
+        }),
       ]);
       setSources(list);
       setStatuses(stats);
+      setPipeline(health);
       // RC#5 (#3295): The 5s poll is the safety net for missed completed/failed events.
       // If a source is in syncingIds but the poll shows it's no longer active (no
       // in-progress status indicator from the server), we clear it here. In practice
@@ -534,6 +558,8 @@ export function MemorySourcesRegistry({
               key={source.id}
               source={source}
               status={statusById.get(source.id) ?? null}
+              pipeline={pipeline}
+              isAuthenticated={isAuthenticated}
               isSyncing={syncingIds.has(source.id) || syncProgress.has(source.id)}
               isBuilding={buildingId === source.id}
               progress={syncProgress.get(source.id) ?? null}
@@ -546,6 +572,16 @@ export function MemorySourcesRegistry({
               onToggleSettings={handleToggleSettings}
               onSettingsSaved={handleSettingsSaved}
               onToast={onToast}
+              onViewHealth={() => {
+                console.debug('[ui-flow][memory-sources] view memory health from source row');
+                navigate('/brain?tab=sync');
+              }}
+              onSignIn={() => {
+                console.debug(
+                  '[ui-flow][memory-sources] sign-in prompt from stored-without-vectors'
+                );
+                navigate('/auth');
+              }}
             />
           ))}
         </ul>
@@ -692,6 +728,10 @@ function MemorySyncSchedule({ lastSyncMs, onToast }: MemorySyncScheduleProps) {
 interface SourceRowProps {
   source: MemorySourceEntry;
   status: SourceStatus | null;
+  /** Global downstream pipeline health (GH-4690); `null` before first poll. */
+  pipeline: MemoryTreePipelineStatus | null;
+  /** Whether a backend session exists — gates the "Sign in to enable" prompt. */
+  isAuthenticated: boolean;
   isSyncing: boolean;
   isBuilding: boolean;
   progress: SyncProgress | null;
@@ -704,11 +744,17 @@ interface SourceRowProps {
   onToggleSettings: (sourceId: string) => void;
   onSettingsSaved: (updated: MemorySourceEntry) => void;
   onToast?: (toast: Omit<ToastNotification, 'id'>) => void;
+  /** Navigate to Brain > Memory > Sync (the full memory-health panel). */
+  onViewHealth: () => void;
+  /** Navigate to sign-in (embeddings need a backend session). */
+  onSignIn: () => void;
 }
 
 function SourceRow({
   source,
   status,
+  pipeline,
+  isAuthenticated,
   isSyncing,
   isBuilding,
   progress,
@@ -721,12 +767,29 @@ function SourceRow({
   onToggleSettings,
   onSettingsSaved,
   onToast,
+  onViewHealth,
+  onSignIn,
 }: SourceRowProps) {
   const { t } = useT();
   const icon = SOURCE_KIND_ICONS[source.kind] ?? '📄';
   const kindLabel = t(SOURCE_KIND_LABEL_KEYS[source.kind] ?? source.kind);
   const detail = sourceDetail(source);
   const lastSync = status ? relativeTimestamp(status.last_chunk_at_ms, t) : null;
+
+  // GH-4690: layered pipeline verdict. Only meaningful in a settled state —
+  // during an active sync (`progress`) or right after one (`result`) the row
+  // renders live progress / a terminal chip instead, and `chunks_pending` is
+  // legitimately transient, so we suppress the warning until things settle.
+  const settled = !progress && !result;
+  const health: SourcePipelineHealth = settled
+    ? deriveSourcePipelineHealth(status, pipeline)
+    : { state: 'none', issues: [], authRelated: false };
+  const ingestedOnly = health.state === 'ingested_only';
+  if (ingestedOnly) {
+    console.debug(
+      `[ui-flow][memory-sources] source=${source.id} ingested-only issues=${health.issues.join(',')}`
+    );
+  }
 
   return (
     <li className="flex flex-col gap-2 py-3" data-testid={`memory-source-row-${source.kind}`}>
@@ -743,7 +806,13 @@ function SourceRow({
             <span className="rounded-md bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-content-muted">
               {kindLabel}
             </span>
-            {status && status.chunks_synced > 0 && <FreshnessPill freshness={status.freshness} />}
+            {status &&
+              status.chunks_synced > 0 &&
+              (ingestedOnly ? (
+                <IngestedOnlyPill sourceId={source.id} />
+              ) : (
+                <FreshnessPill freshness={status.freshness} />
+              ))}
           </div>
           {detail && <p className="mt-0.5 truncate pl-7 text-xs text-content-faint">{detail}</p>}
           {progress && (
@@ -811,6 +880,37 @@ function SourceRow({
                 )}
               </div>
             )}
+          {ingestedOnly && (
+            <div
+              className="mt-2 flex flex-col gap-1 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 pl-7 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+              data-testid={`memory-source-pipeline-warning-${source.id}`}
+              role="status">
+              {health.issues.map(issue => (
+                <div key={issue} className="flex items-start gap-1.5">
+                  <WarnIcon />
+                  <span className="break-words">{t(pipelineIssueMessageKey(issue))}</span>
+                </div>
+              ))}
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[18px]">
+                {health.authRelated && !isAuthenticated && (
+                  <button
+                    type="button"
+                    onClick={onSignIn}
+                    data-testid={`memory-source-signin-${source.id}`}
+                    className="font-medium text-amber-900 underline underline-offset-2 hover:text-amber-950 dark:text-amber-100 dark:hover:text-white">
+                    {t('sync.pipeline.signInToEnable')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onViewHealth}
+                  data-testid={`memory-source-view-health-${source.id}`}
+                  className="font-medium text-amber-900 underline underline-offset-2 hover:text-amber-950 dark:text-amber-100 dark:hover:text-white">
+                  {t('sync.pipeline.viewHealth')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -903,6 +1003,24 @@ function FreshnessPill({ freshness }: { freshness: FreshnessLabel }) {
         ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
         : 'bg-surface-subtle text-content-secondary';
   return <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${cls}`}>{label}</span>;
+}
+
+/**
+ * GH-4690: the "Ingested only" warning pill. Replaces the clean freshness pill
+ * when a source ingested chunks but the downstream retrieval pipeline failed
+ * (no vectors / extraction / degraded tree). Amber, matching the degraded
+ * badges in the Brain > Memory > Sync panel, so raw sync ≠ retrieval-ready is
+ * unmistakable at a glance.
+ */
+function IngestedOnlyPill({ sourceId }: { sourceId: string }) {
+  const { t } = useT();
+  return (
+    <span
+      className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"
+      data-testid={`memory-source-ingested-only-${sourceId}`}>
+      {t('sync.pipeline.ingestedOnly')}
+    </span>
+  );
 }
 
 function relativeTimestamp(epochMs: number | null, t: (k: string) => string): string | null {

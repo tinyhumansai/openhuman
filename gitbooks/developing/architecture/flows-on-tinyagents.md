@@ -26,9 +26,9 @@ runs, and how the two runtimes compose.
 | Crate | Role | Where |
 | --- | --- | --- |
 | `tinyflows` | Host-agnostic workflow model + validate + compile + run. Never hard-codes a vendor; every outside-world effect goes through a capability trait. | [`vendor/tinyflows/`](../../../vendor/tinyflows/) |
-| `tinyagents` | The published state-graph + agent-loop harness both runtimes lower onto. | crate; OpenHuman seam in [`src/openhuman/tinyagents/`](../../../src/openhuman/tinyagents/) |
+| `tinyagents` | The published state-graph + agent-loop harness both runtimes lower onto. | crate; OpenHuman seam in [`src/openhuman/agent/tinyagents/`](../../../src/openhuman/agent/tinyagents/) |
 | `openhuman::flows` | The host: CRUD/run/resume RPCs, SQLite store, triggers, the builder/scout agents. | [`src/openhuman/flows/`](../../../src/openhuman/flows/) |
-| `openhuman::tinyflows` | The **capability seam** - adapters implementing the `tinyflows` traits over real OpenHuman services. | [`src/openhuman/tinyflows/`](../../../src/openhuman/tinyflows/) |
+| `openhuman::flows::tinyflows` | The **capability seam** - adapters implementing the `tinyflows` traits over real OpenHuman services. | [`src/openhuman/flows/tinyflows/`](../../../src/openhuman/flows/tinyflows/) |
 
 `tinyflows` is published to crates.io and is deliberately persistence-free and
 vendor-free (see its [`CLAUDE.md`](../../../vendor/tinyflows/CLAUDE.md)); OpenHuman
@@ -53,7 +53,7 @@ flowchart LR
   compile --> gb["tinyagents<br/>GraphBuilder"]
   gb --> run["engine::run_with_checkpointer<br/>(drive to completion)"]
   run --> outcome["RunOutcome<br/>{ output, pending_approvals, cancelled }"]
-  seam["openhuman::tinyflows<br/>capability seam"] -. host-injected .-> run
+  seam["openhuman::flows::tinyflows<br/>capability seam"] -. host-injected .-> run
 ```
 
 1. **validate** ([`validate.rs`](../../../vendor/tinyflows/src/validate.rs)) -
@@ -75,13 +75,13 @@ flowchart LR
 4. **outcome** - a `RunOutcome { output, pending_approvals, cancelled }`; the host
    persists live steps through the `FlowRunObserver` and exports the durable
    graph observations to Langfuse
-   ([`tinyflows/langfuse_export.rs`](../../../src/openhuman/tinyflows/langfuse_export.rs)).
+   ([`tinyflows/langfuse_export.rs`](../../../src/openhuman/flows/tinyflows/langfuse_export.rs)).
 
 Because the engine keys persisted state by a caller-supplied `thread_id`,
 durable **HITL resume** is `engine::resume_with_checkpointer` over the same
 `tinyagents::graph::SqliteCheckpointer` the agent harness uses - opened once per
 host at `<workspace_dir>/flows/checkpoints.db`
-([`caps.rs`](../../../src/openhuman/tinyflows/caps.rs), `open_flow_checkpointer`).
+([`caps.rs`](../../../src/openhuman/flows/tinyflows/caps.rs), `open_flow_checkpointer`).
 
 ## Run state: one JSON map, a merge reducer, and the `{json,text,raw}` envelope
 
@@ -138,9 +138,9 @@ panicking - node wiring never crashes the run.
 `tinyflows` touches nothing real on its own. Everything - LLM calls, tools, HTTP,
 code, persistence, sub-workflow lookup - is a **capability trait** the host
 implements ([`vendor/tinyflows/src/caps/mod.rs`](../../../vendor/tinyflows/src/caps/mod.rs)).
-`openhuman::tinyflows::caps` supplies one adapter per trait, assembled into a
+`openhuman::flows::tinyflows::caps` supplies one adapter per trait, assembled into a
 `Capabilities` bundle per run by `build_capabilities`
-([`caps.rs`](../../../src/openhuman/tinyflows/caps.rs)):
+([`caps.rs`](../../../src/openhuman/flows/tinyflows/caps.rs)):
 
 | tinyflows trait | Node(s) it backs | OpenHuman adapter | Wraps |
 | --- | --- | --- | --- |
@@ -167,7 +167,7 @@ A flow `agent` node names a **registered agent kind** through a trusted
   (`Agent::from_config_for_agent`) and run the node's request through
   `run_single`. That is the *same* entry the builder/scout and cron/subconscious
   jobs use, and internally it drives `run_turn_via_tinyagents_shared`
-  ([`src/openhuman/tinyagents/mod.rs`](../../../src/openhuman/tinyagents/mod.rs)) -
+  ([`src/openhuman/agent/tinyagents/mod.rs`](../../../src/openhuman/agent/tinyagents/mod.rs)) -
   the tinyagents `AgentHarness` tool-call loop. The definition's ToolScope,
   `sandbox_mode`, and `max_iterations` govern the inner turn.
 - **Only a custom `AgentRegistryEntry` exists** (no full definition) → the
@@ -225,7 +225,7 @@ around the whole engine future
 `[autonomy]` tier through `SecurityPolicy::gate_decision` for that node's
 `CommandClass` (`http_request` → Network, `code` → Write, native `oh:` tools →
 their classified class) in `enforce_node_tier_gate`
-([`caps.rs`](../../../src/openhuman/tinyflows/caps.rs)):
+([`caps.rs`](../../../src/openhuman/flows/tinyflows/caps.rs)):
 
 - a `readonly` run **`Block`s** at the network/code boundary and never dispatches;
 - a `supervised` run's `Prompt` decision is escalated by `gate_call_for_tier`
@@ -331,12 +331,12 @@ sequenceDiagram
 | --- | --- |
 | [`vendor/tinyflows/src/`](../../../vendor/tinyflows/src/) | The engine: `model/`, `validate.rs`, `compiler.rs`, `engine.rs`, `expr.rs`, `caps/`, `nodes/`. |
 | [`vendor/tinyflows/src/caps/mod.rs`](../../../vendor/tinyflows/src/caps/mod.rs) | The seven capability traits + `Capabilities` bundle. |
-| [`src/openhuman/tinyflows/caps.rs`](../../../src/openhuman/tinyflows/caps.rs) | The host adapters, `build_capabilities`, `open_flow_checkpointer`, the two-layer gate helpers. |
+| [`src/openhuman/flows/tinyflows/caps.rs`](../../../src/openhuman/flows/tinyflows/caps.rs) | The host adapters, `build_capabilities`, `open_flow_checkpointer`, the two-layer gate helpers. |
 | [`src/openhuman/flows/ops.rs`](../../../src/openhuman/flows/ops.rs) | `flows_run` / `flows_resume` / `flows_build` / `flows_discover` and CRUD. |
 | [`src/openhuman/flows/bus.rs`](../../../src/openhuman/flows/bus.rs) | `FlowTriggerSubscriber` - the host-side multi-trigger bridge. |
 | [`src/openhuman/flows/builder_tools.rs`](../../../src/openhuman/flows/builder_tools.rs) | The builder's `propose` / `revise` / `dry_run` / `save` / `run` tools. |
 | [`src/openhuman/flows/agents/`](../../../src/openhuman/flows/agents/) | `workflow_builder` + `flow_discovery` agent definitions. |
-| [`src/openhuman/tinyflows/langfuse_export.rs`](../../../src/openhuman/tinyflows/langfuse_export.rs) | Post-run export of the durable graph observations. |
+| [`src/openhuman/flows/tinyflows/langfuse_export.rs`](../../../src/openhuman/flows/tinyflows/langfuse_export.rs) | Post-run export of the durable graph observations. |
 
 ## See also
 

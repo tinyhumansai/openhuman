@@ -34,9 +34,9 @@ function randBetween(min: number, max: number): number {
 }
 
 /** Bundled default mascot, served by Vite from `public/`. */
-export const DEFAULT_MASCOT_SRC = '/tiny_mascot.riv';
+const DEFAULT_MASCOT_SRC = '/tiny_mascot.riv';
 
-export interface RiveMascotProps {
+interface RiveMascotProps {
   face?: MascotFace;
   size?: number | string;
   primaryColor?: number;

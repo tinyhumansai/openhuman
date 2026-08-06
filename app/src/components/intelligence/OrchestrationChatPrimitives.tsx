@@ -10,7 +10,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { ChatMessage, ChatWindow } from '../../lib/orchestration/useOrchestrationChats';
 import { formatTime } from './orchestrationTabHelpers';
 
-export interface ChatListButtonProps {
+interface ChatListButtonProps {
   chat: ChatWindow;
   selected: boolean;
   onSelect: () => void;

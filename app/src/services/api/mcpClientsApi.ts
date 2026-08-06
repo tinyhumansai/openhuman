@@ -15,6 +15,7 @@ import type {
   SmitheryServerDetail,
 } from '../../components/channels/mcp/types';
 import { callCoreRpc } from '../coreRpcClient';
+import { isMcpRegistryErrorLike, normalizeMcpRegistryError } from './mcpRegistryErrors';
 
 const log = debug('mcp-clients:api');
 
@@ -93,7 +94,7 @@ interface UpdateEnvResult {
 }
 
 /** Non-secret registry-credentials snapshot. Secret *values* are never returned. */
-export interface RegistrySettings {
+interface RegistrySettings {
   smithery_api_key_set: boolean;
   mcp_official_token_set: boolean;
   mcp_official_base?: string | null;
@@ -113,23 +114,35 @@ export const mcpClientsApi = {
     page_size?: number;
   }): Promise<RegistrySearchResult> => {
     log('registry_search params=%o', params);
-    const result = await callCoreRpc<RegistrySearchResult>({
-      method: 'openhuman.mcp_clients_registry_search',
-      params,
-    });
-    log('registry_search result: %d servers', result.servers?.length ?? 0);
-    return result;
+    try {
+      const result = await callCoreRpc<RegistrySearchResult>({
+        method: 'openhuman.mcp_clients_registry_search',
+        params,
+      });
+      log('registry_search result: %d servers', result.servers?.length ?? 0);
+      return result;
+    } catch (err) {
+      const normalized = normalizeMcpRegistryError(err);
+      log('registry_search error kind=%s', normalized.kind);
+      throw normalized;
+    }
   },
 
   /** Fetch full detail for a single Smithery server. */
   registryGet: async (qualified_name: string): Promise<SmitheryServerDetail> => {
     log('registry_get qualified_name=%s', qualified_name);
-    const result = await callCoreRpc<RegistryGetResult>({
-      method: 'openhuman.mcp_clients_registry_get',
-      params: { qualified_name },
-    });
-    log('registry_get returned server=%s', result.server?.qualified_name);
-    return result.server;
+    try {
+      const result = await callCoreRpc<RegistryGetResult>({
+        method: 'openhuman.mcp_clients_registry_get',
+        params: { qualified_name },
+      });
+      log('registry_get returned server=%s', result.server?.qualified_name);
+      return result.server;
+    } catch (err) {
+      const normalized = normalizeMcpRegistryError(err);
+      log('registry_get error kind=%s', normalized.kind);
+      throw normalized;
+    }
   },
 
   /**
@@ -196,12 +209,19 @@ export const mcpClientsApi = {
     config?: unknown;
   }): Promise<InstalledServer> => {
     log('install qualified_name=%s', params.qualified_name);
-    const result = await callCoreRpc<InstallResult>({
-      method: 'openhuman.mcp_clients_install',
-      params,
-    });
-    log('install returned server_id=%s', result.server?.server_id);
-    return result.server;
+    try {
+      const result = await callCoreRpc<InstallResult>({
+        method: 'openhuman.mcp_clients_install',
+        params,
+      });
+      log('install returned server_id=%s', result.server?.server_id);
+      return result.server;
+    } catch (err) {
+      if (!isMcpRegistryErrorLike(err)) throw err;
+      const normalized = normalizeMcpRegistryError(err);
+      log('install registry error kind=%s', normalized.kind);
+      throw normalized;
+    }
   },
 
   /**

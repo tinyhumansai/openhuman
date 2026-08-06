@@ -20,7 +20,7 @@ import { callCoreRpc } from '../coreRpcClient';
 const log = debug('worktreeApi');
 
 /** Snapshot of a single worktree. Mirrors the Rust `WorktreeStatus`. */
-export interface WorktreeStatus {
+interface WorktreeStatus {
   /** Absolute path to the worktree checkout. */
   path: string;
   /** Checked-out branch (or `(detached HEAD)`), when resolvable. */
@@ -32,7 +32,7 @@ export interface WorktreeStatus {
 }
 
 /** A file changed by more than one worker worktree (pre-merge conflict hint). */
-export interface WorktreeOverlap {
+interface WorktreeOverlap {
   /** Relative path touched by multiple worktrees. */
   file: string;
   /** Branches (or path fallbacks) of the worktrees that touched it. */
@@ -40,7 +40,7 @@ export interface WorktreeOverlap {
 }
 
 /** Response from `openhuman.worktree_list`. */
-export interface WorktreeListView {
+interface WorktreeListView {
   worktrees: WorktreeStatus[];
   overlaps: WorktreeOverlap[];
 }

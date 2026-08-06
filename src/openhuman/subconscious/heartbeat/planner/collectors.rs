@@ -3,13 +3,15 @@ use chrono::{DateTime, Duration, Utc};
 use futures::stream::StreamExt;
 use serde_json::json;
 
-use crate::openhuman::composio::client::{
-    create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
-};
-use crate::openhuman::composio::types::{ComposioConnection, ComposioExecuteResponse};
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
-use crate::openhuman::notifications::store as notifications_store;
+use crate::openhuman::desktop::notifications::store as notifications_store;
+use crate::openhuman::integrations::composio::client::{
+    create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
+};
+use crate::openhuman::integrations::composio::types::{
+    ComposioConnection, ComposioExecuteResponse,
+};
 
 use super::types::{HeartbeatCategory, PendingEvent};
 use super::utils::{compute_overlap_key, sanitize_preview, stable_key};
@@ -230,7 +232,8 @@ async fn fetch_calendar_events_for_connection(
         "timeMax": end_window.to_rfc3339(),
         "maxResults": 20
     });
-    let iana = crate::openhuman::composio::googlecalendar_args::current_iana_timezone();
+    let iana =
+        crate::openhuman::integrations::composio::googlecalendar_args::current_iana_timezone();
     tracing::debug!(
         target: "composio",
         slug = "GOOGLECALENDAR_EVENTS_LIST",
@@ -240,7 +243,7 @@ async fn fetch_calendar_events_for_connection(
         lookahead_minutes = meeting_lookahead_minutes,
         "[composio][heartbeat-planner] applying calendar query defaults pre-poll"
     );
-    let arguments = crate::openhuman::composio::googlecalendar_args::apply_calendar_query_defaults(
+    let arguments = crate::openhuman::integrations::composio::googlecalendar_args::apply_calendar_query_defaults(
         "GOOGLECALENDAR_EVENTS_LIST",
         Some(arguments),
         &iana,
@@ -333,14 +336,16 @@ async fn collect_recall_calendar_meetings(
 ) -> Vec<PendingEvent> {
     let lookahead = config.heartbeat.meeting_lookahead_minutes.max(1);
     let end_window = now + chrono::Duration::minutes(i64::from(lookahead));
-    let meetings = match crate::openhuman::recall_calendar::ops::fetch_recall_meetings(config).await
-    {
-        Ok(m) => m,
-        Err(error) => {
-            tracing::warn!(error = %error, "[heartbeat:planner] recall calendar fetch failed");
-            return Vec::new();
-        }
-    };
+    let meetings =
+        match crate::openhuman::integrations::recall_calendar::ops::fetch_recall_meetings(config)
+            .await
+        {
+            Ok(m) => m,
+            Err(error) => {
+                tracing::warn!(error = %error, "[heartbeat:planner] recall calendar fetch failed");
+                return Vec::new();
+            }
+        };
     let events = build_recall_pending(&meetings, now, end_window);
     tracing::debug!(
         fetched = meetings.len(),
@@ -355,11 +360,12 @@ async fn collect_recall_calendar_meetings(
 /// parser (so dedup/overlap keys match the Composio path). Unit-testable
 /// without a backend session.
 fn build_recall_pending(
-    meetings: &[crate::openhuman::recall_calendar::types::RecallMeeting],
+    meetings: &[crate::openhuman::integrations::recall_calendar::types::RecallMeeting],
     now: DateTime<Utc>,
     end_window: DateTime<Utc>,
 ) -> Vec<PendingEvent> {
-    let data = crate::openhuman::recall_calendar::ops::meetings_to_gcal_json(meetings);
+    let data =
+        crate::openhuman::integrations::recall_calendar::ops::meetings_to_gcal_json(meetings);
     extract_calendar_events(&data, "googlecalendar", "recall", now, end_window)
 }
 
@@ -386,7 +392,7 @@ pub(crate) async fn collect_calendar_meetings(
     let recall_connected = if recall_selected {
         true
     } else {
-        crate::openhuman::recall_calendar::ops::is_connected_cached(config).await
+        crate::openhuman::integrations::recall_calendar::ops::is_connected_cached(config).await
     };
     if recall_connected {
         return collect_recall_calendar_meetings(config, now).await;
@@ -733,7 +739,8 @@ pub(crate) fn collect_relevant_notifications(
         // with a fresh ID that bypasses the dedupe store.
         .filter(|item| item.provider != "heartbeat")
         .filter(|item| {
-            item.status == crate::openhuman::notifications::types::NotificationStatus::Unread
+            item.status
+                == crate::openhuman::desktop::notifications::types::NotificationStatus::Unread
         })
         .filter(|item| {
             item.triage_action
@@ -781,15 +788,17 @@ mod tests {
     fn build_recall_pending_maps_meetings() {
         let now = chrono::Utc::now();
         let end = now + chrono::Duration::hours(2);
-        let meetings = vec![crate::openhuman::recall_calendar::types::RecallMeeting {
-            id: "r1".to_string(),
-            title: Some("Sync".to_string()),
-            meeting_url: Some("https://meet.google.com/aaa-bbbb-ccc".to_string()),
-            start_time: Some((now + chrono::Duration::minutes(30)).to_rfc3339()),
-            end_time: None,
-            platform: None,
-            bot_id: None,
-        }];
+        let meetings = vec![
+            crate::openhuman::integrations::recall_calendar::types::RecallMeeting {
+                id: "r1".to_string(),
+                title: Some("Sync".to_string()),
+                meeting_url: Some("https://meet.google.com/aaa-bbbb-ccc".to_string()),
+                start_time: Some((now + chrono::Duration::minutes(30)).to_rfc3339()),
+                end_time: None,
+                platform: None,
+                bot_id: None,
+            },
+        ];
         let events = build_recall_pending(&meetings, now, end);
         assert_eq!(events.len(), 1);
         assert_eq!(

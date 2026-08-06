@@ -61,7 +61,7 @@ function groupRecords(
   return groups;
 }
 
-export function HistorySection() {
+function HistorySection() {
   const { t } = useT();
   const [records, setRecords] = useState<MeetCallRecord[] | null>(null);
   const [loading, setLoading] = useState(true);

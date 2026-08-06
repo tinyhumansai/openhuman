@@ -78,7 +78,7 @@ function newRow(): InputRow {
 
 const log = debug('skills:create-form');
 
-export interface CreateSkillFormHandle {
+interface CreateSkillFormHandle {
   /** True iff name+description are present and no submit is in flight. */
   isValid: () => boolean;
   /** True while skillsApi.createWorkflow is in flight. */
@@ -87,7 +87,7 @@ export interface CreateSkillFormHandle {
   submit: () => Promise<void>;
 }
 
-export interface CreateSkillFormProps {
+interface CreateSkillFormProps {
   /**
    * The id assigned to the underlying `<form>` element. Wrappers that
    * render their submit button outside the form (modal footer / page

@@ -4,11 +4,11 @@ use super::super::context::{
 };
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
-use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
-use crate::openhuman::embeddings::NoopEmbedding;
+use super::common::{HistoryCaptureModel, NoopMemory, RecordingChannel};
+use crate::openhuman::inference::embeddings::NoopEmbedding;
 use crate::openhuman::inference::provider;
+use crate::openhuman::memory::store::UnifiedMemory;
 use crate::openhuman::memory::{Memory, MemoryCategory};
-use crate::openhuman::memory_store::UnifiedMemory;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -134,11 +134,13 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
     let mut channels_by_name = HashMap::new();
     channels_by_name.insert(channel.name().to_string(), channel);
 
-    let provider_impl = Arc::new(HistoryCaptureProvider::default());
+    let provider_impl = Arc::new(HistoryCaptureModel::default());
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: provider_impl.clone(),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(provider_impl.clone()),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -149,7 +151,7 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         max_tool_iterations: 5,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -159,6 +161,7 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -216,13 +219,15 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
     let mut channels_by_name = HashMap::new();
     channels_by_name.insert(channel.name().to_string(), channel);
 
-    let provider_impl = Arc::new(HistoryCaptureProvider::default());
+    let provider_impl = Arc::new(HistoryCaptureModel::default());
     let tmp = TempDir::new().unwrap();
     let memory = Arc::new(UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap());
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: provider_impl.clone(),
+        turn_model_source: Some(
+            crate::openhuman::agent::tinyagents::TurnModelSource::from_model(provider_impl.clone()),
+        ),
         default_provider: Arc::new("test-provider".to_string()),
         memory,
         tools_registry: Arc::new(vec![]),
@@ -233,7 +238,7 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
         max_tool_iterations: 5,
         min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
         inference_url: None,
@@ -243,6 +248,7 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     let first = traits::ChannelMessage {

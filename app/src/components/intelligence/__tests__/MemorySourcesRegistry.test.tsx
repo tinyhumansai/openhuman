@@ -16,6 +16,10 @@ import {
   openhumanGetMemorySyncSettings,
   openhumanUpdateMemorySyncSettings,
 } from '../../../utils/tauriCommands/config';
+import {
+  memoryTreePipelineStatus,
+  type MemoryTreePipelineStatus,
+} from '../../../utils/tauriCommands/memoryTree';
 import { MemorySourcesRegistry } from '../MemorySourcesRegistry';
 
 // Mock the entire service so we don't hit RPC
@@ -34,9 +38,23 @@ vi.mock('../../../services/memorySourcesService', async () => {
   };
 });
 
-// Mock tauriCommands/memoryTree — not needed in these tests
+// Mock tauriCommands/memoryTree. The registry now also polls
+// memoryTreePipelineStatus for downstream health (GH-4690); default it to a
+// healthy running snapshot so no source row shows a spurious warning.
 vi.mock('../../../utils/tauriCommands/memoryTree', () => ({
   memoryTreeFlushSource: vi.fn().mockResolvedValue({ seals_fired: 0 }),
+  memoryTreePipelineStatus: vi
+    .fn()
+    .mockResolvedValue({
+      status: 'running',
+      reason: null,
+      last_sync_ms: 0,
+      total_chunks: 0,
+      wiki_size_bytes: 0,
+      pipeline_jobs: { ready: 0, running: 0, failed: 0 },
+      is_syncing: false,
+      is_paused: false,
+    }),
 }));
 
 // Mock the memory-sync schedule config RPCs (#3302).
@@ -51,6 +69,24 @@ const mockedUpdate = vi.mocked(service.updateMemorySource);
 const mockedApplyAllIn = vi.mocked(service.applyAllIn);
 const mockedGetSync = vi.mocked(openhumanGetMemorySyncSettings);
 const mockedUpdateSync = vi.mocked(openhumanUpdateMemorySyncSettings);
+const mockedPipeline = vi.mocked(memoryTreePipelineStatus);
+
+/** A healthy `memory_tree_pipeline_status` snapshot (no degradation). */
+function healthyPipeline(
+  overrides: Partial<MemoryTreePipelineStatus> = {}
+): MemoryTreePipelineStatus {
+  return {
+    status: 'running',
+    reason: null,
+    last_sync_ms: 0,
+    total_chunks: 0,
+    wiki_size_bytes: 0,
+    pipeline_jobs: { ready: 0, running: 0, failed: 0 },
+    is_syncing: false,
+    is_paused: false,
+    ...overrides,
+  };
+}
 
 function syncSettings(overrides: Record<string, unknown> = {}) {
   return {
@@ -492,5 +528,122 @@ describe('MemorySourcesRegistry', () => {
     rerender(tree(true));
     await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Reloaded Repo')).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Layered pipeline status — Data Sync must not show a clean "synced" badge
+  // when the downstream retrieval pipeline failed (GH-4690).
+  // -------------------------------------------------------------------------
+  describe('layered pipeline warnings (GH-4690)', () => {
+    it('no regression: a fully healthy sync keeps the clean freshness badge', async () => {
+      mockedList.mockResolvedValue([makeSource({ id: 'src_1', label: 'Healthy Repo' })]);
+      mockedStatus.mockResolvedValue([
+        {
+          source_id: 'src_1',
+          chunks_synced: 5,
+          chunks_pending: 0,
+          last_chunk_at_ms: Date.now(),
+          freshness: 'recent',
+        },
+      ]);
+      mockedPipeline.mockResolvedValue(healthyPipeline());
+
+      renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+      await screen.findByText('Healthy Repo');
+      // Clean state: freshness pill shows, no "Ingested only" warning surfaces.
+      await waitFor(() => {
+        expect(screen.getByText('Recent')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('memory-source-ingested-only-src_1')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('memory-source-pipeline-warning-src_1')).not.toBeInTheDocument();
+    });
+
+    it('flags "Stored without vectors" from per-source pending chunks', async () => {
+      mockedList.mockResolvedValue([makeSource({ id: 'src_1', label: 'Notes' })]);
+      mockedStatus.mockResolvedValue([
+        {
+          source_id: 'src_1',
+          chunks_synced: 1,
+          chunks_pending: 1,
+          last_chunk_at_ms: Date.now(),
+          freshness: 'recent',
+        },
+      ]);
+      // Even with a "healthy" global snapshot, the per-source pending chunks
+      // are the precise signal that this source has no vectors.
+      mockedPipeline.mockResolvedValue(healthyPipeline());
+
+      renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+      await screen.findByText('Notes');
+      expect(await screen.findByTestId('memory-source-ingested-only-src_1')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-source-pipeline-warning-src_1')).toHaveTextContent(
+        /Stored without vectors/i
+      );
+      // Clean freshness badge must be gone.
+      expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+      // A link to the full memory-health panel is offered.
+      expect(screen.getByTestId('memory-source-view-health-src_1')).toBeInTheDocument();
+    });
+
+    it('offers "Sign in to enable" when embeddings fail for lack of a backend session', async () => {
+      mockedList.mockResolvedValue([makeSource({ id: 'src_1', label: 'Notes' })]);
+      mockedStatus.mockResolvedValue([
+        {
+          source_id: 'src_1',
+          chunks_synced: 2,
+          chunks_pending: 2,
+          last_chunk_at_ms: Date.now(),
+          freshness: 'idle',
+        },
+      ]);
+      mockedPipeline.mockResolvedValue(
+        healthyPipeline({
+          status: 'error',
+          first_blocking_cause: {
+            code: 'auth_missing',
+            class: 'unrecoverable',
+            remediation_key: 'memory.health.remediation.auth_missing',
+          },
+        })
+      );
+
+      renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+      await screen.findByText('Notes');
+      // Unauthenticated (no CoreStateProvider ⇒ isAuthenticated false), auth-related.
+      const signIn = await screen.findByTestId('memory-source-signin-src_1');
+      expect(signIn).toBeInTheDocument();
+      // Clicking must not throw (navigates within the MemoryRouter).
+      fireEvent.click(signIn);
+    });
+
+    it('surfaces extraction failure from the global pipeline health', async () => {
+      mockedList.mockResolvedValue([makeSource({ id: 'src_1', label: 'Notes' })]);
+      mockedStatus.mockResolvedValue([
+        {
+          source_id: 'src_1',
+          chunks_synced: 5,
+          chunks_pending: 0,
+          last_chunk_at_ms: Date.now(),
+          freshness: 'recent',
+        },
+      ]);
+      mockedPipeline.mockResolvedValue(
+        healthyPipeline({
+          status: 'degraded',
+          first_blocking_cause: {
+            code: 'extraction_timeout',
+            class: 'transient',
+            remediation_key: 'memory.health.remediation.extraction_timeout',
+          },
+        })
+      );
+
+      renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+      await screen.findByText('Notes');
+      expect(await screen.findByTestId('memory-source-ingested-only-src_1')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-source-pipeline-warning-src_1')).toHaveTextContent(
+        /extraction failed/i
+      );
+    });
   });
 });

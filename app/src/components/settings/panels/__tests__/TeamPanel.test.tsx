@@ -65,8 +65,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../../components/SettingsHeader', () => ({ default: () => null }));
-
 const mockCreateTeam = vi.fn();
 const mockJoinTeam = vi.fn();
 const mockSwitchTeam = vi.fn();

@@ -1,16 +1,26 @@
 #!/usr/bin/env sh
 
-# Bail out immediately on Ctrl+C / SIGTERM. Without this trap, an interrupt
-# only kills the current pnpm subprocess; the script then captures its 130
-# exit, mistakes it for a normal failure, and runs the next pnpm step.
+# Bail out immediately on Ctrl+C / SIGTERM.
 abort() {
+  EXIT_CODE="$1"
   echo
   echo "Pre-push aborted."
-  trap - INT TERM
-  kill -- -$$ 2>/dev/null
-  exit 130
+  exit "$EXIT_CODE"
 }
-trap abort INT TERM
+trap 'abort 130' INT
+trap 'abort 143' TERM
+
+# Commands run synchronously in the hook's foreground process group, so Ctrl+C
+# reaches pnpm and its children. Do not mistake the resulting exit code for a
+# normal check failure and continue with the next command.
+run_check() {
+  "$@"
+  CHECK_EXIT=$?
+  case "$CHECK_EXIT" in
+    130|143) abort "$CHECK_EXIT" ;;
+  esac
+  return "$CHECK_EXIT"
+}
 
 # Windows Git Bash can miss Node/Pnpm in PATH when hooks run.
 # Recover from common PATH drift by hydrating from where.exe.
@@ -65,7 +75,7 @@ fi
 
 # Run format check first (capture exit code without breaking script)
 set +e
-pnpm format:check
+run_check pnpm format:check
 FORMAT_EXIT=$?
 set -e
 
@@ -77,7 +87,7 @@ fi
 
 # Run lint check (capture exit code without breaking script)
 set +e
-pnpm lint
+run_check pnpm lint
 LINT_EXIT=$?
 set -e
 
@@ -89,24 +99,24 @@ fi
 
 # Run TypeScript compile check (capture exit code without breaking script)
 set +e
-pnpm compile
+run_check pnpm compile
 COMPILE_EXIT=$?
 set -e
 
-# Run Rust compile checks for both the core and Tauri codebases
+# Run Clippy for both Rust codebases; Clippy also performs compile checks.
 set +e
-pnpm rust:check
-RUST_CHECK_EXIT=$?
+run_check pnpm rust:clippy
+RUST_CLIPPY_EXIT=$?
 set -e
 
 # Enforce scoped cmd-* tokens in components/commands/
 set +e
-pnpm --dir app run lint:commands-tokens
+run_check pnpm --dir app run lint:commands-tokens
 CMD_TOKENS_EXIT=$?
 set -e
 
 # Exit with error if any command still fails after fixes
-if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
+if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
   echo
   echo "============================================================"
   echo "Pre-push checks failed."
@@ -116,7 +126,7 @@ if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || 
     echo "    git add -A && git commit -m 'chore: apply auto-fixes'"
     echo "    git push"
   fi
-  if [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CHECK_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
+  if [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
     echo "Fix the remaining errors above (TypeScript / Rust / cmd-tokens)"
     echo "before re-pushing — these have no auto-fix path."
   fi

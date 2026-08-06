@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use rusqlite::params;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::with_connection;
-use crate::openhuman::memory_tree::score::store as score_store;
+use crate::openhuman::memory::store::chunks::store::with_connection;
+use crate::openhuman::memory::tree::score::store as score_store;
 use crate::rpc::RpcOutcome;
 
 use super::types::{DeleteChunkResponse, EntityRef, ScoreBreakdown, ScoreSignal, MAX_LIST_LIMIT};
@@ -199,7 +199,7 @@ pub async fn chunk_score_rpc(
             ScoreBreakdown {
                 signals,
                 total: r.total,
-                threshold: crate::openhuman::memory_tree::score::DEFAULT_DROP_THRESHOLD,
+                threshold: crate::openhuman::memory::tree::score::DEFAULT_DROP_THRESHOLD,
                 kept: !r.dropped,
                 llm_consulted,
             }

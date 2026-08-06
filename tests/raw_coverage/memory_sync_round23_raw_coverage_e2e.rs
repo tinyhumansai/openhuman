@@ -14,19 +14,19 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{
+use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use openhuman_core::openhuman::memory::global as memory_global;
-use openhuman_core::openhuman::memory_sync::composio::providers::gmail::GmailProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::notion::NotionProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::profile::{
+use openhuman_core::openhuman::memory::sync::composio::providers::gmail::GmailProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::notion::NotionProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::profile::{
     delete_connected_identity_facets, is_self_identity, is_self_identity_any_toolkit,
     load_connected_identities, persist_provider_profile, render_connected_identities_section,
     IdentityKind,
 };
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::SlackProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::{
+use openhuman_core::openhuman::memory::sync::composio::providers::slack::SlackProvider;
+use openhuman_core::openhuman::memory::sync::composio::providers::{
     ComposioProvider, ProviderContext, ProviderUserProfile, SyncReason,
 };
 
@@ -349,9 +349,9 @@ async fn notion_profile_prefers_bot_owner_and_sync_paginates_into_memory_tree() 
         .await
         .expect("notion sync");
     assert_eq!(outcome.items_ingested, 2);
-    assert!(outcome.summary.contains("fetched 3, persisted 2"));
-    assert_eq!(outcome.details["results_fetched"], 3);
-    assert_eq!(outcome.details["results_persisted"], 2);
+    assert_eq!(outcome.summary, "sync completed");
+    assert_eq!(outcome.details["more_pending"], false);
+    assert_eq!(outcome.details["actions_called"], 4);
 
     let calls = requests.lock().unwrap().clone();
     let fetch_calls: Vec<Value> = calls
@@ -360,7 +360,7 @@ async fn notion_profile_prefers_bot_owner_and_sync_paginates_into_memory_tree() 
         .cloned()
         .collect();
     assert_eq!(fetch_calls.len(), 2);
-    assert_eq!(fetch_calls[0]["arguments"]["page_size"], 50);
+    assert_eq!(fetch_calls[0]["arguments"]["page_size"], 25);
     assert_eq!(fetch_calls[1]["arguments"]["start_cursor"], "page-2");
     server.abort();
 }

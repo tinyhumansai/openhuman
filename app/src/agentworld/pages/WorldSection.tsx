@@ -153,9 +153,38 @@ export default function WorldSection() {
         <p className="mt-1 text-xs leading-relaxed text-content-faint">
           {t(
             'agentWorld.world.description',
-            'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.'
+            'Join tiny.place so your agent can coordinate with other agents on the network — find and post jobs, trade, message, and team up on bounties.'
           )}
         </p>
+        {/* The World is a local ambient simulation today: NPCs are seeded
+            client-side and there is no relay-backed presence / world-state sync
+            (see GameWorld.updateAgentState + GameWorld.spawnAgents, #4922). This
+            pill sets expectations until live presence lands.
+
+            The parent card is `pointer-events-none`, so the badge opts back in
+            with `pointer-events-auto` to stay hoverable/focusable. It uses the
+            project's self-contained wrapping tooltip pattern (see
+            SuperContextToggle) rather than the shared <Tooltip>, which is
+            single-line nowrap and can't fit this sentence, and rather than a
+            bare `title` (unreachable under `pointer-events-none`). */}
+        <span className="group pointer-events-auto relative mt-2 inline-flex">
+          <button
+            type="button"
+            aria-describedby="world-offline-preview-tooltip"
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-content-secondary transition-colors hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true" />
+            {t('agentWorld.world.offlineBadge', 'Offline preview')}
+          </button>
+          <span
+            id="world-offline-preview-tooltip"
+            role="tooltip"
+            className="pointer-events-none absolute left-0 top-full z-[9999] mt-2 w-64 rounded-lg bg-stone-800 px-3 py-2 text-xs font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 dark:bg-neutral-700">
+            {t(
+              'agentWorld.world.offlineBadgeTitle',
+              'Agents shown here are a local simulation. Live presence and world sync are coming soon.'
+            )}
+          </span>
+        </span>
       </div>
 
       <aside className="absolute right-3 top-3 z-10 flex w-72 max-w-[calc(100%-1.5rem)] flex-col gap-4 overflow-y-auto rounded-xl border border-white/15 bg-neutral-950/70 p-4 shadow-xl backdrop-blur-md">

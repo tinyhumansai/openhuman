@@ -19,8 +19,13 @@ import HumanPage from './HumanPage';
 
 // ── Heavy dependency stubs ────────────────────────────────────────────────
 
+// `mock`-prefixed so vitest's hoisted-factory allowlist permits the reference.
+const mockConversationsRender = vi.fn();
 vi.mock('../conversations/Conversations', () => ({
-  default: () => <div data-testid="conversations-stub" />,
+  default: () => {
+    mockConversationsRender();
+    return <div data-testid="conversations-stub" />;
+  },
 }));
 
 vi.mock('./Mascot', async importOriginal => {
@@ -64,6 +69,7 @@ function renderHumanPage(store = buildMinimalStore()) {
 describe('HumanPage — speak-replies localStorage persistence', () => {
   beforeEach(() => {
     localStorage.clear();
+    mockConversationsRender.mockClear();
   });
 
   afterEach(() => {
@@ -113,6 +119,19 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
 
     expect(localStorage.getItem(SPEAK_REPLIES_KEY)).toBe('1');
     expect(checkbox).toBeChecked();
+  });
+
+  it('holds the chat panel stable so mascot lipsync re-renders do not reconcile it (#5357)', async () => {
+    renderHumanPage();
+    expect(mockConversationsRender).toHaveBeenCalledTimes(1);
+
+    // Toggling speak-replies re-renders HumanPage. The memoized chat element is
+    // unchanged, so React must not re-render the heavy Conversations subtree —
+    // this is what keeps the UI responsive during 60fps TTS lipsync frames.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('checkbox'));
+    });
+    expect(mockConversationsRender).toHaveBeenCalledTimes(1);
   });
 
   it('renders a custom GIF mascot when one is configured', () => {

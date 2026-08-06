@@ -33,7 +33,7 @@ export type AgentTeamStatus = 'active' | 'closed';
 export type AgentTeamMemberStatus = 'pending' | 'active' | 'idle' | 'stopped';
 
 /** Lifecycle of a coordination task. Mirrors Rust `AgentTeamTaskStatus`. */
-export type AgentTeamTaskStatus = 'todo' | 'ready' | 'in_progress' | 'blocked' | 'done';
+type AgentTeamTaskStatus = 'todo' | 'ready' | 'in_progress' | 'blocked' | 'done';
 
 /** A team header row. Mirrors Rust `AgentTeam`. */
 export interface AgentTeam {
@@ -62,7 +62,7 @@ export interface AgentTeamMember {
 }
 
 /** A coordination task within a team. Mirrors Rust `AgentTeamTask`. */
-export interface AgentTeamTask {
+interface AgentTeamTask {
   id: string;
   teamId: string;
   title: string;
@@ -84,7 +84,7 @@ export interface AgentTeamTask {
 }
 
 /** A team plus its members and tasks. Mirrors Rust `TeamView` (the `get` shape). */
-export interface TeamView {
+interface TeamView {
   team: AgentTeam;
   members: AgentTeamMember[];
   tasks: AgentTeamTask[];
@@ -96,14 +96,14 @@ export interface TeamView {
  * the object; `gateFailed` carries the unmet-invariant reasons; the rest are
  * bare tags.
  */
-export type CompletionOutcome =
+type CompletionOutcome =
   | ({ kind: 'completed' } & AgentTeamTask)
   | { kind: 'gateFailed'; reasons: string[] }
   | { kind: 'notClaimed' }
   | { kind: 'unknownTask' };
 
 /** Result of stopping a member. Mirrors Rust `MemberShutdown`. */
-export interface MemberShutdown {
+interface MemberShutdown {
   member: AgentTeamMember;
   releasedTaskIds: string[];
 }
@@ -113,7 +113,7 @@ export interface MemberShutdown {
  * (internally-tagged on `kind`): `started` carries the dispatched `runId` and the
  * claimed task; the rest explain why no worker was spawned.
  */
-export type StartMemberOutcome =
+type StartMemberOutcome =
   | { kind: 'started'; runId: string; task: AgentTeamTask }
   | { kind: 'blocked'; unmet: string[] }
   | { kind: 'alreadyClaimed' }
@@ -148,7 +148,7 @@ interface RawRunEvent {
 }
 
 /** Optional filters for {@link agentTeamApi.list}. Mirrors `AgentTeamListRequest`. */
-export interface AgentTeamListParams {
+interface AgentTeamListParams {
   parentThreadId?: string;
   status?: AgentTeamStatus;
   limit?: number;

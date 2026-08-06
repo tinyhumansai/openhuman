@@ -51,7 +51,7 @@ function matchEnumValue(value: string, options: readonly string[] | undefined): 
 
 const RIVE_LAYOUT = new Layout({ fit: Fit.Contain });
 
-export interface ManifestRiveMascotProps {
+interface ManifestRiveMascotProps {
   /** The manifest entry to render. Its runtime `.riv` is loaded + cached. */
   entry: MascotManifestEntry;
   face?: MascotFace;

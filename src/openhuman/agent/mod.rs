@@ -9,7 +9,7 @@
 //! - **[`harness::session::Agent`]**: The primary entry point for running a
 //!   conversation. It manages the loop of sending prompts to a provider and
 //!   executing the resulting tool calls.
-//! - **[`crate::openhuman::agent_registry::agents`]**: Definitions for built-in
+//! - **[`crate::openhuman::agent::registry::agents`]**: Definitions for built-in
 //!   specialized agents (Orchestrator, Code Executor, Researcher, etc.).
 //! - **[`triage`]**: A high-performance pipeline for classifying and responding
 //!   to external triggers (webhooks, cron jobs) using small local models.
@@ -18,17 +18,34 @@
 //! - **[`harness::subagent_runner`]**: Logic for spawning "sub-agents" from
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 
+pub mod agentbox;
+pub mod artifacts;
 pub mod bus;
+pub mod context;
 pub(crate) mod cost;
 pub mod debug;
 pub mod dispatcher;
 pub mod error;
+pub mod experience;
+pub mod file_state;
 pub mod harness;
+pub mod harness_init;
 pub mod hooks;
 pub mod host_runtime;
+pub mod learning;
 pub mod library;
+pub(crate) mod message_convert;
+pub mod messages;
 pub mod multimodal;
+pub mod orchestration;
 pub mod pformat;
+pub mod plan_review;
+/// Cross-platform shell selection shared by [`host_runtime::NativeRuntime`]
+/// and [`crate::openhuman::sandbox::ops`] so all three shell-spawning sites
+/// agree on `cmd.exe` (Windows) vs `bash`/`sh` (Unix). Fixes #4705 where
+/// the sandbox paths hardcoded `sh` and failed at spawn on Windows.
+pub mod platform_shell;
+pub mod profiles;
 pub mod progress;
 /// Structured tracing export off the [`progress`] channel: turns the
 /// real-time [`progress::AgentProgress`] stream into OpenTelemetry/
@@ -37,15 +54,19 @@ pub mod progress;
 pub(crate) mod progress_tracing;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder). Moved from
-/// `openhuman::context::prompt` so prompt rendering lives next to the
-/// agents that consume it. `openhuman::context::prompt` is retained as
+/// `openhuman::agent::context::prompt` so prompt rendering lives next to the
+/// agents that consume it. `openhuman::agent::context::prompt` is retained as
 /// a thin re-export shim for now.
 pub mod prompts;
+pub mod registry;
 mod schemas;
+pub mod session_db;
+pub mod session_import;
 pub mod stop_hooks;
 pub mod task_board;
 pub mod task_dispatcher;
 pub(crate) mod task_session;
+pub mod tinyagents;
 pub mod tool_policy;
 pub mod tools;
 pub mod triage;

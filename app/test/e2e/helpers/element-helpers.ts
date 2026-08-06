@@ -148,7 +148,7 @@ export async function waitForText(
  * - Mac2: XCUIElementTypeButton XPath
  * - tauri-driver: CSS button / [role="button"] / a selector
  */
-export async function waitForButton(
+async function waitForButton(
   text: string,
   timeout: number = 15_000
 ): Promise<ChainablePromiseElement> {
@@ -199,6 +199,33 @@ export async function textExists(text: string): Promise<boolean> {
 
     const el = await browser.$(xpathContainsText(text));
     return await el.isExisting();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Non-blocking check: is matching text rendered and visible right now?
+ *
+ * Unlike {@link textExists}, this deliberately ignores matching text retained
+ * inside a collapsed processing transcript.
+ */
+export async function visibleTextExists(text: string): Promise<boolean> {
+  try {
+    if (isTauriDriver()) {
+      const literal = xpathStringLiteral(text);
+      const matches = await browser.$$(`//*[contains(text(),${literal})]`);
+      for (const match of matches) {
+        if (await match.isDisplayed()) return true;
+      }
+      return false;
+    }
+
+    const matches = await browser.$$(xpathContainsText(text));
+    for (const match of matches) {
+      if (await match.isDisplayed()) return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -299,37 +326,6 @@ export async function clickButton(
 export async function clickNativeButton(text: string, timeout: number = 15_000): Promise<void> {
   const el = await waitForButton(text, timeout);
   await clickAtElement(el);
-}
-
-/**
- * Wait for a toggle/switch element and click it.
- *
- * - Mac2: XCUIElementTypeSwitch / XCUIElementTypeCheckBox
- * - tauri-driver: [role="switch"] / input[type="checkbox"]
- */
-export async function clickToggle(_timeout: number = 15_000): Promise<void> {
-  if (isTauriDriver()) {
-    const selectors = ['[role="switch"]', 'input[type="checkbox"]', 'button[aria-checked]'];
-    for (const sel of selectors) {
-      const el = await browser.$(sel);
-      if (await el.isExisting()) {
-        await clickAtElement(el);
-        return;
-      }
-    }
-    throw new Error('Toggle element not found');
-  }
-
-  // Mac2 path
-  const macSelectors = ['//XCUIElementTypeSwitch', '//XCUIElementTypeCheckBox'];
-  for (const sel of macSelectors) {
-    const el = await browser.$(sel);
-    if (await el.isExisting()) {
-      await clickAtElement(el);
-      return;
-    }
-  }
-  throw new Error('Toggle element not found');
 }
 
 /**

@@ -39,6 +39,7 @@ fn test_job(command: &str) -> CronJob {
         session_target: SessionTarget::Isolated,
         model: None,
         agent_id: None,
+        profile_id: None,
         enabled: true,
         delivery: DeliveryConfig::default(),
         delete_after_run: false,
@@ -48,6 +49,150 @@ fn test_job(command: &str) -> CronJob {
         last_status: None,
         last_output: None,
     }
+}
+
+#[tokio::test]
+async fn resolve_cron_profile_present_and_deleted_fallback() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+
+    // A job attributed to profile "alice".
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.profile_id = Some("alice".into());
+
+    // Profile does not exist yet → None (the deleted-profile fallback path;
+    // the scheduler runs the job without a profile rather than failing it).
+    assert!(
+        resolve_cron_profile(&config, &job).unwrap().is_none(),
+        "missing profile must resolve to None"
+    );
+
+    // Seed the profile → it now resolves.
+    let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
+    profile.id = "alice".into();
+    profile.name = "Alice".into();
+    profile.built_in = false;
+    profile.is_master = false;
+    crate::openhuman::agent::profiles::store::AgentProfileStore::new(config.workspace_dir.clone())
+        .upsert(profile)
+        .expect("seed profile");
+    let resolved = resolve_cron_profile(&config, &job)
+        .expect("profile store loads")
+        .expect("profile resolves");
+    assert_eq!(resolved.id, "alice");
+
+    // A job with no attribution is always None.
+    let plain = test_job("");
+    assert!(resolve_cron_profile(&config, &plain).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn existing_profile_agent_build_failure_does_not_fall_back_profile_less() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("init built-in agent definitions");
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+
+    let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
+    profile.id = "alice".into();
+    profile.agent_id = "removed-agent-definition".into();
+    profile.built_in = false;
+    profile.is_master = false;
+    crate::openhuman::agent::profiles::store::AgentProfileStore::new(config.workspace_dir.clone())
+        .upsert(profile)
+        .expect("seed profile");
+
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.profile_id = Some("alice".into());
+
+    let error = match build_agent_for_cron_job(&config, &job) {
+        Ok(_) => panic!("existing profile build failure must not fall back profile-less"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("under attributed profile"));
+    assert!(error.to_string().contains("removed-agent-definition"));
+}
+
+#[tokio::test]
+async fn attributed_cron_build_retains_profile_gates() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("init built-in agent definitions");
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+
+    let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
+    profile.id = "alice".into();
+    profile.built_in = false;
+    profile.allowed_tools = Some(vec!["file_read".into()]);
+    profile.memory_sources = Some(vec!["slack:#eng".into()]);
+    crate::openhuman::agent::profiles::store::AgentProfileStore::new(config.workspace_dir.clone())
+        .upsert(profile)
+        .expect("seed profile");
+
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.profile_id = Some("alice".into());
+    let built = build_agent_for_cron_job(&config, &job).expect("build attributed cron agent");
+
+    assert_eq!(
+        built.agent.visible_tool_names_for_test(),
+        &["file_read".to_string()].into_iter().collect()
+    );
+    assert_eq!(
+        built.profile.and_then(|profile| profile.memory_sources),
+        Some(vec!["slack:#eng".to_string()]),
+        "the run wrapper must retain the resolved profile for memory scoping"
+    );
+}
+
+#[tokio::test]
+async fn attributed_cron_build_applies_profile_runtime_defaults() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("init built-in agent definitions");
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+
+    let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
+    profile.id = "alice-runtime".into();
+    profile.built_in = false;
+    profile.model_override = Some("profile-runtime-model".into());
+    profile.temperature = Some(0.17);
+    profile.system_prompt_suffix = Some("CRON_PROFILE_SUFFIX_SENTINEL".into());
+    crate::openhuman::agent::profiles::store::AgentProfileStore::new(config.workspace_dir.clone())
+        .upsert(profile)
+        .expect("seed profile");
+
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.profile_id = Some("alice-runtime".into());
+    let built = build_agent_for_cron_job(&config, &job).expect("build attributed cron agent");
+
+    assert_eq!(built.agent.model_name(), "profile-runtime-model");
+    assert_eq!(built.agent.temperature(), 0.17);
+    let prompt = built
+        .agent
+        .build_system_prompt(crate::openhuman::agent::prompts::LearnedContextData::default())
+        .expect("build cron system prompt");
+    assert!(prompt.contains("CRON_PROFILE_SUFFIX_SENTINEL"));
+}
+
+#[test]
+fn cron_job_model_override_wins_over_profile_model() {
+    let config = Config {
+        default_model: Some("config-model".into()),
+        ..Config::default()
+    };
+    let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
+    profile.model_override = Some("profile-model".into());
+    profile.temperature = Some(0.23);
+    let mut job = test_job("");
+    job.model = Some("job-model".into());
+
+    let effective = apply_cron_profile_runtime_defaults(&config, &job, &profile);
+    assert_eq!(effective.default_model.as_deref(), Some("job-model"));
+    assert_eq!(effective.default_temperature, 0.23);
 }
 
 #[test]
@@ -96,7 +241,8 @@ async fn push_cron_alert_deduplicates_repeated_morning_briefing_failures() {
     push_cron_alert(&config, &job, AGENT_JOB_USER_FAILURE_MESSAGE);
 
     let items =
-        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+        crate::openhuman::desktop::notifications::store::list(&config, 10, 0, Some("cron"), None)
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
 }
@@ -122,7 +268,8 @@ async fn deliver_if_configured_alerts_no_delivery_failure() {
         .unwrap();
 
     let items =
-        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+        crate::openhuman::desktop::notifications::store::list(&config, 10, 0, Some("cron"), None)
+            .unwrap();
     assert_eq!(
         items.len(),
         1,
@@ -149,7 +296,8 @@ async fn deliver_if_configured_does_not_alert_successful_empty_no_delivery() {
         .unwrap();
 
     let items =
-        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+        crate::openhuman::desktop::notifications::store::list(&config, 10, 0, Some("cron"), None)
+            .unwrap();
     assert!(
         items.is_empty(),
         "a successful empty run must not spam the alerts tab"
@@ -856,8 +1004,8 @@ async fn cron_agent_job_uses_agent_definition_tool_scope() {
     job.name = Some("morning_briefing".into());
     job.agent_id = Some("morning_briefing".into());
 
-    let agent = build_agent_for_cron_job(&config, &job).expect("build cron agent");
-    let visible = agent.visible_tool_names_for_test();
+    let built = build_agent_for_cron_job(&config, &job).expect("build cron agent");
+    let visible = built.agent.visible_tool_names_for_test();
 
     assert!(
         !visible.is_empty(),
@@ -996,6 +1144,46 @@ async fn persist_job_result_failure_disables_one_shot() {
     let updated = cron::get_job(&config, &job.id).unwrap();
     assert!(!updated.enabled);
     assert_eq!(updated.last_status.as_deref(), Some("error"));
+}
+
+#[tokio::test]
+async fn persist_job_result_disables_at_job_without_delete_flag() {
+    // Regression: an `At` job created without delete_after_run (the RPC default,
+    // and every shell `At` job) must not be rescheduled after it runs. Its `at`
+    // is a fixed instant, so reschedule_after_run would write next_run = at
+    // (now in the past) and due_jobs would re-select it on every poll, re-firing
+    // the job forever.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let at = Utc::now() + ChronoDuration::minutes(10);
+    let job = cron::add_agent_job(
+        &config,
+        Some("at-no-delete".into()),
+        crate::openhuman::cron::Schedule::At { at },
+        "Hello",
+        SessionTarget::Isolated,
+        None,
+        None,
+        false, // delete_after_run = false — the previously-buggy case
+    )
+    .unwrap();
+    let started = Utc::now();
+    let finished = started + ChronoDuration::milliseconds(10);
+
+    let success = persist_job_result(&config, &job, true, "ok", started, finished).await;
+    assert!(success);
+
+    // The row is kept (not auto-deleted) but disabled, and its run is recorded.
+    let updated = cron::get_job(&config, &job.id).unwrap();
+    assert!(!updated.enabled, "At job must be disabled after one run");
+    assert_eq!(updated.last_status.as_deref(), Some("ok"));
+
+    // It is never due again — even at a time past its `at` instant.
+    let due = cron::due_jobs(&config, at + ChronoDuration::minutes(1)).unwrap();
+    assert!(
+        !due.iter().any(|j| j.id == job.id),
+        "disabled At job must not be re-selected by due_jobs"
+    );
 }
 
 #[tokio::test]
@@ -1752,7 +1940,7 @@ fn proactive_job() -> CronJob {
 }
 
 async fn cron_alerts(config: &Config) -> usize {
-    crate::openhuman::notifications::store::list(config, 10, 0, Some("cron"), None)
+    crate::openhuman::desktop::notifications::store::list(config, 10, 0, Some("cron"), None)
         .unwrap()
         .len()
 }
@@ -1781,7 +1969,8 @@ async fn deliver_if_configured_empty_failure_alerts_with_fallback_body() {
         .await
         .is_ok());
     let items =
-        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+        crate::openhuman::desktop::notifications::store::list(&config, 10, 0, Some("cron"), None)
+            .unwrap();
     assert_eq!(items.len(), 1);
     assert!(items[0].body.contains("failed without output"));
 }
@@ -1829,7 +2018,7 @@ fn next_user_error(
 
 #[test]
 fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
-    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+    use crate::openhuman::web_chat::subscribe_web_channel_events;
 
     // Folded from two tests that both published `api_key_missing` to the
     // process-global bus and could false-pass off each other's broadcast under

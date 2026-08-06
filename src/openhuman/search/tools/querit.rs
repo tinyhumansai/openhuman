@@ -107,7 +107,7 @@ impl QueritSearchTool {
         timeout_secs: u64,
     ) -> Self {
         let timeout = timeout_secs.max(1);
-        let http_client = crate::openhuman::tls::tls_client_builder()
+        let http_client = crate::openhuman::util::tls::tls_client_builder()
             .http1_only()
             .timeout(Duration::from_secs(timeout))
             .connect_timeout(Duration::from_secs(10))
@@ -162,10 +162,13 @@ impl QueritSearchTool {
 
     fn render_results_markdown(&self, results: &[QueritResultItem], query: &str) -> String {
         if results.is_empty() {
-            return format!("_No results for `{query}`._");
+            return format!("_No results for `{query}`_ (via Querit)");
         }
 
-        let mut out = format!("# Search results -- `{query}`\n");
+        // Carry the shared `(via <Provider>)` attribution marker the plain-text
+        // renderer already emits, so the tool timeline can label the row
+        // (#5136). Production shows the markdown rendering.
+        let mut out = format!("# Search results -- `{query}` (via Querit)\n");
         for item in results.iter().take(self.max_results) {
             let title = item
                 .title
@@ -565,6 +568,30 @@ mod tests {
         assert!(result.contains("Page age: 2026-05-01"));
         assert!(result.contains("Site: Example"));
         assert!(result.contains("First result snippet."));
+    }
+
+    #[test]
+    fn test_render_markdown_carries_provider_marker() {
+        // The markdown renderer is what production shows
+        // (`output_for_llm(true)`), so it must carry the same shared
+        // `(via <Provider>)` marker the plain-text renderer emits — that is
+        // what the tool timeline reads back to label the row (#5136).
+        let results = vec![QueritResultItem {
+            url: "https://example.com/a".into(),
+            page_age: None,
+            title: Some("First Result".into()),
+            snippet: Some("Snippet.".into()),
+            site_name: None,
+            site_icon: None,
+            sentence: vec![],
+        }];
+        let result = tool().render_results_markdown(&results, "test");
+        assert!(result.lines().next().unwrap().ends_with("(via Querit)"));
+
+        // A completed empty search is attributed too, so the timeline does not
+        // keep showing it as in-progress.
+        let empty = tool().render_results_markdown(&[], "test");
+        assert!(empty.trim_end().ends_with("(via Querit)"));
     }
 
     #[test]

@@ -93,6 +93,8 @@ let _activeTransport: CoreTransport | null = null;
 /**
  * Override the active transport used by `callCoreRpc`.
  * Set to null to revert to the default local HTTP path.
+ *
+ * @knipignore Public transport-manager integration seam for remote profiles.
  */
 export function setActiveCoreTransport(transport: CoreTransport | null): void {
   _activeTransport = transport;
@@ -106,7 +108,7 @@ export function setActiveCoreTransport(transport: CoreTransport | null): void {
  * in again.`) can drive both a silent swallow in usage/credits chains AND
  * a global reauth signal without every caller re-implementing the regex.
  */
-export type CoreRpcErrorKind =
+type CoreRpcErrorKind =
   | 'auth_expired'
   | 'provider_auth' // downstream provider 401 — NOT user session expiry
   | 'transport'
@@ -114,7 +116,14 @@ export type CoreRpcErrorKind =
   | 'rate_limited'
   | 'budget_exceeded'
   | 'thread_not_found'
+  | 'method_not_found' // the running core does not expose this method — permanent
   | 'unknown';
+
+/**
+ * Prefix the core prepends to an unrecognised-method error. Mirrors
+ * `UNKNOWN_METHOD_PREFIX` in `src/core/dispatch.rs` — keep the two in sync.
+ */
+const UNKNOWN_METHOD_PREFIX = 'unknown method: ';
 
 export class CoreRpcError extends Error {
   readonly kind: CoreRpcErrorKind;
@@ -145,6 +154,11 @@ export function classifyRpcError(
   if (isThreadNotFoundRpcData(data)) return 'thread_not_found';
   if (httpStatus === 401) return 'auth_expired';
   if (httpStatus === 429) return 'rate_limited';
+  // The running core has no such method — a transport-boundary version skew
+  // (older core than the UI bundle, a domain-gated `DomainSet`, or a slim
+  // feature build), never a transient fault. Classified before the generic
+  // arms so polling callers can stop instead of retrying forever (#5157).
+  if (message.startsWith(UNKNOWN_METHOD_PREFIX)) return 'method_not_found';
   // Confirmed OpenHuman session expiry — explicit markers from the backend/core.
   if (/Session expired|SESSION_EXPIRED/i.test(message)) return 'auth_expired';
   // Core-side "no backend session token" → the auth profile is gone but the
@@ -236,6 +250,18 @@ function threadIdFromRpcData(data: unknown): string | null {
   return null;
 }
 
+/**
+ * Whether `error` is the core reporting that it does not expose the method.
+ *
+ * This is a **permanent** condition for the life of the connection: the method
+ * is absent from the running core's registry, so retrying can never succeed.
+ * Pollers must treat it as terminal and stop — an unbounded retry loop against
+ * an absent method produced ~9k Sentry events/day from a single client (#5157).
+ */
+export function isMethodNotFoundCoreRpcError(error: unknown): error is CoreRpcError {
+  return error instanceof CoreRpcError && error.kind === 'method_not_found';
+}
+
 export function isThreadNotFoundCoreRpcError(
   error: unknown,
   threadId?: string
@@ -285,6 +311,8 @@ const CORE_RPC_TOKEN_INVALIDATED_EVENT = 'invalidated';
  * Subscribe to core RPC bearer invalidations. Returns an unsubscribe handle.
  * The listener fires AFTER the cache has been cleared, so a subsequent
  * `getCoreRpcToken()` will re-resolve.
+ *
+ * @knipignore Public token-invalidation subscription seam for long-lived RPC consumers.
  */
 export function subscribeCoreRpcTokenInvalidated(listener: () => void): () => void {
   const wrapped = () => listener();
@@ -591,8 +619,8 @@ export async function getCoreHttpBaseUrl(): Promise<string> {
  * unauthenticated request that the server will reject with 401 and have the
  * browser auto-reconnect against forever.
  *
- * The same helper is consumed by the WebhooksDebugPanel settings screen and
- * is the seam #1339 will reuse when the approvals SSE stream lands.
+ * This is the seam #1339 will reuse when the approvals SSE stream lands (the
+ * former WebhooksDebugPanel consumer was retired with the webhooks UI).
  *
  * SECURITY (audit U3): forwarding the long-lived bearer in the query string can
  * leak into proxy/server logs. It is bounded today — `QUERY_TOKEN_PATHS`
@@ -601,6 +629,8 @@ export async function getCoreHttpBaseUrl(): Promise<string> {
  * logs this URL. The proper fix is a short-lived single-use handshake token
  * minted just before opening the stream; that requires a new core endpoint and
  * is tracked as the follow-up to this seam. Do not log the returned URL.
+ *
+ * @knipignore Documented webhook SSE authentication URL seam.
  */
 export function buildWebhookEventsUrl(baseUrl: string, coreRpcToken: string | null): string | null {
   if (!coreRpcToken) return null;

@@ -11,7 +11,7 @@ import Kbd from '../commands/Kbd';
 // ordering and appends Help. Unknown groups sort alphabetically after these.
 const DISPLAY_ORDER = ['Navigation', 'Profiles', 'Chat', 'View', 'General', 'Help'];
 
-export interface ShortcutGroup {
+interface ShortcutGroup {
   group: string;
   items: RegisteredAction[];
 }
@@ -34,7 +34,7 @@ function getSnapshot(): RegisteredAction[] {
  * shortcut. Driven by the same registry the command palette uses, so the help
  * directory can never drift from the real bindings.
  */
-export function useActiveShortcutGroups(): ShortcutGroup[] {
+function useActiveShortcutGroups(): ShortcutGroup[] {
   const actions = useSyncExternalStore(subscribe, getSnapshot);
   return useMemo(() => {
     const byGroup = new Map<string, RegisteredAction[]>();

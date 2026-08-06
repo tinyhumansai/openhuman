@@ -12,7 +12,7 @@ import { BODY_PATH } from './paths';
  */
 export type GhostyVariant = 'shaded' | 'flat';
 
-export interface GhostyDefsProps {
+interface GhostyDefsProps {
   idPrefix: string;
   bodyColor: string;
   variant?: GhostyVariant;

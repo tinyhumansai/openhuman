@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::notifications::store as notifications_store;
-use crate::openhuman::notifications::types::{IntegrationNotification, NotificationStatus};
+use crate::openhuman::desktop::notifications::store as notifications_store;
+use crate::openhuman::desktop::notifications::types::{
+    IntegrationNotification, NotificationStatus,
+};
 
 use super::types::{HeartbeatCategory, PendingEvent, PlannedDelivery};
 use super::utils::sanitize_preview;

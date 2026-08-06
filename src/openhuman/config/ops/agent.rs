@@ -26,6 +26,10 @@ pub struct AutonomySettingsPatch {
     /// "Always allow" allowlist — tool names the gate skips prompting for.
     pub auto_approve: Option<Vec<String>>,
     pub require_task_plan_approval: Option<bool>,
+    /// Blanket "auto-approve everything" bypass. `SubconsciousTainted` and
+    /// `Unknown` origins are still denied by the gate regardless of this
+    /// setting.
+    pub auto_approve_all: Option<bool>,
 }
 
 /// Partial update for the `[agent]` block. Currently carries the single
@@ -122,6 +126,9 @@ pub async fn apply_autonomy_settings(
     if let Some(require_task_plan_approval) = update.require_task_plan_approval {
         config.autonomy.require_task_plan_approval = require_task_plan_approval;
     }
+    if let Some(auto_approve_all) = update.auto_approve_all {
+        config.autonomy.auto_approve_all = auto_approve_all;
+    }
 
     config.save().await.map_err(|e| e.to_string())?;
 
@@ -188,7 +195,7 @@ pub async fn add_auto_approve_tool(tool_name: &str) -> Result<(), String> {
 /// wall-clock timeout).
 ///
 /// After persisting, pushes the new value into the live
-/// [`crate::openhuman::tool_timeout`] runtime so subsequent tool calls honour
+/// [`crate::openhuman::tools::timeout`] runtime so subsequent tool calls honour
 /// it without a core restart. The `OPENHUMAN_TOOL_TIMEOUT_SECS` env var, when
 /// set, still overrides the config value (the push is a no-op in that case).
 /// Returns the updated config snapshot.
@@ -196,7 +203,7 @@ pub async fn apply_agent_settings(
     config: &mut Config,
     update: AgentSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    use crate::openhuman::tool_timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
+    use crate::openhuman::tools::timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
 
     if let Some(timeout_secs) = update.agent_timeout_secs {
         if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&timeout_secs) {
@@ -213,7 +220,7 @@ pub async fn apply_agent_settings(
     config.save().await.map_err(|e| e.to_string())?;
 
     let effective =
-        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+        crate::openhuman::tools::timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
     log::debug!(
         "[config][agent] agent settings saved; agent_timeout_secs={} effective={}s",
         config.agent.agent_timeout_secs,
@@ -243,13 +250,13 @@ pub async fn load_and_apply_agent_settings(
 /// is overriding the configured value, so the UI can explain a no-op control.
 pub async fn get_agent_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
-    crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    crate::openhuman::tools::timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
     let value = serde_json::json!({
         "agent_timeout_secs": config.agent.agent_timeout_secs,
-        "effective_timeout_secs": crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
-        "env_override": crate::openhuman::tool_timeout::env_override_active(),
-        "min_timeout_secs": crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS,
-        "max_timeout_secs": crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS,
+        "effective_timeout_secs": crate::openhuman::tools::timeout::tool_execution_timeout_secs(),
+        "env_override": crate::openhuman::tools::timeout::env_override_active(),
+        "min_timeout_secs": crate::openhuman::tools::timeout::MIN_TIMEOUT_SECS,
+        "max_timeout_secs": crate::openhuman::tools::timeout::MAX_TIMEOUT_SECS,
     });
     Ok(RpcOutcome::single_log(value, "agent settings read"))
 }
@@ -560,7 +567,7 @@ pub async fn apply_activity_level_settings(
     config.save().await.map_err(|e| e.to_string())?;
 
     let gate_cfg = config.scheduler_gate.clone();
-    crate::openhuman::scheduler_gate::gate::update_config(gate_cfg);
+    crate::openhuman::cron::scheduler_gate::gate::update_config(gate_cfg);
 
     tracing::info!(
         level = %level.as_str(),

@@ -19,7 +19,7 @@ interface ActionItemChecklistProps {
   items: MeetCallActionItem[];
 }
 
-export function ActionItemChecklist({ items }: ActionItemChecklistProps) {
+function ActionItemChecklist({ items }: ActionItemChecklistProps) {
   const { t } = useT();
   const navigate = useNavigate();
   const [checked, setChecked] = useState<Record<number, boolean>>({});

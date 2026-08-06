@@ -49,9 +49,8 @@ export VITE_BACKEND_URL="$MOCK_API_URL"
 # unless the caller already pinned one explicitly.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 
-# The tinyagents harness is the agent engine on every build now (issue #4249);
-# the suite exercises it by default. Set OPENHUMAN_AGENT_GRAPH_{TINYAGENTS,CHANNEL,
-# SUBAGENT}=0 to force the (being-removed) legacy engine during the transition.
+# The TinyAgents harness is the only agent engine on every build (issue #4249),
+# so the suite exercises the production path without a legacy escape hatch.
 
 echo "Running Rust tests with BACKEND_URL=$BACKEND_URL and RUST_MIN_STACK=$RUST_MIN_STACK"
 cd "$REPO_ROOT"
@@ -68,7 +67,7 @@ if [ -f "$HOME/.cargo/env" ]; then
 fi
 
 cargo_test() {
-  cargo test --manifest-path Cargo.toml --workspace "$@"
+  cargo test --manifest-path Cargo.toml --workspace --features bin-tools "$@"
 }
 
 integration_test_targets() {

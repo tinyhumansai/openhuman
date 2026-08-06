@@ -1,7 +1,7 @@
 /**
  * Tests for ConfirmDialog — the in-app confirmation modal that replaces native
- * window.confirm for Agent World destructive actions (#4197). Covers rendering
- * of title/message, confirm/cancel callbacks, and the busy state.
+ * window.confirm for Agent World destructive actions (#4197). Covers the
+ * compatibility prop mapping and destructive-by-default behavior.
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,15 +22,13 @@ describe('ConfirmDialog', () => {
   test('renders the title and message', () => {
     render(<ConfirmDialog {...baseProps()} />);
     expect(screen.getByText('Delete post')).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-dialog-message')).toHaveTextContent(
-      "Delete this post? This can't be undone."
-    );
+    expect(screen.getByText("Delete this post? This can't be undone.")).toBeInTheDocument();
   });
 
   test('calls onConfirm when the confirm button is clicked', async () => {
     const props = baseProps();
     render(<ConfirmDialog {...props} />);
-    await userEvent.click(screen.getByTestId('confirm-dialog-confirm'));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(props.onConfirm).toHaveBeenCalledTimes(1);
     expect(props.onCancel).not.toHaveBeenCalled();
   });
@@ -45,13 +43,18 @@ describe('ConfirmDialog', () => {
 
   test('disables the confirm button and shows busyLabel while busy', () => {
     render(<ConfirmDialog {...baseProps()} busy busyLabel="Deleting…" />);
-    const confirm = screen.getByTestId('confirm-dialog-confirm');
+    const confirm = screen.getByRole('button', { name: 'Deleting…' });
     expect(confirm).toBeDisabled();
     expect(confirm).toHaveTextContent('Deleting…');
   });
 
   test('uses a custom confirm label when provided', () => {
     render(<ConfirmDialog {...baseProps()} confirmLabel="Remove" />);
-    expect(screen.getByTestId('confirm-dialog-confirm')).toHaveTextContent('Remove');
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+  });
+
+  test('retains destructive-by-default styling through the global dialog', () => {
+    render(<ConfirmDialog {...baseProps()} />);
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveClass('bg-coral-500');
   });
 });

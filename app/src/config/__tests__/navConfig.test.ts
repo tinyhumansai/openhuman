@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { AVATAR_MENU_ITEMS, NAV_TABS } from '../navConfig';
 
 describe('NAV_TABS', () => {
-  it('has exactly 7 entries', () => {
-    expect(NAV_TABS).toHaveLength(7);
+  it('has exactly 6 entries', () => {
+    expect(NAV_TABS).toHaveLength(6);
   });
 
   it('has the correct ids in order', () => {
@@ -13,7 +13,6 @@ describe('NAV_TABS', () => {
       'human',
       'brain',
       'flows',
-      'orchestration',
       'agent-world',
       'connections',
     ]);
@@ -25,7 +24,6 @@ describe('NAV_TABS', () => {
       '/human',
       '/brain',
       '/flows',
-      '/orchestration',
       '/agent-world',
       '/connections',
     ]);
@@ -37,7 +35,6 @@ describe('NAV_TABS', () => {
       'nav.human',
       'nav.brain',
       'nav.flows',
-      'nav.orchestration',
       'nav.agentWorld',
       'nav.connections',
     ]);
@@ -49,10 +46,13 @@ describe('NAV_TABS', () => {
       'tab-human',
       'tab-brain',
       'tab-flows',
-      'tab-orchestration',
       'tab-agent-world',
       'tab-connections',
     ]);
+  });
+
+  it('no longer contains a top-level orchestration tab (folded under Brain)', () => {
+    expect(NAV_TABS.find(t => t.id === 'orchestration')).toBeUndefined();
   });
 
   it('no longer contains home or settings tabs (moved to the sidebar header)', () => {
@@ -101,5 +101,11 @@ describe('AVATAR_MENU_ITEMS', () => {
   it('billing uses openUrl; all others use navigate', () => {
     const openUrlItems = AVATAR_MENU_ITEMS.filter(i => i.kind === 'openUrl').map(i => i.id);
     expect(openUrlItems).toEqual(['billing']);
+  });
+
+  it('opens billing on the authenticated dashboard', () => {
+    expect(AVATAR_MENU_ITEMS.find(i => i.id === 'billing')?.target).toBe(
+      'https://tinyhumans.ai/dashboard'
+    );
   });
 });

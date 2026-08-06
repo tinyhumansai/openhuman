@@ -7,15 +7,7 @@ import { ValidationError } from './validation';
 export enum ErrorCategory {
   CHAT = 'CHAT',
   MSG = 'MSG',
-  CONTACT = 'CONTACT',
-  GROUP = 'GROUP',
-  MEDIA = 'MEDIA',
-  PROFILE = 'PROFILE',
-  AUTH = 'AUTH',
-  ADMIN = 'ADMIN',
   VALIDATION = 'VALIDATION',
-  SEARCH = 'SEARCH',
-  DRAFT = 'DRAFT',
 }
 
 function generateErrorCode(functionName: string, category?: ErrorCategory | string): string {

@@ -161,7 +161,6 @@ async function setupMockRpc(page: Page, state: MockState) {
               localState: {},
               keyringStatus: { isUnlocked: true, hasPassphrase: false },
               runtime: {
-                screenIntelligence: { enabled: false },
                 localAi: { enabled: false },
                 autocomplete: { enabled: false },
                 service: { running: false },

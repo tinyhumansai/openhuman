@@ -463,6 +463,53 @@ pub enum DomainEvent {
         status: String,
     },
 
+    /// A `flows_run` (or `flows_resume`) invocation just persisted its
+    /// `flow_runs` row, before execution begins (issue B35, runs-rail live
+    /// refresh). Published from `flows::ops::flows_run` right after
+    /// `start_flow_run_row` returns, so the UI can show "Running" immediately
+    /// instead of waiting for the blocking RPC to resolve or the first
+    /// `FlowRunProgress` step. Covers every run source (Rpc/Schedule/AppEvent/
+    /// Resume, incl. copilot live-run) since they all funnel through
+    /// `start_flow_run_row`.
+    FlowRunStarted {
+        /// The affected flow's id.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer thread id).
+        run_id: String,
+    },
+
+    /// The terminal companion to [`FlowRunStarted`] (issue B35 follow-up, runs
+    /// rail live finish). Published from `flows::ops::finish_flow_run_row`
+    /// right after `store::finish_flow_run` persists the terminal
+    /// `flow_runs` row, so the UI can flip a run to Completed/Failed live
+    /// instead of relying on a poll to notice the settled row.
+    FlowRunFinished {
+        /// The affected flow's id.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer thread id).
+        run_id: String,
+        /// Terminal status: `"completed"` | `"failed"` |
+        /// `"completed_with_warnings"` | `"cancelled"`.
+        status: String,
+    },
+
+    /// A saved flow's definition changed (created / updated / deleted /
+    /// enable-toggled). Bridged to a `flow:changed` socket event so an open
+    /// Workflows list or canvas refetches instead of silently showing stale
+    /// state — most importantly, so an agent `save_workflow` becomes visible in
+    /// a canvas the user has open (audit F6). Best-effort (broadcast bridges
+    /// drop on lag); the UI's own refetch-on-focus remains the backstop.
+    FlowChanged {
+        /// The affected flow's id.
+        flow_id: String,
+        /// What happened: `"created"` | `"updated"` | `"deleted"` |
+        /// `"enabled_changed"`.
+        kind: String,
+        /// Who made the change: `"agent"` | `"user"` | `"system"` — a coarse
+        /// hint for the UI banner ("an assistant edited this flow").
+        actor: String,
+    },
+
     // ── Skills ──────────────────────────────────────────────────────────
     /// A skill was loaded into the runtime.
     WorkflowLoaded { skill_id: String, runtime: String },
@@ -562,7 +609,7 @@ pub enum DomainEvent {
     /// flow-approval-surface, PR2/PR3). Unlike `ApprovalRequested`, this
     /// event carries no `thread_id`/`client_id` — a flow run has neither, so
     /// the generic chat-routed socket bridge
-    /// (`channels::providers::web::event_bus::ApprovalSurfaceSubscriber`)
+    /// (`web_chat::event_bus::ApprovalSurfaceSubscriber`)
     /// silently drops it (that gap was the original silent-deadlock bug).
     /// Published by `ApprovalGate::intercept_audited` alongside the existing
     /// `ApprovalRequested`, bridged by `core::socketio` directly to a
@@ -584,10 +631,39 @@ pub enum DomainEvent {
         summary: String,
     },
 
+    // ── Egress (privacy spine) ──────────────────────────────────────────
+    /// An external data transfer is about to leave the device. Published by
+    /// [`crate::openhuman::security::egress::emit_external_transfer`] from every
+    /// external-egress point (LLM inference, Composio tool calls, backend
+    /// integrations, network-fetch tools, cloud embeddings) *before* the
+    /// transfer, carrying an [`EgressDescriptor`](crate::openhuman::security::egress::EgressDescriptor)
+    /// that answers "what leaves, to where, why". Privacy epic S2 (#4436).
+    ///
+    /// Bridged to the `external_transfer_pending` web-channel socket event by
+    /// `EgressSurfaceSubscriber` (defined in
+    /// `src/openhuman/web_chat/event_bus.rs`) when the emitting
+    /// turn carries chat routing. `thread_id` / `client_id` come from the
+    /// ambient `APPROVAL_CHAT_CONTEXT` and are `None` for CLI / cron /
+    /// background transfers (no chat surface to route to).
+    ///
+    /// Only external transfers fire this event — local-only inference
+    /// (Ollama / LM Studio / …) never leaves the device and is not published.
+    ExternalTransferPending {
+        /// What leaves, to where, and why (plus S5 identification-risk fields,
+        /// default-empty until the detector lands).
+        descriptor: crate::openhuman::security::egress::EgressDescriptor,
+        /// Chat thread the transfer belongs to, when the turn originated from a
+        /// chat channel. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the disclosure to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+
     // ── Plan review (interactive plan-mode gate) ────────────────────────
     /// An interactive turn parked on a thread-scoped plan the user must
     /// review before execution. Published by
-    /// [`crate::openhuman::plan_review::gate::PlanReviewGate::request_review`]
+    /// [`crate::openhuman::agent::plan_review::gate::PlanReviewGate::request_review`]
     /// and bridged to the web channel as a `plan_review_request` socket event.
     PlanReviewRequested {
         /// Unique id correlating the decision back to the parked turn.
@@ -613,10 +689,10 @@ pub enum DomainEvent {
     // ── Artifacts ───────────────────────────────────────────────────────
     /// An artifact transitioned to [`ArtifactStatus::Ready`] — file
     /// is on disk and ready to be downloaded. Published by
-    /// [`crate::openhuman::artifacts::store::finalize_artifact`].
+    /// [`crate::openhuman::agent::artifacts::store::finalize_artifact`].
     /// Bridged to the web channel as an `artifact_ready` socket event
     /// when the publishing turn carries an `APPROVAL_CHAT_CONTEXT`
-    /// (see [`crate::openhuman::approval::ApprovalChatContext`]).
+    /// (see [`crate::openhuman::security::approval::ApprovalChatContext`]).
     /// Sub-task #2779 of #1535.
     ArtifactReady {
         /// UUID of the artifact record.
@@ -669,7 +745,7 @@ pub enum DomainEvent {
     /// An artifact record has been **created** (`ArtifactStatus::Pending`)
     /// but no bytes are on disk yet — the producing tool has only just
     /// reserved the row. Published by
-    /// [`crate::openhuman::artifacts::store::create_artifact`].
+    /// [`crate::openhuman::agent::artifacts::store::create_artifact`].
     /// Bridged to the web channel as an `artifact_pending` socket event
     /// so the frontend can render an in-progress / "Generating…" card the
     /// moment the tool dispatches, instead of waiting until the file
@@ -704,7 +780,7 @@ pub enum DomainEvent {
     // ── Webhooks ────────────────────────────────────────────────────────
     /// An incoming webhook request from the transport layer, ready for routing.
     WebhookIncomingRequest {
-        request: crate::openhuman::webhooks::WebhookRequest,
+        request: crate::openhuman::skills::webhooks::WebhookRequest,
         raw_data: serde_json::Value,
     },
     /// A webhook was received and routed to a skill.
@@ -952,22 +1028,6 @@ pub enum DomainEvent {
         total_size: usize,
         /// Wall-clock seconds since epoch when the rebuild completed.
         rebuilt_at: f64,
-    },
-
-    // ── Desktop Companion ──────────────────────────────────────────────
-    /// A desktop companion session was started.
-    CompanionSessionStarted { session_id: String, ttl_secs: u64 },
-    /// The companion transitioned to a new state.
-    CompanionStateChanged {
-        session_id: String,
-        state: String,
-        previous_state: String,
-    },
-    /// A desktop companion session ended.
-    CompanionSessionEnded {
-        session_id: String,
-        reason: String,
-        turn_count: usize,
     },
 
     // ── MCP Clients ─────────────────────────────────────────────────────
@@ -1350,7 +1410,10 @@ impl DomainEvent {
             | Self::CronDeliveryRequested { .. }
             | Self::ProactiveMessageRequested { .. }
             | Self::FlowScheduleTick { .. }
-            | Self::FlowRunProgress { .. } => "cron",
+            | Self::FlowRunProgress { .. }
+            | Self::FlowRunStarted { .. }
+            | Self::FlowRunFinished { .. }
+            | Self::FlowChanged { .. } => "cron",
 
             Self::WorkflowLoaded { .. }
             | Self::WorkflowStopped { .. }
@@ -1394,10 +1457,6 @@ impl DomainEvent {
             | Self::DevicePeerOffline { .. }
             | Self::DeviceTunnelFrame { .. } => "device",
 
-            Self::CompanionSessionStarted { .. }
-            | Self::CompanionStateChanged { .. }
-            | Self::CompanionSessionEnded { .. } => "companion",
-
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
             | Self::SystemRestartRequested { .. }
@@ -1432,6 +1491,8 @@ impl DomainEvent {
             | Self::FlowApprovalRequested { .. } => "approval",
 
             Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
+
+            Self::ExternalTransferPending { .. } => "egress",
 
             Self::ArtifactReady { .. }
             | Self::ArtifactFailed { .. }
@@ -1512,6 +1573,9 @@ impl DomainEvent {
             Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
             Self::FlowScheduleTick { .. } => "FlowScheduleTick",
             Self::FlowRunProgress { .. } => "FlowRunProgress",
+            Self::FlowRunStarted { .. } => "FlowRunStarted",
+            Self::FlowRunFinished { .. } => "FlowRunFinished",
+            Self::FlowChanged { .. } => "FlowChanged",
             Self::WorkflowLoaded { .. } => "WorkflowLoaded",
             Self::WorkflowStopped { .. } => "WorkflowStopped",
             Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",
@@ -1547,9 +1611,6 @@ impl DomainEvent {
             Self::DevicePeerOnline { .. } => "DevicePeerOnline",
             Self::DevicePeerOffline { .. } => "DevicePeerOffline",
             Self::DeviceTunnelFrame { .. } => "DeviceTunnelFrame",
-            Self::CompanionSessionStarted { .. } => "CompanionSessionStarted",
-            Self::CompanionStateChanged { .. } => "CompanionStateChanged",
-            Self::CompanionSessionEnded { .. } => "CompanionSessionEnded",
             Self::SystemStartup { .. } => "SystemStartup",
             Self::SystemShutdown { .. } => "SystemShutdown",
             Self::SystemRestartRequested { .. } => "SystemRestartRequested",
@@ -1568,6 +1629,7 @@ impl DomainEvent {
             Self::FlowApprovalRequested { .. } => "FlowApprovalRequested",
             Self::PlanReviewRequested { .. } => "PlanReviewRequested",
             Self::PlanReviewDecided { .. } => "PlanReviewDecided",
+            Self::ExternalTransferPending { .. } => "ExternalTransferPending",
             Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
             Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",

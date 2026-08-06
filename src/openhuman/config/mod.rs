@@ -8,11 +8,14 @@
 //! - Handling the schema definitions for all agent and system settings.
 
 pub mod daemon;
+pub mod migration_helpers;
+pub mod migrations;
 pub mod ops;
 pub mod schema;
 mod schemas;
 pub mod settings_cli;
 pub mod tools;
+pub mod workspace;
 
 #[allow(unused_imports)]
 pub use daemon::DaemonConfig;
@@ -26,34 +29,40 @@ pub use schema::{
     default_projects_dir, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
     resolve_action_dir, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
+// Crate-internal: workspace→config-dir resolver reused by the cloud embedder.
+pub(crate) use schema::resolve_config_dir_for_workspace;
 #[allow(unused_imports)]
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, output_language_directive, runtime_proxy_config,
     set_runtime_proxy_config, AgentConfig, AuditConfig, AutoJoinPolicy, AutoSummarizePolicy,
-    AutocompleteConfig, AutonomyConfig, BrowserComputerUseConfig, BrowserConfig,
-    CapabilityProviderConfig, CapabilityProviderTrustState, ChannelsConfig, ComposioConfig, Config,
-    ContextConfig, CostConfig, CronConfig, CurlConfig, DashboardConfig, DelegateAgentConfig,
-    DiagramViewerConfig, DictationActivationMode, DictationConfig, DiscordConfig,
-    DockerRuntimeConfig, EmailConfig, EmbeddingRouteConfig, GitbooksConfig, HeartbeatConfig,
-    HttpHeader, HttpRequestConfig, IMessageConfig, IntegrationToggle, IntegrationsConfig,
-    LarkConfig, LearningConfig, LinqConfig, LlmBackend, LocalAiConfig, MatrixConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MeetConfig, MemoryConfig,
+    AutonomyConfig, BrowserComputerUseConfig, BrowserConfig, CapabilityProviderConfig,
+    CapabilityProviderTrustState, ChannelsConfig, ComposioConfig, Config, ContextConfig,
+    CostConfig, CronConfig, CurlConfig, DashboardConfig, DelegateAgentConfig, DiagramViewerConfig,
+    DictationActivationMode, DictationConfig, DiscordConfig, DockerRuntimeConfig, EmailConfig,
+    EmbeddingRouteConfig, GitbooksConfig, HeartbeatConfig, HttpHeader, HttpRequestConfig,
+    IMessageConfig, IntegrationToggle, IntegrationsConfig, LarkConfig, LearningConfig, LinqConfig,
+    LlmBackend, LocalAiConfig, MatrixConfig, McpAuthConfig, McpClientConfig,
+    McpClientIdentityConfig, McpServerConfig, MedullaClientConfig, MedullaCycleConfig,
+    MedullaCycleLimits, MedullaPromptOverrides, MedullaVerification, MeetConfig, MemoryConfig,
     MemoryTreeConfig, ModelRouteConfig, MultimodalConfig, MultimodalFileConfig,
     ObservabilityConfig, OrchestratorModelConfig, PolymarketClobCredentials, PolymarketConfig,
     PrivacyConfig, PrivacyMode, ProxyConfig, ProxyScope, ReflectionSource, ReliabilityConfig,
-    ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    SchedulerGateConfig, SchedulerGateMode, ScreenIntelligenceConfig, SearchConfig, SearchEngine,
-    SearchEngineCredentials, SearxngConfig, SecretsConfig, SecurityConfig, ShellConfig,
-    SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
-    TeamModelConfig, TelegramConfig, TokenjuiceConfig, UpdateConfig, UpdateRestartStrategy,
-    VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig, YuanbaoConfig,
-    DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL,
+    ResourceLimitsConfig, RuntimeConfig, RuntimePoolConfig, RuntimePoolLangConfig, SandboxBackend,
+    SandboxConfig, SchedulerConfig, SchedulerGateConfig, SchedulerGateMode, SearchConfig,
+    SearchEngine, SearchEngineCredentials, SearxngConfig, SecretsConfig, SecurityConfig,
+    ShellConfig, SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
+    StreamMode, TeamModelConfig, TelegramConfig, TokenjuiceConfig, UpdateConfig,
+    UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
+    YuanbaoConfig, DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL,
     MEMORY_SYNC_INTERVAL_PRESETS_SECS, MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1,
     MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
-    MODEL_VISION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    MODEL_VISION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA,
+    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
 };
+// Kept as a separate re-export (issue #4117) so the large alphabetized group
+// above stays byte-identical and rustfmt-stable.
+pub use schema::RequiredOutputContract;
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,

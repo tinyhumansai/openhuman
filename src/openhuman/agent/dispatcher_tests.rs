@@ -277,7 +277,7 @@ fn assistant_tool_calls(id: &str) -> ConversationMessage {
 }
 
 fn tool_results(id: &str) -> ConversationMessage {
-    use crate::openhuman::inference::provider::ToolResultMessage;
+    use crate::openhuman::agent::messages::ToolResultMessage;
     ConversationMessage::ToolResults(vec![ToolResultMessage {
         tool_call_id: id.into(),
         content: "ok".into(),
@@ -285,13 +285,13 @@ fn tool_results(id: &str) -> ConversationMessage {
 }
 
 fn user_chat(text: &str) -> ConversationMessage {
-    ConversationMessage::Chat(crate::openhuman::inference::provider::ChatMessage::user(
-        text,
-    ))
+    ConversationMessage::Chat(crate::openhuman::agent::messages::ChatMessage::user(text))
 }
 
 fn assistant_chat(text: &str) -> ConversationMessage {
-    ConversationMessage::Chat(crate::openhuman::inference::provider::ChatMessage::assistant(text))
+    ConversationMessage::Chat(crate::openhuman::agent::messages::ChatMessage::assistant(
+        text,
+    ))
 }
 
 #[test]
@@ -458,7 +458,7 @@ fn native_dispatcher_omits_reasoning_content_when_absent() {
 }
 
 fn tool_results_multi(ids: &[&str]) -> ConversationMessage {
-    use crate::openhuman::inference::provider::ToolResultMessage;
+    use crate::openhuman::agent::messages::ToolResultMessage;
     ConversationMessage::ToolResults(
         ids.iter()
             .map(|id| ToolResultMessage {

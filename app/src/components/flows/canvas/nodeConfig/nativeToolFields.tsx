@@ -18,7 +18,7 @@ import { Field, INPUT_CLASS, MONO_CLASS } from './nodeConfigFields';
 /** The `oh:` prefix that marks a native-tool slug (mirrors the Rust constant). */
 export const NATIVE_TOOL_PREFIX = 'oh:';
 
-export interface NativeToolFieldProps {
+interface NativeToolFieldProps {
   label: string;
   hint?: string;
   /** The full `config.slug`, e.g. `oh:web_search` (or empty / `oh:`). */

@@ -22,7 +22,7 @@
 //!   ← subagent_runner::run_inner_loop / run_typed_mode / run_subagent
 //!   ← SkillDelegationTool::execute   (delegate_to_integrations_agent)
 //!   ← Agent::execute_tool_call / execute_tools / turn
-//!   ← channels::providers::web::run_chat_task
+//!   ← web_chat::run_chat_task
 //! ```
 //!
 //! The crash trigger is `composio_list_tools` reloading the config from
@@ -50,7 +50,7 @@
 //! ## What this test does
 //!
 //! Faithful reproduction in cargo-test is awkward: we can't easily
-//! rebuild the upper chat-channel layers (`channels::providers::web::
+//! rebuild the upper chat-channel layers (`web_chat::
 //! run_chat_task → Agent::turn → execute_tools → SkillDelegationTool`)
 //! without standing up an HTTP + Socket.IO stack. We drive the production
 //! path from `run_subagent` downward — i.e. everything below
@@ -94,7 +94,7 @@
 //!   * `OPENHUMAN_WORKSPACE` pointed at a tempdir with a representative
 //!     `config.toml` so the TOML parser does real work,
 //!   * `run_subagent(integrations_agent)` exactly like
-//!     `delegate_to_integrations_agent` does, with a stubbed `Provider`
+//!     `delegate_to_integrations_agent` does, with a stubbed `ChatModel`
 //!     that emits one `composio_list_tools` tool call on iteration 1
 //!     and stops on iteration 2.
 //!
@@ -108,15 +108,12 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use openhuman_core::openhuman::agent::context::prompt::ToolCallFormat;
 use openhuman_core::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ModelSpec};
 use openhuman_core::openhuman::agent::harness::{
     run_subagent, with_parent_context, ParentExecutionContext, SubagentRunOptions,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::ToolCallFormat;
-use openhuman_core::openhuman::inference::provider::{
-    ChatRequest, ChatResponse, Provider, ToolCall,
-};
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
@@ -124,6 +121,9 @@ use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::tempdir;
+use tinyagents::harness::message::AssistantMessage;
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
 
 // ── env serialisation (config-rs reads process env) ──────────────────
 
@@ -178,7 +178,6 @@ chat_onboarding_completed = true
 [observability]
 [autonomy]
 [runtime]
-[screen_intelligence]
 [autocomplete]
 [reliability]
 [scheduler]
@@ -190,56 +189,47 @@ mode = "backend"
 entity_id = "test-entity"
 "#;
 
-// ── mock provider that emits one composio_list_tools tool call ──────
+// ── mock model that emits one composio_list_tools tool call ─────────
 
-struct StubProvider {
+struct StubModel {
     iter: Arc<Mutex<usize>>,
+    profile: ModelProfile,
 }
 
 #[async_trait]
-impl Provider for StubProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok("ok".into())
+impl ChatModel<()> for StubModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat(
+    async fn invoke(
         &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         let mut count = self.iter.lock();
         *count += 1;
         if *count == 1 {
-            Ok(ChatResponse {
-                text: Some("listing available gmail actions".into()),
-                tool_calls: vec![ToolCall {
-                    id: "call_1".into(),
-                    name: "composio_list_tools".into(),
-                    arguments: json!({ "toolkits": ["gmail"] }).to_string(),
-                    extra_content: None,
-                }],
+            Ok(ModelResponse {
+                message: AssistantMessage {
+                    id: None,
+                    content: Vec::new(),
+                    tool_calls: vec![ToolCall::new(
+                        "call_1",
+                        "composio_list_tools",
+                        json!({ "toolkits": ["gmail"] }),
+                    )],
+                    usage: None,
+                },
                 usage: None,
-                reasoning_content: None,
+                finish_reason: Some("tool_calls".into()),
+                raw: None,
+                resolved_model: None,
+                continue_turn: None,
             })
         } else {
-            Ok(ChatResponse {
-                text: Some("done".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            })
+            Ok(ModelResponse::assistant("done"))
         }
-    }
-
-    fn supports_native_tools(&self) -> bool {
-        true
     }
 }
 
@@ -338,19 +328,22 @@ fn composio_list_tools_via_subagent_runs_on_production_worker_stack() {
 async fn drive_subagent() {
     let _ = AgentDefinitionRegistry::init_global_builtins();
 
-    let provider = Arc::new(StubProvider {
+    let mut profile = ModelProfile::default();
+    profile.tool_calling = true;
+    let model = Arc::new(StubModel {
         iter: Arc::new(Mutex::new(0)),
+        profile,
     });
 
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["integrations_agent".to_string()].into_iter().collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
-            provider.clone(),
-        ),
+        turn_model_source:
+            openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
@@ -375,9 +368,9 @@ async fn drive_subagent() {
         .expect("integrations_agent built-in must exist")
         .clone();
     // The shipped `integrations_agent` definition has `model.hint =
-    // "agentic"`, which would otherwise build a fresh provider via the
+    // "agentic"`, which would otherwise build a fresh model via the
     // workload factory and try to hit the real backend. Override to
-    // Inherit so the stub provider above receives the request — same
+    // Inherit so the stub model above receives the request — same
     // trick used in `tests/calendar_grounding_e2e.rs`.
     def.model = ModelSpec::Inherit;
 

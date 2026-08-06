@@ -69,6 +69,37 @@ describe('agentProfilesApi', () => {
     });
   });
 
+  it('forwards dedicatedMemory/dedicatedWorkspace on upsert and round-trips the read-only resolved paths on list', async () => {
+    const profile = {
+      id: 'writer',
+      name: 'Writer',
+      description: 'Drafts copy.',
+      agentId: 'orchestrator',
+      builtIn: false,
+      dedicatedMemory: true,
+      dedicatedWorkspace: true,
+    };
+    const enriched = {
+      ...profile,
+      soulMdFile: '/workspace/personalities/writer/SOUL.md',
+      workspaceDir: '/action/profiles/writer',
+    };
+    const response = { profiles: [enriched], activeProfileId: 'writer' };
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: response });
+    const { agentProfilesApi } = await import('./agentProfilesApi');
+    await expect(agentProfilesApi.upsert(profile)).resolves.toEqual(response);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.profiles_upsert',
+      params: { profile },
+    });
+
+    mockCallCoreRpc.mockResolvedValueOnce({ data: response });
+    const listed = await agentProfilesApi.list();
+    expect(listed.profiles[0].soulMdFile).toBe('/workspace/personalities/writer/SOUL.md');
+    expect(listed.profiles[0].workspaceDir).toBe('/action/profiles/writer');
+  });
+
   it('rejects malformed envelopes with undefined data', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({ data: undefined });
 

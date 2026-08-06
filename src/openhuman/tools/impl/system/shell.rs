@@ -1,6 +1,6 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::runtime_python::PythonBootstrap;
+use crate::openhuman::runtime::javascript::NodeBootstrap;
+use crate::openhuman::runtime::python::PythonBootstrap;
 use crate::openhuman::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
@@ -173,11 +173,11 @@ impl ShellTool {
     /// deadline applies only when the caller passes `timeout_secs` (issue
     /// #4023). A `0` explicitly disables it. Any positive value is clamped to
     /// `1..=3600`. See
-    /// [`crate::openhuman::tool_timeout::explicit_call_timeout_duration`].
+    /// [`crate::openhuman::tools::timeout::explicit_call_timeout_duration`].
     fn explicit_timeout(&self, requested: Option<u64>) -> Option<Duration> {
-        crate::openhuman::tool_timeout::explicit_call_timeout_duration(
+        crate::openhuman::tools::timeout::explicit_call_timeout_duration(
             requested,
-            crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS,
+            crate::openhuman::tools::timeout::MAX_TIMEOUT_SECS,
         )
     }
 }
@@ -346,6 +346,20 @@ impl ShellTool {
         // `ApprovalGate` (see `external_effect_with_args`) before `execute()`
         // ran; this enforces what must still hold afterwards.
         if let Err(reason) = self.security.check_gated_command(command) {
+            return (false, ToolResult::error(reason));
+        }
+
+        // Cross-profile write guard (1b), shell call site. File tools enforce
+        // the same boundary per-path in `SecurityPolicy::validate_path`; shell
+        // commands never funnel through that, so scan the command's path-shaped
+        // tokens against the profile's own workspace (its cwd). No-op unless the
+        // session runs under a dedicated-workspace profile. See
+        // `profiles::guard::scan_command_for_cross_profile` for the containment
+        // rationale (the cwd is already rooted at the profile's own dir).
+        let cwd = self.effective_action_dir_for_context(context);
+        if let Err(reason) =
+            super::check_cross_profile_command(self.security.as_ref(), command, &cwd, "shell")
+        {
             return (false, ToolResult::error(reason));
         }
 
@@ -532,7 +546,7 @@ impl ShellTool {
         // long command isn't killed while still bounding a wedged sandbox.
         let explicit_timeout = self.explicit_timeout(requested_timeout);
         let effective = explicit_timeout.unwrap_or_else(|| {
-            Duration::from_secs(crate::openhuman::tool_timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+            Duration::from_secs(crate::openhuman::tools::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
         });
         tracing::debug!(
             timeout_secs = effective.as_secs(),
@@ -1303,7 +1317,7 @@ mod tests {
         assert_eq!(
             tool.explicit_timeout(Some(9_999)),
             Some(Duration::from_secs(
-                crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS
+                crate::openhuman::tools::timeout::MAX_TIMEOUT_SECS
             ))
         );
     }

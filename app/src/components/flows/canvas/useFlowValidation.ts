@@ -23,9 +23,9 @@ import { type FlowValidation, validateFlow } from '../../../services/api/flowsAp
 const log = createDebug('app:flows:canvas:validate');
 
 /** Idle delay after the last edit before auto-validating the draft. */
-export const VALIDATION_DEBOUNCE_MS = 500;
+const VALIDATION_DEBOUNCE_MS = 500;
 
-export interface FlowValidationState {
+interface FlowValidationState {
   /** The most recent successful validation result, or `null` before the first. */
   validation: FlowValidation | null;
   /** True while a validation RPC is in flight (debounced or manual). */
@@ -105,5 +105,3 @@ export function useFlowValidation(
 
   return { validation, validating, validateNow: run };
 }
-
-export default useFlowValidation;

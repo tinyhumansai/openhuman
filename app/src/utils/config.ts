@@ -102,6 +102,22 @@ export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS !=
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
+/**
+ * Transcript-derived restore path (Phase C, `docs/plans/transcript-derived-view.md`).
+ *
+ * When **on** (default), the settled-turn process trails on thread open are
+ * hydrated from the `openhuman.threads_transcript_get` projection of the
+ * append-only `session_raw/*.jsonl` source of truth, instead of the legacy
+ * `turn_state_history` snapshot ring. Live token streaming is untouched either
+ * way — in-flight turns still render from socket-fed `chatRuntimeSlice` state.
+ *
+ * Automatic fallback to the legacy `turn_state_history` hydration when the RPC
+ * errors or reports `hasTranscript: false` (legacy threads), so the old path
+ * stays fully working. Hard-disable the whole derived path for a build with
+ * `VITE_DERIVED_TRANSCRIPT=false`.
+ */
+export const DERIVED_TRANSCRIPT_ENABLED = import.meta.env.VITE_DERIVED_TRANSCRIPT !== 'false';
+
 /** Google Analytics 4 Measurement ID. Leave blank to disable GA. */
 export const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
 
@@ -210,6 +226,26 @@ export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';
 
+/**
+ * Public GitHub repository URL. Target of the in-app "Star us on GitHub" CTA
+ * (#5005). Override via VITE_OPENHUMAN_GITHUB_REPO_URL for forks.
+ *
+ * The override is accepted only when it parses as an `https:` URL. This value is
+ * handed straight to `openUrl` by the CTA, so a malformed string or a
+ * custom-scheme override could break the button or invoke an unintended
+ * protocol handler; anything that is not valid HTTPS falls back to the default.
+ */
+export const OPENHUMAN_GITHUB_REPO_URL = ((): string => {
+  const fallback = 'https://github.com/tinyhumansai/openhuman';
+  const override = (import.meta.env.VITE_OPENHUMAN_GITHUB_REPO_URL as string | undefined)?.trim();
+  if (!override) return fallback;
+  try {
+    return new URL(override).protocol === 'https:' ? override : fallback;
+  } catch {
+    return fallback;
+  }
+})();
+
 /** Support page base URL. The crash screen appends `?ref=<sentryEventId>` so support can correlate a user's pasted Error ID to the exact Sentry event. Override via VITE_SUPPORT_URL for deployment-specific support endpoints. */
 export const SUPPORT_URL =
   (import.meta.env.VITE_SUPPORT_URL as string | undefined)?.trim() ||
@@ -242,6 +278,18 @@ export const MASCOT_VOICE_ID =
 export const MASCOT_VOICE_MODEL_ID =
   (import.meta.env.VITE_MASCOT_VOICE_MODEL_ID as string | undefined)?.trim() ||
   'eleven_multilingual_v2';
+
+/**
+ * Gates the realtime ElevenLabs Agents voice mode (#5399). Off by default so
+ * the classic turn-based voice pipeline stays the only path until the realtime
+ * session is ready; set `VITE_VOICE_MODE` to any non-empty value to expose the
+ * Settings toggle. This gates only the UI switch — the realtime code paths
+ * additionally check the persisted `mascot.voiceMode`, so the feature ships
+ * dark even where the flag is on.
+ */
+export const VOICE_MODE_FLAG_ENABLED = Boolean(
+  (import.meta.env.VITE_VOICE_MODE as string | undefined)?.trim()
+);
 
 /**
  * URL of the published mascot manifest (`dist/mascots.json` from the

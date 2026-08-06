@@ -8,8 +8,8 @@ use motosan_ai_oauth::Token;
 use serde::Deserialize;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
-use crate::openhuman::credentials::{state_dir_from_config, AuthService};
+use crate::openhuman::security::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
+use crate::openhuman::security::credentials::{state_dir_from_config, AuthService};
 
 use super::config::codex_oauth_config;
 

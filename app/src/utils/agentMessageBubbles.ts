@@ -207,7 +207,7 @@ function isHeadingLine(line: string): boolean {
   return /^\*\*[^*]+\*\*:?$/.test(trimmed);
 }
 
-export interface ParsedMarkdownTable {
+interface ParsedMarkdownTable {
   headers: string[];
   rows: string[][];
 }

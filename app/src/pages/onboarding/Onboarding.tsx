@@ -40,7 +40,6 @@ const Onboarding = () => {
         <Route path="custom/embeddings" element={<CustomEmbeddingsPage />} />
         <Route path="custom/activity" element={<CustomActivityPage />} />
         <Route path="custom/vault" element={<VaultSetupStep />} />
-        {/* <Route path="custom/memory" element={<CustomMemoryPage />} /> */}
         <Route path="*" element={<Navigate to="welcome" replace />} />
       </Route>
     </Routes>

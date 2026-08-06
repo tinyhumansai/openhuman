@@ -16,7 +16,7 @@ import { callCoreRpc } from '../../services/coreRpcClient';
 
 type Request = { refId: string; keyName: string; prompt: string };
 
-export function SecretPromptDialog() {
+function SecretPromptDialog() {
   const { t } = useT();
   const [request, setRequest] = useState<Request | null>(null);
   const [value, setValue] = useState('');

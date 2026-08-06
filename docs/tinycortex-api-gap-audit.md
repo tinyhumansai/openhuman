@@ -1,5 +1,10 @@
 # TinyCortex API Gap Audit (Phase 0.2)
 
+**Status (2026-07-22):** Historical gap inventory for the completed engine
+cutover. Counts and source anchors below describe the audit base; unresolved
+host consolidation work, including G1 re-homing and sync dedupe, is tracked in
+`tinycortex-migration-plan-2026-07-22.md`.
+
 **Purpose.** Map every host call site into the engine-mapping modules
 (`memory_store`, `memory_tree`, `memory_queue`, and the long tail) onto a TinyCortex
 public API. Where no crate API covers a host need, record a **gap** — each gap becomes a
@@ -48,16 +53,16 @@ The crate exposes every seam the plan expects, plus more. Host implements these:
 | `Summariser` (time-tree, string) | `tree/runtime/engine.rs:29` | **divergent — see G6** |
 | `EntityExtractor` (regex + LLM) | `score/extract/composite.rs:16` | `tinycortex/chat.rs` (LLM variant) |
 | `QueueDelegates` | `queue/handlers.rs:96` | `tinycortex/queue_driver.rs` |
-| `TreeJobSink` | `ingest/types.rs:15` | `tinycortex/sinks.rs` |
-| `TreeLeafSink` | `archivist/sink.rs:44` | `tinycortex/sinks.rs` |
-| `SnapshotItemSource` | `diff/source.rs:28` | `tinycortex/sinks.rs` |
-| `EntityOccurrenceIndex` | `graph/types.rs:44` | `tinycortex/sinks.rs` |
+| `TreeJobSink` | `ingest/types.rs:15` | `tinycortex/ingest.rs` |
+| `TreeLeafSink` | `archivist/sink.rs:44` | `tinycortex/ingest.rs` |
+| `SnapshotItemSource` | `diff/source.rs:28` | host diff adapter |
+| `EntityOccurrenceIndex` | `graph/types.rs:44` | host graph adapter |
 | `SelfIdentity` | `store/entity_index/store.rs:25` | host identity registry |
 | `GoalsGenerator` | `goals/reflect.rs:57` | `tinycortex/chat.rs` |
 | `SourceReader` | `sources/readers/mod.rs:1732` | local readers only *(amended: live-sync readers join the crate in W-SYNC, plan §8)* |
 | `SyncEventSink` *(new, W-SYNC)* | `sync/traits.rs` (planned) | `tinycortex/sync_sink.rs` → `MemorySyncStage` bus events |
 | `SkillDocSink` *(new, W-SYNC)* | `sync/traits.rs` (planned) | forwards to `MemoryClient::store_skill_sync` (host-retained unified tier) |
-| `ConversationEventBus` / `ChannelEventHandler` | `conversations/bus.rs:106/95` | `tinycortex/bus.rs` (translate to `DomainEvent`) |
+| `ConversationEventBus` / `ChannelEventHandler` | `conversations/bus.rs:106/95` | host `memory_conversations/bus.rs` (translate to `DomainEvent`) |
 
 Config seam: `MemoryConfig{workspace, embedding: EmbeddingConfig{dim,model,strict},
 tree: TreeConfig{input_token_budget,output_token_budget,summary_fanout,flush_age_secs},
@@ -86,7 +91,7 @@ retrieval: RetrievalConfig{default_profile}, sync_budget: SyncBudgetConfig}` +
 
 ### G2 — Graph relation-edge persistence (E2GraphRAG accumulation) — **HARD**
 
-- **Host:** `memory_store/unified/graph.rs`, `unified/query.rs` persist and query co-occurrence
+- **Host:** `memory_store/namespace_store/{graph,query}.rs` persist and query co-occurrence
   / LLM-triple relations; `NamespaceMemoryHit.supporting_relations: Vec<GraphRelationRecord>`
   is populated at retrieval.
 - **Crate:** persists the **entity occurrence index** at persist time

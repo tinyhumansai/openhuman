@@ -31,7 +31,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory_tree::tree_runtime::{engine, store};
+use openhuman_core::openhuman::memory::tree::tree_runtime::{engine, store};
 use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 use tinyagents::TinyAgentsError;
 

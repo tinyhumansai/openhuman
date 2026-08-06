@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::content::obsidian_registry;
+use crate::openhuman::memory::store::content::obsidian_registry;
 use crate::rpc::RpcOutcome;
 
 use super::types::{ObsidianVaultStatusResponse, VaultHealthCheckResponse};
@@ -69,7 +69,7 @@ pub async fn vault_health_check_rpc(
     .await
     .map_err(|e| format!("vault_health_check fs probe join error: {e}"))?;
 
-    let pipeline = crate::openhuman::memory_tree::tree::rpc::pipeline_status_rpc(config)
+    let pipeline = crate::openhuman::memory::tree::tree::rpc::pipeline_status_rpc(config)
         .await
         .map_err(|e| format!("vault_health_check pipeline_status: {e}"))?;
 

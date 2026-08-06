@@ -15,10 +15,10 @@ This is deliberate scoping. The previous design tried to put every modality on-d
 
 | Workload                  | Default model                     | Implementation                                                                                                          |
 | ------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Memory embeddings**     | `all-minilm:latest`               | `src/openhuman/embeddings/ollama.rs` - used by the [Memory Tree](../obsidian-wiki/memory-tree.md) for vector search.    |
+| **Memory embeddings**     | `bge-m3`                          | `src/openhuman/inference/embeddings/ollama.rs` - used by the [Memory Tree](../obsidian-wiki/memory-tree.md) for vector search.    |
 | **Summary-tree building** | `gemma3:1b-it-qat` (configurable) | `src/openhuman/tree_summarizer/ops.rs` - source / topic / global summary builders for the Memory Tree.                  |
-| **Heartbeat loop**        | small chat model                  | `src/openhuman/heartbeat/` - periodic background reflection.                                                            |
-| **Learning / reflection** | small chat model                  | `src/openhuman/learning/reflection.rs` - passes that consolidate what was learned.                                      |
+| **Heartbeat loop**        | small chat model                  | `src/openhuman/subconscious/heartbeat/` - periodic background reflection.                                                            |
+| **Learning / reflection** | small chat model                  | `src/openhuman/agent/learning/reflection.rs` - passes that consolidate what was learned.                                      |
 | **Subconscious**          | small chat model                  | `src/openhuman/subconscious/executor.rs` - background evaluation loop.                                                  |
 | **Chat**                  | configured local chat model       | `Config::workload_local_model("chat")` reads `chat_provider`; `src/openhuman/routing/provider.rs` handles hint routing. |
 | **Reasoning**             | configured local chat model       | `Config::workload_local_model("reasoning")` reads `reasoning_provider`; see [Opting in](#opting-in).                    |
@@ -31,7 +31,7 @@ Each of these is an explicit opt-in. Turning on local AI does not silently route
 | -------------- | ---------------------------------------------------------------------------------------------- |
 | **Chat**       | Frontier reasoning quality unless `chat_provider` is explicitly set to a local provider.       |
 | **Reasoning**  | Stronger multi-step quality unless `reasoning_provider` is explicitly set to a local provider. |
-| **Vision**     | Same.                                                                                          |
+| **Vision**     | Same, unless `vision_provider` points at a local vision-capable model. See below.              |
 | **STT**        | Backend-proxied transcription (`src/openhuman/voice/cloud_transcribe.rs`).                     |
 | **TTS**        | Hosted [text-to-speech](../native-tools/voice.md) under the hood (`reply_speech.rs`).          |
 | **Web search** | Backend proxy (no API key on your machine).                                                    |
@@ -102,10 +102,23 @@ Local AI is worth turning on if any of these are true:
 
 It is **not** worth turning on if you only have a few sources connected, the cloud path is faster and the privacy benefit is small. There is also a hardware cost: Ollama and a small Gemma model want a few GB of RAM and pull a few GB of weights.
 
+## Local vision
+
+Vision is a separate capability from chat, and **most small local models cannot do it**. Ollama does not reject an image sent to a text-only model: it drops the image and answers from the prompt text, which produces a fluent description of something the model never saw. OpenHuman therefore resolves the vision model through a capability check and refuses to route a vision request at a chat-only model.
+
+What that means in practice:
+
+- `local_ai.vision_model_id` must name a vision-capable model. `moondream:1.8b-v2-q4_K_S` (~1.7 GB) is the smallest option; `gemma3:4b-it-qat` and `gemma4:e4b-it-q8_0` handle chat and vision with one set of weights.
+- Gemma 3 is text-only at 270M and 1B, and multimodal from 4B up. **Gemma 3n is a different model and is text-only at every size**, so it is not usable for vision even though it is a capable chat model.
+- Leaving `vision_model_id` empty is a valid "no local vision" setup. A vision request then returns a message naming the config key to set and the models to pull, rather than failing silently.
+- If a configured vision model turns out to be chat-only, the core logs a warning and falls back to a vision-capable default instead of sending images to a model that would ignore them.
+
+The full per-model capability table lives in [Local models & bring your own key](local-and-byok-models.md).
+
 ## What you'll need
 
 - [**Ollama**](https://ollama.com) installed and running locally, or [**LM Studio**](https://lmstudio.ai) with the local server enabled.
-- Enough disk for the models (`gemma3:1b-it-qat` \~700 MB, `all-minilm:latest` \~23 MB).
+- Enough disk for the models (`gemma3:1b-it-qat` \~1.0 GB, `bge-m3` \~1.2 GB, plus \~1.7 GB if you add Moondream for vision).
 - Enough RAM to keep the model resident (8 GB+ recommended, 16 GB+ ideal).
 
 OpenHuman handles the rest: lifecycle (`src/openhuman/inference/local/service/`), API clients, health checks, and graceful fallback to remote when the local provider disappears.
@@ -119,6 +132,7 @@ OpenHuman handles the rest: lifecycle (`src/openhuman/inference/local/service/`)
 
 ## See also
 
+- [Local models & bring your own key](local-and-byok-models.md). Per-model capability table and BYOK setup.
 - [Memory Tree](../obsidian-wiki/memory-tree.md). what local embeddings + summarization power.
 - [Automatic Model Routing](README.md). how lightweight chat hints prefer the local provider.
 - [Privacy & Security](../privacy-and-security.md). what moves on-device when you opt in.

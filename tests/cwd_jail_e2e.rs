@@ -1,4 +1,4 @@
-//! End-to-end tests for `openhuman::cwd_jail`.
+//! End-to-end tests for `openhuman::sandbox::cwd_jail`.
 //!
 //! Each test goes through the public surface only — `Jail`, `spawn`,
 //! `JailRegistry`, `default_backend` — and (where the platform allows it)
@@ -19,7 +19,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use openhuman_core::openhuman::cwd_jail::{
+use openhuman_core::openhuman::sandbox::cwd_jail::{
     default_backend, spawn, spawn_with, Jail, JailRegistry, NoopBackend,
 };
 

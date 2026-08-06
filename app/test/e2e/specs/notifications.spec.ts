@@ -177,7 +177,8 @@ describe('Notifications', () => {
     // may not have a bottom-tab button. Retry the hash set if it bounces.
     for (let attempt = 0; attempt < 3; attempt++) {
       await browser.execute(() => {
-        window.location.hash = '/notifications';
+        // `/notifications` now lands on the Welcome landing; jump to the alerts view.
+        window.location.hash = '/notifications?view=main';
       });
       await browser.pause(1_500);
       const h = await browser.execute(() => window.location.hash);
@@ -215,7 +216,9 @@ describe('Notifications', () => {
       return;
     }
 
-    await navigateViaHash('/notifications');
+    // The bare route intentionally shows the notifications welcome screen.
+    // Select the main view before asserting sections from the alerts UI.
+    await navigateViaHash('/notifications?view=main');
     await waitForNotificationsSections(10_000);
 
     const sectionVisible = await browser.execute(() => {

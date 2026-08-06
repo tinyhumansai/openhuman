@@ -9,7 +9,7 @@
 
 use super::super::definition::{PromptSource, ToolScope};
 use super::types::SubagentRunError;
-use crate::openhuman::context::prompt::PromptContext;
+use crate::openhuman::agent::context::prompt::PromptContext;
 use crate::openhuman::tools::Tool;
 
 // ── Heavy-schema toolkit accounting ─────────────────────────────────────
@@ -188,7 +188,7 @@ pub(super) fn filter_tool_indices(
             // explicit `disallow` above still wins). A deliberately tool-less
             // agent (`Named([])`, e.g. the payload summarizer) runs no tools,
             // produces no compacted output, and so stays tool-less.
-            if crate::openhuman::tokenjuice::is_recovery_tool(name) {
+            if crate::openhuman::inference::tokenjuice::is_recovery_tool(name) {
                 return !matches!(scope, ToolScope::Named(allowed) if allowed.is_empty());
             }
             if let Some(prefix) = skill_prefix.as_deref() {
@@ -203,6 +203,20 @@ pub(super) fn filter_tool_indices(
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Intersect a child definition's tool indices with the tools the parent turn
+/// actually exposes. An empty parent set is the legacy "unknown/unrestricted"
+/// sentinel used by internal callers and older tests.
+pub(super) fn retain_parent_visible_tool_indices(
+    indices: &mut Vec<usize>,
+    parent_tools: &[Box<dyn Tool>],
+    parent_visible: &std::collections::HashSet<String>,
+) {
+    if parent_visible.is_empty() {
+        return;
+    }
+    indices.retain(|&index| parent_visible.contains(parent_tools[index].name()));
 }
 
 pub(super) fn disallowed_tool_matches(disallowed: &[String], name: &str) -> bool {
@@ -248,10 +262,23 @@ mod tests {
             "research",
             "review_code",
             "do_crypto",
+            // `do_prediction_markets` is `markets_agent`'s `delegate_name`; the
+            // agent — and therefore this delegate tool — is compiled out with
+            // the `prediction-markets` feature.
+            #[cfg(feature = "prediction-markets")]
             "do_prediction_markets",
             "schedule_task",
+            // `make_presentation` is `presentation_agent`'s `delegate_name`; the agent —
+            // and therefore this delegate tool — is compiled out with the
+            // `documents` feature.
+            #[cfg(feature = "documents")]
             "make_presentation",
             "archive_session",
+            // `use_mcp_server` is `mcp_agent`'s `delegate_name`; the agent —
+            // and therefore this delegate tool — is compiled out with the
+            // `mcp` feature (#4799). `setup_mcp_server` belongs to
+            // `mcp_setup`, which stays registered in both builds.
+            #[cfg(feature = "mcp")]
             "use_mcp_server",
             "setup_mcp_server",
         ] {
@@ -274,7 +301,7 @@ mod tests {
 #[cfg(test)]
 mod recovery_visibility_tests {
     use super::*;
-    use crate::openhuman::tokenjuice::LEGACY_RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
+    use crate::openhuman::inference::tokenjuice::LEGACY_RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
     use crate::openhuman::tools::{CurrentTimeTool, RetrieveToolOutputTool};
 
     fn tools() -> Vec<Box<dyn crate::openhuman::tools::Tool>> {
@@ -334,6 +361,17 @@ mod recovery_visibility_tests {
             None,
         );
         assert!(!names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
+    }
+
+    #[test]
+    fn parent_visibility_caps_wildcard_child_scope() {
+        let t = tools();
+        let mut idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], None);
+        let parent_visible = ["current_time".to_string()].into_iter().collect();
+
+        retain_parent_visible_tool_indices(&mut idx, &t, &parent_visible);
+
+        assert_eq!(names(&idx, &t), vec!["current_time".to_string()]);
     }
 }
 

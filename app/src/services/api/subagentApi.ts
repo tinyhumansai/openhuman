@@ -14,7 +14,7 @@ import { callCoreRpc } from '../coreRpcClient';
 const log = debug('subagentApi');
 
 /** Result of a cancel request. Mirrors the Rust handler payload. */
-export interface SubagentCancelResult {
+interface SubagentCancelResult {
   /** True if a running sub-agent was aborted; false if it was already done/unknown. */
   cancelled: boolean;
   taskId: string;

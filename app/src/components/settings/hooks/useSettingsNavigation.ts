@@ -14,15 +14,12 @@ const log = debug('settings:nav');
 // SettingsRoute type — derived from the registry so it stays in sync.
 // ---------------------------------------------------------------------------
 
-export type SettingsRoute =
+type SettingsRoute =
   | 'home'
   | 'agents'
   | 'agent-access'
   | 'account'
   | 'cron-jobs'
-  | 'screen-intelligence'
-  | 'desktop-agent'
-  | 'autocomplete'
   | 'privacy'
   | 'billing'
   | 'team'
@@ -32,28 +29,17 @@ export type SettingsRoute =
   | 'llm'
   | 'voice'
   | 'tools'
-  | 'memory-data'
-  | 'memory-sync'
-  | 'memory-debug'
   | 'recovery-phrase'
   | 'wallet-balances'
-  | 'webhooks-debug'
-  | 'agent-chat'
-  | 'screen-awareness-debug'
-  | 'autocomplete-debug'
-  | 'voice-debug'
   | 'local-model-debug'
   | 'notifications'
   | 'notification-routing'
   | 'personality'
   | 'appearance'
   | 'approval-history'
-  | 'intelligence'
   | 'integrations'
   | 'composio-triggers'
-  | 'tasks'
   | 'mcp-server'
-  | 'dev-workflow'
   | 'sandbox-settings'
   | 'permissions'
   | 'activity-level'
@@ -67,12 +53,10 @@ export type SettingsRoute =
   | 'search'
   | 'skills-runner'
   | 'event-log'
-  | 'model-health'
-  | 'analysis-views'
   | 'tool-policy-diagnostics'
   | 'about';
 
-export interface BreadcrumbItem {
+interface BreadcrumbItem {
   label: string;
   onClick?: () => void;
 }

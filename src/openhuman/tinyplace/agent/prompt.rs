@@ -3,7 +3,7 @@
 //! The tiny.place domain owns this worker because its prompt, allowed tool
 //! surface, and future SDK-backed actions should evolve with the domain code.
 
-use crate::openhuman::context::prompt::{
+use crate::openhuman::agent::context::prompt::{
     render_safety, render_tools, render_user_files, render_workspace, PromptContext,
 };
 use anyhow::Result;
@@ -61,7 +61,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
+    use crate::openhuman::agent::context::prompt::{LearnedContextData, ToolCallFormat};
     use std::collections::HashSet;
 
     fn empty_ctx() -> PromptContext<'static> {
@@ -85,6 +85,8 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
         }
     }
 

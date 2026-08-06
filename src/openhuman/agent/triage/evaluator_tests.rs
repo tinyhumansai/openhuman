@@ -1,9 +1,7 @@
 use super::*;
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
-use crate::openhuman::agent_registry::agents::BUILTINS;
-use crate::openhuman::inference::provider::Provider;
-use async_trait::async_trait;
+use crate::openhuman::agent::registry::agents::BUILTINS;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc as StdArc;
@@ -235,24 +233,15 @@ fn classify_string_does_not_misclassify_unrelated_security_phrases() {
 // first; falling through to local arm uses a different
 // `provider_name` we inspect to disambiguate.
 
-struct NoopProvider;
-
-#[async_trait]
-impl Provider for NoopProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
-        anyhow::bail!("NoopProvider should never be called — bus mock short-circuits")
-    }
+fn unused_model_source() -> crate::openhuman::agent::tinyagents::TurnModelSource {
+    let model: StdArc<dyn tinyagents::harness::model::ChatModel<()>> =
+        StdArc::new(tinyagents::harness::testkit::ScriptedModel::new(Vec::new()));
+    crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model)
 }
 
 fn cloud_arm() -> ResolvedProvider {
     ResolvedProvider {
-        provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
+        turn_model_source: unused_model_source(),
         provider_name: "stub-cloud".to_string(),
         model: "stub-cloud-model".to_string(),
         used_local: false,
@@ -261,7 +250,7 @@ fn cloud_arm() -> ResolvedProvider {
 
 fn local_arm() -> ResolvedProvider {
     ResolvedProvider {
-        provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
+        turn_model_source: unused_model_source(),
         provider_name: "stub-local".to_string(),
         model: "stub-local-model".to_string(),
         used_local: true,

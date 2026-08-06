@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 
 use chrono::Utc;
 use openhuman_core::openhuman::config::rpc as config_rpc;
-use openhuman_core::openhuman::credentials::profiles::{
+use openhuman_core::openhuman::security::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
 use openhuman_core::openhuman::memory::{

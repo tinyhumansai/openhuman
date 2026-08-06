@@ -77,14 +77,15 @@ async fn execute_with_id_but_no_changes_is_an_error() {
 
 // ── the move + update applied through ops::edit (the tool's real effect) ─────
 
-#[test]
-fn apply_moves_and_updates_a_card_and_returns_success() {
+#[tokio::test]
+async fn apply_moves_and_updates_a_card_and_returns_success() {
     let dir = tempfile::tempdir().unwrap();
     let location = BoardLocation::Thread {
         workspace_dir: dir.path().to_path_buf(),
         thread_id: TASK_SOURCES_THREAD_ID.to_string(),
     };
     let id = ops::add(&location, "Review PR #5", CardPatch::default())
+        .await
         .unwrap()
         .cards[0]
         .id
@@ -96,11 +97,12 @@ fn apply_moves_and_updates_a_card_and_returns_success() {
         "evidence": ["posted review on PR #5"]
     }))
     .unwrap();
-    let res = apply(&location, &id, patch);
+    let res = apply(&location, &id, patch).await;
     assert!(!res.is_error, "successful move/update must not be an error");
 
     // The board reflects the move + evidence.
     let card = ops::list(&location)
+        .await
         .unwrap()
         .cards
         .into_iter()
@@ -110,14 +112,14 @@ fn apply_moves_and_updates_a_card_and_returns_success() {
     assert!(card.evidence.iter().any(|e| e.contains("posted review")));
 }
 
-#[test]
-fn apply_on_unknown_id_returns_error() {
+#[tokio::test]
+async fn apply_on_unknown_id_returns_error() {
     let dir = tempfile::tempdir().unwrap();
     let location = BoardLocation::Thread {
         workspace_dir: dir.path().to_path_buf(),
         thread_id: TASK_SOURCES_THREAD_ID.to_string(),
     };
     let patch = build_patch(&json!({ "status": "blocked", "blocker": "no channel" })).unwrap();
-    let res = apply(&location, "task-does-not-exist", patch);
+    let res = apply(&location, "task-does-not-exist", patch).await;
     assert!(res.is_error, "missing card must surface as a tool error");
 }

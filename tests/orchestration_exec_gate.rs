@@ -5,10 +5,10 @@
 //! tested from integration tests). Asserts the device-authoritative rule: a
 //! local-execution device tool is authorized only for a Master-chat cycle.
 
-use openhuman_core::openhuman::orchestration::exec_gate::{
+use openhuman_core::openhuman::hosted::orchestration::exec_gate::{
     cycle_is_master, cycle_target, is_local_execution_tool, record_cycle_origin,
 };
-use openhuman_core::openhuman::orchestration::types::LOCAL_MASTER_AGENT;
+use openhuman_core::openhuman::hosted::orchestration::types::LOCAL_MASTER_AGENT;
 
 #[test]
 fn master_cycle_is_authorized_a2a_and_unknown_are_denied() {

@@ -39,5 +39,5 @@ Filesystem tools respect a workspace boundary - the agent can't read or write ou
 
 ## See also
 
-* [System & Utilities](system-and-utilities.md) - `shell`, `node_exec`, `npm_exec` for the rest of the dev loop.
+* [System & Utilities](system-and-utilities.md) - `shell`, `node_exec`, `npm_exec`, `python_exec` for the rest of the dev loop.
 * [Agent Coordination](agent-coordination.md) - `todo_write`, `spawn_subagent` for larger refactors.

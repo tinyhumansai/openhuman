@@ -11,32 +11,32 @@ use openhuman_core::openhuman::agent::harness::{
 };
 use openhuman_core::openhuman::agent::hooks::{PostTurnHook, ToolCallRecord, TurnContext};
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::ToolCallFormat;
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
-};
+use openhuman_core::openhuman::agent::context::prompt::ToolCallFormat;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::memory_store::{events, fts5, profile, segments};
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::memory::store::{events, fts5, profile, segments};
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tempfile::TempDir;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<String>>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<anyhow::Result<ChatResponse>>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<anyhow::Result<ModelResponse>>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(VecDeque::from(responses)),
             requests: Mutex::new(Vec::new()),
@@ -49,35 +49,27 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: true,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: OnceLock<ModelProfile> = OnceLock::new();
+        Some(PROFILE.get_or_init(|| ModelProfile {
+            provider: Some("round21".to_string()),
+            tool_calling: true,
+            parallel_tool_calls: true,
+            ..ModelProfile::default()
+        }))
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        Ok(format!("summary:{message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         self.requests.lock().push(
             request
                 .messages
                 .iter()
-                .map(|message| format!("{}:{}", message.role, message.content))
+                .map(|message| format!("{message:?}:{}", message.text()))
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
@@ -85,6 +77,7 @@ impl Provider for ScriptedProvider {
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -202,34 +195,28 @@ fn turn(session_id: &str, user_message: &str, assistant_response: &str) -> TurnC
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
-        usage: Some(UsageInfo {
-            input_tokens: 13,
-            output_tokens: 5,
-            context_window: 8192,
-            cached_input_tokens: 2,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.001,
-        }),
-        reasoning_content: None,
-    }
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(13, 5);
+    usage.cache_read_tokens = 2;
+    ModelResponse::assistant(text).with_usage(usage)
 }
 
-fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some("calling echo".to_string()),
-        tool_calls: vec![ToolCall {
-            id: "round21-call".to_string(),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
+fn tool_response(name: &str, arguments: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("calling echo".to_string()),
+                ContentBlock::thinking("scripted tool use"),
+            ],
+            tool_calls: vec![ToolCall::new("round21-call", name, arguments)],
+            usage: None,
+        },
         usage: None,
-        reasoning_content: Some("scripted tool use".to_string()),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -268,7 +255,7 @@ fn definition(max_iterations: usize) -> AgentDefinition {
     }
 }
 
-fn parent_context(workspace: &Path, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent_context(workspace: &Path, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -280,10 +267,13 @@ fn parent_context(workspace: &Path, provider: Arc<ScriptedProvider>) -> ParentEx
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            model,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round21-parent-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace.to_path_buf(),
@@ -384,7 +374,7 @@ async fn subagent_no_parent_and_checkpoint_fallback_are_deterministic() -> Resul
     assert!(matches!(no_parent, SubagentRunError::NoParentContext));
 
     let tmp = TempDir::new()?;
-    let provider = ScriptedProvider::new(vec![
+    let provider = ScriptedModel::new(vec![
         Ok(tool_response("echo", json!({"message": "first"}))),
         Err(anyhow::anyhow!("checkpoint model unavailable")),
     ]);

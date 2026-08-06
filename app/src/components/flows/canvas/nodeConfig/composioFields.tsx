@@ -33,7 +33,7 @@ function toolkitLabel(slug: string): string {
 }
 
 /** Distinct connected Composio toolkits from the canvas's loaded connections. */
-export function connectedToolkits(connections: FlowConnection[]): string[] {
+function connectedToolkits(connections: FlowConnection[]): string[] {
   const seen = new Set<string>();
   for (const c of connections) {
     if (c.kind === 'composio' && c.toolkit) seen.add(c.toolkit);
@@ -43,7 +43,7 @@ export function connectedToolkits(connections: FlowConnection[]): string[] {
 
 // ── toolkit (app) picker ─────────────────────────────────────────────────────
 
-export interface ComposioToolkitFieldProps {
+interface ComposioToolkitFieldProps {
   label: string;
   hint?: string;
   value: string;

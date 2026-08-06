@@ -108,6 +108,12 @@ fi
 lib_filters_raw=""
 test_targets_raw=""
 for f in "${files[@]}"; do
+  if [ ! -e "${f}" ]; then
+    # dorny/paths-filter includes deleted paths. They contain no changed lines
+    # to cover and, for tests, no longer correspond to runnable Cargo targets.
+    log "ignoring deleted rust-relevant path: ${f}"
+    continue
+  fi
   case "${f}" in
     src/lib.rs | src/main.rs)
       run_full "root module ${f} changed — whole-crate scope"

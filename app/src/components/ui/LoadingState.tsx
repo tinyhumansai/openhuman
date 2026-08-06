@@ -1,14 +1,32 @@
+import type { ReactNode } from 'react';
+
 import { Spinner } from './icons';
 
-interface ErrorBannerProps {
-  message: string;
+export interface ErrorBannerProps {
+  children?: ReactNode;
+  message?: ReactNode;
+  action?: ReactNode;
+  size?: 'sm' | 'md';
   className?: string;
 }
 
-export function ErrorBanner({ message, className }: ErrorBannerProps) {
+const ERROR_BANNER_SIZES = { sm: 'p-3 text-xs', md: 'p-4 text-sm' } as const;
+
+export function ErrorBanner({
+  children,
+  message,
+  action,
+  size = 'sm',
+  className,
+}: ErrorBannerProps) {
   return (
-    <div className={`rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 ${className ?? ''}`}>
-      <p className="text-xs text-coral-400">{message}</p>
+    <div
+      role="alert"
+      className={`rounded-xl border border-coral-500/20 bg-coral-500/10 text-coral-400 ${ERROR_BANNER_SIZES[size]} ${className ?? ''}`}>
+      <div className={action ? 'flex items-start justify-between gap-3' : undefined}>
+        <div className="min-w-0 flex-1">{children ?? message}</div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
     </div>
   );
 }

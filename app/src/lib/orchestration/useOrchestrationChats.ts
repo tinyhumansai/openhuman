@@ -68,20 +68,20 @@ export interface ChatWindow {
 
 type Translate = (key: string) => string;
 
-export type SessionsState =
+type SessionsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'payment_required' }
   | { status: 'ok' };
 
-export type MessagesPaneState =
+type MessagesPaneState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok' };
 
 /** RPC `chat` key for a summary: sessions key on their id, pinned on their kind. */
-export function chatKeyForSession(summary: SessionSummary): string {
+function chatKeyForSession(summary: SessionSummary): string {
   return summary.chatKind === 'session' ? summary.sessionId : summary.chatKind;
 }
 
@@ -167,7 +167,7 @@ function buildChatWindow(
   };
 }
 
-export interface UseOrchestrationChatsResult {
+interface UseOrchestrationChatsResult {
   sessionsState: SessionsState;
   messagesState: MessagesPaneState;
   chats: ChatWindow[];

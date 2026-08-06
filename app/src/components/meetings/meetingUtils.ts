@@ -181,7 +181,7 @@ export function deriveDisplayNameFromEmail(email: string | undefined): string {
  * mailbox, then blank. Slugs are canonical Composio slugs (see
  * `canonicalizeComposioToolkitSlug`).
  */
-export const NAME_SOURCE_TOOLKITS: Record<MeetingPlatform, string[]> = {
+const NAME_SOURCE_TOOLKITS: Record<MeetingPlatform, string[]> = {
   gmeet: ['googlemeet', 'gmail'],
   zoom: ['zoom', 'gmail'],
   teams: ['microsoft_teams', 'outlook', 'gmail'],

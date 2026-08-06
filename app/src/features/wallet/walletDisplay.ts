@@ -7,7 +7,7 @@
 import type { BalanceInfo, EvmNetwork, WalletChain } from '../../services/walletApi';
 
 /** Full display name per EVM network. */
-export const EVM_NETWORK_LABEL: Record<EvmNetwork, string> = {
+const EVM_NETWORK_LABEL: Record<EvmNetwork, string> = {
   ethereum_mainnet: 'Ethereum',
   base_mainnet: 'Base',
   arbitrum_one: 'Arbitrum',
@@ -17,7 +17,7 @@ export const EVM_NETWORK_LABEL: Record<EvmNetwork, string> = {
 };
 
 /** Short badge label per EVM network. */
-export const EVM_NETWORK_BADGE: Record<EvmNetwork, string> = {
+const EVM_NETWORK_BADGE: Record<EvmNetwork, string> = {
   ethereum_mainnet: 'ETH',
   base_mainnet: 'BASE',
   arbitrum_one: 'ARB',

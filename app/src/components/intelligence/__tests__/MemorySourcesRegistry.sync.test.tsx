@@ -50,8 +50,22 @@ vi.mock('../../../services/memorySourcesService', () => ({
 }));
 
 // ── tauriCommands mock ────────────────────────────────────────────────────────
+// memoryTreePipelineStatus is polled for downstream pipeline health (GH-4690);
+// default to a healthy running snapshot so rows keep their clean synced state.
 vi.mock('../../../utils/tauriCommands/memoryTree', () => ({
   memoryTreeFlushSource: vi.fn().mockResolvedValue({ seals_fired: 0 }),
+  memoryTreePipelineStatus: vi
+    .fn()
+    .mockResolvedValue({
+      status: 'running',
+      reason: null,
+      last_sync_ms: 0,
+      total_chunks: 0,
+      wiki_size_bytes: 0,
+      pipeline_jobs: { ready: 0, running: 0, failed: 0 },
+      is_syncing: false,
+      is_paused: false,
+    }),
 }));
 
 // ── helpers ───────────────────────────────────────────────────────────────────

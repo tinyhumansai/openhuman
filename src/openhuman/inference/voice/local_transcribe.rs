@@ -261,8 +261,8 @@ pub async fn transcribe_whisper(
 ///   mischaracterised silence as a failure and flooded Sentry
 ///   (TAURI-RUST-2S: 799 events / 23 users across every shipped release).
 ///   Return `Ok` with an empty transcript instead — the frontend
-///   (`sttClient.ts`) and internal callers (`voice::always_on`,
-///   `desktop_companion::pipeline`) already treat empty text as a benign skip.
+///   (`sttClient.ts`) and internal callers (`voice::always_on`) already
+///   treat empty text as a benign skip.
 /// - **Exit 0 with text** → the trimmed transcript.
 fn interpret_whisper_output(
     success: bool,
@@ -272,6 +272,15 @@ fn interpret_whisper_output(
     model_id: String,
 ) -> Result<RpcOutcome<WhisperTranscribeResult>, String> {
     if !success {
+        // Windows-specific: STATUS_DLL_NOT_FOUND means the system VC++ runtime
+        // is missing. Surface an actionable message instead of a cryptic exit code.
+        if crate::openhuman::inference::paths::is_dll_not_found_exit(exit_code) {
+            let maybe_msg = crate::openhuman::inference::paths::report_dll_not_found(LOG_PREFIX);
+            let display_msg = maybe_msg.unwrap_or_else(|| {
+                format!("{LOG_PREFIX} whisper-cli unavailable (STATUS_DLL_NOT_FOUND — check VC++ Redistributable)")
+            });
+            return Err(display_msg);
+        }
         return Err(format!(
             "{LOG_PREFIX} whisper-cli failed (exit={exit_code:?}): {}",
             String::from_utf8_lossy(stderr).trim()

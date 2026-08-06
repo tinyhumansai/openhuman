@@ -3,8 +3,8 @@
 Status: execution plan (2026-07-04), written after a ground-truth code map of
 both the OpenHuman progress surface and the vendored crate observability
 primitives. This is the actionable plan for the C4 workstream's July 2026
-continuation notes, and it is the gated prerequisite for **doc 03 (V3) Step
-5** — deleting the `ProviderDelta` bridge and `progress_tracing`.
+continuation notes, and it is the gated prerequisite for **S6 below** —
+deleting the `ProviderDelta` bridge and `progress_tracing`.
 
 ## 1. Corrected architecture (what the map found)
 
@@ -14,14 +14,14 @@ continuation notes, and it is the gated prerequisite for **doc 03 (V3) Step
   `AgentObservation`s and lets exporters project.
 - **The journal/status/persistence stack already exists and is attached to
   every run.** `run_turn_via_tinyagents_shared`
-  (`src/openhuman/tinyagents/mod.rs:420`) mints a run id, seeds the `EventSink`
-  with it, and `attach_turn_journal` (`src/openhuman/tinyagents/journal.rs:304`)
+  (`src/openhuman/agent/tinyagents/mod.rs:420`) mints a run id, seeds the `EventSink`
+  with it, and `attach_turn_journal` (`src/openhuman/agent/tinyagents/journal.rs:304`)
   installs `StoreEventJournal` (over `JsonlAppendStore`) via a
   `JournalSink → RedactingSink → FanOutSink`, plus a durable `FileStatusStore`.
   Every run already durably records the crate `AgentEvent` stream as
   `AgentObservation`s.
 - **Two producers of `AgentProgress`:**
-  - Crate path: `OpenhumanEventBridge` (`src/openhuman/tinyagents/observability.rs:464`)
+  - Crate path: `OpenhumanEventBridge` (`src/openhuman/agent/tinyagents/observability.rs:464`)
     maps `AgentEvent` → `AgentProgress` live (stateful: iteration cursor,
     subagent `scope`, `tool_names` recovery, display labels, failure class).
   - Legacy path: `session/tool_progress.rs` `TurnProgress` +
@@ -171,13 +171,13 @@ span-projection slice.
    per-call charged USD awaits a journal-native event. Later delete
    `progress_tracing/langfuse.rs` (~825 + tests).
 5. **S5 — delete `progress_tracing.rs` + `SpanCollector`** once S3 shadow shows
-   no divergence for one release **and** V3 projection parity holds (the doc 07
-   gate). Tick the deletion ledger (~2k incl. tests).
+   no divergence for one release **and** journal projection parity holds (the
+   §5 gate). Tick the deletion ledger (~2k incl. tests).
 6. **S6 (= V3 Step 5)** — with `AgentProgress` now a journal projection, delete
    the legacy `ProviderDelta` bridge in `session/tool_progress.rs` (253) and the
    `spawn_delta_forwarder`, since the crate event path is the only producer.
 
-## 5. Gates (doc 07)
+## 5. Gates
 
 - `progress_tracing` delete: **C4 shadow parity (S3) for one release AND V3
   projection parity.** Langfuse (S4) may land earlier (independent shape parity).

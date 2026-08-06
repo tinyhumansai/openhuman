@@ -12,7 +12,7 @@ export type ChannelType =
  *  from the core (which is typed `string`). `satisfies` keeps this list in
  *  lockstep with the `ChannelType` union — adding a member there without updating
  *  here is a compile error. */
-export const KNOWN_CHANNEL_TYPES = [
+const KNOWN_CHANNEL_TYPES = [
   'telegram',
   'discord',
   'web',
@@ -56,11 +56,6 @@ export interface ChannelConnectionsState {
   migrationCompleted: boolean;
   defaultMessagingChannel: ChannelType;
   connections: Record<ChannelType, ChannelConnectionsByMode>;
-}
-
-export interface OutboundRoute {
-  channel: ChannelType;
-  authMode: ChannelAuthMode;
 }
 
 // --- Backend-driven definitions (from openhuman.channels_list) ---

@@ -43,6 +43,17 @@ interface EngineOption {
   requiresKey: boolean;
 }
 
+/** Search engines that route directly from this machine with the user's own key. */
+type ByokEngine = 'parallel' | 'brave' | 'querit' | 'exa';
+
+/** Patch field that carries each BYOK engine's key. Empty string clears it. */
+const BYOK_KEY_FIELD: Record<ByokEngine, keyof SearchSettingsUpdate> = {
+  parallel: 'parallel_api_key',
+  brave: 'brave_api_key',
+  querit: 'querit_api_key',
+  exa: 'exa_api_key',
+};
+
 /**
  * Normalize a user-entered allowed-site entry down to a bare host so it
  * matches `url_guard`'s host-based comparison. Strips a leading scheme and any
@@ -67,9 +78,11 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const [parallelKey, setParallelKey] = useState<string>('');
   const [braveKey, setBraveKey] = useState<string>('');
   const [queritKey, setQueritKey] = useState<string>('');
+  const [exaKey, setExaKey] = useState<string>('');
   const [showParallel, setShowParallel] = useState(false);
   const [showBrave, setShowBrave] = useState(false);
   const [showQuerit, setShowQuerit] = useState(false);
+  const [showExa, setShowExa] = useState(false);
   // Editor text for the allowed-websites host list (one host per line). The
   // "*" wildcard is represented by the access mode, not shown here.
   const [allowedText, setAllowedText] = useState<string>('');
@@ -109,6 +122,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
       id: 'querit',
       label: t('settings.search.engineQueritLabel'),
       description: t('settings.search.engineQueritDesc'),
+      requiresKey: true,
+    },
+    {
+      id: 'exa',
+      label: t('settings.search.engineExaLabel'),
+      description: t('settings.search.engineExaDesc'),
       requiresKey: true,
     },
   ];
@@ -160,22 +179,22 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     }
   };
 
-  const persistKey = async (engine: 'parallel' | 'brave' | 'querit', rawKey: string) => {
+  // Clear the local draft input once its key round-trips to the core.
+  const clearDraftKey: Record<ByokEngine, () => void> = {
+    parallel: () => setParallelKey(''),
+    brave: () => setBraveKey(''),
+    querit: () => setQueritKey(''),
+    exa: () => setExaKey(''),
+  };
+
+  const persistKey = async (engine: ByokEngine, rawKey: string) => {
     if (!settings) return;
     setStatus({ kind: 'saving' });
     try {
-      const update =
-        engine === 'parallel'
-          ? { parallel_api_key: rawKey }
-          : engine === 'brave'
-            ? { brave_api_key: rawKey }
-            : { querit_api_key: rawKey };
-      await openhumanUpdateSearchSettings(update);
+      await openhumanUpdateSearchSettings({ [BYOK_KEY_FIELD[engine]]: rawKey });
       const refreshed = await openhumanGetSearchSettings();
       setSettings(refreshed.result);
-      if (engine === 'parallel') setParallelKey('');
-      else if (engine === 'brave') setBraveKey('');
-      else setQueritKey('');
+      clearDraftKey[engine]();
       setStatus({ kind: 'saved' });
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -221,6 +240,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     if (engine === 'parallel') return settings.parallel_configured;
     if (engine === 'brave') return settings.brave_configured;
     if (engine === 'querit') return settings.querit_configured;
+    if (engine === 'exa') return settings.exa_configured;
     return false;
   };
 
@@ -367,6 +387,23 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
                 onClear={() => void persistKey('querit', '')}
                 configured={settings.querit_configured}
                 docUrl="https://www.querit.ai/en/docs/reference/post"
+                t={t}
+              />
+              <KeyEditor
+                label={t('settings.search.exaKeyLabel')}
+                placeholder={
+                  settings.exa_configured
+                    ? t('settings.search.placeholderStored')
+                    : t('settings.search.placeholderExa')
+                }
+                show={showExa}
+                onToggleShow={() => setShowExa(s => !s)}
+                value={exaKey}
+                onChange={setExaKey}
+                onSave={() => void persistKey('exa', exaKey)}
+                onClear={() => void persistKey('exa', '')}
+                configured={settings.exa_configured}
+                docUrl="https://exa.ai"
                 t={t}
               />
             </div>

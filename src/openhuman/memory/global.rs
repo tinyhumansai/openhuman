@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::openhuman::memory_store::{MemoryClient, MemoryClientRef};
+use crate::openhuman::memory::store::{MemoryClient, MemoryClientRef};
 
 #[derive(Clone)]
 struct GlobalMemoryClient {

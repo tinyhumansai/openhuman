@@ -76,7 +76,7 @@ function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNod
           // Ignore launcher errors from OS URL handler failures.
         });
       }}
-      className="cursor-pointer underline">
+      className="cursor-pointer underline break-words [overflow-wrap:anywhere]">
       {children}
     </a>
   );

@@ -5,6 +5,7 @@
  * to enter the key, test connection, and save. Dimension changes show a
  * destructive confirm dialog since they invalidate stored vectors.
  */
+import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -32,6 +33,11 @@ import {
   SettingsTextField,
 } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+// Grep-friendly, namespaced diagnostics for the custom-endpoint verification
+// flow. Logs only safe metadata (error classification code, state transitions) —
+// never the endpoint URL, API key, or backend-provided detail body.
+const log = createDebug('app:settings:embeddings');
 
 type Status =
   | { kind: 'idle' }
@@ -303,6 +309,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         await setEmbeddingsApiKey('custom', setupKey.trim());
       }
       setStatus({ kind: 'saving' });
+      log('setupSaveCustom: calling update_embeddings_settings (provider=custom)');
       const result = await updateEmbeddingsSettings({
         provider: 'custom',
         model: customModel || 'embedding',
@@ -310,16 +317,26 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         custom_endpoint: customEndpoint.trim(),
         confirm_wipe: false,
       });
+      // Safe to log the error *code* (an enum-like sentinel, e.g.
+      // EMBEDDINGS_AUTH_FAILED) — it carries no endpoint/key/detail content.
+      log(
+        'setupSaveCustom: rpc returned error_code=%s',
+        typeof result.error === 'string' && result.error !== '' ? result.error : 'none'
+      );
       // Setup-time verification failed: the endpoint couldn't prove it can
-      // embed, so the config was NOT saved. Covers no `/embeddings` route
-      // (TAURI-RUST-5JR), LM Studio with no model loaded (TAURI-RUST-4P4), and
-      // any other probe failure/timeout. Keep the setup popup open and surface
-      // the actionable message so the user can fix it (load a model, correct the
-      // endpoint, …) and retry.
+      // embed, so the config was NOT saved. update_settings only ever returns an
+      // `error` for a verification failure or the dimension-wipe confirm, so any
+      // error code other than the wipe-confirm is a failed probe. Matching on the
+      // shape (rather than an explicit allow-list) means the differentiated #5017
+      // codes — EMBEDDINGS_MODEL_INCOMPATIBLE / _AUTH_FAILED / _ENDPOINT_UNREACHABLE
+      // / _DIMENSION_MISMATCH, plus _ENDPOINT_NO_API and _NO_MODEL_LOADED — all
+      // surface their actionable backend message instead of a new code being
+      // silently treated as a save. Keep the setup popup open so the user can fix
+      // it (pick an embeddings model, correct the key/endpoint, …) and retry.
       if (
-        result.error === 'EMBEDDINGS_ENDPOINT_NO_API' ||
-        result.error === 'EMBEDDINGS_NO_MODEL_LOADED' ||
-        result.error === 'EMBEDDINGS_VERIFICATION_FAILED'
+        typeof result.error === 'string' &&
+        result.error !== '' &&
+        result.error !== 'EMBEDDINGS_DIMENSION_CHANGE_REQUIRES_WIPE'
       ) {
         // `result.message`/`result.detail` are backend-emitted (already
         // context-specific); only the generic fallback is frontend-owned UI
@@ -336,10 +353,17 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
             ? `${baseMessage} (${result.detail})`
             : baseMessage
         );
+        // Verification failed: keep the setup popup open (status→idle, not error)
+        // so the user can correct the model/key/endpoint and retry.
+        log(
+          'setupSaveCustom: verification failed (code=%s) — preserving setup popup, early return',
+          result.error
+        );
         setStatus({ kind: 'idle' });
         return;
       }
       if (result.error === 'EMBEDDINGS_DIMENSION_CHANGE_REQUIRES_WIPE') {
+        log('setupSaveCustom: dimension change requires wipe — prompting confirm');
         setPendingWipe({
           provider: 'custom',
           model: customModel || 'embedding',
@@ -348,6 +372,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         });
         setStatus({ kind: 'idle' });
       } else {
+        log('setupSaveCustom: verification passed — saved, reloading settings');
         await reload();
         setStatus({ kind: 'saved' });
       }
@@ -641,7 +666,7 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
                 </div>
                 <div>
                   <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                    {t('settings.embeddings.apiKeyLabel').replace('{provider}', 'API')} (
+                    {t('settings.embeddings.apiKeyLabelGeneric')} (
                     {t('settings.embeddings.optional')})
                   </label>
                   <SettingsTextField

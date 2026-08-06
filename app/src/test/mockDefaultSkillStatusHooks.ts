@@ -1,5 +1,5 @@
 /**
- * Shared Vitest mocks for screen-intelligence / autocomplete / voice status hooks.
+ * Shared Vitest mocks for voice status hooks.
  * Import this module first in Skills page tests so `Skills` does not require `CoreStateProvider`.
  */
 import { vi } from 'vitest';
@@ -13,18 +13,6 @@ const offlineStatusBase = {
   ctaLabel: 'Enable',
   ctaVariant: 'sage' as const,
 };
-
-vi.mock('../features/screen-intelligence/useScreenIntelligenceSkillStatus', () => ({
-  useScreenIntelligenceSkillStatus: () => ({
-    ...offlineStatusBase,
-    allPermissionsGranted: false,
-    platformUnsupported: false,
-  }),
-}));
-
-vi.mock('../features/autocomplete/useAutocompleteSkillStatus', () => ({
-  useAutocompleteSkillStatus: () => ({ ...offlineStatusBase, platformUnsupported: false }),
-}));
 
 vi.mock('../features/voice/useVoiceSkillStatus', () => ({
   useVoiceSkillStatus: () => ({

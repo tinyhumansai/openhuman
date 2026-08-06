@@ -38,6 +38,62 @@ fn write_and_clear_active_user_roundtrip() {
 }
 
 #[test]
+fn read_active_user_checked_returns_none_when_no_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).unwrap().is_none());
+}
+
+#[test]
+fn read_active_user_checked_returns_none_when_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(ACTIVE_USER_STATE_FILE), "").unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).unwrap().is_none());
+}
+
+#[test]
+fn read_active_user_checked_returns_id_when_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_active_user_id(tmp.path(), "user-checked").unwrap();
+    assert_eq!(
+        read_active_user_id_checked(tmp.path()).unwrap(),
+        Some("user-checked".to_string())
+    );
+}
+
+#[test]
+fn read_active_user_checked_errors_when_marker_unreadable() {
+    // A marker that EXISTS but cannot be read as a file (here: a directory at
+    // the marker path) must surface an error rather than being laundered into
+    // "signed out". Otherwise a returning user is silently downgraded to the
+    // pre-login profile and their data under users/<id> is orphaned (#5334).
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(ACTIVE_USER_STATE_FILE)).unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).is_err());
+
+    // The best-effort wrapper still collapses to `None` for hint-only callers.
+    assert!(read_active_user_id(tmp.path()).is_none());
+}
+
+#[tokio::test]
+async fn resolve_dirs_errors_instead_of_pre_login_when_marker_unreadable() {
+    // End-to-end: an unreadable active_user.toml must make directory
+    // resolution FAIL rather than silently resolve to users/local — the path
+    // that presents a signed-in user with a fresh, empty profile (#5334).
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join(ACTIVE_USER_STATE_FILE)).unwrap();
+
+    let default_workspace = root.join("workspace");
+    let result =
+        resolve_runtime_config_dirs_with(root, &default_workspace, &MapEnv::default()).await;
+
+    assert!(
+        result.is_err(),
+        "unreadable marker must not silently fall back to the pre-login profile"
+    );
+}
+
+#[test]
 fn user_openhuman_dir_builds_correct_path() {
     let root = PathBuf::from("/home/test/.openhuman");
     let dir = user_openhuman_dir(&root, "user-123");
@@ -87,6 +143,14 @@ fn pre_login_user_dir_is_under_users_tree() {
 
 #[test]
 fn default_root_dir_name_uses_staging_suffix_for_staging_env() {
+    // APP_ENV is process-global and `default_root_dir_name()` reads it on every
+    // call, so flipping it here races any concurrent test that resolves the root
+    // openhuman dir (e.g. the credentials active-session guard, which silently
+    // stops finding `active_user.toml` once the root becomes `.openhuman-staging`).
+    // Take the same lock those tests hold.
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let prior = std::env::var(crate::api::config::APP_ENV_VAR).ok();
 
     std::env::set_var(crate::api::config::APP_ENV_VAR, "staging");
@@ -235,9 +299,51 @@ fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
     }
     cfg.apply_env_overrides();
     assert!(cfg.shell.hide_window);
+
+    // An empty / whitespace-only value is treated as unset: the field is left
+    // unchanged and it must NOT hit the "unrecognized value" warn path (a bare
+    // `OPENHUMAN_SHELL_HIDE_WINDOW=` in the environment previously warned on
+    // every boot).
+    cfg.shell.hide_window = true;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        cfg.shell.hide_window,
+        "empty value should leave hide_window=true"
+    );
+
+    cfg.shell.hide_window = false;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "   ");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        !cfg.shell.hide_window,
+        "whitespace-only value should leave hide_window=false"
+    );
+
     unsafe {
         std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
     }
+}
+
+#[test]
+fn classify_shell_hide_window_distinguishes_unset_from_unrecognized() {
+    use super::env_overlay::{classify_shell_hide_window, ShellHideWindowParse as P};
+    // The key distinction the change relies on: an empty / whitespace-only value
+    // is `Unset` (silent no-op), NOT `Unrecognized` (which warns on every boot).
+    // Testing the classifier directly proves this — the field-unchanged assertion
+    // above holds for BOTH branches and so can't catch a regression here.
+    assert_eq!(classify_shell_hide_window(""), P::Unset);
+    assert_eq!(classify_shell_hide_window("   "), P::Unset);
+    assert_eq!(classify_shell_hide_window("\t"), P::Unset);
+    assert_eq!(classify_shell_hide_window("on"), P::Set(true));
+    assert_eq!(classify_shell_hide_window("FALSE"), P::Set(false));
+    assert_eq!(classify_shell_hide_window("  yes  "), P::Set(true));
+    assert_eq!(classify_shell_hide_window("maybe"), P::Unrecognized);
+    assert_eq!(classify_shell_hide_window("2"), P::Unrecognized);
 }
 
 #[test]
@@ -549,6 +655,42 @@ fn env_overlay_toggles_agent_tracing_capture_content() {
         &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "true"),
     );
     assert!(cfg.observability.agent_tracing.capture_content);
+}
+
+#[test]
+fn env_overlay_runtime_pool_workers_and_enabled() {
+    // Baseline: master switch on, both pools at the default worker count.
+    let mut cfg = Config::default();
+    assert!(cfg.runtime_pool.enabled, "master switch defaults on");
+    assert_eq!(cfg.runtime_pool.node.max_workers, 2);
+    assert_eq!(cfg.runtime_pool.python.max_workers, 2);
+
+    // Valid overrides land; `enabled` parses via the shared bool parser.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_RUNTIME_POOL_ENABLED", "off")
+            .with("OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS", "7")
+            .with("OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS", "3"),
+    );
+    assert!(!cfg.runtime_pool.enabled, "explicit off disables the pool");
+    assert_eq!(cfg.runtime_pool.node.max_workers, 7);
+    assert_eq!(cfg.runtime_pool.python.max_workers, 3);
+
+    // Unparseable worker counts are ignored (the warn arm) — the previously
+    // applied values survive rather than resetting to a default or zero.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_RUNTIME_POOL_NODE_MAX_WORKERS", "not-a-number")
+            .with("OPENHUMAN_RUNTIME_POOL_PYTHON_MAX_WORKERS", ""),
+    );
+    assert_eq!(
+        cfg.runtime_pool.node.max_workers, 7,
+        "invalid node worker count keeps the prior value"
+    );
+    assert_eq!(
+        cfg.runtime_pool.python.max_workers, 3,
+        "empty python worker count keeps the prior value"
+    );
 }
 
 #[test]
@@ -1047,7 +1189,7 @@ fn env_overlay_context_tool_result_budget_env_suppresses_legacy_migration() {
     // migration must NOT run — even when the explicit env value equals
     // the default. This protects users who explicitly set the env to
     // the default.
-    let default_budget = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
+    let default_budget = crate::openhuman::agent::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
     let mut cfg = Config::default();
     cfg.context.tool_result_budget_bytes = default_budget;
     cfg.agent.tool_result_budget_bytes = 999_999;
@@ -1087,34 +1229,34 @@ fn env_overlay_compaction_default_on_and_kill_switch() {
 }
 
 #[test]
-fn env_overlay_super_context_default_on_and_toggle() {
-    // Default is on.
-    assert!(Config::default().context.super_context_enabled);
+fn env_overlay_super_context_default_off_and_toggle() {
+    // Default is off — it's an expensive pass, so it's opt-in.
+    assert!(!Config::default().context.super_context_enabled);
 
-    // `OPENHUMAN_SUPER_CONTEXT=0` opts out.
+    // `OPENHUMAN_SUPER_CONTEXT=1` opts in.
     let mut cfg = Config::default();
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "0"));
-    assert!(!cfg.context.super_context_enabled);
-
-    // The namespaced alias works and `on` re-enables it.
-    let mut cfg = Config::default();
-    cfg.context.super_context_enabled = false;
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "on"),
-    );
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "1"));
     assert!(cfg.context.super_context_enabled);
+
+    // The namespaced alias works and `off` disables it again.
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = true;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "off"),
+    );
+    assert!(!cfg.context.super_context_enabled);
 
     // Garbage is ignored (leaves the prior value untouched).
     let mut cfg = Config::default();
-    cfg.context.super_context_enabled = false;
+    cfg.context.super_context_enabled = true;
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "maybe"));
-    assert!(!cfg.context.super_context_enabled);
+    assert!(cfg.context.super_context_enabled);
 }
 
 #[test]
 fn env_overlay_context_tool_result_budget_legacy_migration_when_env_absent() {
     // Env absent, context at default, agent customised → agent value copies forward.
-    let default_budget = crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
+    let default_budget = crate::openhuman::agent::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
     let mut cfg = Config::default();
     cfg.context.tool_result_budget_bytes = default_budget;
     cfg.agent.tool_result_budget_bytes = 777_777;
@@ -1360,7 +1502,7 @@ async fn test_save_preserves_backup_file() {
     let config_path = tmp.path().join("config.toml");
     let backup_path = tmp.path().join("config.toml.bak");
 
-    let mut config = Config {
+    let config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -1387,7 +1529,7 @@ async fn test_save_then_corrupt_then_recover() {
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
 
-    let mut config = Config {
+    let config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -1618,6 +1760,10 @@ default_temperature = 0.7
         Some("gpt-valid"),
         "valid config must load normally without recovery"
     );
+    assert!(
+        !config.recovered_from_corruption,
+        "a valid config must not set the recovery flag"
+    );
 }
 
 #[tokio::test]
@@ -1691,6 +1837,288 @@ async fn load_or_init_read_failure_embeds_path_in_error_context() {
     assert!(
         msg.contains("os error"),
         "error must carry the underlying io cause via {{:#}} (#3962): {msg}"
+    );
+}
+
+/// A read denial on an existing config is fully explained by the file's
+/// uid/gid/mode and the process's euid — numbers the loader already has in
+/// hand. Without them a report of
+/// `Permission denied (os error 13)` cannot distinguish a mis-owned container
+/// volume (our defect) from a host ACL (the user's), which is exactly the
+/// ambiguity that made the sign-in failure undiagnosable.
+#[cfg(unix)]
+#[tokio::test]
+async fn load_or_init_read_failure_reports_file_and_process_ownership() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let config_path = root.join("config.toml");
+    std::fs::write(&config_path, "default_temperature = 0.5\n").unwrap();
+    std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    if std::fs::read_to_string(&config_path).is_ok() {
+        return; // running as root — permissions are ignored, assertion is moot
+    }
+
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
+    let err = Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
+        .await
+        .expect_err("reading an unreadable config.toml must fail");
+
+    let msg = format!("{err:#}");
+    for needle in ["file uid=", "gid=", "mode=0000", "process euid="] {
+        assert!(
+            msg.contains(needle),
+            "error must carry `{needle}` so the denial is diagnosable: {msg}"
+        );
+    }
+    // We created the file, so it is NOT an ownership mismatch — the marker
+    // must stay off, or every ordinary ACL denial would start paging.
+    assert!(
+        !msg.contains(CONFIG_OWNER_MISMATCH_MARKER),
+        "a config we own must not be reported as an ownership mismatch: {msg}"
+    );
+}
+
+/// `Config::save` writes the live config through a temp file + atomic rename,
+/// so the temp file's mode becomes the config's mode. It used to be created at
+/// `0o666 & ~umask` (0644), silently re-widening a file that holds `enc2:`
+/// provider keys and channel tokens on every settings change, and propagating
+/// the same mode onto `config.toml.bak` via `fs::copy`.
+#[cfg(unix)]
+#[tokio::test]
+async fn save_keeps_config_and_backup_owner_only_readable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let config = Config {
+        config_path: config_path.clone(),
+        workspace_dir: tmp.path().join("workspace"),
+        ..Default::default()
+    };
+
+    config.save().await.expect("first save");
+    let mode = std::fs::metadata(&config_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "config.toml must be owner-only after save");
+
+    // The second save is the one that creates the .bak (from the temp file).
+    config.save().await.expect("second save");
+    let backup_mode = std::fs::metadata(config_path.with_extension("toml.bak"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        backup_mode, 0o600,
+        "config.toml.bak holds the same secrets and must be owner-only too"
+    );
+    let mode_after = std::fs::metadata(&config_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode_after, 0o600, "an overwriting save must not re-widen");
+}
+
+// ── non-UTF-8 (binary) config recovery (#5167) ──────────────────────────
+
+/// Helper: write binary (non-UTF-8) bytes to a file.
+async fn write_binary(path: &std::path::Path, bytes: &[u8]) {
+    tokio::fs::write(path, bytes)
+        .await
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+}
+
+#[tokio::test]
+async fn load_or_init_recovers_from_non_utf8_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // Write binary data that is NOT valid UTF-8.
+    let config_path = root.join("config.toml");
+    let binary_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01, 0x02];
+    write_binary(&config_path, &binary_bytes).await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    // Should have loaded defaults (not crashed).
+    assert!(
+        config.default_model.is_some(),
+        "must load defaults from non-UTF-8 config"
+    );
+
+    // The runtime recovery flag must be set so the boot path can surface a
+    // user-visible notice (#5167).
+    assert!(
+        config.recovered_from_corruption,
+        "recovered_from_corruption must be set after non-UTF-8 recovery"
+    );
+
+    // The original binary file should have been renamed to .corrupted.<ts>.
+    let dir = std::fs::read_dir(root).unwrap();
+    let mut found_corrupted = false;
+    for entry in dir {
+        let name = entry.unwrap().file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("config.corrupted.") {
+            found_corrupted = true;
+            break;
+        }
+    }
+    assert!(
+        found_corrupted,
+        "non-UTF-8 config must be renamed to config.corrupted.<ts>"
+    );
+
+    // A fresh config.toml must have been created by the persistence logic.
+    assert!(
+        tokio::fs::try_exists(&config_path).await.unwrap(),
+        "a fresh config.toml must exist after recovery"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_recovers_from_non_utf8_using_valid_backup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let config_path = root.join("config.toml");
+    let backup_path = root.join("config.toml.bak");
+
+    let binary_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01, 0x02];
+    write_binary(&config_path, &binary_bytes).await;
+    // Write a valid backup.
+    write_file(
+        &backup_path,
+        r#"default_model = "backup-recovery-test"
+default_temperature = 0.7
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some("backup-recovery-test"),
+        "must recover model from backup when config has non-UTF-8 content"
+    );
+
+    // The binary file should have been renamed.
+    let dir = std::fs::read_dir(root).unwrap();
+    let mut found_corrupted = false;
+    for entry in dir {
+        let name = entry.unwrap().file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("config.corrupted.") {
+            found_corrupted = true;
+            break;
+        }
+    }
+    assert!(
+        found_corrupted,
+        "non-UTF-8 config must be renamed to config.corrupted.<ts>"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_non_utf8_falls_back_to_defaults_when_backup_also_non_utf8() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let config_path = root.join("config.toml");
+    let backup_path = root.join("config.toml.bak");
+
+    let binary_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01, 0x02];
+    write_binary(&config_path, &binary_bytes).await;
+    write_binary(&backup_path, &binary_bytes).await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some(crate::openhuman::config::schema::DEFAULT_MODEL),
+        "must fall back to defaults when both config and backup have non-UTF-8 content"
+    );
+
+    // The primary should be renamed.
+    let dir = std::fs::read_dir(root).unwrap();
+    let mut found_corrupted = false;
+    for entry in dir {
+        let name = entry.unwrap().file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("config.corrupted.") {
+            found_corrupted = true;
+            break;
+        }
+    }
+    assert!(
+        found_corrupted,
+        "non-UTF-8 config must be renamed to config.corrupted.<ts>"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_preserves_backup_when_config_is_non_utf8() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let config_path = root.join("config.toml");
+    let backup_path = root.join("config.toml.bak");
+
+    let binary_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01, 0x02];
+    write_binary(&config_path, &binary_bytes).await;
+    write_file(
+        &backup_path,
+        r#"default_model = "preserve-backup-test"
+default_temperature = 0.7
+"#,
+    )
+    .await;
+
+    let _config = load_or_init_for_workspace(root).await;
+
+    // The .bak file must NOT be renamed or deleted.
+    assert!(
+        tokio::fs::try_exists(&backup_path).await.unwrap(),
+        ".bak file must be preserved when recovering from non-UTF-8 config"
+    );
+    let bak_contents = tokio::fs::read_to_string(&backup_path).await.unwrap();
+    assert!(
+        bak_contents.contains("preserve-backup-test"),
+        "backup content must be preserved: {bak_contents}"
+    );
+}
+
+#[tokio::test]
+async fn load_from_config_path_sets_recovery_flag_on_non_utf8() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let workspace = root.join("workspace");
+
+    // The snapshot-reload path (`load_from_config_path`) must set the per-load
+    // recovery flag on the returned `Config`. This test asserts only that flag;
+    // the surfacing itself is wired one layer up in `app_state_snapshot`, which
+    // latches this flag on every poll (see `desktop::app_state::recovery_signal`
+    // and its `latch_from_config` call in `snapshot`), so a long-lived runtime
+    // that reloads a since-corrupted config does surface the notice (#5167).
+    let config_path = root.join("config.toml");
+    let binary_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01, 0x02];
+    write_binary(&config_path, &binary_bytes).await;
+
+    let config = Config::load_from_config_path(&config_path, &workspace)
+        .await
+        .expect("load_from_config_path must recover, not error");
+
+    assert!(
+        config.recovered_from_corruption,
+        "load_from_config_path must set the recovery flag on non-UTF-8 content"
     );
 }
 

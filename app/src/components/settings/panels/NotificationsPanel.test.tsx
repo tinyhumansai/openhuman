@@ -17,10 +17,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../components/SettingsHeader', () => ({
-  default: ({ title }: { title: string }) => <div data-testid="settings-header">{title}</div>,
-}));
-
 const getBypassPrefsMock = vi.fn();
 const setGlobalDndMock = vi.fn();
 vi.mock('../../../services/webviewAccountService', () => ({

@@ -2,6 +2,25 @@ use super::*;
 use cpal::{SampleFormat, SampleRate, SupportedBufferSize, SupportedStreamConfigRange};
 
 #[test]
+fn i16_to_f32_normalises_to_unit_range() {
+    assert_eq!(i16_to_f32(&[0]), vec![0.0]);
+    assert_eq!(i16_to_f32(&[16384]), vec![0.5]);
+    assert_eq!(i16_to_f32(&[-32768]), vec![-1.0]);
+    // Interleaved frames are converted element-wise, order preserved.
+    assert_eq!(i16_to_f32(&[0, 16384, -16384]), vec![0.0, 0.5, -0.5]);
+}
+
+#[test]
+fn u16_to_f32_centers_on_midscale() {
+    // Unsigned PCM is offset-binary: 32768 is silence (0.0), the endpoints map
+    // to the extremes. This is the conversion the fallback path was missing.
+    assert_eq!(u16_to_f32(&[32768]), vec![0.0]);
+    assert_eq!(u16_to_f32(&[49152]), vec![0.5]);
+    assert_eq!(u16_to_f32(&[0]), vec![-1.0]);
+    assert_eq!(u16_to_f32(&[32768, 49152, 16384]), vec![0.0, 0.5, -0.5]);
+}
+
+#[test]
 fn to_mono_passthrough_single_channel() {
     let input = vec![0.1, 0.2, 0.3];
     assert_eq!(to_mono(&input, 1), input);

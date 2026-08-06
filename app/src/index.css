@@ -132,9 +132,18 @@
 
   /* Suppress the default browser focus ring (outline + tap highlight) but
      leave borders and box-shadows alone — components rely on those for
-     selected / focus-visible styling (e.g. the runtime picker cards). */
+     selected / focus-visible styling (e.g. the runtime picker cards).
+     Deliberate outlines are left alone too. This block used to carry
+     `outline: none !important` on the bare `*`, which suppressed EVERY outline
+     in the app, not just the focus ring it was aimed at — `!important` on a
+     universal selector outranks any component rule. That silently killed all
+     four flow-canvas rings, which are drawn with `outline`: the live run
+     overlay (`.flow-node-running` / `-success` / `-failed`), the validation
+     ring (`.flow-node-error`), and the copilot diff overlay
+     (`.flow-node-added` / `-removed`). None of them could ever paint. The
+     focus-ring suppression this comment actually describes is fully covered by
+     the `*:focus` rule below plus the explicit element list after it. */
   * {
-    outline: none !important;
     -webkit-tap-highlight-color: transparent !important;
   }
 

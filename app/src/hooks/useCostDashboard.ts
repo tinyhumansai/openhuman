@@ -63,7 +63,7 @@ export interface CostUsageCategoryStats {
   percent_of_total: number;
 }
 
-export interface CostUsageLogPayload {
+interface CostUsageLogPayload {
   records: CostUsageRecord[];
   by_category: CostUsageCategoryStats[];
   total_cost_usd: number;
@@ -81,13 +81,13 @@ interface RpcEnvelope<T> {
 
 const DEFAULT_REFRESH_MS = 10_000;
 
-export interface UseCostDashboardOptions {
+interface UseCostDashboardOptions {
   refreshMs?: number;
   /** When true, polling pauses (e.g. when the panel is hidden). */
   paused?: boolean;
 }
 
-export interface UseCostDashboardResult {
+interface UseCostDashboardResult {
   data: CostDashboardPayload | null;
   /** True only before the first successful fetch resolves. */
   isLoading: boolean;
@@ -100,12 +100,12 @@ export interface UseCostDashboardResult {
   refetch: () => Promise<void>;
 }
 
-export interface UseCostUsageLogOptions extends UseCostDashboardOptions {
+interface UseCostUsageLogOptions extends UseCostDashboardOptions {
   days?: number;
   limit?: number;
 }
 
-export interface UseCostUsageLogResult {
+interface UseCostUsageLogResult {
   data: CostUsageLogPayload | null;
   isLoading: boolean;
   isFetching: boolean;

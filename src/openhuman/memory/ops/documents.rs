@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::openhuman::memory::store::{NamespaceDocumentInput, NamespaceRetrievalContext};
 use crate::openhuman::memory::{
     ApiEnvelope, DeleteDocumentRequest, DeleteDocumentResponse, EmptyRequest, ListDocumentsRequest,
     ListDocumentsResponse, ListNamespacesResponse, MemoryIngestionConfig, MemoryIngestionRequest,
@@ -12,7 +13,6 @@ use crate::openhuman::memory::{
     QueryNamespaceRequest, QueryNamespaceResponse, RecallContextRequest, RecallContextResponse,
     RecallMemoriesRequest, RecallMemoriesResponse,
 };
-use crate::openhuman::memory_store::{NamespaceDocumentInput, NamespaceRetrievalContext};
 use crate::rpc::RpcOutcome;
 
 use super::envelope::{envelope, error_envelope, memory_counts};

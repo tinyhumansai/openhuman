@@ -25,6 +25,26 @@ export interface AgentProfile {
   memoryDirSuffix?: string | null;
   isMaster?: boolean | null;
   sortOrder?: number | null;
+  /** Give this profile its own memory subtree instead of the shared one. Default false. */
+  dedicatedMemory?: boolean;
+  /** Give this profile its own working directory under action_dir. Default false. */
+  dedicatedWorkspace?: boolean;
+  /**
+   * Read-only, resolved by the core on read (never sent on upsert): absolute
+   * path of `personalities/<id>/SOUL.md` when it exists.
+   */
+  soulMdFile?: string;
+  /**
+   * Read-only, resolved by the core on read (never sent on upsert): absolute
+   * path of the dedicated workspace directory when `dedicatedWorkspace` is set.
+   */
+  workspaceDir?: string;
+  /**
+   * Read-only, resolved by the core on read (never sent on upsert): absolute
+   * path of the profile's private `skills/` directory when it exists on disk.
+   * SKILL.md workflows placed there are scoped to this profile only.
+   */
+  skillsDir?: string;
 }
 
 export interface AgentProfilesResponse {

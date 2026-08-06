@@ -5,6 +5,7 @@ export type InputSize = 'sm' | 'md' | 'lg';
 export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   inputSize?: InputSize;
   invalid?: boolean;
+  monospace?: boolean;
 }
 
 const SIZES: Record<InputSize, string> = {
@@ -14,7 +15,14 @@ const SIZES: Record<InputSize, string> = {
 };
 
 const Input = forwardRef<HTMLInputElement, InputProps>((props, ref) => {
-  const { inputSize = 'md', invalid, className, ...rest } = props;
+  const {
+    inputSize = 'md',
+    invalid,
+    monospace,
+    className,
+    'aria-invalid': ariaInvalid,
+    ...rest
+  } = props;
   const ring = invalid
     ? 'border-coral-400 focus:border-coral-500 focus:ring-coral-500/20 dark:border-coral-500/60'
     : 'border-line-strong focus:border-primary-500 focus:ring-primary-500/20 dark:focus:border-primary-400';
@@ -24,11 +32,14 @@ const Input = forwardRef<HTMLInputElement, InputProps>((props, ref) => {
     'disabled:opacity-50 disabled:bg-surface-muted',
     SIZES[inputSize],
     ring,
+    monospace ? 'font-mono' : '',
     className ?? '',
   ]
     .filter(Boolean)
     .join(' ');
-  return <input ref={ref} className={classes} {...rest} />;
+  return (
+    <input ref={ref} className={classes} {...rest} aria-invalid={invalid ? true : ariaInvalid} />
+  );
 });
 Input.displayName = 'Input';
 

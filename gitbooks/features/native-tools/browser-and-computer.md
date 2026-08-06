@@ -1,17 +1,16 @@
 ---
-description: Open URLs, take screenshots, click, type, and move the mouse - natively.
+description: Open URLs, inspect DOM snapshots, click, type, and move the mouse - natively.
 icon: display
 ---
 
 # Browser & Computer Control
 
-When the agent needs to *use* your machine the way a person would - open a page, screenshot it, click a button, type a phrase - these tools are how it does it.
+When the agent needs to *use* your machine the way a person would - open a page, inspect its DOM snapshot, click a button, type a phrase - these tools are how it does it.
 
 ## Browser
 
 * **Open** a URL in an embedded webview the agent can read back from.
-* **Screenshot** the current page.
-* **Inspect** image output and metadata, so the agent can describe what it sees.
+* **Snapshot** the current page's accessibility/DOM structure, including stable element references for later actions.
 
 The browser surface runs through CEF (Chromium Embedded Framework) and includes a security layer that scopes what pages can do. See [Chromium Embedded Framework](../../developing/cef.md) for the platform details.
 
@@ -24,7 +23,7 @@ The browser surface runs through CEF (Chromium Embedded Framework) and includes 
 ## What it's good for
 
 * Driving sites that don't have an API or a [native integration](../integrations/README.md).
-* Multi-step UI flows where a single screenshot isn't enough.
+* Multi-step UI flows where an interactive DOM snapshot provides the next actionable element.
 * Automating local apps from inside a chat.
 
 ## See also

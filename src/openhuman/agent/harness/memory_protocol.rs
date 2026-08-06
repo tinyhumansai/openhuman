@@ -22,7 +22,7 @@
 //! - **index drift** — a write that was never followed by `update_memory_md`
 //!   (detected at the next write, and at run end via [`MemoryProtocolTracker::pending_index_update`]).
 //!
-//! The tinyagents seam ([`crate::openhuman::tinyagents::middleware`]) drives this
+//! The tinyagents seam ([`crate::openhuman::agent::tinyagents::middleware`]) drives this
 //! tracker from its `after_tool` / `after_agent` hooks and surfaces the guidance
 //! back to the model as a corrective note appended to the tool result — the same
 //! "structured correction surfaced to the model" pattern used for unknown-tool

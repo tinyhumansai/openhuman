@@ -17,7 +17,7 @@ import { injectViseme, tweenTransform } from './renderCore';
 import { sanitizeSvg } from './sanitizeSvg';
 import type { MascotDetail, MascotState } from './types';
 
-export interface BackendMascotProps {
+interface BackendMascotProps {
   mascot: MascotDetail;
   /** Active state id. Falls back to `mascot.defaultState` when unknown. */
   stateId?: string;

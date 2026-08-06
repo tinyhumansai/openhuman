@@ -97,6 +97,35 @@ fn search_response_deserializes() {
     let resp: SearchResponse = serde_json::from_str(json).unwrap();
     assert_eq!(resp.results.len(), 1);
     assert_eq!(resp.results[0].title, "Example");
+    // Older backends omit the resolved provider entirely (#5136).
+    assert_eq!(resp.provider, None);
+}
+
+#[test]
+fn search_response_reads_resolved_provider() {
+    // The backend names the provider it routed the managed search to, so the
+    // UI attribution ("Searched with Exa") is never hardcoded (#5136).
+    let json = r#"{
+        "searchId": "s123",
+        "results": [],
+        "costUsd": 0.01,
+        "provider": "Exa"
+    }"#;
+    let resp: SearchResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(resp.provider.as_deref(), Some("Exa"));
+}
+
+#[test]
+fn search_response_reads_provider_aliases() {
+    // Tolerate the backend naming the field differently so a rename upstream
+    // does not silently drop attribution.
+    for field in ["resolvedProvider", "searchProvider"] {
+        let json = format!(
+            r#"{{ "searchId": "s123", "results": [], "costUsd": 0.01, "{field}": "Brave" }}"#
+        );
+        let resp: SearchResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp.provider.as_deref(), Some("Brave"), "field {field}");
+    }
 }
 
 // ── ParallelExtractTool ─────────────────────────────────────────

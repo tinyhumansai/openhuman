@@ -25,9 +25,9 @@ import { useT } from '../../lib/i18n/I18nContext';
 import AmountCommitDialog from './AmountCommitDialog';
 import X402ConfirmDialog, { type X402WalletBalance } from './X402ConfirmDialog';
 
-export type CommitKind = 'bid' | 'offer';
+type CommitKind = 'bid' | 'offer';
 
-export interface CommitFlowProps {
+interface CommitFlowProps {
   kind: CommitKind;
   /** Display name of the listing/handle (e.g. "@auction"). */
   name: string;

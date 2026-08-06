@@ -6,7 +6,7 @@
 //! before any file is written. If any edit fails validation, no files
 //! are touched.
 
-use crate::openhuman::file_state;
+use crate::openhuman::agent::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;

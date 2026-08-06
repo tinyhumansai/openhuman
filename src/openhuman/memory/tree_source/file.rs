@@ -31,8 +31,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::content::raw::raw_source_dir;
-use crate::openhuman::memory_store::trees::types::Tree;
+use crate::openhuman::memory::store::content::raw::raw_source_dir;
+use crate::openhuman::memory::store::trees::types::Tree;
 
 /// Filename of the per-source registry mirror inside `raw/<source_slug>/`.
 pub const SOURCE_FILE_NAME: &str = "_source.md";
@@ -134,7 +134,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_store::trees::types::{TreeKind, TreeStatus};
+    use crate::openhuman::memory::store::trees::types::{TreeKind, TreeStatus};
     use chrono::TimeZone;
     use tempfile::TempDir;
 
@@ -150,6 +150,7 @@ mod tests {
             id: "source:abc".into(),
             kind: TreeKind::Source,
             scope: scope.into(),
+            ask: None,
             root_id: None,
             max_level: 0,
             status: TreeStatus::Active,

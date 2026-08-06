@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   autoLayout,
+  connectionEdgeId,
   createFlowNode,
   edgeId,
   type FlowEdge,
   type FlowNode,
   isValidFlowConnection,
+  normalizeWorkflowGraphForDirtyCheck,
+  stepNumbers,
+  stepNumbersForFlow,
   workflowGraphToXyflow,
   xyflowToWorkflowGraph,
 } from './graphAdapter';
@@ -261,6 +265,74 @@ describe('graphAdapter', () => {
     });
   });
 
+  describe('normalizeWorkflowGraphForDirtyCheck (F-m3)', () => {
+    it('backfills auto-layout positions on a graph saved without them', () => {
+      const withoutPositions = graph({
+        nodes: [
+          node({ id: 't', kind: 'trigger', name: 'Trigger' }),
+          node({ id: 'a', name: 'Agent' }),
+        ],
+        edges: [edge({ from_node: 't', to_node: 'a' })],
+      });
+      const meta = { schema_version: 1, id: 'wf_1', name: 'demo' };
+
+      const normalized = normalizeWorkflowGraphForDirtyCheck(withoutPositions, meta);
+
+      // Every node has a concrete position — exactly what the canvas's own
+      // mount-time `onGraphChange` would report back.
+      for (const n of normalized.nodes) {
+        expect(n.position).toBeDefined();
+        expect(typeof n.position?.x).toBe('number');
+        expect(typeof n.position?.y).toBe('number');
+      }
+      // And it's deterministic: normalizing again is a no-op (idempotent),
+      // which is what lets a REMOUNTED canvas's `editorGraph` (already
+      // normalized once) compare equal to `persistedGraphRef.current`
+      // normalized fresh — the two happen at different points in time but
+      // must still match.
+      expect(normalizeWorkflowGraphForDirtyCheck(normalized, meta)).toEqual(normalized);
+    });
+
+    it('is a no-op (beyond re-stamping meta) for a graph that already carries positions', () => {
+      const withPositions = graph({
+        nodes: [
+          node({ id: 't', kind: 'trigger', name: 'Trigger', position: { x: 40, y: 80 } }),
+          node({ id: 'a', name: 'Agent', position: { x: 320, y: 80 } }),
+        ],
+        edges: [edge({ from_node: 't', to_node: 'a' })],
+      });
+      const meta = { schema_version: 1, id: 'wf_1', name: 'demo' };
+
+      const normalized = normalizeWorkflowGraphForDirtyCheck(withPositions, meta);
+
+      expect(normalized.nodes[0].position).toEqual({ x: 40, y: 80 });
+      expect(normalized.nodes[1].position).toEqual({ x: 320, y: 80 });
+    });
+
+    it('lets a position-less graph and its own canvas-reported (positioned) copy compare equal once both are normalized', () => {
+      // This is the exact F-m3 scenario: the server graph has no positions,
+      // but the canvas always reports one back (via `workflowGraphToXyflow` +
+      // `xyflowToWorkflowGraph`) the moment it mounts.
+      const serverGraph = graph({
+        nodes: [
+          node({ id: 't', kind: 'trigger', name: 'Trigger' }),
+          node({ id: 'a', name: 'Agent' }),
+        ],
+        edges: [edge({ from_node: 't', to_node: 'a' })],
+      });
+      const meta = { schema_version: 1, id: 'wf_1', name: 'demo' };
+      const { nodes, edges } = workflowGraphToXyflow(serverGraph);
+      const canvasReported = xyflowToWorkflowGraph(nodes, edges, meta);
+
+      expect(JSON.stringify(normalizeWorkflowGraphForDirtyCheck(serverGraph, meta))).toBe(
+        JSON.stringify(normalizeWorkflowGraphForDirtyCheck(canvasReported, meta))
+      );
+      // Without normalizing the server side, they would NOT compare equal —
+      // pinning that this test is actually exercising the fix, not a tautology.
+      expect(JSON.stringify(serverGraph)).not.toBe(JSON.stringify(canvasReported));
+    });
+  });
+
   describe('autoLayout', () => {
     it('returns an empty map for no nodes', () => {
       expect(autoLayout([], []).size).toBe(0);
@@ -334,6 +406,50 @@ describe('graphAdapter', () => {
     });
   });
 
+  describe('connectionEdgeId', () => {
+    it('matches edgeId for the same 4-tuple (editor-created edges match adapter-created ones)', () => {
+      const connection = { source: 'x', sourceHandle: 'p1', target: 'y', targetHandle: 'p2' };
+      expect(connectionEdgeId(connection)).toBe(
+        edgeId({ from_node: 'x', from_port: 'p1', to_node: 'y', to_port: 'p2' })
+      );
+    });
+
+    it('does not collide on the same "-" boundary-shift case edgeId guards against (F-m6)', () => {
+      // Same colliding node/port tuples as the `edgeId` test above, but coming
+      // in as onConnect's live `Connection` shape (nullable handles) rather
+      // than an already-resolved WorkflowEdge.
+      const first = connectionEdgeId({
+        source: 'a-b',
+        sourceHandle: 'c',
+        target: 'd',
+        targetHandle: 'e',
+      });
+      const second = connectionEdgeId({
+        source: 'a',
+        sourceHandle: 'b-c',
+        target: 'd',
+        targetHandle: 'e',
+      });
+      expect(first).not.toBe(second);
+    });
+
+    it('defaults null/undefined handles to the "main" port, matching isValidFlowConnection', () => {
+      const withNullHandles = connectionEdgeId({
+        source: 'a',
+        sourceHandle: null,
+        target: 'b',
+        targetHandle: null,
+      });
+      const withExplicitMain = connectionEdgeId({
+        source: 'a',
+        sourceHandle: 'main',
+        target: 'b',
+        targetHandle: 'main',
+      });
+      expect(withNullHandles).toBe(withExplicitMain);
+    });
+  });
+
   describe('createFlowNode', () => {
     it('builds a flowNode with a single default main input/output and empty config/ports', () => {
       const created = createFlowNode('agent', { x: 12, y: 34 }, 'new-agent-0', 'Agent');
@@ -358,6 +474,13 @@ describe('graphAdapter', () => {
       expect(created.data.ports).toEqual([{ name: 'true' }, { name: 'false' }]);
       expect(created.data.inputPorts).toEqual(['main']);
       expect(created.data.outputPorts).toEqual(['true', 'false']);
+    });
+
+    it('seeds a loop node with declared body/done output ports (fixed runtime routing)', () => {
+      const created = createFlowNode('loop', { x: 0, y: 0 }, 'loop-0', 'Repeat');
+      expect(created.data.ports).toEqual([{ name: 'body' }, { name: 'done' }]);
+      expect(created.data.inputPorts).toEqual(['main']);
+      expect(created.data.outputPorts).toEqual(['body', 'done']);
     });
   });
 
@@ -479,5 +602,177 @@ describe('graphAdapter', () => {
         { from_node: 'new-trigger-0', from_port: 'main', to_node: 'new-agent-1', to_port: 'main' },
       ]);
     });
+  });
+});
+
+describe('stepNumbers', () => {
+  it('numbers from the roots outward, not in declaration order', () => {
+    // Declared tail-first on purpose: the agent is listed before the trigger
+    // that feeds it, so a numbering that trusted array order would label the
+    // agent "1". Graphs the copilot authors routinely come back unordered.
+    const nodes = [node({ id: 'b', kind: 'agent' }), node({ id: 'a', kind: 'trigger' })];
+    const edges = [edge({ from_node: 'a', to_node: 'b' })];
+
+    const steps = stepNumbers(nodes, edges);
+
+    expect(steps.get('a')).toBe(1);
+    expect(steps.get('b')).toBe(2);
+  });
+
+  it('numbers a fan-out breadth-first so sibling branches get adjacent numbers', () => {
+    // trigger → (x, y) → z. Depth-first would number one branch to its end
+    // before starting the other, which reads wrong beside a columnar layout.
+    const nodes = [
+      node({ id: 't', kind: 'trigger' }),
+      node({ id: 'x', kind: 'agent' }),
+      node({ id: 'y', kind: 'agent' }),
+      node({ id: 'z', kind: 'agent' }),
+    ];
+    const edges = [
+      edge({ from_node: 't', to_node: 'x' }),
+      edge({ from_node: 't', to_node: 'y' }),
+      edge({ from_node: 'x', to_node: 'z' }),
+    ];
+
+    const steps = stepNumbers(nodes, edges);
+
+    // Exact values, not a sorted set: sibling order is deterministic (adjacency
+    // follows edge declaration order), and a sorted assertion would still pass
+    // if the traversal reversed x and y.
+    expect(steps.get('t')).toBe(1);
+    expect(steps.get('x')).toBe(2);
+    expect(steps.get('y')).toBe(3);
+    expect(steps.get('z')).toBe(4);
+  });
+
+  it('still numbers nodes the walk cannot reach', () => {
+    // A disconnected node and a pure cycle both have no zero-in-degree entry.
+    // Every card must show an index, so these are appended after the reachable
+    // ones rather than left undefined.
+    const nodes = [
+      node({ id: 't', kind: 'trigger' }),
+      node({ id: 'orphan', kind: 'agent' }),
+      node({ id: 'c1', kind: 'agent' }),
+      node({ id: 'c2', kind: 'agent' }),
+    ];
+    const edges = [
+      edge({ from_node: 'c1', to_node: 'c2' }),
+      edge({ from_node: 'c2', to_node: 'c1' }),
+    ];
+
+    const steps = stepNumbers(nodes, edges);
+
+    // Pin the declaration-order fallback exactly — a sorted comparison would
+    // pass even if the fallback emitted them in some other order.
+    expect(steps.size).toBe(4);
+    expect(steps.get('t')).toBe(1);
+    expect(steps.get('orphan')).toBe(2);
+    expect(steps.get('c1')).toBe(3);
+    expect(steps.get('c2')).toBe(4);
+  });
+
+  it('numbers the xyflow shape identically to the workflow shape', () => {
+    // The editable canvas only ever holds the xyflow shape, so both entry
+    // points must agree or a graph would renumber itself on save/reload.
+    const wfNodes = [node({ id: 'a', kind: 'trigger' }), node({ id: 'b', kind: 'agent' })];
+    const wfEdges = [edge({ from_node: 'a', to_node: 'b' })];
+    const graph: WorkflowGraph = {
+      schema_version: 1,
+      id: 'wf',
+      name: 'Flow',
+      nodes: wfNodes,
+      edges: wfEdges,
+    };
+
+    const { nodes: flowNodes, edges: flowEdges } = workflowGraphToXyflow(graph);
+
+    expect(stepNumbersForFlow(flowNodes, flowEdges)).toEqual(stepNumbers(wfNodes, wfEdges));
+  });
+
+  it('keeps disconnected chains contiguous instead of interleaving them', () => {
+    // Regression: seeding every root at once interleaved independent chains, so
+    // `a → b` plus `c → d` numbered a=1, c=2, b=3, d=4 — drawing a second chain
+    // renumbered the first one's steps underneath the user.
+    const nodes = [
+      node({ id: 'a', kind: 'trigger' }),
+      node({ id: 'b', kind: 'agent' }),
+      node({ id: 'c', kind: 'trigger' }),
+      node({ id: 'd', kind: 'agent' }),
+    ];
+    const edges = [edge({ from_node: 'a', to_node: 'b' }), edge({ from_node: 'c', to_node: 'd' })];
+
+    expect(stepNumbers(nodes, edges)).toEqual(
+      new Map([
+        ['a', 1],
+        ['b', 2],
+        ['c', 3],
+        ['d', 4],
+      ])
+    );
+  });
+
+  it('does not renumber the existing flow when a second chain is drawn', () => {
+    // The property that matters on the canvas: numbers already on screen must
+    // not shift because unrelated work appeared elsewhere.
+    const a = node({ id: 'a', kind: 'trigger' });
+    const b = node({ id: 'b', kind: 'agent' });
+    const firstChain = [edge({ from_node: 'a', to_node: 'b' })];
+
+    const before = stepNumbers([a, b], firstChain);
+
+    const after = stepNumbers(
+      [a, b, node({ id: 'c', kind: 'trigger' }), node({ id: 'd', kind: 'agent' })],
+      [...firstChain, edge({ from_node: 'c', to_node: 'd' })]
+    );
+
+    expect(after.get('a')).toBe(before.get('a'));
+    expect(after.get('b')).toBe(before.get('b'));
+  });
+
+  it('renumbers when a node is added or connected mid-edit', () => {
+    // Regression: numbers used to be baked into node `data` by
+    // `workflowGraphToXyflow`, which the editable canvas runs only at mount.
+    // A node added afterwards (via `createFlowNode`, which sets no number) had
+    // none at all, and connecting it left every other number stale until a
+    // save or remount.
+    const a = createFlowNode('trigger', { x: 0, y: 0 }, 'a', 'Trigger');
+    const b = createFlowNode('agent', { x: 280, y: 0 }, 'b', 'Agent');
+    const connected: FlowEdge[] = [{ id: 'e1', source: 'a', target: 'b' }];
+
+    expect(stepNumbersForFlow([a, b], connected)).toEqual(
+      new Map([
+        ['a', 1],
+        ['b', 2],
+      ])
+    );
+
+    // Add a third node the way the palette does — no number of its own.
+    const c = createFlowNode('tool_call', { x: 560, y: 0 }, 'c', 'Tool');
+    const afterAdd = stepNumbersForFlow([a, b, c], connected);
+    expect(afterAdd.get('c')).toBe(3);
+
+    // Connect it, and the numbering follows the new topology.
+    const afterConnect = stepNumbersForFlow(
+      [a, b, c],
+      [...connected, { id: 'e2', source: 'b', target: 'c' }]
+    );
+    expect(afterConnect).toEqual(
+      new Map([
+        ['a', 1],
+        ['b', 2],
+        ['c', 3],
+      ])
+    );
+
+    // Rewiring so `c` comes before `b` must renumber, not keep stale values.
+    const rewired = stepNumbersForFlow(
+      [a, b, c],
+      [
+        { id: 'e3', source: 'a', target: 'c' },
+        { id: 'e4', source: 'c', target: 'b' },
+      ]
+    );
+    expect(rewired.get('c')).toBe(2);
+    expect(rewired.get('b')).toBe(3);
   });
 });

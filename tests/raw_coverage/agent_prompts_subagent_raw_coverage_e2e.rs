@@ -8,20 +8,16 @@ use openhuman_core::openhuman::agent::harness::{
     ToolScope,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::context::prompt::{
+use openhuman_core::openhuman::agent::context::prompt::{
     render_ambient_environment, render_subagent_system_prompt, render_tools, render_user_files,
     ConnectedIntegration, CuratedMemoryPromptSnapshot, LearnedContextData, NamespaceSummary,
     PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder, ToolCallFormat,
     UserIdentity,
 };
-use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
-use openhuman_core::openhuman::inference::provider::{
-    ChatRequest, ChatResponse, Provider, ToolCall, UsageInfo,
-};
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -29,21 +25,25 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tinyagents::harness::message::{AssistantMessage, ContentBlock};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tinyagents::harness::usage::Usage;
 
-struct ScriptedProvider {
-    responses: Mutex<VecDeque<anyhow::Result<ChatResponse>>>,
+struct ScriptedModel {
+    responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
     requests: Mutex<Vec<String>>,
-    native_tools: bool,
+    profile: ModelProfile,
     delay: Option<Duration>,
     always_fail: Option<String>,
 }
 
-impl ScriptedProvider {
-    fn new(responses: Vec<ChatResponse>) -> Arc<Self> {
+impl ScriptedModel {
+    fn new(responses: Vec<ModelResponse>) -> Arc<Self> {
         Arc::new(Self {
             responses: Mutex::new(responses.into_iter().map(Ok).collect()),
             requests: Mutex::new(Vec::new()),
-            native_tools: true,
+            profile: native_profile(),
             delay: None,
             always_fail: None,
         })
@@ -53,7 +53,7 @@ impl ScriptedProvider {
         Arc::new(Self {
             responses: Mutex::new(VecDeque::new()),
             requests: Mutex::new(Vec::new()),
-            native_tools: true,
+            profile: native_profile(),
             delay: None,
             always_fail: Some(message.to_string()),
         })
@@ -63,7 +63,7 @@ impl ScriptedProvider {
         Arc::new(Self {
             responses: Mutex::new(VecDeque::from([Ok(text_response("late"))])),
             requests: Mutex::new(Vec::new()),
-            native_tools: true,
+            profile: native_profile(),
             delay: Some(delay),
             always_fail: None,
         })
@@ -74,39 +74,31 @@ impl ScriptedProvider {
     }
 }
 
+fn native_profile() -> ModelProfile {
+    ModelProfile {
+        provider: Some("round18".to_string()),
+        tool_calling: true,
+        parallel_tool_calls: true,
+        ..ModelProfile::default()
+    }
+}
+
 #[async_trait]
-impl Provider for ScriptedProvider {
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            native_tool_calling: self.native_tools,
-            vision: false,
-        }
+impl ChatModel<()> for ScriptedModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        Some(&self.profile)
     }
 
-    async fn chat_with_system(
+    async fn invoke(
         &self,
-        _system_prompt: Option<&str>,
-        message: &str,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<String> {
-        if let Some(message) = &self.always_fail {
-            anyhow::bail!(message.clone());
-        }
-        Ok(format!("summary: {message}"))
-    }
-
-    async fn chat(
-        &self,
-        request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: f64,
-    ) -> Result<ChatResponse> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         self.requests.lock().push(
             request
                 .messages
                 .iter()
-                .map(|message| format!("{}:{}", message.role, message.content))
+                .map(|message| format!("{message:?}:{}", message.text()))
                 .collect::<Vec<_>>()
                 .join("\n---\n"),
         );
@@ -114,12 +106,13 @@ impl Provider for ScriptedProvider {
             tokio::time::sleep(delay).await;
         }
         if let Some(message) = &self.always_fail {
-            anyhow::bail!(message.clone());
+            return Err(tinyagents::TinyAgentsError::Model(message.clone()));
         }
         self.responses
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final")))
+            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
     }
 }
 
@@ -214,34 +207,28 @@ impl Tool for EchoTool {
     }
 }
 
-fn text_response(text: &str) -> ChatResponse {
-    ChatResponse {
-        text: Some(text.to_string()),
-        tool_calls: Vec::new(),
-        usage: Some(UsageInfo {
-            input_tokens: 10,
-            output_tokens: 4,
-            context_window: 8192,
-            cached_input_tokens: 2,
-            cache_creation_tokens: 0,
-            reasoning_tokens: 0,
-            charged_amount_usd: 0.001,
-        }),
-        reasoning_content: None,
-    }
+fn text_response(text: &str) -> ModelResponse {
+    let mut usage = Usage::new(10, 4);
+    usage.cache_read_tokens = 2;
+    ModelResponse::assistant(text).with_usage(usage)
 }
 
-fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
-    ChatResponse {
-        text: Some("calling tool".to_string()),
-        tool_calls: vec![ToolCall {
-            id: "round18-call".to_string(),
-            name: name.to_string(),
-            arguments: arguments.to_string(),
-            extra_content: None,
-        }],
+fn tool_response(name: &str, arguments: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("calling tool".to_string()),
+                ContentBlock::thinking("test reasoning"),
+            ],
+            tool_calls: vec![ToolCall::new("round18-call", name, arguments)],
+            usage: None,
+        },
         usage: None,
-        reasoning_content: Some("test reasoning".to_string()),
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
     }
 }
 
@@ -284,7 +271,7 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
     }
 }
 
-fn parent(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutionContext {
+fn parent(workspace: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools = vec![tool("echo"), tool("delegate_nested"), tool("other__skip")];
     let specs = tools.iter().map(|tool| tool.spec()).collect();
     ParentExecutionContext {
@@ -296,10 +283,13 @@ fn parent(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutio
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(provider),
+        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
+            model,
+        ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
         visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round18-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
@@ -360,6 +350,8 @@ fn prompt_context<'a>(
         personality_soul_md: Some("personality soul override".to_string()),
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -385,7 +377,7 @@ fn prompt_sections_render_files_identity_memory_tools_and_ambient_blocks() -> Re
     let rendered = SystemPromptBuilder::with_defaults()
         .insert_section_before(
             "user_memory",
-            Box::new(openhuman_core::openhuman::context::prompt::UserReflectionsSection),
+            Box::new(openhuman_core::openhuman::agent::context::prompt::UserReflectionsSection),
         )
         .build(&ctx)?;
 
@@ -476,7 +468,7 @@ fn subagent_prompt_renderer_covers_format_branches_and_missing_indices() {
 
 #[test]
 fn agent_builder_validation_reports_each_required_component() {
-    let provider = ScriptedProvider::new(vec![]);
+    let provider = ScriptedModel::new(vec![]);
 
     let err = match Agent::builder().build() {
         Ok(_) => panic!("builder without tools should fail"),
@@ -492,7 +484,7 @@ fn agent_builder_validation_reports_each_required_component() {
 
     let err = match Agent::builder()
         .tools(Vec::new())
-        .provider_arc(provider.clone())
+        .chat_model(provider.clone())
         .build()
     {
         Ok(_) => panic!("builder without memory should fail"),
@@ -502,7 +494,7 @@ fn agent_builder_validation_reports_each_required_component() {
 
     let err = match Agent::builder()
         .tools(Vec::new())
-        .provider_arc(provider)
+        .chat_model(provider)
         .memory(Arc::new(StubMemory))
         .build()
     {
@@ -513,7 +505,7 @@ fn agent_builder_validation_reports_each_required_component() {
 
     let agent = Agent::builder()
         .tools(vec![tool("echo"), tool("echo")])
-        .provider_arc(ScriptedProvider::new(vec![]))
+        .chat_model(ScriptedModel::new(vec![]))
         .memory(Arc::new(StubMemory))
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .visible_tool_names(HashSet::from(["echo".to_string()]))
@@ -533,7 +525,7 @@ async fn run_subagent_loads_workspace_prompt_runs_tool_and_returns_final() -> Re
     )?;
     std::fs::write(workspace.path().join("PROFILE.md"), "profile from disk")?;
     std::fs::write(workspace.path().join("MEMORY.md"), "memory from disk")?;
-    let provider = ScriptedProvider::new(vec![
+    let provider = ScriptedModel::new(vec![
         tool_response("echo", json!({"message": "hello"})),
         text_response("final from subagent"),
     ]);
@@ -571,7 +563,7 @@ async fn run_subagent_loads_workspace_prompt_runs_tool_and_returns_final() -> Re
 #[tokio::test]
 async fn run_subagent_missing_file_falls_back_to_empty_prompt() -> Result<()> {
     let workspace = tempfile::tempdir()?;
-    let provider = ScriptedProvider::new(vec![text_response("fallback ok")]);
+    let provider = ScriptedModel::new(vec![text_response("fallback ok")]);
     let def = definition(PromptSource::File {
         path: "missing.md".to_string(),
     });
@@ -590,7 +582,7 @@ async fn run_subagent_missing_file_falls_back_to_empty_prompt() -> Result<()> {
 #[tokio::test]
 async fn run_subagent_surfaces_provider_errors_and_can_be_cancelled() -> Result<()> {
     let workspace = tempfile::tempdir()?;
-    let failing = ScriptedProvider::failing("round18 provider failure");
+    let failing = ScriptedModel::failing("round18 provider failure");
     let def = definition(PromptSource::Inline("inline prompt".to_string()));
 
     let result = with_parent_context(parent(workspace.path().to_path_buf(), failing), async {
@@ -599,7 +591,7 @@ async fn run_subagent_surfaces_provider_errors_and_can_be_cancelled() -> Result<
     .await;
     assert!(matches!(result, Err(SubagentRunError::Provider(_))));
 
-    let slow = ScriptedProvider::delayed(Duration::from_secs(30));
+    let slow = ScriptedModel::delayed(Duration::from_secs(30));
     let slow_parent = parent(workspace.path().to_path_buf(), slow.clone());
     let slow_def = def.clone();
     let handle = tokio::spawn(async move {

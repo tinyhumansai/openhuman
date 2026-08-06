@@ -1,0 +1,955 @@
+use super::*;
+use crate::openhuman::agent::context::prompt::ToolCallFormat;
+use crate::openhuman::agent::dispatcher::NativeToolDispatcher;
+use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinition, AgentTier, DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
+};
+use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
+use crate::openhuman::agent::messages::ConversationMessage;
+use crate::openhuman::agent::orchestration::spawn_parallel_graph::{
+    prepare_spawn_parallel_tasks_from_defs, ParallelTaskRejectionKind, SpawnParallelTaskPreflight,
+};
+use crate::openhuman::agent::Agent;
+use crate::openhuman::config::AgentConfig;
+use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
+use crate::openhuman::tools::traits::ToolTimeout;
+use crate::openhuman::tools::{PermissionLevel, Tool, ToolResult};
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+use tinyagents::harness::message::{AssistantMessage, Message};
+use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyagents::harness::tool::ToolCall;
+use tokio::time::{sleep, timeout, Duration};
+
+const PARENT_PROMPT_CANARY: &str = "parallel-fanout-e2e-canary";
+const RESEARCH_PROMPT_CANARY: &str = "research-branch-canary";
+const PLANNER_PROMPT_CANARY: &str = "planner-branch-canary";
+const RESEARCH_DONE_CANARY: &str = "research-finished-canary";
+const PLANNER_DONE_CANARY: &str = "planner-finished-canary";
+const FINAL_CANARY: &str = "parallel-summary-canary";
+
+fn test_lineage(task_id: &str) -> ParallelAgentLineage {
+    ParallelAgentLineage {
+        parent_session: "parent-session".into(),
+        root_session: "root-session".into(),
+        child_task_id: task_id.into(),
+    }
+}
+
+#[test]
+fn metadata_methods_expose_execute_permission_and_schema() {
+    let tool = SpawnParallelAgentsTool::default();
+    assert_eq!(tool.name(), "spawn_parallel_agents");
+    assert!(tool.description().contains("independent sub-agent tasks"));
+    assert_eq!(tool.permission_level(), PermissionLevel::Execute);
+    let schema = tool.parameters_schema();
+    assert_eq!(schema["required"][0], "tasks");
+    assert_eq!(schema["properties"]["tasks"]["minItems"], 2);
+}
+
+#[test]
+fn ownership_boundary_is_prepended_when_present() {
+    let prompt = with_ownership_boundary("implement tests", Some("files: src/foo.rs"));
+    assert!(prompt.starts_with("[Ownership Boundary]"));
+    assert!(prompt.contains("files: src/foo.rs"));
+    assert!(prompt.contains("[Task]\nimplement tests"));
+}
+
+#[test]
+fn schema_advertises_isolation_and_base_ref() {
+    let tool = SpawnParallelAgentsTool::default();
+    let schema = tool.parameters_schema();
+    let props = &schema["properties"]["tasks"]["items"]["properties"];
+    assert_eq!(props["isolation"]["enum"][0], "none");
+    assert_eq!(props["isolation"]["enum"][1], "worktree");
+    assert_eq!(props["base_ref"]["enum"][0], "head");
+    assert_eq!(props["base_ref"]["enum"][1], "fresh");
+}
+
+#[test]
+fn task_deserializes_isolation_and_base_ref() {
+    let task: ParallelAgentTask = serde_json::from_value(json!({
+        "agent_id": "coder",
+        "prompt": "do it",
+        "isolation": "worktree",
+        "base_ref": "fresh"
+    }))
+    .expect("deserialize task");
+    assert_eq!(task.isolation.as_deref(), Some("worktree"));
+    assert_eq!(task.base_ref.as_deref(), Some("fresh"));
+}
+
+#[test]
+fn task_isolation_defaults_to_none() {
+    let task: ParallelAgentTask = serde_json::from_value(json!({
+        "agent_id": "researcher",
+        "prompt": "read it"
+    }))
+    .expect("deserialize task");
+    assert!(task.isolation.is_none());
+    assert!(task.base_ref.is_none());
+}
+
+#[test]
+fn result_omits_worktree_fields_when_absent() {
+    let result = ParallelAgentResult {
+        task_id: "t1".into(),
+        agent_id: "a".into(),
+        lineage: test_lineage("t1"),
+        success: true,
+        output: Some("ok".into()),
+        error: None,
+        ownership: None,
+        elapsed_ms: 5,
+        iterations: 1,
+        stale_parent_reads: Vec::new(),
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
+    };
+    let v = serde_json::to_value(&result).unwrap();
+    assert!(v.get("worktreePath").is_none());
+    assert!(v.get("changedFiles").is_none());
+    assert!(v.get("dirtyStatus").is_none());
+}
+
+#[test]
+fn result_serializes_worktree_fields_when_present() {
+    let result = ParallelAgentResult {
+        task_id: "t2".into(),
+        agent_id: "coder".into(),
+        lineage: test_lineage("t2"),
+        success: true,
+        output: None,
+        error: None,
+        ownership: None,
+        elapsed_ms: 9,
+        iterations: 2,
+        stale_parent_reads: Vec::new(),
+        worktree_path: Some("/repo/.claude/worktrees/t2".into()),
+        changed_files: vec!["src/a.rs".into()],
+        dirty_status: Some(true),
+    };
+    let v = serde_json::to_value(&result).unwrap();
+    assert_eq!(v["worktreePath"], "/repo/.claude/worktrees/t2");
+    assert_eq!(v["changedFiles"][0], "src/a.rs");
+    assert_eq!(v["dirtyStatus"], true);
+}
+
+#[tokio::test]
+async fn rejects_single_task() {
+    let tool = SpawnParallelAgentsTool::new();
+    let result = tool
+        .execute(json!({
+            "tasks": [{ "agent_id": "researcher", "prompt": "only one" }]
+        }))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.output().contains("at least two"));
+}
+
+#[tokio::test]
+async fn rejects_missing_or_invalid_tasks_before_parent_lookup() {
+    let tool = SpawnParallelAgentsTool::new();
+
+    let missing = tool.execute(json!({})).await.expect_err("missing tasks");
+    assert!(missing.to_string().contains("Missing 'tasks'"));
+
+    let invalid = tool
+        .execute(json!({ "tasks": "not an array" }))
+        .await
+        .expect_err("invalid tasks");
+    assert!(invalid.to_string().contains("Invalid tasks array"));
+}
+
+#[tokio::test]
+async fn rejects_two_tasks_outside_agent_turn() {
+    let tool = SpawnParallelAgentsTool::new();
+    let result = tool
+        .execute(json!({
+            "tasks": [
+                { "agent_id": "researcher", "prompt": "one" },
+                { "agent_id": "planner", "prompt": "two" }
+            ]
+        }))
+        .await
+        .expect("tool result");
+    assert!(result.is_error);
+    assert!(result.output().contains("outside of an agent turn"));
+}
+
+struct NoopMemory;
+
+#[async_trait]
+impl Memory for NoopMemory {
+    async fn store(
+        &self,
+        _namespace: &str,
+        _key: &str,
+        _content: &str,
+        _category: MemoryCategory,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn recall(
+        &self,
+        _query: &str,
+        _limit: usize,
+        _opts: RecallOpts<'_>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        Ok(Vec::new())
+    }
+
+    async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        Ok(None)
+    }
+
+    async fn list(
+        &self,
+        _namespace: Option<&str>,
+        _category: Option<&MemoryCategory>,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        Ok(Vec::new())
+    }
+
+    async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>> {
+        Ok(Vec::new())
+    }
+
+    async fn count(&self) -> anyhow::Result<usize> {
+        Ok(0)
+    }
+
+    async fn health_check(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "noop"
+    }
+}
+
+fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
+    let agent_config = AgentConfig {
+        max_parallel_tools,
+        ..Default::default()
+    };
+    let model: Arc<dyn tinyagents::harness::model::ChatModel<()>> =
+        Arc::new(tinyagents::harness::testkit::ScriptedModel::replies(vec![
+            "ok",
+        ]));
+    ParentExecutionContext {
+        workspace_descriptor: None,
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: [
+            "researcher".to_string(),
+            "critic".to_string(),
+            "integrations_agent".to_string(),
+        ]
+        .into_iter()
+        .collect(),
+        turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
+        all_tools: Arc::new(Vec::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_names: std::collections::HashSet::new(),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
+        model_name: "test-model".into(),
+        temperature: 0.2,
+        workspace_dir: std::env::temp_dir(),
+        memory: Arc::new(NoopMemory),
+        agent_config,
+        workflows: Arc::new(Vec::new()),
+        memory_context: Arc::new(None),
+        session_id: "session-test".into(),
+        channel: "test".into(),
+        connected_integrations: Vec::new(),
+        tool_call_format: ToolCallFormat::PFormat,
+        session_key: "0_test".into(),
+        session_parent_prefix: None,
+        on_progress: None,
+        run_queue: None,
+    }
+}
+
+fn parent_context_with_tools(
+    max_parallel_tools: usize,
+    tools: Vec<Box<dyn Tool>>,
+) -> ParentExecutionContext {
+    let mut parent = parent_context(max_parallel_tools);
+    parent.all_tools = Arc::new(tools);
+    parent
+}
+
+fn definition_with_tool_scope(
+    id: &str,
+    tools: ToolScope,
+    sandbox_mode: SandboxMode,
+) -> AgentDefinition {
+    AgentDefinition {
+        id: id.to_string(),
+        when_to_use: "test definition".into(),
+        display_name: None,
+        system_prompt: PromptSource::Inline("test prompt".into()),
+        omit_identity: true,
+        omit_memory_context: true,
+        omit_safety_preamble: true,
+        omit_skills_catalog: true,
+        omit_profile: true,
+        omit_memory_md: true,
+        model: ModelSpec::Inherit,
+        temperature: 0.0,
+        tools,
+        disallowed_tools: Vec::new(),
+        skill_filter: None,
+        extra_tools: Vec::new(),
+        max_iterations: 3,
+        iteration_policy: Default::default(),
+        max_result_chars: None,
+        max_turn_output_tokens: None,
+        timeout_secs: None,
+        sandbox_mode,
+        background: false,
+        trigger_memory_agent: Default::default(),
+        tokenjuice_compression: Default::default(),
+        subagents: Vec::new(),
+        delegate_name: None,
+        agent_tier: AgentTier::Worker,
+        source: DefinitionSource::Builtin,
+        graph: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn rejects_more_tasks_than_parent_parallel_limit() {
+    // The parallel-limit check now runs inside the execution graph, which is
+    // reached only after the registry lookup — so this test needs the global
+    // builtins initialised (as its siblings already do) rather than relying on
+    // whichever test happened to initialise them first.
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let tool = SpawnParallelAgentsTool::new();
+    let parent = parent_context(2);
+    let result = with_parent_context(parent, async {
+        tool.execute(json!({
+            "tasks": [
+                { "agent_id": "researcher", "prompt": "one" },
+                { "agent_id": "planner", "prompt": "two" },
+                { "agent_id": "critic", "prompt": "three" }
+            ]
+        }))
+        .await
+    })
+    .await
+    .expect("tool result");
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("max_parallel_tools"),
+        "unexpected result: {}",
+        result.output()
+    );
+}
+
+#[tokio::test]
+async fn collects_immediate_task_validation_failures() {
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let tool = SpawnParallelAgentsTool::new();
+    let parent = parent_context(4);
+
+    let result = with_parent_context(parent, async {
+        tool.execute(json!({
+            "tasks": [
+                { "agent_id": " ", "prompt": "missing agent", "ownership": "files: none" },
+                { "agent_id": "__missing_agent__", "prompt": "unknown agent" },
+                { "agent_id": "integrations_agent", "prompt": "needs toolkit" }
+            ]
+        }))
+        .await
+    })
+    .await
+    .expect("tool result");
+
+    assert!(!result.is_error, "{}", result.output());
+    let body: serde_json::Value = serde_json::from_str(&result.output()).expect("json output");
+    assert_eq!(body["parallel_agents"]["total"], 3);
+    assert_eq!(body["parallel_agents"]["failed"], 3);
+    let errors = body["parallel_agents"]["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|result| result["error"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("agent_id and prompt")));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("unknown agent_id")));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("requires toolkit")));
+}
+
+#[derive(Default)]
+struct FixtureStepState {
+    calls: AtomicUsize,
+}
+
+struct FixtureStepTool {
+    state: Arc<FixtureStepState>,
+}
+
+#[async_trait]
+impl Tool for FixtureStepTool {
+    fn name(&self) -> &str {
+        "fixture_step"
+    }
+
+    fn description(&self) -> &str {
+        "Fixture tool used by parallel subagent tests."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "required": ["branch", "step"],
+            "properties": {
+                "branch": { "type": "string" },
+                "step": { "type": "integer" }
+            }
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let branch = args
+            .get("branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let step = args.get("step").and_then(|v| v.as_u64()).unwrap_or(0);
+        self.state.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success(format!("{branch}-step-{step}-ok")))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::None
+    }
+}
+
+struct PermissionFixtureTool {
+    name: &'static str,
+    level: PermissionLevel,
+}
+
+#[async_trait]
+impl Tool for PermissionFixtureTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn description(&self) -> &str {
+        "Fixture tool with a configurable permission level."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({ "type": "object" })
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult::success("ok"))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        self.level
+    }
+}
+
+#[test]
+fn shared_workspace_rejects_write_capable_named_worker_without_worktree() {
+    let definition = definition_with_tool_scope(
+        "researcher",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::None,
+    );
+    let definitions = HashMap::from([(definition.id.clone(), definition)]);
+    let parent = parent_context_with_tools(
+        4,
+        vec![Box::new(PermissionFixtureTool {
+            name: "write_fixture",
+            level: PermissionLevel::Write,
+        })],
+    );
+
+    let preflight = prepare_spawn_parallel_tasks_from_defs(
+        vec![ParallelAgentTask {
+            agent_id: "researcher".into(),
+            prompt: "edit a file".into(),
+            context: None,
+            toolkit: None,
+            ownership: None,
+            isolation: None,
+            base_ref: None,
+        }],
+        &definitions,
+        &parent,
+    );
+
+    match preflight.into_iter().next().expect("one preflight result") {
+        SpawnParallelTaskPreflight::Rejected(rejection) => {
+            assert_eq!(rejection.kind, ParallelTaskRejectionKind::RequiresIsolation);
+            assert!(rejection.error.contains("write_fixture:Write"));
+            assert!(rejection.error.contains("isolation=\"worktree\""));
+        }
+        SpawnParallelTaskPreflight::Prepared(_) => {
+            panic!("write-capable shared worker must require worktree isolation")
+        }
+    }
+}
+
+#[test]
+fn shared_workspace_allows_readonly_or_explicitly_isolated_workers() {
+    let readonly = definition_with_tool_scope(
+        "researcher",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::ReadOnly,
+    );
+    let writer = definition_with_tool_scope(
+        "critic",
+        ToolScope::Named(vec!["write_fixture".into()]),
+        SandboxMode::None,
+    );
+    let definitions = HashMap::from([(readonly.id.clone(), readonly), (writer.id.clone(), writer)]);
+    let parent = parent_context_with_tools(
+        4,
+        vec![Box::new(PermissionFixtureTool {
+            name: "write_fixture",
+            level: PermissionLevel::Write,
+        })],
+    );
+
+    let preflight = prepare_spawn_parallel_tasks_from_defs(
+        vec![
+            ParallelAgentTask {
+                agent_id: "researcher".into(),
+                prompt: "read only".into(),
+                context: None,
+                toolkit: None,
+                ownership: None,
+                isolation: None,
+                base_ref: None,
+            },
+            ParallelAgentTask {
+                agent_id: "critic".into(),
+                prompt: "isolated edit".into(),
+                context: None,
+                toolkit: None,
+                ownership: Some("files: src/b.rs".into()),
+                isolation: Some("worktree".into()),
+                base_ref: None,
+            },
+        ],
+        &definitions,
+        &parent,
+    );
+
+    assert!(preflight
+        .into_iter()
+        .all(|item| matches!(item, SpawnParallelTaskPreflight::Prepared(_))));
+}
+
+struct ParallelHarnessState {
+    total_calls: AtomicUsize,
+    active_subagent_calls: AtomicUsize,
+    max_active_subagent_calls: AtomicUsize,
+    /// Sequence counter over subagent provider calls. The first two calls (one
+    /// from each parallel subagent) rendezvous at [`Self::overlap_barrier`].
+    subagent_call_seq: AtomicUsize,
+    /// Deterministic overlap gate: the first provider call of each parallel
+    /// subagent waits here until both have arrived, guaranteeing the
+    /// `max_active_subagent_calls >= 2` assertion without depending on a timing
+    /// window (the old fixed `sleep` raced under load and flaked — see #5209).
+    overlap_barrier: tokio::sync::Barrier,
+    seen_payloads: Mutex<Vec<String>>,
+}
+
+impl Default for ParallelHarnessState {
+    fn default() -> Self {
+        Self {
+            total_calls: AtomicUsize::new(0),
+            active_subagent_calls: AtomicUsize::new(0),
+            max_active_subagent_calls: AtomicUsize::new(0),
+            subagent_call_seq: AtomicUsize::new(0),
+            overlap_barrier: tokio::sync::Barrier::new(2),
+            seen_payloads: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct ParallelHarnessProvider {
+    state: Arc<ParallelHarnessState>,
+}
+
+impl ParallelHarnessProvider {
+    fn total_calls(&self) -> usize {
+        self.state.total_calls.load(Ordering::SeqCst)
+    }
+
+    fn max_active_subagent_calls(&self) -> usize {
+        self.state.max_active_subagent_calls.load(Ordering::SeqCst)
+    }
+
+    fn record_active_peak(&self, current: usize) {
+        let mut observed = self.state.max_active_subagent_calls.load(Ordering::SeqCst);
+        while current > observed {
+            match self.state.max_active_subagent_calls.compare_exchange(
+                observed,
+                current,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(next) => observed = next,
+            }
+        }
+    }
+
+    async fn respond_for_subagent(&self, flattened: &str) -> tinyagents::Result<ModelResponse> {
+        let current = self
+            .state
+            .active_subagent_calls
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        self.record_active_peak(current);
+
+        // The two parallel subagents' first provider calls rendezvous at the
+        // barrier, deterministically forcing them to be active simultaneously
+        // (peak >= 2). The old approach slept a fixed 25ms and hoped the second
+        // call started before the first woke — a window scheduling jitter could
+        // miss, so the `max_active >= 2` assertion flaked run-to-run (#5209).
+        // The wait is timeout-guarded so a genuine loss of parallelism fails the
+        // assertion instead of hanging the test. Later calls (seq >= 2) yield
+        // briefly to keep the interleaving realistic.
+        let seq = self.state.subagent_call_seq.fetch_add(1, Ordering::SeqCst);
+        if seq < 2 {
+            let _ = timeout(Duration::from_secs(5), self.state.overlap_barrier.wait()).await;
+        } else {
+            sleep(Duration::from_millis(5)).await;
+        }
+
+        let response = (|| -> tinyagents::Result<ModelResponse> {
+            if flattened.contains(RESEARCH_PROMPT_CANARY) {
+                if flattened.contains("research-step-3-ok") {
+                    Ok(text_response(RESEARCH_DONE_CANARY))
+                } else if flattened.contains("research-step-2-ok") {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "research", "step": 3 }),
+                    ))
+                } else if flattened.contains("research-step-1-ok") {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "research", "step": 2 }),
+                    ))
+                } else {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "research", "step": 1 }),
+                    ))
+                }
+            } else if flattened.contains(PLANNER_PROMPT_CANARY) {
+                if flattened.contains("planner-step-3-ok") {
+                    Ok(text_response(PLANNER_DONE_CANARY))
+                } else if flattened.contains("planner-step-2-ok") {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "planner", "step": 3 }),
+                    ))
+                } else if flattened.contains("planner-step-1-ok") {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "planner", "step": 2 }),
+                    ))
+                } else {
+                    Ok(tool_response(
+                        "fixture_step",
+                        json!({ "branch": "planner", "step": 1 }),
+                    ))
+                }
+            } else {
+                Err(tinyagents::TinyAgentsError::Model(format!(
+                    "unexpected subagent payload: {flattened}"
+                )))
+            }
+        })();
+
+        self.state
+            .active_subagent_calls
+            .fetch_sub(1, Ordering::SeqCst);
+        response
+    }
+}
+
+#[async_trait]
+impl ChatModel<()> for ParallelHarnessProvider {
+    fn profile(&self) -> Option<&ModelProfile> {
+        static PROFILE: std::sync::LazyLock<ModelProfile> =
+            std::sync::LazyLock::new(|| ModelProfile {
+                provider: Some("parallel-harness-test".to_string()),
+                tool_calling: true,
+                parallel_tool_calls: true,
+                ..ModelProfile::default()
+            });
+        Some(&PROFILE)
+    }
+
+    async fn invoke(
+        &self,
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        self.state.total_calls.fetch_add(1, Ordering::SeqCst);
+        let flattened = request
+            .messages
+            .iter()
+            .map(|message| {
+                let role = match message {
+                    Message::System(_) => "system",
+                    Message::User(_) => "user",
+                    Message::Assistant(_) => "assistant",
+                    Message::Tool(_) => "tool",
+                };
+                format!("{role}:{}", message.text())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.state.seen_payloads.lock().push(flattened.clone());
+
+        if flattened.contains(PARENT_PROMPT_CANARY) {
+            if flattened.contains(RESEARCH_DONE_CANARY) && flattened.contains(PLANNER_DONE_CANARY) {
+                return Ok(text_response(format!(
+                    "{FINAL_CANARY}: merged {RESEARCH_DONE_CANARY} and {PLANNER_DONE_CANARY}"
+                )));
+            }
+
+            return Ok(tool_response(
+                "spawn_parallel_agents",
+                json!({
+                    "tasks": [
+                        {
+                            "agent_id": "__test_inherit_parallel_worker",
+                            "prompt": format!("Work the research branch: {RESEARCH_PROMPT_CANARY}"),
+                            "ownership": "scope: research"
+                        },
+                        {
+                            "agent_id": "__test_inherit_parallel_worker",
+                            "prompt": format!("Work the planning branch: {PLANNER_PROMPT_CANARY}"),
+                            "ownership": "scope: planning"
+                        }
+                    ]
+                }),
+            ));
+        }
+
+        self.respond_for_subagent(&flattened).await
+    }
+}
+
+fn text_response(text: impl Into<String>) -> ModelResponse {
+    ModelResponse::assistant(text)
+}
+
+fn tool_response(name: &str, arguments: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        message: AssistantMessage {
+            id: None,
+            content: Vec::new(),
+            tool_calls: vec![ToolCall::new(format!("call-{name}"), name, arguments)],
+            usage: None,
+        },
+        usage: None,
+        finish_reason: Some("tool_calls".to_string()),
+        raw: None,
+        resolved_model: None,
+        continue_turn: None,
+    }
+}
+
+// This exercises the full parallel-subagent path (parent turn → spawn N
+// subagents → each runs several nested tool-call iterations). It is a deep
+// async state machine whose stacked frames exceed the default ~2 MiB libtest
+// per-test thread stack in debug/coverage builds; the thread overflows and
+// SIGABRTs the *entire* test process, which then non-deterministically tags an
+// unrelated concurrently-running test as FAILED (issue #5209 — the
+// experience-recall test was a frequent victim). CI only avoided this by
+// exporting a 64 MiB `RUST_MIN_STACK`; a raw `cargo test` has no such env.
+// Production drives agent turns on an explicit large stack for the same reason
+// (`agent::bus::handle_agent_run_turn_on_large_stack`). Mirror that here so the
+// test never aborts the process regardless of `RUST_MIN_STACK`.
+#[test]
+fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls() {
+    std::thread::Builder::new()
+        .name("parallel-subagent-flow-test".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build large-stack test runtime")
+                .block_on(
+                    agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls_inner(),
+                );
+        })
+        .expect("spawn large-stack test thread")
+        .join()
+        .expect("large-stack parallel-subagent test thread panicked");
+}
+
+async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls_inner() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let provider = ParallelHarnessProvider::default();
+    let fixture_state = Arc::new(FixtureStepState::default());
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory::store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
+
+    let tools: Vec<Box<dyn Tool>> = vec![
+        Box::new(SpawnParallelAgentsTool::new()),
+        Box::new(FixtureStepTool {
+            state: Arc::clone(&fixture_state),
+        }),
+    ];
+
+    let mut agent = Agent::builder()
+        .chat_model(Arc::new(provider.clone()))
+        .tools(tools)
+        .memory(mem)
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(workspace_path)
+        .build()
+        .unwrap();
+
+    let response = agent
+        .turn("Run a long parallel delegation pass. parallel-fanout-e2e-canary")
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "agent turn failed: {err}\nseen payloads:\n{}",
+                provider.state.seen_payloads.lock().join("\n---\n")
+            )
+        });
+
+    assert!(
+        response.contains(FINAL_CANARY),
+        "final orchestrator response should contain the synthesis canary: {response}"
+    );
+    assert!(
+        response.contains(RESEARCH_DONE_CANARY) && response.contains(PLANNER_DONE_CANARY),
+        "final response should include both subagent completions: {response}"
+    );
+    assert_eq!(
+        fixture_state.calls.load(Ordering::SeqCst),
+        6,
+        "expected three nested tool calls per parallel subagent"
+    );
+    assert!(
+        provider.max_active_subagent_calls() >= 2,
+        "expected overlapping subagent provider calls, max_active={}",
+        provider.max_active_subagent_calls()
+    );
+    assert!(
+        provider.total_calls() >= 10,
+        "expected parent + subagent loop to hit the provider many times, total_calls={}",
+        provider.total_calls()
+    );
+
+    let history = agent.history();
+    let mut saw_parallel_call = false;
+    let mut saw_parallel_result = false;
+    let mut iterations = Vec::new();
+
+    for message in history {
+        match message {
+            ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
+                if tool_calls
+                    .iter()
+                    .any(|call| call.name == "spawn_parallel_agents")
+                {
+                    saw_parallel_call = true;
+                }
+            }
+            ConversationMessage::ToolResults(results) => {
+                for result in results {
+                    if !result.content.contains("\"parallel_agents\"") {
+                        continue;
+                    }
+                    saw_parallel_result = true;
+                    let payload: serde_json::Value =
+                        serde_json::from_str(&result.content).expect("parallel tool result json");
+                    assert_eq!(payload["parallel_agents"]["succeeded"], 2);
+                    assert_eq!(payload["parallel_agents"]["failed"], 0);
+
+                    let results = payload["parallel_agents"]["results"]
+                        .as_array()
+                        .expect("parallel results array");
+                    assert_eq!(results.len(), 2);
+                    for item in results {
+                        assert_eq!(item["success"], true);
+                        iterations.push(
+                            item["iterations"]
+                                .as_u64()
+                                .expect("parallel result iterations"),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_parallel_call,
+        "parent history should record spawn_parallel_agents"
+    );
+    assert!(
+        saw_parallel_result,
+        "parent history should record the parallel tool result"
+    );
+    assert_eq!(
+        iterations,
+        vec![4, 4],
+        "each subagent should run three tool calls plus a final completion iteration"
+    );
+}
+
+#[test]
+fn spawn_parallel_agents_opts_out_of_the_global_tool_timeout() {
+    // A fan-out of N long sub-agents must not be hard-killed at the single-tool
+    // wall-clock default (120s): that truncates every worker and bounds the whole
+    // group at one worker's budget. The tool governs its own lifetime via its
+    // internal max_concurrency, cancellation token, and per-sub-agent caps.
+    assert_eq!(
+        SpawnParallelAgentsTool::new().timeout_policy(&json!({})),
+        ToolTimeout::Unbounded,
+    );
+}

@@ -20,20 +20,14 @@ use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
 };
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
+use openhuman_core::openhuman::security::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
 use openhuman_core::openhuman::inference::local::ops::{
     local_ai_chat, local_ai_download_asset, local_ai_downloads_progress, local_ai_should_react,
     LocalAiChatMessage,
 };
 use openhuman_core::openhuman::inference::local::LocalAiService;
-use openhuman_core::openhuman::inference::provider::compatible::{
-    AuthStyle as CompatibleAuthStyle, OpenAiCompatibleProvider,
-};
 use openhuman_core::openhuman::inference::provider::factory::auth_key_for_slug;
-use openhuman_core::openhuman::inference::provider::{
-    list_configured_models, ChatMessage, ChatRequest, Provider, ProviderDelta,
-};
-use openhuman_core::openhuman::tools::ToolSpec;
+use openhuman_core::openhuman::inference::provider::list_configured_models;
 
 #[derive(Clone, Default)]
 struct MockState {
@@ -93,180 +87,7 @@ fn env_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[tokio::test]
-async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
-    let (base, state) = serve_mock().await;
-    let tools = vec![
-        ToolSpec {
-            name: "lookup".to_string(),
-            description: "first wins".to_string(),
-            parameters: json!({"type": "object"}),
-        },
-        ToolSpec {
-            name: "lookup".to_string(),
-            description: "duplicate should be dropped".to_string(),
-            parameters: json!({"type": "object"}),
-        },
-    ];
-
-    let provider = OpenAiCompatibleProvider::new_merge_system_into_user(
-        "custom_openai",
-        &format!("{base}/v1"),
-        Some("secret-key"),
-        CompatibleAuthStyle::Custom("x-custom-auth".to_string()),
-    )
-    .with_openhuman_thread_id();
-
-    let merged = provider
-        .chat_with_system(Some("system line"), "user line", "merge-model", 0.6)
-        .await
-        .expect("merged chat");
-    assert_eq!(merged, "merged response");
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(8);
-    let retried = provider
-        .chat(
-            ChatRequest {
-                messages: &[
-                    ChatMessage::assistant(
-                        json!({
-                            "content": "called",
-                            "reasoning_content": "reasoned",
-                            "tool_calls": [{
-                                "id": "call_a",
-                                "name": "lookup",
-                                "arguments": "{\"q\":\"a\"}"
-                            }]
-                        })
-                        .to_string(),
-                    ),
-                    ChatMessage::tool(
-                        json!({
-                            "tool_call_id": "call_a",
-                            "content": "tool output"
-                        })
-                        .to_string(),
-                    ),
-                    ChatMessage::user("stream with retry"),
-                ],
-                tools: Some(&tools),
-                stream: Some(&tx),
-                max_tokens: None,
-            },
-            "stream-tools-unsupported",
-            0.2,
-        )
-        .await
-        .expect("stream retry without tools");
-    drop(tx);
-    assert_eq!(retried.text.as_deref(), Some("json stream fallback"));
-    assert!(rx.recv().await.is_none(), "non-SSE JSON emits no deltas");
-
-    let no_fallback = OpenAiCompatibleProvider::new_no_responses_fallback(
-        "glm",
-        &format!("{base}/v1"),
-        None,
-        CompatibleAuthStyle::None,
-    );
-    let err = no_fallback
-        .chat_with_system(None, "missing", "not-found-model", 0.2)
-        .await
-        .expect_err("404 should be enriched without responses fallback");
-    assert!(err.to_string().contains("endpoint URL"));
-
-    let empty_err = provider
-        .chat_with_history(&[ChatMessage::user("empty choices")], "empty-choices", 0.2)
-        .await
-        .expect_err("empty choices");
-    assert!(empty_err.to_string().contains("No response"));
-
-    let responses_err = provider
-        .chat_with_history(
-            &[ChatMessage::system("only system")],
-            "responses-empty-input",
-            0.2,
-        )
-        .await
-        .expect_err("responses requires input");
-    assert!(!responses_err.to_string().is_empty());
-
-    let bearer = OpenAiCompatibleProvider::new(
-        "bearer",
-        &format!("{base}/v1"),
-        Some("bearer-token"),
-        CompatibleAuthStyle::Bearer,
-    );
-    let x_api = OpenAiCompatibleProvider::new(
-        "xapi",
-        &format!("{base}/v1"),
-        Some("x-api-token"),
-        CompatibleAuthStyle::XApiKey,
-    );
-    let anthropic = OpenAiCompatibleProvider::new(
-        "anthropic",
-        &format!("{base}/v1"),
-        Some("anthropic-token"),
-        CompatibleAuthStyle::Anthropic,
-    );
-    assert_eq!(
-        bearer
-            .chat_with_system(None, "auth", "auth-model", 0.1)
-            .await
-            .expect("bearer auth"),
-        "auth response"
-    );
-    assert_eq!(
-        x_api
-            .chat_with_system(None, "auth", "auth-model", 0.1)
-            .await
-            .expect("x-api auth"),
-        "auth response"
-    );
-    assert_eq!(
-        anthropic
-            .chat_with_system(None, "auth", "auth-model", 0.1)
-            .await
-            .expect("anthropic auth"),
-        "auth response"
-    );
-
-    let seen = state.requests.lock().expect("requests");
-    let merge_body = seen
-        .iter()
-        .find(|(_, _, body)| body["model"] == "merge-model")
-        .expect("merge request")
-        .2
-        .clone();
-    assert_eq!(merge_body["messages"][0]["role"], "user");
-    assert!(merge_body["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("system line\n\nuser line"));
-    assert!(seen
-        .iter()
-        .any(|(_, auth, body)| body["model"] == "merge-model"
-            && auth.as_deref() == Some("secret-key")));
-    assert!(seen.iter().any(|(_, auth, body)| {
-        body["model"] == "auth-model" && auth.as_deref() == Some("Bearer bearer-token")
-    }));
-    assert!(seen
-        .iter()
-        .any(|(_, auth, body)| body["model"] == "auth-model"
-            && auth.as_deref() == Some("x-api-token")));
-    assert!(seen.iter().any(|(_, auth, body)| {
-        body["model"] == "auth-model" && auth.as_deref() == Some("anthropic-token")
-    }));
-    let retry_bodies: Vec<Value> = seen
-        .iter()
-        .filter(|(_, _, body)| body["model"] == "stream-tools-unsupported")
-        .map(|(_, _, body)| body.clone())
-        .collect();
-    assert_eq!(retry_bodies.len(), 2);
-    assert!(retry_bodies[0].get("tools").is_some());
-    assert!(retry_bodies[1].get("tools").is_none());
-}
-
-#[tokio::test]
+ #[tokio::test]
 async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
     let _env_guard = env_lock();
     let (base, state) = serve_mock().await;
@@ -275,7 +96,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
     config.local_ai.runtime_enabled = true;
     config.local_ai.opt_in_confirmed = true;
     config.local_ai.base_url = Some(base.clone());
-    config.local_ai.chat_model_id = "gemma4:e4b-it-q8_0".to_string();
+    config.local_ai.chat_model_id = "gemma3n:e4b-it-q8_0".to_string();
     config.local_ai.embedding_model_id = "bge-m3".to_string();
     config.local_ai.vision_model_id = "missing-vision".to_string();
     config.local_ai.selected_tier = Some("custom".to_string());
@@ -313,7 +134,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|issue| issue.as_str().unwrap().contains("gemma4:e4b-it-q8_0")));
+        .any(|issue| issue.as_str().unwrap().contains("gemma3n:e4b-it-q8_0")));
 
     let assets = service.assets_status(&config).await.expect("assets");
     assert!(assets.ollama_available);
@@ -354,7 +175,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
         .lock()
         .expect("models")
         .iter()
-        .any(|m| m == "gemma4:e4b-it-q8_0"));
+        .any(|m| m == "gemma3n:e4b-it-q8_0"));
 
     let mut lm_config = config.clone();
     lm_config.local_ai.provider = "lmstudio".to_string();
@@ -399,7 +220,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
         .await
         .expect("ops progress")
         .value;
-    assert_eq!(ops_progress.chat.id, "gemma4:e4b-it-q8_0");
+    assert_eq!(ops_progress.chat.id, "gemma3n:e4b-it-q8_0");
 
     let ops_asset = local_ai_download_asset(&config, "embedding")
         .await
@@ -708,7 +529,7 @@ async fn ollama_show(Json(body): Json<Value>) -> impl IntoResponse {
             .into_response();
     }
     let context = match model {
-        "gemma4:e4b-it-q8_0" => 1024,
+        "gemma3n:e4b-it-q8_0" => 1024,
         "bge-m3" => 8192,
         _ => 4096,
     };
@@ -724,7 +545,7 @@ async fn ollama_show(Json(body): Json<Value>) -> impl IntoResponse {
 async fn ollama_pull(State(state): State<MockState>, Json(body): Json<Value>) -> impl IntoResponse {
     let name = body["name"]
         .as_str()
-        .unwrap_or("gemma4:e4b-it-q8_0")
+        .unwrap_or("gemma3n:e4b-it-q8_0")
         .to_string();
     state.ollama_models.lock().expect("models").push(name);
     let body = [

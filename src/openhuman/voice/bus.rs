@@ -1,6 +1,6 @@
-//! Voice domain event publishers. The PTT transcript-committed event is
-//! published here so the future screen-intelligence follow-up can subscribe
-//! and grab a frame on commit without coupling to the channel-web flow.
+//! Voice domain event publishers. Publishing the PTT transcript-committed
+//! event here lets downstream subscribers react without coupling to the
+//! channel-web flow.
 
 use crate::core::event_bus::{publish_global, DomainEvent, VoiceEvent};
 

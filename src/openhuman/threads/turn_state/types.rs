@@ -71,8 +71,8 @@ pub struct PersistedToolFailure {
     pub next_action: String,
 }
 
-impl From<&crate::openhuman::tool_status::ClassifiedFailure> for PersistedToolFailure {
-    fn from(f: &crate::openhuman::tool_status::ClassifiedFailure) -> Self {
+impl From<&crate::openhuman::tools::status::ClassifiedFailure> for PersistedToolFailure {
+    fn from(f: &crate::openhuman::tools::status::ClassifiedFailure) -> Self {
         // Serialize the enums to their wire variant name so the persisted
         // `class`/`category` strings match exactly what the live socket emits
         // (`ClassifiedFailure` serializes each as its bare variant name).
@@ -125,6 +125,13 @@ pub struct ToolTimelineEntry {
     /// `tool_result`. `None` while running and on legacy snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    /// Per-turn monotonic ordering key stamped at the moment the row is first
+    /// created, so a rehydrated timeline can order rows identically to the live
+    /// stream (conversations-timeline-refactor, Phase 4 amendment). Shares the
+    /// per-turn ordering space with [`TranscriptItem::seq`]. `None` on snapshots
+    /// written before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
 }
 
 /// Live sub-agent activity nested under a `subagent:*` timeline row.

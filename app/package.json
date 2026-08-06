@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.58.14",
+  "version": "0.63.6",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -62,7 +62,7 @@
     "rust:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "rust:format": "cargo fmt --manifest-path ../Cargo.toml --all && cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "rust:format:check": "cargo fmt --manifest-path ../Cargo.toml --all --check && cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
-    "rust:clippy": "cargo clippy -p openhuman -- -D warnings",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx --cache",
@@ -72,14 +72,13 @@
     "knip:production": "knip --config knip.json --production"
   },
   "dependencies": {
+    "@elevenlabs/react": "^1.12.0",
     "@noble/ciphers": "^1.2.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@reduxjs/toolkit": "^2.11.2",
-    "@remotion/player": "4.0.454",
-    "@remotion/zod-types": "4.0.454",
     "@rive-app/react-webgl2": "^4.28.6",
     "@scure/base": "^2.2.0",
     "@scure/bip32": "^2.0.1",
@@ -97,14 +96,12 @@
     "d3-force": "^3.0.0",
     "debug": "^4.4.3",
     "katex": "^0.16.47",
-    "lottie-react": "^2.4.1",
     "os-browserify": "^0.3.0",
     "pixi.js": "^8.18.1",
     "process": "^0.11.10",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-ga4": "^3.0.1",
     "react-icons": "^5.6.0",
     "react-joyride": "^3.1.0",
     "react-markdown": "^10.1.0",
@@ -116,7 +113,6 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "remotion": "4.0.454",
     "socket.io-client": "^4.8.3",
     "tauri-plugin-ptt-api": "workspace:*",
     "three": "^0.183.2",
@@ -148,9 +144,11 @@
     "@vitest/coverage-v8": "^4.0.18",
     "@wdio/appium-service": "^9.24.0",
     "@wdio/cli": "^9.24.0",
+    "@wdio/globals": "^9.24.0",
     "@wdio/local-runner": "^9.24.0",
     "@wdio/mocha-framework": "^9.24.0",
     "@wdio/spec-reporter": "^9.24.0",
+    "@wdio/types": "^9.24.0",
     "autoprefixer": "^10.4.23",
     "cross-env": "^10.1.0",
     "eslint": "^9.39.2",
@@ -169,6 +167,7 @@
     "typescript": "~5.8.3",
     "vite": "^8.0.0",
     "vite-plugin-node-polyfills": "^0.26.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "webdriverio": "^9.24.0"
   }
 }

@@ -157,31 +157,6 @@ export function formatNextRun(iso: string): string {
 }
 
 /**
- * Format a past ISO timestamp as relative time (e.g. "2 hours ago").
- */
-export function formatTimeAgo(iso: string): string {
-  const past = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - past.getTime();
-
-  if (diffMs < 0) return past.toLocaleString();
-
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return 'just now';
-
-  const diffMin = Math.floor(diffMs / 60_000);
-  if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
-
-  const diffHrs = Math.floor(diffMs / 3_600_000);
-  if (diffHrs < 24) return `${diffHrs} hour${diffHrs !== 1 ? 's' : ''} ago`;
-
-  const diffDays = Math.floor(diffMs / 86_400_000);
-  if (diffDays < 30) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-
-  return past.toLocaleDateString();
-}
-
-/**
  * Format duration_ms into a compact string like "3s" or "1m 12s".
  */
 export function formatDuration(ms: number): string {

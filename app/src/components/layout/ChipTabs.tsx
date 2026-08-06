@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 
+import { IS_DEV } from '../../utils/config';
+
 const namespace = 'chip-tabs';
 
 function debug(message: string, payload?: Record<string, unknown>) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.debug(`[${namespace}] ${message}`, payload ?? {});
   }
 }
@@ -18,9 +20,13 @@ export interface ChipTabItem<T extends string> {
    * `testIdPrefix` is set on the bar, otherwise no testid is emitted.
    */
   testId?: string;
+  /** ID of the tab panel controlled by this chip. */
+  controls?: string;
+  /** ID assigned to the chip so its panel can reference it via `aria-labelledby`. */
+  labelledBy?: string;
 }
 
-export interface ChipTabsProps<T extends string> {
+interface ChipTabsProps<T extends string> {
   /** Chips to render, left to right. */
   items: ChipTabItem<T>[];
   /** Currently active chip id. */
@@ -47,12 +53,16 @@ export interface ChipTabsProps<T extends string> {
    * already supply their own gutter.
    */
   className?: string;
+  /** Uses a smaller chip footprint while retaining the row layout. */
+  compact?: boolean;
 }
 
 /** Canonical chip-row spacing — its own gutter so content below sits correctly. */
 const DEFAULT_ROW_CLASS = 'flex flex-wrap gap-1.5 px-4 pt-3 pb-3';
 
-const baseChipClass = 'rounded-full px-3 py-1 text-xs font-medium transition-colors';
+const baseChipClass = 'rounded-full text-xs font-medium transition-colors';
+const defaultChipSpacingClass = 'px-3 py-1';
+const compactChipSpacingClass = 'px-2 py-0.5';
 // Inverse pill built from theme tokens: the foreground colour becomes the fill
 // and the surface colour becomes the text, so the selected chip stays
 // high-contrast and on-theme under any palette (light, dark, or custom).
@@ -78,6 +88,7 @@ export default function ChipTabs<T extends string>({
   testId,
   testIdPrefix,
   className = DEFAULT_ROW_CLASS,
+  compact = false,
 }: ChipTabsProps<T>) {
   const isNav = as === 'nav';
 
@@ -87,7 +98,7 @@ export default function ChipTabs<T extends string>({
       role={isNav ? 'navigation' : 'tablist'}
       aria-label={ariaLabel}
       data-testid={testId}>
-      {items.map(item => {
+      {items.map((item, index) => {
         const active = item.id === value;
         const chipTestId = item.testId ?? (testIdPrefix ? `${testIdPrefix}-${item.id}` : undefined);
 
@@ -97,13 +108,41 @@ export default function ChipTabs<T extends string>({
             type="button"
             data-testid={chipTestId}
             role={isNav ? undefined : 'tab'}
+            id={isNav ? undefined : item.labelledBy}
             aria-selected={isNav ? undefined : active}
+            aria-controls={isNav ? undefined : item.controls}
             aria-current={isNav ? (active ? 'page' : undefined) : undefined}
+            tabIndex={isNav ? undefined : active ? 0 : -1}
             onClick={() => {
               debug('select', { id: item.id });
               onChange(item.id);
             }}
-            className={`${baseChipClass} ${active ? activeChipClass : inactiveChipClass}`}>
+            onKeyDown={
+              isNav
+                ? undefined
+                : event => {
+                    let nextIndex: number | null = null;
+                    if (event.key === 'ArrowRight') nextIndex = (index + 1) % items.length;
+                    if (event.key === 'ArrowLeft')
+                      nextIndex = (index - 1 + items.length) % items.length;
+                    if (event.key === 'Home') nextIndex = 0;
+                    if (event.key === 'End') nextIndex = items.length - 1;
+                    if (nextIndex === null) return;
+
+                    event.preventDefault();
+                    const nextItem = items[nextIndex];
+                    if (!nextItem) return;
+                    debug('keyboard select', { id: nextItem?.id, key: event.key });
+                    onChange(nextItem.id);
+                    const tabs = event.currentTarget
+                      .closest('[role="tablist"]')
+                      ?.querySelectorAll<HTMLElement>('[role="tab"]');
+                    tabs?.[nextIndex]?.focus();
+                  }
+            }
+            className={`${baseChipClass} ${
+              compact ? compactChipSpacingClass : defaultChipSpacingClass
+            } ${active ? activeChipClass : inactiveChipClass}`}>
             {item.label}
           </button>
         );

@@ -42,16 +42,16 @@ pub use vault::{obsidian_vault_status_rpc, vault_health_check_rpc};
 #[allow(dead_code)]
 pub(crate) fn parse_source_kind_str(
     s: &str,
-) -> Option<crate::openhuman::memory_store::chunks::types::SourceKind> {
-    crate::openhuman::memory_store::chunks::types::SourceKind::parse(s).ok()
+) -> Option<crate::openhuman::memory::store::chunks::types::SourceKind> {
+    crate::openhuman::memory::store::chunks::types::SourceKind::parse(s).ok()
 }
 
 #[cfg(test)]
 pub(crate) use crate::openhuman::config::Config;
 #[cfg(test)]
-pub(crate) use crate::openhuman::memory_store::chunks::store::with_connection;
+pub(crate) use crate::openhuman::memory::store::chunks::store::with_connection;
 #[cfg(test)]
-pub(crate) use crate::openhuman::memory_store::chunks::types::SourceKind;
+pub(crate) use crate::openhuman::memory::store::chunks::types::SourceKind;
 #[cfg(test)]
 pub(crate) use admin::clear_composio_sync_state;
 

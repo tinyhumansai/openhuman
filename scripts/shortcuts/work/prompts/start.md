@@ -56,7 +56,7 @@ Add verbose diagnostics on new/changed flows: entry/exit, branches, retries, tim
 
 ## 7. Capability catalog
 
-If this adds, removes, or renames a user-facing feature, update `src/openhuman/about_app/` in the same change.
+If this adds, removes, or renames a user-facing feature, update `src/openhuman/platform/about_app/` in the same change.
 
 ## 8. Pre-merge quality checks
 

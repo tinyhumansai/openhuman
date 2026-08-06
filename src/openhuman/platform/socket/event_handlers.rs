@@ -1,0 +1,1022 @@
+//! Socket.IO event routing and protocol handlers.
+//!
+//! Thin transport layer: parses incoming Socket.IO events and publishes them
+//! to the event bus for domain-specific handling. Webhook routing lives in
+//! `webhooks::bus`, channel inbound processing lives in `channels::bus`.
+
+use std::sync::Arc;
+
+use serde_json::json;
+use tokio::sync::mpsc;
+
+use crate::api::models::socket::ConnectionStatus;
+use crate::core::event_bus::{publish_global, BackendMeetTurn, DomainEvent};
+use crate::openhuman::skills::webhooks::WebhookRequest;
+
+use super::manager::{emit_server_event, emit_state_change, SharedState};
+
+// ---------------------------------------------------------------------------
+// Main event dispatcher
+// ---------------------------------------------------------------------------
+
+/// Route a Socket.IO event to the appropriate handler based on its name.
+pub(super) fn handle_sio_event(
+    event_name: &str,
+    data: serde_json::Value,
+    emit_tx: &mpsc::UnboundedSender<String>,
+    shared: &Arc<SharedState>,
+) {
+    // Log every incoming event for observability.
+    // Payload content is intentionally omitted from logs — webhook bodies,
+    // channel messages, and Composio trigger payloads can carry PII, secrets,
+    // or auth tokens. The byte-length alone is sufficient for diagnosing
+    // truncation and throughput issues without exposing raw content.
+    let payload = data.to_string();
+    log::info!(
+        "[socket] event received: name={} data_bytes={}",
+        event_name,
+        payload.len()
+    );
+    // CodeRabbit #3250222027: even at debug level, raw bodies can leak
+    // PII / secrets / tokens. Log structural metadata (top-level shape +
+    // byte length) but never the raw text.
+    let payload_shape = match &data {
+        serde_json::Value::Object(map) => format!("object_keys={}", map.len()),
+        serde_json::Value::Array(arr) => format!("array_len={}", arr.len()),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::Bool(_) => "bool".to_string(),
+        serde_json::Value::Null => "null".to_string(),
+    };
+    log::debug!(
+        "[socket] event payload: name={} data_bytes={} shape={} preview_omitted=true",
+        event_name,
+        payload.len(),
+        payload_shape
+    );
+    log::debug!("[socket] event dispatch: name={}", event_name);
+
+    match event_name {
+        "ready" => {
+            log::info!("[socket] Server ready — auth successful");
+            super::medulla::workflows::begin_connection_generation();
+            *shared.status.write() = ConnectionStatus::Connected;
+            emit_state_change(shared);
+            // Declare the device-tool manifest so the hosted brain knows which
+            // tool calls to round-trip to this device (Phase 2). Sent every
+            // (re)connect so the server's view is rebuilt from scratch.
+            emit_via_channel(
+                emit_tx,
+                "orch:register_tools",
+                crate::openhuman::hosted::orchestration::effect_executor::device_tool_manifest(),
+            );
+            // Advertise this core's agent roster to the backend so a medulla
+            // operator can delegate `medulla:task_run` to a named agent. The
+            // backend clears the roster on socket disconnect.
+            super::medulla::emit_register_agents();
+            // Advertise the saved workflow graphs this host can be asked to run,
+            // so the orchestrator can name one when delegating. Same
+            // per-connection lifetime as the roster: rebuilt on every reconnect,
+            // dropped server-side on disconnect. A no-op until a host installs a
+            // `WorkflowBridge`.
+            super::medulla::workflows::emit_register_workflows();
+        }
+        "error" => {
+            log::error!("[socket] Server error event: {}", data);
+            *shared.status.write() = ConnectionStatus::Error;
+            emit_state_change(shared);
+        }
+        // Hosted-brain device effect: relay a reply over Signal, then ack. Runs
+        // async so the recv loop isn't blocked on the send; the ack rides back
+        // over the same socket. Device Signal keys never leave the machine.
+        "orch:effect:send_dm" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::hosted::orchestration::effect_executor::handle_send_dm(&data)
+                        .await
+                {
+                    log::debug!("[socket] orch:effect:send_dm acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
+        }
+        // Hosted-brain device tool call: run a local (read-only) device tool and
+        // return the result so the reasoning loop can continue.
+        "orch:tool_call" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, result)) =
+                    crate::openhuman::hosted::orchestration::effect_executor::handle_tool_call(
+                        &data,
+                    )
+                    .await
+                {
+                    log::debug!("[socket] orch:tool_call result call_id={call_id}");
+                    emit_via_channel(&tx, "orch:tool_result", result);
+                }
+            });
+        }
+        // Hosted-brain context-guard eviction: fold the evicted compressed
+        // summaries into local memory RAG so they stay retrievable offline, then
+        // ack. Async so the recv loop isn't blocked on the RAG write; the ack
+        // rides back over the same socket (shared `orch:effect:result` channel).
+        "orch:effect:evict" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::hosted::orchestration::effect_executor::handle_evict(&data)
+                        .await
+                {
+                    log::debug!("[socket] orch:effect:evict acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
+        }
+        // Webhook tunnel — publish to event bus for routing by WebhookRequestSubscriber
+        "webhook:request" => {
+            log::info!("[socket] Publishing webhook:request to event bus");
+            match serde_json::from_value::<WebhookRequest>(data.clone()) {
+                Ok(request) => {
+                    publish_global(DomainEvent::WebhookIncomingRequest {
+                        request,
+                        raw_data: data,
+                    });
+                }
+                Err(e) => {
+                    log::error!("[socket] Failed to parse webhook:request payload: {e}");
+                    // Publish with a minimal request so the subscriber can still
+                    // emit an error response. Build a request from what we can parse.
+                    let cid = data
+                        .get("correlationId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let _tunnel_uuid = data
+                        .get("tunnelUuid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Record parse error in router debug log if available
+                    if let Some(router) = shared.webhook_router.read().clone() {
+                        router.record_parse_error(
+                            cid.clone(),
+                            data.get("tunnelUuid")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            data.get("method")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            data.get("path")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            data.clone(),
+                            format!("bad request: {e}"),
+                        );
+                    }
+
+                    // Emit error response directly via socket manager
+                    if let Some(mgr) = crate::openhuman::platform::socket::global_socket_manager() {
+                        let err_json = json!({ "error": format!("Bad request: {e}") });
+                        let body = base64_encode(&err_json.to_string());
+                        let response_data = json!({
+                            "correlationId": cid,
+                            "statusCode": 400,
+                            "headers": {},
+                            "body": body,
+                        });
+                        let mgr = mgr.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = mgr.emit("webhook:response", response_data).await {
+                                log::error!("[socket] Failed to emit webhook error response: {e}");
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        // Composio trigger webhook — backend emits this after HMAC-verifying
+        // an incoming Composio webhook. Deserialize into the canonical
+        // `ComposioTriggerEvent` DTO so shape mismatches fail fast with a
+        // clear log line instead of being silently coerced to empty strings.
+        "composio:trigger" => {
+            log::info!("[socket] Publishing composio:trigger to event bus");
+            match serde_json::from_value::<
+                crate::openhuman::integrations::composio::ComposioTriggerEvent,
+            >(data.clone())
+            {
+                Ok(event) => {
+                    if event.toolkit.is_empty() || event.trigger.is_empty() {
+                        log::warn!(
+                            "[socket] composio:trigger missing toolkit/trigger; dropping event"
+                        );
+                    } else {
+                        log::info!(
+                            "[socket] Publishing composio:trigger to event bus: toolkit={}, trigger={}, metadata_id={}, metadata_uuid={}",
+                            event.toolkit,
+                            event.trigger,
+                            event.metadata.id,
+                            event.metadata.uuid
+                        );
+                        publish_global(DomainEvent::ComposioTriggerReceived {
+                            toolkit: event.toolkit,
+                            trigger: event.trigger,
+                            metadata_id: event.metadata.id,
+                            metadata_uuid: event.metadata.uuid,
+                            payload: event.payload,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[socket] failed to parse composio:trigger payload: {e}; dropping event"
+                    );
+                }
+            }
+        }
+        // Device tunnel — peer-status update.
+        "tunnel:peer-status" => {
+            log::info!("[socket] tunnel:peer-status received");
+            match serde_json::from_value::<
+                crate::openhuman::security::devices::tunnel_client::TunnelPeerStatus,
+            >(data.clone())
+            {
+                Ok(status) => {
+                    if status.online {
+                        publish_global(DomainEvent::DevicePeerOnline {
+                            channel_id: status.channel_id,
+                        });
+                    } else {
+                        publish_global(DomainEvent::DevicePeerOffline {
+                            channel_id: status.channel_id,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[socket] failed to parse tunnel:peer-status: {e}");
+                }
+            }
+        }
+        // Device tunnel — encrypted frame from the iOS device.
+        "tunnel:frame" => {
+            log::debug!("[socket] tunnel:frame received");
+            match serde_json::from_value::<
+                crate::openhuman::security::devices::tunnel_client::TunnelFrame,
+            >(data.clone())
+            {
+                Ok(frame) => {
+                    publish_global(DomainEvent::DeviceTunnelFrame {
+                        channel_id: frame.channel_id,
+                        payload_b64: frame.payload,
+                    });
+                }
+                Err(e) => {
+                    log::warn!("[socket] failed to parse tunnel:frame: {e}");
+                }
+            }
+        }
+        // Device tunnel — backend evicted the channel (TTL / server restart).
+        "tunnel:evicted" => {
+            let channel_id = data
+                .get("channelId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            log::info!("[socket] tunnel:evicted channel_id={}", channel_id);
+            if !channel_id.is_empty() {
+                publish_global(DomainEvent::DevicePeerOffline { channel_id });
+            }
+        }
+
+        // ── Backend Meet Bot events ──────────────────────────────────────
+        "bot:joined" => {
+            let meet_url = data
+                .get("meetUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::info!("[socket] bot:joined meet_url_len={}", meet_url.len());
+            publish_global(DomainEvent::BackendMeetJoined {
+                meet_url,
+                correlation_id,
+            });
+        }
+        "bot:left" => {
+            let reason = data
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::info!("[socket] bot:left reason={}", reason);
+            publish_global(DomainEvent::BackendMeetLeft {
+                reason,
+                correlation_id,
+            });
+        }
+        "bot:reply" => {
+            let transcript = data
+                .get("transcript")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let reply = data
+                .get("reply")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let emotion = data
+                .get("emotion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("neutral")
+                .to_string();
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::info!(
+                "[socket] bot:reply reply_len={} emotion={}",
+                reply.len(),
+                emotion
+            );
+            publish_global(DomainEvent::BackendMeetReply {
+                transcript,
+                reply,
+                emotion,
+                correlation_id,
+            });
+        }
+        "bot:harness" => {
+            let transcript = data
+                .get("transcript")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let instruction = data
+                .get("instruction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let emotion = data
+                .get("emotion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("neutral")
+                .to_string();
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::info!(
+                "[socket] bot:harness instruction_len={} emotion={}",
+                instruction.len(),
+                emotion
+            );
+            publish_global(DomainEvent::BackendMeetHarness {
+                transcript,
+                instruction,
+                emotion,
+                correlation_id,
+            });
+        }
+        "voice:harness" => {
+            // Realtime voice-agent turn relayed from the backend Custom-LLM
+            // bridge (#5399): run the local orchestrator and stream the reply
+            // back up as voice:harness:delta / :done / :error.
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let messages: Vec<serde_json::Value> = data
+                .get("messages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            log::info!(
+                "[socket] voice:harness correlation={} messages={}",
+                correlation_id,
+                messages.len()
+            );
+            if correlation_id.is_empty() {
+                log::warn!("[socket] voice:harness missing correlationId — dropping");
+            } else {
+                #[cfg(feature = "voice")]
+                tokio::spawn(
+                    crate::openhuman::voice::realtime_harness::handle_voice_harness_turn(
+                        correlation_id,
+                        messages,
+                    ),
+                );
+                #[cfg(not(feature = "voice"))]
+                {
+                    let _ = messages;
+                    log::warn!("[socket] voice:harness ignored — voice feature disabled");
+                }
+            }
+        }
+        "bot:transcript" => {
+            let turns: Vec<BackendMeetTurn> = data
+                .get("turns")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let duration_ms = data.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0);
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::info!(
+                "[socket] bot:transcript turns={} duration_ms={}",
+                turns.len(),
+                duration_ms
+            );
+            // Thread creation + memory ingest are handled by the
+            // MeetingEventSubscriber (agent_meetings/bus.rs) reacting to
+            // this event — no inline spawn needed.
+            publish_global(DomainEvent::BackendMeetTranscript {
+                turns,
+                duration_ms,
+                correlation_id,
+            });
+        }
+        "bot:transcript_delta" => {
+            // Incremental mid-call transcript turn (issue #4304). Relayed live
+            // to the renderer; the terminal `bot:transcript` stays authoritative
+            // for thread creation / summary (handled by MeetingEventSubscriber).
+            match parse_transcript_delta(&data) {
+                Some((turn, index, is_partial, correlation_id)) => {
+                    log::info!(
+                        "[socket] bot:transcript_delta index={} is_partial={} role={}",
+                        index,
+                        is_partial,
+                        turn.role
+                    );
+                    publish_global(DomainEvent::BackendMeetTranscriptDelta {
+                        turn,
+                        index,
+                        is_partial,
+                        correlation_id,
+                    });
+                }
+                None => {
+                    log::warn!(
+                        "[socket] bot:transcript_delta dropped: missing/invalid 'turn' field"
+                    );
+                }
+            }
+        }
+        "bot:in_call_request" => {
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let speaker = data
+                .get("speaker")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            let command_text = data
+                .get("commandText")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let recent_transcript: Vec<BackendMeetTurn> = data
+                .get("recentTranscript")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            let timestamp_ms = data
+                .get("timestampMs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            // Dual-mascot name addressing (#4277 follow-up): which slot the
+            // backend's wake matcher decided was addressed (0|1), if any.
+            let mascot_slot = data
+                .get("mascotSlot")
+                .and_then(|v| v.as_u64())
+                .filter(|s| *s <= 1)
+                .map(|s| s as u8);
+            log::info!(
+                "[socket] bot:in_call_request speaker={} cmd_len={} mascot_slot={:?}",
+                speaker,
+                command_text.len(),
+                mascot_slot
+            );
+            publish_global(DomainEvent::BackendMeetInCallRequest {
+                correlation_id,
+                speaker,
+                command_text,
+                recent_transcript,
+                timestamp_ms,
+                mascot_slot,
+            });
+        }
+        "bot:error" => {
+            let error = data
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error")
+                .to_string();
+            let correlation_id = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            log::error!("[socket] bot:error: {}", error);
+            publish_global(DomainEvent::BackendMeetError {
+                error,
+                correlation_id,
+            });
+        }
+
+        // ── Medulla harness plane ────────────────────────────────────────
+        // A medulla operator (running in the backend) drives an openhuman agent
+        // session as a delegated sub-agent. See `socket::medulla`.
+        "medulla:task_run" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskRun>(data) {
+                Ok(run) => {
+                    log::info!(
+                        "[socket] medulla:task_run task_id={} cycle_id={} agent_id={:?}",
+                        run.task_id,
+                        run.cycle_id,
+                        run.agent_id
+                    );
+                    super::medulla::manager().start_task(run);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_run: {e}"),
+            }
+        }
+        "medulla:task_send" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskSend>(data) {
+                Ok(send) => {
+                    log::info!("[socket] medulla:task_send task_id={}", send.task_id);
+                    super::medulla::manager().steer_task(send);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_send: {e}"),
+            }
+        }
+        "medulla:task_abort" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskAbort>(data) {
+                Ok(abort) => {
+                    log::info!("[socket] medulla:task_abort task_id={}", abort.task_id);
+                    super::medulla::manager().abort_task(abort);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_abort: {e}"),
+            }
+        }
+        // Capability handshake. The backend waits 10s per probe, so an
+        // unanswered one is not a graceful degradation — it is a stall on the
+        // first delegation to this agent.
+        "medulla:capabilities_request" => {
+            match serde_json::from_value::<super::medulla::payloads::CapabilitiesRequest>(
+                data.clone(),
+            ) {
+                Ok(request) => {
+                    log::info!(
+                        "[socket] medulla:capabilities_request probe_id={} agent_id={}",
+                        request.probe_id,
+                        request.agent_id
+                    );
+                    super::medulla::handle_capabilities_request(request);
+                }
+                // An undecodable probe still has to be answered when it named
+                // itself, for the same reason a decodable one does: silence
+                // spends the backend's whole 10s window.
+                Err(e) => {
+                    log::warn!("[socket] failed to parse medulla:capabilities_request: {e}");
+                    super::medulla::reject_unparsed_capabilities_request(&data, &e.to_string());
+                }
+            }
+        }
+        // Workflow round trip: a read of, or an authoring turn on, this host's
+        // own workflow store.
+        "medulla:workflow_request" => {
+            match serde_json::from_value::<super::medulla::payloads::WorkflowRequest>(data.clone())
+            {
+                Ok(request) => {
+                    log::info!(
+                        "[socket] medulla:workflow_request request_id={} op={:?}",
+                        request.request_id,
+                        request.op
+                    );
+                    super::medulla::workflows::handle_workflow_request(request);
+                }
+                // An undecodable frame still has to be answered when it named
+                // itself: staying silent would cost the backend the op's whole
+                // deadline (up to ten minutes for `copilot`).
+                Err(e) => {
+                    log::warn!("[socket] failed to parse medulla:workflow_request: {e}");
+                    super::medulla::workflows::reject_unparsed_request(&data, &e.to_string());
+                }
+            }
+        }
+
+        // Channel inbound message — publish to event bus for ChannelInboundSubscriber
+        _ if event_name.ends_with(":message") => {
+            log::info!(
+                "[socket] Publishing inbound channel message '{}' to event bus",
+                event_name
+            );
+
+            let channel = data
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let message = data
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if channel.is_empty() {
+                log::warn!("[socket] channel:message missing 'channel' field");
+                return;
+            }
+            if message.is_empty() {
+                log::debug!("[socket] channel:message empty or missing 'message'");
+                return;
+            }
+
+            // Lift sender / reply_target / thread_ts off the raw payload so
+            // the agent loop can derive per-sender conversation keys
+            // instead of collapsing every inbound message in a shared
+            // channel onto the same `channel:<name>` thread (which lets
+            // one participant resume another's cached agent session).
+            let nonempty = |v: Option<&serde_json::Value>| -> Option<String> {
+                v.and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            };
+            let sender = nonempty(data.get("sender"))
+                .or_else(|| nonempty(data.get("from")))
+                .or_else(|| nonempty(data.get("user_id")));
+            let reply_target = nonempty(data.get("reply_target"))
+                .or_else(|| nonempty(data.get("chat_id")))
+                .or_else(|| nonempty(data.get("channel_id")));
+            let thread_ts =
+                nonempty(data.get("thread_ts")).or_else(|| nonempty(data.get("thread_id")));
+
+            publish_global(DomainEvent::ChannelInboundMessage {
+                event_name: event_name.to_string(),
+                channel,
+                message,
+                sender,
+                reply_target,
+                thread_ts,
+                raw_data: data,
+            });
+        }
+        _ => {
+            log::debug!("[socket] Unhandled event '{}' — logging only", event_name);
+            emit_server_event(shared, event_name, data);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
+
+/// Base64-encode a string (for webhook error response bodies).
+fn base64_encode(input: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
+}
+
+/// Parse a `bot:transcript_delta` payload (issue #4304) into its event fields.
+///
+/// Expected shape: `{ turn: { role, content }, index, isPartial, correlationId }`.
+/// Returns `None` when the required `turn` object is missing or malformed so the
+/// caller can drop the event rather than publish a degenerate turn. `index`
+/// defaults to 0 and `isPartial` to `false` (final) when absent.
+fn parse_transcript_delta(
+    data: &serde_json::Value,
+) -> Option<(BackendMeetTurn, u64, bool, Option<String>)> {
+    let turn: BackendMeetTurn = data
+        .get("turn")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+    let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let is_partial = data
+        .get("isPartial")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let correlation_id = data
+        .get("correlationId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    Some((turn, index, is_partial, correlation_id))
+}
+
+/// Send a Socket.IO event through the emit channel.
+///
+/// Format: `42["eventName", data]`
+pub(super) fn emit_via_channel(
+    tx: &mpsc::UnboundedSender<String>,
+    event: &str,
+    data: serde_json::Value,
+) {
+    let payload = serde_json::to_string(&json!([event, data])).unwrap_or_default();
+    let msg = format!("42{}", payload);
+    if let Err(e) = tx.send(msg) {
+        log::error!("[socket] emit_via_channel failed: {e}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SIO event parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a Socket.IO EVENT payload into an event name and JSON data.
+///
+/// Format: `["eventName", data]` or `<ackId>["eventName", data]`.
+pub(super) fn parse_sio_event(text: &str) -> Option<(String, serde_json::Value)> {
+    let json_start = text.find('[')?;
+    let json_str = &text[json_start..];
+    let arr: Vec<serde_json::Value> = serde_json::from_str(json_str).ok()?;
+    let event_name = arr.first()?.as_str()?.to_string();
+    let data = arr.get(1).cloned().unwrap_or(serde_json::Value::Null);
+    Some((event_name, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::RwLock;
+    use serde_json::json;
+
+    fn make_shared() -> Arc<SharedState> {
+        Arc::new(SharedState {
+            webhook_router: RwLock::new(None),
+            ack_registry: super::super::manager::AckRegistry::default(),
+            status: RwLock::new(ConnectionStatus::Disconnected),
+            socket_id: RwLock::new(None),
+            error: RwLock::new(None),
+        })
+    }
+
+    // ── base64_encode ───────────────────────────────────────────────
+
+    #[test]
+    fn base64_encode_round_trips_ascii() {
+        use base64::Engine;
+        let s = "hello world";
+        let encoded = base64_encode(s);
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .unwrap();
+        assert_eq!(decoded, s.as_bytes());
+    }
+
+    #[test]
+    fn base64_encode_handles_empty_string() {
+        assert_eq!(base64_encode(""), "");
+    }
+
+    #[test]
+    fn base64_encode_handles_json_body() {
+        let encoded = base64_encode(r#"{"error":"nope"}"#);
+        assert_eq!(encoded, "eyJlcnJvciI6Im5vcGUifQ==");
+    }
+
+    // ── parse_sio_event ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_sio_event_accepts_bare_array() {
+        let (name, data) = parse_sio_event(r#"["hello",{"x":1}]"#).unwrap();
+        assert_eq!(name, "hello");
+        assert_eq!(data, json!({"x": 1}));
+    }
+
+    #[test]
+    fn parse_sio_event_strips_ack_id_prefix() {
+        let (name, data) = parse_sio_event(r#"123["hello",{"x":1}]"#).unwrap();
+        assert_eq!(name, "hello");
+        assert_eq!(data["x"], 1);
+    }
+
+    #[test]
+    fn parse_sio_event_defaults_data_to_null_when_missing() {
+        let (name, data) = parse_sio_event(r#"["ping"]"#).unwrap();
+        assert_eq!(name, "ping");
+        assert!(data.is_null());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_for_garbage() {
+        assert!(parse_sio_event("not an sio event").is_none());
+        assert!(parse_sio_event("").is_none());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_when_first_element_is_not_string() {
+        assert!(parse_sio_event("[42,{}]").is_none());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_when_json_invalid() {
+        assert!(parse_sio_event(r#"[invalid json"#).is_none());
+    }
+
+    // ── parse_transcript_delta (bot:transcript_delta, #4304) ────────
+
+    #[test]
+    fn parse_transcript_delta_extracts_all_fields() {
+        let data = json!({
+            "turn": { "role": "user", "content": "hello there" },
+            "index": 3,
+            "isPartial": true,
+            "correlationId": "corr-123"
+        });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "user");
+        assert_eq!(turn.content, "hello there");
+        assert_eq!(index, 3);
+        assert!(is_partial);
+        assert_eq!(correlation_id.as_deref(), Some("corr-123"));
+    }
+
+    #[test]
+    fn parse_transcript_delta_defaults_index_partial_and_correlation() {
+        let data = json!({ "turn": { "role": "assistant", "content": "hi" } });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "assistant");
+        assert_eq!(index, 0);
+        assert!(!is_partial);
+        assert!(correlation_id.is_none());
+    }
+
+    #[test]
+    fn parse_transcript_delta_returns_none_without_turn() {
+        assert!(parse_transcript_delta(&json!({ "index": 1, "isPartial": false })).is_none());
+        // Malformed turn (missing required fields) is also dropped.
+        assert!(parse_transcript_delta(&json!({ "turn": { "role": "user" } })).is_none());
+    }
+
+    // ── handle_sio_event dispatch ───────────────────────────────────
+
+    #[test]
+    fn handle_sio_event_ready_sets_connected() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event("ready", json!({}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
+    }
+
+    #[test]
+    fn handle_sio_event_error_sets_error_status() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event("error", json!({"msg":"oops"}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Error);
+    }
+
+    #[test]
+    fn handle_sio_event_debug_truncation_respects_utf8_boundary() {
+        // Serialized JSON must be >= 500 bytes with a multi-byte codepoint
+        // straddling byte 500 — mirrors OPENHUMAN-TAURI-KC (Cyrillic at 499..501).
+        let inner = format!("{}н", "a".repeat(498));
+        let payload_json = serde_json::Value::String(inner.clone()).to_string();
+        assert!(
+            payload_json.len() >= 500,
+            "fixture too short: {} bytes",
+            payload_json.len()
+        );
+        assert!(
+            !payload_json.is_char_boundary(500),
+            "fixture must place byte 500 inside a multi-byte character"
+        );
+
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event(
+            "weird.unrelated.event",
+            serde_json::Value::String(inner),
+            &tx,
+            &shared,
+        );
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn handle_sio_event_unknown_event_is_noop_on_status() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // Start disconnected — an unhandled event must not flip status.
+        handle_sio_event("weird.unrelated.event", json!({}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn handle_sio_event_channel_message_missing_channel_is_dropped() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // No "channel" field → the dispatcher must return without touching status.
+        handle_sio_event("telegram:message", json!({"message": "hi"}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn handle_sio_event_channel_message_empty_text_is_dropped() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event(
+            "telegram:message",
+            json!({"channel": "tg:123", "message": "   "}),
+            &tx,
+            &shared,
+        );
+        // Status should still be untouched. The dropped-empty branch is the
+        // coverage target — this test validates we hit the early-return path.
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    // ── emit_via_channel ────────────────────────────────────────────
+
+    #[test]
+    fn emit_via_channel_sends_socketio_event_frame() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        emit_via_channel(&tx, "hello", json!({"x": 1}));
+        let msg = rx.try_recv().expect("message should be sent");
+        assert!(
+            msg.starts_with("42"),
+            "expected SIO EVENT prefix, got: {msg}"
+        );
+        assert!(msg.contains("\"hello\""));
+        assert!(msg.contains("\"x\""));
+    }
+
+    #[test]
+    fn emit_via_channel_works_with_null_data() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        emit_via_channel(&tx, "ping", serde_json::Value::Null);
+        let msg = rx.try_recv().expect("message should be sent");
+        assert_eq!(msg, r#"42["ping",null]"#);
+    }
+
+    #[test]
+    fn emit_via_channel_logs_but_does_not_panic_on_closed_receiver() {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        drop(rx); // receiver closed first
+                  // Must not panic — error path just logs.
+        emit_via_channel(&tx, "ping", json!({}));
+    }
+
+    // Regression: OPENHUMAN-TAURI-KC (#1814). A multi-byte UTF-8 char
+    // straddling byte 500 of `data.to_string()` used to panic the debug-log
+    // truncator with `byte index 500 is not a char boundary`, killing the
+    // core thread on every receipt of such an event.
+    //
+    // The fix: payload content is never emitted in any log line (PII/secrets
+    // policy). The raw payload bytes are therefore never sliced at a byte
+    // index that may not be a UTF-8 boundary. This test:
+    //   1. Constructs a fixture that would have triggered the old panic.
+    //   2. Verifies `handle_sio_event` completes without panicking.
+    //   3. Verifies the debug-log format string for the pre-match lines does
+    //      NOT include any payload slice — confirmed structurally by the code
+    //      review and enforced at the type level (the `payload` binding is
+    //      only used via `.len()` after this change).
+    #[test]
+    fn handle_sio_event_payload_redacted_no_panic_on_multibyte_boundary() {
+        // Build a payload whose JSON serialization places the 2-byte Cyrillic
+        // `'н'` exactly at bytes 499..501. `json!({"data": <s>}).to_string()`
+        // emits `{"data":"<s>"}`, so the 9-byte prefix `{"data":"` plus 490
+        // ASCII bytes lands the next char at byte 499.
+        let mut s = "a".repeat(490);
+        s.push('н'); // 2 bytes — straddles byte 500
+        s.push_str(&"b".repeat(20)); // trailing pad past the 500-byte cap
+        let payload = json!({ "data": s });
+        let serialized = payload.to_string();
+        assert!(
+            serialized.len() > 500,
+            "fixture must exceed the 500-byte boundary"
+        );
+        assert!(
+            !serialized.is_char_boundary(500),
+            "fixture must place a multi-byte char across byte 500"
+        );
+
+        // Confirm that the payload string, if sliced at byte 500, would panic —
+        // i.e. that the old code really was broken for this input.
+        let would_panic = std::panic::catch_unwind(|| {
+            let _ = &serialized[..500];
+        });
+        assert!(
+            would_panic.is_err(),
+            "slice at byte 500 should panic for this fixture (validates the fixture itself)"
+        );
+
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // Any event name exercises the pre-match log path. Must not panic.
+        handle_sio_event("anything.unhandled", payload, &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+}

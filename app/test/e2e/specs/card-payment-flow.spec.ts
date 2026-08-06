@@ -76,7 +76,7 @@ describe('Card Payment Flow', () => {
       expect(onSettings).toBe(true);
       console.log(`${LOG_PREFIX} 5.3 — back-to-settings navigation works`);
     } else {
-      // Fallback: use PageBackButton's generic back arrow
+      // Fallback: return through the settings navigation helper.
       await navigateToSettings();
       const onSettings = await textExists('Settings');
       expect(onSettings).toBe(true);

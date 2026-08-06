@@ -23,7 +23,7 @@ export interface BackendMeetHarnessEvent {
   correlationId?: string;
 }
 
-export interface BackendMeetTranscriptEvent {
+interface BackendMeetTranscriptEvent {
   turns: BackendMeetTurn[];
   duration_ms: number;
   correlationId?: string;
@@ -35,14 +35,14 @@ export interface BackendMeetTranscriptEvent {
  * `index` supersedes an earlier one (used to finalize a partial line).
  * `is_partial` marks a not-yet-finalized line, rendered greyed in the UI.
  */
-export interface BackendMeetTranscriptDeltaEvent {
+interface BackendMeetTranscriptDeltaEvent {
   turn: BackendMeetTurn;
   index: number;
   is_partial: boolean;
   correlationId?: string;
 }
 
-export interface BackendMeetState {
+interface BackendMeetState {
   status: BackendMeetStatus;
   meetUrl: string | null;
   meetingId: string | null;
@@ -186,9 +186,6 @@ export const selectBackendMeetLastReply = (state: { backendMeet: BackendMeetStat
   state.backendMeet.lastReply;
 export const selectBackendMeetLastHarness = (state: { backendMeet: BackendMeetState }) =>
   state.backendMeet.lastHarness;
-export const selectBackendMeetMeetingId = (state: {
-  backendMeet: BackendMeetState;
-}): string | null => state.backendMeet.meetingId;
 export const selectBackendMeetListenOnly = (state: { backendMeet: BackendMeetState }): boolean =>
   state.backendMeet.listenOnly;
 export const selectBackendMeetError = (state: { backendMeet: BackendMeetState }): string | null =>

@@ -23,7 +23,7 @@ pub(super) struct SubagentCheckpointOutcome {
 /// digest summary if the summarization call fails or returns no prose.
 ///
 /// The summary runs on a crate [`ChatModel`] (built from the turn's
-/// [`TurnModelSource`](crate::openhuman::tinyagents::TurnModelSource) — model +
+/// [`TurnModelSource`](crate::openhuman::agent::tinyagents::TurnModelSource) — model +
 /// temperature baked in), so the checkpoint no longer names the `Provider` trait
 /// (issue #4249, Phase 3 / Motion A).
 pub(super) struct SubagentCheckpoint {
@@ -54,7 +54,8 @@ impl SubagentCheckpoint {
         let request = ModelRequest::new(summary_input).with_max_tokens(self.max_output_tokens);
         match self.chat_model.invoke(&(), request).await {
             Ok(resp) => {
-                let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&resp);
+                let usage =
+                    crate::openhuman::agent::tinyagents::model::usage_info_from_response(&resp);
                 let raw = resp.text();
                 let (prose, _) = super::super::super::parse::parse_tool_calls(&raw);
                 let text = if prose.trim().is_empty() {

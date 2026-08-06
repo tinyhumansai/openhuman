@@ -2,7 +2,7 @@ import { useId } from 'react';
 
 import { channelsToHex, hexToChannels } from '../../../../lib/theme/color';
 
-export interface ColorTokenFieldProps {
+interface ColorTokenFieldProps {
   /** Token key without `--` (e.g. `surface-canvas`). */
   tokenKey: string;
   /** Human label for the swatch row. */

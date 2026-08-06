@@ -30,11 +30,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
+use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::agent::progress::AgentProgress;
+use crate::openhuman::agent::tinyagents::run_turn_via_tinyagents_shared;
+use crate::openhuman::agent::tinyagents::TurnModelSource;
 use crate::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
-use crate::openhuman::inference::provider::ChatMessage;
-use crate::openhuman::tinyagents::run_turn_via_tinyagents_shared;
-use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::Tool;
 
 /// Drive a channel/CLI turn on the graph engine. Returns the final assistant
@@ -77,7 +77,7 @@ pub(crate) async fn run_channel_turn_via_graph(
     // Phase 3 / Motion A): the harness graph names crate model types only, and
     // reads native-tool / vision capability + telemetry id off the built bundle.
     let context_window = source.effective_context_window(model).await;
-    let turn_models = source.build(model, temperature, context_window);
+    let turn_models = source.build(model, temperature, context_window)?;
 
     // Native-tool support drives the durable history-suffix dispatcher (native
     // envelope vs prompt-guided text) at the end of this turn; capture it before
@@ -140,7 +140,7 @@ pub(crate) async fn run_channel_turn_via_graph(
         Some(crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS),
         // Context middlewares: cache-align + default tool-result byte cap (the
         // channel path has no session `ContextManager` to source config from).
-        crate::openhuman::tinyagents::TurnContextMiddleware::defaults(),
+        crate::openhuman::agent::tinyagents::TurnContextMiddleware::defaults(),
         // Channel/CLI path carries its own gating; no session `.tool_policy()`.
         None,
         // Channel turns do not yet carry SDK workspace descriptors.
@@ -179,10 +179,12 @@ pub(crate) async fn run_channel_turn_via_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::inference::provider::{ChatResponse, Provider, ToolCall};
     use crate::openhuman::tools::ToolResult;
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tinyagents::harness::message::AssistantMessage;
+    use tinyagents::harness::model::{ChatModel, ModelProfile, ModelResponse};
+    use tinyagents::harness::testkit::ScriptedModel;
+    use tinyagents::harness::tool::ToolCall;
 
     struct PingTool;
     #[async_trait]
@@ -201,57 +203,31 @@ mod tests {
         }
     }
 
-    struct PingThenDone {
-        calls: AtomicUsize,
-    }
-    #[async_trait]
-    impl Provider for PingThenDone {
-        async fn chat_with_system(
-            &self,
-            _s: Option<&str>,
-            _m: &str,
-            _model: &str,
-            _t: f64,
-        ) -> anyhow::Result<String> {
-            Ok(String::new())
-        }
-        async fn chat(
-            &self,
-            _r: crate::openhuman::inference::provider::ChatRequest<'_>,
-            _model: &str,
-            _t: f64,
-        ) -> anyhow::Result<ChatResponse> {
-            let n = self.calls.fetch_add(1, Ordering::SeqCst);
-            if n == 0 {
-                Ok(ChatResponse {
-                    tool_calls: vec![ToolCall {
-                        id: "p".to_string(),
-                        name: "ping".to_string(),
-                        arguments: "{}".to_string(),
-                        extra_content: None,
-                    }],
-                    ..Default::default()
-                })
-            } else {
-                Ok(ChatResponse {
-                    text: Some("channel done".to_string()),
-                    ..Default::default()
-                })
-            }
-        }
-        fn supports_native_tools(&self) -> bool {
-            true
-        }
-    }
-
     #[tokio::test]
     async fn channel_turn_runs_through_the_graph() {
         let registry: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(PingTool)]);
         let mut history = vec![ChatMessage::user("ping please")];
+        let scripted: Arc<dyn ChatModel<()>> = Arc::new(ScriptedModel::new(vec![
+            ModelResponse {
+                message: AssistantMessage {
+                    id: None,
+                    content: Vec::new(),
+                    tool_calls: vec![ToolCall::new("p", "ping", serde_json::json!({}))],
+                    usage: None,
+                },
+                usage: None,
+                finish_reason: Some("tool_calls".to_string()),
+                raw: None,
+                resolved_model: None,
+                continue_turn: None,
+            },
+            ModelResponse::assistant("channel done"),
+        ]));
+        let mut profile = ModelProfile::default();
+        profile.tool_calling = true;
+        profile.parallel_tool_calls = true;
         let text = run_channel_turn_via_graph(
-            TurnModelSource::new(Arc::new(PingThenDone {
-                calls: AtomicUsize::new(0),
-            })),
+            TurnModelSource::from_model_with_profile(scripted, profile),
             &mut history,
             registry,
             vec![],

@@ -1,4 +1,5 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
+import type { AgentProfile } from '../../../../types/agentProfile';
 import type { CoreCronJob, CoreCronRun } from '../../../../utils/tauriCommands';
 import Button from '../../../ui/Button';
 
@@ -13,6 +14,8 @@ interface CoreJobListProps {
   onRemoveCoreJob: (jobId: string) => void;
   /** Optional: when provided, an Edit button is rendered per row. */
   onEditCoreJob?: (job: CoreCronJob) => void;
+  /** Agent profiles, used to resolve a job's attributed profile name. */
+  profiles?: AgentProfile[];
 }
 
 const CoreJobList = ({
@@ -25,8 +28,14 @@ const CoreJobList = ({
   onLoadCoreRuns,
   onRemoveCoreJob,
   onEditCoreJob,
+  profiles = [],
 }: CoreJobListProps) => {
   const { t } = useT();
+
+  // Resolve a job's attributed profile to a display name, falling back to the
+  // raw id when the profile has since been deleted.
+  const profileLabel = (profileId: string): string =>
+    profiles.find(p => p.id === profileId)?.name || profileId;
 
   const toggleButtonLabel = (job: CoreCronJob) => {
     if (coreBusyKey === `core-toggle:${job.id}`) {
@@ -103,6 +112,14 @@ const CoreJobList = ({
                     {new Date(job.next_run).toLocaleString()}
                   </span>
                 </div>
+                {job.profile_id && (
+                  <div data-testid={`cron-job-profile-${job.id}`}>
+                    {t('settings.cron.jobs.profile')}{' '}
+                    <span className="font-medium text-content-secondary">
+                      {profileLabel(job.profile_id)}
+                    </span>
+                  </div>
+                )}
                 {job.last_status && (
                   <div>
                     {t('settings.cron.jobs.lastStatus')}{' '}

@@ -1,4 +1,4 @@
-export interface SettingsSwitchProps {
+interface SettingsSwitchProps {
   id: string;
   checked: boolean;
   onCheckedChange: (next: boolean) => void;
