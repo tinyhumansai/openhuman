@@ -7395,7 +7395,7 @@ const messages: TranslationMap = {
     'Accedi con il tuo account ChatGPT per usare i modelli OpenAI senza una chiave API.',
   'settings.ai.openaiOauthConnect': 'Accedi con ChatGPT',
   'settings.ai.openaiOauthConnected': 'Connesso a ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Apertura dell’accesso…',
+  'settings.ai.openaiOauthOpening': 'Apertura del browser…',
   'settings.ai.openaiOauthCallbackHint':
     'Dopo l’accesso, incolla l’URL di reindirizzamento completo dal browser (inizia con http://127.0.0.1:1455/).',
   'settings.ai.openaiOauthCallbackPlaceholder':
