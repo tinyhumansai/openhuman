@@ -145,9 +145,8 @@ pub const CACHE_PROMPT_CAP: usize = 25;
 pub fn load_learned_from_global_cache() -> Vec<String> {
     match crate::openhuman::memory::global::client_if_ready() {
         Some(client) => {
-            let cache = crate::openhuman::agent::learning::cache::FacetCache::new(
-                client.profile_conn(),
-            );
+            let cache =
+                crate::openhuman::agent::learning::cache::FacetCache::new(client.profile_conn());
             load_learned_from_cache(&cache)
         }
         None => {

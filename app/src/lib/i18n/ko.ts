@@ -613,9 +613,11 @@ const messages: TranslationMap = {
   'brain.goals.deleteGoal': '목표 삭제',
   'brain.goals.actionError': '문제가 발생했습니다. 다시 시도해 주세요.',
   'brain.profile.title': '학습된 프로필',
-  'brain.profile.description': 'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
   'brain.profile.loading': 'Loading preferences…',
-  'brain.profile.empty': 'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
   'brain.profile.rebuild': '재구축',
   'brain.profile.rebuilding': 'Rebuilding…',
   'brain.profile.pin': '고정',
@@ -623,7 +625,8 @@ const messages: TranslationMap = {
   'brain.profile.forget': '잊기',
   'brain.profile.pinned': '(pinned)',
   'brain.profile.learningEnabled': '자기 학습',
-  'brain.profile.learningOffHint': 'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
   'brain.profile.actionError': 'Something went wrong. Please try again.',
   'brain.profile.meta': '{{state}} · stability {{stability}}',
   'brain.profile.class.style': 'Style',

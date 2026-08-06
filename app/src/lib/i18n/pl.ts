@@ -633,9 +633,11 @@ const messages: TranslationMap = {
   'brain.goals.deleteGoal': 'Usuń cel',
   'brain.goals.actionError': 'Coś poszło nie tak. Spróbuj ponownie.',
   'brain.profile.title': 'Wyuczony profil',
-  'brain.profile.description': 'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
   'brain.profile.loading': 'Loading preferences…',
-  'brain.profile.empty': 'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
   'brain.profile.rebuild': 'Przebuduj',
   'brain.profile.rebuilding': 'Rebuilding…',
   'brain.profile.pin': 'Przypnij',
@@ -643,7 +645,8 @@ const messages: TranslationMap = {
   'brain.profile.forget': 'Zapomnij',
   'brain.profile.pinned': '(pinned)',
   'brain.profile.learningEnabled': 'Samouczenie',
-  'brain.profile.learningOffHint': 'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
   'brain.profile.actionError': 'Something went wrong. Please try again.',
   'brain.profile.meta': '{{state}} · stability {{stability}}',
   'brain.profile.class.style': 'Style',

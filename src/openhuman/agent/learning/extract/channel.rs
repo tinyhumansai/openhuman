@@ -59,9 +59,7 @@ pub fn emit_primary_channel(channel: &str) -> bool {
     };
 
     candidate::global().push(candidate);
-    tracing::debug!(
-        "[learning::extract::channel] emitted channel/primary={value} (Structural)"
-    );
+    tracing::debug!("[learning::extract::channel] emitted channel/primary={value} (Structural)");
     true
 }
 
