@@ -7,6 +7,15 @@ import PrivacyPanel from '../PrivacyPanel';
 
 vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({ listCapabilities: vi.fn() }));
 
+const getSettingsMock = vi.fn();
+const updateSettingsMock = vi.fn();
+vi.mock('../../../../services/api/learningApi', () => ({
+  learningApi: {
+    getSettings: (...args: unknown[]) => getSettingsMock(...args),
+    updateSettings: (...args: unknown[]) => updateSettingsMock(...args),
+  },
+}));
+
 const setMeetAutoOrchestratorHandoffMock = vi.fn();
 const setAnalyticsEnabledMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
@@ -19,6 +28,10 @@ vi.mock('../../../../providers/CoreStateProvider', () => ({
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
+}));
+
+vi.mock('../../../../services/coreRpcClient', () => ({
+  callCoreRpc: vi.fn().mockResolvedValue({ result: { mode: 'standard' } }),
 }));
 
 const annotated: Capability = {
@@ -60,21 +73,41 @@ const unannotated: Capability = {
 describe('PrivacyPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getSettingsMock.mockResolvedValue({ enabled: false });
+    updateSettingsMock.mockResolvedValue({ enabled: true });
   });
 
   it('flips the analytics toggle when clicked (#1698)', async () => {
     vi.mocked(listCapabilities).mockResolvedValue([]);
     renderWithProviders(<PrivacyPanel />);
 
-    // Analytics toggle is the first role="switch" on the page (before meet-handoff).
-    const toggles = await screen.findAllByRole('switch');
-    const toggle = toggles[0];
+    const toggle = await screen.findByTestId('privacy-analytics-toggle');
     expect(toggle.getAttribute('aria-checked')).toBe('false');
 
     fireEvent.click(toggle);
 
     await waitFor(() => {
       expect(setAnalyticsEnabledMock).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it('flips the self-learning toggle via learningApi', async () => {
+    vi.mocked(listCapabilities).mockResolvedValue([]);
+    renderWithProviders(<PrivacyPanel />);
+
+    const toggle = await screen.findByTestId('privacy-learning-toggle');
+    await waitFor(() => {
+      expect(toggle).not.toBeDisabled();
+    });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(updateSettingsMock).toHaveBeenCalledWith(true);
+    });
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-checked')).toBe('true');
     });
   });
 
@@ -110,8 +143,8 @@ describe('PrivacyPanel', () => {
       expect(screen.getByTestId('privacy-load-error')).toBeTruthy();
     });
     expect(screen.queryByTestId('privacy-capability-list')).toBeNull();
-    // Analytics + meet-handoff toggles still rendered
-    expect(screen.getAllByRole('switch').length).toBeGreaterThanOrEqual(2);
+    // Learning + analytics + meet-handoff toggles still rendered
+    expect(screen.getAllByRole('switch').length).toBeGreaterThanOrEqual(3);
   });
 
   it('flips the meet auto-handoff toggle from OFF to ON when clicked (#1299)', async () => {

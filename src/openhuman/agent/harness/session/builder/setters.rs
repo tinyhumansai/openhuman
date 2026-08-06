@@ -271,9 +271,10 @@ impl AgentBuilder {
 
     /// Enables or disables explicit-preference injection.
     ///
-    /// When `true` (the default), preferences stored via `remember_preference`
-    /// are fetched from the `user_profile` namespace and injected into the
-    /// system prompt on every turn, independent of `learning_enabled`.
+    /// When `true` (the default), Lane A general preferences written via
+    /// `save_preference` (`user_pref_general`) are injected into the system
+    /// prompt on every turn, independent of `learning_enabled`. The retired
+    /// `user_profile` KV namespace is not read on this path.
     pub fn explicit_preferences_enabled(mut self, enabled: bool) -> Self {
         self.explicit_preferences_enabled = enabled;
         self

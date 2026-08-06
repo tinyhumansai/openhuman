@@ -9,8 +9,9 @@
 //! (backed by `user_profile_facets`) and returns them as a list of formatted
 //! strings suitable for injection into `LearnedContextData.user_profile`.
 //!
-//! The existing KV-namespace reads in `fetch_learned_context` are preserved
-//! (both paths active in this phase; KV path will be removed in a follow-up).
+//! When `learning.enabled` is on, [`merge_standing_preferences`] combines
+//! Lane A explicit prefs (`save_preference`) with Active facets — Lane A
+//! first, then facets, deduped and capped.
 //!
 //! ## Phase 4 addition (#566)
 //!
@@ -133,8 +134,53 @@ impl PromptSection for MemoryAccessSection {
 
 /// Maximum number of facets to include in the ambient prompt injection.
 ///
-/// Corresponds to "~25 entries total" from the Phase 3 spec.
-const CACHE_PROMPT_CAP: usize = 25;
+/// Corresponds to "~25 entries total" from the Phase 3 spec. Also used as the
+/// merged standing-preferences cap (Lane A + Active facets).
+pub const CACHE_PROMPT_CAP: usize = 25;
+
+/// Load Active facets from the process-global memory client's facet cache.
+///
+/// Returns an empty vec when the global client is not ready (startup race or
+/// tests that never called [`crate::openhuman::memory::global::init`]).
+pub fn load_learned_from_global_cache() -> Vec<String> {
+    match crate::openhuman::memory::global::client_if_ready() {
+        Some(client) => {
+            let cache = crate::openhuman::agent::learning::cache::FacetCache::new(
+                client.profile_conn(),
+            );
+            load_learned_from_cache(&cache)
+        }
+        None => {
+            tracing::debug!(
+                "[learning::prompt] global memory client not ready — skipping Active facets"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Merge Lane A explicit preferences with Active facet strings for prompt injection.
+///
+/// Lane A entries come first. Facets follow. Entries whose normalised text
+/// (lowercase, trimmed) already appeared are skipped. The result is capped at
+/// [`CACHE_PROMPT_CAP`].
+pub fn merge_standing_preferences(explicit: Vec<String>, facets: Vec<String>) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(CACHE_PROMPT_CAP.min(explicit.len() + facets.len()));
+    for entry in explicit.into_iter().chain(facets) {
+        let key = entry.trim().to_lowercase();
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        out.push(entry);
+        if out.len() >= CACHE_PROMPT_CAP {
+            break;
+        }
+    }
+    out
+}
 
 /// Load Active facets from the `FacetCache` and format them for prompt injection.
 ///
@@ -143,9 +189,7 @@ const CACHE_PROMPT_CAP: usize = 25;
 /// at [`CACHE_PROMPT_CAP`] entries.
 ///
 /// This function is **synchronous** and performs only SQLite reads — safe to call
-/// from the synchronous part of the system prompt build path. The caller should
-/// keep both this path and the existing KV-namespace path active until the KV path
-/// is removed in a follow-up phase.
+/// from the synchronous part of the system prompt build path.
 pub fn load_learned_from_cache(
     cache: &crate::openhuman::agent::learning::cache::FacetCache,
 ) -> Vec<String> {

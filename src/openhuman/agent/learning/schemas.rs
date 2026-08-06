@@ -20,6 +20,8 @@ pub fn all_learning_controller_schemas() -> Vec<ControllerSchema> {
         learning_schemas("learning_unpin_facet"),
         learning_schemas("learning_forget_facet"),
         learning_schemas("learning_reset_cache"),
+        learning_schemas("learning_get_settings"),
+        learning_schemas("learning_update_settings"),
     ]
 }
 
@@ -68,6 +70,14 @@ pub fn all_learning_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: learning_schemas("learning_reset_cache"),
             handler: handle_reset_cache,
+        },
+        RegisteredController {
+            schema: learning_schemas("learning_get_settings"),
+            handler: handle_get_settings,
+        },
+        RegisteredController {
+            schema: learning_schemas("learning_update_settings"),
+            handler: handle_update_settings,
         },
     ]
 }
@@ -418,6 +428,36 @@ pub fn learning_schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "learning_get_settings" => ControllerSchema {
+            namespace: "learning",
+            function: "get_settings",
+            description: "Read the self-learning master switch (`learning.enabled`) and related flags.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Whether the full learning subsystem (capture → score → inject) is on.",
+                required: true,
+            }],
+        },
+        "learning_update_settings" => ControllerSchema {
+            namespace: "learning",
+            function: "update_settings",
+            description: "Update and persist the self-learning master switch. New sessions pick up \
+                          the value; the current session keeps its frozen learning_enabled flag.",
+            inputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Set learning.enabled to this value.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "The persisted learning.enabled value after save.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "learning",
             function: "unknown",
@@ -438,13 +478,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_eleven() {
-        assert_eq!(all_learning_controller_schemas().len(), 11);
+    fn all_schemas_returns_thirteen() {
+        assert_eq!(all_learning_controller_schemas().len(), 13);
     }
 
     #[test]
-    fn all_controllers_returns_eleven() {
-        assert_eq!(all_learning_registered_controllers().len(), 11);
+    fn all_controllers_returns_thirteen() {
+        assert_eq!(all_learning_registered_controllers().len(), 13);
     }
 
     #[test]
@@ -1091,6 +1131,43 @@ fn handle_reset_cache(_params: Map<String, Value>) -> ControllerFuture {
             "deleted": deleted,
             "pinned_preserved": pinned_preserved,
         });
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
+// ── get_settings / update_settings ────────────────────────────────────────────
+
+fn handle_get_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[learning.get_settings] called");
+        let config = config_rpc::load_config_with_timeout().await?;
+        let enabled = config.learning.enabled;
+        let log = vec![format!("learning.get_settings: enabled={enabled}")];
+        let payload = serde_json::json!({ "enabled": enabled });
+        RpcOutcome::new(payload, log).into_cli_compatible_json()
+    })
+}
+
+fn handle_update_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "missing required `enabled` (bool)".to_string())?;
+
+        tracing::debug!("[learning.update_settings] enabled={enabled}");
+
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        config.learning.enabled = enabled;
+        config
+            .save()
+            .await
+            .map_err(|e| format!("failed to save learning settings: {e}"))?;
+
+        let log = vec![format!(
+            "learning.update_settings: enabled={enabled} (takes effect on new sessions)"
+        )];
+        let payload = serde_json::json!({ "enabled": config.learning.enabled });
         RpcOutcome::new(payload, log).into_cli_compatible_json()
     })
 }

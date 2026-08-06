@@ -30,10 +30,11 @@ The subsystem is organised in phases (issue #566): **Phase 1** the candidate tax
 | `prompt_sections.rs` | `LearnedContextSection`, `UserProfileSection`, `MemoryAccessSection` (+ `MEMORY_ACCESS_INSTRUCTION`), and `load_learned_from_cache` (synchronous cache→prompt loader, cap 25). |
 | `profile_md_renderer.rs` | `ProfileMdRenderer` — subscribes to `CacheRebuilt`, re-renders 5 managed `PROFILE.md` blocks (style/identity/tooling/vetoes/goals) from Active facets. |
 | `linkedin_enrichment.rs` | Gmail→LinkedIn→Apify enrichment pipeline; `run_linkedin_enrichment`, `summarise_profile_with_llm`, `render_profile_markdown`, `scrape_linkedin_profile`. |
-| `extract/` | Phase 2 producers (`mod.rs` + `signature.rs`, `heuristics.rs`, `summary_facets.rs`). |
+| `extract/` | Phase 2 producers (`mod.rs` + `signature.rs`, `heuristics.rs`, `summary_facets.rs`, `channel.rs`). |
 | `extract/signature.rs` | Email-signature parser → Identity candidates; subscribes to `DocumentCanonicalized` (email). |
 | `extract/heuristics.rs` | `LengthRatioDetector` / `EditWindowDetector` / `CorrectionRepeatDetector` → Style + Veto candidates via `record_turn`. |
 | `extract/summary_facets.rs` | Parses the LLM summariser's structured JSON block; `route_facets_to_buffer` pushes validated candidates (requires `evidence_chunks`). |
+| `extract/channel.rs` | Session channel → `channel/primary` Structural candidate (`emit_primary_channel`). |
 | `transcript_ingest/` | Transcript→memory pipeline (`mod.rs`, `extract.rs`, `dedupe.rs`, `persist.rs`, `types.rs`). |
 | `transcript_ingest/mod.rs` | `ingest_transcript_path` / `ingest_session_transcript`; extract→dedupe→persist into `conversation_memory` + `conversation_reflections` namespaces. |
 | `*_tests.rs` | Sibling test suites (`cache`, `reflection`, `prompt_sections`, `linkedin_enrichment`). |
@@ -53,7 +54,7 @@ Not re-exported but public within the module: `candidate::global()`, the `linked
 
 ## RPC / controllers
 
-Namespace `learning` (wired into `src/core/all.rs`; 11 controllers). Methods:
+Namespace `learning` (wired into `src/core/all.rs`; 13 controllers). Methods:
 
 | Method | Purpose |
 | --- | --- |
@@ -67,6 +68,7 @@ Namespace `learning` (wired into `src/core/all.rs`; 11 controllers). Methods:
 | `learning.pin_facet` / `learning.unpin_facet` | Toggle `user_state` Pinned ↔ Auto. |
 | `learning.forget_facet` | Mark `Dropped` + `user_state = Forgotten` (blocks re-promotion). |
 | `learning.reset_cache` | Delete all `Auto` rows, preserve `Pinned`. |
+| `learning.get_settings` / `learning.update_settings` | Read / persist the `learning.enabled` master switch (takes effect on new sessions). |
 
 All handlers go through the memory client's `profile_conn()` and a `FacetCache`; `linkedin_enrichment` / `save_profile` load config via `config::rpc::load_config_with_timeout`.
 
@@ -119,8 +121,10 @@ These are subscriber registrations rather than a single `bus.rs`; subscriptions 
 - **Class is encoded in the key prefix** (`style/verbosity`, `goal/learn_rust`). `candidate.key` carries no prefix; the detector prepends `class_prefix`. Legacy rows without a recognised prefix are skipped by rebuild.
 - **`emit_candidates_*` uses the global buffer length as a synthetic `episodic_id`** (a Phase-2 placeholder noted to be replaced by a real `episodic_log` row id).
 - **Goal facets render value-only** (full sentence, no key prefix) in both prompt injection and `PROFILE.md`; other classes render `**key**: value`.
-- **Prompt loaders are synchronous SQLite reads** — `load_learned_from_cache` runs in the sync prompt-build path and degrades to empty on error. Both the cache path and the legacy KV-namespace path are still active (KV slated for later removal).
+- **Prompt loaders are synchronous SQLite reads** — `load_learned_from_cache` / `load_learned_from_global_cache` run on the prompt-build path and degrade to empty on error. When `learning.enabled` is on, `fetch_learned_context` merges Lane A (`user_pref_general`) with Active facets via `merge_standing_preferences` (Lane A first, deduped, capped at `CACHE_PROMPT_CAP`).
 - **Reflection has a local/cloud gate.** Local route requires `local_ai.usage.learning` flag; if off it falls back to a cloud provider or no-ops (empty string), and an empty response is a clean-skip sentinel that rolls back the throttle counter. Per-session reflections are throttled by `max_reflections_per_session`.
 - **LinkedIn enrichment short-circuits** if `PROFILE.md` already exists, and the Composio-only Gmail-search stage is documented as currently erroring (Gmail-via-Composio removed) — callers should pass `preset_profile_url` obtained via the frontend's webview Gmail helper.
-- **Transcript ingestion is heuristic-only by design** (no hard LLM dependency) so it can run as a background task without provider credentials.
+- **Channel producer** (`extract/channel.rs`) emits `channel/primary` Structural candidates from the live session channel at agent construction / `set_event_context` when learning is enabled (skips empty/`internal`).
 - The `profile_md_renderer` deliberately does **not** touch the `connected-accounts` block — that's owned by the Composio provider path.
+- **Brain Profile tab** (`/brain?tab=profile`) lists facets and calls pin/unpin/forget/rebuild plus `learning_get/update_settings` for the master switch. The same switch is also on **Settings → Privacy**.
+- Standing-preference inject reads Lane A (`user_pref_general`) + Active facets only — not the retired `user_profile` KV namespace.

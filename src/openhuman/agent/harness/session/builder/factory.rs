@@ -1301,6 +1301,10 @@ impl Agent {
         }
         builder = builder.archivist_hook(archivist_hook_arc);
         let mut agent = builder.build()?;
+        if config.learning.enabled {
+            let channel = agent.event_channel().to_string();
+            crate::openhuman::agent::learning::extract::channel::emit_primary_channel(&channel);
+        }
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;

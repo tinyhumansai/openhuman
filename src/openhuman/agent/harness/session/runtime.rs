@@ -252,6 +252,11 @@ impl Agent {
         self.event_session_id = session_id.into();
         self.event_channel = channel.into();
         self.rebuild_tool_policy_session();
+        if self.learning_enabled {
+            crate::openhuman::agent::learning::extract::channel::emit_primary_channel(
+                &self.event_channel,
+            );
+        }
     }
 
     /// Override the agent definition name used for session transcript

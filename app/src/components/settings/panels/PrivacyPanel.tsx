@@ -1,8 +1,9 @@
 import debug from 'debug';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
+import { learningApi } from '../../../services/api/learningApi';
 import {
   type Capability,
   type CapabilityPrivacy,
@@ -56,6 +57,11 @@ const PrivacyPanel = () => {
 
   const [capabilities, setCapabilities] = useState<AnnotatedCapability[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [learningEnabled, setLearningEnabled] = useState(false);
+  const [learningLoadState, setLearningLoadState] = useState<'loading' | 'ready' | 'error'>(
+    'loading'
+  );
+  const [learningSaving, setLearningSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +86,26 @@ const PrivacyPanel = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    log('[privacy] fetching learning.enabled');
+    learningApi
+      .getSettings()
+      .then(settings => {
+        if (cancelled) return;
+        setLearningEnabled(settings.enabled);
+        setLearningLoadState('ready');
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('[privacy] failed to load learning settings:', err);
+        setLearningLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleToggleAnalytics = async () => {
     const newValue = !analyticsEnabled;
     try {
@@ -98,6 +124,21 @@ const PrivacyPanel = () => {
     }
   };
 
+  const handleToggleLearning = useCallback(async () => {
+    if (learningSaving || learningLoadState !== 'ready') return;
+    const next = !learningEnabled;
+    setLearningSaving(true);
+    try {
+      const settings = await learningApi.updateSettings(next);
+      setLearningEnabled(settings.enabled);
+      log('[privacy] learning.enabled persisted', settings.enabled);
+    } catch (error) {
+      console.warn('[privacy] failed to persist learning.enabled:', error);
+    } finally {
+      setLearningSaving(false);
+    }
+  }, [learningEnabled, learningLoadState, learningSaving]);
+
   return (
     <SettingsPanel
       testId="settings-privacy-panel"
@@ -105,6 +146,27 @@ const PrivacyPanel = () => {
       <>
         {/* Privacy Mode selector (#4435) — data-egress posture */}
         <PrivacyModeSection />
+
+        {/* Self-learning — master switch for capture → facet cache → prompt inject */}
+        <SettingsSection title={t('privacy.selfLearning')}>
+          <SettingsRow
+            htmlFor="switch-learning"
+            label={t('privacy.selfLearningLabel')}
+            description={t('privacy.selfLearningDesc')}
+            control={
+              <SettingsSwitch
+                id="switch-learning"
+                checked={learningEnabled}
+                disabled={learningLoadState !== 'ready' || learningSaving}
+                onCheckedChange={() => {
+                  void handleToggleLearning();
+                }}
+                aria-label={t('privacy.selfLearningLabel')}
+                data-testid="privacy-learning-toggle"
+              />
+            }
+          />
+        </SettingsSection>
 
         {/* What leaves my computer */}
         <SettingsSection title={t('privacy.whatLeavesComputer')}>
