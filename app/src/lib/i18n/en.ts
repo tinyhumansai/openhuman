@@ -349,6 +349,7 @@ const en: TranslationMap = {
   // Per-tab text headers (title reuses brain.tabs.*)
   'brain.header.graph': "How your agent's knowledge connects: people, topics, and memories.",
   'brain.header.goals': 'What your agent is working toward, and why.',
+  'brain.header.profile': 'Preferences your agent has learned, and what stays in every reply.',
   'brain.header.sources': 'The data your agent learns from.',
   'brain.header.sync': 'Keep your memory fresh and review what changed.',
   'brain.header.subconscious': 'Background thinking that runs while you’re away.',
@@ -372,6 +373,7 @@ const en: TranslationMap = {
   'brain.tabs.subconscious': 'Subconscious',
   'brain.tabs.graph': 'Graph',
   'brain.tabs.goals': 'Goals',
+  'brain.tabs.profile': 'Profile',
   'brain.tabs.sources': 'Sources',
   'brain.tabs.sync': 'Sync',
   'brain.tabs.orchestration': 'Orchestration',
@@ -390,6 +392,30 @@ const en: TranslationMap = {
   'brain.goals.editGoal': 'Edit goal',
   'brain.goals.deleteGoal': 'Delete goal',
   'brain.goals.actionError': 'Something went wrong. Please try again.',
+  'brain.profile.title': 'Learned profile',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.loading': 'Loading preferences…',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.rebuild': 'Rebuild',
+  'brain.profile.rebuilding': 'Rebuilding…',
+  'brain.profile.pin': 'Pin preference',
+  'brain.profile.unpin': 'Unpin preference',
+  'brain.profile.forget': 'Forget preference',
+  'brain.profile.pinned': '(pinned)',
+  'brain.profile.learningEnabled': 'Self-learning',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.actionError': 'Something went wrong. Please try again.',
+  'brain.profile.meta': '{{state}} · stability {{stability}}',
+  'brain.profile.class.style': 'Style',
+  'brain.profile.class.identity': 'Identity',
+  'brain.profile.class.tooling': 'Tooling',
+  'brain.profile.class.veto': 'Vetoes',
+  'brain.profile.class.goal': 'Goals',
+  'brain.profile.class.channel': 'Channel',
+  'brain.profile.class.other': 'Other',
 
   // Feedback board
   'feedback.board': 'Feedback board',
@@ -1675,6 +1701,10 @@ const en: TranslationMap = {
   'privacy.sentTo': 'Sent to',
   'privacy.leavesDevice': 'Leaves device',
   'privacy.staysLocal': 'Stays local',
+  'privacy.selfLearning': 'Self-learning',
+  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningDesc':
+    'When on, OpenHuman may infer how you like to work and inject Active preferences into new sessions. Default is off. Manage facts on Brain → Profile.',
   'privacy.anonymizedAnalytics': 'Product Analytics',
   'privacy.shareAnonymizedData': 'Share Product Analytics and Diagnostics',
   'privacy.shareAnonymizedDataDesc':

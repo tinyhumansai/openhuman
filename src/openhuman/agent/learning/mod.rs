@@ -41,7 +41,8 @@ pub use cache::FacetCache;
 pub use candidate::{Buffer, CueFamily, EvidenceRef, FacetClass, LearningCandidate};
 pub use profile_md_renderer::ProfileMdRenderer;
 pub use prompt_sections::{
-    load_learned_from_cache, LearnedContextSection, MemoryAccessSection, UserProfileSection,
+    load_learned_from_cache, load_learned_from_global_cache, merge_standing_preferences,
+    LearnedContextSection, MemoryAccessSection, UserProfileSection, CACHE_PROMPT_CAP,
     MEMORY_ACCESS_INSTRUCTION,
 };
 pub use reflection::ReflectionHook;

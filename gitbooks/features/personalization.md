@@ -90,19 +90,26 @@ The learned profile is materialized into **`PROFILE.md`** in your workspace, a r
 
 The renderer only touches its own managed blocks. Anything you write by hand outside those blocks (and the separate `## Connected Accounts` block owned by the integrations layer) is left untouched. Empty classes show a `*(no entries yet)*` placeholder rather than disappearing.
 
-> **Per-session freeze.** `PROFILE.md` is folded into the agent's system prompt at the start of a session and held stable for that session's lifetime, which keeps prompt caching fast. Edits you make mid-session are picked up on the next rebuild and the next session, not retroactively in the current one.
+> **Per-session freeze.** Active facets and Lane A prefs are folded into the agent's system prompt at the start of a session and held stable for that session's lifetime, which keeps prompt caching fast. Edits you make mid-session (or toggling self-learning) are picked up on the next rebuild and the next session, not retroactively in the current one.
 
 ***
 
 ## How it surfaces in replies
 
-On every turn the agent reads the Active facets and injects them as a compact **"Your standing preferences"** section in the system prompt, alongside a standing instruction to call `memory_recall` before answering anything that leans on past sessions. The result is that the agent defaults to your verbosity, your tools, and your vetoes without being reminded, and it reaches into memory for the specifics.
+When **self-learning is on** (`learning.enabled`, default off — toggle it under **Settings → Privacy** or on the Brain **Profile** tab), every turn builds a compact **"Your standing preferences"** block in the system prompt from two sources:
+
+1. **Lane A explicit prefs** — facts you saved via `save_preference` (always authoritative; listed first).
+2. **Active facets** — scored inferences from the ambient cache (style, identity, tooling, vetoes, goals, channel).
+
+Lane A wins on text collisions. The block is capped so it stays small. Alongside it, a standing instruction tells the agent to call `memory_recall` before answering anything that leans on past sessions.
+
+When self-learning is off, only Lane A explicit prefs are injected (if `explicit_preferences_enabled` remains on).
 
 ***
 
 ## Optional LinkedIn enrichment
 
-During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. The flow searches your connected Gmail for a `linkedin.com/in/...` profile URL, and (when available) scrapes the public profile, then compresses what it finds into `PROFILE.md` via the `learning_save_profile` step. It runs once, as a fire-and-forget pass. It is entirely opt-in and is skipped cleanly if no profile is found.
+During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. The desktop flow finds a `linkedin.com/in/...` URL (via the Gmail webview helper) and persists it with `learning_save_profile` (`summarize=true`) so the core LLM compresses it into `PROFILE.md`. It runs once, as a fire-and-forget pass. It is entirely opt-in and is skipped cleanly if no profile is found. Pass a `profile_url` when calling `learning_linkedin_enrichment` if you already have the URL — the Composio-only Gmail search stage is not used by the desktop onboarding path.
 
 ***
 
@@ -111,8 +118,9 @@ During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. T
 Everything learned is inspectable and reversible:
 
 - **Edit `PROFILE.md` directly.** It's your file. Correct, add, or delete anything; the next rebuild respects your edits.
-- **The Brain page** (raised center button in the bottom bar, `/brain`) is the home for memory and intelligence. The knowledge graph, goals, sources, and sync status all live here.
-- **Pin** a fact to lock it Active and shield it from decay, or **forget** a fact to drop it and block it from coming back. Under the hood these are the `learning_pin_facet`, `learning_unpin_facet`, and `learning_forget_facet` operations over the `openhuman.learning_*` RPC surface, alongside `learning_list_facets` and `learning_rebuild_cache`.
+- **The Brain page** (raised center button in the bottom bar, `/brain`) is the home for memory and intelligence. Open the **Profile** tab to list learned facets, pin / unpin / forget them, rebuild the cache, and toggle self-learning. The same master switch also lives under **Settings → Privacy**.
+- **Pin** a fact to lock it Active and shield it from decay, or **forget** a fact to drop it and block it from coming back. Under the hood these are the `learning_pin_facet`, `learning_unpin_facet`, and `learning_forget_facet` operations over the `openhuman.learning_*` RPC surface, alongside `learning_list_facets`, `learning_rebuild_cache`, `learning_get_settings`, and `learning_update_settings`.
+- Standing preferences in the prompt come from **Lane A** (`user_pref_general`) plus **Active facets** (`user_profile_facets`). The retired `user_profile` KV namespace is not an authority for that inject path.
 
 ***
 
