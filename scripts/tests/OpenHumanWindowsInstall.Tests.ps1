@@ -129,8 +129,11 @@ Assert-True ($t -is [bool]) 'returns a boolean'
 
 Write-Host "`n== Installer failure propagation ==" -ForegroundColor Cyan
 Assert-DoesNotThrow { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 0 -InstallerType 'MSI' } 'accepts a successful child process'
+Assert-DoesNotThrow { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 1641 -InstallerType 'MSI' } 'accepts an MSI success that initiated a reboot'
+Assert-DoesNotThrow { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 3010 -InstallerType 'MSI' } 'accepts an MSI success that requires a reboot'
 Assert-Throws { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 1603 -InstallerType 'MSI' } 'MSI install failed with exit code 1603.' 'turns an MSI failure into a terminating error'
 Assert-Throws { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 5 -InstallerType 'EXE' } 'Installer exited with code 5.' 'turns an EXE failure into a terminating error'
+Assert-Throws { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 3010 -InstallerType 'EXE' } 'Installer exited with code 3010.' 'does not treat MSI reboot codes as EXE success'
 
 $versionOutput = (Install-OpenHuman -Version | Out-String).Trim()
 Assert-Equal 'openhuman-installer 1.1.0' $versionOutput '-Version remains successful'
