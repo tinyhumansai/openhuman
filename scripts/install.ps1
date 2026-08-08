@@ -48,6 +48,19 @@ function Test-OpenHumanWindowsProcessElevated {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Test-OpenHumanInstallerExitCodeSucceeded {
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$ExitCode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("MSI", "EXE")]
+    [string]$InstallerType
+  )
+
+  return $ExitCode -eq 0 -or ($InstallerType -eq "MSI" -and $ExitCode -in @(1641, 3010))
+}
+
 function Assert-OpenHumanInstallerProcessSucceeded {
   <#
   .SYNOPSIS
@@ -62,7 +75,7 @@ function Assert-OpenHumanInstallerProcessSucceeded {
     [string]$InstallerType
   )
 
-  if ($ExitCode -eq 0 -or ($InstallerType -eq "MSI" -and $ExitCode -in @(1641, 3010))) {
+  if (Test-OpenHumanInstallerExitCodeSucceeded -ExitCode $ExitCode -InstallerType $InstallerType) {
     return
   }
 
@@ -243,7 +256,7 @@ Examples:
       Write-Info "Requesting administrator approval for machine-wide install (UAC)…"
       $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Verb RunAs -Wait -PassThru
     }
-    if ($proc.ExitCode -notin @(0, 1641, 3010)) {
+    if (-not (Test-OpenHumanInstallerExitCodeSucceeded -ExitCode $proc.ExitCode -InstallerType "MSI")) {
       Write-WarnMsg "If this persists, capture a log: msiexec /i `"$tmpFile`" /l*v `"$env:TEMP\OpenHuman-msi.log`""
     }
     Assert-OpenHumanInstallerProcessSucceeded -ExitCode $proc.ExitCode -InstallerType "MSI"
