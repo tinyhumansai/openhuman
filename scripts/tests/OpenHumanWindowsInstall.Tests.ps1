@@ -87,10 +87,10 @@ $p = 'C:\Temp\OpenHuman_0.0.0_x64_en-US.msi'
 $args = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $p
 Assert-True ($args.Count -eq 4) 'returns exactly 4 argument tokens'
 Assert-Equal '/i' $args[0] 'first token is /i'
-Assert-Equal $p $args[1] 'second token is MSI path'
+Assert-Equal ('"{0}"' -f $p) $args[1] 'second token is quoted MSI path'
 $pSpaces = 'C:\Temp\Test User\OpenHuman_0.0.0_x64_en-US.msi'
 $argsSpaces = Get-OpenHumanMsiexecInstallArgumentList -MsiPath $pSpaces
-Assert-Equal $pSpaces $argsSpaces[1] 'path with spaces remains one second argv token (no split)'
+Assert-Equal ('"{0}"' -f $pSpaces) $argsSpaces[1] 'path with spaces remains quoted for Start-Process'
 Assert-Equal '/qn' $args[2] 'third token is /qn'
 Assert-Equal '/norestart' $args[3] 'fourth token is /norestart'
 Assert-True ($args -notcontains 'MSIINSTALLPERUSER') 'must not set MSIINSTALLPERUSER (perMachine MSI)'
@@ -145,7 +145,7 @@ try {
   $env:OS = 'Windows_NT'
   $env:PROCESSOR_ARCHITECTURE = 'AMD64'
   function Invoke-RestMethod { throw 'release API unavailable' }
-  Assert-Throws { Install-OpenHuman -DryRun } 'Could not query release API: release API unavailable' 'release API failures preserve their cause'
+  Assert-Throws { Install-OpenHuman -DryRun } 'release API unavailable' 'release API failures preserve their error record'
 } finally {
   Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
   $env:PROCESSOR_ARCHITECTURE = $originalArch
