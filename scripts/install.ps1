@@ -51,7 +51,7 @@ function Test-OpenHumanWindowsProcessElevated {
 function Assert-OpenHumanInstallerProcessSucceeded {
   <#
   .SYNOPSIS
-    Throw when a Windows installer process reports a non-zero exit code.
+    Throw when a Windows installer process reports an unsuccessful exit code.
   #>
   param(
     [Parameter(Mandatory = $true)]
@@ -62,7 +62,7 @@ function Assert-OpenHumanInstallerProcessSucceeded {
     [string]$InstallerType
   )
 
-  if ($ExitCode -eq 0) {
+  if ($ExitCode -eq 0 -or ($InstallerType -eq "MSI" -and $ExitCode -in @(1641, 3010))) {
     return
   }
 
