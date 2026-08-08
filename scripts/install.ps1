@@ -187,7 +187,7 @@ Examples:
       }
     }
   } catch {
-    Write-WarnMsg "Could not query release API: $($_.Exception.Message)"
+    throw "Could not query release API: $($_.Exception.Message)"
   }
 
   if (-not $assetUrl) {

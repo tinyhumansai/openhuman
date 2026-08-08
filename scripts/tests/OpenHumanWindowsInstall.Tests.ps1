@@ -139,6 +139,19 @@ $versionOutput = (Install-OpenHuman -Version | Out-String).Trim()
 Assert-Equal 'openhuman-installer 1.1.0' $versionOutput '-Version remains successful'
 Assert-Throws { Install-OpenHuman -Channel 'preview' } 'Only -Channel stable is currently supported.' 'invalid arguments terminate instead of returning success'
 
+$originalArch = $env:PROCESSOR_ARCHITECTURE
+$originalOs = $env:OS
+try {
+  $env:OS = 'Windows_NT'
+  $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+  function Invoke-RestMethod { throw 'release API unavailable' }
+  Assert-Throws { Install-OpenHuman -DryRun } 'Could not query release API: release API unavailable' 'release API failures preserve their cause'
+} finally {
+  Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
+  $env:PROCESSOR_ARCHITECTURE = $originalArch
+  $env:OS = $originalOs
+}
+
 $originalOs = $env:OS
 try {
   $env:OS = 'OpenHumanTestUnsupported'
