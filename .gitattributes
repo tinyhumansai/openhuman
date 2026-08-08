@@ -6,3 +6,5 @@ Dockerfile text eol=lf
 .dockerignore text eol=lf
 docker-compose*.yml text eol=lf
 *.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
