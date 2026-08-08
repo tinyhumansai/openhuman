@@ -243,7 +243,7 @@ Examples:
       Write-Info "Requesting administrator approval for machine-wide install (UAC)…"
       $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Verb RunAs -Wait -PassThru
     }
-    if ($proc.ExitCode -ne 0) {
+    if ($proc.ExitCode -notin @(0, 1641, 3010)) {
       Write-WarnMsg "If this persists, capture a log: msiexec /i `"$tmpFile`" /l*v `"$env:TEMP\OpenHuman-msi.log`""
     }
     Assert-OpenHumanInstallerProcessSucceeded -ExitCode $proc.ExitCode -InstallerType "MSI"
