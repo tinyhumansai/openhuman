@@ -6,7 +6,7 @@
 .DESCRIPTION
   Dot-sources install.ps1 (does not run Install-OpenHuman) and validates
   Get-OpenHumanMsiexecInstallArgumentList, Select-OpenHumanWindowsAssetFromRelease,
-  and Test-OpenHumanWindowsProcessElevated.
+  Test-OpenHumanWindowsProcessElevated, and installer failure propagation.
 
   Run from repo root:
     pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
@@ -44,6 +44,41 @@ function Assert-True {
     Write-Host "FAIL: $Message" -ForegroundColor Red
   } else {
     Write-Host "ok $Message" -ForegroundColor Green
+  }
+}
+
+function Assert-DoesNotThrow {
+  param([scriptblock]$Action, [string]$Message)
+  $script:testCount++
+  try {
+    & $Action | Out-Null
+    Write-Host "ok $Message" -ForegroundColor Green
+  } catch {
+    $script:failCount++
+    Write-Host "FAIL: $Message" -ForegroundColor Red
+    Write-Host "  unexpected error: $($_.Exception.Message)" -ForegroundColor Red
+  }
+}
+
+function Assert-Throws {
+  param([scriptblock]$Action, [string]$ExpectedMessage, [string]$Message)
+  $script:testCount++
+  try {
+    & $Action | Out-Null
+    $script:failCount++
+    Write-Host "FAIL: $Message" -ForegroundColor Red
+    Write-Host "  expected error: $ExpectedMessage" -ForegroundColor Red
+    Write-Host "  actual: no terminating error" -ForegroundColor Red
+  } catch {
+    $actualMessage = $_.Exception.Message
+    if ($ExpectedMessage -ne $actualMessage) {
+      $script:failCount++
+      Write-Host "FAIL: $Message" -ForegroundColor Red
+      Write-Host "  expected error: $ExpectedMessage" -ForegroundColor Red
+      Write-Host "  actual error:   $actualMessage" -ForegroundColor Red
+    } else {
+      Write-Host "ok $Message" -ForegroundColor Green
+    }
   }
 }
 
@@ -91,6 +126,23 @@ Assert-True ($null -eq $sel3) 'null when no assets'
 Write-Host "`n== Test-OpenHumanWindowsProcessElevated ==" -ForegroundColor Cyan
 $t = Test-OpenHumanWindowsProcessElevated
 Assert-True ($t -is [bool]) 'returns a boolean'
+
+Write-Host "`n== Installer failure propagation ==" -ForegroundColor Cyan
+Assert-DoesNotThrow { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 0 -InstallerType 'MSI' } 'accepts a successful child process'
+Assert-Throws { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 1603 -InstallerType 'MSI' } 'MSI install failed with exit code 1603.' 'turns an MSI failure into a terminating error'
+Assert-Throws { Assert-OpenHumanInstallerProcessSucceeded -ExitCode 5 -InstallerType 'EXE' } 'Installer exited with code 5.' 'turns an EXE failure into a terminating error'
+
+$versionOutput = (Install-OpenHuman -Version | Out-String).Trim()
+Assert-Equal 'openhuman-installer 1.1.0' $versionOutput '-Version remains successful'
+Assert-Throws { Install-OpenHuman -Channel 'preview' } 'Only -Channel stable is currently supported.' 'invalid arguments terminate instead of returning success'
+
+$originalOs = $env:OS
+try {
+  $env:OS = 'OpenHumanTestUnsupported'
+  Assert-Throws { Get-Content -Raw $installScript | Invoke-Expression } 'This installer is for Windows only.' 'piped irm|iex-style execution preserves terminating errors'
+} finally {
+  $env:OS = $originalOs
+}
 
 Write-Host "`n== $($testCount) checks, $failCount failed ==" -ForegroundColor $(if ($failCount -eq 0) { 'Green' } else { 'Red' })
 if ($failCount -gt 0) {
