@@ -636,6 +636,7 @@ mod tests {
     #[test]
     fn build_emits_delegation_guide_with_collapsed_tool() {
         let integrations = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
@@ -685,6 +686,7 @@ mod tests {
         );
 
         let gmail = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
@@ -718,6 +720,7 @@ mod tests {
     #[test]
     fn delegation_guide_uses_compact_collapsed_format() {
         let integrations = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
@@ -736,6 +739,7 @@ mod tests {
 
     fn gmail_only() -> Vec<ConnectedIntegration> {
         vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
@@ -820,6 +824,7 @@ mod tests {
         // focused on what the orchestrator can actually delegate.
         let integrations = vec![
             ConnectedIntegration {
+                result_notes: None,
                 toolkit: "gmail".into(),
                 description: "Email.".into(),
                 tools: Vec::new(),
@@ -829,6 +834,7 @@ mod tests {
                 non_active_status: None,
             },
             ConnectedIntegration {
+                result_notes: None,
                 toolkit: "linear".into(),
                 description: "Tracker.".into(),
                 tools: Vec::new(),
@@ -876,6 +882,7 @@ mod tests {
     #[test]
     fn build_omits_guide_when_no_integrations_connected() {
         let integrations = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "linear".into(),
             description: "Tracker.".into(),
             tools: Vec::new(),

@@ -1181,6 +1181,7 @@ mod tests {
         connections: Vec<IntegrationConnection>,
     ) -> ConnectedIntegration {
         ConnectedIntegration {
+            result_notes: None,
             toolkit: toolkit.to_string(),
             description: String::new(),
             tools: Vec::new(),

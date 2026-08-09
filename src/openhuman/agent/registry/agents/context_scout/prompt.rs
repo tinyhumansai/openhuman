@@ -176,6 +176,7 @@ mod tests {
 
     fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         ConnectedIntegration {
+            result_notes: None,
             toolkit: toolkit.to_string(),
             description: String::new(),
             tools: vec![],

@@ -244,6 +244,7 @@ mod connected_fallback_tests {
 
     fn integration(toolkit: &str) -> ConnectedIntegration {
         ConnectedIntegration {
+            result_notes: None,
             toolkit: toolkit.into(),
             description: String::new(),
             tools: vec![],

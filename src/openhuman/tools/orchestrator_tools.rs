@@ -323,6 +323,7 @@ mod tests {
 
     fn integration(toolkit: &str, description: &str) -> ConnectedIntegration {
         ConnectedIntegration {
+            result_notes: None,
             toolkit: toolkit.into(),
             description: description.into(),
             tools: vec![],
@@ -533,6 +534,7 @@ mod tests {
         let integrations = vec![
             integration("gmail", "Send and read email."),
             ConnectedIntegration {
+                result_notes: None,
                 toolkit: "github".into(),
                 description: "GitHub access.".into(),
                 tools: vec![],
@@ -602,6 +604,7 @@ mod tests {
         let reg = registry_with_targets();
         let integrations = vec![
             ConnectedIntegration {
+                result_notes: None,
                 toolkit: "Brand.New".into(),
                 description: "   ".into(),
                 tools: vec![],

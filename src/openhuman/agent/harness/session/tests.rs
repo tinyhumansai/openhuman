@@ -277,6 +277,7 @@ fn set_connected_integrations_marks_session_initialized_and_updates_hash() {
 
     agent.set_connected_integrations(vec![
         crate::openhuman::agent::context::prompt::ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email".into(),
             tools: vec![],
@@ -306,6 +307,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
     let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
     agent.set_connected_integrations(vec![
         crate::openhuman::agent::context::prompt::ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email".into(),
             tools: vec![],
@@ -326,6 +328,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
     let _shared_tools = agent.tools_arc();
     agent.set_connected_integrations(vec![
         crate::openhuman::agent::context::prompt::ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email".into(),
             tools: vec![],
@@ -335,6 +338,7 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
             non_active_status: None,
         },
         crate::openhuman::agent::context::prompt::ConnectedIntegration {
+            result_notes: None,
             toolkit: "notion".into(),
             description: "Docs".into(),
             tools: vec![],
@@ -370,6 +374,7 @@ fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
 
     let conn =
         |slug: &str, desc: &str| crate::openhuman::agent::context::prompt::ConnectedIntegration {
+            result_notes: None,
             toolkit: slug.into(),
             description: desc.into(),
             tools: vec![],

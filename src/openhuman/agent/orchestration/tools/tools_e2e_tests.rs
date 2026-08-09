@@ -346,6 +346,7 @@ async fn skill_delegation_tool_runs_integrations_agent_e2e() {
             workspace.path(),
             provider.clone(),
             vec![ConnectedIntegration {
+                result_notes: None,
                 toolkit: "gmail".to_string(),
                 description: "Email access.".to_string(),
                 tools: Vec::new(),

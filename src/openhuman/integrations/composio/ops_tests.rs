@@ -1448,6 +1448,7 @@ fn seed_cache(key: &str, integrations: Vec<ConnectedIntegration>) {
 /// Only `toolkit` + `connected` matter for diff-based invalidation.
 fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
     ConnectedIntegration {
+        result_notes: None,
         toolkit: toolkit.to_string(),
         description: String::new(),
         tools: Vec::new(),

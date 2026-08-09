@@ -275,7 +275,7 @@ pub fn agent_ready_toolkits() -> Vec<&'static str> {
     slugs
 }
 
-pub use descriptions::toolkit_description;
+pub use descriptions::{toolkit_description, toolkit_result_notes};
 pub(crate) use helpers::{first_array_str, merge_extra, pick_str};
 pub use registry::{
     all_providers, get_provider, init_default_providers, register_provider, ProviderArc,

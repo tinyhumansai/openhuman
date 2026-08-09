@@ -307,6 +307,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
     assert!(cached_active_integrations(&config).is_none());
 
     let first = ConnectedIntegration {
+        result_notes: None,
         toolkit: "gmail".into(),
         description: "Gmail".into(),
         tools: Vec::new(),
@@ -316,6 +317,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         non_active_status: None,
     };
     let second = ConnectedIntegration {
+        result_notes: None,
         toolkit: "slack".into(),
         description: "Slack".into(),
         tools: Vec::new(),
@@ -325,6 +327,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         non_active_status: None,
     };
     let disconnected = ConnectedIntegration {
+        result_notes: None,
         toolkit: "notion".into(),
         description: "Notion".into(),
         tools: Vec::new(),
@@ -340,6 +343,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
     assert_ne!(
         connected_set_hash(&[]),
         connected_set_hash(&[ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: String::new(),
             tools: Vec::new(),
