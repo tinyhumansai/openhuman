@@ -147,12 +147,9 @@ git submodule update --init --recursive
 pnpm install
 ```
 
-Why submodules matter here:
+Why submodules matter here: the `vendor/tiny*` trees (`tinyagents`, `tinychannels`, `tinycortex`, `tinyflows`, `tinyjuice`, `tinyplace`, `tinybus`, `tinyhumans-sdk`) are path dependencies of the Rust core. If they are missing, `cargo` cannot resolve the workspace and Rust builds fail.
 
-- `app/src-tauri/vendor/tauri-cef`
-- `app/src-tauri/vendor/tauri-plugin-notification`
-
-Those vendored trees are part of the current desktop toolchain. If they are missing, desktop builds and Tauri CLI setup will fail.
+The two Tauri trees this list used to name — `vendor/tauri-cef` and `vendor/tauri-plugin-notification` — are gone. The desktop shell builds on upstream Wry and takes `tauri-plugin-notification` from crates.io.
 
 ### 3. Configure for development
 
