@@ -41,7 +41,6 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 | CMake | Current stable | Required by native Rust dependencies such as Whisper bindings. |
 | Ninja | Current stable | Required on macOS and Windows to build the bundled CEF helper. CMake delegates the actual compile to Ninja; without it the `cef-dll-sys` build script aborts. |
 | ripgrep (`rg`) | Current stable | Used by the `lint:commands-tokens` pre-push step (scans `app/src/components/commands/`). Without it, `git push` fails the hook with `rg: command not found`. |
-| Tauri vendored sources | Git submodules under `app/src-tauri/vendor/` | Required for the CEF-aware Tauri CLI and notification plugin patches. |
 | macOS tools | Xcode Command Line Tools | Needed for local desktop builds on macOS. |
 | Linux desktop packages | System GTK/WebKit/AppIndicator build deps | Install the package set Tauri requires for your distro before attempting desktop builds. |
 
