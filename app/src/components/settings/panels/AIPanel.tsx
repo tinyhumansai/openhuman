@@ -2350,6 +2350,7 @@ const CustomRoutingDialog = ({
                 }
                 analyticsId="ai-model-entry-mode-toggle"
                 optionLabel={m => `${humanizeModelId(m.id)} — ${m.id}`}
+                providerSlug={selectedSlug}
               />
             )}
 
@@ -2816,6 +2817,7 @@ const GlobalOwnModelSelector = ({
                 label={t('settings.ai.globalModel.model')}
                 placeholder={t('settings.ai.globalModel.enterModelId')}
                 analyticsId="ai-global-model-entry-mode-toggle"
+                providerSlug={selectedSlug}
               />
             )}
           </div>

@@ -32,54 +32,57 @@ interface ResolvedModel {
 
 interface ModelCache {
   at: number;
-  /** encoded OpenAI-style id -> SDK model selection */
+  /** OpenAI-style model id -> SDK model selection. */
   byId: Map<string, ResolvedModel>;
 }
 
 const caches = new Map<string, ModelCache>();
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+const PARAM_MARKER = "~p=";
 
-function sameParams(a: ModelParameterValue[], b: ModelParameterValue[]): boolean {
-  if (a.length !== b.length) return false;
-  const key = (p: ModelParameterValue) => `${p.id}=${p.value}`;
-  const as = a.map(key).sort();
-  const bs = b.map(key).sort();
-  return as.every((v, i) => v === bs[i]);
+function encodedModelId(id: string, params: ModelParameterValue[]): string {
+  return `${id}${params
+    .map(param => `${PARAM_MARKER}${encodeURIComponent(param.id)}:${encodeURIComponent(param.value)}`)
+    .join("")}`;
 }
 
 /**
- * Expands one SDK model into OpenAI-style entries: the bare model id, one
- * entry per curated variant, and one entry per parameter value that no
- * variant already covers (this is how reasoning-effort levels surface).
+ * Advertise the base model and each supported parameter value. The settings UI
+ * groups these records into separate controls; selected controls are encoded
+ * together, so users can combine e.g. reasoning + context + speed.
  */
 function expandModel(model: ModelListItem, into: Map<string, ResolvedModel>): void {
   if (!into.has(model.id)) into.set(model.id, { id: model.id });
 
-  const variants = model.variants ?? [];
-  for (const variant of variants) {
-    // Skip variants that carry no params or just restate the model name —
-    // they decode to the same selection as the bare model id.
-    if (variant.params.length === 0) continue;
-    if (slugify(variant.displayName) === slugify(model.id)) continue;
-    const encoded = `${model.id}~${slugify(variant.displayName)}`;
-    if (!into.has(encoded)) into.set(encoded, { id: model.id, params: variant.params });
-  }
-
   for (const param of model.parameters ?? []) {
     for (const option of param.values) {
       const params: ModelParameterValue[] = [{ id: param.id, value: option.value }];
-      if (variants.some((v) => sameParams(v.params, params))) continue;
-      const label = option.displayName ?? option.value;
-      const encoded = `${model.id}~${slugify(`${param.id}-${label}`)}`;
+      const encoded = encodedModelId(model.id, params);
       if (!into.has(encoded)) into.set(encoded, { id: model.id, params });
     }
   }
+}
+
+function parseModelId(raw: string): ResolvedModel {
+  const firstParam = raw.indexOf(PARAM_MARKER);
+  if (firstParam < 0) return { id: raw };
+
+  const id = raw.slice(0, firstParam);
+  const params: ModelParameterValue[] = [];
+  for (const part of raw.slice(firstParam + PARAM_MARKER.length).split(PARAM_MARKER)) {
+    const separator = part.indexOf(":");
+    if (separator <= 0) continue;
+    try {
+      params.push({
+        id: decodeURIComponent(part.slice(0, separator)),
+        value: decodeURIComponent(part.slice(separator + 1)),
+      });
+    } catch {
+      // A malformed custom model entry is forwarded as its literal id below.
+      return { id: raw };
+    }
+  }
+  return params.length > 0 ? { id, params } : { id };
 }
 
 async function modelCacheFor(apiKey: string): Promise<ModelCache> {
@@ -221,7 +224,7 @@ async function handleCompletion(
   }
 
   const cache = await modelCacheFor(apiKey);
-  const resolved = cache.byId.get(request.model) ?? { id: request.model };
+  const resolved = cache.byId.get(request.model) ?? parseModelId(request.model);
   const prompt = messagesToPrompt(request.messages);
 
   const result = await Agent.prompt(prompt, {
