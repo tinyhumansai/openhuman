@@ -224,6 +224,16 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     tone: TONE.indigo,
     keyPlaceholder: 'ms-...',
   },
+  {
+    // Local sidecar (scripts/cursor-bridge) adapting the Cursor SDK to an
+    // OpenAI-compatible surface. Keep in sync with the Rust catalog.
+    slug: 'cursor',
+    label: 'Cursor',
+    endpoint: 'http://127.0.0.1:8790/v1',
+    authStyle: 'bearer',
+    tone: TONE.violet,
+    keyPlaceholder: 'cursor_...',
+  },
 ];
 
 // NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a

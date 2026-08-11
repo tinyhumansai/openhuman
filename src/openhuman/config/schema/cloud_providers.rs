@@ -191,6 +191,14 @@ pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
         endpoint: "https://api-inference.modelscope.cn/v1",
         auth_style: AuthStyle::Bearer,
     },
+    BuiltinCloudProvider {
+        // Local sidecar (scripts/cursor-bridge) that adapts the Cursor SDK to
+        // an OpenAI-compatible surface; the bearer is the user's Cursor API key.
+        slug: "cursor",
+        label: "Cursor",
+        endpoint: "http://127.0.0.1:8790/v1",
+        auth_style: AuthStyle::Bearer,
+    },
 ];
 
 fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {

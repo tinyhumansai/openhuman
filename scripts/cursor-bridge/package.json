@@ -1,0 +1,13 @@
+{
+  "name": "cursor-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local OpenAI-compatible bridge that serves Cursor SDK models to OpenHuman",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts"
+  },
+  "dependencies": {
+    "@cursor/sdk": "*"
+  }
+}
