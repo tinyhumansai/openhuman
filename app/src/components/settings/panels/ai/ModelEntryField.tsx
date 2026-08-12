@@ -28,15 +28,9 @@ import { isAzureFoundryEndpoint, looksLikeAzureBaseModelId } from '../azureDeplo
 
 const CURSOR_PARAM_MARKER = '~p=';
 
-type CursorModelCatalog = {
-  id: string;
-  parameters: Map<string, Set<string>>;
-};
+type CursorModelCatalog = { id: string; parameters: Map<string, Set<string>> };
 
-type CursorSelection = {
-  id: string;
-  parameters: Map<string, string>;
-};
+type CursorSelection = { id: string; parameters: Map<string, string> };
 
 const CURSOR_PARAMETER_LABELS: Record<string, string> = {
   reasoning: 'Reasoning effort',
@@ -57,11 +51,16 @@ function parseCursorSelection(value: string): CursorSelection {
   if (firstParameter < 0) return { id: value, parameters: new Map() };
 
   const parameters = new Map<string, string>();
-  for (const part of value.slice(firstParameter + CURSOR_PARAM_MARKER.length).split(CURSOR_PARAM_MARKER)) {
+  for (const part of value
+    .slice(firstParameter + CURSOR_PARAM_MARKER.length)
+    .split(CURSOR_PARAM_MARKER)) {
     const separator = part.indexOf(':');
     if (separator <= 0) continue;
     try {
-      parameters.set(decodeURIComponent(part.slice(0, separator)), decodeURIComponent(part.slice(separator + 1)));
+      parameters.set(
+        decodeURIComponent(part.slice(0, separator)),
+        decodeURIComponent(part.slice(separator + 1))
+      );
     } catch {
       return { id: value, parameters: new Map() };
     }
@@ -72,7 +71,10 @@ function parseCursorSelection(value: string): CursorSelection {
 function serializeCursorSelection(selection: CursorSelection): string {
   const parameters = [...selection.parameters.entries()].sort(([a], [b]) => a.localeCompare(b));
   return `${selection.id}${parameters
-    .map(([id, value]) => `${CURSOR_PARAM_MARKER}${encodeURIComponent(id)}:${encodeURIComponent(value)}`)
+    .map(
+      ([id, value]) =>
+        `${CURSOR_PARAM_MARKER}${encodeURIComponent(id)}:${encodeURIComponent(value)}`
+    )
     .join('')}`;
 }
 
@@ -95,7 +97,10 @@ function humanizeCursorModelId(id: string): string {
   return id
     .split(/[-_]/)
     .filter(Boolean)
-    .map(part => acronyms.get(part.toLowerCase()) ?? `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .map(
+      part =>
+        acronyms.get(part.toLowerCase()) ?? `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`
+    )
     .join(' ');
 }
 
@@ -156,7 +161,9 @@ const CursorModelSelector = ({
 
       {active &&
         [...active.parameters.entries()]
-          .sort(([a], [b]) => cursorParameterOrder(a) - cursorParameterOrder(b) || a.localeCompare(b))
+          .sort(
+            ([a], [b]) => cursorParameterOrder(a) - cursorParameterOrder(b) || a.localeCompare(b)
+          )
           .map(([parameter, values]) => (
             <div key={parameter} className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-content-secondary">
@@ -328,7 +335,12 @@ export const ModelEntryField = ({
           placeholder={isAzureProvider ? t('settings.ai.deploymentNamePlaceholder') : placeholder}
         />
       ) : providerSlug === 'cursor' ? (
-        <CursorModelSelector model={model} onModelChange={onModelChange} catalog={catalog} label={fieldLabel} />
+        <CursorModelSelector
+          model={model}
+          onModelChange={onModelChange}
+          catalog={catalog}
+          label={fieldLabel}
+        />
       ) : (
         <SettingsSelect
           aria-label={fieldLabel}
