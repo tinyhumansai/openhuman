@@ -231,6 +231,23 @@ tinycortex-api = { path = "vendor/tinycortex/api" }
 tinymemory = { path = "vendor/tinymemory" }
 tinymemory-api = { path = "vendor/tinymemory/api" }
 tinymemory-tinycortex = { path = "vendor/tinymemory/adapters/tinycortex" }
+# `tinymemory-core` is the *substance* of the memory subsystem, extracted out of
+# `src/openhuman/memory/` — the SQLite/vector store, the markdown summary tree,
+# the provider sync pipelines, ingestion, recall/query/search, the ingest queue,
+# conversations, people, goals and the tool-memory rules.
+#
+# What deliberately stayed behind in `src/openhuman/memory/` is the *host layer*
+# per the tinymemory README split: the RPC surface (`schemas/`, `read_rpc/`),
+# agent tools (`tools/`), the security/taint guard (`guard/`), the driver
+# binding (`driver/`), the memory agent, and the config mapping. Those reach
+# into this crate; this crate never names an OpenHuman type. Everything it needs
+# from the host arrives through the seam traits in `tinymemory_api::host`, whose
+# implementations live in `src/openhuman/memory/host.rs`.
+#
+# The `schemars` feature is enabled because the memory config *section* structs
+# (`MemoryConfig`, `MemoryTreeConfig`, …) now live in `tinymemory_api::host` and
+# are still fields of OpenHuman's `Config`, which derives `JsonSchema`.
+tinymemory-core = { path = "vendor/tinymemory/core" }
 tinychannels = { version = "0.1", features = ["relay-websocket"] }
 # tinybus — the message bus. Owns what `src/core/event_bus/` used to: the typed
 # pub/sub surface (`EventBus`, `EventHandler`, `SubscriptionHandle`), the
@@ -246,6 +263,13 @@ tinychannels = { version = "0.1", features = ["relay-websocket"] }
 # `uds` is on so the kernel can join a broker that out-of-process integrations
 # are already attached to (`core::bus::init_over_socket`). `cli` is not: the
 # `tinybus` binary is a developer tool, not something the kernel links.
+#
+# The dynamic module loader is NOT enabled here. It arrives through this
+# crate's own default-ON `modules` feature, which forwards `tinybus/modules`.
+# Enabling it unconditionally would put a `dlopen` loader in the kernel
+# profile — `tinybus` is always-on surface, so `--no-default-features
+# --features flows` would carry `ureq` and the archive stack for a host that
+# never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -381,13 +405,10 @@ fs2 = "0.4"
 # only by `openhuman::scheduler_gate::signals` to decide when to throttle
 # background LLM work on laptops.
 starship-battery = { version = "0.10", optional = true }
-ethers-core = { version = "2.0.14", default-features = false, optional = true }
-ethers-signers = { version = "2.0.14", default-features = false, optional = true }
 # Multi-chain wallet signing.
 # - bitcoin: P2WPKH PSBT build/sign/broadcast (includes secp256k1).
 # - ed25519-dalek: Solana transaction signing.
 # - bs58: Solana base58 addresses + Tron base58check addresses.
-bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery", "rand-std"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core"] }
 bs58 = { version = "0.5", default-features = false, features = ["std", "check"] }
 # Shared BIP-39 mnemonic → seed for non-EVM chains (BTC P2WPKH derivation,
@@ -399,11 +420,9 @@ coins-bip39 = { version = "0.8", optional = true }
 curve25519-dalek = { version = "4", default-features = false, features = ["alloc"], optional = true }
 
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
-pdf-extract = { version = "0.10", optional = true }
 # The WhatsApp Web provider (and its `whatsapp-rust` / `wacore` / `serde-big-array`
 # stack) now lives in the tinychannels crate; the `whatsapp-web` feature forwards
 # to `tinychannels/whatsapp-web`.
-ppt-rs = { version = "0.2.14", optional = true }
 # Terminal chat UI (`openhuman tui` / `chat`). Exclusive to the default-ON
 # `tui` feature (see `[features]` below): a slim / headless build without `tui`
 # drops both `ratatui` and `crossterm`. Kept in lockstep — ratatui 0.30
@@ -415,12 +434,20 @@ crossterm = { version = "0.29", optional = true }
 # Terminal column-width measurement for the `tui` chat renderer
 # (`src/tui/render.rs`); only compiled behind `#[cfg(feature = "tui")]`.
 unicode-width = { version = "0.2", optional = true }
-# TinyDocs — host-agnostic document synthesis. Owns the `.docx` spec types,
-# their size limits, the validation rules, and the OOXML writer (`docx-rs`
-# lives behind it now, not here). OpenHuman keeps only the host policy the
-# crate deliberately refuses to guess at: the artifact pipeline, the
-# `spawn_blocking` hop, and the generation deadline — see
-# `src/openhuman/tools/impl/document/`.
+# TinyDocs — the document wire contract, and nothing else.
+#
+# `default-features = false` is load-bearing: it takes the spec types, their
+# size limits, the validation rules and the PNG/JPEG header reader, and leaves
+# every writer behind. Synthesis happens in the `tinydocs` TinyBus module
+# (`src/openhuman/modules/`), so this build carries the shape of a document
+# without carrying the code that produces one — which is why `docx-rs`,
+# `ppt-rs` and `pdf-extract` are absent from the graph entirely rather than
+# merely gated.
+#
+# Sharing the contract rather than re-declaring it is the point. The specs are
+# what an LLM is shown as a JSON tool schema and what the module validates
+# against; two definitions of that would drift, and the drift would be a tool
+# description promising limits the module does not enforce.
 #
 # Vendored as a path dependency like `tinyhumans-sdk`: the crate is not
 # published to crates.io, so there is no `[patch.crates-io]` entry for it.
@@ -442,7 +469,17 @@ tinydocs = { path = "vendor/tinydocs", default-features = false, optional = true
 # After cloning: `git submodule update --init vendor/tinywallet`.
 #
 # Optional: exclusive to the default-ON `web3` feature.
-tinywallet = { path = "vendor/tinywallet", default-features = false, features = ["btc", "evm", "solana", "tron", "keccak", "key", "net", "asset", "client", "tx"], optional = true }
+# Taken WITHOUT `tx` or `client`, which is the whole point: those are the only
+# gates that pull the `bitcoin` crate and its native secp256k1 build, and
+# transaction building now happens in the loaded `tinywallet` module instead.
+# What stays is address validation, key derivation, the `Transport` seam, the
+# wire contract, EIP-712 hashing and ERC-20 calldata — none of which needs a
+# chain library.
+tinywallet = { path = "vendor/tinywallet", default-features = false, features = ["btc", "evm", "solana", "tron", "keccak", "key", "net", "wire", "eip712", "abi", "x402"], optional = true }
+# secp256k1 signing over the digests the wallet module hands back. Pure Rust,
+# and already in the graph beneath `coins-bip32` (which derives the key being
+# used), so naming it directly costs nothing and is what lets `bitcoin` go.
+k256 = { version = "0.13", default-features = false, features = ["std", "ecdsa"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Windows: tokio-tungstenite uses native-tls (schannel) so wss://
@@ -488,6 +525,12 @@ landlock = { version = "0.4", optional = true }
 rppal = { version = "0.22", optional = true }
 
 [dev-dependencies]
+# The host's own tests drive `tinymemory-core`'s test helpers
+# (`chat::test_override`, `StaticChatProvider`, `tool_memory::test_helpers`).
+# They were `#[cfg(test)]` items in this crate before the memory extraction; a
+# downstream test harness cannot see those across a crate boundary, so the
+# extracted crate exposes them behind `test-support` instead.
+tinymemory-core = { path = "vendor/tinymemory/core", features = ["test-support"] }
 # Dual-declared on purpose (same shape as the `sentry`/`axum` entries): the
 # optional dependency above is bin-only behind `bin-tools`, but
 # `agent_orchestration::tools::tools_e2e_tests` (a #[cfg(test)] LIB module),
@@ -598,7 +641,7 @@ default = ["media", "skills", "flows", "mcp", "channels", "medulla", "http-serve
 # `None`; and the three `ops` entry points always-on code calls return a
 # build-fact error, so a post-sync snapshot or a subconscious diff is logged and
 # skipped rather than silently reported as "nothing changed".
-memory-git = ["dep:git2", "tinycortex/git-diff", "tinycortex/wiki-git"]
+memory-git = ["dep:git2", "tinycortex/git-diff", "tinycortex/wiki-git", "tinymemory-core/memory-git"]
 http-server = ["dep:axum", "dep:socketioxide"]
 # Local audio-device access: the `cpal` capture stack behind voice recording
 # and the accessibility microphone-permission probe. Default-ON. Slim /
@@ -617,15 +660,39 @@ http-server = ["dep:axum", "dep:socketioxide"]
 # nothing and would silently drop the microphone probe from the shipped app if
 # the forwarding list were not updated in lockstep.
 inference = ["dep:cpal"]
-# Office-document tools: the `generate_presentation` (ppt-rs) and
-# `generate_document` (docx-rs) agent tools, plus `pdf-extract` for PDF text
-# extraction during multimodal file ingest. Default-ON. Slim / headless builds
-# opt out via `--no-default-features --features "<explicit list without
-# documents>"`, which drops all three crates. Leaf gate (no stub facade): when
-# off, the two tools are absent from the tool list rather than degraded to an
-# error, and PDF ingest degrades the file to a reference instead of extracted
-# text (`agent::multimodal::extract_pdf_text`).
-documents = ["dep:pdf-extract", "dep:ppt-rs", "dep:tinydocs", "tinydocs/docx"]
+# Office-document tools: the `generate_document` and `generate_presentation`
+# agent tools, plus PDF text extraction during multimodal file ingest.
+# Default-ON.
+#
+# The synthesis is NOT in this build. All three run in the `tinydocs` TinyBus
+# module, downloaded and verified at first use (`src/openhuman/modules/`), so
+# this gate turns on the tools and the host policy around them — the artifact
+# pipeline, the deadlines, image resolution under the security policy — and
+# `tinydocs` is here for the wire contract only. `docx-rs`, `ppt-rs` and
+# `pdf-extract` are not in the dependency graph in any configuration.
+#
+# Leaf gate (no stub facade): when off, the two tools are absent from the tool
+# list rather than degraded to an error, and PDF ingest degrades the file to a
+# reference instead of extracted text
+# (`agent::multimodal::extract_pdf_text`). Slim / headless builds opt out via
+# `--no-default-features --features "<explicit list without documents>"`.
+documents = ["dep:tinydocs", "modules"]
+# The dynamic module host (`openhuman::modules`): the loader that admits a
+# compiled `cdylib` through tinybus's ABI descriptor, manifest, dependency and
+# SHA-256 gates, plus the `modules` RPC namespace and the registry of modules
+# this build trusts. Default-ON, and implied by every gate whose work happens in
+# a module — today that is `documents`.
+#
+# Off ⇒ the `modules.*` controllers are unregistered (unknown-method over
+# `/rpc`, absent from `/schema`) and nothing can load a native module. Forwarding
+# `tinybus/modules` here rather than on the dependency itself keeps the loader
+# out of the kernel profile, where `tinybus` is always-on: a workflow-only host
+# should not carry `ureq` and an archive stack to support a loader it cannot use.
+#
+# A loaded module is trusted in-process code with this process's privileges, and
+# tinybus never unloads one. See `src/openhuman/modules/` before adding an entry
+# to the registry.
+modules = ["tinybus/modules"]
 # Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
 # server, always-on listening, and podcast audio generation/email delivery.
 # Default-ON — the desktop app always ships with voice. Slim / headless builds
@@ -671,10 +738,8 @@ voice = [
 # to do with the wallet. Measured: excluding them costs 0, because tinyplace
 # pulls them in regardless.
 web3 = [
-    "dep:bitcoin",
+    "dep:k256",
     "dep:curve25519-dalek",
-    "dep:ethers-core",
-    "dep:ethers-signers",
     "dep:coins-bip39",
     "dep:tinywallet",
 ]
@@ -983,6 +1048,10 @@ tinyagents = { path = "vendor/tinyagents" }
 # publishing.
 tinyflows = { path = "vendor/tinyflows" }
 tinycortex = { path = "vendor/tinycortex" }
+# `tinymemory-core` names `tinycortex-api` by version requirement (this crate
+# depends on it by path, above). Patch it onto the same checkout so both see one
+# copy of the contract types and the trait identities unify.
+tinycortex-api = { path = "vendor/tinycortex/api" }
 tinyjuice = { path = "vendor/tinyjuice" }
 tinychannels = { path = "vendor/tinychannels" }
 tinyplace = { path = "vendor/tinyplace/sdk/rust" }

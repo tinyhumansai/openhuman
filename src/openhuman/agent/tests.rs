@@ -228,21 +228,33 @@ impl Tool for CountingTool {
 /// The returned `TempDir` must be held alive for the duration of the test
 /// to prevent the directory (and its SQLite database) from being deleted.
 fn make_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = MemoryConfig {
         backend: "none".into(),
         ..MemoryConfig::default()
     };
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }
 
 fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = MemoryConfig {
         backend: "sqlite".into(),
         ..MemoryConfig::default()
     };
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }

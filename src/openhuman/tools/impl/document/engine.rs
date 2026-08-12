@@ -20,10 +20,10 @@
 
 use std::time::Duration;
 
-use tokio::task::JoinError;
-use tokio::time::{error::Elapsed, timeout};
+use tokio::time::timeout;
 
 use super::types::{DocumentError, GenerateDocumentInput};
+use crate::openhuman::modules::documents;
 
 /// Generate the `.docx` bytes for `input`, giving up after `deadline`.
 ///
@@ -31,6 +31,30 @@ use super::types::{DocumentError, GenerateDocumentInput};
 /// thread acquisition. Hitting it surfaces as
 /// [`DocumentError::GenerationTimeout`].
 pub(super) async fn generate(
+    input: &GenerateDocumentInput,
+    deadline: Duration,
+) -> Result<Vec<u8>, DocumentError> {
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(DocumentError::GenerationFailed {
+                stderr_truncated: DocumentError::truncate_stderr(&format!(
+                    "config unavailable: {error}"
+                )),
+            });
+        }
+    };
+    generate_with(&config, input, deadline).await
+}
+
+/// [`generate`], against a caller-supplied config.
+///
+/// Split out so a test can drive the whole path without `load_or_init`, which
+/// reads — and on a fresh machine writes — the real user config directory. A
+/// unit test that touches it depends on whatever is on the developer's box and
+/// can leave a config file behind.
+async fn generate_with(
+    config: &crate::openhuman::config::Config,
     input: &GenerateDocumentInput,
     deadline: Duration,
 ) -> Result<Vec<u8>, DocumentError> {
@@ -50,14 +74,18 @@ pub(super) async fn generate(
         "[document:engine] generate:start"
     );
 
-    let join: Result<Result<Result<Vec<u8>, tinydocs::Error>, _>, Elapsed> = timeout(
-        deadline,
-        tokio::task::spawn_blocking(move || tinydocs::docx::generate(&owned)),
-    )
-    .await;
+    // Loaded before the clock starts. A first use may download and verify the
+    // artifact, and a deadline meant for generation should not be spent on that
+    // — otherwise the first document a user ever asks for is the one that times
+    // out. Cached after the first call, so this is free from then on.
+    if let Err(error) = documents::ensure_ready(config).await {
+        return Err(DocumentError::from(error));
+    }
+
+    let call = timeout(deadline, documents::generate_docx(config, &owned)).await;
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
-    match join {
+    match call {
         Err(_elapsed) => {
             tracing::warn!(
                 target: "document",
@@ -70,29 +98,18 @@ pub(super) async fn generate(
                 timeout_secs: deadline_secs,
             })
         }
-        Ok(Err(join_err)) => {
-            let err = map_join_error(join_err);
+        Ok(Err(call_err)) => {
+            let err = DocumentError::from(call_err);
             tracing::warn!(
                 target: "document",
                 elapsed_ms,
-                kind = "join_error",
+                kind = "module_failure",
                 err = %err,
                 "[document:engine] generate:failure"
             );
             Err(err)
         }
-        Ok(Ok(Err(crate_err))) => {
-            let err = DocumentError::from(crate_err);
-            tracing::warn!(
-                target: "document",
-                elapsed_ms,
-                kind = "engine_failure",
-                err = %err,
-                "[document:engine] generate:failure"
-            );
-            Err(err)
-        }
-        Ok(Ok(Ok(bytes))) => {
+        Ok(Ok(bytes)) => {
             tracing::debug!(
                 target: "document",
                 elapsed_ms,
@@ -101,25 +118,6 @@ pub(super) async fn generate(
                 "[document:engine] generate:done"
             );
             Ok(bytes)
-        }
-    }
-}
-
-fn map_join_error(err: JoinError) -> DocumentError {
-    // The outer `tokio::time::timeout` already routes the timeout case, so a
-    // `JoinError` here is a panic (library bug / OOM on the blocking pool) or
-    // a cancellation (runtime shutdown / explicit abort). Both surface as
-    // `GenerationFailed` with context preserved — mirrors the presentation
-    // engine so a "0s timeout" message is never fabricated.
-    if err.is_panic() {
-        DocumentError::GenerationFailed {
-            stderr_truncated: DocumentError::truncate_stderr("document engine panicked"),
-        }
-    } else {
-        DocumentError::GenerationFailed {
-            stderr_truncated: DocumentError::truncate_stderr(&format!(
-                "document engine task cancelled: {err}"
-            )),
         }
     }
 }
@@ -167,141 +165,93 @@ mod tests {
         body
     }
 
+    /// A config with modules turned off, so nothing leaves this process.
+    ///
+    /// The test drives `generate_with` rather than `generate` deliberately:
+    /// `generate` calls `Config::load_or_init`, which reads — and on a fresh
+    /// machine writes — the real user config directory, so its behaviour would
+    /// depend on whatever is on the box running the test and it could leave a
+    /// file behind. Supplying the config also makes the outcome deterministic:
+    /// with modules disabled the only reachable error is `ModuleUnavailable`.
+    fn isolated_config() -> crate::openhuman::config::Config {
+        let mut config = crate::openhuman::config::Config::default();
+        config.modules.enabled = false;
+        config.modules.allow_download = false;
+        config
+    }
+
     #[tokio::test]
-    async fn generate_round_trips_to_valid_docx() {
-        // End-to-end through the wrapper: build → tinydocs → byte buffer →
-        // re-open as zip → confirm the OOXML skeleton + that our text reached
-        // document.xml.
-        let bytes = generate(&sample_input(), Duration::from_secs(30))
-            .await
-            .expect("generate should succeed");
-
-        // A `.docx` is a zip: the magic bytes are the local-file-header
-        // signature `PK\x03\x04`. This is the acceptance-criteria check
-        // that any OOXML reader can open the file.
-        assert!(
-            bytes.len() > 200,
-            "docx unexpectedly small ({} bytes)",
-            bytes.len()
-        );
-        assert_eq!(&bytes[0..2], b"PK", "docx must start with the zip magic PK");
-
-        let names = docx_entry_names(&bytes);
-        for required in ["[Content_Types].xml", "_rels/.rels", "word/document.xml"] {
-            assert!(
-                names.iter().any(|n| n == required),
-                "missing OOXML entry: {required} (got: {names:?})"
-            );
-        }
-
-        // Numbering was used → the numbering part must materialise.
-        assert!(
-            names.iter().any(|n| n == "word/numbering.xml"),
-            "bullet list should emit word/numbering.xml (got: {names:?})"
-        );
-
-        // Our title, heading, paragraph, and bullet text all reach the
-        // rendered document body — none dropped on the floor.
-        let doc = docx_entry_body(&bytes, "word/document.xml");
-        for needle in [
-            "Project Charter",
-            "Overview",
-            "This document describes the plan.",
-            "Goals",
-            "Ship v1",
-            "Delight users",
-        ] {
-            assert!(
-                doc.contains(needle),
-                "document.xml missing text: {needle:?}"
-            );
+    async fn generate_reports_a_structured_outcome_when_no_module_is_available() {
+        // Contract: with no module reachable, `generate` surfaces a clean,
+        // structured outcome — never a panic, never a half-written buffer, and
+        // never a hang waiting on a bus nobody is serving.
+        match generate_with(&isolated_config(), &sample_input(), Duration::from_secs(30)).await {
+            Err(DocumentError::ModuleUnavailable { .. }) => {}
+            other => panic!("expected ModuleUnavailable with modules disabled, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn generate_drops_blank_paragraphs_and_bullets() {
-        // Whitespace-only entries must not blow up generation and must not
-        // emit empty runs — the engine trims + drops them.
-        let input = GenerateDocumentInput {
-            title: "Trimmed".to_string(),
-            author: Some("   ".to_string()),
-            sections: vec![DocumentSection {
-                heading: Some("Kept".to_string()),
-                paragraphs: vec!["real".to_string(), "   ".to_string(), String::new()],
-                bullets: vec!["item".to_string(), "\t\n".to_string()],
-            }],
-        };
-        let bytes = generate(&input, Duration::from_secs(30))
-            .await
-            .expect("generate should succeed on whitespace-only entries");
-        let doc = docx_entry_body(&bytes, "word/document.xml");
-        assert!(doc.contains("real"));
-        assert!(doc.contains("item"));
-    }
-
-    #[tokio::test]
-    async fn generate_surfaces_a_crate_validation_failure() {
-        // `tinydocs` re-validates inside `generate`, so a spec that never went
-        // through `validate_input` still fails structurally rather than
-        // producing a blank document.
-        let input = GenerateDocumentInput {
-            title: String::new(),
-            author: None,
-            sections: vec![],
-        };
-        match generate(&input, Duration::from_secs(30)).await {
-            Err(DocumentError::InvalidInput { field, .. }) => assert_eq!(field, "title"),
-            other => panic!("expected InvalidInput(title), got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn generate_yields_clean_structured_result_under_zero_deadline() {
-        // Contract under an impossibly-short deadline: `generate` must surface a
-        // clean, structured outcome — never a panic or a half-written buffer.
-        //
-        // Which outcome we get is inherently racy and must NOT be pinned: a
-        // near-zero `timeout` wrapping `spawn_blocking` usually elapses first
-        // (GenerationTimeout), but the runtime can instead cancel the blocking
-        // task, which `map_join_error` maps to GenerationFailed, and a trivial
-        // input can even finish before the timer fires (Ok). Asserting one exact
-        // variant made this flake under coverage instrumentation. We assert the
-        // real invariant: any Ok is a non-empty buffer, any Err is one of the
-        // two documented structured variants, and nothing panics.
-        match generate(&sample_input(), Duration::ZERO).await {
+    async fn a_zero_deadline_never_panics_or_yields_a_partial_buffer() {
+        // Which outcome arrives is inherently racy and must NOT be pinned: the
+        // near-zero timeout usually elapses first, but the disabled-module check
+        // runs ahead of the clock. Assert the invariant instead — any Ok is a
+        // non-empty buffer, any Err is one of the documented variants.
+        match generate_with(&isolated_config(), &sample_input(), Duration::ZERO).await {
             Ok(bytes) => assert!(!bytes.is_empty(), "a completed docx must be non-empty"),
             Err(DocumentError::GenerationTimeout { timeout_secs }) => {
                 assert_eq!(timeout_secs, 0, "zero deadline reports 0 seconds");
             }
-            Err(DocumentError::GenerationFailed { .. }) => {
-                // Blocking task cancelled before the timer fired — still clean.
+            Err(
+                DocumentError::GenerationFailed { .. } | DocumentError::ModuleUnavailable { .. },
+            ) => {
+                // Failed or refused before the timer fired — still clean.
             }
             Err(other) => panic!("unexpected error variant under a zero deadline: {other:?}"),
         }
     }
 
-    #[tokio::test]
-    async fn map_join_error_cancellation_becomes_generation_failed() {
-        // A non-panic JoinError (cancellation via abort) surfaces as
-        // GenerationFailed with the cancellation context preserved — never
-        // a fabricated "0s timeout".
-        let handle = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
-        });
-        handle.abort();
-        let join_err = handle.await.expect_err("aborted task yields JoinError");
-        assert!(
-            !join_err.is_panic(),
-            "abort() yields a cancellation, not a panic"
-        );
-        match map_join_error(join_err) {
-            DocumentError::GenerationFailed { stderr_truncated } => {
-                assert!(
-                    stderr_truncated.contains("document engine task cancelled"),
-                    "cancellation context missing: {stderr_truncated:?}"
-                );
+    // The OOXML round trips that used to live here — container shape, which
+    // text reaches document.xml, blank filtering — moved with the writer into
+    // `tinydocs::docx`, which tests them against the bytes it produces. Asserting
+    // them again through a bus call would test the same behaviour twice and
+    // drift the moment one copy changed.
+
+    #[test]
+    fn a_module_failure_maps_onto_the_agent_facing_shape() {
+        // There is no blocking task to join any more — the module owns its own
+        // pool — so the failure this file has to classify is a call failure.
+        // The three outcomes drive three different agent behaviours, which is
+        // why the client distinguishes them at all.
+        use crate::openhuman::modules::documents::DocumentCallError;
+
+        assert!(matches!(
+            DocumentError::from(DocumentCallError::InvalidInput("blank title".to_string())),
+            DocumentError::InvalidInput { .. }
+        ));
+        assert!(matches!(
+            DocumentError::from(DocumentCallError::Failed("writer stopped".to_string())),
+            DocumentError::GenerationFailed { .. }
+        ));
+        assert!(matches!(
+            DocumentError::from(DocumentCallError::Unavailable("no artifact".to_string())),
+            DocumentError::ModuleUnavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn a_module_reported_invalid_input_names_the_spec() {
+        // The structured field/reason pair does not survive the wire, so the
+        // conversion has to supply a field rather than leave the agent without
+        // one. Local validation runs first, so this path is the rare one.
+        use crate::openhuman::modules::documents::DocumentCallError;
+
+        match DocumentError::from(DocumentCallError::InvalidInput("too long".to_string())) {
+            DocumentError::InvalidInput { field, reason } => {
+                assert_eq!(field, "spec");
+                assert_eq!(reason, "too long");
             }
-            other => panic!("expected GenerationFailed, got {other:?}"),
+            other => panic!("expected InvalidInput, got {other:?}"),
         }
     }
 }

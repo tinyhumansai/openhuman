@@ -1,26 +1,21 @@
-//! People: contact resolution + scoring.
+//! Host layer over [`tinymemory_core::people`].
 //!
-//! A5 module. Deterministic resolver maps (imessage handle | email | display
-//! name) to a stable `PersonId`. Scoring blends recency × frequency ×
-//! reciprocity × depth from interaction rows into a ranked `people.list`.
-//!
-//! Intentionally self-contained: no dependency on `life_capture`,
-//! `chronicle`, `nudges`, or UI. Integration happens in later slices.
+//! The domain itself lives in the extracted crate; what stays here is its
+//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
+//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
+//! The glob re-export keeps every historical `memory::people::…` path resolving.
 
-pub mod address_book;
-pub mod migrations;
-pub mod resolver;
+pub use tinymemory_core::people::*;
+
 pub mod rpc;
 pub mod schemas;
-pub mod scorer;
-pub mod store;
-pub mod tools;
-pub mod types;
 
+// The controller aggregators this domain's RPC surface defines. Aliased
+// exactly as the pre-extraction module exported them.
 pub use schemas::{
     all_controller_schemas as all_people_controller_schemas,
     all_registered_controllers as all_people_registered_controllers,
 };
 
 #[cfg(test)]
-mod tests;
+mod schemas_tests;

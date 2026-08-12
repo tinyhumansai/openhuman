@@ -1,10 +1,10 @@
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::store::chunks::types::SourceKind;
-use crate::openhuman::memory::tree::retrieval::cover::cover_window;
 use crate::openhuman::memory::tree::retrieval::rpc::CoverWindowRequest;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinymemory_core::store::chunks::types::SourceKind;
+use tinymemory_core::tree::retrieval::cover::cover_window;
 
 /// Agent-facing wrapper for the windowed minimum-cover retrieval. Returns the
 /// smallest set of nodes (summaries + raw chunks) covering all memory in

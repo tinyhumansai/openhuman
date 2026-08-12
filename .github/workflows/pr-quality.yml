@@ -61,6 +61,9 @@ jobs:
       - name: Lychee link check
         uses: lycheeverse/lychee-action@v2
         with:
+          # Product Hunt denies GitHub-hosted runners (403) for the translated
+          # README badge destination, so it cannot be a stable external-link
+          # check.
           args: >-
             --no-progress
             --include-fragments
@@ -73,6 +76,7 @@ jobs:
             --exclude '^https://github\.com/tinyhumansai/openhuman/stargazers'
             --exclude '^https://api\.star-history\.com/'
             --exclude '^https://x\.com/karpathy/status/2039805659525644595$'
+            --exclude '^https://www\.producthunt\.com/'
             'docs/**/*.md'
             'src/**/README.md'
             '.github/PULL_REQUEST_TEMPLATE.md'

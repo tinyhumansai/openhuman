@@ -30,6 +30,12 @@ where
     // other so a concurrent provider construction cannot escape the stub.
     let lock = TREE_INGEST_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
     let _guard = lock.lock().await;
+    // Tree ingest builds a memory store, which reaches the embedding seam.
+    // Installing it here rather than relying on some earlier test having done
+    // so is what makes these deterministic — the `test_override` below still
+    // keeps the *chat* side offline, since `build_chat_runtime` checks it
+    // before building anything.
+    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::memory::chat::test_override::with_provider(
         Arc::new(crate::openhuman::memory::chat::StaticChatProvider::new(
             "{}",

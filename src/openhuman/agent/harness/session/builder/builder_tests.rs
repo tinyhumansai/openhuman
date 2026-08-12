@@ -16,6 +16,9 @@ fn spec(name: &str) -> ToolSpec {
 
 #[test]
 fn recovery_tool_joins_a_named_allowlist() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::inference::tokenjuice::RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
     use std::collections::HashSet;
 
@@ -36,6 +39,9 @@ fn recovery_tool_joins_a_named_allowlist() {
 
 #[test]
 fn empty_allowlist_stays_empty() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use std::collections::HashSet;
     // Empty == "no filter" (all tools visible) AND the deliberately tool-less
     // Named([]) case — both must stay empty so the invariant holds.
@@ -46,6 +52,9 @@ fn empty_allowlist_stays_empty() {
 
 #[test]
 fn drops_duplicates_first_wins() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     // Real-world collision: researcher's `delegate_name = "research"`
     // synthesises a delegate tool that shadows a same-named skill.
     // Anthropic 400s on duplicate tool names; the dedup helper must
@@ -68,6 +77,9 @@ fn drops_duplicates_first_wins() {
 
 #[test]
 fn passes_through_when_no_duplicates() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let specs = vec![spec("a"), spec("b"), spec("c")];
     let deduped = dedup_visible_tool_specs(specs);
     assert_eq!(deduped.len(), 3);
@@ -78,12 +90,18 @@ fn passes_through_when_no_duplicates() {
 
 #[test]
 fn handles_empty_input() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let deduped = dedup_visible_tool_specs(Vec::<ToolSpec>::new());
     assert!(deduped.is_empty());
 }
 
 #[test]
 fn preserves_full_spec_content_for_kept_entries() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     // Description + parameters must survive the dedup pass intact —
     // the LLM uses both for tool-call decisions, and corrupting them
     // would silently degrade function-calling quality.
@@ -106,6 +124,9 @@ fn preserves_full_spec_content_for_kept_entries() {
 
 #[test]
 fn automatic_memory_policy_does_not_synthesize_delegate_tools() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let defs = crate::openhuman::agent::registry::agents::load_builtins().unwrap();
     let help = defs
         .iter()
@@ -160,6 +181,9 @@ fn builtin_def(id: &str) -> crate::openhuman::agent::harness::definition::AgentD
 
 #[tokio::test]
 async fn build_session_agent_applies_extended_policy_definition_cap() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -196,6 +220,9 @@ async fn build_session_agent_applies_extended_policy_definition_cap() {
 
 #[tokio::test]
 async fn build_session_agent_applies_strict_cap_below_global_default() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -221,6 +248,9 @@ async fn build_session_agent_applies_strict_cap_below_global_default() {
 
 #[tokio::test]
 async fn build_session_agent_falls_back_to_global_default_when_no_definition() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -245,6 +275,9 @@ async fn build_session_agent_falls_back_to_global_default_when_no_definition() {
 
 #[tokio::test]
 async fn build_session_agent_carries_active_profile_id_when_profile_present() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -275,6 +308,9 @@ async fn build_session_agent_carries_active_profile_id_when_profile_present() {
 
 #[tokio::test]
 async fn profile_allowed_tools_restrict_shared_session_builder() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -310,6 +346,9 @@ async fn profile_allowed_tools_restrict_shared_session_builder() {
 
 #[tokio::test]
 async fn channel_ceiling_does_not_inherit_orchestrator_role_visibility() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -351,6 +390,9 @@ async fn channel_ceiling_does_not_inherit_orchestrator_role_visibility() {
 
 #[tokio::test]
 async fn dedicated_memory_profile_scopes_tree_and_transcript_storage() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -377,6 +419,9 @@ async fn dedicated_memory_profile_scopes_tree_and_transcript_storage() {
 
 #[tokio::test]
 async fn build_session_agent_leaves_active_profile_id_none_without_profile() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -413,6 +458,9 @@ fn custom_profile(
 
 #[tokio::test]
 async fn build_session_agent_routes_dedicated_memory_to_profile_subtree() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -444,6 +492,9 @@ async fn build_session_agent_routes_dedicated_memory_to_profile_subtree() {
 
 #[tokio::test]
 async fn build_session_agent_profile_less_uses_shared_memory_subtree() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -473,6 +524,9 @@ async fn build_session_agent_profile_less_uses_shared_memory_subtree() {
 
 #[tokio::test]
 async fn build_session_agent_injects_profile_soul_into_prompt() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -515,6 +569,9 @@ async fn build_session_agent_injects_profile_soul_into_prompt() {
 
 #[tokio::test]
 async fn build_session_agent_uses_profile_memory_instead_of_root_memory() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -572,6 +629,9 @@ async fn build_session_agent_uses_profile_memory_instead_of_root_memory() {
 
 #[tokio::test]
 async fn from_config_for_agent_synthesizes_custom_registry_entry_with_named_scope() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
     use crate::openhuman::agent::registry::types::{
         AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy,
@@ -627,6 +687,9 @@ async fn from_config_for_agent_synthesizes_custom_registry_entry_with_named_scop
 
 #[tokio::test]
 async fn build_session_agent_injects_default_profile_soul_into_prompt() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -663,6 +726,9 @@ async fn build_session_agent_injects_default_profile_soul_into_prompt() {
 
 #[tokio::test]
 async fn build_session_agent_profile_less_prompt_has_no_personality_soul() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -689,6 +755,9 @@ async fn build_session_agent_profile_less_prompt_has_no_personality_soul() {
 
 #[tokio::test]
 async fn from_config_for_agent_still_errors_for_a_genuinely_unknown_id() {
+    // Building a session agent constructs a memory store, which reaches
+    // the embedding seam; before the extraction this needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();

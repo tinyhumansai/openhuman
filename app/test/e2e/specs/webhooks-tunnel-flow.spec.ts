@@ -1,8 +1,8 @@
 /**
- * End-to-end: supported webhook controller surface and retired-route coverage.
+ * End-to-end: webhook controller surface and compatibility-route coverage.
  *
- * Backend tunnel CRUD is deliberately not exposed through OpenHuman; pin that policy here.
- * The supported echo-registration behavior is exercised in webhooks-ingress-flow.spec.ts.
+ * The backend tunnel CRUD surface is available through OpenHuman. Echo-registration
+ * behavior is exercised separately in webhooks-ingress-flow.spec.ts.
  */
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
@@ -40,10 +40,9 @@ describe('Webhook controller surface and retired-route coverage', () => {
     expect(atHome).toBe(true);
   });
 
-  it('does not expose retired backend tunnel CRUD', async () => {
+  it('exposes backend tunnel CRUD', async () => {
     const listed = await callOpenhumanRpc('openhuman.webhooks_list_tunnels', {});
-    expect(listed.ok).toBe(false);
-    expect(listed.error).toContain('backend webhook routes are not exposed through OpenHuman');
+    expect(listed.ok).toBe(true);
   });
 
   it('legacy Webhooks route lands on Connections', async () => {

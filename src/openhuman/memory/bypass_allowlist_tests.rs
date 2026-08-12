@@ -282,7 +282,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the driver's own constructor",
     ),
     (
-        "src/openhuman/memory/global.rs",
+        "vendor/tinymemory/core/src/global.rs",
         "MemoryClient::from_workspace_dir(",
         "the process-global slot itself; it is what global::client hands out",
     ),
@@ -363,33 +363,33 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "tool_rule_put/get/*_json/*_for_prompt have no contract equivalent",
     ),
     (
-        "src/openhuman/memory/store/client.rs",
+        "vendor/tinymemory/core/src/store/client.rs",
         ".profile_conn(",
         "sole in-family call; wraps the raw handle in ProfileStore. profile_conn is pub(in crate::openhuman::memory), so the compiler — not this lint — is the primary enforcement",
     ),
     // ── Composio memory sync: profile_store + &MemoryClientRef ──
     (
-        "src/openhuman/memory/sync/composio/providers/profile.rs",
+        "vendor/tinymemory/core/src/sync/composio/providers/profile.rs",
         ".profile_store(",
         "typed profile writes; the contract has no profile family, so still unguarded",
     ),
     (
-        "src/openhuman/memory/sync/composio/providers/profile.rs",
+        "vendor/tinymemory/core/src/sync/composio/providers/profile.rs",
         "global::client_if_ready(",
         "resolved only to reach profile_store()",
     ),
     (
-        "src/openhuman/memory/sync/composio/providers/types.rs",
+        "vendor/tinymemory/core/src/sync/composio/providers/types.rs",
         "MemoryClient::from_workspace_dir(",
         "provider trait takes &MemoryClientRef; the contract has no such shape",
     ),
     (
-        "src/openhuman/memory/sync/composio/providers/types.rs",
+        "vendor/tinymemory/core/src/sync/composio/providers/types.rs",
         "global::client_if_ready(",
         "same provider trait shape",
     ),
     (
-        "src/openhuman/memory/sync/composio/providers/user_scopes.rs",
+        "vendor/tinymemory/core/src/sync/composio/providers/user_scopes.rs",
         "global::client_if_ready(",
         "same provider trait shape",
     ),
@@ -402,18 +402,18 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     // archivist and the learning cache reach them the same way, and those two
     // are already allowlisted below/above for the same reason.
     (
-        "src/openhuman/memory/store/golden.rs",
+        "src/openhuman/memory/store_golden.rs",
         ".profile_conn(",
         "fixture seeder: episodic/segment/event/profile tiers have no guarded writer",
     ),
     (
-        "src/openhuman/memory/store/golden.rs",
+        "src/openhuman/memory/store_golden.rs",
         "global::client(",
         "resolved only to reach profile_conn() for the fixture seed/read-back",
     ),
     // ── The engine seam ──
     (
-        "src/openhuman/memory/tinycortex/sync.rs",
+        "vendor/tinymemory/core/src/tinycortex/sync.rs",
         "global::client_if_ready(",
         "the TinyCortex engine seam; it sits beneath the contract, not above it",
     ),
@@ -455,6 +455,18 @@ fn scan() -> BTreeSet<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     collect_rs_files(&root.join("src"), &mut files);
+    // The memory subsystem was extracted into `tinymemory-core`, and most of
+    // the files this lint counts went with it. Scanning only this crate's `src`
+    // would quietly drop them from the tally — which would read as "the
+    // bypasses were cleaned up" rather than "they moved out of view".
+    collect_rs_files(
+        &root
+            .join("vendor")
+            .join("tinymemory")
+            .join("core")
+            .join("src"),
+        &mut files,
+    );
 
     let mut found = BTreeSet::new();
     for path in &files {
@@ -510,7 +522,7 @@ fn bypass_scanner_finds_the_known_bypasses() {
          module would pass vacuously. Fix the scanner, not the assertion."
     );
     let canary = (
-        "src/openhuman/memory/store/client.rs".to_string(),
+        "vendor/tinymemory/core/src/store/client.rs".to_string(),
         ".profile_conn(".to_string(),
     );
     assert!(

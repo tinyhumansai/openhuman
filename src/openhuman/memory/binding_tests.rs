@@ -8,8 +8,20 @@
 //! depends on.
 
 use super::*;
+use crate::core::subsystem::DriverClass;
+use crate::openhuman::config::schema::MemorySubsystemConfig;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+// `binding.rs` reaches these through its own `use` statements; a sibling test
+// module only inherits its `pub` items, so they are named again here.
+use crate::core::subsystem::{DriverHealth, SubsystemSlot};
+use tinycortex_api::capabilities::Capabilities;
+use tinycortex_api::health::MemoryHealth;
+use tinycortex_api::null::{NullMemoryProvider, NULL_DRIVER_ID};
+use tinycortex_api::provider::MemoryProvider;
+use tinycortex_api::CONTRACT_VERSION;
 
 // Imported here rather than re-exported from `binding.rs`: since admission
 // moved to `tinymemory::registry`, the production module no longer names this
@@ -24,7 +36,7 @@ use tinycortex_api::provider::{MemoryCore, MemoryPortability, MemoryRecall};
 use tinycortex_api::recall::OwnedRecallOpts;
 use tinycortex_api::types::{MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary};
 
-use crate::openhuman::config::schema::MemoryDriverConfig;
+use tinymemory_api::host::MemoryDriverConfig;
 
 fn external_driver_cfg(trust_state: &str) -> MemorySubsystemConfig {
     let mut cfg = MemorySubsystemConfig {

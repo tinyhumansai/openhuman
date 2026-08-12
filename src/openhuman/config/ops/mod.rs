@@ -25,7 +25,7 @@ pub use loader::{
     agent_server_status, client_config_json, core_rpc_url_from_env, get_config_snapshot,
     get_dashboard_settings, get_data_paths, get_data_paths_for_user, get_runtime_flags,
     load_and_get_client_config_snapshot, load_and_get_config_snapshot,
-    load_config_for_workspace_with_timeout, load_config_with_timeout,
+    load_config_for_workspace_with_timeout, load_config_with_timeout, reload_config_from_paths,
     reload_config_snapshot_with_timeout, reset_local_data, set_browser_allow_all,
     snapshot_config_json, RuntimeFlagsOut,
 };

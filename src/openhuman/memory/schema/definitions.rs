@@ -766,7 +766,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: NAMESPACE,
             function: "set_enabled",
             description: "Toggle Memory Tree auto-sync (#1856 Part 1). \
-                Flips `config.scheduler_gate.mode` between `auto` (enabled=true) \
+                Flips `config.scheduler_gate().mode` between `auto` (enabled=true) \
                 and `off` (enabled=false), persists the change, and hot-reloads \
                 the live scheduler-gate so in-flight workers observe the new \
                 policy at their next `wait_for_capacity` await. The 20-min \

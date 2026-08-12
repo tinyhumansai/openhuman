@@ -305,8 +305,10 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Full desktop E2E suite on all three shipped OSes (build-once-then-fanout
-  # shards — see e2e-reusable.yml).
+  # Full desktop E2E suite on the currently supported Linux harness
+  # (build-once-then-fanout shards — see e2e-reusable.yml). macOS and Windows
+  # need native drivers after the Wry migration (#5485); enabling their old
+  # CEF/Appium path makes every shard fail before a spec starts.
   e2e-desktop:
     name: Desktop E2E (full suite, 3 OS)
     # No `secrets: inherit` — the called workflow uses no secrets; keep this
@@ -314,8 +316,8 @@ jobs:
     uses: ./.github/workflows/e2e-reusable.yml
     with:
       run_linux: true
-      run_macos: true
-      run_windows: true
+      run_macos: false
+      run_windows: false
       full: true
 
   ci-full-gate:

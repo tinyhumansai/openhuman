@@ -16,7 +16,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider;
 use crate::openhuman::memory::agent::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::memory::store as memory_store;
-use crate::openhuman::memory::tool_memory::ToolMemoryCaptureHook;
+use crate::openhuman::memory::tool_memory::capture::ToolMemoryCaptureHook;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool};
@@ -429,18 +429,24 @@ impl Agent {
         // legacy callers. A built-in Master Agent has an explicit
         // `hint:coding`, while existing pre-registry callers continue using
         // `config.default_model` unchanged.
-        let master_model_hint = target_def.and_then(|def| {
-            if def.id == "orchestrator" {
-                match &def.model {
-                    crate::openhuman::agent::harness::definition::ModelSpec::Hint(hint) => {
-                        Some(format!("hint:{hint}"))
+        let master_model_hint = config
+            .default_model
+            .is_none()
+            .then(|| {
+                target_def.and_then(|def| {
+                    if def.id == "orchestrator" {
+                        match &def.model {
+                            crate::openhuman::agent::harness::definition::ModelSpec::Hint(hint) => {
+                                Some(format!("hint:{hint}"))
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
                     }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        });
+                })
+            })
+            .flatten();
         let provider_role = provider_role_for(
             agent_id,
             master_model_hint

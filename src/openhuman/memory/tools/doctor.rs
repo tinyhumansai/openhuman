@@ -42,7 +42,7 @@ impl Tool for MemoryDoctorTool {
     }
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let report = async_run_doctor(&self.config).await;
+        let report = async_run_doctor(self.config.as_ref()).await;
         // Serialize the structured report so the model gets the typed stages +
         // first_blocking_cause + counters verbatim (it can summarize for the
         // user from there). serde of a plain struct can't fail here.

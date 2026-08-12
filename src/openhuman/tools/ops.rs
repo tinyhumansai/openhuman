@@ -828,16 +828,16 @@ pub fn all_tools_with_runtime(
     {
         let goals_dir = root_config.workspace_dir.clone();
         tools.push(Box::new(
-            crate::openhuman::memory::goals::GoalsListTool::new(goals_dir.clone()),
+            crate::openhuman::memory::tools::goals::GoalsListTool::new(goals_dir.clone()),
         ));
         tools.push(Box::new(
-            crate::openhuman::memory::goals::GoalsAddTool::new(goals_dir.clone()),
+            crate::openhuman::memory::tools::goals::GoalsAddTool::new(goals_dir.clone()),
         ));
         tools.push(Box::new(
-            crate::openhuman::memory::goals::GoalsEditTool::new(goals_dir.clone()),
+            crate::openhuman::memory::tools::goals::GoalsEditTool::new(goals_dir.clone()),
         ));
         tools.push(Box::new(
-            crate::openhuman::memory::goals::GoalsDeleteTool::new(goals_dir),
+            crate::openhuman::memory::tools::goals::GoalsDeleteTool::new(goals_dir),
         ));
     }
 

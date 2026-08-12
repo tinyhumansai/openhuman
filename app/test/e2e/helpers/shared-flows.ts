@@ -148,7 +148,7 @@ const HASH_REDIRECTS = {
   '/home': '/chat',
   '/accounts': '/chat',
   '/skills': '/connections',
-  '/channels': '/connections',
+  '/channels': '/connections?tab=messaging',
   '/activity': '/settings/notifications',
   '/intelligence': '/settings/notifications',
   '/routines': '/flows',
@@ -165,6 +165,7 @@ const HASH_REDIRECTS = {
   '/settings/llm': '/connections?tab=llm',
   '/settings/voice': '/connections?tab=voice',
   '/settings/search': '/connections?tab=search',
+  '/agent-world': '/agent-world/welcome',
 };
 
 /** Resolve a requested hash to where the router actually settles. */

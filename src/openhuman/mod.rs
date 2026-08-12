@@ -51,6 +51,8 @@ pub mod medulla;
 // submodule carries its own `#[cfg(feature = "meet")]` (see `meet/mod.rs`).
 pub mod meet;
 pub mod memory;
+#[cfg(feature = "modules")]
+pub mod modules;
 pub mod platform;
 pub mod runtime;
 pub mod sandbox;

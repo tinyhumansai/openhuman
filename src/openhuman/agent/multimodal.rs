@@ -1457,7 +1457,7 @@ async fn file_payload_from_bytes(
     }
 
     if mime == "application/pdf" {
-        match extract_pdf_text(bytes.clone()).await {
+        match extract_pdf_text(bytes.to_vec()).await {
             Ok(raw) => {
                 let (text, truncated_chars) = truncate_chars(raw, max_extracted_text_chars);
                 if truncated_chars > 0 {
@@ -1619,21 +1619,38 @@ fn extract_utf8_text(bytes: &[u8]) -> Result<String, String> {
     }
 }
 
-/// Run `pdf-extract` on a copy of `bytes` inside a `spawn_blocking`
-/// worker, bounded by [`PDF_EXTRACTION_TIMEOUT`]. Returns the raw
-/// extracted text on success; on timeout / panic / parse error the
-/// caller degrades the file to [`FilePayload::Reference`] rather than
-/// surface the failure to the user (avoids Sentry noise on broken PDFs).
+/// Extract a PDF's text layer through the `tinydocs` module, bounded by
+/// [`PDF_EXTRACTION_TIMEOUT`].
+///
+/// The parsing runs in the module, which owns its own blocking pool, so there is
+/// no `spawn_blocking` here — but the deadline stays, because the cost is set by
+/// the input rather than by anything this side validated, and only the host
+/// knows how long an attachment is worth waiting for.
+///
+/// The bytes ride a bus stream rather than a JSON frame: a `.pdf` is bounded
+/// only by what the multimodal config accepted, which is far past what a frame
+/// holds.
+///
+/// Every failure — an unavailable module, a damaged document, the deadline — is
+/// reported the same way it always was, and the caller degrades the file to
+/// [`FilePayload::Reference`] rather than surfacing it (which avoids Sentry
+/// noise on broken PDFs).
 #[cfg(feature = "documents")]
 async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
-    let extraction = tokio::task::spawn_blocking(move || {
-        pdf_extract::extract_text_from_mem(&bytes).map_err(|error| error.to_string())
-    });
+    use crate::openhuman::modules::documents;
 
-    match tokio::time::timeout(PDF_EXTRACTION_TIMEOUT, extraction).await {
-        Ok(Ok(Ok(text))) => Ok(text),
-        Ok(Ok(Err(reason))) => Err(reason),
-        Ok(Err(join_error)) => Err(format!("pdf extraction worker panicked: {join_error}")),
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| format!("config unavailable for pdf extraction: {error}"))?;
+
+    match tokio::time::timeout(
+        PDF_EXTRACTION_TIMEOUT,
+        documents::extract_text(&config, &bytes),
+    )
+    .await
+    {
+        Ok(Ok(text)) => Ok(text),
+        Ok(Err(error)) => Err(error.to_string()),
         Err(_) => Err(format!(
             "pdf extraction exceeded {}s timeout",
             PDF_EXTRACTION_TIMEOUT.as_secs()

@@ -1,11 +1,11 @@
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::store::chunks::types::SourceKind;
 use crate::openhuman::memory::tree::tree::rpc;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 use tinycortex::memory::ingest::canonicalize::document::DocumentInput;
+use tinymemory_core::store::chunks::types::SourceKind;
 
 pub struct MemoryTreeIngestDocumentTool;
 
@@ -147,10 +147,11 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::openhuman::config::{Config, TEST_ENV_LOCK};
-    use crate::openhuman::memory::store::chunks::types::SourceRef;
+    use crate::openhuman::config::Config;
+    use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::tools::traits::Tool;
     use serde_json::json;
+    use tinymemory_core::store::chunks::types::SourceRef;
 
     struct WorkspaceEnvGuard {
         _lock: std::sync::MutexGuard<'static, ()>,

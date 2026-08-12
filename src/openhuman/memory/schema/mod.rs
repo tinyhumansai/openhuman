@@ -1,22 +1,8 @@
-//! Controller schemas for the memory tree.
+//! The memory subsystem's JSON-RPC controller schemas.
 //!
-//! Registered JSON-RPC methods include the original Phase 1 surface
-//! (`ingest`, `list_chunks`, `get_chunk`) plus the new
-//! Memory-tab read RPCs added by the cloud-default backend refactor:
-//! `list_sources`, `search`, `recall`, `entity_index_for`,
-//! `top_entities`, `chunk_score`, `delete_chunk`, and destructive
-//! maintenance helpers for local iteration.
-//!
-//! Handlers delegate to [`super::rpc`] (write side) or
-//! [`super::read_rpc`] (UI read side).
-//!
-//! # Sub-module layout
-//!
-//! | File              | Contents                                             |
-//! |-------------------|------------------------------------------------------|
-//! | `definitions.rs`  | [`schemas`] match — one [`ControllerSchema`] per RPC |
-//! | `handlers.rs`     | `handle_*` functions bridging JSON → typed RPC calls |
-//! | `registry.rs`     | [`all_controller_schemas`] / [`all_registered_controllers`] lists |
+//! Stayed in the host through the extraction: every item here names
+//! `ControllerSchema`, `FieldSchema` or `TypeSchema`, and controller
+//! registration is host surface by the tinymemory README's split.
 
 mod definitions;
 mod handlers;
@@ -25,9 +11,5 @@ mod registry;
 pub use definitions::schemas;
 pub use registry::{all_controller_schemas, all_registered_controllers};
 
-// Re-export the NAMESPACE constant so schema_tests.rs can reference it via
-// `super::NAMESPACE` the same way the original flat module did.
-
 #[cfg(test)]
-#[path = "../schema_tests.rs"]
 mod tests;

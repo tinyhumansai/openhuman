@@ -93,11 +93,10 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   // run. `--bail` on e2e-run-all-flows.sh sets E2E_BAIL_ON_FAILURE=1 so we
   // flip this to 1 (= stop after the first failed spec).
   bail: process.env.E2E_BAIL_ON_FAILURE === '1' ? 1 : 0,
-  // Retry a failed spec file once (unless bailing) to absorb transient
-  // shared-session flakiness — cold-start warmups and `resetApp` bring-up
-  // races that sit right at the Mocha hook budget. Deterministic failures
-  // still fail on the retry; this only rescues the genuinely-flaky ones.
-  specFileRetries: process.env.E2E_BAIL_ON_FAILURE === '1' ? 0 : 1,
+  // Linux shards retry failed specs in e2e-run-all-flows.sh after restarting
+  // tauri-driver and the app. Retrying here would reuse the same driver and
+  // turn a stuck POST /session into another two-minute timeout.
+  specFileRetries: 0,
   specFileRetriesDeferred: true,
   waitforTimeout: 10_000,
   connectionRetryTimeout: 120_000,

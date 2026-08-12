@@ -1,63 +1,77 @@
 # memory
 
-Orchestration layer over the memory stack. Owns:
+Host layer over the memory stack. The substance of the memory subsystem was
+extracted into [`tinymemory-core`](https://github.com/tinyhumansai/tinymemory): the
+SQLite/vector store, the markdown summary tree, the provider sync pipelines,
+ingestion, recall/query/search, the ingest queue, conversations, people,
+goals and the tool-memory rules. That crate names no OpenHuman type — see
+[its README](https://github.com/tinyhumansai/tinymemory#readme) for the extracted
+side of this split.
 
-- **Sync orchestration** — accepts cron/manual sync requests, emits
-  frontend-visible lifecycle events, and dispatches into `memory_sync`.
-- **Query orchestration** — surfaces the high-level memory query tools
-  and agentic tree walk flow, delegating traversal/retrieval to `memory_tree`.
-- **Remember orchestration** — classifies chat history, uploaded data,
-  and LLM-thought memory before routing it onward.
-- **Ingest pipeline** — orchestrates source → canonicalise → chunk →
-  score → persist → enqueue extract jobs.
-- **RPC surface** — `read_rpc`, sync handlers, controller schemas for the
-  memory\_\* RPC namespace.
+Links to the extracted crate point at GitHub rather than into
+`vendor/tinymemory/`: CI checks out this repository without submodule
+contents, so a relative link into that directory resolves to nothing on the
+runner and fails the link check.
 
-Does **not** own any storage primitives — those live in
-[`memory_store`](store/). See that module for raw md, chunks,
-entities, trees, vectors, kv, and contacts.
+What stays here, per that split:
 
-## Sibling memory\_\* modules
+- **RPC surface** — [`schemas/`](schemas/) + [`schema/`](schema/), the
+  memory\_\* controller registrations, and [`read_rpc/`](read_rpc/) for reads.
+- **Agent tools** — [`tools/`](tools/), [`agent/`](agent/) (the memory agent
+  + prompt), and the consolidated `memory_query` agent tool in
+  [`query/`](query/) (it came back from the extracted crate because the
+  engine crate cannot name the `Tool` trait).
+- **Guard** — [`guard/`](guard/), the taint/scope/budget policy gate over
+  every provider call.
+- **Driver binding** — [`driver/`](driver/), which provider backs a
+  workspace.
+- **Ops** — [`ops/`](ops/), RPC handlers that delegate into the core.
+- **Seam impls** — [`host.rs`](host.rs) /
+  [`host_impls.rs`](host_impls.rs) — `install_memory_event_sink` and
+  `MemoryHostConfig for Config`.
 
-The memory stack is split across several top-level modules so each has
-one job. memory orchestrates and routes between them.
+Everything else in this module is a **re-export** of the extracted crate
+(`pub use tinymemory_core::{chat, global, ingest_pipeline, ingestion,
+preferences, remember, rpc_models, store, sync_events, traits, util, …}` in
+[`mod.rs`](mod.rs)), so the ~550 `crate::openhuman::memory::…` paths
+elsewhere in this crate keep resolving unchanged. Prefer
+`tinymemory_core::…` in new code.
 
-| Module                                     | Role                                                                                                |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| [`memory_store`](store/)         | Storage primitives: raw / chunks / entities / trees / vectors / kv / contacts. SQLite + on-disk md. |
-| [`memory_tree`](tree/)           | Generic tree mechanics: bucket-seal, flush, summarise, and retrieval/traversal backends.            |
-| `tinycortex::memory::archivist`            | Chat conversation → clip tool-calls → push to tree; called directly by the host harness.            |
-| [`tool_memory`](tool_memory/)         | Tool-scoped rules + agent read/write tools.                                                         |
-| [`memory_sync`](sync/)           | Composio + workspace + MCP sync pipelines.                                                          |
+## Domains that kept their RPC surface here
 
-## What lives here
+Mostly extracted, but each is a thin wrapper (`pub use
+tinymemory_core::<domain>::*;` plus the handler/schema modules that name
+`RpcOutcome` and `ControllerSchema`):
 
-| Path                                              | Role                                                                                                                                                                    |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`mod.rs`](mod.rs)                                | Module root + orchestration-facing exports.                                                                                                                              |
-| [`sync_events.rs`](sync_events.rs)                              | High-level sync lifecycle types + frontend-visible stage events.                                                                                                         |
-| [`query/`](query/)                                | High-level memory query tools, including the agentic tree-walk flow.                                                                                                     |
-| [`remember.rs`](remember.rs)                      | High-level remember source classification (`chat_history`, `uploaded_data`, `llm_thought`).                                                                              |
-| [`ingest_pipeline.rs`](ingest_pipeline.rs)        | Source-agnostic ingest orchestration. Called by sync pipelines and tree ingest RPC.                                                                                      |
-| [`ingestion/`](ingestion/)                        | Document ingestion queue + extraction (entities, relations, embeddings) — feeds UnifiedMemory documents.                                                                |
-| [`tinycortex::memory::ingest::canonicalize`](https://github.com/tinyhumansai/tinycortex/tree/main/src/memory/ingest/canonicalize) | Source → canonical markdown (chat / email / document), owned by TinyCortex and used at ingest time. |
-| [`chat/`](chat.rs)                                | Chat-source canonicalisation helpers.                                                                                                                                   |
-| [`read_rpc/`](read_rpc/)                           | RPC handlers for memory reads.                                                                                                                                          |
-| [`schemas/`](schemas/) + [`schema/`](schema/)      | Controller schema definitions for the memory + memory_tree RPC namespaces.                                                                                              |
-| [`sync_status/`](sync/sync_status/)     | Sync freshness tracking + RPC.                                                                                                                                          |
-| [`ops/`](ops/)                                    | RPC operation handlers + the shared `active_memory_client` helper.                                                                                                      |
-| [`preferences.rs`](preferences.rs)                | User preference read/write helpers.                                                                                                                                     |
-| [`rpc_models.rs`](rpc_models.rs)                  | Shared RPC request/response shapes.                                                                                                                                     |
-| [`traits.rs`](traits.rs)                          | `Memory`, `MemoryEntry`, `MemoryCategory`, `NamespaceSummary`, `RecallOpts`. The backend-agnostic contract every store implements.                                      |
-| [`util/`](util/)                                  | Small helpers (redact for log PII).                                                                                                                                     |
-| [`global.rs`](global.rs)                          | Global-namespace helpers.                                                                                                                                               |
+| Module                          | Role                                                     |
+| -------------------------------- | --------------------------------------------------------- |
+| [`conversations/`](conversations/) | Conversation-scoped memory RPC.                          |
+| [`diff/`](diff/)                 | Git-backed diff RPC (gated by the `memory-git` feature). |
+| [`goals/`](goals/)               | Goal tracking RPC.                                       |
+| [`people/`](people/)             | People/contacts RPC.                                     |
+| [`sources/`](sources/)           | Source-registration RPC.                                 |
+| [`sync/`](sync/)                 | Composio + workspace + MCP sync pipeline RPC.            |
+| [`tool_memory/`](tool_memory/)   | Tool-scoped rules + agent read/write tools.               |
+| [`tree/`](tree/)                 | Tree walk/retrieval RPC.                                  |
+
+## What lives in the extracted crate (for reference)
+
+See [`vendor/tinymemory/core/src/`](https://github.com/tinyhumansai/tinymemory/tree/main/core/src) for
+the storage primitives (`store/`), ingestion queue (`ingestion/`), sync
+lifecycle types (`sync_events.rs`), remember classification (`remember.rs`),
+ingest orchestration (`ingest_pipeline.rs`), the `Memory`/`MemoryEntry`/etc.
+traits (`traits.rs`), preferences (`preferences.rs`), and shared RPC shapes
+(`rpc_models.rs`). Source → canonical markdown (chat / email / document)
+lives in [`tinycortex::memory::ingest::canonicalize`](https://github.com/tinyhumansai/tinycortex/tree/main/src/memory/ingest/canonicalize),
+owned by TinyCortex and used at ingest time.
 
 ## Layer rules
 
 - **No storage in this module.** All persistence goes through
-  `memory_store::*`. If you're tempted to open a SQLite connection
-  here, the connection helper belongs one layer down.
-- **Orchestration lives here.** High-level sync/query/remember decisions
-  should land in `memory`; sibling `memory_*` modules do the backend work.
+  `tinymemory_core::store::*`. If you're tempted to open a SQLite
+  connection here, the connection helper belongs one layer down, in the
+  extracted crate.
+- **RPC + tools + seam wiring live here.** Domain logic belongs in
+  `tinymemory-core`; this module surfaces it over `/rpc` and to agents.
 - **Surface high-level tool calls** that route to the right submodule;
   don't expose internals at the call site.

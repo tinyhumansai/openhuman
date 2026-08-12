@@ -107,8 +107,21 @@ cleanup() {
   set +e
   if [ -n "$APPIUM_PID" ]; then
     echo "[runner] Stopping driver (pid $APPIUM_PID)..."
+    # tauri-driver launches WebKitWebDriver as a child. Killing only the
+    # tauri-driver parent leaves that native child holding the WebDriver port;
+    # the next per-spec runner then observes its stale /status response and
+    # hangs when it tries to create a session. Snapshot descendants before the
+    # parent is reaped, just as we do for the app process below.
+    DRIVER_CHILD_PIDS="$(pgrep -P "$APPIUM_PID" 2>/dev/null || true)"
+    pkill -TERM -P "$APPIUM_PID" 2>/dev/null || true
     kill "$APPIUM_PID" 2>/dev/null || true
     wait "$APPIUM_PID" 2>/dev/null || true
+    sleep 1
+    if [ -n "$DRIVER_CHILD_PIDS" ]; then
+      for pid in $DRIVER_CHILD_PIDS; do
+        kill -KILL "$pid" 2>/dev/null || true
+      done
+    fi
   fi
   if [ -n "$APP_PID" ]; then
     echo "[runner] Stopping app (pid $APP_PID)..."

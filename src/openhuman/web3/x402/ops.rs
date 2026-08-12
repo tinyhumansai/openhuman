@@ -584,45 +584,38 @@ async fn build_evm_payment(
     challenge: &PaymentRequired,
     req: &PaymentRequirements,
 ) -> Result<PaymentPayload, X402Error> {
-    let (signer, from_address) = derive_evm_signer().await?;
-    build_evm_payment_with_signer(&signer, from_address, challenge, req)
+    let (secret, from_address) = derive_evm_signer().await?;
+    build_evm_payment_with_signer(&secret, &from_address, challenge, req)
 }
 
 /// Core EVM payment construction — separated from wallet derivation for testability.
 pub(crate) fn build_evm_payment_with_signer(
-    signer: &ethers_signers::LocalWallet,
-    from_address: ethers_core::types::Address,
+    secret: &[u8],
+    from_address: &str,
     challenge: &PaymentRequired,
     req: &PaymentRequirements,
 ) -> Result<PaymentPayload, X402Error> {
-    use ethers_core::types::{Address, U256};
-
-    use std::str::FromStr;
+    use tinywallet::eip712;
 
     let chain_id = req
         .evm_chain_id()
         .ok_or_else(|| X402Error::Protocol(format!("not an EVM network: {}", req.network)))?;
 
-    let amount = U256::from_dec_str(&req.amount)
+    let amount = eip712::u256_from_decimal(&req.amount)
         .map_err(|e| X402Error::Protocol(format!("invalid amount '{}': {e}", req.amount)))?;
 
-    let pay_to = Address::from_str(&req.pay_to).map_err(|e| {
-        X402Error::Protocol(format!("invalid EVM payTo address '{}': {e}", req.pay_to))
-    })?;
-
-    let token_address = Address::from_str(&req.asset).map_err(|e| {
-        X402Error::Protocol(format!("invalid EVM token address '{}': {e}", req.asset))
-    })?;
+    let from_bytes = evm_address_bytes(from_address)?;
+    let pay_to = evm_address_bytes(&req.pay_to)?;
+    let token_address = evm_address_bytes(&req.asset)?;
 
     // EIP-3009 parameters
-    let valid_after = U256::zero();
-    let valid_before = U256::from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + req.max_timeout_seconds,
-    );
+    let valid_after = eip712::u256_from_u64(0);
+    let valid_before_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .saturating_add(req.max_timeout_seconds);
+    let valid_before = eip712::u256_from_u64(valid_before_secs);
 
     // Random nonce for EIP-3009
     let nonce = {
@@ -649,36 +642,35 @@ pub(crate) fn build_evm_payment_with_signer(
         .and_then(|e| e.version.as_deref())
         .unwrap_or("2");
     let domain_separator =
-        eip712_domain_separator_named(token_address, chain_id, domain_name, domain_version);
-    let struct_hash = eip3009_struct_hash(
-        from_address,
+        eip712::domain_separator(token_address, chain_id, domain_name, domain_version);
+    let struct_hash = eip712::transfer_with_authorization_hash(
+        from_bytes,
         pay_to,
         amount,
         valid_after,
         valid_before,
         nonce,
     );
+    let digest = eip712::signing_digest(domain_separator, struct_hash);
 
-    let mut digest_input = Vec::with_capacity(66);
-    digest_input.extend(b"\x19\x01");
-    digest_input.extend(domain_separator);
-    digest_input.extend(struct_hash);
-    let digest: [u8; 32] = {
-        use ethers_core::types::H256;
-        let h = H256::from(ethers_core::utils::keccak256(&digest_input));
-        h.into()
-    };
-
-    let signature = signer
-        .sign_hash(ethers_core::types::H256::from(digest))
+    // Signed here with `k256`, over the prehashed digest. An EIP-712 signature
+    // is `r ‖ s ‖ v` where `v` is the recovery id offset by 27 — not EIP-155's
+    // chain-mixed `v`, because typed data is not a transaction.
+    let key = k256::ecdsa::SigningKey::from_slice(secret)
+        .map_err(|_| X402Error::Wallet("derived EVM key is unusable".to_string()))?;
+    let (signature, recovery_id) = key
+        .sign_prehash_recoverable(&digest)
         .map_err(|e| X402Error::Wallet(format!("EVM sign EIP-3009: {e}")))?;
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&signature.to_bytes());
+    sig_bytes[64] = recovery_id.to_byte() + 27;
 
-    let sig_hex = format!("0x{}", hex::encode(signature.to_vec()));
+    let sig_hex = format!("0x{}", hex::encode(sig_bytes));
     let nonce_hex = format!("0x{}", hex::encode(nonce));
 
     debug!(
-        "{LOG_PREFIX} built EVM payment chain_id={chain_id} amount={} asset={} from={:#x} to={:#x}",
-        req.amount, req.asset, from_address, pay_to
+        "{LOG_PREFIX} built EVM payment chain_id={chain_id} amount={} asset={} from={} to={}",
+        req.amount, req.asset, from_address, req.pay_to
     );
 
     Ok(PaymentPayload {
@@ -688,11 +680,11 @@ pub(crate) fn build_evm_payment_with_signer(
         payload: PaymentProof::Evm(EvmPaymentProof {
             signature: sig_hex,
             authorization: EvmAuthorization {
-                from: format!("{from_address:#x}"),
-                to: format!("{pay_to:#x}"),
+                from: from_address.to_string(),
+                to: req.pay_to.clone(),
                 value: req.amount.clone(),
                 valid_after: "0".to_string(),
-                valid_before: valid_before.to_string(),
+                valid_before: valid_before_secs.to_string(),
                 nonce: nonce_hex,
             },
         }),
@@ -700,11 +692,14 @@ pub(crate) fn build_evm_payment_with_signer(
     })
 }
 
-/// Derive the wallet's EVM signer from the encrypted mnemonic.
-async fn derive_evm_signer(
-) -> Result<(ethers_signers::LocalWallet, ethers_core::types::Address), X402Error> {
+/// Derive the wallet's EVM signing key from the encrypted mnemonic.
+///
+/// Returns the raw secret and the checksummed address it controls. Derivation
+/// goes through `tinywallet::key` — the same BIP-32 walk the wallet domain uses,
+/// so an x402 payment is signed by exactly the account the wallet reports — and
+/// the key stays in this process.
+async fn derive_evm_signer() -> Result<(Vec<u8>, String), X402Error> {
     use crate::openhuman::web3::wallet::WalletChain;
-    use ethers_signers::{coins_bip39::English, MnemonicBuilder, Signer};
 
     let secret = crate::openhuman::web3::wallet::secret_material(WalletChain::Evm)
         .await
@@ -722,100 +717,29 @@ async fn derive_evm_signer(
     .map_err(|e| X402Error::Wallet(format!("decrypt mnemonic: {e}")))?
     .value;
 
-    let wallet = MnemonicBuilder::<English>::default()
-        .phrase(mnemonic.as_str())
-        .derivation_path(&secret.derivation_path)
-        .map_err(|e| {
-            X402Error::Wallet(format!(
-                "invalid EVM derivation path '{}': {e}",
-                secret.derivation_path
-            ))
-        })?
-        .build()
-        .map_err(|e| X402Error::Wallet(format!("derive EVM signer: {e}")))?;
+    let derived = tinywallet::key::derive(
+        tinywallet::Chain::Evm,
+        mnemonic.as_str(),
+        &secret.derivation_path,
+    )
+    .map_err(|e| X402Error::Wallet(format!("derive EVM signer: {e}")))?;
 
-    let address = wallet.address();
-    Ok((wallet, address))
+    Ok((
+        derived.secret_bytes().to_vec(),
+        derived.address().to_string(),
+    ))
 }
 
-/// EIP-712 domain separator with default USDC params ("USD Coin", "2").
-pub(crate) fn eip712_domain_separator(
-    verifying_contract: ethers_core::types::Address,
-    chain_id: u64,
-) -> [u8; 32] {
-    eip712_domain_separator_named(verifying_contract, chain_id, "USD Coin", "2")
-}
-
-/// EIP-712 domain separator with explicit name and version from the 402 extra.
-pub(crate) fn eip712_domain_separator_named(
-    verifying_contract: ethers_core::types::Address,
-    chain_id: u64,
-    name: &str,
-    version: &str,
-) -> [u8; 32] {
-    use ethers_core::utils::keccak256;
-
-    let type_hash = keccak256(
-        b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
-    );
-    let name_hash = keccak256(name.as_bytes());
-    let version_hash = keccak256(version.as_bytes());
-
-    let mut encoded = Vec::with_capacity(5 * 32);
-    encoded.extend(type_hash);
-    encoded.extend(name_hash);
-    encoded.extend(version_hash);
-    let mut chain_id_bytes = [0u8; 32];
-    chain_id_bytes[24..].copy_from_slice(&chain_id.to_be_bytes());
-    encoded.extend(chain_id_bytes);
-    let mut addr_bytes = [0u8; 32];
-    addr_bytes[12..].copy_from_slice(verifying_contract.as_bytes());
-    encoded.extend(addr_bytes);
-
-    keccak256(&encoded)
-}
-
-/// EIP-3009 `TransferWithAuthorization` struct hash.
-pub(crate) fn eip3009_struct_hash(
-    from: ethers_core::types::Address,
-    to: ethers_core::types::Address,
-    value: ethers_core::types::U256,
-    valid_after: ethers_core::types::U256,
-    valid_before: ethers_core::types::U256,
-    nonce: [u8; 32],
-) -> [u8; 32] {
-    use ethers_core::utils::keccak256;
-
-    let type_hash = keccak256(
-        b"TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)",
-    );
-
-    let mut encoded = Vec::with_capacity(7 * 32);
-    encoded.extend(type_hash);
-
-    let mut from_bytes = [0u8; 32];
-    from_bytes[12..].copy_from_slice(from.as_bytes());
-    encoded.extend(from_bytes);
-
-    let mut to_bytes = [0u8; 32];
-    to_bytes[12..].copy_from_slice(to.as_bytes());
-    encoded.extend(to_bytes);
-
-    let mut value_bytes = [0u8; 32];
-    value.to_big_endian(&mut value_bytes);
-    encoded.extend(value_bytes);
-
-    let mut va_bytes = [0u8; 32];
-    valid_after.to_big_endian(&mut va_bytes);
-    encoded.extend(va_bytes);
-
-    let mut vb_bytes = [0u8; 32];
-    valid_before.to_big_endian(&mut vb_bytes);
-    encoded.extend(vb_bytes);
-
-    encoded.extend(nonce);
-
-    keccak256(&encoded)
+/// The 20 raw bytes of an EVM address.
+fn evm_address_bytes(address: &str) -> Result<[u8; 20], X402Error> {
+    let validated = tinywallet::address::evm::validate(address)
+        .map_err(|e| X402Error::Protocol(format!("invalid EVM address '{address}': {e}")))?;
+    let body = validated.strip_prefix("0x").unwrap_or(&validated);
+    let decoded = hex::decode(body)
+        .map_err(|_| X402Error::Protocol(format!("non-hex EVM address '{address}'")))?;
+    decoded
+        .try_into()
+        .map_err(|_| X402Error::Protocol(format!("truncated EVM address '{address}'")))
 }
 
 // ---------------------------------------------------------------------------

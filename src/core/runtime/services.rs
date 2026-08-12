@@ -12,7 +12,9 @@
 //! spawned at all) up to a `ServiceSet` chosen by the embedder, while these
 //! functions keep their config gates (is it enabled for this user).
 
+// `to_arc` / the config accessors are `MemoryHostConfig` trait methods.
 use std::sync::Once;
+use tinymemory_api::host::MemoryHostConfig;
 
 use crate::core::runtime::ServiceSet;
 use crate::openhuman::config::Config;
@@ -276,7 +278,7 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
 
     if plan.memory_queue {
         log::debug!("[runtime.bootstrap] starting memory queue workers");
-        crate::openhuman::memory::queue::start(config.clone());
+        crate::openhuman::memory::queue::start(config.to_arc());
     } else {
         log::debug!("[runtime.bootstrap] memory queue workers disabled by ServiceSet");
     }

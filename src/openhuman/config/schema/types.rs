@@ -34,7 +34,11 @@ pub const DEFAULT_MODEL: &str = MODEL_CHAT_V1;
 /// [`Config::memory_sync_interval_secs`] is `None` — i.e. the user has not
 /// explicitly picked a schedule. 24h, matching the "Sync every 24h" preset
 /// surfaced in the Memory Sources UI. See issue #3302.
-pub const DEFAULT_MEMORY_SYNC_INTERVAL_SECS: u64 = 86_400;
+///
+/// Defined in `tinymemory_api::host` and re-exported here: the extracted memory
+/// subsystem applies this fallback too, and two `86_400`s that must agree is a
+/// drift waiting to happen.
+pub use tinymemory_api::host::DEFAULT_MEMORY_SYNC_INTERVAL_SECS;
 
 /// Preset memory-sync cadences (seconds) offered in the UI: 4h / 12h / 24h.
 /// "Manual only" is represented separately by `Some(0)`. See issue #3302.
@@ -291,6 +295,12 @@ pub struct Config {
 
     #[serde(default)]
     pub mcp_client: McpClientConfig,
+
+    /// Loadable native modules — whether they load, whether this host may fetch
+    /// them, and where a developer's own build lives. The loadable *set* is
+    /// compiled in, not configured: see `openhuman::modules::registry`.
+    #[serde(default)]
+    pub modules: super::ModulesConfig,
 
     /// Trust metadata for external capability providers. Empty by default so
     /// existing installations keep the same tool-discovery behavior.
@@ -809,6 +819,7 @@ impl Default for Config {
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
             mcp_client: McpClientConfig::default(),
+            modules: super::ModulesConfig::default(),
             capability_providers: Vec::new(),
             multimodal: MultimodalConfig::default(),
             multimodal_files: MultimodalFileConfig::default(),

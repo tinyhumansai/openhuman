@@ -1,27 +1,16 @@
-//! Client-facing `user_error` surfacing for memory-pipeline health causes.
+//! The wire payload for the memory subsystem's `user_error` web-channel event.
 //!
-//! The memory pipeline already records typed causes for the status panel, but
-//! the panel only exists while the user is looking at it. A cause the user must
-//! act on outside the app — the local Ollama runtime being unusable — also
-//! belongs in the durable UserErrorCenter, which is fed by the metadata-only
-//! `user_error` web-channel event the cron scheduler introduced.
+//! `tinymemory_core::tree::health::user_error` decides *that* a local-runtime
+//! failure must reach the user; this module decides *what goes on the wire*.
+//! The split is the same one the rest of the extraction follows — web channels,
+//! and the socket the payload rides, are host surface.
 //!
-//! This module owns that payload and its publisher so the two producers (the
-//! embedder health gate in `memory::store::factories` and the failure
-//! classifier in the parent module) emit one identical, tested shape.
+//! Both halves key on `LOCAL_MODEL_UNAVAILABLE_KIND`, which lives in the
+//! contract crate so the two cannot drift apart silently.
+
+use tinymemory_api::host::{LOCAL_MODEL_UNAVAILABLE_KIND, MEMORY_USER_ERROR_SOURCE};
 
 use crate::core::socketio::WebChannelEvent;
-
-/// Stable `error_type` token for the local-embedding-runtime user error.
-///
-/// Mirrors the frontend `UserErrorKind` discriminator of the same name; the
-/// classifier keys on this exact string, so a drift on either side drops the
-/// signal silently. Kept as a constant so the FE-parity test names one symbol.
-pub(crate) const LOCAL_MODEL_UNAVAILABLE_KIND: &str = "local_model_unavailable";
-
-/// `error_source` for everything published here. Drives the panel's scope
-/// grouping (`socketService` maps it to the `memory` `UserErrorScope`).
-const MEMORY_SOURCE: &str = "memory";
 
 /// The metadata-only `user_error` payload for an unusable local embedding
 /// runtime. Built separately from the publish so the no-leak contract is
@@ -37,20 +26,20 @@ pub(crate) fn local_model_unavailable_user_error() -> WebChannelEvent {
         // connected clients rather than one chat session.
         client_id: "system".to_string(),
         error_type: Some(LOCAL_MODEL_UNAVAILABLE_KIND.to_string()),
-        error_source: Some(MEMORY_SOURCE.to_string()),
+        error_source: Some(MEMORY_USER_ERROR_SOURCE.to_string()),
         ..Default::default()
     }
 }
 
 /// Broadcast the local-runtime user error to every connected client.
 ///
-/// `origin` is a short, non-sensitive tag naming which producer fired
-/// (`health_gate` / `embed_classify`) so the two paths stay distinguishable in
-/// the log without threading a correlation id through the health API.
+/// Called from the `MemoryEvent::LocalModelUnavailable` arm of the sink in
+/// [`crate::openhuman::memory::host`]. `origin` names the producer
+/// (`health_gate` / `embed_classify`) and is logged, never sent.
 pub(crate) fn publish_local_model_unavailable_user_error(origin: &str) {
     log::debug!(
-        "[memory_tree::health] action=surface_user_error kind={LOCAL_MODEL_UNAVAILABLE_KIND} \
-         source={MEMORY_SOURCE} origin={origin}"
+        "[memory::host] action=broadcast_user_error kind={LOCAL_MODEL_UNAVAILABLE_KIND} \
+         source={MEMORY_USER_ERROR_SOURCE} origin={origin}"
     );
     crate::openhuman::web_chat::publish_web_channel_event(local_model_unavailable_user_error());
 }
@@ -72,7 +61,10 @@ mod tests {
             event.error_type.as_deref(),
             Some(LOCAL_MODEL_UNAVAILABLE_KIND)
         );
-        assert_eq!(event.error_source.as_deref(), Some(MEMORY_SOURCE));
+        assert_eq!(
+            event.error_source.as_deref(),
+            Some(MEMORY_USER_ERROR_SOURCE)
+        );
 
         // Nothing that could carry the base URL, a model id, or raw provider
         // prose may ride along.
@@ -95,6 +87,6 @@ mod tests {
     /// would file this entry under the wrong heading.
     #[test]
     fn source_matches_frontend_scope_mapping() {
-        assert_eq!(MEMORY_SOURCE, "memory");
+        assert_eq!(MEMORY_USER_ERROR_SOURCE, "memory");
     }
 }

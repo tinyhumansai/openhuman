@@ -403,9 +403,9 @@ pub struct PipelineStatusResponse {
 pub async fn pipeline_status_rpc(
     config: &Config,
 ) -> Result<RpcOutcome<PipelineStatusResponse>, String> {
-    use crate::openhuman::config::SchedulerGateMode;
     use crate::openhuman::memory::queue::store as queue_store;
     use crate::openhuman::memory::queue::types::JobStatus;
+    use tinymemory_api::host::SchedulerGateMode;
 
     log::debug!("[memory-tree][rpc] pipeline_status: entry");
 
@@ -897,7 +897,7 @@ pub(crate) const QUEUE_STALL_THRESHOLD_MS: i64 = 6 * 60 * 60 * 1000;
 /// metric could not be read).
 fn derive_pipeline_status(
     is_paused: bool,
-    mode: crate::openhuman::config::SchedulerGateMode,
+    mode: tinymemory_api::host::SchedulerGateMode,
     is_syncing: bool,
     failed: u64,
     failed_unrecoverable: u64,
@@ -1017,7 +1017,7 @@ pub struct SetEnabledResponse {
 
 /// `memory_tree_set_enabled` RPC handler (#1856 Part 1).
 ///
-/// Flips `config.scheduler_gate.mode` to either `Auto` (enabled) or `Off`
+/// Flips `config.scheduler_gate().mode` to either `Auto` (enabled) or `Off`
 /// (paused), persists to disk via `config.save()`, and hot-reloads the
 /// live scheduler-gate state so any in-flight workers immediately observe
 /// the new policy at their next `wait_for_capacity()` await.
@@ -1032,7 +1032,7 @@ pub async fn set_enabled_rpc(
     config: &mut Config,
     req: SetEnabledRequest,
 ) -> Result<RpcOutcome<SetEnabledResponse>, String> {
-    use crate::openhuman::config::SchedulerGateMode;
+    use tinymemory_api::host::SchedulerGateMode;
 
     let prev_mode = config.scheduler_gate.mode;
     let new_mode = if req.enabled {
@@ -1454,8 +1454,8 @@ mod tests {
     /// counters.
     #[test]
     fn derive_pipeline_status_precedence_matches_spec() {
-        use crate::openhuman::config::SchedulerGateMode;
         use crate::openhuman::memory::tree::health::{DegradedState, FailureCode, PipelineFailure};
+        use tinymemory_api::host::SchedulerGateMode;
 
         let healthy = DegradedState::default();
         let recall_degraded = DegradedState {
@@ -1645,8 +1645,8 @@ mod tests {
     /// healthy. Pins the threshold boundary and the full precedence chain.
     #[test]
     fn stalled_queue_degrades_instead_of_reading_healthy() {
-        use crate::openhuman::config::SchedulerGateMode;
         use crate::openhuman::memory::tree::health::{DegradedState, FailureCode, PipelineFailure};
+        use tinymemory_api::host::SchedulerGateMode;
 
         let healthy = DegradedState::default();
         let stalled = Some(QUEUE_STALL_THRESHOLD_MS);
@@ -2029,7 +2029,7 @@ mod tests {
     /// invariant the toggle relies on.
     #[tokio::test]
     async fn pipeline_status_reflects_paused_when_scheduler_off() {
-        use crate::openhuman::config::SchedulerGateMode;
+        use tinymemory_api::host::SchedulerGateMode;
 
         let (_tmp, mut cfg) = test_config();
         cfg.scheduler_gate.mode = SchedulerGateMode::Off;
@@ -2105,7 +2105,7 @@ mod tests {
     /// host's real ~/.openhuman directory.
     #[tokio::test]
     async fn set_enabled_toggles_scheduler_gate_mode() {
-        use crate::openhuman::config::SchedulerGateMode;
+        use tinymemory_api::host::SchedulerGateMode;
 
         let (tmp, mut cfg) = test_config();
         // Pin config_path inside the tempdir so `save()` stays sandboxed.

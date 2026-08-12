@@ -169,9 +169,8 @@ async fn attributed_cron_build_applies_profile_temperature_and_prompt_defaults()
     job.profile_id = Some("alice-runtime".into());
     let built = build_agent_for_cron_job(&config, &job).expect("build attributed cron agent");
 
-    // Agent definitions own their model selection; profile model overrides are
-    // intentionally not projected through the definition-host path.
-    assert_eq!(built.agent.model_name(), "coding-v1");
+    // Explicit profile model selection must win over the built-in agent hint.
+    assert_eq!(built.agent.model_name(), "profile-runtime-model");
     assert_eq!(built.agent.temperature(), 0.17);
     let prompt = built
         .agent

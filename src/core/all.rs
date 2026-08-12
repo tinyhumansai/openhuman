@@ -141,13 +141,16 @@ pub enum DomainGroup {
     Hosted,
     /// The multi-agent relay surface (`tinyplace/`).
     Relay,
+    /// Loadable native modules: the module host, its registry, and the `modules`
+    /// RPC surface (`modules/`).
+    Modules,
     // Everything not in a named family — always on in `full()`, off otherwise.
     Platform,
 }
 
 impl DomainGroup {
     /// Number of variants. Kept in sync by `domain_group_all_lists_every_variant`.
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 23;
 
     /// Every variant, for exhaustive iteration in drift guards.
     ///
@@ -180,6 +183,7 @@ impl DomainGroup {
         DomainGroup::Desktop,
         DomainGroup::Hosted,
         DomainGroup::Relay,
+        DomainGroup::Modules,
         DomainGroup::Platform,
     ];
 
@@ -209,7 +213,8 @@ impl DomainGroup {
             DomainGroup::Desktop => 18,
             DomainGroup::Hosted => 19,
             DomainGroup::Relay => 20,
-            DomainGroup::Platform => 21,
+            DomainGroup::Modules => 21,
+            DomainGroup::Platform => 22,
         }
     }
 }
@@ -1092,6 +1097,16 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Mcp,
         crate::openhuman::mcp::audit::all_mcp_audit_internal_controllers(),
+    );
+    // Loadable native modules: list/status and an explicit load. Read-only apart
+    // from that load, and it cannot name an artifact — the loadable set is
+    // compiled into `modules::registry`, so this namespace can start a module
+    // the build already trusts and nothing else.
+    #[cfg(feature = "modules")]
+    push(
+        &mut controllers,
+        DomainGroup::Modules,
+        crate::openhuman::modules::all_registered_controllers(),
     );
     // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
     // but NOT advertised to agents in tool listings or schema discovery.

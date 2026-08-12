@@ -21,6 +21,10 @@ use std::sync::OnceLock;
 /// `memory_init` → `current_workspace_dir`) pin the env var to this same path so
 /// the env and the bound client agree. See `documents::tests`.
 pub(crate) fn ensure_shared_memory_client() -> PathBuf {
+    // Building a client reaches the embedding seam, which fails loudly when
+    // unwired. Before the extraction these were direct calls and needed no
+    // setup; now they need the host impls installed.
+    crate::openhuman::memory::host_impls::install_for_tests();
     static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
     let workspace = WORKSPACE.get_or_init(|| {
         let tmp = tempfile::TempDir::new().expect("tempdir");

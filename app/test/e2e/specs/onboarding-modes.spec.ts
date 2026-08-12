@@ -254,15 +254,28 @@ describe('Onboarding modes — Simple (Cloud) vs Advanced (Custom)', function ()
     setMockBehavior('composioConnections', '[]');
     // Reset state but skip the built-in onboarding walker — we walk it
     // ourselves to assert the per-step UI.
-    await resetApp('e2e-onboarding-modes', { skipAuth: true });
-    // resetApp restores onboarding_completed=true for normal specs; this spec
-    // intentionally exercises the onboarding flow, so flip it back to false
-    // before triggering auth so App.tsx routes to /onboarding.
-    stepLog('Setting onboarding_completed=false for onboarding flow test');
-    await callOpenhumanRpc('openhuman.config_set_onboarding_completed', { value: false });
+    // This spec needs a non-local authenticated session to exercise the
+    // Cloud choice. test_reset alone leaves a prior app-session profile in
+    // place; that profile can be local and intentionally redirects straight
+    // to the Custom wizard, bypassing the runtime-choice page altogether.
+    await resetApp('e2e-onboarding-modes', { skipAuth: true, clearAuthSession: true });
+    // resetApp restores onboarding_completed=true for normal specs. Auth
+    // bootstrap refreshes the renderer snapshot, so change the flag *after*
+    // login; doing it before auth lets the stale "complete" snapshot bounce
+    // the runtime-choice route to chat.
     await triggerAuthDeepLinkBypass('e2e-onboarding-modes');
     await waitForAuthBootstrap(15_000);
     await dismissBootCheckGateIfVisible(8_000);
+    stepLog('Setting onboarding_completed=false after auth bootstrap');
+    await callOpenhumanRpc('openhuman.config_set_onboarding_completed', { value: false });
+    await browser.execute(() => {
+      window.location.replace('#/onboarding/welcome');
+      window.location.reload();
+    });
+    await waitForWindowVisible(25_000);
+    await waitForWebView(15_000);
+    await waitForAppReady(15_000);
+    await waitForAuthBootstrap(15_000);
     await waitForHash('#/onboarding', 15_000);
   });
 

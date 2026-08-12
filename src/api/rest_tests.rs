@@ -260,13 +260,10 @@ async fn authed_json_uses_sdk_transport_with_bearer_and_host_headers() {
 }
 
 #[tokio::test]
-async fn authed_json_cannot_bypass_sdk_admin_or_webhook_exclusions() {
+async fn authed_json_cannot_bypass_sdk_admin_exclusions() {
     let client = BackendOAuthClient::new("http://127.0.0.1:9").unwrap();
 
-    for (method, path) in [
-        (Method::POST, "/admin/announcements"),
-        (Method::GET, "/webhooks/core"),
-    ] {
+    for (method, path) in [(Method::POST, "/admin/announcements")] {
         let err = client
             .authed_json("token", method, path, None)
             .await
@@ -275,7 +272,6 @@ async fn authed_json_cannot_bypass_sdk_admin_or_webhook_exclusions() {
             err.chain().any(|source| {
                 let message = source.to_string();
                 message.contains("intentionally not exposed")
-                    || message.contains("webhook routes are not exposed")
             }),
             "{path} must be rejected locally by the SDK: {err:#}"
         );

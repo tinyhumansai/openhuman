@@ -20,7 +20,13 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use tinydocs::docx::{
+use crate::openhuman::modules::documents::DocumentCallError;
+
+// Reached through `spec`, not `docx`: this build carries the contract and not
+// the writer, so the gated `docx` module is not compiled here at all. The types
+// are the same ones the module validates against, which is the whole reason
+// `spec` is separable.
+pub use tinydocs::spec::document::{
     DocumentSpec as GenerateDocumentInput, MAX_BULLETS_PER_SECTION, MAX_PARAGRAPHS_PER_SECTION,
     MAX_PARAGRAPH_CHARS, MAX_SECTIONS, MAX_TEXT_CHARS,
 };
@@ -31,7 +37,7 @@ pub use tinydocs::docx::{
 // is private, so the re-export reads as unused to the compiler — hence the
 // explicit allow rather than dropping a name callers legitimately need.
 #[allow(unused_imports)]
-pub use tinydocs::docx::DocumentSection;
+pub use tinydocs::spec::DocumentSection;
 
 /// Tool output returned via [`crate::openhuman::tools::traits::ToolResult`]
 /// as the JSON `data` field.
@@ -61,6 +67,13 @@ pub enum DocumentError {
 
     #[error("document generation exceeded {timeout_secs}s timeout")]
     GenerationTimeout { timeout_secs: u64 },
+
+    /// The document module could not be loaded on this host.
+    ///
+    /// Terminal for the running process: the loader never retries a module that
+    /// failed, so the message says what would change the outcome.
+    #[error("document generation is unavailable: {reason}")]
+    ModuleUnavailable { reason: String },
 }
 
 impl DocumentError {
@@ -73,22 +86,23 @@ impl DocumentError {
 }
 
 impl From<tinydocs::Error> for DocumentError {
-    /// Map a `tinydocs` failure onto the agent-facing shape.
+    /// Map a spec-validation failure onto the agent-facing shape.
     ///
-    /// The mapping is total and lossless in both directions that matter: the
-    /// structured `field` / `reason` pair the agent self-corrects on survives
-    /// intact, and the already-truncated generation detail is carried across
-    /// without re-truncating. `GenerationTimeout` is deliberately absent here
-    /// — `tinydocs` is synchronous and has no deadline, so only
-    /// [`engine`](super::engine) can produce that variant.
+    /// This is the *local* path: `validate_input` below checks the spec against
+    /// the same limits the module would, before a call is made, so the agent
+    /// gets a structured `field` / `reason` pair it can self-correct on without
+    /// paying for a round trip. Errors that come back from the module take the
+    /// `DocumentCallError` conversion instead, where that structure has already
+    /// been flattened by the wire.
+    ///
+    /// `GenerationTimeout` is deliberately absent: validation has no deadline,
+    /// so only [`engine`](super::engine) produces that variant.
     ///
     /// `tinydocs::Error` is `#[non_exhaustive]`, so the catch-all arm is
-    /// required by the compiler rather than chosen. It degrades a variant
-    /// added by a future `tinydocs` release to `GenerationFailed` carrying
-    /// that variant's own `Display` text: the agent still sees a real reason
-    /// instead of a swallowed error, and the fallback is deliberately *not*
-    /// silent so a crate bump that introduces a case worth handling
-    /// structurally shows up in the logs.
+    /// required by the compiler rather than chosen. It degrades a variant added
+    /// by a future release to `GenerationFailed` carrying that variant's own
+    /// `Display` text, and logs, so a crate bump that introduces a case worth
+    /// handling structurally shows up rather than being swallowed.
     fn from(err: tinydocs::Error) -> Self {
         match err {
             tinydocs::Error::InvalidInput { field, reason } => Self::InvalidInput { field, reason },
@@ -106,6 +120,43 @@ impl From<tinydocs::Error> for DocumentError {
                     stderr_truncated: Self::truncate_stderr(&other.to_string()),
                 }
             }
+        }
+    }
+}
+
+/// Reported when the document module cannot be loaded on this host.
+///
+/// A distinct variant rather than a `GenerationFailed`, because the two mean
+/// opposite things to whoever reads them: generation failing is a document that
+/// might work on a retry, whereas an unavailable module means the capability is
+/// not present in this build or on this machine and no amount of rephrasing the
+/// request will produce one.
+impl From<DocumentCallError> for DocumentError {
+    /// Map a module-call failure onto the agent-facing shape.
+    ///
+    /// The three call outcomes map onto three different agent behaviours, which
+    /// is the whole reason the client distinguishes them: `InvalidInput` is
+    /// something a model can fix by rewriting its spec, `Failed` is not, and
+    /// `Unavailable` means it should stop asking.
+    ///
+    /// The structured `field` / `reason` pair does not survive the bus — an
+    /// error crosses as a name plus a message — so an `InvalidInput` from the
+    /// module names `spec` and carries the message as its reason. In practice
+    /// this is rare: [`validate_input`] runs against the same limits before the
+    /// call is made, so a spec that reaches the module has already passed the
+    /// checks the module would apply.
+    fn from(err: DocumentCallError) -> Self {
+        match err {
+            DocumentCallError::InvalidInput(reason) => Self::InvalidInput {
+                field: "spec".to_string(),
+                reason: Self::truncate_stderr(&reason),
+            },
+            DocumentCallError::Unavailable(reason) => Self::ModuleUnavailable {
+                reason: Self::truncate_stderr(&reason),
+            },
+            DocumentCallError::Failed(reason) => Self::GenerationFailed {
+                stderr_truncated: Self::truncate_stderr(&reason),
+            },
         }
     }
 }
@@ -148,6 +199,17 @@ pub(super) fn validate_input(input: &GenerateDocumentInput) -> Result<(), Docume
             title_chars,
             section_count,
             error_kind = "generation_failed",
+            "[document:types] input rejected"
+        ),
+        // Neither of the last two can come out of validation, which has no
+        // deadline and does not touch the module. Enumerated rather than caught
+        // by a wildcard so a new variant is a compile error here — this match is
+        // the one place every failure shape is named.
+        Err(DocumentError::ModuleUnavailable { .. }) => tracing::debug!(
+            target: "document",
+            title_chars,
+            section_count,
+            error_kind = "module_unavailable",
             "[document:types] input rejected"
         ),
         Err(DocumentError::GenerationTimeout { .. }) => tracing::debug!(

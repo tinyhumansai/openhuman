@@ -1,6 +1,9 @@
 //! Typed input / output / error contracts for the `generate_presentation` tool.
 
 use serde::{Deserialize, Serialize};
+use tinydocs::spec::ImageFormat;
+
+use crate::openhuman::modules::documents::DocumentCallError;
 
 /// Maximum number of slides a single `generate_presentation` call may
 /// produce. Hard cap to bound generation time and output size; the
@@ -95,7 +98,7 @@ pub struct SlideSpec {
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedSlideImage {
     pub bytes: Vec<u8>,
-    pub format: &'static str,
+    pub format: ImageFormat,
     pub width_px: u32,
     pub height_px: u32,
     pub caption: Option<String>,
@@ -160,6 +163,14 @@ pub enum PresentationError {
     #[error("presentation generation exceeded {timeout_secs}s timeout")]
     GenerationTimeout { timeout_secs: u64 },
 
+    /// The document module could not be loaded on this host.
+    ///
+    /// Distinct from `GenerationFailed`: that is a deck that might work on a
+    /// retry, this is a capability that is not present and will not become
+    /// present without a restart.
+    #[error("presentation generation is unavailable: {reason}")]
+    ModuleUnavailable { reason: String },
+
     /// Reserved for the planned `format` selector that will let callers
     /// request alternative deck formats (`.pdf` / `.key` / image
     /// strips). Today the tool only emits `.pptx`, so this variant is
@@ -172,6 +183,40 @@ pub enum PresentationError {
         extension: String,
         supported: String,
     },
+}
+
+impl From<DocumentCallError> for PresentationError {
+    /// Map a module-call failure onto the agent-facing shape.
+    ///
+    /// The three call outcomes mean three different things to an agent:
+    /// `InvalidInput` is a spec it can rewrite, `Failed` is a deck that might
+    /// work on a retry, and `Unavailable` means the capability is not present
+    /// and it should stop asking.
+    ///
+    /// The structured `field` / `reason` pair does not survive the bus — an
+    /// error crosses as a name plus a message — so an `InvalidInput` from the
+    /// module names `spec`. In practice this is rare: `validate_input` checks
+    /// the same limits before the call, so a deck that reaches the module has
+    /// already passed them.
+    ///
+    /// `exit_code` is `-1` because it always is: the field is a vestige of the
+    /// python-pptx subprocess this path replaced in #2778, kept so the agent's
+    /// error shape did not churn.
+    fn from(err: DocumentCallError) -> Self {
+        match err {
+            DocumentCallError::InvalidInput(reason) => Self::InvalidInput {
+                field: "spec".to_string(),
+                reason: Self::truncate_stderr(&reason),
+            },
+            DocumentCallError::Unavailable(reason) => Self::ModuleUnavailable {
+                reason: Self::truncate_stderr(&reason),
+            },
+            DocumentCallError::Failed(reason) => Self::GenerationFailed {
+                exit_code: -1,
+                stderr_truncated: Self::truncate_stderr(&reason),
+            },
+        }
+    }
 }
 
 impl PresentationError {

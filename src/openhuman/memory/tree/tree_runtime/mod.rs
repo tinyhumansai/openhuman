@@ -1,27 +1,25 @@
-//! Hierarchical time-based summary tree.
+//! Host layer over [`tinymemory_core::tree::tree_runtime`].
 //!
-//! Organizes summaries as a tree: root → year → month → day → hour (leaf).
-//! Each hour, a background job drains buffered raw content, summarizes it into
-//! the hour leaf, and propagates updated summaries upward through the tree.
-//! Stored as markdown files in `memory/namespaces/{ns}/tree/`.
-//!
-//! This module was renamed from `memory::summarizer` to
-//! `memory_tree::tree_runtime` so it no longer collides conceptually with
-//! [`crate::openhuman::memory::tree::summarise`], which is only the single-call
-//! LLM fold primitive used during seals.
+//! The domain itself lives in the extracted crate; what stays here is its
+//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
+//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
+//! The glob re-export keeps every historical `memory::tree::tree_runtime::…` path resolving.
 
-pub mod bus;
-pub(crate) mod cli;
-pub mod engine;
+pub use tinymemory_core::tree::tree_runtime::*;
+
 pub mod ops;
-pub mod store;
-
-mod schemas;
+pub mod schemas;
 
 pub use ops as rpc;
+
+pub mod bus;
+
+/// The `openhuman memory tree` CLI subcommands, which drive the RPC handlers.
+pub mod cli;
+
+// The controller aggregators this domain's RPC surface defines. Aliased
+// exactly as the pre-extraction module exported them.
 pub use schemas::{
     all_controller_schemas as all_tree_summarizer_controller_schemas,
     all_registered_controllers as all_tree_summarizer_registered_controllers,
 };
-// Runtime tree types are engine-owned.
-pub use tinycortex::memory::tree::runtime::*;

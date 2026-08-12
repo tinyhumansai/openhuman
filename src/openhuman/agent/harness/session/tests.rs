@@ -168,6 +168,9 @@ fn _assert_builder_is_exported() -> AgentBuilder {
 /// built `Agent` so individual tests can assert against the
 /// [`Agent::agent_definition_name`] accessor.
 fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Agent {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -522,6 +525,9 @@ async fn skill_listener_closed_channel_nulls_rx_and_is_not_a_signal() {
 #[test]
 #[cfg(feature = "skills")]
 fn refresh_workflows_picks_up_skill_installed_on_disk() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     // Isolated, trusted workspace with one project-scope skill on disk.
@@ -591,6 +597,9 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
 #[test]
 #[cfg(feature = "skills")]
 fn refresh_workflows_retracts_skill_removed_from_disk() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     let ws = tempfile::TempDir::new().expect("temp workspace");
@@ -697,6 +706,9 @@ fn refresh_workflows_retracts_skill_removed_from_disk() {
 
 #[tokio::test]
 async fn turn_without_tools_returns_text() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -737,6 +749,9 @@ async fn turn_without_tools_returns_text() {
 /// web-channel `take_last_turn_usage_totals` drain path still works.
 #[tokio::test]
 async fn last_turn_usage_is_public_and_non_draining() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -810,6 +825,9 @@ async fn last_turn_usage_is_public_and_non_draining() {
 
 #[tokio::test]
 async fn turn_with_native_dispatcher_handles_tool_results_variant() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -862,6 +880,9 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
 
 #[tokio::test]
 async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -970,6 +991,9 @@ fn turn_dispatches_spawn_subagent_through_full_path() {
 }
 
 async fn turn_dispatches_spawn_subagent_through_full_path_inner() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::AgentDefinitionRegistry;
     use crate::openhuman::tools::SpawnSubagentTool;
 
@@ -1081,6 +1105,9 @@ async fn turn_dispatches_spawn_subagent_through_full_path_inner() {
 ///      effective model between turns).
 #[tokio::test]
 async fn system_prompt_and_model_are_byte_stable_across_turns() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -1411,6 +1438,9 @@ fn bound_cached_transcript_messages_snaps_past_leading_orphan_tool() {
 /// the reasoning that prose seeding (`seed_resume_from_messages`) discards.
 #[test]
 fn seed_resume_from_thread_transcript_preserves_tool_calls_and_reasoning() {
+    // The embedding seam fails loudly when unwired; before the memory
+    // extraction this was a direct call and needed no setup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     use super::transcript::{self, MessageUsage, TranscriptMeta, TurnUsage};
     use crate::openhuman::agent::messages::ChatMessage;
     use crate::openhuman::inference::provider::ToolCall;

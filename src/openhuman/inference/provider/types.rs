@@ -1,7 +1,12 @@
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
+
 use std::fmt::Write;
+/// Token usage returned by a provider. Defined in the contract crate because
+/// the extracted memory subsystem threads it out of summarisation runs; every
+/// existing `inference::provider::UsageInfo` path keeps naming this one type.
+pub use tinymemory_api::host::UsageInfo;
 
 /// A tool call requested by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,33 +22,6 @@ pub struct ToolCall {
     /// history stays byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_content: Option<serde_json::Value>,
-}
-
-/// Token usage information returned by the provider after an inference call.
-#[derive(Debug, Clone, Default)]
-pub struct UsageInfo {
-    /// Number of tokens in the input/prompt.
-    pub input_tokens: u64,
-    /// Number of tokens in the output/completion.
-    pub output_tokens: u64,
-    /// Total context window size for the model (0 if unknown).
-    pub context_window: u64,
-    /// Number of input tokens that were served from the KV cache
-    /// (returned by backends that support prompt caching, e.g. via
-    /// `openhuman.usage.cached_input_tokens` or
-    /// `prompt_tokens_details.cached_tokens`).
-    pub cached_input_tokens: u64,
-    /// Number of input tokens written into a provider prompt/KV cache on this
-    /// request (cache-creation / cache-write tokens). Distinct from
-    /// `cached_input_tokens` (cache reads). Zero when the provider does not
-    /// report a cache-write breakdown.
-    pub cache_creation_tokens: u64,
-    /// Number of reasoning/thinking output tokens when the provider exposes
-    /// them separately from `output_tokens`. Zero when unavailable.
-    pub reasoning_tokens: u64,
-    /// Amount billed for this request in USD (from
-    /// `openhuman.billing.charged_amount_usd`). Zero when unavailable.
-    pub charged_amount_usd: f64,
 }
 
 /// An LLM response that may contain text, tool calls, or both.

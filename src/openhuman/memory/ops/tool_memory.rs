@@ -192,7 +192,7 @@ pub async fn tool_rules_for_prompt(
             .then_with(|| a.tool_name.cmp(&b.tool_name))
             .then_with(|| a.rule.cmp(&b.rule))
     });
-    let rendered = crate::openhuman::memory::tool_memory::render_tool_memory_rules(&flat);
+    let rendered = crate::openhuman::memory::tool_memory::prompt::render_tool_memory_rules(&flat);
     Ok(RpcOutcome::single_log(
         ToolRulesForPromptResult {
             rendered,

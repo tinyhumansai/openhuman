@@ -42,8 +42,17 @@ voice
 # Wallet / web3 / x402 domains and their agent tools.
 web3
 
-# Document ingestion and conversion.
+# Document ingestion and conversion. The synthesis itself is NOT in the binary:
+# `.docx` / `.pptx` generation and PDF extraction run in the loaded `tinydocs`
+# module, so this gate ships the tools and the host policy around them. Implies
+# `modules`.
 documents
+
+# The dynamic module host: the loader that admits a compiled cdylib through
+# tinybus's ABI, manifest and SHA-256 gates, the compiled-in registry of modules
+# this build trusts, and the `modules` RPC namespace. Required by `documents` —
+# without it the document tools have nothing to call.
+modules
 
 # Saved automation graphs: create/run/schedule + the workflow_builder and
 # flow_discovery agents.

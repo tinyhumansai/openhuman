@@ -1,10 +1,13 @@
 //! RPC handler implementations for memory sources.
 
+// `to_arc` / the config accessors are `MemoryHostConfig` trait methods.
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::memory::sources::apply_kind_defaults;
 use crate::openhuman::memory::sources::readers;
 use crate::openhuman::memory::sources::registry::{self, MemorySourcePatch};
 use crate::openhuman::memory::sources::types::{MemorySourceEntry, SourceKind};
 use crate::rpc::RpcOutcome;
+use tinymemory_api::host::MemoryHostConfig;
 
 #[derive(Debug, serde::Serialize)]
 pub struct CodingSessionStatusResponse {
@@ -267,39 +270,6 @@ pub async fn add_rpc(req: AddRequest) -> Result<RpcOutcome<AddResponse>, String>
     Ok(RpcOutcome::new(AddResponse { source }, vec![]))
 }
 
-/// Apply conservative per-kind cap defaults to a new source entry.
-///
-/// Only fills fields that are still `None` — never overwrites a
-/// caller-supplied value. This mirrors the retroactive migration logic in
-/// `reconcile::apply_composio_source_caps_migration` so the same defaults
-/// are applied consistently at creation time and during migration.
-pub fn apply_kind_defaults(entry: &mut MemorySourceEntry) {
-    match entry.kind {
-        SourceKind::GithubRepo => {
-            if entry.max_prs.is_none() {
-                entry.max_prs = Some(10);
-            }
-            if entry.max_issues.is_none() {
-                entry.max_issues = Some(10);
-            }
-            if entry.max_commits.is_none() {
-                entry.max_commits = Some(50);
-            }
-        }
-        SourceKind::RssFeed => {
-            if entry.max_items.is_none() {
-                entry.max_items = Some(20);
-            }
-        }
-        SourceKind::TwitterQuery if entry.since_days.is_none() => {
-            entry.since_days = Some(7);
-        }
-        // Folder / WebPage / Composio: no defaults to apply here.
-        // Composio defaults are set at upsert time in registry::upsert_composio_source.
-        _ => {}
-    }
-}
-
 // ── Update ──
 
 #[derive(Debug, serde::Deserialize)]
@@ -418,7 +388,7 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
         .ok_or_else(|| format!("source '{}' not found", req.source_id))?;
 
     let config = config_rpc::load_config_with_timeout().await?;
-    crate::openhuman::memory::sources::sync::sync_source(source, config).await?;
+    crate::openhuman::memory::sources::sync::sync_source(source, config.to_arc()).await?;
 
     Ok(RpcOutcome::new(
         SyncResponse {
@@ -744,7 +714,7 @@ pub async fn apply_all_in_rpc() -> Result<RpcOutcome<AllInResponse>, String> {
             kind = %source.kind.as_str(),
             "[memory_sources] apply_all_in_rpc: triggering sync"
         );
-        match crate::openhuman::memory::sources::sync::sync_source(source.clone(), config.clone())
+        match crate::openhuman::memory::sources::sync::sync_source(source.clone(), config.to_arc())
             .await
         {
             Ok(()) => {

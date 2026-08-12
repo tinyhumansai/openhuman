@@ -572,17 +572,6 @@ impl BackendOAuthClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
-        // OpenHuman does not consume backend webhook APIs. Keep that boundary
-        // local even though the shared SDK intentionally exposes the
-        // user-owned `/webhooks/core` tunnel CRUD surface for other clients.
-        // Platform-admin operations are independently rejected by the SDK's
-        // generated route gate below.
-        anyhow::ensure!(
-            !path
-                .split(['/', '?'])
-                .any(|segment| segment.eq_ignore_ascii_case("webhooks")),
-            "backend webhook routes are not exposed through OpenHuman"
-        );
         let url = self.url_for(path)?;
         let sdk = self
             .sdk

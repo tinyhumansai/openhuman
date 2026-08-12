@@ -16,13 +16,13 @@ on:
         type: boolean
         default: true
       run_macos:
-        description: Run the macOS E2E job.
+        description: Run the macOS E2E job (disabled by default until native driver support lands).
         type: boolean
-        default: true
+        default: false
       run_windows:
-        description: Run the Windows E2E job.
+        description: Run the Windows E2E job (disabled by default until native driver support lands).
         type: boolean
-        default: true
+        default: false
       full:
         description:
           When true, run the entire spec suite (sharded). When false, run the

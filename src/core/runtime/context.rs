@@ -507,6 +507,13 @@ pub async fn init_stores(
         domains,
     );
     if plan.memory {
+        // The extracted memory subsystem reaches back into this crate through
+        // process-global seams. They must be installed BEFORE the first memory
+        // call: the embedding, chat, Composio and config seams fail loudly when
+        // unwired rather than degrading, because a quiet degrade would write
+        // vectors into the wrong embedding space or make a sync run look empty
+        // instead of broken.
+        crate::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(cfg.clone()));
         match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
             Ok(_) => log::info!(
                 "[boot] memory::global initialized (workspace={})",

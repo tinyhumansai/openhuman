@@ -3,7 +3,6 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -55,23 +54,9 @@ pub struct SpacyRuntime {
     pub python_bin: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpacyEntity {
-    pub text: String,
-    pub label: String,
-    #[serde(default)]
-    pub start: u32,
-    #[serde(default)]
-    pub end: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpacyResponse {
-    #[serde(default)]
-    pub entities: Vec<SpacyEntity>,
-    #[serde(default)]
-    pub nouns: Vec<String>,
-}
+/// The spaCy wire types live in the contract crate — the memory tree's query
+/// extractor consumes them. See [`tinymemory_api::host::SpacyResponse`].
+pub use tinymemory_api::host::{SpacyEntity, SpacyResponse};
 
 pub async fn extract(config: &Config, text: &str) -> Result<SpacyResponse> {
     super::server::request_spacy_extract(config, text).await

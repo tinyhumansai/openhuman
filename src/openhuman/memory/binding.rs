@@ -70,9 +70,10 @@ use tinymemory::registry::{
 use crate::core::subsystem::{
     BoundDriver, DriverCapabilities, DriverClass, DriverHealth, SubsystemSlot,
 };
-use crate::openhuman::config::schema::{MemoryHooksConfig, MemorySubsystemConfig};
 use crate::openhuman::memory::driver::embedded::EmbeddedMemoryProvider;
 use crate::openhuman::memory::guard::{GuardPolicy, MemoryGuard};
+use tinymemory_api::host::MemoryHooksConfig;
+use tinymemory_api::host::MemorySubsystemConfig;
 
 /// Why a bind fell back to the placeholder driver.
 ///
@@ -80,7 +81,7 @@ use crate::openhuman::memory::guard::{GuardPolicy, MemoryGuard};
 /// produce it. `reason` is operator-facing: it is logged, published on the
 /// event bus, and rendered in status, so it must never interpolate
 /// `credential_ref` or `endpoint` from
-/// [`crate::openhuman::config::schema::MemoryDriverConfig`], which carries a
+/// [`tinymemory_api::host::MemoryDriverConfig`], which carries a
 /// manual redacting `Debug` for exactly that reason. The crate enforces this
 /// structurally — [`DriverEntry`] carries neither field, so a refusal built
 /// there cannot reach one. Pinned by
@@ -125,7 +126,7 @@ impl MemoryBinding {
     /// backed by a *compiler*-enforced boundary: even if `MemoryBinding` grows
     /// another reachable path, no module outside `openhuman::memory` can name
     /// this accessor at all.
-    pub(in crate::openhuman::memory) fn unguarded_provider(&self) -> &Arc<dyn MemoryProvider> {
+    pub(crate) fn unguarded_provider(&self) -> &Arc<dyn MemoryProvider> {
         &self.provider
     }
 
@@ -352,8 +353,8 @@ fn build(workspace_dir: &Path, cfg: &MemorySubsystemConfig) -> MemoryBinding {
             );
             // Sync, and a no-op when the bus is not yet initialized, so this is
             // safe to call pre-boot with no `#[cfg(test)]` guard.
-            crate::core::bus::BUS.publish(
-                crate::core::events::DomainEvent::MemoryDriverBindFailed {
+            crate::openhuman::memory::events::publish(
+                crate::openhuman::memory::events::MemoryEvent::DriverBindFailed {
                     configured_driver: fallback.configured_driver.clone(),
                     bound_driver: NULL_DRIVER_ID.to_string(),
                     reason: fallback.reason.clone(),

@@ -226,7 +226,9 @@ Consequences worth knowing before touching either seam:
   the second belongs accepts an address that only fails later, at signing time.
 - **Each crate's gates ride OpenHuman's existing ones**: `tinydocs` is
   exclusive to `documents`, `tinywallet` to `web3`. Both are default-ON and
-  already forwarded to the desktop shell.
+  already forwarded to the desktop shell. Note `tinydocs` is now taken with
+  `default-features = false` — the wire contract, not the writers, which run in
+  the TinyBus module instead (see the module host section).
 
 ### Backend API access — `src/api/` over `tinyhumans-sdk`
 
@@ -384,7 +386,7 @@ Two independent runtime axes on `CoreBuilder` (`src/core/runtime/builder.rs`):
 - **`ServiceSet`** selects which *background services / transports* run (`rpc_http`, `socketio`, `cron`, `channels`, `heartbeat`, …). Presets: `desktop()` / `headless_api()` / `none()`.
 - **`DomainSet`** selects which *domain families* exist at runtime, one flag per `DomainGroup` (`src/core/all.rs`). Presets: `full()` (default — byte-identical to before #4796), `harness()` (agent + memory + threads + config + security only), `none()`. Every controller is tagged with its `DomainGroup` at the single registration site in `src/core/all.rs`; the live surface (controllers/`/schema`/dispatch, agent tools, stores, subscribers) is filtered by the ambient `CoreContext::domains()`. A gated domain's controllers become unknown-method, its agent tools absent, its stores/subscribers uninitialized. `examples/embed_headless.rs` uses `DomainSet::harness()`; `examples/embed_kernel.rs` uses `DomainSet::kernel()` — the floor (threads + config + security, with `agent`/`memory` OFF) that a host opts subsystems back into by field assignment. Per-gate Cargo `[features]` (children #4797–#4804) narrow the compile-time surface further; `DomainSet` is the runtime axis they compose with.
 
-**`DomainGroup` tracks family directories 1:1.** After the domain reorg (#5328) each variant names a `src/openhuman/` family, so the runtime axis stopped sweeping half the surface into the `Platform` catch-all. Groups: the harness families (`Agent`, `Memory`, `Threads`, `Config`, `Security`), the compile-gate families (`Flows`, `Skills`, `Mcp`, `Meet`, `Channels`, `Web3`, `Voice`, `Media`, `Medulla`), the families carved out of `Platform` (`Inference`, `Integrations`, `Automation` = cron + subconscious, `Runtimes` = runtime + sandbox, `Desktop`, `Hosted`, `Relay` = tinyplace), and `Platform` itself — now only the kernel surfaces with no family of their own (`platform/`, `tools/`, `http_host/`, `test_support/`).
+**`DomainGroup` tracks family directories 1:1.** After the domain reorg (#5328) each variant names a `src/openhuman/` family, so the runtime axis stopped sweeping half the surface into the `Platform` catch-all. Groups: the harness families (`Agent`, `Memory`, `Threads`, `Config`, `Security`), the compile-gate families (`Flows`, `Skills`, `Mcp`, `Meet`, `Channels`, `Web3`, `Voice`, `Media`, `Medulla`), the families carved out of `Platform` (`Inference`, `Integrations`, `Automation` = cron + subconscious, `Runtimes` = runtime + sandbox, `Desktop`, `Hosted`, `Relay` = tinyplace, `Modules` = the native module host), and `Platform` itself — now only the kernel surfaces with no family of their own (`platform/`, `tools/`, `http_host/`, `test_support/`).
 
 That realignment fixed two real defects, both pinned by tests in `src/core/all_tests.rs`:
 
@@ -411,7 +413,7 @@ Per-domain Cargo features drop whole domains **at compile time** (smaller binary
 | **Contributor** | `[features] default` in `Cargo.toml` | What a bare `cargo check`, `cargo test` and rust-analyzer compile. 9 cheap gates. **353 packages / 3 native builds** (`libsqlite3-sys`, `lzma-sys`, `ring`). |
 | **Product** | `scripts/ci/product-features.txt` | What the shipped desktop app has. 16 gates. **540 packages / 7 native builds** (adds `bzip2-sys`, `libgit2-sys`, `libz-sys`, `zstd-sys`). |
 
-`default` used to be the product set, which made the inner loop pay for the whole product on every edit — web3's ethers/secp256k1 cohort, `documents`' zstd/bzip2 native builds, the cpal/hound/arboard/enigo/rdev stack behind `voice`+`inference`, `contacts`' macOS objc2 cohort, `crash-reporting`'s sentry tree, `tui`'s ratatui. Those are default-OFF now. **This did not change what ships**: the shell has set `default-features = false` since #1061 and never inherited `default` anyway.
+`default` used to be the product set, which made the inner loop pay for the whole product on every edit — web3's ethers/secp256k1 cohort, `documents`' zstd/bzip2 native builds (since removed from the graph entirely — the codecs run in a module now), the cpal/hound/arboard/enigo/rdev stack behind `voice`+`inference`, `contacts`' macOS objc2 cohort, `crash-reporting`'s sentry tree, `tui`'s ratatui. Those are default-OFF now. **This did not change what ships**: the shell has set `default-features = false` since #1061 and never inherited `default` anyway.
 
 What it *did* change: **a lane that relies on default features no longer covers the product.** Every CI lane that builds or tests the product passes `--features "$(bash scripts/ci/product-features.sh)"` — clippy, the unit lane, the coverage lane, `scripts/test-rust-with-mock.sh`. If you add a lane, decide which of the two sets it is testing and say so in a comment. Four `tests/*.rs` targets carry `required-features` for the same reason (`json_rpc_e2e`, `raw_coverage_all`, `observability_smoke`, `x402_twit_sh_live`); without those gates cargo **silently skips** them and the run still exits 0 — the same trap `--bins` without `bin-tools` already had.
 
@@ -484,6 +486,8 @@ Two columns because there are two sets (see above): **Contrib** is `[features] d
 | `inference` | OFF | ON | the `cpal` audio-device stack: microphone capture for voice, plus `desktop::accessibility::permissions`' mic-permission probe. Implied by `voice`. Off ⇒ the probe reports `Unknown`. **The name is historical** — it used to gate the bundled whisper.cpp STT engine, which no longer exists (see the scope note below); do not rename it, it is forwarded by name from the shell manifest and asserted by `INFERENCE_COMPILED_IN` | `cpal` |
 | `web3` | OFF | ON | the `openhuman::web3` family (`web3`, `web3::wallet`, `web3::x402`) — crypto wallet (multi-chain sign/broadcast), swaps/bridges/dapp calls, x402 machine payments | `bitcoin`, `curve25519-dalek` |
 | `media` | ON | ON | `openhuman::media::generation` (the `media_generate_*` agent tools) + `openhuman::media::image` scaffold | none (surface-only) |
+| `documents` | OFF | ON | the `generate_document` / `generate_presentation` agent tools and PDF text extraction during multimodal ingest. **The synthesis is not in this build** — all three run in the `tinydocs` TinyBus module (see below), so this gate turns on the tools and the host policy around them: the artifact pipeline, the deadlines, image resolution under the security policy. `tinydocs` is consumed with `default-features = false`, for the wire contract only. Implies `modules`. Off ⇒ both tools absent from the tool list rather than degraded, and PDF ingest degrades a file to a reference instead of extracted text | **39 crates**, and they leave `Cargo.lock` entirely: `docx-rs`, `ppt-rs`, `pdf-extract` plus `lopdf`, `syntect`, `pulldown-cmark`, `xml-rs`, `quick-xml`, `zip 0.6`, `zstd`, `bzip2`, `encoding_rs`, `euclid`, `ttf-parser`, the CFF/Type1/CMap parsers, … Product profile 505 → 448 names |
+| `modules` | ON | ON | `openhuman::modules` — the dynamic module host: the loader that admits a compiled `cdylib` through tinybus's ABI descriptor, manifest, dependency and SHA-256 gates, the compiled-in registry of modules this build trusts, and the `modules` RPC namespace. Implied by `documents`. Off ⇒ `modules.*` is unknown-method and nothing can load a native module | none in the product profile (`ureq`, `flate2`, `tar`, `zip 2`, `tempfile`, `toml` are already there) — **but see the kernel-floor note**: this feature exists so `tinybus/modules` is not enabled on the dependency itself, which would put a `dlopen` loader into the kernel profile where `tinybus` is always-on |
 | `meet` | OFF | ON | `openhuman::meet` (join-URL validation) + `openhuman::meet::agent` (live STT/LLM/TTS loop) + `openhuman::meet::backend_bot` (backend-delegated Meet bot over Socket.IO) | none — see note |
 | `skills` | ON | ON | `openhuman::skills` + `openhuman::skills::runtime` + `openhuman::skills::catalog` domains — SKILL.md discovery/parse/install, workflow execution + run logs, remote catalogs, the `skill_setup` / `skill_executor` builtin agents, and the 16 skill agent tools | none (see below) |
 | `flows` | ON | ON | `openhuman::flows` (saved automation graphs — create/run/schedule, the `workflow_builder` + `flow_discovery` agents), `openhuman::flows::tinyflows` (engine seam), `openhuman::flows::rhai` (`.ragsh` language-workflow tool) | `tinyflows`, `jaq-core`, `jaq-std`, `jaq-json`, `rhai` |
@@ -570,6 +574,88 @@ Follows the voice facade+stub pattern for `mcp::server` / `mcp::registry` / `mcp
 **Dangling `mcp_agent` in the orchestrator TOML is expected and safe.** `agent.toml` is data and cannot be `#[cfg]`'d, so the orchestrator keeps listing `mcp_agent` in `subagents` even when the agent is compiled out. Both resolution sites already tolerate unknown ids — `collect_orchestrator_tools` warns and skips, `validate_tier_hierarchy` `continue`s — so the core still boots. `orchestrator_tolerates_unresolvable_subagent_id` / `orchestrator_tolerates_absent_mcp_agent` in `loader.rs` pin that contract; do not "tighten" unknown-subagent handling into a hard error without re-checking them. `src/core/legacy_aliases.rs`'s frontend-catalog drift tests ignore gated namespaces for the same data-vs-code reason.
 
 `src/core/all.rs` needs **no** `#[cfg]` for this gate: the stub aggregators return empty vecs, so the registration sites keep compiling unchanged.
+
+### Loadable native modules — `src/openhuman/modules/`
+
+A capability can live outside this binary. A module is a compiled `cdylib`
+speaking the tinybus module ABI: downloaded from a pinned release, verified
+against a digest compiled into `modules::registry`, admitted through tinybus's
+ABI and manifest gates, and attached to a private in-process broker as an
+ordinary bus peer. The core then calls it over that bus like any other service.
+`documents` is the first consumer — `.docx` / `.pptx` synthesis and PDF
+extraction all happen in the `tinydocs` module.
+
+**What it buys is a dependency boundary that survives compilation.** A codec is
+not kernel work, and each one drags a tree of parsers into a binary that mostly
+does something else. Moving one out removes its dependencies from the build
+rather than merely gating them: `documents` went from 39 crates to none.
+
+**What it costs is process isolation, and that is not small.** A loaded module
+shares this address space, these privileges and this crash domain; tinybus's
+deadlines, bounded queues and caught panics contain ordinary misbehaviour, not a
+segfault. `dlopen` runs code before any symbol can be inspected, so the ABI,
+manifest and digest gates decide what is **admitted**, never what is **safe**.
+Modules are first-party code that ships separately. Anything untrusted belongs in
+a process.
+
+**tinybus never unloads a library.** A module that is refused or faulted is
+failed until the process restarts, which is why `modules::ops` caches failures
+instead of retrying — the alternative is paying a download and a `dlopen` per
+tool call to reach the same error.
+
+Five decisions worth knowing before touching this:
+
+- **The registry is a compiled-in `const` table.** Which modules exist, which
+  interfaces they claim, and which bytes are legitimate are build-time decisions.
+  Neither config nor RPC can name an artifact: a registry a server could add
+  entries to would be remote code execution with a download step. `[modules]`
+  config controls only whether modules load, whether this host may fetch them,
+  and where a developer's own build lives.
+- **Digests are pinned in source as the host's half of a two-sided check.**
+  tinybus fetches the release's own `checksum.toml`, compares it with ours,
+  hashes the download, and extracts only after. Pinning here makes the check
+  auditable offline and makes a release re-cut under the same tag stop matching
+  rather than silently replacing what runs in-process. Take the values verbatim
+  from the release; never recompute them from a local build.
+- **Artifact selection returns an ordered list, not one answer.** A target triple
+  is not enough — a `.so` built against glibc 2.39 fails to `dlopen` on a 2.35
+  host with a symbol-version error the ABI gate cannot phrase helpfully. So
+  releases publish per-distro artifacts, `modules::platform` probes glibc, prefers
+  the newest build that could work, and falls through on admission failure. A musl
+  or BSD host gets an empty list: "unsupported" beats a download that cannot load.
+- **Admission is permissive, deliberately.** Strict mode additionally refuses a
+  module whose rustc version differs from the host's, and the real published
+  artifact **is** refused that way — released artifacts are built on whatever
+  toolchain CI had and this crate pins its own, so mismatch is the normal case.
+  Strict mode would have meant the feature never worked in the field while every
+  local build looked fine. Everything protecting the address space is still
+  enforced; only the toolchain string is relaxed.
+- **Modules run on their own broker**, because `OnceBus::init_in_process` builds
+  its `Broker` privately and `ModuleHost::new` needs one. The consequence: a
+  module cannot publish a `DomainEvent`. Fine for a codec; revisit if a module
+  ever needs to emit events.
+
+**The bus belongs to whichever runtime creates it.** In the core that is the one
+runtime the process has. In tests it is not: two `#[tokio::test]` functions each
+build their own, and the second to call a loaded module finds a broker whose tasks
+died with the first — the call **hangs** until some deadline above it fires. Any
+test driving a real module must be the only one in its process, which is why the
+module-backed tool tests are `#[ignore]`d rather than merely gated on an artifact.
+Run them one at a time with `OPENHUMAN_MODULE_PATH` pointing at a directory
+holding the built library.
+
+**Payloads in and out are not symmetric.** Inbound bytes ride a tinybus stream
+opened alongside the call, so flow control and the size cap are the bus's. Replies
+cannot: `Interface::call` receives no caller identity and no connection, so a
+served object cannot open a stream back to its caller. A produced document is held
+by the module and pulled in chunks. A reply-stream seam upstream would remove that
+half.
+
+**`modules` must not be enabled on the tinybus dependency directly.** `tinybus` is
+always-on kernel surface, so `features = ["modules"]` there puts a loader plus
+`ureq` and an archive stack into the kernel profile for a host that can never use
+one — 305 → 308 packages, which the kernel-floor ratchet caught. It is forwarded
+from this crate's own `modules` feature instead.
 
 #### The `tui` gate
 

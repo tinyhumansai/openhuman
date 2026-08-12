@@ -156,6 +156,7 @@ openhuman_core = { path = "../..", package = "openhuman", default-features = fal
     "voice",
     "web3",
     "documents",
+    "modules",
     "flows",
     "meet",
     "skills",
@@ -261,6 +262,11 @@ tinyagents = { path = "../../vendor/tinyagents" }
 # publishing.
 tinyflows = { path = "../../vendor/tinyflows" }
 tinycortex = { path = "../../vendor/tinycortex" }
+# `tinymemory-core` (pulled in transitively through `openhuman_core`) names
+# `tinycortex-api` by version requirement, same as the root Cargo world —
+# patch it onto the same checkout here too, or this independent Cargo world
+# tries to resolve it from crates.io and fails (it was never published).
+tinycortex-api = { path = "../../vendor/tinycortex/api" }
 tinyjuice = { path = "../../vendor/tinyjuice" }
 tinychannels = { path = "../../vendor/tinychannels" }
 tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }

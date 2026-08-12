@@ -159,7 +159,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
-    crate::openhuman::memory::sync_events::register_sync_stage_bridge(&config);
+    crate::openhuman::memory::sync_events_bridge::register_sync_stage_bridge(&config);
     crate::openhuman::integrations::composio::register_composio_trigger_subscriber();
     crate::openhuman::meet::backend_bot::calendar::register_meet_calendar_subscriber();
     crate::openhuman::meet::backend_bot::bus::register_meeting_event_subscriber();

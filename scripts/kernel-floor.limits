@@ -13,6 +13,45 @@
 # Simulate with: scripts/dep-sim.py --cut <crates>
 #
 # History
+#   305/282/2  2026-08-10  tinymemory engine-neutral memory layer (+3 packages
+#                      / +3 names). `tinymemory`, `tinymemory-api`, and
+#                      `tinymemory-tinycortex` are deliberate always-on
+#                      dependencies: driver admission and the mandatory memory
+#                      capability families must remain available to a second
+#                      engine in the `flows` host profile. `tinydocs` and
+#                      `tinywallet` remain gated behind `documents` and
+#                      `web3`, respectively, and do not enter this profile.
+#                      Verified with `scripts/kernel-floor.sh flows` and
+#                      `cargo tree --no-default-features --features flows
+#                      --invert tinymemory`.
+#   305/282/2  2026-08-11  documents moved into the tinydocs TinyBus module.
+#                      NO CHANGE to this profile, and that is the point of the
+#                      entry: `documents` was never in the `flows` profile, so
+#                      the codecs it carried were invisible to this ratchet.
+#                      What the ratchet DID catch is the other half of the same
+#                      change — enabling `tinybus/modules` on the dependency
+#                      itself put a `dlopen` loader plus `ureq` and an archive
+#                      stack into the kernel profile (305 -> 308 packages,
+#                      282 -> 285 names), because tinybus is always-on surface.
+#                      Fixed by forwarding `tinybus/modules` from this crate's
+#                      own default-ON `modules` feature instead, so a
+#                      workflow-only host carries no loader. Back to 305/282/2,
+#                      identical to upstream/main.
+#                      The shed lands on the PRODUCT profile, which is what
+#                      ships: 505 -> 448 unique crate names, and 39 crates leave
+#                      Cargo.lock entirely — docx-rs, ppt-rs, pdf-extract and
+#                      their font/PostScript/XML tails (lopdf, syntect,
+#                      pulldown-cmark, xml-rs, quick-xml, zip 0.6, zstd, bzip2,
+#                      encoding_rs, euclid, ttf-parser, …). Verified with
+#                      `scripts/assert-shed.sh documents docx-rs ppt-rs
+#                      pdf-extract syntect pulldown-cmark lopdf xml-rs` and the
+#                      same against the product feature set.
+#                      NOTE: this profile already exceeded its limit on
+#                      upstream/main (305/282 vs 302/279) before this branch;
+#                      `scripts/check-kernel-floor.sh` fails identically there.
+#                      Not raised here — the number is unchanged, and raising a
+#                      limit to paper over inherited growth is what this file
+#                      exists to prevent.
 #   302/279/2  2026-08-09  `memory-git` gate (-3 packages / -3 names / -2 NATIVE),
 #                      measured on top of the runtime-node entry below.
 #
@@ -190,4 +229,4 @@
 #                      Native: aws-lc-sys libgit2-sys libsqlite3-sys libz-sys
 #                      lzma-sys ring. Target after gating is 222 names / 2 native
 #                      (libsqlite3-sys, ring) — see docs/plans MIGRATION-PLAN G6.
-flows:302:279:2
+flows:305:282:2

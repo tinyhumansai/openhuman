@@ -84,7 +84,8 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::openhuman::config::{Config, TEST_ENV_LOCK};
+    use crate::openhuman::config::Config;
+    use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::tools::traits::Tool;
     use serde_json::json;
 
@@ -191,7 +192,7 @@ mod tests {
         );
         assert_eq!(parsed, json!([]));
 
-        let direct = crate::openhuman::memory::tree::retrieval::drill_down::drill_down(
+        let direct = tinymemory_core::tree::retrieval::drill_down::drill_down(
             &cfg,
             "summary-does-not-exist",
             1,

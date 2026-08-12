@@ -317,29 +317,10 @@ describe('Auth & Access Control', () => {
   // -------------------------------------------------------------------------
 
   it('user can log out via Settings and returns to Welcome', async () => {
-    // Re-auth to get a clean session for logout
-    clearRequestLog();
-    await triggerAuthDeepLink('e2e-pre-logout-token');
-
-    // Wait for the consume call rather than using a fixed delay.
-    await browser.waitUntil(
-      async () => {
-        const consumed = getRequestLog().find(
-          r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
-        );
-        return !!consumed;
-      },
-      {
-        timeout: 10_000,
-        interval: 500,
-        timeoutMsg: 'Timed out waiting for pre-logout token consume call',
-      }
-    );
-
-    const homeCheck = await waitForHomePage(10_000);
-    if (!homeCheck) {
-      await navigateToHome();
-    }
+    // resetApp established a clean authenticated session for this suite.
+    // A second asynchronous deep-link login here races its post-login redirect
+    // against the Settings navigation, while adding no logout coverage.
+    await navigateToHome();
 
     // Log out + Clear App Data moved out of the main /settings page and
     // into the Account section in PR #2550 (LogoutAndClearActions footer

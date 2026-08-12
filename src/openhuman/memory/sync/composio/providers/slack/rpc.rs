@@ -245,7 +245,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
-        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+        config.composio.mode = tinymemory_api::host::COMPOSIO_MODE_DIRECT.to_string();
         std::mem::forget(tmp);
         config
     }
@@ -307,7 +307,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
-        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+        config.composio.mode = tinymemory_api::host::COMPOSIO_MODE_DIRECT.to_string();
         config.composio.api_key = Some("test-direct-key".to_string());
         std::mem::forget(tmp);
 

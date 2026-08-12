@@ -12,7 +12,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ethers_core::types::U256;
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -34,6 +33,20 @@ const QUOTE_STORE_CAP: usize = 64;
 
 static QUOTE_STORE: Lazy<Mutex<Vec<PreparedTransaction>>> = Lazy::new(|| Mutex::new(Vec::new()));
 static QUOTE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Return the compressed SEC1 public key for a secp256k1 secret.
+///
+/// The wallet module uses this public data to confirm that the locally held
+/// secret controls the transaction sender.
+pub(super) fn compressed_public_key(secret: &[u8]) -> Result<Vec<u8>, String> {
+    let key = k256::ecdsa::SigningKey::from_slice(secret)
+        .map_err(|_| "derived key is not a valid secp256k1 scalar".to_string())?;
+    Ok(key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec())
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -508,14 +521,28 @@ pub(crate) fn insert_quote_for_test(quote: PreparedTransaction) -> PreparedTrans
     store_quote(quote)
 }
 
-pub fn hex_to_u256(hex_value: &str) -> Result<U256, String> {
+/// Parse an `0x`-prefixed hex quantity, as every EVM JSON-RPC result encodes
+/// integers.
+///
+/// `u128` rather than a 256-bit type. Nothing this wallet reads from a node —
+/// a nonce, a gas price, a gas limit, a wei balance — approaches 2^128, which
+/// is about 3.4e20 ETH, and carrying `ethers-core` for a bignum that is never
+/// exercised past 128 bits is the trade this port exists to stop making. A
+/// value that genuinely did overflow is reported rather than truncated.
+///
+/// # Errors
+///
+/// A message naming the offending value if it is not hex, or does not fit.
+pub fn hex_to_u128(hex_value: &str) -> Result<u128, String> {
     let trimmed = hex_value.trim();
     let normalized = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-    U256::from_str_radix(normalized, 16)
+    u128::from_str_radix(normalized, 16)
         .map_err(|e| format!("invalid hex quantity '{hex_value}': {e}"))
 }
 
-pub fn u256_to_hex(value: U256) -> String {
+/// Render an integer the way an EVM JSON-RPC parameter expects it.
+#[must_use]
+pub fn u128_to_hex(value: u128) -> String {
     format!("0x{value:x}")
 }
 

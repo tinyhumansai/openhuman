@@ -34,7 +34,7 @@ impl EventHandler<DomainEvent> for TreeSummarizerEventSubscriber {
 
     async fn handle(&self, event: &DomainEvent) {
         match event {
-            DomainEvent::TreeSummarizerHourCompleted {
+            crate::core::events::DomainEvent::TreeSummarizerHourCompleted {
                 namespace,
                 node_id,
                 token_count,
@@ -46,7 +46,7 @@ impl EventHandler<DomainEvent> for TreeSummarizerEventSubscriber {
                     "[tree_summarizer] hour leaf completed"
                 );
             }
-            DomainEvent::TreeSummarizerPropagated {
+            crate::core::events::DomainEvent::TreeSummarizerPropagated {
                 namespace,
                 node_id,
                 level,
@@ -60,7 +60,7 @@ impl EventHandler<DomainEvent> for TreeSummarizerEventSubscriber {
                     "[tree_summarizer] node propagated"
                 );
             }
-            DomainEvent::TreeSummarizerRebuildCompleted {
+            crate::core::events::DomainEvent::TreeSummarizerRebuildCompleted {
                 namespace,
                 total_nodes,
             } => {
@@ -89,33 +89,39 @@ mod tests {
     #[tokio::test]
     async fn handles_hour_completed_without_panic() {
         let sub = TreeSummarizerEventSubscriber::new();
-        sub.handle(&DomainEvent::TreeSummarizerHourCompleted {
-            namespace: "test".into(),
-            node_id: "2024/03/15/14".into(),
-            token_count: 500,
-        })
+        sub.handle(
+            &crate::core::events::DomainEvent::TreeSummarizerHourCompleted {
+                namespace: "test".into(),
+                node_id: "2024/03/15/14".into(),
+                token_count: 500,
+            },
+        )
         .await;
     }
 
     #[tokio::test]
     async fn handles_propagated_without_panic() {
         let sub = TreeSummarizerEventSubscriber::new();
-        sub.handle(&DomainEvent::TreeSummarizerPropagated {
-            namespace: "test".into(),
-            node_id: "2024/03/15".into(),
-            level: "day".into(),
-            token_count: 1500,
-        })
+        sub.handle(
+            &crate::core::events::DomainEvent::TreeSummarizerPropagated {
+                namespace: "test".into(),
+                node_id: "2024/03/15".into(),
+                level: "day".into(),
+                token_count: 1500,
+            },
+        )
         .await;
     }
 
     #[tokio::test]
     async fn handles_rebuild_without_panic() {
         let sub = TreeSummarizerEventSubscriber::new();
-        sub.handle(&DomainEvent::TreeSummarizerRebuildCompleted {
-            namespace: "test".into(),
-            total_nodes: 42,
-        })
+        sub.handle(
+            &crate::core::events::DomainEvent::TreeSummarizerRebuildCompleted {
+                namespace: "test".into(),
+                total_nodes: 42,
+            },
+        )
         .await;
     }
 

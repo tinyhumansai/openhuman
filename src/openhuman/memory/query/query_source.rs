@@ -1,10 +1,10 @@
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::query::backend;
-use crate::openhuman::memory::store::chunks::types::SourceKind;
 use crate::openhuman::memory::tree::retrieval::rpc::QuerySourceRequest;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinymemory_core::store::chunks::types::SourceKind;
 
 pub struct MemoryTreeQuerySourceTool;
 
@@ -109,7 +109,8 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::openhuman::config::{Config, TEST_ENV_LOCK};
+    use crate::openhuman::config::Config;
+    use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::tools::traits::Tool;
     use serde_json::json;
 
@@ -212,7 +213,7 @@ mod tests {
         assert_eq!(parsed["hits"], json!([]));
         assert_eq!(parsed["total"], json!(0));
 
-        let direct = crate::openhuman::memory::tree::retrieval::source::query_source(
+        let direct = tinymemory_core::tree::retrieval::source::query_source(
             &cfg,
             None,
             Some(SourceKind::Document),

@@ -160,6 +160,8 @@ async fn execute_rejects_unknown_field() {
 }
 
 #[tokio::test]
+#[ignore = "needs a built tinydocs module (OPENHUMAN_MODULE_PATH) and its own process: \
+the module bus belongs to the runtime that creates it, so run this test alone"]
 async fn execute_happy_path_returns_artifact_metadata() {
     // End-to-end: drives the real docx-rs engine + artifact pipeline.
     // Asserts the success contract — the artifact is finalised on disk and

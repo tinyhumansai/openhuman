@@ -121,9 +121,22 @@ pub async fn load_config_for_workspace_with_timeout(
 /// [`load_config_with_timeout`], this does not re-resolve the process-global
 /// `OPENHUMAN_WORKSPACE` env var on every call.
 pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Config, String> {
+    reload_config_from_paths(&snapshot.config_path, &snapshot.workspace_dir).await
+}
+
+/// The anchored reload, addressed by path rather than by a whole `Config`.
+///
+/// Callers that hold the extracted memory subsystem's `dyn MemoryHostConfig`
+/// cannot produce a concrete `Config` to pass to
+/// [`reload_config_snapshot_with_timeout`] — but they can read the two paths
+/// off the seam. Same behaviour, narrower argument.
+pub async fn reload_config_from_paths(
+    config_path: &std::path::Path,
+    workspace_dir: &std::path::Path,
+) -> Result<Config, String> {
     match tokio::time::timeout(
         CONFIG_LOAD_TIMEOUT,
-        Config::load_from_config_path(&snapshot.config_path, &snapshot.workspace_dir),
+        Config::load_from_config_path(config_path, workspace_dir),
     )
     .await
     {

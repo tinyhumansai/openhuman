@@ -486,7 +486,7 @@ jobs:
         run: |
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --lib -- \
-            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: core::runtime:: agent::registry::agents::loader:: memory::people::address_book::tests:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::
+            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: core::runtime:: agent::registry::agents::loader:: memory::people::address_book::tests:: openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features mcp --lib -- \
             mcp::server::resources::
@@ -538,7 +538,7 @@ jobs:
           openhuman/agent/harness/session/tests.rs
           openhuman/agent/harness/subagent_runner/tool_prep.rs
           openhuman/agent/registry/agents/loader.rs
-          openhuman/inference/local/mod.rs
+          openhuman/config/migrations/retire_local_whisper_stt_tests.rs
           openhuman/memory/people/address_book.rs
           openhuman/mcp/server/resources.rs
           openhuman/platform/socket/event_handlers.rs
@@ -779,8 +779,38 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Clear stale Tauri coverage artifacts
+        # rust-cache restores app/src-tauri/target, including llvm-cov-target.
+        # cargo's fingerprints do not distinguish a previously restored
+        # non-instrumented test executable, which then runs successfully but
+        # produces no .profraw file for cargo-llvm-cov to merge.
+        run: cargo llvm-cov clean --manifest-path app/src-tauri/Cargo.toml
+
       - name: Run cargo llvm-cov for Tauri shell
-        run: bash scripts/ci-cancel-aware.sh cargo llvm-cov --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
+        run: |
+          # Write raw profiles to the container's in-memory filesystem first.
+          # Both the workspace bind mount and the container overlay have
+          # dropped LLVM profile writes on hosted container jobs. /dev/shm is
+          # container-local and these raw counter files are only a few MiB.
+          profile_dir="/dev/shm/openhuman-tauri-profraw-${GITHUB_RUN_ID}"
+          rm -rf "$profile_dir"
+          mkdir -p "$profile_dir"
+          # Source cargo-llvm-cov's instrumentation environment, then override
+          # the raw-profile path before invoking Cargo directly. Calling
+          # `cargo llvm-cov` here would overwrite LLVM_PROFILE_FILE again.
+          export CARGO_TARGET_DIR="$PWD/app/src-tauri/target/llvm-cov-target"
+          # Do not chain the runner's sccache wrapper underneath llvm-cov.
+          # Its shared cache can return objects compiled without coverage,
+          # yielding a passing test binary that never writes a raw profile.
+          unset RUSTC_WRAPPER
+          eval "$(cargo llvm-cov show-env --manifest-path app/src-tauri/Cargo.toml --sh)"
+          export LLVM_PROFILE_FILE="$profile_dir/tauri-%p-%m.profraw"
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path app/src-tauri/Cargo.toml
+          shopt -s nullglob
+          profiles=("$profile_dir"/*.profraw)
+          test "${#profiles[@]}" -gt 0
+          mv "${profiles[@]}" "$CARGO_TARGET_DIR/"
+          bash scripts/ci-cancel-aware.sh cargo llvm-cov report --manifest-path app/src-tauri/Cargo.toml --lcov --output-path lcov-tauri.info
         env:
           # Serialize codegen/link to cap peak memory + disk during the
           # instrumented Tauri-shell link (SIGBUS otherwise). Mirrors

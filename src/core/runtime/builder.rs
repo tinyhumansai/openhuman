@@ -222,6 +222,8 @@ pub struct DomainSet {
     pub hosted: bool,
     /// The multi-agent relay surface (tinyplace).
     pub relay: bool,
+    /// Loadable native modules: the module host, registry and `modules` RPC.
+    pub modules: bool,
     /// Everything not in a named family — always on in `full()`.
     pub platform: bool,
 }
@@ -252,6 +254,7 @@ impl DomainSet {
             desktop: true,
             hosted: true,
             relay: true,
+            modules: true,
             platform: true,
         }
     }
@@ -282,6 +285,7 @@ impl DomainSet {
             desktop: false,
             hosted: false,
             relay: false,
+            modules: false,
             platform: false,
         }
     }
@@ -329,6 +333,7 @@ impl DomainSet {
             desktop: false,
             hosted: false,
             relay: false,
+            modules: false,
             platform: true,
         }
     }
@@ -365,6 +370,7 @@ impl DomainSet {
             desktop: false,
             hosted: false,
             relay: false,
+            modules: false,
             platform: false,
         }
     }
@@ -393,6 +399,7 @@ impl DomainSet {
             desktop: false,
             hosted: false,
             relay: false,
+            modules: false,
             platform: false,
         }
     }
@@ -421,6 +428,7 @@ impl DomainSet {
             DomainGroup::Desktop => self.desktop,
             DomainGroup::Hosted => self.hosted,
             DomainGroup::Relay => self.relay,
+            DomainGroup::Modules => self.modules,
             DomainGroup::Platform => self.platform,
         }
     }

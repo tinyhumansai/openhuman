@@ -1,37 +1,20 @@
-//! Memory sources — registry of data connectors that feed memory.
+//! Host layer over [`tinymemory_core::sources`].
 //!
-//! This domain owns the **what feeds my memory** question: a typed
-//! registry of sources (Composio OAuth connections, local folders,
-//! GitHub repos, RSS feeds, Twitter queries, web pages) persisted
-//! in `config.toml` under `[[memory_sources]]`.
-//!
-//! It provides:
-//! - CRUD for source entries (add/remove/list/get/update)
-//! - A `SourceReader` trait with per-kind reader implementations
-//!   that can list items and read individual item content
-//! - RPC surface (`openhuman.memory_sources_*`)
-//!
-//! `memory_sync` consumes from this registry to decide what to sync
-//! and when. This module does not own sync scheduling or ingestion —
-//! it only defines connectors and reads from them.
+//! The domain itself lives in the extracted crate; what stays here is its
+//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
+//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
+//! The glob re-export keeps every historical `memory::sources::…` path resolving.
 
-pub mod readers;
-pub mod reconcile;
-pub mod registry;
+pub use tinymemory_core::sources::*;
+
 pub mod rpc;
 pub mod schemas;
-pub mod status;
-pub mod sync;
-pub mod types;
 
-pub use registry::{
-    add_source, apply_all_in, get_source, list_enabled_by_kind, list_sources,
-    memory_sync_defaults_for_toolkit, remove_composio_source_by_connection_id, remove_source,
-    update_source, upsert_composio_source, MemorySourcePatch,
-};
-pub use rpc::apply_kind_defaults;
+pub use tinymemory_core::sources::apply_kind_defaults;
+
+// The controller aggregators this domain's RPC surface defines. Aliased
+// exactly as the pre-extraction module exported them.
 pub use schemas::{
     all_controller_schemas as all_memory_sources_controller_schemas,
     all_registered_controllers as all_memory_sources_registered_controllers,
 };
-pub use types::{ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind};

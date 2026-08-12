@@ -2301,7 +2301,7 @@ fn register_domain_subscribers(
             crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
                 workspace_dir.clone(),
             );
-            crate::openhuman::memory::sync_events::register_sync_stage_bridge(&config);
+            crate::openhuman::memory::sync_events_bridge::register_sync_stage_bridge(&config);
         }
     } else {
         log::debug!(

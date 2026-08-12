@@ -459,7 +459,8 @@ mod tests {
         //    front of the agent on every subsequent turn.
         let mut flat: Vec<_> = prompt.into_values().flatten().collect();
         flat.sort_by(|a, b| b.priority.cmp(&a.priority));
-        let rendered = crate::openhuman::memory::tool_memory::render_tool_memory_rules(&flat);
+        let rendered =
+            crate::openhuman::memory::tool_memory::prompt::render_tool_memory_rules(&flat);
         assert!(rendered.contains("Never email Sarah"));
         assert!(rendered.contains("**[critical]**"));
     }

@@ -46,6 +46,8 @@
 //! event bus dispatch loop is never blocked by a long-running provider
 //! call (sync can take seconds).
 
+// `backend_client` is a host extension on the core's `ProviderContext`.
+use crate::openhuman::memory::sync::composio::providers::ProviderContextExt;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -55,10 +57,10 @@ use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriageOutcome, TriggerEnvelope};
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT;
 use crate::openhuman::integrations::composio::trigger_history;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
+use tinymemory_api::host::COMPOSIO_MODE_DIRECT;
 
 use super::providers::{get_provider, ProviderContext};
 use crate::openhuman::integrations::composio::client::ComposioClient;
@@ -384,7 +386,7 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
                         "[composio][triage] run_triage failed (label={}): {e:#}",
                         envelope.display_label
                     );
-                    crate::core::observability::report_error_or_expected(
+                    crate::openhuman::memory::observability::report_error_or_expected(
                         detail.as_str(),
                         "composio",
                         "trigger_triage",
@@ -582,7 +584,29 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
                     // collapses both to `Vec::new()` and would
                     // otherwise hide auth/backend failures from
                     // incident triage.
-                    match ops::fetch_connected_integrations_status(ctx.config.as_ref()).await {
+                    // `ctx.config` is the seam's `dyn MemoryHostConfig` now,
+                    // and this fetcher wants the host's concrete `Config`.
+                    // Re-reading it here is also the correct thing on its own
+                    // terms: the context snapshot was taken at hook-entry and
+                    // the OAuth completion we are reacting to may have written
+                    // credentials since.
+                    let live_config = match crate::openhuman::config::rpc::reload_config_from_paths(
+                        ctx.config.config_path(),
+                        ctx.config.workspace_dir(),
+                    )
+                    .await
+                    {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            tracing::debug!(
+                                error = %e,
+                                "[composio:bus] connected-integrations refresh: \
+                                 reload_config failed; skipping"
+                            );
+                            return;
+                        }
+                    };
+                    match ops::fetch_connected_integrations_status(&live_config).await {
                         FetchConnectedIntegrationsStatus::Authoritative(entries) => {
                             let mut toolkits: Vec<String> = entries
                                 .iter()
@@ -591,8 +615,8 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
                                 .collect();
                             toolkits.sort();
                             toolkits.dedup();
-                            crate::core::bus::BUS.publish(
-                                DomainEvent::ComposioIntegrationsChanged {
+                            crate::openhuman::memory::events::publish(
+                                crate::openhuman::memory::events::MemoryEvent::ComposioIntegrationsChanged {
                                     toolkits: toolkits.clone(),
                                 },
                             );
@@ -646,7 +670,7 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
             // onboarding completes. The memory_sources auto-register below
             // still runs unconditionally so the source appears in the unified
             // sources list immediately.
-            if !ctx.config.onboarding_completed {
+            if !ctx.config.onboarding_completed() {
                 tracing::info!(
                     toolkit = %toolkit,
                     connection_id = %connection_id,
@@ -822,7 +846,7 @@ async fn wait_for_connection_active(
 // ── Config-changed subscriber ───────────────────────────────────────
 
 /// Drops the prompt-level integrations cache whenever the user flips
-/// `config.composio.mode` between `"backend"` and `"direct"` or
+/// `config.composio().mode` between `"backend"` and `"direct"` or
 /// stores/clears the direct-mode API key. Without this, the chat
 /// runtime keeps the old tenant's tool catalogue / connection list
 /// pinned for up to `CACHE_TTL` (60s) — that's the regression behind
@@ -894,7 +918,7 @@ impl EventHandler<DomainEvent> for ComposioConfigChangedSubscriber {
                         .collect();
                     toolkits.sort();
                     toolkits.dedup();
-                    crate::core::bus::BUS.publish(DomainEvent::ComposioIntegrationsChanged {
+                    crate::openhuman::memory::events::publish(crate::openhuman::memory::events::MemoryEvent::ComposioIntegrationsChanged {
                         toolkits: toolkits.clone(),
                     });
                     tracing::debug!(
