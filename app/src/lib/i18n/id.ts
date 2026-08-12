@@ -4875,7 +4875,7 @@ const messages: TranslationMap = {
   'settings.ai.cursorParameterThinking': 'Pemikiran',
   'settings.ai.cursorParameterContextWindow': 'Jendela konteks',
   'settings.ai.cursorParameterFastMode': 'Mode cepat',
-  'settings.ai.cursorParameterDefault': 'Default',
+  'settings.ai.cursorParameterDefault': 'Bawaan',
   'settings.ai.deploymentNameLabel': 'Nama penerapan',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

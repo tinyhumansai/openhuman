@@ -232,7 +232,9 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     endpoint: 'http://127.0.0.1:8790/v1',
     authStyle: 'bearer',
     tone: TONE.violet,
-    keyPlaceholder: 'cursor_...',
+    // The bridge authenticates callers with its own token (printed at startup /
+    // .bridge-token file); the Cursor key stays in the bridge's environment.
+    keyPlaceholder: 'cursor-bridge token',
   },
 ];
 

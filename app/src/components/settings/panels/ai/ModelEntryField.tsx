@@ -18,6 +18,7 @@
  * an explicit toggle exposes it for every other provider too, which also
  * unblocks any provider whose listing omits a model the user is entitled to.
  */
+import createDebug from 'debug';
 import { useCallback, useMemo, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
@@ -25,6 +26,8 @@ import type { ModelInfo } from '../../../../services/api/aiSettingsApi';
 import Button from '../../../ui/Button';
 import { SettingsSelect, SettingsTextField } from '../../controls';
 import { isAzureFoundryEndpoint, looksLikeAzureBaseModelId } from '../azureDeployment';
+
+const log = createDebug('app:settings:model-entry');
 
 const CURSOR_PARAM_MARKER = '~p=';
 
@@ -138,6 +141,9 @@ const CursorModelSelector = ({
     const next = new Map(selection.parameters);
     if (value) next.set(parameter, value);
     else next.delete(parameter);
+    // Privacy-safe diagnostics: model id + parameter name + direction only —
+    // never the parameter value or any user-authored text.
+    log('cursor parameter %s %s (model %s)', parameter, value ? 'set' : 'cleared', selection.id);
     onModelChange(serializeCursorSelection({ id: selection.id, parameters: next }));
   };
 
