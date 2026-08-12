@@ -4738,6 +4738,11 @@ const messages: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} معرف النموذج',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': 'حدد نموذجًا...',
+  'settings.ai.cursorParameterReasoningEffort': 'جهد الاستدلال',
+  'settings.ai.cursorParameterThinking': 'التفكير',
+  'settings.ai.cursorParameterContextWindow': 'نافذة السياق',
+  'settings.ai.cursorParameterFastMode': 'الوضع السريع',
+  'settings.ai.cursorParameterDefault': 'افتراضي',
   'settings.ai.deploymentNameLabel': 'اسم النشر',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

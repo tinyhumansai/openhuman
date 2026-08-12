@@ -4850,6 +4850,11 @@ const messages: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} মডেল আইডি',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': 'একটি মডেল নির্বাচন করুন...',
+  'settings.ai.cursorParameterReasoningEffort': 'যুক্তির প্রচেষ্টা',
+  'settings.ai.cursorParameterThinking': 'চিন্তা',
+  'settings.ai.cursorParameterContextWindow': 'প্রসঙ্গ উইন্ডো',
+  'settings.ai.cursorParameterFastMode': 'দ্রুত মোড',
+  'settings.ai.cursorParameterDefault': 'ডিফল্ট',
   'settings.ai.deploymentNameLabel': 'ডিপ্লয়মেন্টের নাম',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

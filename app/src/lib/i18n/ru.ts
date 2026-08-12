@@ -4896,6 +4896,11 @@ const messages: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} идентификатор модели',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': 'Выберите модель...',
+  'settings.ai.cursorParameterReasoningEffort': 'Усилие рассуждения',
+  'settings.ai.cursorParameterThinking': 'Мышление',
+  'settings.ai.cursorParameterContextWindow': 'Контекстное окно',
+  'settings.ai.cursorParameterFastMode': 'Быстрый режим',
+  'settings.ai.cursorParameterDefault': 'По умолчанию',
   'settings.ai.deploymentNameLabel': 'Имя развёртывания',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

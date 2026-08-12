@@ -33,11 +33,11 @@ type CursorModelCatalog = { id: string; parameters: Map<string, Set<string>> };
 type CursorSelection = { id: string; parameters: Map<string, string> };
 
 const CURSOR_PARAMETER_LABELS: Record<string, string> = {
-  reasoning: 'Reasoning effort',
-  effort: 'Reasoning effort',
-  thinking: 'Thinking',
-  context: 'Context window',
-  fast: 'Fast mode',
+  reasoning: 'settings.ai.cursorParameterReasoningEffort',
+  effort: 'settings.ai.cursorParameterReasoningEffort',
+  thinking: 'settings.ai.cursorParameterThinking',
+  context: 'settings.ai.cursorParameterContextWindow',
+  fast: 'settings.ai.cursorParameterFastMode',
 };
 
 const cursorParameterOrder = (id: string): number => {
@@ -46,7 +46,7 @@ const cursorParameterOrder = (id: string): number => {
   return index < 0 ? order.length : index;
 };
 
-function parseCursorSelection(value: string): CursorSelection {
+export function parseCursorSelection(value: string): CursorSelection {
   const firstParameter = value.indexOf(CURSOR_PARAM_MARKER);
   if (firstParameter < 0) return { id: value, parameters: new Map() };
 
@@ -68,7 +68,7 @@ function parseCursorSelection(value: string): CursorSelection {
   return { id: value.slice(0, firstParameter), parameters };
 }
 
-function serializeCursorSelection(selection: CursorSelection): string {
+export function serializeCursorSelection(selection: CursorSelection): string {
   const parameters = [...selection.parameters.entries()].sort(([a], [b]) => a.localeCompare(b));
   return `${selection.id}${parameters
     .map(
@@ -78,12 +78,13 @@ function serializeCursorSelection(selection: CursorSelection): string {
     .join('')}`;
 }
 
-function displayCursorOption(parameter: string, value: string): string {
+function displayCursorOption(t: (key: string) => string, parameter: string, value: string): string {
   if (parameter === 'fast') {
-    if (value === 'fast' || value === 'true') return 'Yes';
-    if (value === 'false') return 'No';
+    if (value === 'fast' || value === 'true') return t('common.yes');
+    if (value === 'false') return t('common.no');
   }
-  if (parameter === 'thinking') return value === 'true' ? 'Enabled' : 'Disabled';
+  if (parameter === 'thinking')
+    return value === 'true' ? t('common.enabled') : t('common.disabled');
   return value.replace(/-/g, ' ');
 }
 
@@ -115,6 +116,7 @@ const CursorModelSelector = ({
   catalog: readonly ModelInfo[];
   label: string;
 }) => {
+  const { t } = useT();
   const models = useMemo(() => {
     const grouped = new Map<string, CursorModelCatalog>();
     for (const entry of catalog) {
@@ -147,7 +149,7 @@ const CursorModelSelector = ({
           value={selection.id}
           onChange={event => onModelChange(event.target.value)}
           className="w-full">
-          {!selection.id && <option value="">Select a model</option>}
+          {!selection.id && <option value="">{t('settings.ai.selectModel')}</option>}
           {selection.id && !models.some(entry => entry.id === selection.id) && (
             <option value={selection.id}>{selection.id}</option>
           )}
@@ -164,27 +166,33 @@ const CursorModelSelector = ({
           .sort(
             ([a], [b]) => cursorParameterOrder(a) - cursorParameterOrder(b) || a.localeCompare(b)
           )
-          .map(([parameter, values]) => (
-            <div key={parameter} className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-content-secondary">
-                {CURSOR_PARAMETER_LABELS[parameter] ?? parameter}
-              </label>
-              <SettingsSelect
-                aria-label={`${label} ${parameter}`}
-                value={selection.parameters.get(parameter) ?? ''}
-                onChange={event => updateParameter(parameter, event.target.value)}
-                className="w-full">
-                <option value="">Default</option>
-                {[...values]
-                  .sort((a, b) => a.localeCompare(b))
-                  .map(value => (
-                    <option key={value} value={value}>
-                      {displayCursorOption(parameter, value)}
-                    </option>
-                  ))}
-              </SettingsSelect>
-            </div>
-          ))}
+          .map(([parameter, values]) => {
+            const parameterLabel = t(CURSOR_PARAMETER_LABELS[parameter] ?? parameter);
+            const parameterId = `cursor-model-parameter-${parameter}`;
+
+            return (
+              <div key={parameter} className="flex flex-col gap-1.5">
+                <label htmlFor={parameterId} className="text-xs font-medium text-content-secondary">
+                  {parameterLabel}
+                </label>
+                <SettingsSelect
+                  id={parameterId}
+                  aria-label={parameterLabel}
+                  value={selection.parameters.get(parameter) ?? ''}
+                  onChange={event => updateParameter(parameter, event.target.value)}
+                  className="w-full">
+                  <option value="">{t('settings.ai.cursorParameterDefault')}</option>
+                  {[...values]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map(value => (
+                      <option key={value} value={value}>
+                        {displayCursorOption(t, parameter, value)}
+                      </option>
+                    ))}
+                </SettingsSelect>
+              </div>
+            );
+          })}
     </div>
   );
 };

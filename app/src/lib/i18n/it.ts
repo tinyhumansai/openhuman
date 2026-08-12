@@ -4925,6 +4925,11 @@ const messages: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} ID modello',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': 'Seleziona un modello...',
+  'settings.ai.cursorParameterReasoningEffort': 'Sforzo di ragionamento',
+  'settings.ai.cursorParameterThinking': 'Pensiero',
+  'settings.ai.cursorParameterContextWindow': 'Finestra di contesto',
+  'settings.ai.cursorParameterFastMode': 'Modalità rapida',
+  'settings.ai.cursorParameterDefault': 'Predefinito',
   'settings.ai.deploymentNameLabel': 'Nome della distribuzione',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

@@ -24,6 +24,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 package-lock.json
+!scripts/cursor-bridge/package-lock.json
 
 node_modules
 dist

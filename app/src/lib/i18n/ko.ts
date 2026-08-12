@@ -4797,6 +4797,11 @@ const messages: TranslationMap = {
   'settings.ai.modelIdPlaceholderForProvider': '{slug} 모델 ID',
   'settings.ai.modelIdPlaceholder': 'model-id',
   'settings.ai.selectModel': '모델 선택...',
+  'settings.ai.cursorParameterReasoningEffort': '추론 수준',
+  'settings.ai.cursorParameterThinking': '사고',
+  'settings.ai.cursorParameterContextWindow': '컨텍스트 창',
+  'settings.ai.cursorParameterFastMode': '빠른 모드',
+  'settings.ai.cursorParameterDefault': '기본값',
   'settings.ai.deploymentNameLabel': '배포 이름',
   'settings.ai.deploymentNamePlaceholder': 'my-gpt-deployment',
   'settings.ai.deploymentNameHelp':

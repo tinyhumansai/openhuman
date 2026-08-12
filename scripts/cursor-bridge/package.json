@@ -5,9 +5,15 @@
   "description": "Local OpenAI-compatible bridge that serves Cursor SDK models to OpenHuman",
   "type": "module",
   "scripts": {
-    "start": "node src/index.ts"
+    "start": "node --experimental-strip-types src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   },
   "dependencies": {
-    "@cursor/sdk": "*"
+    "@cursor/sdk": "^1.0.27"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
   }
 }

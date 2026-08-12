@@ -19,6 +19,7 @@ import type { ModelListItem, ModelParameterValue } from "@cursor/sdk";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.CURSOR_BRIDGE_PORT || 8790);
+const AUTHORITY = `${HOST}:${PORT}`;
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.join(BRIDGE_DIR, "workspace");
 mkdirSync(WORKSPACE, { recursive: true });
@@ -261,6 +262,13 @@ async function handleCompletion(
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.headers.host !== AUTHORITY) {
+      return sendError(res, 400, `invalid Host header; expected ${AUTHORITY}`);
+    }
+    if (req.headers.origin !== undefined) {
+      return sendError(res, 403, "Origin header is not allowed");
+    }
+
     const url = new URL(req.url ?? "/", `http://${HOST}`);
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
       return sendJson(res, 200, { ok: true, service: "cursor-bridge" });
