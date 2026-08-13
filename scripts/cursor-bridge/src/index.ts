@@ -25,6 +25,29 @@ const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.join(BRIDGE_DIR, "workspace");
 mkdirSync(WORKSPACE, { recursive: true });
 
+const TRUSTED_CURSOR_BACKEND_HOSTS = new Set(["api2.cursor.sh", "api.cursor.com"]);
+
+/**
+ * The SDK reads CURSOR_BACKEND_URL from the process environment (default
+ * https://api2.cursor.sh). Reject an override that isn't HTTPS Cursor before
+ * any caller key is sent upstream.
+ */
+function assertTrustedCursorBackend(): void {
+  const raw = process.env.CURSOR_BACKEND_URL?.trim();
+  if (!raw) return;
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("CURSOR_BACKEND_URL is not a valid URL");
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || !TRUSTED_CURSOR_BACKEND_HOSTS.has(host)) {
+    throw new Error("CURSOR_BACKEND_URL must be https://api2.cursor.sh or https://api.cursor.com");
+  }
+}
+
 const MODELS_TTL_MS = 5 * 60 * 1000;
 
 interface ResolvedModel {
@@ -88,6 +111,7 @@ function parseModelId(raw: string): ResolvedModel {
 }
 
 async function modelCacheFor(apiKey: string): Promise<ModelCache> {
+  assertTrustedCursorBackend();
   const cached = caches.get(apiKey);
   if (cached && Date.now() - cached.at < MODELS_TTL_MS) return cached;
 
@@ -240,6 +264,7 @@ async function handleCompletion(res: http.ServerResponse, apiKey: string, body: 
   const resolved = cache.byId.get(request.model) ?? parseModelId(request.model);
   const prompt = messagesToPrompt(request.messages);
 
+  assertTrustedCursorBackend();
   const result = await Agent.prompt(prompt, {
     apiKey,
     model: resolved.params ? { id: resolved.id, params: resolved.params } : { id: resolved.id },
@@ -320,6 +345,8 @@ const server = http.createServer(async (req, res) => {
 // timeouts stay finite so stalled connections can't pin sockets forever.
 server.requestTimeout = 15 * 60 * 1000;
 server.headersTimeout = 60 * 1000;
+
+assertTrustedCursorBackend();
 
 server.listen(PORT, HOST, () => {
   console.log(`[cursor-bridge] listening on http://${HOST}:${PORT}/v1`);
