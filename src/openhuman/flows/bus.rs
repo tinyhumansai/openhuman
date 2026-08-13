@@ -663,46 +663,38 @@ impl DedupCommitSubscriber {
         }
     }
 
-    /// The node ids of every `dedup` node in `flow_id`'s saved graph, or an
-    /// empty vec (logged, not propagated) if the flow can't be loaded — a
-    /// flow deleted between run-finish and this handler firing, or a
-    /// transient store error, both degrade to "nothing to settle" rather than
-    /// panicking the event bus.
+    /// The node ids of every `dedup` node the finishing run executed.
     ///
-    /// **Known limitation (issue #5265, Codex "P2" on the dedup engine PR):**
-    /// this reads the flow's CURRENT saved definition at settlement time, not
-    /// a snapshot of the graph the finishing run actually executed. Nothing
-    /// today persists a per-run graph/node-id snapshot — `prepare_flow_run`
-    /// loads `Flow` fresh into the spawned run's own task, and that copy is
-    /// discarded once the run starts; the `FlowRun` row has no `graph` field.
-    /// If a long-running flow is edited (or deleted) while a run is still in
-    /// flight:
-    /// - a `dedup` node the run wrote `tentative` keys under, then deleted or
-    ///   renamed before `FlowRunFinished` fires, is no longer found here — its
-    ///   tentative keys are neither committed nor released, so those items
-    ///   silently retry on the flow's next run (safe-direction: at worst a
-    ///   duplicate, never a lost item, matching this subsystem's existing
-    ///   safe-failure posture — see the module doc's "Best-effort throughout"
-    ///   paragraph);
-    /// - conversely a `dedup` node id newly added to the saved graph after the
-    ///   run started is settled here even though the run never executed it
-    ///   (a harmless no-op: it has no `tentative` keys to commit/release, see
-    ///   `commit`/`release`'s early returns).
+    /// Prefers the per-run snapshot [`snapshot_run_dedup_nodes`] wrote at
+    /// run-start (issue #5268 item 2), so a flow edited *while the run was
+    /// still in flight* is settled against the graph the run actually ran
+    /// rather than whatever the flow has since been edited into. This closes
+    /// the case where a `dedup` node the run wrote `tentative` keys under is
+    /// deleted or renamed before `FlowRunFinished` fires: previously it was
+    /// no longer found here, so those keys were neither committed nor
+    /// released and the items silently retried on the flow's next run.
     ///
-    /// Closing this properly means persisting a per-run graph/dedup-node-id
-    /// snapshot at run-start (`start_flow_run_row` or a sibling write) and
-    /// having this method read that snapshot instead of `store::get_flow` —
-    /// a schema + call-site change bigger than this PR's scope; reported as a
-    /// follow-up rather than attempted here.
-    fn dedup_node_ids(&self, flow_id: &str) -> Vec<String> {
+    /// Falls back to the flow's CURRENT saved graph when no snapshot exists —
+    /// a run that started before this snapshot landed, a resumed run
+    /// (`flows_resume` re-enters an existing run without a fresh run-start),
+    /// or a snapshot write that failed. That fallback is exactly the
+    /// historical behaviour, so the degraded path is never worse than before.
+    ///
+    /// Returns an empty vec (logged, not propagated) when neither source
+    /// yields anything — a flow deleted between run-finish and this handler
+    /// firing, or a transient store error, both degrade to "nothing to
+    /// settle" rather than panicking the event bus.
+    fn dedup_node_ids(&self, namespace: &str, flow_id: &str, run_id: &str) -> Vec<String> {
+        if let Some(ids) = self.snapshotted_dedup_node_ids(namespace, run_id) {
+            tracing::trace!(
+                target: "flows", %flow_id, %run_id, count = ids.len(),
+                "[dedup-commit] settling against this run's dedup-node snapshot"
+            );
+            return ids;
+        }
+
         match store::get_flow(&self.config, flow_id) {
-            Ok(Some(flow)) => flow
-                .graph
-                .nodes
-                .iter()
-                .filter(|n| n.kind == NodeKind::Dedup)
-                .map(|n| n.id.clone())
-                .collect(),
+            Ok(Some(flow)) => dedup_node_ids_in(&flow),
             Ok(None) => {
                 tracing::debug!(target: "flows", %flow_id, "[dedup-commit] flow no longer exists — skipping");
                 Vec::new()
@@ -714,8 +706,90 @@ impl DedupCommitSubscriber {
         }
     }
 
+    /// The dedup-node-id snapshot recorded for `run_id`, or `None` when this
+    /// run has none — see [`dedup_node_ids`](Self::dedup_node_ids)'s fallback.
+    ///
+    /// An unreadable, non-array or empty snapshot is reported as absent so
+    /// settlement degrades to the saved graph rather than to "settle
+    /// nothing": settling nothing would strand tentative keys, whereas the
+    /// saved graph is the behaviour this subsystem shipped with.
+    fn snapshotted_dedup_node_ids(&self, namespace: &str, run_id: &str) -> Option<Vec<String>> {
+        let key = run_dedup_snapshot_key(run_id);
+        let value = match store::kv_get(&self.config, namespace, &key) {
+            Ok(Some(value)) => value,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!(
+                    target: "flows", %namespace, %run_id, error = %e,
+                    "[dedup-commit] failed to read this run's dedup snapshot — falling back to \
+                     the flow's saved graph"
+                );
+                return None;
+            }
+        };
+
+        let ids: Vec<String> = value
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        if ids.is_empty() {
+            return None;
+        }
+        Some(ids)
+    }
+
+    /// Pins the ids of every `dedup` node in the graph this run is starting
+    /// with, so [`Self::dedup_node_ids`] can settle the run against the nodes
+    /// it actually executed rather than whatever the flow has been edited into
+    /// by the time it finishes (issue #5268 item 2).
+    ///
+    /// Reading the saved graph here, rather than having `flows::ops` hand us
+    /// its in-hand `Flow`, keeps the whole fix inside this subscriber.
+    /// `FlowRunStarted` is published from `flows::ops::flows_run{,_detached}`
+    /// immediately after the `flow_runs` row insert — before the engine
+    /// executes a single node — so the graph read back here is the one the run
+    /// is starting with.
+    ///
+    /// Best-effort like everything else in this subscriber: a load failure is
+    /// logged and swallowed, degrading settlement to the historical "use the
+    /// flow's current saved graph" behaviour rather than disturbing the run.
+    fn snapshot_run_nodes(&self, flow_id: &str, run_id: &str) {
+        match store::get_flow(&self.config, flow_id) {
+            Ok(Some(flow)) => snapshot_run_dedup_nodes(&self.config, flow_id, run_id, &flow),
+            // Nothing to pin, and not an error worth logging: the fallback
+            // already handles a flow that is no longer there.
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "flows", %flow_id, %run_id, error = %e,
+                    "[dedup-commit] could not load flow to snapshot its dedup nodes at run start \
+                     — settlement will fall back to the flow's saved graph"
+                );
+            }
+        }
+    }
+
+    /// Drops this run's dedup-node snapshot once the run has been settled.
+    ///
+    /// Best-effort: a failed delete leaves one small run-scoped KV row
+    /// behind, which nothing reads again (snapshots are keyed by `run_id`, and
+    /// run ids are never reused).
+    fn clear_run_snapshot(&self, namespace: &str, flow_id: &str, run_id: &str) {
+        let key = run_dedup_snapshot_key(run_id);
+        if let Err(e) = store::kv_delete(&self.config, namespace, &key) {
+            tracing::warn!(
+                target: "flows", %flow_id, %run_id, error = %e,
+                "[dedup-commit] failed to clear this run's dedup snapshot — harmless: the key is \
+                 run-scoped and is never read again"
+            );
+        }
+    }
+
     async fn handle_finished(&self, flow_id: &str, run_id: &str, status: &str) {
-        let node_ids = self.dedup_node_ids(flow_id);
+        let namespace = flow_state_namespace(flow_id);
+        let node_ids = self.dedup_node_ids(&namespace, flow_id, run_id);
         if node_ids.is_empty() {
             tracing::trace!(target: "flows", %flow_id, %run_id, %status, "[dedup-commit] no dedup nodes in this flow — nothing to settle");
             return;
@@ -739,7 +813,6 @@ impl DedupCommitSubscriber {
         tracing::trace!(target: "flows", %flow_id, %run_id, "[dedup-commit] acquired per-flow commit lock");
         self.maybe_test_delay().await;
 
-        let namespace = format!("flow:{flow_id}");
         for node_id in node_ids {
             if success {
                 self.commit(&namespace, &node_id, flow_id, run_id);
@@ -747,6 +820,12 @@ impl DedupCommitSubscriber {
                 self.release(&namespace, &node_id, flow_id, run_id);
             }
         }
+
+        // Still inside the per-flow lock: the snapshot is this run's alone, so
+        // no other run contends for it, but keeping the delete here means a
+        // settled run never leaves a readable snapshot behind for a
+        // late-arriving duplicate `FlowRunFinished` to settle a second time.
+        self.clear_run_snapshot(&namespace, flow_id, run_id);
 
         drop(lock_guard);
         tracing::trace!(target: "flows", %flow_id, %run_id, "[dedup-commit] released per-flow commit lock");
@@ -825,11 +904,19 @@ impl EventHandler<DomainEvent> for DedupCommitSubscriber {
 
     fn domains(&self) -> Option<&[&str]> {
         // Same reasoning as `FlowRunDigestSubscriber::domains` just above:
-        // `FlowRunFinished` is tagged `"cron"` by `DomainEvent::domain()`.
+        // `FlowRunStarted` and `FlowRunFinished` are both tagged `"cron"` by
+        // `DomainEvent::domain()` — they share a single match arm there.
         Some(&["cron"])
     }
 
     async fn handle(&self, event: &DomainEvent) {
+        // Pin the `dedup` nodes THIS run is about to execute, so settlement at
+        // `FlowRunFinished` uses the graph the run really ran rather than
+        // whatever the flow has been edited into by the time it finishes
+        // (issue #5268 item 2).
+        if let DomainEvent::FlowRunStarted { flow_id, run_id } = event {
+            self.snapshot_run_nodes(flow_id, run_id);
+        }
         if let DomainEvent::FlowRunFinished {
             flow_id,
             run_id,
@@ -838,6 +925,71 @@ impl EventHandler<DomainEvent> for DedupCommitSubscriber {
         {
             self.handle_finished(flow_id, run_id, status).await;
         }
+    }
+}
+
+/// The `StateStore` namespace a flow's `dedup` keys live in.
+///
+/// MUST match `tinyflows::caps::build_capabilities`'s `state_namespace`
+/// (`src/openhuman/flows/tinyflows/caps.rs`) — colliding with the very keys
+/// the engine's own `dedup` node reads and writes during the run is the entire
+/// point. Deliberately NOT [`flow_namespace`], which is the flow's *memory*
+/// namespace and a different string.
+fn flow_state_namespace(flow_id: &str) -> String {
+    format!("flow:{flow_id}")
+}
+
+/// KV key holding the dedup-node-id snapshot for a single run (issue #5268).
+///
+/// The `dedup::` prefix (double colon) cannot collide with the engine's own
+/// `dedup:<node_id>:<committed|tentative>` keys — reaching this shape would
+/// need a node id beginning with `:`, which the graph schema does not admit.
+fn run_dedup_snapshot_key(run_id: &str) -> String {
+    format!("dedup::run_nodes:{run_id}")
+}
+
+/// The ids of every `dedup` node in `flow`'s graph, in graph order.
+fn dedup_node_ids_in(flow: &Flow) -> Vec<String> {
+    let nodes = &flow.graph.nodes;
+    nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Dedup)
+        .map(|n| n.id.clone())
+        .collect()
+}
+
+/// Records the ids of every `dedup` node in the graph a run is about to
+/// execute, so [`DedupCommitSubscriber`] settles that run against the graph it
+/// really ran rather than whatever the flow has been edited into by the time it
+/// finishes (issue #5268 item 2).
+///
+/// Called from [`DedupCommitSubscriber`]'s `FlowRunStarted` arm, which fires
+/// from `flows::ops::flows_run{,_detached}` immediately after the initial
+/// `flow_runs` row insert and before the engine executes any node.
+///
+/// Writes nothing when the graph has no `dedup` node — the overwhelming
+/// majority of flows — so the common path costs one graph scan and zero I/O,
+/// and an absent key stays an unambiguous "no snapshot" for
+/// [`DedupCommitSubscriber::dedup_node_ids`]'s fallback.
+///
+/// Best-effort like the rest of this subsystem: a failed write is logged and
+/// swallowed, degrading settlement to the historical
+/// load-the-current-saved-graph behaviour rather than failing the run.
+fn snapshot_run_dedup_nodes(config: &Config, flow_id: &str, run_id: &str, flow: &Flow) {
+    let node_ids = dedup_node_ids_in(flow);
+    if node_ids.is_empty() {
+        return;
+    }
+
+    let namespace = flow_state_namespace(flow_id);
+    let key = run_dedup_snapshot_key(run_id);
+    let value = Value::Array(node_ids.into_iter().map(Value::String).collect());
+    if let Err(e) = store::kv_set(config, &namespace, &key, &value) {
+        tracing::warn!(
+            target: "flows", %flow_id, %run_id, error = %e,
+            "[dedup-commit] failed to snapshot this run's dedup nodes — settlement will fall back \
+             to the flow's saved graph at finish time"
+        );
     }
 }
 
@@ -882,954 +1034,5 @@ fn store_key_set(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::flows::Flow;
-    use crate::openhuman::inference::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::store::UnifiedMemory;
-    use serde_json::json;
-    use tinyflows::model::{Node, NodeKind, WorkflowGraph};
-
-    /// A directly-constructed, isolated [`Memory`] for the digest tests — NOT
-    /// the process-global `OnceLock` client. The global is one-shot, so an
-    /// earlier test in the same binary may already have bound it to a different
-    /// workspace, making `global::init(..)` here a silent no-op (see
-    /// `memory::global`'s own test notes). Injecting this instance into the
-    /// subscriber via [`FlowRunDigestSubscriber::with_memory`] makes writes and
-    /// read-backs go through the SAME store deterministically — the same shape
-    /// `flows::memory_tools`' tests use.
-    fn digest_test_memory(tmp: &tempfile::TempDir) -> Arc<dyn Memory> {
-        Arc::new(UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap())
-    }
-
-    fn test_config(tmp: &tempfile::TempDir) -> Arc<Config> {
-        let config = Config {
-            workspace_dir: tmp.path().join("workspace"),
-            action_dir: tmp.path().join("workspace"),
-            config_path: tmp.path().join("config.toml"),
-            ..Config::default()
-        };
-        std::fs::create_dir_all(&config.workspace_dir).unwrap();
-        Arc::new(config)
-    }
-
-    fn trigger_node(config: Value) -> Node {
-        Node {
-            id: "t".to_string(),
-            kind: NodeKind::Trigger,
-            type_version: 1,
-            name: "Trigger".to_string(),
-            config,
-            ports: Vec::new(),
-            position: None,
-        }
-    }
-
-    fn flow_with_trigger_config(id: &str, enabled: bool, trigger_config: Value) -> Flow {
-        Flow {
-            id: id.to_string(),
-            name: id.to_string(),
-            enabled,
-            graph: WorkflowGraph {
-                nodes: vec![trigger_node(trigger_config)],
-                ..Default::default()
-            },
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-            last_run_at: None,
-            last_status: None,
-            require_approval: false,
-        }
-    }
-
-    fn dedup_node(id: &str) -> Node {
-        Node {
-            id: id.to_string(),
-            kind: NodeKind::Dedup,
-            type_version: 1,
-            name: id.to_string(),
-            config: json!({ "key": "=item.id" }),
-            ports: Vec::new(),
-            position: None,
-        }
-    }
-
-    /// A saved flow with a `trigger` node plus one `dedup` node with id
-    /// `dedup_id` — the minimal graph [`DedupCommitSubscriber::dedup_node_ids`]
-    /// needs to find something to settle.
-    fn flow_with_dedup_node(id: &str, dedup_id: &str) -> Flow {
-        Flow {
-            id: id.to_string(),
-            name: id.to_string(),
-            enabled: true,
-            graph: WorkflowGraph {
-                nodes: vec![trigger_node(json!({})), dedup_node(dedup_id)],
-                ..Default::default()
-            },
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-            last_run_at: None,
-            last_status: None,
-            require_approval: false,
-        }
-    }
-
-    #[test]
-    fn pinned_trigger_inputs_reads_values_an_author_fixed_for_unattended_runs() {
-        let flow = flow_with_trigger_config(
-            "f1",
-            true,
-            json!({
-                "trigger_kind": "schedule",
-                "schedule": "0 9 * * *",
-                "inputs": { "repo": "acme/api", "depth": 3 }
-            }),
-        );
-        let inputs = pinned_trigger_inputs(&flow);
-        assert_eq!(inputs["repo"], json!("acme/api"));
-        assert_eq!(inputs["depth"], json!(3));
-    }
-
-    #[test]
-    fn pinned_trigger_inputs_is_empty_when_unset_or_malformed() {
-        // Empty, not an error: a flow declaring no inputs (the overwhelming
-        // majority) must keep dispatching on a tick exactly as before, and a
-        // malformed value is caught downstream by `prepare_flow_run`, which
-        // reports it against the flow's actual declarations.
-        for cfg in [
-            json!({ "trigger_kind": "schedule" }),
-            json!({ "trigger_kind": "schedule", "inputs": null }),
-            json!({ "trigger_kind": "schedule", "inputs": ["repo"] }),
-        ] {
-            let flow = flow_with_trigger_config("f1", true, cfg.clone());
-            assert!(
-                pinned_trigger_inputs(&flow).is_empty(),
-                "expected no pinned inputs for {cfg}"
-            );
-        }
-    }
-
-    #[test]
-    fn pinned_trigger_inputs_is_empty_for_a_graph_with_no_trigger() {
-        let mut flow = flow_with_trigger_config("f1", true, json!({ "trigger_kind": "schedule" }));
-        flow.graph.nodes.clear();
-        assert!(pinned_trigger_inputs(&flow).is_empty());
-    }
-
-    #[test]
-    fn name_and_domains_are_stable() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = FlowTriggerSubscriber::new(test_config(&tmp));
-        assert_eq!(sub.name(), "flows::trigger");
-        assert_eq!(
-            sub.domains(),
-            Some(&["cron", "composio", "webhook", "system"][..])
-        );
-    }
-
-    #[tokio::test]
-    async fn handle_does_not_panic_on_arbitrary_events() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = FlowTriggerSubscriber::new(test_config(&tmp));
-        sub.handle(&DomainEvent::CronJobTriggered {
-            job_id: "j1".into(),
-            job_name: "test".into(),
-            job_type: "shell".into(),
-        })
-        .await;
-        sub.handle(&DomainEvent::FlowScheduleTick {
-            flow_id: "missing-flow".into(),
-        })
-        .await;
-    }
-
-    #[test]
-    fn extract_trigger_kind_reads_schedule() {
-        let flow = flow_with_trigger_config(
-            "f1",
-            true,
-            json!({ "trigger_kind": "schedule", "schedule": "0 9 * * *" }),
-        );
-        assert!(matches!(
-            extract_trigger_kind(&flow),
-            Some(TriggerKind::Schedule)
-        ));
-    }
-
-    #[test]
-    fn extract_trigger_kind_none_for_missing_discriminator() {
-        let flow = flow_with_trigger_config("f1", true, json!({}));
-        assert!(extract_trigger_kind(&flow).is_none());
-    }
-
-    #[test]
-    fn extract_trigger_kind_none_for_invalid_discriminator() {
-        let flow = flow_with_trigger_config("f1", true, json!({ "trigger_kind": "not_a_kind" }));
-        assert!(extract_trigger_kind(&flow).is_none());
-    }
-
-    #[test]
-    fn matches_app_event_requires_toolkit_and_slug_match() {
-        let flow = flow_with_trigger_config(
-            "f1",
-            true,
-            json!({ "trigger_kind": "app_event", "toolkit": "gmail", "trigger_slug": "GMAIL_NEW_GMAIL_MESSAGE" }),
-        );
-        assert!(matches_app_event(&flow, "gmail", "GMAIL_NEW_GMAIL_MESSAGE"));
-        // Case-insensitive.
-        assert!(matches_app_event(&flow, "Gmail", "gmail_new_gmail_message"));
-        // Wrong toolkit or slug does not match.
-        assert!(!matches_app_event(
-            &flow,
-            "slack",
-            "GMAIL_NEW_GMAIL_MESSAGE"
-        ));
-        assert!(!matches_app_event(&flow, "gmail", "SLACK_NEW_MESSAGE"));
-    }
-
-    #[test]
-    fn matches_app_event_false_for_non_app_event_trigger() {
-        let flow = flow_with_trigger_config(
-            "f1",
-            true,
-            json!({ "trigger_kind": "schedule", "schedule": "0 9 * * *" }),
-        );
-        assert!(!matches_app_event(
-            &flow,
-            "gmail",
-            "GMAIL_NEW_GMAIL_MESSAGE"
-        ));
-    }
-
-    #[tokio::test]
-    async fn handle_app_event_ignores_disabled_flows() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_trigger_config(
-            "disabled-flow",
-            false,
-            json!({ "trigger_kind": "app_event", "toolkit": "gmail", "trigger_slug": "GMAIL_NEW_GMAIL_MESSAGE" }),
-        );
-        crate::openhuman::flows::store::upsert_flow(&config, &flow).unwrap();
-
-        // `list_enabled_flows` must not surface the disabled flow at all —
-        // proves the subscriber's dispatch source already excludes it,
-        // rather than asserting on a spawned background task's side effect.
-        let (enabled, skipped) =
-            crate::openhuman::flows::store::list_enabled_flows(&config).unwrap();
-        assert!(enabled.is_empty());
-        assert_eq!(skipped, 0);
-    }
-
-    #[tokio::test]
-    async fn handle_schedule_tick_ignores_disabled_flow() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_trigger_config(
-            "sched-flow",
-            false,
-            json!({ "trigger_kind": "schedule", "schedule": "0 9 * * *" }),
-        );
-        crate::openhuman::flows::store::upsert_flow(&config, &flow).unwrap();
-
-        let sub = FlowTriggerSubscriber::new(config.clone());
-        // Must not panic and must not spawn a run for a disabled flow — we
-        // can't directly observe "no run happened" without a full flows_run
-        // fixture, but this exercises the early-return path without error.
-        sub.handle(&DomainEvent::FlowScheduleTick {
-            flow_id: "sched-flow".into(),
-        })
-        .await;
-    }
-
-    // ── in-flight dedupe (CodeRabbit finding B) ─────────────────────
-
-    #[test]
-    fn try_acquire_dispatch_skips_a_flow_already_in_flight() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = FlowTriggerSubscriber::new(test_config(&tmp));
-
-        let guard = sub
-            .try_acquire_dispatch("f1")
-            .expect("first claim for f1 should succeed");
-        assert!(
-            sub.try_acquire_dispatch("f1").is_none(),
-            "a second claim for the same flow while the first is held must be skipped"
-        );
-
-        // A different flow is unaffected.
-        assert!(sub.try_acquire_dispatch("f2").is_some());
-
-        drop(guard);
-        assert!(
-            sub.try_acquire_dispatch("f1").is_some(),
-            "dropping the guard must release the claim so f1 can run again"
-        );
-    }
-
-    #[test]
-    fn default_constructs_the_same_as_new() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let a = FlowTriggerSubscriber::new(config.clone());
-        let b = FlowTriggerSubscriber::new(config);
-        assert_eq!(a.name(), b.name());
-    }
-
-    // ── FlowRunDigestSubscriber ─────────────────────────────────────
-
-    #[test]
-    fn digest_name_and_domains_are_stable() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = FlowRunDigestSubscriber::new(test_config(&tmp));
-        assert_eq!(sub.name(), "flows::digest");
-        assert_eq!(sub.domains(), Some(&["cron"][..]));
-    }
-
-    #[tokio::test]
-    async fn digest_handle_does_not_panic_on_unrelated_events() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = FlowRunDigestSubscriber::new(test_config(&tmp));
-        // Must not panic, and must not touch the memory layer at all, for
-        // any event other than `FlowRunFinished`.
-        sub.handle(&DomainEvent::CronJobTriggered {
-            job_id: "j1".into(),
-            job_name: "test".into(),
-            job_type: "shell".into(),
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn digest_ignores_failed_run() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let memory = digest_test_memory(&tmp);
-
-        let flow = flow_with_trigger_config("f-failed", true, json!({}));
-        store::upsert_flow(&config, &flow).unwrap();
-        store::insert_flow_run(
-            &config,
-            "run-failed",
-            "f-failed",
-            "thread-failed",
-            "2026-01-01T00:00:00Z",
-        )
-        .unwrap();
-        store::finish_flow_run(
-            &config,
-            "run-failed",
-            "failed",
-            "2026-01-01T00:05:00Z",
-            &[],
-            &[],
-            Some("boom"),
-            None,
-        )
-        .unwrap();
-
-        let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-failed".into(),
-            run_id: "run-failed".into(),
-            status: "failed".into(),
-        })
-        .await;
-
-        let entry = memory
-            .get(&flow_namespace("f-failed"), "run_digest:run-failed")
-            .await
-            .unwrap();
-        assert!(
-            entry.is_none(),
-            "a failed run must never produce a run_digest entry"
-        );
-    }
-
-    #[tokio::test]
-    async fn digest_ignores_cancelled_run() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let memory = digest_test_memory(&tmp);
-
-        let flow = flow_with_trigger_config("f-cancelled", true, json!({}));
-        store::upsert_flow(&config, &flow).unwrap();
-        store::insert_flow_run(
-            &config,
-            "run-cancelled",
-            "f-cancelled",
-            "thread-cancelled",
-            "2026-01-01T00:00:00Z",
-        )
-        .unwrap();
-        store::finish_flow_run(
-            &config,
-            "run-cancelled",
-            "cancelled",
-            "2026-01-01T00:05:00Z",
-            &[],
-            &[],
-            None,
-            None,
-        )
-        .unwrap();
-
-        let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-cancelled".into(),
-            run_id: "run-cancelled".into(),
-            status: "cancelled".into(),
-        })
-        .await;
-
-        let entry = memory
-            .get(&flow_namespace("f-cancelled"), "run_digest:run-cancelled")
-            .await
-            .unwrap();
-        assert!(entry.is_none());
-    }
-
-    #[tokio::test]
-    async fn digest_writes_run_digest_entry_for_completed_run() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let memory = digest_test_memory(&tmp);
-
-        let flow = flow_with_trigger_config("f-ok", true, json!({}));
-        store::upsert_flow(&config, &flow).unwrap();
-        store::insert_flow_run(
-            &config,
-            "run-ok",
-            "f-ok",
-            "thread-ok",
-            "2026-01-01T00:00:00Z",
-        )
-        .unwrap();
-        let step = crate::openhuman::flows::FlowRunStep {
-            node_id: "n1".to_string(),
-            output: json!({ "sent": 3 }),
-            port: None,
-            status: Some("success".to_string()),
-            duration_ms: Some(12),
-            diagnostics: Vec::new(),
-        };
-        store::finish_flow_run(
-            &config,
-            "run-ok",
-            "completed",
-            "2026-01-01T00:05:00Z",
-            &[step],
-            &[],
-            None,
-            None,
-        )
-        .unwrap();
-
-        let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-ok".into(),
-            run_id: "run-ok".into(),
-            status: "completed".into(),
-        })
-        .await;
-
-        let entry = memory
-            .get(&flow_namespace("f-ok"), "run_digest:run-ok")
-            .await
-            .unwrap()
-            .expect("completed run must produce a run_digest entry");
-        assert_eq!(entry.taint, MemoryTaint::ExternalSync);
-        assert!(entry.content.contains("f-ok"));
-        assert!(entry.content.contains("completed"));
-        assert!(entry.content.contains("n1"));
-        assert!(entry.content.chars().count() <= DIGEST_MAX_CHARS);
-    }
-
-    #[tokio::test]
-    async fn digest_treats_completed_with_warnings_as_success() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let memory = digest_test_memory(&tmp);
-
-        let flow = flow_with_trigger_config("f-warn", true, json!({}));
-        store::upsert_flow(&config, &flow).unwrap();
-        store::insert_flow_run(
-            &config,
-            "run-warn",
-            "f-warn",
-            "thread-warn",
-            "2026-01-01T00:00:00Z",
-        )
-        .unwrap();
-        store::finish_flow_run(
-            &config,
-            "run-warn",
-            "completed_with_warnings",
-            "2026-01-01T00:05:00Z",
-            &[],
-            &[],
-            None,
-            None,
-        )
-        .unwrap();
-
-        let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-warn".into(),
-            run_id: "run-warn".into(),
-            status: "completed_with_warnings".into(),
-        })
-        .await;
-
-        let entry = memory
-            .get(&flow_namespace("f-warn"), "run_digest:run-warn")
-            .await
-            .unwrap();
-        assert!(entry.is_some());
-    }
-
-    #[test]
-    fn truncate_chars_bounds_output_and_marks_truncation() {
-        let long = "x".repeat(50);
-        let truncated = truncate_chars(&long, 10);
-        assert_eq!(truncated.chars().count(), 10);
-        assert!(truncated.ends_with('…'));
-
-        let short = "hello";
-        assert_eq!(truncate_chars(short, 10), "hello");
-    }
-
-    #[test]
-    fn render_run_digest_is_bounded_and_includes_key_fields() {
-        let run = FlowRun {
-            id: "run-1".to_string(),
-            flow_id: "f1".to_string(),
-            thread_id: "thread-1".to_string(),
-            status: "completed".to_string(),
-            started_at: "2026-01-01T00:00:00Z".to_string(),
-            finished_at: Some("2026-01-01T00:05:00Z".to_string()),
-            steps: vec![crate::openhuman::flows::FlowRunStep {
-                node_id: "n1".to_string(),
-                output: json!({ "ok": true }),
-                port: None,
-                status: Some("success".to_string()),
-                duration_ms: Some(5),
-                diagnostics: Vec::new(),
-            }],
-            pending_approvals: Vec::new(),
-            error: None,
-            graph_hash: None,
-        };
-        let digest = render_run_digest("My Flow", &run);
-        assert!(digest.contains("My Flow"));
-        assert!(digest.contains("completed"));
-        assert!(digest.contains("n1"));
-        assert!(digest.chars().count() <= DIGEST_MAX_CHARS);
-    }
-
-    // ── DedupCommitSubscriber ────────────────────────────────────────
-
-    fn dedup_state_namespace(flow_id: &str) -> String {
-        // MUST match `tinyflows::build_capabilities`'s `state_namespace`
-        // (`src/openhuman/flows/tinyflows/caps.rs`) — this test asserts the
-        // subscriber collides with the SAME keys the engine's `dedup` node
-        // itself reads/writes, not just "some" namespace.
-        format!("flow:{flow_id}")
-    }
-
-    #[test]
-    fn dedup_commit_name_and_domains_are_stable() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = DedupCommitSubscriber::new(test_config(&tmp));
-        assert_eq!(sub.name(), "flows::dedup_commit");
-        assert_eq!(sub.domains(), Some(&["cron"][..]));
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_ignores_unrelated_events() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let sub = DedupCommitSubscriber::new(test_config(&tmp));
-        // Must not panic for any event other than `FlowRunFinished`.
-        sub.handle(&DomainEvent::CronJobTriggered {
-            job_id: "j1".into(),
-            job_name: "test".into(),
-            job_type: "shell".into(),
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_flow_with_no_dedup_nodes_is_a_noop() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_trigger_config("f-no-dedup", true, json!({}));
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let sub = DedupCommitSubscriber::new(config);
-        // Must not panic when the flow has no `dedup` node at all.
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-no-dedup".into(),
-            run_id: "run-1".into(),
-            status: "completed".into(),
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_unions_tentative_into_committed_and_clears_tentative_on_success() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_dedup_node("f-ok", "dd");
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-ok");
-        store::kv_set(&config, &namespace, "dedup:dd:committed", &json!(["a"])).unwrap();
-        store::kv_set(
-            &config,
-            &namespace,
-            "dedup:dd:tentative",
-            &json!(["b", "c"]),
-        )
-        .unwrap();
-
-        let sub = DedupCommitSubscriber::new(config.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-ok".into(),
-            run_id: "run-ok".into(),
-            status: "completed".into(),
-        })
-        .await;
-
-        let committed = store::kv_get(&config, &namespace, "dedup:dd:committed")
-            .unwrap()
-            .expect("committed key must still exist");
-        let mut committed: Vec<&str> = committed
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
-        committed.sort_unstable();
-        assert_eq!(committed, vec!["a", "b", "c"], "committed = union");
-
-        assert!(
-            store::kv_get(&config, &namespace, "dedup:dd:tentative")
-                .unwrap()
-                .is_none(),
-            "tentative must be cleared after a successful commit"
-        );
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_treats_completed_with_warnings_as_success() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_dedup_node("f-warn", "dd");
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-warn");
-        store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["x"])).unwrap();
-
-        let sub = DedupCommitSubscriber::new(config.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-warn".into(),
-            run_id: "run-warn".into(),
-            status: "completed_with_warnings".into(),
-        })
-        .await;
-
-        let committed = store::kv_get(&config, &namespace, "dedup:dd:committed")
-            .unwrap()
-            .expect("completed_with_warnings must still commit");
-        assert_eq!(committed, json!(["x"]));
-        assert!(store::kv_get(&config, &namespace, "dedup:dd:tentative")
-            .unwrap()
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_releases_tentative_without_touching_committed_on_failure() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_dedup_node("f-failed", "dd");
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-failed");
-        store::kv_set(&config, &namespace, "dedup:dd:committed", &json!(["a"])).unwrap();
-        store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["b"])).unwrap();
-
-        let sub = DedupCommitSubscriber::new(config.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-failed".into(),
-            run_id: "run-failed".into(),
-            status: "failed".into(),
-        })
-        .await;
-
-        assert_eq!(
-            store::kv_get(&config, &namespace, "dedup:dd:committed")
-                .unwrap()
-                .unwrap(),
-            json!(["a"]),
-            "committed must be untouched by a failed run"
-        );
-        assert!(
-            store::kv_get(&config, &namespace, "dedup:dd:tentative")
-                .unwrap()
-                .is_none(),
-            "tentative must be released (cleared) on failure so the item retries"
-        );
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_releases_tentative_on_cancelled_and_interrupted() {
-        for status in ["cancelled", "interrupted"] {
-            let tmp = tempfile::TempDir::new().unwrap();
-            let config = test_config(&tmp);
-            let flow_id = format!("f-{status}");
-            let flow = flow_with_dedup_node(&flow_id, "dd");
-            store::upsert_flow(&config, &flow).unwrap();
-
-            let namespace = dedup_state_namespace(&flow_id);
-            store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["z"])).unwrap();
-
-            let sub = DedupCommitSubscriber::new(config.clone());
-            sub.handle(&DomainEvent::FlowRunFinished {
-                flow_id: flow_id.clone(),
-                run_id: format!("run-{status}"),
-                status: status.to_string(),
-            })
-            .await;
-
-            assert!(
-                store::kv_get(&config, &namespace, "dedup:dd:committed")
-                    .unwrap()
-                    .is_none(),
-                "status {status} must never commit"
-            );
-            assert!(
-                store::kv_get(&config, &namespace, "dedup:dd:tentative")
-                    .unwrap()
-                    .is_none(),
-                "status {status} must release tentative"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_two_dedup_nodes_settle_independently() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = Flow {
-            id: "f-multi".to_string(),
-            name: "f-multi".to_string(),
-            enabled: true,
-            graph: WorkflowGraph {
-                nodes: vec![
-                    trigger_node(json!({})),
-                    dedup_node("dd1"),
-                    dedup_node("dd2"),
-                ],
-                ..Default::default()
-            },
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-            last_run_at: None,
-            last_status: None,
-            require_approval: false,
-        };
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-multi");
-        store::kv_set(&config, &namespace, "dedup:dd1:tentative", &json!(["a"])).unwrap();
-        store::kv_set(&config, &namespace, "dedup:dd2:tentative", &json!(["b"])).unwrap();
-
-        let sub = DedupCommitSubscriber::new(config.clone());
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-multi".into(),
-            run_id: "run-multi".into(),
-            status: "completed".into(),
-        })
-        .await;
-
-        assert_eq!(
-            store::kv_get(&config, &namespace, "dedup:dd1:committed")
-                .unwrap()
-                .unwrap(),
-            json!(["a"])
-        );
-        assert_eq!(
-            store::kv_get(&config, &namespace, "dedup:dd2:committed")
-                .unwrap()
-                .unwrap(),
-            json!(["b"])
-        );
-    }
-
-    // ── per-flow commit serialization (issue #5265) ───────────────────
-    //
-    // CodeRabbit "Major" on the dedup engine PR: the commit's
-    // load(committed)+union(tentative)+store(committed) is a
-    // read-modify-write, not a CAS. Two overlapping `FlowRunFinished`
-    // events for the SAME flow could otherwise interleave and have the
-    // second writer's store clobber the first writer's union, silently
-    // losing that run's committed keys. `handle_finished` now serializes
-    // settlement per `flow_id` via `FLOW_COMMIT_LOCKS`.
-    //
-    // Two tests, deliberately split:
-    //
-    // - `..._never_runs_two_commits_for_the_same_flow_concurrently` spawns a
-    //   burst of genuinely overlapping `FlowRunFinished` events for the SAME
-    //   flow_id and proves the LOCK itself provides mutual exclusion (the
-    //   high-water mark of concurrently-active critical sections never
-    //   exceeds 1) — this is the "spawn two tasks contending on the same
-    //   flow_id" case.
-    // - `..._serial_commits_for_the_same_flow_accumulate_via_union` proves
-    //   the property that mutual exclusion protects: settling run after run
-    //   for the same node never clobbers an earlier run's committed keys —
-    //   each contributes to the union.
-    //
-    // These are split rather than combined into one "two runs with two
-    // different tentative sets, truly concurrently, assert union" test
-    // because `tentative` is a single shared KV row per node (not
-    // per-run) — forcing two *different* tentative contents to both survive
-    // a genuinely simultaneous read would require injecting a write from
-    // outside `handle_finished` in the middle of its critical section, which
-    // instead exercises the SEPARATE, still-open node-side race (the
-    // `dedup` node's own in-run `tentative` read-modify-write, documented on
-    // `DedupCommitSubscriber` above as explicitly NOT fixed by this lock).
-    // Together, the two tests below establish the same guarantee end to
-    // end: the lock enforces serialization (test 1), and serialization is
-    // sufficient for correctness (test 2).
-
-    #[tokio::test]
-    async fn dedup_commit_never_runs_two_commits_for_the_same_flow_concurrently() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_dedup_node("f-race", "dd");
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-race");
-        store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["seed"])).unwrap();
-
-        // Arm the test-only scheduling hook (see `CommitTestHooks`): every
-        // `handle_finished` call sleeps briefly while holding the per-flow
-        // lock, and records how many calls are concurrently inside that
-        // window. Instance-scoped (not a global static) so this doesn't
-        // interfere with — or get polluted by — unrelated tests that cargo
-        // runs concurrently on other threads. Without a correctly-scoped
-        // lock, a burst of overlapping `FlowRunFinished` events for the SAME
-        // flow_id would pile up inside the critical section together
-        // instead of queuing.
-        let hooks = Arc::new(CommitTestHooks::default());
-        hooks
-            .delay_ms
-            .store(20, std::sync::atomic::Ordering::SeqCst);
-
-        let sub = Arc::new(DedupCommitSubscriber::with_test_hooks(
-            config.clone(),
-            hooks.clone(),
-        ));
-        let mut handles = Vec::new();
-        for i in 0..5 {
-            let sub = sub.clone();
-            handles.push(tokio::spawn(async move {
-                sub.handle(&DomainEvent::FlowRunFinished {
-                    flow_id: "f-race".into(),
-                    run_id: format!("run-{i}"),
-                    status: "completed".into(),
-                })
-                .await;
-            }));
-        }
-        for handle in handles {
-            handle.await.unwrap();
-        }
-
-        assert_eq!(
-            hooks.concurrent.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "every critical-section entry must have a matching exit"
-        );
-        assert_eq!(
-            hooks
-                .max_concurrent
-                .load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "the per-flow lock must serialize overlapping FlowRunFinished handling for the \
-             same flow_id — at most one commit critical section may be active at a time"
-        );
-    }
-
-    #[tokio::test]
-    async fn dedup_commit_serial_commits_for_the_same_flow_accumulate_via_union() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let flow = flow_with_dedup_node("f-serial", "dd");
-        store::upsert_flow(&config, &flow).unwrap();
-
-        let namespace = dedup_state_namespace("f-serial");
-        let sub = DedupCommitSubscriber::new(config.clone());
-
-        // Run A finishes, having tentatively seen "a".
-        store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["a"])).unwrap();
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-serial".into(),
-            run_id: "run-a".into(),
-            status: "completed".into(),
-        })
-        .await;
-
-        // Run B finishes later, having independently tentatively seen "b".
-        // The per-flow lock (proven by the concurrency test above) is what
-        // guarantees two overlapping runs' `FlowRunFinished` handling
-        // reduces to exactly this serialized order in practice — so this is
-        // the correctness property that mutual exclusion is protecting.
-        store::kv_set(&config, &namespace, "dedup:dd:tentative", &json!(["b"])).unwrap();
-        sub.handle(&DomainEvent::FlowRunFinished {
-            flow_id: "f-serial".into(),
-            run_id: "run-b".into(),
-            status: "completed".into(),
-        })
-        .await;
-
-        let committed = store::kv_get(&config, &namespace, "dedup:dd:committed")
-            .unwrap()
-            .expect("committed key must exist after both runs settle");
-        let mut committed: Vec<&str> = committed
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
-        committed.sort_unstable();
-        assert_eq!(
-            committed,
-            vec!["a", "b"],
-            "settling run B must not clobber run A's already-committed keys — committed is a \
-             running union across every run that has settled, never a last-writer-wins overwrite"
-        );
-        assert!(
-            store::kv_get(&config, &namespace, "dedup:dd:tentative")
-                .unwrap()
-                .is_none(),
-            "tentative must be cleared after each successful commit"
-        );
-    }
-
-    #[test]
-    fn flow_commit_lock_returns_the_same_arc_for_the_same_flow_id_and_differs_across_flows() {
-        let a1 = flow_commit_lock("f-lock-a");
-        let a2 = flow_commit_lock("f-lock-a");
-        assert!(
-            Arc::ptr_eq(&a1, &a2),
-            "the same flow_id must share one lock instance"
-        );
-
-        let b = flow_commit_lock("f-lock-b");
-        assert!(
-            !Arc::ptr_eq(&a1, &b),
-            "different flow_ids must not contend on the same lock"
-        );
-    }
-}
+#[path = "bus_tests.rs"]
+mod tests;
