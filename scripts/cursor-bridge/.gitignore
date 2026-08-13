@@ -1,3 +1,4 @@
 node_modules/
 workspace/
 .bridge-token
+.env

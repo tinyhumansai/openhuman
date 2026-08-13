@@ -7,16 +7,13 @@
  *   POST /v1/chat/completions  -> one-shot Agent.prompt(), streamed back as SSE
  *                                 when the client asks for it
  *
- * Auth: callers authenticate to the bridge with a bridge-local token
- * (Authorization: Bearer <token>) — from CURSOR_BRIDGE_TOKEN or the generated
- * .bridge-token file. The Cursor API key is read only from the bridge's own
- * CURSOR_API_KEY environment variable and is used solely for upstream Cursor
- * API authentication; it never transits this plaintext HTTP hop.
+ * Auth: the Authorization bearer is the user's Cursor API key (same value
+ * pasted in OpenHuman → Connections → LLM → Cursor). The sidecar binds
+ * 127.0.0.1 only and rejects Origin / mismatched Host headers.
  */
 import http from "node:http";
 import path from "node:path";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Agent, Cursor } from "@cursor/sdk";
 import type { ModelListItem, ModelParameterValue } from "@cursor/sdk";
@@ -27,42 +24,6 @@ const AUTHORITY = `${HOST}:${PORT}`;
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = path.join(BRIDGE_DIR, "workspace");
 mkdirSync(WORKSPACE, { recursive: true });
-
-const CURSOR_API_KEY = process.env.CURSOR_API_KEY?.trim();
-if (!CURSOR_API_KEY) {
-  console.error(
-    "[cursor-bridge] CURSOR_API_KEY is not set. It authenticates the bridge to Cursor " +
-      "upstream; callers authenticate to the bridge with the separate bridge token.",
-  );
-  process.exit(1);
-}
-
-const TOKEN_FILE = path.join(BRIDGE_DIR, "..", ".bridge-token");
-
-/**
- * Bridge-local credential, independent of the Cursor API key. Sourced from
- * CURSOR_BRIDGE_TOKEN when set, otherwise generated once and persisted so the
- * provider key stored in OpenHuman survives bridge restarts.
- */
-function loadBridgeToken(): string {
-  const fromEnv = process.env.CURSOR_BRIDGE_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-  try {
-    const existing = readFileSync(TOKEN_FILE, "utf8").trim();
-    if (existing) return existing;
-  } catch {
-    // First run — generate below.
-  }
-  const generated = randomBytes(24).toString("base64url");
-  writeFileSync(TOKEN_FILE, generated, { mode: 0o600 });
-  console.log(
-    `[cursor-bridge] generated a bridge token (saved to ${TOKEN_FILE}).\n` +
-      `Set it as the Cursor provider API key in OpenHuman:\n  ${generated}`,
-  );
-  return generated;
-}
-
-const BRIDGE_TOKEN = loadBridgeToken();
 
 const MODELS_TTL_MS = 5 * 60 * 1000;
 
@@ -189,13 +150,11 @@ function messagesToPrompt(messages: ChatMessage[]): string {
   return sections.join("\n\n");
 }
 
-/** Constant-time check of the bridge token from the Authorization header. */
-function isAuthorized(req: http.IncomingMessage): boolean {
+/** Cursor API key from the Authorization bearer (OpenHuman's provider key). */
+function apiKeyFrom(req: http.IncomingMessage): string | undefined {
   const header = req.headers.authorization;
   const bearer = header?.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
-  const presented = Buffer.from(bearer);
-  const expected = Buffer.from(BRIDGE_TOKEN);
-  return presented.length === expected.length && timingSafeEqual(presented, expected);
+  return bearer || undefined;
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -248,8 +207,8 @@ async function readBody(req: http.IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").replace(/^﻿/, "");
 }
 
-async function handleModels(res: http.ServerResponse): Promise<void> {
-  const cache = await modelCacheFor(CURSOR_API_KEY);
+async function handleModels(res: http.ServerResponse, apiKey: string): Promise<void> {
+  const cache = await modelCacheFor(apiKey);
   sendJson(res, 200, {
     object: "list",
     data: [...cache.byId.keys()].map((id) => ({
@@ -261,7 +220,7 @@ async function handleModels(res: http.ServerResponse): Promise<void> {
   });
 }
 
-async function handleCompletion(res: http.ServerResponse, body: string): Promise<void> {
+async function handleCompletion(res: http.ServerResponse, apiKey: string, body: string): Promise<void> {
   let request: {
     model?: string;
     messages?: ChatMessage[];
@@ -277,12 +236,12 @@ async function handleCompletion(res: http.ServerResponse, body: string): Promise
     return sendError(res, 400, "missing messages");
   }
 
-  const cache = await modelCacheFor(CURSOR_API_KEY);
+  const cache = await modelCacheFor(apiKey);
   const resolved = cache.byId.get(request.model) ?? parseModelId(request.model);
   const prompt = messagesToPrompt(request.messages);
 
   const result = await Agent.prompt(prompt, {
-    apiKey: CURSOR_API_KEY,
+    apiKey,
     model: resolved.params ? { id: resolved.id, params: resolved.params } : { id: resolved.id },
     tools: [],
     local: { cwd: WORKSPACE },
@@ -332,15 +291,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, service: "cursor-bridge" });
     }
 
-    if (!isAuthorized(req)) {
-      return sendError(res, 401, "unauthorized: valid bridge token required");
+    const apiKey = apiKeyFrom(req);
+    if (!apiKey) {
+      return sendError(res, 401, "unauthorized: send Authorization: Bearer <Cursor API key>");
     }
 
     if (req.method === "GET" && url.pathname === "/v1/models") {
-      return await handleModels(res);
+      return await handleModels(res, apiKey);
     }
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      return await handleCompletion(res, await readBody(req));
+      return await handleCompletion(res, apiKey, await readBody(req));
     }
     sendError(res, 404, `unknown route: ${req.method} ${url.pathname}`);
   } catch (err) {
