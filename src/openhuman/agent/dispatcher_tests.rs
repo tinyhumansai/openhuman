@@ -129,7 +129,8 @@ fn pformat_dispatcher_parses_tool_call_tag() {
     let dispatcher = PFormatToolDispatcher::new(registry);
     let response = ChatResponse {
         text: Some(
-            "Let me check the weather.\n<tool_call>get_weather[London|metric]</tool_call>".into(),
+            "Let me check the weather.\n<tool_call>get_weather[0|London|1|metric]</tool_call>"
+                .into(),
         ),
         tool_calls: vec![],
         usage: None,
@@ -181,7 +182,7 @@ fn pformat_dispatcher_handles_multiple_tags() {
     let dispatcher = PFormatToolDispatcher::new(registry);
     let response = ChatResponse {
         text: Some(
-            "Step 1.\n<tool_call>shell[ls]</tool_call>\nStep 2.\n<tool_call>shell[pwd]</tool_call>"
+            "Step 1.\n<tool_call>shell[0|ls]</tool_call>\nStep 2.\n<tool_call>shell[0|pwd]</tool_call>"
                 .into(),
         ),
         tool_calls: vec![],

@@ -434,10 +434,11 @@ pub fn render_subagent_system_prompt_with_format(
                 "## Tool Use Protocol\n\n\
                  Tool calls use **P-Format**: compact, positional, pipe-delimited syntax \
                  wrapped in `<tool_call>` tags.\n\n\
-                 ```\n<tool_call>\ntool_name[arg1|arg2]\n</tool_call>\n```\n\n\
-                 Arguments are positional — match the order shown in each tool's `Call as:` \
-                 signature above (alphabetical by parameter name). \
-                 Escape `|` as `\\|`, `]` as `\\]` inside values. \
+                 ```\n<tool_call>\nget_weather[0|London|1|metric]\n</tool_call>\n```\n\n\
+                 A `Call as:` signature numbers its slots and shows each as a `<name>` \
+                 placeholder; replace each one with a value, keeping its number, and send \
+                 only the arguments you are actually passing. \
+                 Escape `|` as `\\|`, `]` as `\\]`, and `\\` as `\\\\` inside values. \
                  You may emit multiple `<tool_call>` blocks per response.\n\n\
                  Use the provided tools to accomplish the task. Reply with a concise, dense \
                  final answer when you have one — the parent agent will weave it back into the \

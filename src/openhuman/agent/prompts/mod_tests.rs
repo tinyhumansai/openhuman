@@ -783,6 +783,50 @@ fn subagent_render_options_invert_definition_flags() {
     assert!(!narrow.include_memory_md);
 }
 
+/// The sub-agent block must teach every escape `split_escaped` honours. It
+/// already drifted once on the slot numbering — a sub-agent wrote the old
+/// `name[arg|arg]` grammar and `parse_pformat_call` dropped the call whole — so
+/// an escape documented in one prompt path and not the other is the same defect
+/// in a quieter form: a value carrying a backslash is encoded on a guess.
+#[test]
+fn the_subagent_pformat_block_documents_every_escape_the_parser_honours() {
+    let workspace = std::env::temp_dir().join(format!(
+        "openhuman_pformat_escapes_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let rendered = render_subagent_system_prompt_with_format(
+        &workspace,
+        "reasoning-v1",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist.",
+        SubagentRenderOptions::default(),
+        ToolCallFormat::PFormat,
+        &[],
+        None,
+        None,
+    );
+
+    for (escape, what) in [
+        (r"`\|`", "a literal pipe"),
+        (r"`\]`", "a literal closing bracket"),
+        (r"`\\`", "a literal backslash"),
+    ] {
+        assert!(
+            rendered.contains(escape),
+            "the sub-agent P-Format block must document {escape} for {what}"
+        );
+    }
+
+    // The escape set is the parser's, not this block's: `pformat::split_pipes`
+    // decodes exactly these three (`handles_backslash_escape` and its
+    // neighbours pin the decoding itself).
+}
+
 #[test]
 fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
     let workspace =

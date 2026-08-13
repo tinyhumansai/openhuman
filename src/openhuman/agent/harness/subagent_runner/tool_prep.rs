@@ -87,12 +87,16 @@ pub(crate) fn build_text_mode_tool_instructions() -> String {
         "Tool calls use **P-Format** (Parameter-Format): compact, positional, \
          pipe-delimited syntax wrapped in `<tool_call>` tags.\n\n",
     );
-    out.push_str("```\n<tool_call>\nGMAIL_FETCH_EMAILS[ca_123||10]\n</tool_call>\n```\n\n");
+    out.push_str("```\n<tool_call>\nGMAIL_FETCH_EMAILS[0|ca_123|2|10]\n</tool_call>\n```\n\n");
     out.push_str(
         "**Rules:**\n\
-         - Form: `name[arg1|arg2|...|argN]`. Arguments are positional and must match the \
-           order shown in each tool's `Call as:` signature in the `## Tools` section \
-           (alphabetical by parameter name). Leave a slot empty to omit that argument.\n\
+         - Form: `name[index|value|index|value|...]`. A `Call as:` signature numbers its \
+           slots and shows each as a `<name>` placeholder; replace each one with a value, \
+           keeping its number. `get_weather[0|<location>|1|<unit>]` is called as \
+           `get_weather[0|London|1|metric]`.\n\
+         - Send only the arguments you are actually passing, each with its own number. \
+           `get_weather[1|metric]` sends unit and no location. The numbers do the skipping, \
+           so there are no empty slots to count.\n\
          - Empty calls: `name[]` for zero-arg tools.\n\
          - Escapes inside argument values: `\\|` for a literal `|`, `\\]` for `]`, `\\\\` for `\\`.\n\
          - Do not nest tags. Emit one tag per call; you can emit multiple tags in the same \
