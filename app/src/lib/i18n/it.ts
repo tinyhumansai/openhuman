@@ -64,6 +64,7 @@ const messages: TranslationMap = {
   'brain.header.graph':
     'Come si collega la conoscenza del tuo agente: persone, argomenti e ricordi.',
   'brain.header.goals': 'A cosa sta lavorando il tuo agente, e perché.',
+  'brain.header.profile': 'Preferences your agent has learned, and what stays in every reply.',
   'brain.header.sources': 'I dati da cui il tuo agente impara.',
   'brain.header.sync': 'Mantieni aggiornata la tua memoria e rivedi cosa è cambiato.',
   'brain.header.subconscious': 'Il pensiero in background che gira mentre sei via.',
@@ -618,6 +619,7 @@ const messages: TranslationMap = {
   'brain.tabs.subconscious': 'Subconscio',
   'brain.tabs.graph': 'Grafico',
   'brain.tabs.goals': 'Obiettivi',
+  'brain.tabs.profile': 'Profilo',
   'brain.goals.title': 'Obiettivi a lungo termine',
   'brain.goals.description':
     'Gli obiettivi duraturi dell’agente per lavorare con te. Modificali qui o lascia che Rifletti li aggiorni.',
@@ -631,6 +633,31 @@ const messages: TranslationMap = {
   'brain.goals.editGoal': 'Modifica obiettivo',
   'brain.goals.deleteGoal': 'Elimina obiettivo',
   'brain.goals.actionError': 'Qualcosa è andato storto. Riprova.',
+  'brain.profile.title': 'Profilo appreso',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.loading': 'Loading preferences…',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.rebuild': 'Ricostruisci',
+  'brain.profile.rebuilding': 'Rebuilding…',
+  'brain.profile.pin': 'Fissa',
+  'brain.profile.unpin': 'Sblocca',
+  'brain.profile.forget': 'Dimentica',
+  'brain.profile.pinned': '(pinned)',
+  'brain.profile.learningEnabled': 'Auto-apprendimento',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.actionError': 'Something went wrong. Please try again.',
+  'brain.profile.meta': '{{state}} · stability {{stability}}',
+  'brain.profile.class.style': 'Style',
+  'brain.profile.class.identity': 'Identity',
+  'brain.profile.class.tooling': 'Tooling',
+  'brain.profile.class.veto': 'Vetoes',
+  'brain.profile.class.goal': 'Goals',
+  'brain.profile.class.channel': 'Channel',
+  'brain.profile.class.other': 'Other',
+
   'brain.tabs.sources': 'Fonti',
   'brain.tabs.sync': 'Sincronizzazione',
   'brain.tabs.orchestration': 'Orchestrazione',
@@ -1650,6 +1677,10 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Inviato a',
   'privacy.leavesDevice': 'Esce dal dispositivo',
   'privacy.staysLocal': 'Rimane locale',
+  'privacy.selfLearning': 'Self-learning',
+  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningDesc':
+    'When on, OpenHuman may infer how you like to work and inject Active preferences into new sessions. Default is off. Manage facts on Brain → Profile.',
   'privacy.anonymizedAnalytics': 'Analisi del prodotto',
   'privacy.shareAnonymizedData': 'Condividi analisi del prodotto e diagnostica',
   'privacy.shareAnonymizedDataDesc':

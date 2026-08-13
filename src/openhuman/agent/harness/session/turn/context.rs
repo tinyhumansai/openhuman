@@ -144,10 +144,10 @@ impl Agent {
     /// # Explicit-preferences narrow path
     ///
     /// When `learning_enabled` is `false` but `explicit_preferences_enabled`
-    /// is `true`, only the `user_profile` namespace (pinned preferences from
-    /// the `remember_preference` tool) is fetched and returned.  All other
+    /// is `true`, only Lane A general preferences (`user_pref_general` from
+    /// `save_preference`) are fetched and returned. All other
     /// inference-derived data (observations, patterns, reflections, tree
-    /// summaries) remains empty — the inference stack is not touched.
+    /// summaries, Active facets) remains empty — the inference stack is not touched.
     pub(in super::super) async fn fetch_learned_context(&self) -> LearnedContextData {
         // Fast path: neither the full learning subsystem nor the explicit
         // preferences path is active — skip all memory reads.
@@ -162,8 +162,7 @@ impl Agent {
         // Narrow explicit-preferences path (Lane A): inject the latest-N general
         // (always-on) preferences written via `save_preference`. Topic-scoped
         // (situational) prefs are NOT injected here — they ride the user message
-        // via per-turn recall (Lane B). The legacy `user_profile` pinned namespace
-        // is no longer read here; explicit prefs now live in `user_pref_general`.
+        // via per-turn recall (Lane B).
         if !self.learning_enabled && self.explicit_preferences_enabled {
             let general = crate::openhuman::memory::preferences::load_general_preferences(
                 &self.memory,
@@ -205,16 +204,22 @@ impl Agent {
             .await
             .unwrap_or_default();
 
-        // Standing preferences come from the explicit two-lane store (Lane A),
-        // not the inferred `user_profile` facets — those are demoted: no longer
-        // injected as ground truth. A high-confidence inferred facet should be
-        // *proposed* to the user (and pinned via `save_preference` on
-        // confirmation), not silently treated as a standing preference.
+        // Standing preferences = Lane A explicit prefs (save_preference) first,
+        // then Active facets from the ambient personalization cache. Lane A
+        // wins on normalised-text collisions; the merge is capped so the
+        // prompt block stays bounded.
         let general = crate::openhuman::memory::preferences::load_general_preferences(
             &self.memory,
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
+        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache();
+        let standing =
+            crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
+        tracing::debug!(
+            "[learning] fetch_learned_context: merged {} standing preference(s) (Lane A + Active facets)",
+            standing.len()
+        );
 
         // Explicit user reflections — privileged memory class. Pulled
         // separately from observations/patterns so the prompt assembly
@@ -261,7 +266,7 @@ impl Agent {
                 .take(3)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
-            user_profile: general,
+            user_profile: standing,
             // Cap reflections at 10 to keep the privileged section
             // bounded — the issue requires reflections improve context
             // rather than flood it. Newest first.

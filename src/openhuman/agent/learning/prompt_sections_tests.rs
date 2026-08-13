@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::sync::Arc;
 
-use super::load_learned_from_cache;
+use super::{load_learned_from_cache, merge_standing_preferences};
 use crate::openhuman::agent::learning::cache::FacetCache;
 use crate::openhuman::memory::store::profile::{
     FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
@@ -186,6 +186,40 @@ fn load_learned_from_cache_includes_facets_from_all_classes() {
 fn load_learned_from_cache_returns_empty_for_empty_cache() {
     let cache = open_cache();
     assert!(load_learned_from_cache(&cache).is_empty());
+}
+
+// ── merge_standing_preferences ────────────────────────────────────────────────
+
+#[test]
+fn merge_standing_preferences_lane_a_first_dedupes_and_caps() {
+    let explicit = vec!["Be concise.".into(), "Use pnpm.".into()];
+    let facets = vec![
+        "**style/verbosity**: terse".into(),
+        "Be concise.".into(), // duplicate of Lane A (case/space normalised)
+        "**tooling/lang**: rust".into(),
+    ];
+    let merged = merge_standing_preferences(explicit, facets);
+    assert_eq!(merged[0], "Be concise.");
+    assert_eq!(merged[1], "Use pnpm.");
+    assert!(merged.iter().any(|s| s.contains("verbosity")));
+    assert!(merged.iter().any(|s| s.contains("rust")));
+    assert_eq!(
+        merged
+            .iter()
+            .filter(|s| s.to_lowercase().contains("concise"))
+            .count(),
+        1,
+        "duplicate concise entry must be deduped"
+    );
+}
+
+#[test]
+fn merge_standing_preferences_respects_cap() {
+    let explicit: Vec<String> = (0..5).map(|i| format!("explicit-{i}")).collect();
+    let facets: Vec<String> = (0..30).map(|i| format!("facet-{i}")).collect();
+    let merged = merge_standing_preferences(explicit, facets);
+    assert_eq!(merged.len(), super::CACHE_PROMPT_CAP);
+    assert!(merged[0].starts_with("explicit-"));
 }
 
 // ── drop_below_threshold does not touch Active rows ───────────────────────────

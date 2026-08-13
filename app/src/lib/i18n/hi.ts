@@ -61,6 +61,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.feat3Body': 'आपकी मंज़ूरी के साथ एजेंटों के बीच वॉलेट-समर्थित भुगतान।',
   'brain.header.graph': 'आपके एजेंट का ज्ञान कैसे जुड़ता है: लोग, विषय और यादें।',
   'brain.header.goals': 'आपका एजेंट किस दिशा में काम कर रहा है, और क्यों।',
+  'brain.header.profile': 'Preferences your agent has learned, and what stays in every reply.',
   'brain.header.sources': 'वह डेटा जिससे आपका एजेंट सीखता है।',
   'brain.header.sync': 'अपनी मेमोरी को ताज़ा रखें और देखें कि क्या बदला।',
   'brain.header.subconscious': 'पृष्ठभूमि में चलने वाली सोच जो आपके दूर रहने पर काम करती है।',
@@ -603,6 +604,7 @@ const messages: TranslationMap = {
   'brain.tabs.subconscious': 'अवचेतन',
   'brain.tabs.graph': 'ग्राफ़',
   'brain.tabs.goals': 'लक्ष्य',
+  'brain.tabs.profile': 'प्रोफ़ाइल',
   'brain.goals.title': 'दीर्घकालिक लक्ष्य',
   'brain.goals.description':
     'आपके साथ काम करने के लिए एजेंट के स्थायी लक्ष्य। इन्हें यहाँ संपादित करें या Reflect से अपडेट होने दें।',
@@ -616,6 +618,31 @@ const messages: TranslationMap = {
   'brain.goals.editGoal': 'लक्ष्य संपादित करें',
   'brain.goals.deleteGoal': 'लक्ष्य हटाएँ',
   'brain.goals.actionError': 'कुछ गलत हो गया। कृपया पुनः प्रयास करें।',
+  'brain.profile.title': 'सीखा हुआ प्रोफ़ाइल',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.loading': 'Loading preferences…',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.rebuild': 'Rebuild',
+  'brain.profile.rebuilding': 'Rebuilding…',
+  'brain.profile.pin': 'Pin preference',
+  'brain.profile.unpin': 'Unpin preference',
+  'brain.profile.forget': 'Forget preference',
+  'brain.profile.pinned': '(pinned)',
+  'brain.profile.learningEnabled': 'स्व-शिक्षण',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.actionError': 'Something went wrong. Please try again.',
+  'brain.profile.meta': '{{state}} · stability {{stability}}',
+  'brain.profile.class.style': 'Style',
+  'brain.profile.class.identity': 'Identity',
+  'brain.profile.class.tooling': 'Tooling',
+  'brain.profile.class.veto': 'Vetoes',
+  'brain.profile.class.goal': 'Goals',
+  'brain.profile.class.channel': 'Channel',
+  'brain.profile.class.other': 'Other',
+
   'brain.tabs.sources': 'स्रोत',
   'brain.tabs.sync': 'सिंक',
   'brain.tabs.orchestration': 'ऑर्केस्ट्रेशन',
@@ -1612,6 +1639,10 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'भेजा गया',
   'privacy.leavesDevice': 'डिवाइस से बाहर जाता है',
   'privacy.staysLocal': 'लोकल रहता है',
+  'privacy.selfLearning': 'Self-learning',
+  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningDesc':
+    'When on, OpenHuman may infer how you like to work and inject Active preferences into new sessions. Default is off. Manage facts on Brain → Profile.',
   'privacy.anonymizedAnalytics': 'प्रोडक्ट एनालिटिक्स',
   'privacy.shareAnonymizedData': 'प्रोडक्ट एनालिटिक्स और डायग्नॉस्टिक्स शेयर करें',
   'privacy.shareAnonymizedDataDesc':

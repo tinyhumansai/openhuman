@@ -62,6 +62,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.feat3Body': '당신의 승인하에 에이전트 간 지갑 기반 결제가 이루어집니다.',
   'brain.header.graph': '당신의 에이전트가 아는 지식이 어떻게 연결되는지: 사람, 주제, 기억.',
   'brain.header.goals': '당신의 에이전트가 무엇을 위해, 왜 노력하고 있는지.',
+  'brain.header.profile': '학습된 선호와 매 답변에 남는 내용.',
   'brain.header.sources': '당신의 에이전트가 학습하는 데이터.',
   'brain.header.sync': '기억을 최신 상태로 유지하고 무엇이 바뀌었는지 검토하세요.',
   'brain.header.subconscious': '당신이 자리를 비운 동안 실행되는 배경 사고.',
@@ -597,6 +598,7 @@ const messages: TranslationMap = {
   'brain.tabs.subconscious': '잠재의식',
   'brain.tabs.graph': '그래프',
   'brain.tabs.goals': '목표',
+  'brain.tabs.profile': '프로필',
   'brain.goals.title': '장기 목표',
   'brain.goals.description':
     '당신과 함께 일하기 위한 에이전트의 지속적인 목표입니다. 여기서 편집하거나 리플렉트로 업데이트하세요.',
@@ -610,6 +612,31 @@ const messages: TranslationMap = {
   'brain.goals.editGoal': '목표 편집',
   'brain.goals.deleteGoal': '목표 삭제',
   'brain.goals.actionError': '문제가 발생했습니다. 다시 시도해 주세요.',
+  'brain.profile.title': '학습된 프로필',
+  'brain.profile.description':
+    'Facts the agent has inferred about how you like to work. Pin to keep them; forget to block them from returning.',
+  'brain.profile.loading': 'Loading preferences…',
+  'brain.profile.empty':
+    'No learned preferences yet. Turn on self-learning and keep chatting, or rebuild after new evidence arrives.',
+  'brain.profile.rebuild': '재구축',
+  'brain.profile.rebuilding': 'Rebuilding…',
+  'brain.profile.pin': '고정',
+  'brain.profile.unpin': '고정 해제',
+  'brain.profile.forget': '잊기',
+  'brain.profile.pinned': '(pinned)',
+  'brain.profile.learningEnabled': '자기 학습',
+  'brain.profile.learningOffHint':
+    'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
+  'brain.profile.actionError': 'Something went wrong. Please try again.',
+  'brain.profile.meta': '{{state}} · stability {{stability}}',
+  'brain.profile.class.style': 'Style',
+  'brain.profile.class.identity': 'Identity',
+  'brain.profile.class.tooling': 'Tooling',
+  'brain.profile.class.veto': 'Vetoes',
+  'brain.profile.class.goal': 'Goals',
+  'brain.profile.class.channel': 'Channel',
+  'brain.profile.class.other': 'Other',
+
   'brain.tabs.sources': '소스',
   'brain.tabs.sync': '동기화',
   'brain.tabs.orchestration': '오케스트레이션',
@@ -1601,6 +1628,10 @@ const messages: TranslationMap = {
   'privacy.sentTo': '전송 대상',
   'privacy.leavesDevice': '기기를 떠남',
   'privacy.staysLocal': '로컬에 유지됨',
+  'privacy.selfLearning': 'Self-learning',
+  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningDesc':
+    'When on, OpenHuman may infer how you like to work and inject Active preferences into new sessions. Default is off. Manage facts on Brain → Profile.',
   'privacy.anonymizedAnalytics': '제품 분석',
   'privacy.shareAnonymizedData': '제품 분석 및 진단 공유',
   'privacy.shareAnonymizedDataDesc':

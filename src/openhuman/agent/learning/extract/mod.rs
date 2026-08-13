@@ -9,7 +9,9 @@
 //! | [`signature`] | `DomainEvent::DocumentCanonicalized` (email) | Identity |
 //! | [`heuristics`] | Post-turn hook | Style + Veto |
 //! | [`summary_facets`] | LLM summariser output parsing | All classes |
+//! | [`channel`] | Agent session construction | Channel |
 
+pub mod channel;
 pub mod heuristics;
 pub mod signature;
 pub mod summary_facets;

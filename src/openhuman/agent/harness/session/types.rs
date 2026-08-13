@@ -109,9 +109,10 @@ pub struct Agent {
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
-    /// When `true`, pinned preferences stored via `remember_preference` are
-    /// fetched from the `user_profile` namespace and injected into the system
-    /// prompt on every turn, independent of `learning_enabled`.
+    /// When `true`, Lane A general preferences (`user_pref_general` from
+    /// `save_preference`) are injected into the system prompt on every turn,
+    /// independent of `learning_enabled`. Does not read the retired
+    /// `user_profile` KV namespace for standing prefs.
     pub(super) explicit_preferences_enabled: bool,
     pub(super) event_session_id: String,
     pub(super) event_channel: String,
