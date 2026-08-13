@@ -28,21 +28,31 @@ if (Test-BridgeUp) {
     exit 0
 }
 
-$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-if (-not $npm) { $npm = Get-Command npm -ErrorAction SilentlyContinue }
-if (-not $npm) {
-    Write-Host '[cursor-bridge] npm not found on PATH'
+$node = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }
+if (-not $node) {
+    Write-Host '[cursor-bridge] node not found on PATH'
     exit 1
 }
 
 Write-Host '[cursor-bridge] starting...'
-Start-Process -FilePath $npm.Source -ArgumentList 'start' -WorkingDirectory $here -WindowStyle Hidden
+$proc = Start-Process -FilePath $node.Source `
+    -ArgumentList '--experimental-strip-types','src/index.ts' `
+    -WorkingDirectory $here `
+    -WindowStyle Hidden `
+    -PassThru
 
 $deadline = (Get-Date).AddSeconds(15)
 while ((Get-Date) -lt $deadline) {
     if (Test-BridgeUp) {
         Write-Host "[cursor-bridge] listening on $listenUrl"
         exit 0
+    }
+    if ($proc.HasExited) {
+        $code = $proc.ExitCode
+        if ($code -eq 0) { $code = 1 }
+        Write-Host "[cursor-bridge] process exited with status $code before becoming healthy"
+        exit $code
     }
     Start-Sleep -Milliseconds 400
 }
