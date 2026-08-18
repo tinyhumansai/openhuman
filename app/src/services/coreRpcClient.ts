@@ -606,13 +606,7 @@ export async function testCoreRpcConnection(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  return fetch(rpcUrl, {
-    method: 'POST',
-    headers,
-    body,
-    signal: init?.signal,
-    redirect: 'error',
-  });
+  return fetch(rpcUrl, { method: 'POST', headers, body, signal: init?.signal, redirect: 'error' });
 }
 
 export async function getCoreHttpBaseUrl(): Promise<string> {
