@@ -13,6 +13,13 @@ const scriptSourceTokens =
     .find(directive => directive.startsWith('script-src '))
     ?.split(/\s+/)
     .slice(1) ?? [];
+const connectSourceTokens =
+  config.app?.security?.csp
+    ?.split(';')
+    .map(directive => directive.trim())
+    .find(directive => directive.startsWith('connect-src '))
+    ?.split(/\s+/)
+    .slice(1) ?? [];
 
 describe('Tauri content security policy', () => {
   it('allows scripts served from the Wry custom scheme', () => {
@@ -23,5 +30,9 @@ describe('Tauri content security policy', () => {
     expect(scriptSourceTokens).toEqual(
       expect.arrayContaining(["'self'", "'wasm-unsafe-eval'", 'https://www.googletagmanager.com'])
     );
+  });
+
+  it('allows remote cloud runtime HTTP and WebSocket connections', () => {
+    expect(connectSourceTokens).toEqual(expect.arrayContaining(['http:', 'ws:']));
   });
 });
