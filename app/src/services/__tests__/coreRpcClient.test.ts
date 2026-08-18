@@ -35,6 +35,7 @@ describe('coreRpcClient', () => {
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
     expect(body.method).toBe('openhuman.auth_get_state');
+    expect(requestInit.redirect).toBe('error');
   });
 
   test('throws clean error when JSON-RPC error payload is returned', async () => {

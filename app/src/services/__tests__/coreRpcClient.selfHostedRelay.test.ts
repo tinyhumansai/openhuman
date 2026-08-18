@@ -93,6 +93,7 @@ describe('testCoreRpcConnection (self-hosted runtime, #3865)', () => {
     await testCoreRpcConnection('http://127.0.0.1:7788/rpc', 'tok123');
 
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect((vi.mocked(fetch).mock.calls[0][1] as RequestInit).redirect).toBe('error');
     expect(invoke).not.toHaveBeenCalledWith('relay_http_rpc', expect.anything());
   });
 

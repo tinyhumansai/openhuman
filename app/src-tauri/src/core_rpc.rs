@@ -142,6 +142,7 @@ pub(crate) async fn post_json_rpc(
 ) -> Result<RelayHttpResponse, String> {
     validate_rpc_url(url)?;
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
