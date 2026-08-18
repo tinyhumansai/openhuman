@@ -16,7 +16,7 @@ import debug from 'debug';
 import { clearCoreRpcUrlCache } from '../../services/coreRpcClient';
 import type { CoreMode } from '../../store/coreModeSlice';
 import { APP_VERSION } from '../../utils/config';
-import { storeRpcUrl } from '../../utils/configPersistence';
+import { isAllowedCloudRpcUrl, normalizeRpcUrl, storeRpcUrl } from '../../utils/configPersistence';
 
 const log = debug('boot-check');
 const logError = debug('boot-check:error');
@@ -312,7 +312,12 @@ export async function runBootCheck(
   let safeUrl: string | null = null;
   let safeOrigin: string | null = null;
   try {
-    const parsed = new URL(mode.url);
+    const normalizedUrl = normalizeRpcUrl(mode.url);
+    if (!isAllowedCloudRpcUrl(normalizedUrl)) {
+      logError('[boot-check] cloud mode — unauthorized URL, refusing to connect');
+      return { kind: 'unreachable', reason: 'Configured cloud URL is not allowed' };
+    }
+    const parsed = new URL(normalizedUrl);
     safeOrigin = parsed.origin;
     safeUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
   } catch {

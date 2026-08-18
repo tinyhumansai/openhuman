@@ -59,7 +59,9 @@ export function getStoredRpcUrl(): string {
   try {
     const stored = localStorage.getItem(RPC_URL_STORAGE_KEY);
     if (stored && stored.trim().length > 0) {
-      return normalizeRpcUrl(stored);
+      const normalized = normalizeRpcUrl(stored);
+      if (isAllowedCloudRpcUrl(normalized)) return normalized;
+      localStorage.removeItem(RPC_URL_STORAGE_KEY);
     }
   } catch {
     // localStorage might be unavailable in some environments
@@ -84,7 +86,9 @@ export function peekStoredRpcUrl(): string | null {
   try {
     const stored = localStorage.getItem(RPC_URL_STORAGE_KEY);
     if (stored && stored.trim().length > 0) {
-      return normalizeRpcUrl(stored);
+      const normalized = normalizeRpcUrl(stored);
+      if (isAllowedCloudRpcUrl(normalized)) return normalized;
+      localStorage.removeItem(RPC_URL_STORAGE_KEY);
     }
   } catch {
     console.warn('[configPersistence] Unable to access localStorage');
@@ -101,6 +105,11 @@ export function storeRpcUrl(url: string): void {
   try {
     if (url && url.trim().length > 0) {
       const normalized = normalizeRpcUrl(url);
+      if (!isAllowedCloudRpcUrl(normalized)) {
+        localStorage.removeItem(RPC_URL_STORAGE_KEY);
+        console.warn('[configPersistence] Refusing to store unauthorized RPC URL');
+        return;
+      }
       localStorage.setItem(RPC_URL_STORAGE_KEY, normalized);
       log('Stored RPC URL: %s', redactRpcUrlForLog(normalized));
     } else {
@@ -185,6 +194,7 @@ export function isAllowedCloudRpcUrl(url: string): boolean {
   if (!isValidRpcUrl(url)) return false;
 
   const parsed = new URL(url.trim());
+  if (parsed.username || parsed.password) return false;
   if (parsed.protocol === 'https:') return true;
   return parsed.protocol === 'http:' && isLocalOrPrivateNetworkHost(parsed.hostname);
 }

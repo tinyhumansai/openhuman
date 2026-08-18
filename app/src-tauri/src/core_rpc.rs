@@ -1,5 +1,7 @@
 //! Shared helpers for authenticated calls from the Tauri host to the local core RPC.
 
+use std::net::{IpAddr, Ipv6Addr};
+use std::str::FromStr;
 use std::time::Duration;
 
 use reqwest::RequestBuilder;
@@ -38,6 +40,50 @@ fn relay_bearer_header(token: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|t| !t.is_empty())
         .map(|t| format!("Bearer {t}"))
+}
+
+fn is_local_or_private_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") || host.ends_with(".localhost") {
+        return true;
+    }
+
+    match IpAddr::from_str(host) {
+        Ok(IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            a == 10
+                || a == 127
+                || (a == 172 && (16..=31).contains(&b))
+                || (a == 192 && b == 168)
+                || (a == 169 && b == 254)
+                || (a == 100 && (64..=127).contains(&b))
+        }
+        Ok(IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            ip == Ipv6Addr::LOCALHOST
+                || (first & 0xffc0) == 0xfe80
+                || (first & 0xfe00) == 0xfc00
+        }
+        Err(_) => false,
+    }
+}
+
+fn validate_rpc_url(url: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(url).map_err(|_| "invalid core RPC URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("core RPC URL must use HTTP or HTTPS".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("core RPC URL must not contain credentials".to_string());
+    }
+    if parsed.scheme() == "https"
+        || parsed
+            .host_str()
+            .map(is_local_or_private_host)
+            .unwrap_or(false)
+    {
+        return Ok(parsed);
+    }
+    Err("cleartext core RPC is limited to local/private hosts".to_string())
 }
 
 /// Redact a relay URL before it lands in a log line or error string: drop the
@@ -81,6 +127,7 @@ pub(crate) async fn relay_http_rpc(
     token: Option<String>,
     body: String,
 ) -> Result<RelayHttpResponse, String> {
+    validate_rpc_url(&url)?;
     post_json_rpc(&url, token.as_deref(), body).await
 }
 
@@ -94,6 +141,7 @@ pub(crate) async fn post_json_rpc(
     token: Option<&str>,
     body: String,
 ) -> Result<RelayHttpResponse, String> {
+    validate_rpc_url(url)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -185,7 +233,22 @@ fn unwrap_rpc_outcome(value: serde_json::Value) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::relay_bearer_header;
+    use super::{relay_bearer_header, validate_rpc_url};
+
+    #[test]
+    fn allows_https_and_local_or_private_http() {
+        assert!(validate_rpc_url("https://core.example.com/rpc").is_ok());
+        assert!(validate_rpc_url("http://127.0.0.1:7788/rpc").is_ok());
+        assert!(validate_rpc_url("http://192.168.1.74:7788/rpc").is_ok());
+        assert!(validate_rpc_url("http://100.116.244.64:7788/rpc").is_ok());
+    }
+
+    #[test]
+    fn rejects_public_http_and_embedded_credentials() {
+        assert!(validate_rpc_url("http://core.example.com/rpc").is_err());
+        assert!(validate_rpc_url("http://user:pass@192.168.1.74:7788/rpc").is_err());
+        assert!(validate_rpc_url("ftp://127.0.0.1:7788/rpc").is_err());
+    }
 
     #[test]
     fn bearer_header_present_for_real_token() {

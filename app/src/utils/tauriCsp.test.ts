@@ -32,7 +32,25 @@ describe('Tauri content security policy', () => {
     );
   });
 
-  it('allows remote cloud runtime HTTP and WebSocket connections', () => {
-    expect(connectSourceTokens).toEqual(expect.arrayContaining(['http:', 'ws:']));
+  it('preserves required connections without broad cleartext sources', () => {
+    expect(connectSourceTokens).toEqual(
+      expect.arrayContaining([
+        "'self'",
+        'ipc:',
+        'http://ipc.localhost',
+        'http://127.0.0.1:*',
+        'http://localhost:*',
+        'ws://127.0.0.1:*',
+        'ws://localhost:*',
+        'https:',
+        'wss:',
+        'data:',
+        'blob:',
+        'https://*.google-analytics.com',
+        'https://*.analytics.google.com',
+        'https://*.googletagmanager.com',
+      ])
+    );
+    expect(connectSourceTokens).not.toEqual(expect.arrayContaining(['http:', 'ws:']));
   });
 });

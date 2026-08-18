@@ -104,4 +104,22 @@ describe('testCoreRpcConnection (self-hosted runtime, #3865)', () => {
     expect(res.status).toBe(401);
     expect(res.ok).toBe(false);
   });
+
+  test('rejects public cleartext HTTP before sending a token or request', async () => {
+    await expect(testCoreRpcConnection('http://core.example.com/rpc', 'tok123')).rejects.toThrow(
+      'Core RPC URL must use HTTPS or local/private HTTP'
+    );
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('rejects URLs that embed credentials before sending a token or request', async () => {
+    await expect(
+      testCoreRpcConnection('https://user:pass@core.example.com/rpc', 'tok123')
+    ).rejects.toThrow('Core RPC URL must use HTTPS or local/private HTTP');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

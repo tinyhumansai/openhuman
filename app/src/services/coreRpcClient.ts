@@ -3,7 +3,12 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredCoreToken, normalizeRpcUrl, peekStoredRpcUrl } from '../utils/configPersistence';
+import {
+  getStoredCoreToken,
+  isAllowedCloudRpcUrl,
+  normalizeRpcUrl,
+  peekStoredRpcUrl,
+} from '../utils/configPersistence';
 import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 // The bridge-gap-aware Tauri guard: returns true only when the IPC bridge
@@ -516,6 +521,12 @@ export function rpcUrlNeedsShellRelay(rpcUrl: string): boolean {
   return !isPotentiallyTrustworthyHost(parsed.hostname);
 }
 
+function assertAllowedRpcUrl(rpcUrl: string): void {
+  if (!isAllowedCloudRpcUrl(rpcUrl)) {
+    throw new Error('Core RPC URL must use HTTPS or local/private HTTP');
+  }
+}
+
 /**
  * Perform a JSON-RPC POST via the Rust host (`relay_http_rpc` Tauri command),
  * returning a synthesized `Response` so callers reuse their existing
@@ -530,6 +541,7 @@ async function relayRpcViaShell(
   body: string,
   signal?: AbortSignal
 ): Promise<Response> {
+  assertAllowedRpcUrl(rpcUrl);
   const invokePromise = invoke<{ status: number; body: string }>('relay_http_rpc', {
     url: rpcUrl,
     token: token ?? null,
@@ -578,6 +590,7 @@ export async function testCoreRpcConnection(
   init?: { signal?: AbortSignal }
 ): Promise<Response> {
   const rpcUrl = normalizeRpcUrl(url);
+  assertAllowedRpcUrl(rpcUrl);
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} });
 
@@ -667,7 +680,9 @@ export async function callCoreRpc<T>({
   };
 
   try {
-    const [rpcUrl, token] = await Promise.all([getCoreRpcUrl(), getCoreRpcToken()]);
+    const rpcUrl = await getCoreRpcUrl();
+    assertAllowedRpcUrl(rpcUrl);
+    const token = await getCoreRpcToken();
     coreRpcLog('HTTP request', { id: payload.id, method: payload.method });
     if (normalizedMethod === 'openhuman.auth_store_session') {
       coreRpcLog('[rpc] auth_store_session routing', {

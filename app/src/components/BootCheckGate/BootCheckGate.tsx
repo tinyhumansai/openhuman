@@ -29,6 +29,7 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   clearStoredCoreMode,
   clearStoredCoreToken,
+  isAllowedCloudRpcUrl,
   isLocalOrPrivateNetworkHost,
   normalizeRpcUrl,
   storeCoreMode,
@@ -44,10 +45,9 @@ const log = debug('boot-check');
 const logError = debug('boot-check:error');
 
 /**
- * Plain HTTP to a public host is insecure (unencrypted traffic), but we no
- * longer block it — return a non-blocking warning string so the UI can nudge
- * the user toward HTTPS while still letting them proceed. Returns null when the
- * URL is empty, unparseable, HTTPS, or points at a local/private host.
+ * Plain HTTP to a public host is insecure (unencrypted traffic). Keep the
+ * warning visible while the user edits the field; validation below prevents
+ * committing that URL and directs them to HTTPS instead.
  */
 function httpPublicHostWarning(
   rawUrl: string,
@@ -162,6 +162,10 @@ function ModePicker({ onConfirm }: PickerProps) {
       const parsed = new URL(normalizedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError(t('bootCheck.urlMustStartWith'));
+        return null;
+      }
+      if (!isAllowedCloudRpcUrl(normalizedUrl)) {
+        setUrlError(t('bootCheck.httpPublicWarning'));
         return null;
       }
     } catch {

@@ -278,6 +278,11 @@ describe('configPersistence', () => {
       expect(isAllowedCloudRpcUrl('http://core.example.com/rpc')).toBe(false);
       expect(isAllowedCloudRpcUrl('http://8.8.8.8:7788/rpc')).toBe(false);
     });
+
+    it('rejects URLs that embed credentials', () => {
+      expect(isAllowedCloudRpcUrl('https://user:pass@core.example.com/rpc')).toBe(false);
+      expect(isAllowedCloudRpcUrl('http://user:pass@192.168.1.100:7788/rpc')).toBe(false);
+    });
   });
 
   describe('normalizeRpcUrl — edge cases', () => {
@@ -342,15 +347,15 @@ describe('configPersistence', () => {
 
   describe('clearStoredRpcUrl + getStoredRpcUrl', () => {
     it('getStoredRpcUrl returns the default after clearStoredRpcUrl', () => {
-      storeRpcUrl('http://some-host:9999/rpc');
-      expect(getStoredRpcUrl()).toBe('http://some-host:9999/rpc');
+      storeRpcUrl('http://10.0.0.5:9999/rpc');
+      expect(getStoredRpcUrl()).toBe('http://10.0.0.5:9999/rpc');
 
       clearStoredRpcUrl();
       expect(getStoredRpcUrl()).toBe('http://127.0.0.1:7788/rpc');
     });
 
     it('localStorage key is null after clearStoredRpcUrl', () => {
-      storeRpcUrl('http://some-host:9999/rpc');
+      storeRpcUrl('http://10.0.0.5:9999/rpc');
       clearStoredRpcUrl();
       expect(localStorage.getItem('openhuman_core_rpc_url')).toBeNull();
     });

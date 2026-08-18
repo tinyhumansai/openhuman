@@ -33,6 +33,7 @@ import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { CORE_RPC_URL } from '../../../utils/config';
 import {
   clearStoredCoreToken,
+  isAllowedCloudRpcUrl,
   isLocalOrPrivateNetworkHost,
   isTauriEnvironment,
   normalizeRpcUrl,
@@ -190,6 +191,10 @@ const CoreConnectionPanel = () => {
       // description, leaking a secret. Reject it.
       if (parsed.username || parsed.password) {
         setFormError(t('bootCheck.validUrlRequired'));
+        return null;
+      }
+      if (!isAllowedCloudRpcUrl(normalized)) {
+        setFormError(t('bootCheck.httpPublicWarning'));
         return null;
       }
     } catch {
