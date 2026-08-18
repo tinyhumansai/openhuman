@@ -397,7 +397,7 @@ describe('runBootCheck — error and edge branches', () => {
     const result = await runBootCheck({ kind: 'cloud', url: 'not a url' }, transport);
     expect(result.kind).toBe('unreachable');
     if (result.kind === 'unreachable') {
-      expect(result.reason).toContain('valid URL');
+      expect(result.reason).toContain('not allowed');
     }
     expect(transport.callRpc).not.toHaveBeenCalled();
   });

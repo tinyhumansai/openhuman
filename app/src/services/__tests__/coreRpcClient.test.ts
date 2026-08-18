@@ -531,11 +531,11 @@ describe('coreRpcClient', () => {
       const fetchMock = vi.mocked(fetch);
       fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
 
-      await testCoreRpcConnection('http://example.test:7788/rpc');
+      await testCoreRpcConnection('https://example.test:7788/rpc');
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, init] = fetchMock.mock.calls[0];
-      expect(url).toBe('http://example.test:7788/rpc');
+      expect(url).toBe('https://example.test:7788/rpc');
       const requestInit = init as RequestInit;
       expect(requestInit.method).toBe('POST');
       expect(JSON.parse(requestInit.body as string)).toMatchObject({
@@ -566,7 +566,7 @@ describe('coreRpcClient', () => {
       const fetchMock = vi.mocked(fetch);
       fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
 
-      await testCoreRpcConnection('http://example.test:7788/rpc');
+      await testCoreRpcConnection('https://example.test:7788/rpc');
 
       const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
       const headers = requestInit.headers as Record<string, string>;
@@ -604,7 +604,7 @@ describe('coreRpcClient', () => {
       const probe = { ok: false, status: 405, statusText: 'Method Not Allowed' } as Response;
       fetchMock.mockResolvedValueOnce(probe);
 
-      const response = await testCoreRpcConnection('http://example.test:7788/rpc');
+      const response = await testCoreRpcConnection('https://example.test:7788/rpc');
 
       expect(response).toBe(probe);
       expect(response.status).toBe(405);
@@ -1140,6 +1140,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'https://core.example.com/rpc',
       getStoredCoreToken: () => 'cloud-token-abc',
+      isAllowedCloudRpcUrl: () => true,
       normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
@@ -1184,6 +1185,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => 'https://core.example.com/rpc',
       getStoredCoreToken: () => storedToken,
+      isAllowedCloudRpcUrl: () => true,
       normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
@@ -1212,6 +1214,7 @@ describe('getCoreRpcToken (cloud-mode persistence)', () => {
     vi.doMock('../../utils/configPersistence', () => ({
       peekStoredRpcUrl: () => null,
       getStoredCoreToken: () => null,
+      isAllowedCloudRpcUrl: () => true,
       normalizeRpcUrl: normalizeMockRpcUrl,
     }));
     vi.mocked(isTauri).mockReturnValue(true);
