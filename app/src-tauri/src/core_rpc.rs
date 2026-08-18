@@ -127,7 +127,6 @@ pub(crate) async fn relay_http_rpc(
     token: Option<String>,
     body: String,
 ) -> Result<RelayHttpResponse, String> {
-    validate_rpc_url(&url)?;
     post_json_rpc(&url, token.as_deref(), body).await
 }
 

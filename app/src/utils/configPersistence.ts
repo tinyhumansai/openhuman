@@ -88,7 +88,6 @@ export function peekStoredRpcUrl(): string | null {
     if (stored && stored.trim().length > 0) {
       const normalized = normalizeRpcUrl(stored);
       if (isAllowedCloudRpcUrl(normalized)) return normalized;
-      localStorage.removeItem(RPC_URL_STORAGE_KEY);
     }
   } catch {
     console.warn('[configPersistence] Unable to access localStorage');

@@ -313,11 +313,11 @@ export async function runBootCheck(
   let safeOrigin: string | null = null;
   try {
     const normalizedUrl = normalizeRpcUrl(mode.url);
+    const parsed = new URL(normalizedUrl);
     if (!isAllowedCloudRpcUrl(normalizedUrl)) {
       logError('[boot-check] cloud mode — unauthorized URL, refusing to connect');
       return { kind: 'unreachable', reason: 'Configured cloud URL is not allowed' };
     }
-    const parsed = new URL(normalizedUrl);
     safeOrigin = parsed.origin;
     safeUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
   } catch {

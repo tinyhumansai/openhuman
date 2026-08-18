@@ -239,6 +239,7 @@ describe('BootCheckGate — picker (unset mode)', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
+    expect(mockRunBootCheck).not.toHaveBeenCalled();
     expect(screen.getByText(/traffic will not be encrypted/i)).toBeInTheDocument();
     expect(screen.getByText('Select a Runtime')).toBeInTheDocument();
   });
