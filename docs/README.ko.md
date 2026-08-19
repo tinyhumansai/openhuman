@@ -169,11 +169,11 @@ n8n과 Zapier에서 깊은 영감을 받은 [워크플로우](https://tinyhumans
 _AGI와 인공 의식을 향해 나아가고 계신가요? 저장소에 스타를 눌러 다른 사람들도 이 길을 찾을 수 있도록 도와주세요._
 
 <p align="center">
- <a href="https://www.star-history.com/#tinyhumansai/openhuman&type=date&legend=top-left">
+ <a href="https://star-history.dera.page/#tinyhumansai/openhuman&type=date&legend=top-left">
  <picture>
- <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
- <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
- <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
+ <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=tinyhumansai/openhuman&type=date&theme=dark&legend=top-left" />
+ <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
+ <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
  </picture>
  </a>
 </p>
