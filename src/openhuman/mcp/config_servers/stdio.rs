@@ -311,4 +311,28 @@ mod tests {
             "expected Node.js guidance, got: {err}"
         );
     }
+
+    #[tokio::test]
+    async fn initialize_missing_uvx_mentions_uv_and_docs_link() {
+        let client = McpStdioClient::new(
+            "uvx".to_string(),
+            Vec::new(),
+            vec![("PATH".to_string(), "/openhuman/does-not-exist".to_string())],
+            None,
+            McpClientIdentityConfig::default(),
+        );
+        let err = client
+            .initialize()
+            .await
+            .expect_err("missing uvx must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("uv (Python)"),
+            "expected uv guidance, got: {msg}"
+        );
+        assert!(
+            msg.contains("https://docs.astral.sh/uv/"),
+            "expected uv docs link, got: {msg}"
+        );
+    }
 }

@@ -148,6 +148,14 @@ fn version_manager_dirs() -> Vec<PathBuf> {
         push_if_dir(&mut dirs, home.join(".cargo").join("bin"));
         dirs.extend(nvm_latest_bin_dir(&home));
     }
+    #[cfg(windows)]
+    {
+        if let Some(local_app_data) = dirs::data_local_dir() {
+            push_if_dir(&mut dirs, local_app_data.join("Programs").join("uv").join("bin"));
+            push_if_dir(&mut dirs, local_app_data.join("Programs").join("uv"));
+            push_if_dir(&mut dirs, local_app_data.join("bin"));
+        }
+    }
     for fixed in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/local/sbin"] {
         push_if_dir(&mut dirs, PathBuf::from(fixed));
     }
