@@ -73,4 +73,15 @@ describe('<FeedbackComments />', () => {
 
     expect(await screen.findByText('nope')).toBeInTheDocument();
   });
+
+  it('surfaces the string from a plain apiClient rejection', async () => {
+    mockGetFeedback.mockRejectedValueOnce({
+      success: false,
+      error: 'Comments are temporarily unavailable.',
+    });
+
+    renderWithProviders(<FeedbackComments feedbackId="f1" onCommentAdded={() => {}} />);
+
+    expect(await screen.findByText('Comments are temporarily unavailable.')).toBeInTheDocument();
+  });
 });

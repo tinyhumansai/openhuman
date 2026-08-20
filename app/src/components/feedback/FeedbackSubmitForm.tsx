@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../services/api/feedbackApi';
+import { messageForApiError } from '../../services/apiError';
 import type { CreateFeedbackResult, FeedbackQuality, FeedbackType } from '../../types/feedback';
 import { Button, TextArea, TextField } from '../ui';
 
@@ -20,24 +21,6 @@ const VALIDATE_DEBOUNCE_MS = 300;
 const QUALITY_HINT_ID = 'feedback-quality-hint';
 
 type SubmitStatus = 'idle' | 'loading' | 'accepted' | 'rejected' | 'error';
-
-/**
- * Reads the server's message off a rejected API call, falling back to
- * `fallback` when neither shape carries one. `apiClient` rejects with a plain
- * `{ success, error }` object rather than an `Error`, so an `instanceof Error`
- * check alone drops the reason and substitutes generic failure copy.
- */
-function messageForApiError(err: unknown, fallback: string): string {
-  if (err instanceof Error) return err.message;
-  // apiClient rejects with a plain `{ success, error }` object, not an Error.
-  // Without this the server's reason is replaced by generic failure copy, and a
-  // blocked submitter is told nothing they can act on.
-  if (err && typeof err === 'object' && 'error' in err) {
-    const { error } = err as { error?: unknown };
-    if (typeof error === 'string' && error.trim()) return error;
-  }
-  return fallback;
-}
 
 interface FeedbackSubmitFormProps {
   /** Called with the published item when a submission is accepted. */
