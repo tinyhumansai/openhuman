@@ -16,6 +16,7 @@ optdepends=(
 provides=('openhuman')
 conflicts=('openhuman')
 options=('!strip')
+makedepends=('python')
 source=(
   "OpenHuman_${pkgver}_amd64.AppImage::https://github.com/tinyhumansai/openhuman/releases/download/v${pkgver}/OpenHuman_${pkgver}_amd64.AppImage"
   'openhuman'
@@ -55,7 +56,12 @@ for a in d.get('assets'):
 ")
   local actual
   actual=$(sha256sum "OpenHuman_${pkgver}_amd64.AppImage" | cut -d' ' -f1)
-  if [ -n "${expected}" ] && [ "${expected}" != "${actual}" ]; then
+  if [ -z "${expected}" ]; then
+    echo "ERROR: Could not retrieve upstream digest for v${pkgver}." >&2
+    echo "  Cannot verify AppImage integrity; refusing to install unverified binary." >&2
+    exit 1
+  fi
+  if [ "${expected}" != "${actual}" ]; then
     echo "ERROR: AppImage sha256 mismatch for v${pkgver}" >&2
     echo "  expected: ${expected}" >&2
     echo "  actual:   ${actual}" >&2
