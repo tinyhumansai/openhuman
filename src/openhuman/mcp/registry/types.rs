@@ -193,8 +193,20 @@ pub struct ConnectedServerOverview {
     /// Short registry description — the primary capability hint surfaced in
     /// the orchestrator prompt (mirrors Composio's per-toolkit description).
     pub description: Option<String>,
+    /// The server's own `instructions` string from its `initialize` response —
+    /// the MCP-standard place a server states how its tools are meant to be
+    /// used. Stamped at connect time from the same handshake that fills
+    /// [`Self::tools`].
+    ///
+    /// Surfaced only when [`Self::description`] is empty. A server installed
+    /// from the registry inventory already ships a description, and rendering
+    /// both would say the same thing twice; a manually-added custom server has
+    /// no registry entry to describe it, and this is the only capability text
+    /// it can offer.
+    pub instructions: Option<String>,
     /// Advertised tools — retained for a tool-count fallback when a server
-    /// has no description, and for any caller that wants the full list.
+    /// has neither a description nor instructions, and for any caller that
+    /// wants the full list.
     pub tools: Vec<McpTool>,
 }
 
