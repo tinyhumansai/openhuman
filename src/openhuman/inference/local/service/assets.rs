@@ -708,7 +708,6 @@ impl LocalAiService {
             status.state = "downloading".to_string();
             status.warning = Some(format!("Downloading {label} asset"));
             match label {
-                "stt" => status.stt_state = "downloading".to_string(),
                 "tts" | "tts-config" => status.tts_state = "downloading".to_string(),
                 _ => {}
             }
@@ -750,7 +749,6 @@ impl LocalAiService {
             status.state = "downloading".to_string();
             status.warning = Some(format!("Downloading {label} asset"));
             match label {
-                "stt" => status.stt_state = "downloading".to_string(),
                 "tts" | "tts-config" => status.tts_state = "downloading".to_string(),
                 _ => {}
             }

@@ -365,7 +365,7 @@ export async function openhumanLocalAiDownloadsProgress(): Promise<
 }
 
 export async function openhumanLocalAiDownloadAsset(
-  capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
+  capability: 'chat' | 'vision' | 'embedding' | 'tts'
 ): Promise<CommandResponse<LocalAiAssetsStatus>> {
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
     method: 'openhuman.inference_download_asset',

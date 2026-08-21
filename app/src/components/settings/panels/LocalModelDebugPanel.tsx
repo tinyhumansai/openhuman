@@ -297,7 +297,7 @@ const LocalModelDebugPanel = ({ embedded = false }: LocalModelDebugPanelProps = 
   };
 
   const triggerAssetDownload = async (
-    capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
+    capability: 'chat' | 'vision' | 'embedding' | 'tts'
   ) => {
     if (!runtimeEnabled) return;
     setAssetDownloadBusy(prev => ({ ...prev, [capability]: true }));
