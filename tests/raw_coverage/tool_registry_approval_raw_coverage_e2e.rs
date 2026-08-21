@@ -31,7 +31,9 @@ use openhuman_core::openhuman::config::schema::{
 };
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::mcp::registry::connections;
-use openhuman_core::openhuman::mcp::registry::types::{CommandKind, InstalledServer, Transport};
+use openhuman_core::openhuman::mcp::registry::types::{
+    CommandKind, InstalledServer, ServerProvenance, Transport,
+};
 use openhuman_core::openhuman::security::{live_policy, SecurityPolicy};
 use openhuman_core::openhuman::tools::registry::{
     all_tool_registry_controller_schemas, all_tool_registry_registered_controllers,
@@ -288,6 +290,7 @@ fn test_mcp_server() -> InstalledServer {
         last_connected_at: None,
         transport: Transport::Stdio,
         enabled: true,
+        provenance: ServerProvenance::Registry,
     }
 }
 

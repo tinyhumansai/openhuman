@@ -15,7 +15,9 @@
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::mcp::registry::connections;
 use openhuman_core::openhuman::mcp::registry::store;
-use openhuman_core::openhuman::mcp::registry::types::{CommandKind, InstalledServer, Transport};
+use openhuman_core::openhuman::mcp::registry::types::{
+    CommandKind, InstalledServer, ServerProvenance, Transport,
+};
 
 fn fresh_workspace_config() -> (tempfile::TempDir, Config) {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -41,6 +43,7 @@ fn make_installed_server() -> InstalledServer {
         last_connected_at: None,
         transport: Transport::Stdio,
         enabled: true,
+        provenance: ServerProvenance::Registry,
     }
 }
 

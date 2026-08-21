@@ -9909,6 +9909,243 @@ async fn mcp_clients_lifecycle() {
         "disconnect noop should return status=disconnected: {disc_body}"
     );
 
+    // ── 8. add_custom persists a hand-entered stdio server ───────────────────
+    // No registry is consulted: the command comes straight from the caller,
+    // which is the whole point of the custom path.
+    let add_custom = post_json_rpc(
+        &rpc_base,
+        9908,
+        "openhuman.mcp_clients_add_custom",
+        json!({
+            "display_name": "My Local Server",
+            "transport": "stdio",
+            "command": "echo",
+            "args": ["hello"],
+            "env": { "API_KEY": "secret-value" },
+        }),
+    )
+    .await;
+    let add_result = assert_no_jsonrpc_error(&add_custom, "add_custom (stdio)");
+    let add_body = peel_logs_envelope(add_result);
+    let server = add_body
+        .get("server")
+        .expect("add_custom must return a 'server' record");
+    let custom_id = server
+        .get("server_id")
+        .and_then(Value::as_str)
+        .expect("server_id")
+        .to_string();
+    assert_eq!(
+        server.get("provenance").and_then(Value::as_str),
+        Some("custom"),
+        "a hand-entered server must be marked custom: {server}"
+    );
+    assert_eq!(
+        server
+            .get("transport")
+            .and_then(|t| t.get("kind"))
+            .and_then(Value::as_str),
+        Some("stdio"),
+        "transport must round-trip: {server}"
+    );
+    assert!(
+        server
+            .get("qualified_name")
+            .and_then(Value::as_str)
+            .is_some_and(|q| q.starts_with("custom/")),
+        "custom servers get a `custom/` identity: {server}"
+    );
+    assert_eq!(
+        server.get("qualified_name").and_then(Value::as_str),
+        Some("custom/my-local-server"),
+        "the first server slugs its display name: {server}"
+    );
+    // Env values are write-only — key names come back, secrets never do.
+    let serialized = server.to_string();
+    assert!(
+        !serialized.contains("secret-value"),
+        "add_custom response must not echo env values: {serialized}"
+    );
+
+    // ── 8b. a second server with the same display name gets a numeric suffix ──
+    // Two servers may legitimately share a name (same tool, different args), so
+    // the collision resolves to `-2` rather than erroring. Nothing else exercises
+    // this suffix path — the unit tests can't reach the DB dedup lookup.
+    let add_custom_dupe = post_json_rpc(
+        &rpc_base,
+        9918,
+        "openhuman.mcp_clients_add_custom",
+        json!({
+            "display_name": "My Local Server",
+            "transport": "stdio",
+            "command": "echo",
+            "args": ["hello"],
+            "env": {},
+        }),
+    )
+    .await;
+    let dupe_body = peel_logs_envelope(assert_no_jsonrpc_error(
+        &add_custom_dupe,
+        "add_custom (dupe name)",
+    ));
+    assert_eq!(
+        dupe_body
+            .get("server")
+            .and_then(|s| s.get("qualified_name"))
+            .and_then(Value::as_str),
+        Some("custom/my-local-server-2"),
+        "a shared display name must suffix, not error or collide: {dupe_body}"
+    );
+    // Clean it up so the later installed-list count stays deterministic.
+    let dupe_id = dupe_body
+        .get("server")
+        .and_then(|s| s.get("server_id"))
+        .and_then(Value::as_str)
+        .expect("dupe server_id")
+        .to_string();
+    let _ = post_json_rpc(
+        &rpc_base,
+        9919,
+        "openhuman.mcp_clients_uninstall",
+        json!({ "server_id": dupe_id }),
+    )
+    .await;
+
+    // ── 8c. `install` must refuse to clobber a hand-added row ────────────────
+    // `mcp_clients_install` dedupes on a free-form `qualified_name` before it
+    // fetches any listing, so without the provenance guard it would reach the
+    // custom `custom/my-local-server` row and merge caller env onto connection
+    // details the user typed (and it can't re-derive) — reachable as an agent
+    // tool. It must error instead.
+    let install_over_custom = post_json_rpc(
+        &rpc_base,
+        9920,
+        "openhuman.mcp_clients_install",
+        json!({
+            "qualified_name": "custom/my-local-server",
+            "env": { "INJECTED": "x" },
+        }),
+    )
+    .await;
+    let err = assert_jsonrpc_error(&install_over_custom, "install over custom row");
+    let msg = err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        msg.contains("custom server"),
+        "install must refuse a custom row with a clear message: {err}"
+    );
+
+    // ── 9. the custom server shows up in installed_list ──────────────────────
+    let list2 = post_json_rpc(
+        &rpc_base,
+        9909,
+        "openhuman.mcp_clients_installed_list",
+        json!({}),
+    )
+    .await;
+    let list2_body = peel_logs_envelope(assert_no_jsonrpc_error(
+        &list2,
+        "installed_list (after add)",
+    ));
+    let installed2 = list2_body
+        .get("installed")
+        .and_then(Value::as_array)
+        .expect("installed array");
+    assert_eq!(
+        installed2.len(),
+        1,
+        "the custom install must appear in the unified list: {installed2:?}"
+    );
+
+    // ── 10. add_custom rejects a non-http scheme ─────────────────────────────
+    let bad_scheme = post_json_rpc(
+        &rpc_base,
+        9910,
+        "openhuman.mcp_clients_add_custom",
+        json!({
+            "display_name": "Bad Remote",
+            "transport": "http_remote",
+            "url": "file:///etc/passwd",
+        }),
+    )
+    .await;
+    assert!(
+        bad_scheme.get("error").is_some(),
+        "a file:// endpoint must be rejected, not stored: {bad_scheme}"
+    );
+
+    // ── 11. update_custom edits the record it owns ───────────────────────────
+    let update_custom = post_json_rpc(
+        &rpc_base,
+        9911,
+        "openhuman.mcp_clients_update_custom",
+        json!({
+            "server_id": custom_id,
+            "display_name": "Renamed Server",
+            "transport": "http_remote",
+            "url": "http://127.0.0.1:9/mcp",
+            // Blank value = keep the stored secret — but only within a transport.
+            // This call also switches stdio -> http_remote, which re-scopes the
+            // map from subprocess env to request headers, so the stored value
+            // must NOT be kept.
+            "env": { "API_KEY": "" },
+        }),
+    )
+    .await;
+    let upd_body = peel_logs_envelope(assert_no_jsonrpc_error(&update_custom, "update_custom"));
+    let updated = upd_body.get("server").expect("updated server record");
+    assert_eq!(
+        updated.get("display_name").and_then(Value::as_str),
+        Some("Renamed Server")
+    );
+    assert_eq!(
+        updated
+            .get("transport")
+            .and_then(|t| t.get("kind"))
+            .and_then(Value::as_str),
+        Some("http_remote"),
+        "an edit must be able to switch transport: {updated}"
+    );
+    // `API_KEY` was added at step 8 as a *subprocess env var*. Carrying it across
+    // the switch would make `build_http_auth` send it to the endpoint as a
+    // header — a secret that only ever reached a local process, now on the wire,
+    // and invisible to the user because values are write-only. The core, not the
+    // form, has to enforce this: /rpc, the CLI and the iOS client never touch the
+    // React layer.
+    let kept_keys = updated
+        .get("env_keys")
+        .and_then(Value::as_array)
+        .expect("env_keys");
+    assert!(
+        !kept_keys.iter().any(|k| k.as_str() == Some("API_KEY")),
+        "a transport switch must not carry a stdio secret into request headers: {updated}"
+    );
+    // Identity is immutable across an edit.
+    assert_eq!(
+        updated.get("server_id").and_then(Value::as_str),
+        Some(custom_id.as_str())
+    );
+
+    // ── 12. update_custom refuses a server it does not own ───────────────────
+    let update_missing = post_json_rpc(
+        &rpc_base,
+        9912,
+        "openhuman.mcp_clients_update_custom",
+        json!({
+            "server_id": "00000000-0000-0000-0000-000000000004",
+            "display_name": "Nope",
+            "transport": "stdio",
+            "command": "echo",
+        }),
+    )
+    .await;
+    assert!(
+        update_missing.get("error").is_some(),
+        "update_custom on an unknown server must error: {update_missing}"
+    );
+
     mock_join.abort();
     rpc_join.abort();
 }

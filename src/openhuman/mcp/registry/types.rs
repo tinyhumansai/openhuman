@@ -73,6 +73,11 @@ impl Transport {
         }
     }
 
+    /// Whether this transport's env is HTTP headers (vs subprocess env vars).
+    pub fn is_http_remote(&self) -> bool {
+        matches!(self, Self::HttpRemote { .. })
+    }
+
     /// Inverse of `dispatch_kind`. Unknown / missing values fall back to
     /// `Stdio` so pre-migration rows (where the column didn't exist and
     /// every record was implicitly stdio) keep working with no behaviour
@@ -93,6 +98,52 @@ impl Transport {
         match self {
             Self::Stdio => None,
             Self::HttpRemote { url } => Some(url.as_str()),
+        }
+    }
+}
+
+// ── ServerProvenance ────────────────────────────────────────────────────────────
+
+/// Where an install record's connection details came from.
+///
+/// A `Registry` row was resolved from an upstream catalog, so its
+/// command/args/url can always be re-derived from `qualified_name` by
+/// re-fetching the listing. A `Custom` row was typed in by the user: there is
+/// no catalog entry behind it, so the stored fields are the only copy.
+///
+/// Two paths read this, and both refuse to cross the boundary rather than
+/// silently doing the wrong thing: `mcp_clients_install` will not refresh a
+/// `Custom` row (it has no listing to re-resolve from), and
+/// `mcp_clients_update_custom` will not edit a `Registry` row (the next
+/// re-resolve would revert the edit).
+///
+/// Persisted in the `mcp_servers.provenance` column. Every row written before that
+/// column existed was a catalog install, which is why both [`Self::parse`] and
+/// the serde default land on `Registry`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerProvenance {
+    /// Installed from an upstream registry (mcp_official / smithery).
+    Registry,
+    /// Added by the user with hand-entered command/args or URL.
+    Custom,
+}
+
+impl ServerProvenance {
+    /// Stable string identifier persisted in `mcp_servers.provenance`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Registry => "registry",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// Inverse of [`Self::as_str`]. Unknown / missing values fall back to
+    /// `Registry` so pre-migration rows keep working with no behaviour change.
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "custom" => Self::Custom,
+            _ => Self::Registry,
         }
     }
 }
@@ -145,6 +196,12 @@ pub struct InstalledServer {
     /// to `true` for legacy rows persisted before the column existed.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Whether this record came from a registry listing or was entered by the
+    /// user. `install` and `update_custom` both gate on it so neither edits a
+    /// row it cannot correctly re-derive. Defaults to `Registry` for legacy rows
+    /// persisted before the column existed.
+    #[serde(default = "default_provenance")]
+    pub provenance: ServerProvenance,
 }
 
 /// Default for `InstalledServer::transport` when the field is missing from
@@ -159,6 +216,13 @@ fn default_transport() -> Transport {
 /// migrated their construction site yet).
 fn default_enabled() -> bool {
     true
+}
+
+/// Default for `InstalledServer::provenance` when the field is missing from a
+/// serialised payload. Every record predating the column was a registry
+/// install, so that is the only safe default.
+fn default_provenance() -> ServerProvenance {
+    ServerProvenance::Registry
 }
 
 // ── McpTool ─────────────────────────────────────────────────────────────────
@@ -439,11 +503,46 @@ mod tests {
             last_connected_at: None,
             transport: Transport::Stdio,
             enabled: true,
+            provenance: ServerProvenance::Registry,
         };
         let v = serde_json::to_value(&server).unwrap();
         // env_keys present, but no raw values
         assert!(v.get("env_keys").is_some());
         assert!(v.get("env_values").is_none());
+    }
+
+    /// `provenance` round-trips as the snake_case string the store column holds,
+    /// and an absent field (every row written before the column existed)
+    /// re-hydrates as a registry install rather than defaulting a catalog
+    /// server into the hand-edited bucket.
+    #[test]
+    fn server_provenance_round_trips_and_defaults_to_registry() {
+        assert_eq!(ServerProvenance::parse("custom"), ServerProvenance::Custom);
+        assert_eq!(
+            ServerProvenance::parse("registry"),
+            ServerProvenance::Registry
+        );
+        assert_eq!(ServerProvenance::parse(""), ServerProvenance::Registry);
+        assert_eq!(
+            ServerProvenance::parse("garbage"),
+            ServerProvenance::Registry
+        );
+        assert_eq!(ServerProvenance::Custom.as_str(), "custom");
+        assert_eq!(ServerProvenance::Registry.as_str(), "registry");
+
+        let json = serde_json::json!({
+            "server_id": "uuid-legacy",
+            "qualified_name": "@test/legacy",
+            "display_name": "Legacy",
+            "command_kind": "node",
+            "command": "npx",
+            "args": [],
+            "env_keys": [],
+            "installed_at": 1_700_000_000_000_i64,
+        });
+        let server: InstalledServer =
+            serde_json::from_value(json).expect("legacy payload without `provenance` deserialises");
+        assert_eq!(server.provenance, ServerProvenance::Registry);
     }
 
     /// `Transport::dispatch_kind` is the column value persisted into

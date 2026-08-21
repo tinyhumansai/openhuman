@@ -19,7 +19,9 @@
 #![cfg(feature = "mcp")]
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::mcp::registry::types::{CommandKind, InstalledServer, Transport};
+use openhuman_core::openhuman::mcp::registry::types::{
+    CommandKind, InstalledServer, ServerProvenance, Transport,
+};
 use openhuman_core::openhuman::mcp::registry::{connections, ops, store};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ fn make_stub_server(qualified: &str) -> InstalledServer {
         last_connected_at: None,
         transport: Transport::Stdio,
         enabled: true,
+        provenance: ServerProvenance::Registry,
     }
 }
 

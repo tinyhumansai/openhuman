@@ -10,12 +10,13 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension as _};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::openhuman::config::Config;
 
-use super::types::{CommandKind, InstalledServer, Transport};
+use super::types::{CommandKind, InstalledServer, ServerProvenance, Transport};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,13 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     let db_path = db_dir.join("mcp_clients.db");
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open mcp_clients DB: {}", db_path.display()))?;
+    // SQLite's default busy handler is null: a writer that finds the DB locked
+    // fails immediately with SQLITE_BUSY. Several writers share this file — the
+    // 60s supervisor tick's `update_last_connected`, OAuth refresh's
+    // `persist_tokens`, and the custom-server RPCs — so the default turns routine
+    // contention into a surfaced error. Wait instead.
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .context("Failed to set busy_timeout on mcp_clients DB")?;
     init_schema(&conn)?;
     f(&conn)
 }
@@ -111,6 +119,16 @@ fn init_schema(conn: &Connection) -> Result<()> {
             "enabled column to mcp_servers",
         )?;
     }
+    // Distinguishes catalog installs from hand-entered ones. Every row that
+    // predates this column arrived through `mcp_clients_install`, i.e. from a
+    // registry, so the default backfills existing installs correctly.
+    if !existing_cols.iter().any(|c| c == "provenance") {
+        add_column_idempotent(
+            conn,
+            "ALTER TABLE mcp_servers ADD COLUMN provenance TEXT NOT NULL DEFAULT 'registry'",
+            "provenance column to mcp_servers",
+        )?;
+    }
 
     Ok(())
 }
@@ -176,8 +194,9 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
         "INSERT INTO mcp_servers
              (server_id, qualified_name, display_name, description, icon_url,
               command_kind, command, args_json, env_keys_json, config_json,
-              installed_at, last_connected_at, transport, deployment_url, enabled)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              installed_at, last_connected_at, transport, deployment_url, enabled,
+              provenance)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             server.server_id,
             server.qualified_name,
@@ -194,6 +213,7 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
             server.transport.dispatch_kind(),
             server.transport.deployment_url(),
             server.enabled as i64,
+            server.provenance.as_str(),
         ],
     )
     .context("Failed to insert mcp_server")?;
@@ -225,8 +245,9 @@ pub fn insert_server_if_absent_conn(conn: &Connection, server: &InstalledServer)
             "INSERT INTO mcp_servers
                      (server_id, qualified_name, display_name, description, icon_url,
                       command_kind, command, args_json, env_keys_json, config_json,
-                      installed_at, last_connected_at, transport, deployment_url, enabled)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                      installed_at, last_connected_at, transport, deployment_url, enabled,
+                      provenance)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
                  WHERE NOT EXISTS (SELECT 1 FROM mcp_servers WHERE qualified_name = ?2)",
             params![
                 server.server_id,
@@ -244,6 +265,7 @@ pub fn insert_server_if_absent_conn(conn: &Connection, server: &InstalledServer)
                 server.transport.dispatch_kind(),
                 server.transport.deployment_url(),
                 server.enabled as i64,
+                server.provenance.as_str(),
             ],
         )
         .context("Failed to insert mcp_server (if absent)")?;
@@ -303,7 +325,8 @@ pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers ORDER BY installed_at ASC",
     )?;
     let rows = stmt.query_map([], map_server_row)?;
@@ -334,7 +357,8 @@ pub fn find_server_by_qualified_name_conn(
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers WHERE qualified_name = ?1
          ORDER BY installed_at ASC LIMIT 1",
     )?;
@@ -353,7 +377,8 @@ pub fn get_server_conn(conn: &Connection, server_id: &str) -> Result<InstalledSe
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers WHERE server_id = ?1",
     )?;
     let mut rows = stmt.query(params![server_id])?;
@@ -419,6 +444,12 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
     // any row that predates the column so legacy installs keep auto-connecting.
     let enabled: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(1);
 
+    // `provenance` is likewise post-migration; an absent value means the row was
+    // written before custom servers existed, so it can only be a registry
+    // install.
+    let provenance_raw: String = row.get::<_, Option<String>>(15)?.unwrap_or_default();
+    let provenance = ServerProvenance::parse(&provenance_raw);
+
     Ok(InstalledServer {
         server_id: row.get(0)?,
         qualified_name: row.get(1)?,
@@ -434,7 +465,114 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
         last_connected_at: row.get(11)?,
         transport,
         enabled: enabled != 0,
+        provenance,
     })
+}
+
+/// Apply a custom-server edit whose env depends on what is currently stored, as
+/// one serializable read-modify-write.
+///
+/// Writes only the fields the custom-server form owns — `server_id`,
+/// `qualified_name`, `installed_at` and `provenance` stay put, so a rename can't
+/// orphan the row's env or relabel a registry install as custom.
+///
+/// The caller's `build` closure receives the current record **and** the stored
+/// env, both read *inside* the transaction, and returns the row to write plus
+/// the resolved env (or an error, e.g. a provenance rejection). Everything the
+/// edit decides on — provenance, the previous transport for credential-scope,
+/// the env — is read under the lock. Reading any of it outside races a
+/// concurrent edit: an OAuth refresh could rotate a token, or a concurrent
+/// `update_custom` could change the transport and store new-scope credentials,
+/// between a stale read and this write. Using the stale snapshot could revert
+/// the token or mis-classify the scope and carry the new credentials across it.
+/// `BEGIN IMMEDIATE` takes the write lock up front, so the read can't be
+/// undercut and two concurrent edits serialize at BEGIN rather than deadlocking
+/// on a `SHARED`→`RESERVED` upgrade. `get_server_conn` errors if the row was
+/// removed in the gap, so a concurrent uninstall can't produce a phantom write.
+pub fn update_custom_server_rmw<F>(
+    config: &Config,
+    server_id: &str,
+    build: F,
+) -> Result<InstalledServer>
+where
+    F: FnOnce(
+        &InstalledServer,
+        HashMap<String, String>,
+    ) -> Result<(InstalledServer, HashMap<String, String>)>,
+{
+    with_connection(config, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let outcome = (|| {
+            let current = get_server_conn(conn, server_id)?;
+            let stored = load_env_values_conn(conn, server_id)?;
+            let (server, env) = build(&current, stored)?;
+            update_server_custom_fields_conn(conn, server_id, &server)?;
+            set_env_values_conn(conn, server_id, &env)?;
+            Ok::<InstalledServer, anyhow::Error>(server)
+        })();
+        match outcome {
+            Ok(server) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(server)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    })
+}
+
+/// Insert a new custom-server row and its env values as one transaction.
+///
+/// Returns `false` when the `qualified_name` was taken between allocation and
+/// insert. Splitting the two writes would let the row commit and the env fail,
+/// leaving a server the caller was told did not save: it holds the name, so a
+/// retry allocates `-2`, and it is `enabled`, so the supervisor keeps launching
+/// the user's command every 60s with no credentials.
+pub fn insert_custom_server_with_env(
+    config: &Config,
+    server: &InstalledServer,
+    env: &HashMap<String, String>,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        if !insert_server_if_absent_conn(&tx, server)? {
+            return Ok(false);
+        }
+        set_env_values_conn(&tx, &server.server_id, env)?;
+        tx.commit()?;
+        Ok(true)
+    })
+}
+
+pub fn update_server_custom_fields_conn(
+    conn: &Connection,
+    server_id: &str,
+    server: &InstalledServer,
+) -> Result<()> {
+    let args_json = serde_json::to_string(&server.args)?;
+    let env_keys_json = serde_json::to_string(&server.env_keys)?;
+    conn.execute(
+        "UPDATE mcp_servers
+            SET display_name = ?1, description = ?2, command_kind = ?3,
+                command = ?4, args_json = ?5, env_keys_json = ?6,
+                transport = ?7, deployment_url = ?8
+          WHERE server_id = ?9",
+        params![
+            server.display_name,
+            server.description,
+            server.command_kind.as_str(),
+            server.command,
+            args_json,
+            env_keys_json,
+            server.transport.dispatch_kind(),
+            server.transport.deployment_url(),
+            server_id,
+        ],
+    )
+    .context("Failed to update custom mcp_server fields")?;
+    Ok(())
 }
 
 pub fn update_enabled(config: &Config, server_id: &str, enabled: bool) -> Result<()> {
@@ -562,6 +700,62 @@ mod tests {
         (f, conn)
     }
 
+    /// A `Config` pointing at a throwaway workspace, for the helpers that open
+    /// their own connection via `with_connection`.
+    fn test_config() -> (tempfile::TempDir, Config) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        (dir, config)
+    }
+
+    /// The RMW closure must see the record as it stands in the DB *now*, read
+    /// inside the transaction — not a snapshot the caller captured earlier. A
+    /// stale `transport` would let the credential-scope check mis-classify and
+    /// carry a concurrent edit's credentials across origins.
+    #[test]
+    fn rmw_passes_the_current_persisted_record_to_the_closure() {
+        let (_dir, config) = test_config();
+        let mut server = sample_server("srv-rmw");
+        server.provenance = ServerProvenance::Custom;
+        server.transport = Transport::Stdio;
+        insert_custom_server_with_env(&config, &server, &HashMap::new()).unwrap();
+
+        let seen_transport = std::cell::Cell::new("");
+        update_custom_server_rmw(&config, "srv-rmw", |current, _stored| {
+            // Read from the DB inside the txn, so it reflects the persisted Stdio.
+            seen_transport.set(current.transport.dispatch_kind());
+            let mut updated = current.clone();
+            updated.transport = Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string(),
+            };
+            Ok((updated, HashMap::new()))
+        })
+        .unwrap();
+
+        assert_eq!(seen_transport.get(), "stdio", "closure saw the DB record");
+        assert_eq!(
+            get_server(&config, "srv-rmw")
+                .unwrap()
+                .transport
+                .dispatch_kind(),
+            "http_remote",
+            "the write landed"
+        );
+    }
+
+    /// A record removed before the RMW acquires its lock errors instead of
+    /// committing a phantom write.
+    #[test]
+    fn rmw_errors_when_the_row_is_gone() {
+        let (_dir, config) = test_config();
+        let err = update_custom_server_rmw(&config, "nope", |current, stored| {
+            Ok((current.clone(), stored))
+        })
+        .expect_err("missing row must error");
+        assert!(err.to_string().contains("not found"), "got: {err}");
+    }
+
     fn sample_server(id: &str) -> InstalledServer {
         InstalledServer {
             server_id: id.to_string(),
@@ -578,6 +772,7 @@ mod tests {
             last_connected_at: None,
             transport: Transport::Stdio,
             enabled: true,
+            provenance: ServerProvenance::Registry,
         }
     }
 
@@ -599,7 +794,117 @@ mod tests {
                 url: url.to_string(),
             },
             enabled: true,
+            provenance: ServerProvenance::Registry,
         }
+    }
+
+    /// A hand-added server persists `provenance = 'custom'` and reads back as such,
+    /// which is what keeps `update_custom` from editing a catalog install.
+    #[test]
+    fn custom_provenance_round_trips() {
+        let (_f, conn) = open_test_conn();
+        let mut server = sample_server("srv-custom");
+        server.qualified_name = "custom/my-server".to_string();
+        server.provenance = ServerProvenance::Custom;
+        insert_server_conn(&conn, &server).unwrap();
+        let loaded = get_server_conn(&conn, "srv-custom").unwrap();
+        assert_eq!(loaded.provenance, ServerProvenance::Custom);
+        // The registry fixture must not drift into the custom bucket.
+        insert_server_conn(&conn, &sample_http_server("srv-reg", "https://x.io/mcp")).unwrap();
+        assert_eq!(
+            get_server_conn(&conn, "srv-reg").unwrap().provenance,
+            ServerProvenance::Registry
+        );
+    }
+
+    /// A row written before the `provenance` column existed must re-hydrate as a
+    /// registry install — `ADD COLUMN … DEFAULT 'registry'` backfills it, and
+    /// mislabelling an existing catalog install as custom would expose it to
+    /// hand-editing that the next catalog re-resolve would silently revert.
+    #[test]
+    fn pre_migration_rows_backfill_to_registry_provenance() {
+        let (_f, conn) = open_test_conn();
+        // Simulate the pre-migration shape by dropping the column back off.
+        conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN provenance;")
+            .expect("drop provenance column to emulate a pre-migration DB");
+        assert!(!mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "provenance"));
+
+        // Write the legacy row *while the column is absent* — that is the only
+        // way the DDL default is what supplies the value. Inserting after the
+        // migration would bind provenance explicitly and pass no matter what the
+        // default says: flip it to 'custom' and every existing catalog install
+        // would re-hydrate as Custom, which `refresh_existing_install` now
+        // refuses — breaking token rotation for every installed server.
+        conn.execute(
+            "INSERT INTO mcp_servers
+                (server_id, qualified_name, display_name, command_kind, command,
+                 args_json, env_keys_json, installed_at)
+             VALUES ('srv-legacy', 'ai.acme/legacy', 'Legacy', 'node', 'npx',
+                     '[]', '[]', 0)",
+            [],
+        )
+        .expect("insert a row with no provenance column, as a pre-migration build would");
+
+        // Re-running init_schema is what happens on the next launch.
+        init_schema(&conn).unwrap();
+        assert!(mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "provenance"));
+
+        assert_eq!(
+            get_server_conn(&conn, "srv-legacy").unwrap().provenance,
+            ServerProvenance::Registry
+        );
+    }
+
+    /// The edit path replaces connection details while leaving identity and
+    /// provenance alone — a rename must not re-key the row (which would orphan
+    /// its env values) or relabel where it came from.
+    #[test]
+    fn update_server_custom_fields_preserves_identity() {
+        let (_f, conn) = open_test_conn();
+        let mut original = sample_server("srv-edit");
+        original.qualified_name = "custom/original".to_string();
+        original.provenance = ServerProvenance::Custom;
+        insert_server_conn(&conn, &original).unwrap();
+
+        let mut edited = original.clone();
+        edited.display_name = "Renamed".to_string();
+        edited.command = "uvx".to_string();
+        edited.args = vec!["thing".to_string()];
+        edited.transport = Transport::HttpRemote {
+            url: "https://x.io/mcp".to_string(),
+        };
+        edited.command_kind = CommandKind::Python;
+        // Fields the caller must not be able to move.
+        edited.qualified_name = "custom/renamed".to_string();
+        edited.installed_at = 999;
+
+        update_server_custom_fields_conn(&conn, "srv-edit", &edited).unwrap();
+
+        let loaded = get_server_conn(&conn, "srv-edit").unwrap();
+        assert_eq!(loaded.display_name, "Renamed");
+        assert_eq!(loaded.command, "uvx");
+        assert_eq!(loaded.args, vec!["thing".to_string()]);
+        assert_eq!(
+            loaded.transport,
+            Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string()
+            }
+        );
+        assert_eq!(
+            loaded.qualified_name, "custom/original",
+            "identity is immutable"
+        );
+        assert_eq!(
+            loaded.installed_at, 1_700_000_000_000,
+            "install time is immutable"
+        );
+        assert_eq!(loaded.provenance, ServerProvenance::Custom);
     }
 
     #[test]

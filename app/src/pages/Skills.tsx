@@ -533,6 +533,12 @@ export default function Skills() {
     return 'welcome';
   }, [location.search]);
 
+  // Every tab reads fine at 3xl except MCP Servers, which puts the custom-server
+  // pane beside the registry table — at 768px the table is left ~430px and its
+  // columns collapse into a horizontal scroll. Double the width for that one tab
+  // rather than widening (and reflowing) every other tab's single-column layout.
+  const contentMaxWidth = activeTab === 'mcp' ? 'max-w-screen-2xl' : 'max-w-3xl';
+
   const handleTabChange = useCallback(
     (tab: ConnectionsTab) => {
       const params = new URLSearchParams(location.search);
@@ -1026,7 +1032,7 @@ export default function Skills() {
           />
         </div>
       </SidebarContent>
-      <div className="mx-auto h-full w-full max-w-3xl">
+      <div className={`mx-auto h-full w-full ${contentMaxWidth}`}>
         {/* Welcome landing — the first destination; pitches the page and offers
             a few immediate actions into the functional views. */}
         {activeTab === 'welcome' ? (
@@ -1115,7 +1121,7 @@ export default function Skills() {
           </div>
         ) : (
           <PanelPage contentClassName="p-4">
-            <div className={'mx-auto w-full max-w-3xl space-y-4'}>
+            <div className={`mx-auto w-full ${contentMaxWidth} space-y-4`}>
               {CONNECTIONS_HEADERS[activeTab] && (
                 <PageSectionHeader
                   title={t(CONNECTIONS_HEADERS[activeTab]!.titleKey)}

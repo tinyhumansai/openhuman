@@ -52,6 +52,23 @@ export type SmitheryServerDetail = SmitheryServer & {
 
 export type CommandKind = 'node' | 'python' | 'binary';
 
+/**
+ * How an installed server is dialed. Mirrors the Rust `Transport` enum's
+ * persisted `kind` — note this is NOT the same vocabulary as the catalog-facing
+ * `Transport` type below (`'stdio' | 'hosted'`), which describes a *listing*.
+ */
+export type InstalledTransport = { kind: 'stdio' } | { kind: 'http_remote'; url: string };
+
+/**
+ * Where an install record's connection details came from. `'registry'` rows are
+ * re-derivable from a catalog listing; `'custom'` rows were typed in by the
+ * user, so the stored fields are the only copy and only they are editable.
+ *
+ * Distinct from `SmitheryServer.source`, which names *which* upstream registry
+ * a catalog row came from.
+ */
+export type ServerProvenance = 'registry' | 'custom';
+
 export type InstalledServer = {
   server_id: string;
   qualified_name: string;
@@ -66,7 +83,14 @@ export type InstalledServer = {
   installed_at: number;
   last_connected_at?: number;
   enabled: boolean;
+  /** Absent on payloads from a core older than the transport column. */
+  transport?: InstalledTransport;
+  /** Absent on payloads from a core older than custom servers; treat as `'registry'`. */
+  provenance?: ServerProvenance;
 };
+
+/** Narrow an install record to the hand-added kind the custom panel manages. */
+export const isCustomServer = (server: InstalledServer): boolean => server.provenance === 'custom';
 
 export type McpTool = { name: string; description?: string; input_schema: unknown };
 

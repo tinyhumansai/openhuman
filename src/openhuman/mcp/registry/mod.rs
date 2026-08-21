@@ -8,14 +8,18 @@
 //!
 //! # Server transport model
 //!
-//! Today every [`InstalledServer`] is a **local subprocess** launched by npx
-//! / uvx / a direct binary ([`types::CommandKind`]). The connection is stdio
-//! JSON-RPC, owned by [`connections`].
+//! An [`InstalledServer`] is dialed per its [`types::Transport`]: `Stdio` for a
+//! **local subprocess** launched by npx / uvx / a direct binary
+//! ([`types::CommandKind`]), or `HttpRemote` for a hosted endpoint (Streamable
+//! HTTP + SSE + OAuth). Both are owned by [`connections`].
 //!
-//! HTTP-remote MCP servers (the majority of what Smithery actually lists) are
-//! **not yet modelled** as an `InstalledServer` variant — adding a remote
-//! transport variant is planned follow-up work, after which the registry
-//! holds both kinds.
+//! # Where a server's details come from
+//!
+//! Orthogonal to transport, [`types::ServerProvenance`] records whether the
+//! record was resolved from an upstream catalog listing (`Registry`) or typed
+//! in by the user ([`custom`] — `Custom`). Only the provenance differs:
+//! everything downstream (connect, supervise, boot spawn, tool surface) treats
+//! the two identically.
 //!
 //! # Boot-time spawn
 //!
@@ -40,6 +44,7 @@
 //!   [`crate::openhuman::mcp::config_servers::McpStdioClient`] — there is no
 //!   separate stdio client here)
 //! - `boot`        — boot-time spawn of installed local servers
+//! - `custom`      — add/edit installs whose details the user enters by hand
 //! - `ops`         — RPC handler implementations
 //! - `schemas`     — controller schemas + handler dispatch
 //! - `bus`         — DomainEvent subscriber for lifecycle logging
@@ -74,6 +79,8 @@ pub mod bus;
 pub mod connections;
 #[cfg(feature = "mcp")]
 mod curation;
+#[cfg(feature = "mcp")]
+pub mod custom;
 #[cfg(feature = "mcp")]
 pub mod oauth;
 #[cfg(feature = "mcp")]
@@ -110,7 +117,7 @@ pub use schemas::{
     schemas as mcp_registry_schemas,
 };
 
-pub use types::{ConnStatus, InstalledServer, McpTool};
+pub use types::{ConnStatus, InstalledServer, McpTool, ServerProvenance};
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `mcp` feature is OFF.

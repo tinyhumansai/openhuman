@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use super::spawn_servers_concurrently;
 use super::BOOT_SPAWN_CONCURRENCY;
-use crate::openhuman::mcp::registry::types::{CommandKind, InstalledServer, Transport};
+use crate::openhuman::mcp::registry::types::{
+    CommandKind, InstalledServer, ServerProvenance, Transport,
+};
 
 fn sample_server(id: &str, enabled: bool) -> InstalledServer {
     InstalledServer {
@@ -24,6 +26,7 @@ fn sample_server(id: &str, enabled: bool) -> InstalledServer {
         last_connected_at: None,
         transport: Transport::Stdio,
         enabled,
+        provenance: ServerProvenance::Registry,
     }
 }
 

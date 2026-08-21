@@ -93,6 +93,27 @@ interface UpdateEnvResult {
   auth_hint?: string;
 }
 
+/**
+ * Body shared by `add_custom` and `update_custom`. `command`/`args` apply to
+ * `stdio`, `url` to `http_remote`; the core validates the pairing and ignores
+ * the other transport's fields.
+ */
+export interface CustomServerParams {
+  display_name: string;
+  transport: 'stdio' | 'http_remote';
+  command?: string;
+  args?: string[];
+  url?: string;
+  /**
+   * stdio: subprocess environment variables.
+   * http_remote: request headers (key = header name).
+   * Replaces the stored set wholesale — omitted keys are removed. Keys starting
+   * with `__` are reserved by the core for internal connection state.
+   */
+  env?: Record<string, string>;
+  description?: string;
+}
+
 /** Non-secret registry-credentials snapshot. Secret *values* are never returned. */
 interface RegistrySettings {
   smithery_api_key_set: boolean;
@@ -222,6 +243,38 @@ export const mcpClientsApi = {
       log('install registry error kind=%s', normalized.kind);
       throw normalized;
     }
+  },
+
+  /**
+   * Add a server by hand, for one that is not published in any registry.
+   * The record is created disconnected — call `connect` afterwards, so adding a
+   * server and connecting an existing one share one dial path and one set of
+   * failure messages.
+   */
+  addCustom: async (params: CustomServerParams): Promise<InstalledServer> => {
+    log('add_custom display_name=%s transport=%s', params.display_name, params.transport);
+    const result = await callCoreRpc<InstallResult>({
+      method: 'openhuman.mcp_clients_add_custom',
+      params,
+    });
+    log('add_custom returned server_id=%s', result.server?.server_id);
+    return result.server;
+  },
+
+  /**
+   * Replace a hand-added server's connection details. The core rejects this for
+   * registry installs, whose command and endpoint come from the catalog listing.
+   */
+  updateCustom: async (
+    params: CustomServerParams & { server_id: string }
+  ): Promise<InstalledServer> => {
+    log('update_custom server_id=%s transport=%s', params.server_id, params.transport);
+    const result = await callCoreRpc<InstallResult>({
+      method: 'openhuman.mcp_clients_update_custom',
+      params,
+    });
+    log('update_custom returned server_id=%s', result.server?.server_id);
+    return result.server;
   },
 
   /**

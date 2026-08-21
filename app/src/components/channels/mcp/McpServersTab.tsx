@@ -4,6 +4,10 @@
  * Unified table view: shows both installed servers and registry catalog
  * results in a single table. Filter chips at the top let users toggle
  * between "All", "Installed", and "Registry" views.
+ *
+ * Servers no registry publishes are managed by `CustomServersPanel` in the side
+ * pane. Those still install into the same store and appear in this table like
+ * any other install — the pane is an add/edit surface, not a separate world.
  */
 import debug from 'debug';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -14,6 +18,7 @@ import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import { openUrl } from '../../../utils/openUrl';
 import ChipTabs from '../../layout/ChipTabs';
 import Button from '../../ui/Button';
+import CustomServersPanel from './CustomServersPanel';
 import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
@@ -284,24 +289,36 @@ const McpServersTab = () => {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestSeqRef = useRef(0);
 
-  const loadInstalled = useCallback(async () => {
-    log('loading installed servers');
+  // Returns whether the load succeeded so callers can tell a real reload from a
+  // swallowed failure (the list/status render off polled state, so a failed
+  // reload leaves stale rows on screen). Does not throw — the error is surfaced
+  // as `loadError` and as a `false` result.
+  const loadInstalled = useCallback(async (): Promise<boolean> => {
+    log('loadInstalled: begin');
     try {
       const installed = await mcpClientsApi.installedList();
       setServers(Array.isArray(installed) ? installed : []);
       setLoadError(null);
+      log('loadInstalled: ok count=%d', Array.isArray(installed) ? installed.length : 0);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load installed servers';
+      log('loadInstalled: error %s', msg);
       setLoadError(msg);
+      return false;
     }
   }, []);
 
-  const fetchStatuses = useCallback(async () => {
+  const fetchStatuses = useCallback(async (): Promise<boolean> => {
+    log('fetchStatuses: begin');
     try {
       const sv = await mcpClientsApi.status();
       setStatuses(Array.isArray(sv) ? sv : []);
+      log('fetchStatuses: ok count=%d', Array.isArray(sv) ? sv.length : 0);
+      return true;
     } catch (err) {
-      log('status poll error: %o', err);
+      log('fetchStatuses: error %o', err);
+      return false;
     }
   }, []);
 
@@ -425,6 +442,26 @@ const McpServersTab = () => {
     },
     [loadInstalled, fetchStatuses]
   );
+
+  /** Re-read installed servers + statuses. Handed to the custom-servers pane so
+   *  its mutations refresh the same arrays the table renders from.
+   *
+   *  `loadInstalled`/`fetchStatuses` catch their own errors (they update
+   *  `loadError`/leave the last-known arrays), so this resolves even on a failed
+   *  reload — the caller's mutation has already committed and must not be
+   *  reported as failed by a refresh miss. Log the outcome so a silent reload
+   *  failure is still visible. */
+  // Resolves `true` only when BOTH the installed list and the statuses reloaded.
+  // A mutation caller (the custom-servers pane) uses this to distinguish "saved
+  // and the view is current" from "saved but the reload failed and the rows are
+  // now stale" — without conflating either with the mutation's own success.
+  const refreshInstalled = useCallback(async (): Promise<boolean> => {
+    log('refreshInstalled: begin');
+    const installedOk = await loadInstalled();
+    const statusesOk = await fetchStatuses();
+    log('refreshInstalled: done installedOk=%s statusesOk=%s', installedOk, statusesOk);
+    return installedOk && statusesOk;
+  }, [loadInstalled, fetchStatuses]);
 
   const handleLoadMore = () => {
     void fetchCatalog(
@@ -564,265 +601,290 @@ const McpServersTab = () => {
     );
   }
 
-  // Home view — unified table
+  // Home view — registry catalog on the left, hand-added servers on the right.
+  // Side-by-side only from `xl` (1280px — the app's default window width), and
+  // with a fixed-width pane.
+  //
+  // The table needs 640px (`min-w-[640px]` below) before it starts scrolling.
+  // Splitting at `lg` left it ~511px at a 1100px window, and the pane growing to
+  // 384px at `xl` made the table *shrink* by 63px as the window crossed
+  // 1279→1280 — widen the window by a pixel, get a scrollbar. One breakpoint and
+  // one pane width, chosen so the default window clears 640px, avoids both.
+  //
+  // This is still approximate: these are viewport queries, but the real
+  // constraint is the content pane, which the user can resize independently via
+  // the app sidebar. A container query would be exact; the plugin isn't
+  // installed, and pulling it in for one panel isn't this PR's business. A very
+  // wide sidebar can still scroll the table, which is the graceful outcome.
   return (
-    <div className="space-y-3">
-      {/* Search + filter chips */}
-      <div className="flex items-center gap-3">
-        <input
-          type="search"
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          placeholder={t('mcp.catalog.searchPlaceholder')}
-          aria-label={t('mcp.catalog.searchAria')}
-          className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
-        />
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => setInventoryOpen(true)}
-          aria-label={t('mcp.inventory.openAria')}
-          className="shrink-0">
-          {t('mcp.inventory.openButton')}
-        </Button>
-      </div>
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+      <div className="min-w-0 flex-1 space-y-3">
+        {/* Search + filter chips */}
+        <div className="flex items-center gap-3">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={t('mcp.catalog.searchPlaceholder')}
+            aria-label={t('mcp.catalog.searchAria')}
+            className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+          />
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => setInventoryOpen(true)}
+            aria-label={t('mcp.inventory.openAria')}
+            className="shrink-0">
+            {t('mcp.inventory.openButton')}
+          </Button>
+        </div>
 
-      {/* Filters on one bar: the scope (All / Installed / Registry) chips, then —
+        {/* Filters on one bar: the scope (All / Installed / Registry) chips, then —
           when registry rows are visible — a labelled transport filter rendered
           as Stdio/Hosted TOGGLES (no second "All" chip; deselecting both means
           all). This avoids the duplicate-"All" confusion. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <ChipTabs<FilterChip>
-          className="flex flex-wrap items-center gap-2"
-          value={activeChip}
-          onChange={setActiveChip}
-          items={[
-            { id: 'all', label: t('mcp.tab.filter.all') },
-            {
-              id: 'installed',
-              label: t('mcp.tab.filter.installed').replace(
-                '{count}',
-                String(filteredInstalled.length)
-              ),
-            },
-            { id: 'registry', label: t('mcp.tab.filter.registry') },
-          ]}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <ChipTabs<FilterChip>
+            className="flex flex-wrap items-center gap-2"
+            value={activeChip}
+            onChange={setActiveChip}
+            items={[
+              { id: 'all', label: t('mcp.tab.filter.all') },
+              {
+                id: 'installed',
+                label: t('mcp.tab.filter.installed').replace(
+                  '{count}',
+                  String(filteredInstalled.length)
+                ),
+              },
+              { id: 'registry', label: t('mcp.tab.filter.registry') },
+            ]}
+          />
 
-        {showRegistry && (
-          <>
-            <span className="hidden sm:block h-5 w-px bg-line-subtle" aria-hidden="true" />
-            <span className="text-xs font-medium text-content-muted">
-              {t('mcp.tab.transportFilter.label')}
-            </span>
-            <div
-              className="flex flex-wrap items-center gap-2"
-              role="group"
-              aria-label={t('mcp.tab.transportFilter.aria')}>
-              {(['stdio', 'hosted'] as const).map(tp => {
-                const active = transportFilter === tp;
-                return (
-                  <button
-                    key={tp}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setTransportFilter(prev => (prev === tp ? 'all' : tp))}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                      active
-                        ? 'bg-content text-surface'
-                        : 'border border-line text-content-muted hover:bg-surface-muted'
-                    }`}>
-                    {t(tp === 'stdio' ? 'mcp.tab.transport.local' : 'mcp.tab.transport.hosted')}
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </div>
-
-      {loadError && (
-        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-          {loadError}
+          {showRegistry && (
+            <>
+              <span className="hidden sm:block h-5 w-px bg-line-subtle" aria-hidden="true" />
+              <span className="text-xs font-medium text-content-muted">
+                {t('mcp.tab.transportFilter.label')}
+              </span>
+              <div
+                className="flex flex-wrap items-center gap-2"
+                role="group"
+                aria-label={t('mcp.tab.transportFilter.aria')}>
+                {(['stdio', 'hosted'] as const).map(tp => {
+                  const active = transportFilter === tp;
+                  return (
+                    <button
+                      key={tp}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setTransportFilter(prev => (prev === tp ? 'all' : tp))}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                        active
+                          ? 'bg-content text-surface'
+                          : 'border border-line text-content-muted hover:bg-surface-muted'
+                      }`}>
+                      {t(tp === 'stdio' ? 'mcp.tab.transport.local' : 'mcp.tab.transport.hosted')}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
-      )}
 
-      {/* Connection health + bulk lifecycle actions. Only meaningful once
+        {loadError && (
+          <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
+            {loadError}
+          </div>
+        )}
+
+        {/* Connection health + bulk lifecycle actions. Only meaningful once
           servers are installed; surfaces "Retry all" for error-state servers
           (the failed-connection retry affordance #4272 asks for) and
           "Disconnect all". Reads the polled statuses — no extra fetches. */}
-      {(activeChip === 'all' || activeChip === 'installed') && statuses.length > 0 && (
-        <McpConnectionHealthToolbar
-          statuses={statuses}
-          onReconnect={handleReconnectAll}
-          onDisconnect={handleDisconnectAll}
-        />
-      )}
+        {(activeChip === 'all' || activeChip === 'installed') && statuses.length > 0 && (
+          <McpConnectionHealthToolbar
+            statuses={statuses}
+            onReconnect={handleReconnectAll}
+            onDisconnect={handleDisconnectAll}
+          />
+        )}
 
-      {/* Table — horizontally scrollable so the Source/Author/Action columns
+        {/* Table — horizontally scrollable so the Source/Author/Action columns
           aren't clipped when the panel is narrower than the table's natural
           width (the wrapper was `overflow-hidden`, which cut them off with no
           way to scroll). `min-w` keeps the columns readable rather than
           crushing them. */}
-      <div className="rounded-lg border border-line overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="border-b border-line-subtle bg-surface-muted">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted">
-                {t('mcp.tab.column.name')}
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-28">
-                {t('mcp.tab.column.type')}
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-36">
-                {t('mcp.tab.column.author')}
-              </th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-content-muted w-28">
-                {t('mcp.tab.column.action')}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-subtle dark:divide-neutral-800">
-            {/* Installed servers */}
-            {(activeChip === 'all' || activeChip === 'installed') &&
-              filteredInstalled.map(server => {
-                const status: ServerStatus =
-                  statusMap.get(server.server_id)?.status ?? 'disconnected';
-                return (
-                  <tr
-                    key={`installed-${server.server_id}`}
-                    className="hover:bg-surface-muted dark:hover:bg-surface-muted/40 cursor-pointer transition-colors"
-                    tabIndex={0}
-                    role="button"
-                    aria-label={t('mcp.tab.aria.viewDetails').replace(
-                      '{name}',
-                      server.display_name
-                    )}
-                    onClick={() => handleSelectServer(server.server_id)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleSelectServer(server.server_id);
-                      }
-                    }}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
-                          title={status}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-content truncate block">
-                            {server.display_name}
-                          </span>
-                          {server.description && (
-                            <span className="text-xs text-content-faint line-clamp-4 block">
-                              {server.description}
+        <div className="rounded-lg border border-line overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-muted">
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted">
+                  {t('mcp.tab.column.name')}
+                </th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-28">
+                  {t('mcp.tab.column.type')}
+                </th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-36">
+                  {t('mcp.tab.column.author')}
+                </th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium text-content-muted w-28">
+                  {t('mcp.tab.column.action')}
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-subtle dark:divide-neutral-800">
+              {/* Installed servers */}
+              {(activeChip === 'all' || activeChip === 'installed') &&
+                filteredInstalled.map(server => {
+                  const status: ServerStatus =
+                    statusMap.get(server.server_id)?.status ?? 'disconnected';
+                  return (
+                    <tr
+                      key={`installed-${server.server_id}`}
+                      className="hover:bg-surface-muted dark:hover:bg-surface-muted/40 cursor-pointer transition-colors"
+                      tabIndex={0}
+                      role="button"
+                      aria-label={t('mcp.tab.aria.viewDetails').replace(
+                        '{name}',
+                        server.display_name
+                      )}
+                      onClick={() => handleSelectServer(server.server_id)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSelectServer(server.server_id);
+                        }
+                      }}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
+                            title={status}
+                          />
+                          <div className="min-w-0">
+                            <span className="font-medium text-content truncate block">
+                              {server.display_name}
                             </span>
-                          )}
+                            {server.description && (
+                              <span className="text-xs text-content-faint line-clamp-4 block">
+                                {server.description}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs text-content-faint">—</span>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs text-content-muted truncate block">
-                        {deriveAuthor(server.qualified_name) ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
-                        {t('mcp.tab.action.manage')}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        <span className="text-xs text-content-faint">—</span>
+                      </td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        <span className="text-xs text-content-muted truncate block">
+                          {deriveAuthor(server.qualified_name) ?? '—'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
+                          {t('mcp.tab.action.manage')}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
 
-            {/* Registry servers — official first, then the registry's relevance
+              {/* Registry servers — official first, then the registry's relevance
                 order. Each row shows its transport, website/repo links, and the
                 real auth surfaces on install. */}
-            {showRegistry && catalogRows}
-          </tbody>
-        </table>
+              {showRegistry && catalogRows}
+            </tbody>
+          </table>
 
-        {/* Registry fetch error — takes precedence over the empty state so a
+          {/* Registry fetch error — takes precedence over the empty state so a
             failed load reads as an error (with retry), not "no results". */}
-        {showRegistry && catalogError && !catalogLoading && (
-          <div
-            data-testid="mcp-catalog-error"
-            className="py-8 text-center text-sm text-coral-700 dark:text-coral-300 space-y-2">
-            <p>{catalogError}</p>
-            <Button
-              variant="tertiary"
-              size="xs"
-              onClick={() =>
-                void fetchCatalog(
-                  debouncedCatalogFilters.query,
-                  debouncedCatalogFilters.transport,
-                  1,
-                  false
-                )
-              }
-              className="text-primary-600 dark:text-primary-400 hover:underline">
-              {t('common.retry')}
-            </Button>
-          </div>
-        )}
-
-        {/* Empty states */}
-        {activeChip === 'installed' && filteredInstalled.length === 0 && (
-          <div
-            data-testid="mcp-installed-empty"
-            className="py-8 text-center text-sm text-content-faint">
-            {t('mcp.installed.empty')}
-          </div>
-        )}
-        {activeChip === 'registry' &&
-          availableCatalog.length === 0 &&
-          !catalogLoading &&
-          !catalogError && (
+          {showRegistry && catalogError && !catalogLoading && (
             <div
-              data-testid="mcp-catalog-empty"
-              className="py-8 text-center text-sm text-content-faint">
-              {searchQuery
-                ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
-                : t('mcp.catalog.noResults')}
-            </div>
-          )}
-        {activeChip === 'all' &&
-          filteredInstalled.length === 0 &&
-          availableCatalog.length === 0 &&
-          !catalogLoading &&
-          !catalogError && (
-            <div
-              data-testid="mcp-catalog-empty"
-              className="py-8 text-center text-sm text-content-faint">
-              {searchQuery
-                ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
-                : t('mcp.catalog.noResults')}
-            </div>
-          )}
-
-        {/* Loading / load more */}
-        {catalogLoading && (
-          <div className="py-4 text-center text-xs text-content-faint">{t('common.loading')}</div>
-        )}
-        {!catalogLoading &&
-          catalogPage < catalogTotalPages &&
-          (activeChip === 'all' || activeChip === 'registry') && (
-            <div className="py-3 text-center border-t border-line-subtle">
+              data-testid="mcp-catalog-error"
+              className="py-8 text-center text-sm text-coral-700 dark:text-coral-300 space-y-2">
+              <p>{catalogError}</p>
               <Button
                 variant="tertiary"
                 size="xs"
-                onClick={handleLoadMore}
+                onClick={() =>
+                  void fetchCatalog(
+                    debouncedCatalogFilters.query,
+                    debouncedCatalogFilters.transport,
+                    1,
+                    false
+                  )
+                }
                 className="text-primary-600 dark:text-primary-400 hover:underline">
-                {t('mcp.catalog.loadMore')}
+                {t('common.retry')}
               </Button>
             </div>
           )}
+
+          {/* Empty states */}
+          {activeChip === 'installed' && filteredInstalled.length === 0 && (
+            <div
+              data-testid="mcp-installed-empty"
+              className="py-8 text-center text-sm text-content-faint">
+              {t('mcp.installed.empty')}
+            </div>
+          )}
+          {activeChip === 'registry' &&
+            availableCatalog.length === 0 &&
+            !catalogLoading &&
+            !catalogError && (
+              <div
+                data-testid="mcp-catalog-empty"
+                className="py-8 text-center text-sm text-content-faint">
+                {searchQuery
+                  ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
+                  : t('mcp.catalog.noResults')}
+              </div>
+            )}
+          {activeChip === 'all' &&
+            filteredInstalled.length === 0 &&
+            availableCatalog.length === 0 &&
+            !catalogLoading &&
+            !catalogError && (
+              <div
+                data-testid="mcp-catalog-empty"
+                className="py-8 text-center text-sm text-content-faint">
+                {searchQuery
+                  ? t('mcp.catalog.noResultsFor').replace('{query}', searchQuery)
+                  : t('mcp.catalog.noResults')}
+              </div>
+            )}
+
+          {/* Loading / load more */}
+          {catalogLoading && (
+            <div className="py-4 text-center text-xs text-content-faint">{t('common.loading')}</div>
+          )}
+          {!catalogLoading &&
+            catalogPage < catalogTotalPages &&
+            (activeChip === 'all' || activeChip === 'registry') && (
+              <div className="py-3 text-center border-t border-line-subtle">
+                <Button
+                  variant="tertiary"
+                  size="xs"
+                  onClick={handleLoadMore}
+                  className="text-primary-600 dark:text-primary-400 hover:underline">
+                  {t('mcp.catalog.loadMore')}
+                </Button>
+              </div>
+            )}
+        </div>
       </div>
+
+      <aside className="w-full shrink-0 xl:w-80">
+        <CustomServersPanel
+          servers={servers}
+          statuses={statuses}
+          onChanged={refreshInstalled}
+          onSelectServer={handleSelectServer}
+        />
+      </aside>
 
       {inventoryOpen && (
         <McpInventoryPanel
