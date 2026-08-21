@@ -88,7 +88,13 @@ pub struct WorkflowFrontmatter {
     pub metadata: HashMap<String, serde_yaml::Value>,
     /// Tools the skill author asserts their instructions rely on
     /// (non-binding hint; the host decides what to expose).
-    #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
+    #[serde(
+        default,
+        rename = "allowed-tools",
+        alias = "allowed_tools",
+        alias = "tools",
+        deserialize_with = "de_string_or_seq"
+    )]
     pub allowed_tools: Vec<String>,
     /// Domain events that should activate this skill.
     ///
@@ -106,6 +112,32 @@ pub struct WorkflowFrontmatter {
     /// a migration warning when read.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// Deserialize `allowed-tools` from either a YAML sequence (`[Bash, Read]`) or a
+/// single scalar string in Claude Code's convention (`allowed-tools: Bash,
+/// Read, Grep`). A bare scalar is split on commas and trimmed. Without this,
+/// skills authored for the `claude` CLI — which writes a comma-joined string —
+/// fail frontmatter parsing, and their declared tools (Bash, etc.) get dropped,
+/// surfacing as "tool not available" at run time.
+fn de_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrSeq {
+        Seq(Vec<String>),
+        Str(String),
+    }
+    Ok(match StringOrSeq::deserialize(deserializer)? {
+        StringOrSeq::Seq(v) => v,
+        StringOrSeq::Str(s) => s
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+    })
 }
 
 pub(crate) fn metadata_string(fm: &WorkflowFrontmatter, key: &str) -> Option<String> {
@@ -274,4 +306,41 @@ pub(crate) struct LegacyWorkflowManifest {
     pub tools: Vec<String>,
     #[serde(default)]
     pub prompts: Vec<String>,
+}
+
+#[cfg(test)]
+mod allowed_tools_tests {
+    use super::*;
+
+    #[test]
+    fn allowed_tools_accepts_yaml_sequence() {
+        let fm: WorkflowFrontmatter =
+            serde_yaml::from_str("allowed-tools:\n  - Bash\n  - Read\n").unwrap();
+        assert_eq!(fm.allowed_tools, vec!["Bash", "Read"]);
+    }
+
+    #[test]
+    fn allowed_tools_accepts_comma_string() {
+        // Claude Code convention: a scalar comma-joined string. Before the
+        // string-or-seq deserializer this failed with "invalid type: string,
+        // expected a sequence" and the skill's tools were silently dropped.
+        let fm: WorkflowFrontmatter =
+            serde_yaml::from_str("allowed-tools: Bash, Read, Grep, Skill, WebFetch").unwrap();
+        assert_eq!(
+            fm.allowed_tools,
+            vec!["Bash", "Read", "Grep", "Skill", "WebFetch"]
+        );
+    }
+
+    #[test]
+    fn allowed_tools_accepts_tools_alias() {
+        let fm: WorkflowFrontmatter = serde_yaml::from_str("tools: Bash, Read").unwrap();
+        assert_eq!(fm.allowed_tools, vec!["Bash", "Read"]);
+    }
+
+    #[test]
+    fn allowed_tools_defaults_empty_when_absent() {
+        let fm: WorkflowFrontmatter = serde_yaml::from_str("name: foo").unwrap();
+        assert!(fm.allowed_tools.is_empty());
+    }
 }
