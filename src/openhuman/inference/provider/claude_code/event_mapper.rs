@@ -4,12 +4,31 @@
 //! The CLI emits content as anthropic-style content blocks. We map:
 //!   - `content_block_start` text  → start a text accumulator
 //!   - `content_block_delta` text  → `ProviderDelta::TextDelta`
-//!   - `content_block_start` tool  → `ProviderDelta::ToolCallStart`
-//!   - `content_block_delta` tool  → `ProviderDelta::ToolCallArgsDelta`
+//!   - `content_block_*`      tool → tracked but **NOT surfaced** (see below)
 //!   - `result`                    → finalize usage + cost
 //!
 //! Thinking blocks (`thinking_delta`) are forwarded as
 //! `ProviderDelta::ThinkingDelta`.
+//!
+//! ## Tool blocks are deliberately not surfaced
+//!
+//! The `claude` CLI is a **self-executing** agent: it runs its own built-in
+//! tools (`Read`/`Write`/`Edit`/`Bash`/`Glob`/…) and OpenHuman's MCP tools
+//! internally, in its own agent loop, and returns their results itself. So a
+//! `tool_use` block in the stream is a call the CLI has **already executed** —
+//! not a request for OpenHuman to run something.
+//!
+//! If we surfaced these as OpenHuman [`ToolCall`]s, the tinyagents harness would
+//! try to dispatch them, hold none of them by those names, and reject each one
+//! (`unknown tool \`Read\`; valid tools: [...]`) — injecting that corrective
+//! back into the transcript and looping until it aborts (`N tool calls in a row
+//! failed with no progress`). That is the intermittent "something went wrong"
+//! wall users hit (it only bit when a `tool_use` block arrived as a streamed
+//! partial rather than solely in the skipped final `assistant` message).
+//!
+//! So we track a `tool_use` block only enough to keep its `input_json_delta`s
+//! out of the visible text, and surface nothing. The CLI's final assistant text
+//! is the turn's result; its live narration/thinking still streams to the UI.
 
 use std::collections::HashMap;
 
@@ -40,6 +59,10 @@ enum BlockKind {
 pub struct EventMapper {
     blocks: HashMap<u64, BlockState>,
     pub final_text: String,
+    /// Always empty for the self-executing `claude` CLI: its `tool_use` blocks
+    /// are calls it already ran itself, so they are never surfaced as OpenHuman
+    /// tool calls (see the module docs). Kept as the response's `tool_calls`
+    /// slot so the harness always sees a terminal, tool-less response.
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<UsageInfo>,
     pub error: Option<String>,
@@ -154,35 +177,36 @@ impl EventMapper {
                 Vec::new()
             }
             "tool_use" => {
-                let call_id = block
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
+                // The CLI has ALREADY executed this tool itself (see the module
+                // docs). Track the block so its argument deltas don't leak into
+                // the visible text, but surface no `ToolCallStart` — OpenHuman's
+                // harness must never try to re-dispatch a call the CLI ran.
                 let tool_name = block
                     .get("name")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
-                if call_id.is_none() || tool_name.is_none() {
-                    log::warn!(
-                        "[claude-code][event-mapper] skipping tool_use block with missing id or name"
+                let call_id = block
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                if let Some(name) = tool_name.as_deref() {
+                    log::debug!(
+                        "[claude-code][event-mapper] CLI self-executed tool `{name}` (not surfaced to the harness)"
                     );
-                    return Vec::new();
                 }
-                let call_id = call_id.unwrap();
-                let tool_name = tool_name.unwrap();
                 self.blocks.insert(
                     index,
                     BlockState {
                         kind: BlockKind::Tool,
-                        call_id: Some(call_id.clone()),
-                        tool_name: Some(tool_name.clone()),
+                        call_id,
+                        tool_name,
                         text_accum: String::new(),
                         input_accum: String::new(),
                     },
                 );
-                vec![ProviderDelta::ToolCallStart { call_id, tool_name }]
+                Vec::new()
             }
             _ => Vec::new(),
         }
@@ -219,42 +243,27 @@ impl EventMapper {
                 vec![ProviderDelta::ThinkingDelta { delta: text }]
             }
             (BlockKind::Tool, "input_json_delta") => {
+                // Self-executed by the CLI (see the module docs). Accumulate so
+                // these argument fragments never reach the visible text, but
+                // surface nothing to the harness.
                 let partial = delta
                     .get("partial_json")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                state.input_accum.push_str(&partial);
-                let call_id = state.call_id.clone().unwrap_or_default();
-                vec![ProviderDelta::ToolCallArgsDelta {
-                    call_id,
-                    delta: partial,
-                }]
+                    .unwrap_or("");
+                state.input_accum.push_str(partial);
+                Vec::new()
             }
             _ => Vec::new(),
         }
     }
 
     fn on_block_stop(&mut self, index: u64) -> Vec<ProviderDelta> {
-        let Some(state) = self.blocks.remove(&index) else {
-            return Vec::new();
-        };
-        if state.kind == BlockKind::Tool {
-            let call_id = state.call_id.unwrap_or_default();
-            let name = state.tool_name.unwrap_or_default();
-            let arguments = if state.input_accum.trim().is_empty() {
-                "{}".to_string()
-            } else {
-                state.input_accum.clone()
-            };
-            self.tool_calls.push(ToolCall {
-                id: call_id,
-                name,
-                arguments,
-                // Claude Code CLI events carry no OpenAI-compat extra_content.
-                extra_content: None,
-            });
-        }
+        // Drop the finished block from the in-flight map. Text/thinking streamed
+        // incrementally; a `tool_use` block is deliberately NOT finalized into a
+        // harness tool call — the CLI already executed it (see the module docs),
+        // so `tool_calls` stays empty and the harness treats the turn's final
+        // assistant text as terminal instead of trying to re-dispatch.
+        self.blocks.remove(&index);
         Vec::new()
     }
 
@@ -316,21 +325,52 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_assembles_input() {
+    fn self_executed_tool_block_is_not_surfaced() {
+        // The `claude` CLI runs its own tools; a `tool_use` block is a call it
+        // already executed. It must NOT become a harness tool call, or the
+        // harness rejects it ("unknown tool …") and loops to an abort. Nothing
+        // is surfaced — no ToolCallStart, no ToolCallArgsDelta — and the final
+        // response carries no tool calls, so the harness sees a terminal turn.
         let mut m = EventMapper::new();
-        let start = json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"memory_search"}});
-        let d_args = json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"q\":\"foo\"}"}});
+        let start = json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"Read"}});
+        let d_args = json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"/tmp/x.png\"}"}});
         let stop = json!({"type":"content_block_stop","index":1});
+
         let starts = m.handle(ClaudeCodeEvent::StreamEvent { event: start });
-        assert!(
-            matches!(&starts[0], ProviderDelta::ToolCallStart { tool_name, .. } if tool_name == "memory_search")
-        );
+        assert!(starts.is_empty(), "tool_use must emit no ToolCallStart: {starts:?}");
         let args = m.handle(ClaudeCodeEvent::StreamEvent { event: d_args });
-        assert!(matches!(&args[0], ProviderDelta::ToolCallArgsDelta { .. }));
+        assert!(args.is_empty(), "tool args must emit no delta: {args:?}");
         m.handle(ClaudeCodeEvent::StreamEvent { event: stop });
-        assert_eq!(m.tool_calls.len(), 1);
-        assert_eq!(m.tool_calls[0].name, "memory_search");
-        assert_eq!(m.tool_calls[0].arguments, r#"{"q":"foo"}"#);
+
+        assert!(m.tool_calls.is_empty(), "no harness tool call is produced");
+        assert!(
+            m.into_response().tool_calls.is_empty(),
+            "the aggregated response must carry no tool calls"
+        );
+    }
+
+    #[test]
+    fn text_around_a_tool_block_still_streams() {
+        // Suppressing tool blocks must not eat the CLI's narration text: the
+        // user still sees live progress even though the tool call is hidden.
+        let mut m = EventMapper::new();
+        m.handle(ClaudeCodeEvent::StreamEvent { event: text_block_start(0) });
+        let pre = m.handle(ClaudeCodeEvent::StreamEvent { event: text_delta(0, "rendering… ") });
+        // a self-executed tool block in the middle
+        m.handle(ClaudeCodeEvent::StreamEvent {
+            event: json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"c","name":"Bash"}}),
+        });
+        m.handle(ClaudeCodeEvent::StreamEvent {
+            event: json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+        });
+        m.handle(ClaudeCodeEvent::StreamEvent { event: json!({"type":"content_block_stop","index":1}) });
+        m.handle(ClaudeCodeEvent::StreamEvent { event: text_block_start(2) });
+        let post = m.handle(ClaudeCodeEvent::StreamEvent { event: text_delta(2, "done") });
+
+        assert!(matches!(&pre[0], ProviderDelta::TextDelta { delta } if delta == "rendering… "));
+        assert!(matches!(&post[0], ProviderDelta::TextDelta { delta } if delta == "done"));
+        assert_eq!(m.final_text, "rendering… done", "tool args never leaked into text");
+        assert!(m.tool_calls.is_empty());
     }
 
     #[test]
