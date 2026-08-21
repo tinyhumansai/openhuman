@@ -223,14 +223,50 @@ fn append_system_prompt_args(
     ])
 }
 
+/// True if the `claude` CLI still has an on-disk conversation for `session_id`.
+///
+/// Claude persists sessions at `<config>/projects/<encoded-cwd>/<uuid>.jsonl`,
+/// where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`. We scan every
+/// project dir rather than reconstruct the cwd-encoding (a CLI-internal detail);
+/// a single `read_dir` is cheap next to spawning the process.
+fn cc_session_exists(session_id: &str) -> bool {
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+    base.map(|b| cc_session_exists_in(&b, session_id))
+        .unwrap_or(false)
+}
+
+/// Inner, testable half of [`cc_session_exists`]: scan `<config_dir>/projects/*`
+/// for a `<session_id>.jsonl` conversation file.
+fn cc_session_exists_in(config_dir: &std::path::Path, session_id: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
+        return false;
+    };
+    let file = format!("{session_id}.jsonl");
+    entries.flatten().any(|e| e.path().join(&file).is_file())
+}
+
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards
 /// `ProviderDelta`s through `ctx.stream` as they arrive and returns the
 /// aggregated `ChatResponse` when done.
 pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     let stored = ctx.session_store.get(&ctx.thread_id);
-    let is_new = !stored.as_deref().map(is_uuid_v4).unwrap_or(false);
+    let stored_valid = stored.as_deref().map(is_uuid_v4).unwrap_or(false);
+    // A persisted id is only *resumable* if the CLI still has that session on
+    // disk. We persist the id before the creating turn runs, so a create that
+    // fails (transient error, cancelled turn, cleared CLI store) leaves a
+    // valid-looking id that was never created — and resuming it then loops on
+    // `No conversation found with session ID: <uuid>` forever with no recovery.
+    // Treat a missing session as new: recreate it (reusing the same id so the
+    // thread's mapping stays stable) with `--session-id` and full context.
+    let resumable = stored_valid && stored.as_deref().map(cc_session_exists).unwrap_or(false);
+    let is_new = !resumable;
     let cc_session_id = if is_new {
-        let id = generate_uuid_v4();
+        let id = match stored {
+            Some(s) if stored_valid => s, // reuse the valid id; recreate its session
+            _ => generate_uuid_v4(),
+        };
         if let Err(e) = ctx.session_store.set(&ctx.thread_id, &id) {
             log::warn!(
                 "[claude-code][driver] failed to persist session uuid for thread {}: {}",
@@ -240,7 +276,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         }
         id
     } else {
-        stored.expect("checked Some above")
+        stored.expect("resumable implies Some")
     };
 
     // Set up a per-turn scratch dir for --mcp-config and any other transient
@@ -613,6 +649,25 @@ mod tests {
             Some(v) => std::env::set_var("OPENHUMAN_CLAUDE_CODE_SANDBOX", v),
             None => std::env::remove_var("OPENHUMAN_CLAUDE_CODE_SANDBOX"),
         }
+    }
+
+    #[test]
+    fn cc_session_exists_in_detects_present_and_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "11111111-2222-4333-8444-555555555555";
+        // Nothing on disk yet → absent. This is the poisoned-resume case the
+        // driver must recreate with --session-id rather than --resume.
+        assert!(!cc_session_exists_in(dir.path(), id));
+        // Create <config>/projects/<encoded-cwd>/<id>.jsonl → detected.
+        let proj = dir.path().join("projects").join("-Users-someone-project");
+        std::fs::create_dir_all(&proj).expect("mkdir projects");
+        std::fs::write(proj.join(format!("{id}.jsonl")), b"{}").expect("write session");
+        assert!(cc_session_exists_in(dir.path(), id));
+        // A different id stays absent even with one session present.
+        assert!(!cc_session_exists_in(
+            dir.path(),
+            "99999999-2222-4333-8444-555555555555"
+        ));
     }
 
     #[test]
