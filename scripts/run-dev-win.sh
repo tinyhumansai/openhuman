@@ -553,6 +553,15 @@ export PATH="$PATH_PREFIX:$PATH"
 "$PNPM_EXE" tauri:ensure
 "$PNPM_EXE" core:stage
 
+# Cursor models are served by a local Node sidecar (scripts/cursor-bridge).
+# OpenHuman does not spawn it, so start it here if it is not already up.
+BRIDGE_START="$REPO_ROOT/scripts/cursor-bridge/start.ps1"
+if [[ -f "$BRIDGE_START" ]]; then
+  echo "[run-dev-win] ensuring cursor-bridge on 127.0.0.1:8790"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$BRIDGE_START")" \
+    || echo "[run-dev-win] WARNING: cursor-bridge failed to start (Cursor models will 401/fail until it is up)" >&2
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage the CEF runtime next to the dev OpenHuman.exe.
 #

@@ -2,7 +2,12 @@ import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
-import { ModelEntryField, useModelEntryMode } from '../ai/ModelEntryField';
+import {
+  ModelEntryField,
+  parseCursorSelection,
+  serializeCursorSelection,
+  useModelEntryMode,
+} from '../ai/ModelEntryField';
 
 /**
  * Direct coverage for the model / deployment-name field shared by both AI-panel
@@ -45,6 +50,31 @@ const Harness = ({
 };
 
 describe('ModelEntryField', () => {
+  it('round-trips Cursor model parameters with stable URL encoding', () => {
+    const encoded = serializeCursorSelection({
+      id: 'gpt-5.6-terra',
+      parameters: new Map([
+        ['reasoning', 'high effort'],
+        ['context', '1m'],
+      ]),
+    });
+
+    expect(encoded).toBe('gpt-5.6-terra~p=context:1m~p=reasoning:high%20effort');
+    expect(parseCursorSelection(encoded)).toEqual({
+      id: 'gpt-5.6-terra',
+      parameters: new Map([
+        ['context', '1m'],
+        ['reasoning', 'high effort'],
+      ]),
+    });
+  });
+
+  it('keeps malformed Cursor model selections intact', () => {
+    const malformed = 'gpt-5.6-terra~p=reasoning:%E0%A4%A';
+
+    expect(parseCursorSelection(malformed)).toEqual({ id: malformed, parameters: new Map() });
+  });
+
   it('relabels the field for an Azure endpoint and opens on free text', () => {
     renderWithProviders(
       <Harness

@@ -18,13 +18,190 @@
  * an explicit toggle exposes it for every other provider too, which also
  * unblocks any provider whose listing omits a model the user is entitled to.
  */
-import { useCallback, useState } from 'react';
+import createDebug from 'debug';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { ModelInfo } from '../../../../services/api/aiSettingsApi';
 import Button from '../../../ui/Button';
 import { SettingsSelect, SettingsTextField } from '../../controls';
 import { isAzureFoundryEndpoint, looksLikeAzureBaseModelId } from '../azureDeployment';
+
+const log = createDebug('app:settings:model-entry');
+
+const CURSOR_PARAM_MARKER = '~p=';
+
+type CursorModelCatalog = { id: string; parameters: Map<string, Set<string>> };
+
+type CursorSelection = { id: string; parameters: Map<string, string> };
+
+const CURSOR_PARAMETER_LABELS: Record<string, string> = {
+  reasoning: 'settings.ai.cursorParameterReasoningEffort',
+  effort: 'settings.ai.cursorParameterReasoningEffort',
+  thinking: 'settings.ai.cursorParameterThinking',
+  context: 'settings.ai.cursorParameterContextWindow',
+  fast: 'settings.ai.cursorParameterFastMode',
+};
+
+const cursorParameterOrder = (id: string): number => {
+  const order = ['reasoning', 'effort', 'thinking', 'context', 'fast'];
+  const index = order.indexOf(id);
+  return index < 0 ? order.length : index;
+};
+
+export function parseCursorSelection(value: string): CursorSelection {
+  const firstParameter = value.indexOf(CURSOR_PARAM_MARKER);
+  if (firstParameter < 0) return { id: value, parameters: new Map() };
+
+  const parameters = new Map<string, string>();
+  for (const part of value
+    .slice(firstParameter + CURSOR_PARAM_MARKER.length)
+    .split(CURSOR_PARAM_MARKER)) {
+    const separator = part.indexOf(':');
+    if (separator <= 0) continue;
+    try {
+      parameters.set(
+        decodeURIComponent(part.slice(0, separator)),
+        decodeURIComponent(part.slice(separator + 1))
+      );
+    } catch {
+      return { id: value, parameters: new Map() };
+    }
+  }
+  return { id: value.slice(0, firstParameter), parameters };
+}
+
+export function serializeCursorSelection(selection: CursorSelection): string {
+  const parameters = [...selection.parameters.entries()].sort(([a], [b]) => a.localeCompare(b));
+  return `${selection.id}${parameters
+    .map(
+      ([id, value]) =>
+        `${CURSOR_PARAM_MARKER}${encodeURIComponent(id)}:${encodeURIComponent(value)}`
+    )
+    .join('')}`;
+}
+
+function displayCursorOption(t: (key: string) => string, parameter: string, value: string): string {
+  if (parameter === 'fast') {
+    if (value === 'fast' || value === 'true') return t('common.yes');
+    if (value === 'false') return t('common.no');
+  }
+  if (parameter === 'thinking')
+    return value === 'true' ? t('common.enabled') : t('common.disabled');
+  return value.replace(/-/g, ' ');
+}
+
+function humanizeCursorModelId(id: string): string {
+  const acronyms = new Map([
+    ['ai', 'AI'],
+    ['glm', 'GLM'],
+    ['gpt', 'GPT'],
+    ['kimi', 'Kimi'],
+  ]);
+  return id
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(
+      part =>
+        acronyms.get(part.toLowerCase()) ?? `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`
+    )
+    .join(' ');
+}
+
+const CursorModelSelector = ({
+  model,
+  onModelChange,
+  catalog,
+  label,
+}: {
+  model: string;
+  onModelChange: (next: string) => void;
+  catalog: readonly ModelInfo[];
+  label: string;
+}) => {
+  const { t } = useT();
+  const models = useMemo(() => {
+    const grouped = new Map<string, CursorModelCatalog>();
+    for (const entry of catalog) {
+      const selection = parseCursorSelection(entry.id);
+      const current = grouped.get(selection.id) ?? { id: selection.id, parameters: new Map() };
+      for (const [parameter, value] of selection.parameters) {
+        const values = current.parameters.get(parameter) ?? new Set<string>();
+        values.add(value);
+        current.parameters.set(parameter, values);
+      }
+      grouped.set(selection.id, current);
+    }
+    return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));
+  }, [catalog]);
+
+  const selection = parseCursorSelection(model);
+  const active = models.find(entry => entry.id === selection.id);
+  const updateParameter = (parameter: string, value: string) => {
+    const next = new Map(selection.parameters);
+    if (value) next.set(parameter, value);
+    else next.delete(parameter);
+    // Privacy-safe diagnostics: model id + parameter name + direction only —
+    // never the parameter value or any user-authored text.
+    log('cursor parameter %s %s (model %s)', parameter, value ? 'set' : 'cleared', selection.id);
+    onModelChange(serializeCursorSelection({ id: selection.id, parameters: next }));
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <SettingsSelect
+          aria-label={label}
+          value={selection.id}
+          onChange={event => onModelChange(event.target.value)}
+          className="w-full">
+          {!selection.id && <option value="">{t('settings.ai.selectModel')}</option>}
+          {selection.id && !models.some(entry => entry.id === selection.id) && (
+            <option value={selection.id}>{selection.id}</option>
+          )}
+          {models.map(entry => (
+            <option key={entry.id} value={entry.id}>
+              {humanizeCursorModelId(entry.id)} — {entry.id}
+            </option>
+          ))}
+        </SettingsSelect>
+      </div>
+
+      {active &&
+        [...active.parameters.entries()]
+          .sort(
+            ([a], [b]) => cursorParameterOrder(a) - cursorParameterOrder(b) || a.localeCompare(b)
+          )
+          .map(([parameter, values]) => {
+            const parameterLabel = t(CURSOR_PARAMETER_LABELS[parameter] ?? parameter);
+            const parameterId = `cursor-model-parameter-${parameter}`;
+
+            return (
+              <div key={parameter} className="flex flex-col gap-1.5">
+                <label htmlFor={parameterId} className="text-xs font-medium text-content-secondary">
+                  {parameterLabel}
+                </label>
+                <SettingsSelect
+                  id={parameterId}
+                  aria-label={parameterLabel}
+                  value={selection.parameters.get(parameter) ?? ''}
+                  onChange={event => updateParameter(parameter, event.target.value)}
+                  className="w-full">
+                  <option value="">{t('settings.ai.cursorParameterDefault')}</option>
+                  {[...values]
+                    .sort((a, b) => a.localeCompare(b))
+                    .map(value => (
+                      <option key={value} value={value}>
+                        {displayCursorOption(t, parameter, value)}
+                      </option>
+                    ))}
+                </SettingsSelect>
+              </div>
+            );
+          })}
+    </div>
+  );
+};
 
 /** Resolved entry-mode state for one picker. Produced by {@link useModelEntryMode}. */
 export interface ModelEntryMode {
@@ -103,6 +280,7 @@ export const ModelEntryField = ({
   placeholder,
   analyticsId,
   optionLabel,
+  providerSlug,
 }: {
   mode: ModelEntryMode;
   model: string;
@@ -118,6 +296,8 @@ export const ModelEntryField = ({
   analyticsId: string;
   /** Option text for a catalog entry. Defaults to the bare model id. */
   optionLabel?: (m: ModelInfo) => string;
+  /** Enables Cursor's grouped model-parameter picker for the local bridge. */
+  providerSlug?: string | null;
 }) => {
   const { t } = useT();
   const { isAzureProvider, manualEntry, useManualEntry, showAzureLegacyHint } = mode;
@@ -167,6 +347,13 @@ export const ModelEntryField = ({
           value={model}
           onChange={e => onModelChange(e.target.value)}
           placeholder={isAzureProvider ? t('settings.ai.deploymentNamePlaceholder') : placeholder}
+        />
+      ) : providerSlug === 'cursor' ? (
+        <CursorModelSelector
+          model={model}
+          onModelChange={onModelChange}
+          catalog={catalog}
+          label={fieldLabel}
         />
       ) : (
         <SettingsSelect
