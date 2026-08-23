@@ -3205,6 +3205,7 @@ async fn observer_persists_each_step_incrementally() {
         output: json!([{ "json": { "ok": true } }]),
         duration_ms: 7,
         diagnostics: Vec::new(),
+        transcript: Vec::new(),
     });
     observer.on_step_finish(&ExecutionStep {
         node_id: "b".to_string(),
@@ -3212,6 +3213,7 @@ async fn observer_persists_each_step_incrementally() {
         output: Value::Null,
         duration_ms: 3,
         diagnostics: Vec::new(),
+        transcript: Vec::new(),
     });
 
     // The store now holds both live steps with real status + timing — proof of
@@ -3232,6 +3234,7 @@ async fn observer_persists_each_step_incrementally() {
         output: json!([{ "json": { "ok": true } }]),
         duration_ms: 42,
         diagnostics: Vec::new(),
+        transcript: Vec::new(),
     });
     let row = store::get_flow_run(&config, &run_id).unwrap().unwrap();
     assert_eq!(row.steps.len(), 2, "re-firing a node must not duplicate it");

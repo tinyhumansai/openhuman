@@ -246,6 +246,7 @@ mod tests {
             output: Value::Null,
             duration_ms: 5,
             diagnostics: Vec::new(),
+            transcript: Vec::new(),
         });
         observer.on_run_finish(&Run {
             id: "run-1".to_string(),
