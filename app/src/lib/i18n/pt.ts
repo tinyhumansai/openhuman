@@ -7219,6 +7219,28 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Excluir',
   'flows.delete.deleting': 'Excluindo…',
   'flows.canvas.renameLabel': 'Renomear fluxo de trabalho',
+  'settings.ai.openaiOauthTitle': 'Entrar com o ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Entre com sua conta do ChatGPT para usar modelos da OpenAI sem uma chave de API.',
+  'settings.ai.openaiOauthConnect': 'Entrar com o ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Conectado ao ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Abrindo o login…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Após entrar, cole a URL de redirecionamento completa do navegador (começa com http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Concluir login no ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Desconectar o ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'O login no ChatGPT está disponível apenas no aplicativo para desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Não foi possível iniciar o login no ChatGPT. Tente novamente ou use uma chave de API.',
+  'settings.ai.openaiOauthCompleteError':
+    'O login no ChatGPT não foi concluído. Verifique a URL de redirecionamento e tente novamente.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Após entrar, cole a URL de redirecionamento do navegador.',
+  'settings.ai.openaiOauthDisconnectError':
+    'Não foi possível desconectar o ChatGPT. Tente novamente.',
   'memorySources.codingSessions.title': 'Sessões de agentes de programação',
   'memorySources.codingSessions.description':
     'Transforme decisões e correções do Codex e Claude Code em memória privada de persona.',

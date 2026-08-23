@@ -7141,6 +7141,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+  'settings.ai.openaiOauthTitle': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Masuk dengan akun ChatGPT untuk menggunakan model OpenAI tanpa kunci API.',
+  'settings.ai.openaiOauthConnect': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Terhubung ke ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Membuka proses masuk…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (diawali dengan http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Selesaikan proses masuk ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Putuskan ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'Masuk dengan ChatGPT hanya tersedia di aplikasi desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Tidak dapat memulai proses masuk ChatGPT. Coba lagi atau gunakan kunci API.',
+  'settings.ai.openaiOauthCompleteError':
+    'Proses masuk ChatGPT tidak selesai. Periksa URL pengalihan lalu coba lagi.',
+  'settings.ai.openaiOauthCallbackRequired': 'Tempel URL pengalihan dari browser setelah masuk.',
+  'settings.ai.openaiOauthDisconnectError': 'Tidak dapat memutuskan ChatGPT. Silakan coba lagi.',
   'memorySources.codingSessions.title': 'Sesi agen pemrograman',
   'memorySources.codingSessions.description':
     'Ubah keputusan dan koreksi Codex serta Claude Code menjadi memori persona pribadi.',

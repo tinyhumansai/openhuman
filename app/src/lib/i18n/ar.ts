@@ -6950,6 +6950,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'حذف',
   'flows.delete.deleting': 'جارٍ الحذف…',
   'flows.canvas.renameLabel': 'إعادة تسمية سير العمل',
+  'settings.ai.openaiOauthTitle': 'تسجيل الدخول باستخدام ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'سجّل الدخول بحساب ChatGPT لاستخدام نماذج OpenAI من دون مفتاح API.',
+  'settings.ai.openaiOauthConnect': 'تسجيل الدخول باستخدام ChatGPT',
+  'settings.ai.openaiOauthConnected': 'متصل بـ ChatGPT',
+  'settings.ai.openaiOauthOpening': 'جارٍ فتح تسجيل الدخول…',
+  'settings.ai.openaiOauthCallbackHint':
+    'بعد تسجيل الدخول، الصق عنوان URL الكامل لإعادة التوجيه من متصفحك (يبدأ بـ http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'إكمال تسجيل الدخول إلى ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'قطع الاتصال بـ ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'تسجيل الدخول إلى ChatGPT متاح فقط في تطبيق سطح المكتب.',
+  'settings.ai.openaiOauthStartError':
+    'تعذّر بدء تسجيل الدخول إلى ChatGPT. حاول مجددًا أو استخدم مفتاح API.',
+  'settings.ai.openaiOauthCompleteError':
+    'لم يكتمل تسجيل الدخول إلى ChatGPT. تحقّق من عنوان إعادة التوجيه وحاول مجددًا.',
+  'settings.ai.openaiOauthCallbackRequired': 'الصق عنوان إعادة التوجيه من متصفحك بعد تسجيل الدخول.',
+  'settings.ai.openaiOauthDisconnectError': 'تعذّر قطع الاتصال بـ ChatGPT. يُرجى المحاولة مجددًا.',
   'memorySources.codingSessions.title': 'جلسات وكلاء البرمجة',
   'memorySources.codingSessions.description':
     'حوّل قرارات وتصحيحات Codex وClaude Code إلى ذاكرة شخصية خاصة.',

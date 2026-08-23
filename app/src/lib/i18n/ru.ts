@@ -7180,6 +7180,27 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Удалить',
   'flows.delete.deleting': 'Удаление…',
   'flows.canvas.renameLabel': 'Переименовать рабочий процесс',
+  'settings.ai.openaiOauthTitle': 'Войти через ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Войдите в аккаунт ChatGPT, чтобы использовать модели OpenAI без ключа API.',
+  'settings.ai.openaiOauthConnect': 'Войти через ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Подключено к ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Открываем вход…',
+  'settings.ai.openaiOauthCallbackHint':
+    'После входа вставьте полный URL перенаправления из браузера (начинается с http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Завершить вход в ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Отключить ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'Вход через ChatGPT доступен только в настольном приложении.',
+  'settings.ai.openaiOauthStartError':
+    'Не удалось начать вход в ChatGPT. Повторите попытку или используйте ключ API.',
+  'settings.ai.openaiOauthCompleteError':
+    'Вход в ChatGPT не завершён. Проверьте URL перенаправления и повторите попытку.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'После входа вставьте URL перенаправления из браузера.',
+  'settings.ai.openaiOauthDisconnectError': 'Не удалось отключить ChatGPT. Повторите попытку.',
   'memorySources.codingSessions.title': 'Сеансы агентов программирования',
   'memorySources.codingSessions.description':
     'Превратите решения и исправления из Codex и Claude Code в приватную память персоны.',

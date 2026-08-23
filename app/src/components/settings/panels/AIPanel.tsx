@@ -56,6 +56,7 @@ import Button from '../../ui/Button';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSelect, SettingsStatusLine, SettingsSwitch, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import OpenAiOAuthConnect from '../oauth/OpenAiOAuthConnect';
 import { ClaudeCodeConnect } from './ai/ClaudeCodeStatusCard';
 import { ModelEntryField, useModelEntryMode } from './ai/ModelEntryField';
 import { routingWithProviderRemoved, toSelectableChatModels } from './aiRouting';
@@ -681,6 +682,7 @@ const ProviderKeyDialog = ({
   initialValue,
   initialKeyValue,
   oauthAction,
+  openAiOAuth,
   onCancel,
   onSubmit,
 }: {
@@ -699,6 +701,12 @@ const ProviderKeyDialog = ({
   /** Pre-populate the API key field in `endpointKeyMode`. */
   initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
+  /** When set, render the OpenAI "Sign in with ChatGPT" surface; `onConnected`
+   *  fires once the OAuth round-trip succeeds so the parent can refresh + close. */
+  openAiOAuth?: {
+    onCompleted: () => Promise<void> | void;
+    onDisconnected: () => Promise<void> | void;
+  } | null;
   onCancel: () => void;
   /** Returns the entered value(s). For plain local runtimes this is the
    *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
@@ -883,6 +891,17 @@ const ProviderKeyDialog = ({
           ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
+
+        {openAiOAuth ? (
+          <div className="mt-4">
+            <OpenAiOAuthConnect
+              testIdPrefix="settings-openai-oauth"
+              allowDisconnect
+              onCompleted={openAiOAuth.onCompleted}
+              onDisconnected={openAiOAuth.onDisconnected}
+            />
+          </div>
+        ) : null}
 
         {oauthAction ? (
           <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">
@@ -2790,6 +2809,46 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     }
   }, [connectProvider, t]);
 
+  const handleOpenAiOAuthCompleted = useCallback(async () => {
+    try {
+      await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+      console.debug('[ai-settings:openai-oauth] provider registration succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider registration failed', {
+        provider: 'openai',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await reload();
+      throw err;
+    }
+  }, [connectProvider, reload]);
+
+  const handleOpenAiOAuthDisconnected = useCallback(async () => {
+    const existing = draft.cloudProviders.find(cp => cp.slug === 'openai');
+    if (!existing) return;
+    const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+    const nextRouting = routingWithProviderRemoved(
+      draft.routing,
+      { slug: existing.slug, isLocalRuntime: false },
+      remaining
+    );
+    try {
+      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+      console.debug('[ai-settings:openai-oauth] provider removal succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider removal failed', {
+        provider: 'openai',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await reload();
+      throw err;
+    }
+  }, [draft, persist, reload]);
+
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
 
@@ -3452,6 +3511,14 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       }
                     }
                   },
+                }
+              : null
+          }
+          openAiOAuth={
+            keyDialogFor === 'openai' && !pendingLocalLabel
+              ? {
+                  onCompleted: handleOpenAiOAuthCompleted,
+                  onDisconnected: handleOpenAiOAuthDisconnected,
                 }
               : null
           }

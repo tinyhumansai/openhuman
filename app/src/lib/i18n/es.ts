@@ -7251,6 +7251,27 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Eliminar',
   'flows.delete.deleting': 'Eliminando…',
   'flows.canvas.renameLabel': 'Cambiar el nombre del flujo de trabajo',
+  'settings.ai.openaiOauthTitle': 'Iniciar sesión con ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Inicia sesión con tu cuenta de ChatGPT para usar modelos de OpenAI sin una clave de API.',
+  'settings.ai.openaiOauthConnect': 'Iniciar sesión con ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Conectado con ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Abriendo el inicio de sesión…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Después de iniciar sesión, pega la URL de redirección completa de tu navegador (comienza por http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Completar el inicio de sesión con ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Desconectar ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'El inicio de sesión con ChatGPT solo está disponible en la aplicación de escritorio.',
+  'settings.ai.openaiOauthStartError':
+    'No se pudo iniciar la sesión con ChatGPT. Inténtalo de nuevo o usa una clave de API.',
+  'settings.ai.openaiOauthCompleteError':
+    'No se completó el inicio de sesión con ChatGPT. Comprueba la URL de redirección e inténtalo de nuevo.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Pega la URL de redirección de tu navegador después de iniciar sesión.',
+  'settings.ai.openaiOauthDisconnectError': 'No se pudo desconectar ChatGPT. Inténtalo de nuevo.',
   'memorySources.codingSessions.title': 'Sesiones de agentes de programación',
   'memorySources.codingSessions.description':
     'Convierte tus decisiones y correcciones de Codex y Claude Code en memoria privada de personalidad.',

@@ -7107,6 +7107,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'মুছুন',
   'flows.delete.deleting': 'মুছে ফেলা হচ্ছে…',
   'flows.canvas.renameLabel': 'ওয়ার্কফ্লো পুনঃনামকরণ করুন',
+  'settings.ai.openaiOauthTitle': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthDescription':
+    'API কী ছাড়াই OpenAI মডেল ব্যবহার করতে আপনার ChatGPT অ্যাকাউন্ট দিয়ে সাইন ইন করুন।',
+  'settings.ai.openaiOauthConnect': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthConnected': 'ChatGPT-এর সাথে সংযুক্ত',
+  'settings.ai.openaiOauthOpening': 'সাইন-ইন খোলা হচ্ছে…',
+  'settings.ai.openaiOauthCallbackHint':
+    'সাইন ইন করার পর ব্রাউজার থেকে সম্পূর্ণ রিডাইরেক্ট URL পেস্ট করুন (http://127.0.0.1:1455/ দিয়ে শুরু)।',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT সাইন-ইন সম্পূর্ণ করুন',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT সংযোগ বিচ্ছিন্ন করুন',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT সাইন-ইন শুধু ডেস্কটপ অ্যাপে পাওয়া যায়।',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT সাইন-ইন শুরু করা যায়নি। আবার চেষ্টা করুন অথবা একটি API কী ব্যবহার করুন।',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT সাইন-ইন সম্পূর্ণ হয়নি। রিডাইরেক্ট URL পরীক্ষা করে আবার চেষ্টা করুন।',
+  'settings.ai.openaiOauthCallbackRequired':
+    'সাইন ইন করার পর ব্রাউজার থেকে রিডাইরেক্ট URL পেস্ট করুন।',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT সংযোগ বিচ্ছিন্ন করা যায়নি। আবার চেষ্টা করুন।',
   'memorySources.codingSessions.title': 'কোডিং-এজেন্ট সেশন',
   'memorySources.codingSessions.description':
     'Codex ও Claude Code-এর সিদ্ধান্ত এবং সংশোধনকে ব্যক্তিগত পারসোনা মেমরিতে রূপ দিন।',

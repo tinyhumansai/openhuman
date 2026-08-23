@@ -7026,6 +7026,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+  'settings.ai.openaiOauthTitle': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthDescription':
+    'API 키 없이 OpenAI 모델을 사용하려면 ChatGPT 계정으로 로그인하세요.',
+  'settings.ai.openaiOauthConnect': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthConnected': 'ChatGPT에 연결됨',
+  'settings.ai.openaiOauthOpening': '로그인 페이지를 여는 중…',
+  'settings.ai.openaiOauthCallbackHint':
+    '로그인 후 브라우저의 전체 리디렉션 URL을 붙여넣으세요(http://127.0.0.1:1455/ 로 시작).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT 로그인 완료',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT 연결 해제',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT 로그인이 완료되지 않았습니다. 리디렉션 URL을 확인하고 다시 시도하세요.',
+  'settings.ai.openaiOauthCallbackRequired': '로그인 후 브라우저의 리디렉션 URL을 붙여넣으세요.',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT 연결을 해제할 수 없습니다. 다시 시도하세요.',
   'memorySources.codingSessions.title': '코딩 에이전트 세션',
   'memorySources.codingSessions.description':
     'Codex와 Claude Code의 결정 및 수정 사항을 비공개 페르소나 메모리로 변환합니다.',

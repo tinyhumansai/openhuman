@@ -916,6 +916,8 @@ describe('AIPanel', () => {
     expect(
       within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
     ).not.toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-section')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-connect')).toBeInTheDocument();
   });
 
   it('#5339: keeps a valid key and saves the provider when the add-time probe fails for a non-auth reason', async () => {

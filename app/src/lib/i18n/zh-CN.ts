@@ -6723,6 +6723,23 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '删除',
   'flows.delete.deleting': '正在删除…',
   'flows.canvas.renameLabel': '重命名工作流',
+  'settings.ai.openaiOauthTitle': '使用 ChatGPT 登录',
+  'settings.ai.openaiOauthDescription':
+    '使用 ChatGPT 账户登录，无需 API 密钥即可使用 OpenAI 模型。',
+  'settings.ai.openaiOauthConnect': '使用 ChatGPT 登录',
+  'settings.ai.openaiOauthConnected': '已连接 ChatGPT',
+  'settings.ai.openaiOauthOpening': '正在打开登录页面…',
+  'settings.ai.openaiOauthCallbackHint':
+    '登录后，请粘贴浏览器中的完整重定向 URL（以 http://127.0.0.1:1455/ 开头）。',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': '完成 ChatGPT 登录',
+  'settings.ai.openaiOauthDisconnect': '断开 ChatGPT 连接',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 登录仅在桌面应用中可用。',
+  'settings.ai.openaiOauthStartError': '无法开始 ChatGPT 登录。请重试或使用 API 密钥。',
+  'settings.ai.openaiOauthCompleteError': 'ChatGPT 登录未完成。请检查重定向 URL 后重试。',
+  'settings.ai.openaiOauthCallbackRequired': '登录后，请粘贴浏览器中的重定向 URL。',
+  'settings.ai.openaiOauthDisconnectError': '无法断开 ChatGPT 连接，请重试。',
   'memorySources.codingSessions.title': '编程智能体会话',
   'memorySources.codingSessions.description':
     '将 Codex 和 Claude Code 中的决策与纠正转化为私有人格记忆。',

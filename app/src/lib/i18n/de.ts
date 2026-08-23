@@ -7305,6 +7305,28 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Löschen',
   'flows.delete.deleting': 'Wird gelöscht…',
   'flows.canvas.renameLabel': 'Workflow umbenennen',
+  'settings.ai.openaiOauthTitle': 'Mit ChatGPT anmelden',
+  'settings.ai.openaiOauthDescription':
+    'Melde dich mit deinem ChatGPT-Konto an, um OpenAI-Modelle ohne API-Schlüssel zu verwenden.',
+  'settings.ai.openaiOauthConnect': 'Mit ChatGPT anmelden',
+  'settings.ai.openaiOauthConnected': 'Mit ChatGPT verbunden',
+  'settings.ai.openaiOauthOpening': 'Anmeldung wird geöffnet…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Füge nach der Anmeldung die vollständige Weiterleitungs-URL aus deinem Browser ein (beginnt mit http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT-Anmeldung abschließen',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT-Verbindung trennen',
+  'settings.ai.openaiOauthDesktopOnly':
+    'Die ChatGPT-Anmeldung ist nur in der Desktop-App verfügbar.',
+  'settings.ai.openaiOauthStartError':
+    'Die ChatGPT-Anmeldung konnte nicht gestartet werden. Versuche es erneut oder verwende einen API-Schlüssel.',
+  'settings.ai.openaiOauthCompleteError':
+    'Die ChatGPT-Anmeldung wurde nicht abgeschlossen. Prüfe die Weiterleitungs-URL und versuche es erneut.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Füge nach der Anmeldung die Weiterleitungs-URL aus deinem Browser ein.',
+  'settings.ai.openaiOauthDisconnectError':
+    'Die ChatGPT-Verbindung konnte nicht getrennt werden. Bitte versuche es erneut.',
   'memorySources.codingSessions.title': 'Coding-Agent-Sitzungen',
   'memorySources.codingSessions.description':
     'Verwandle Entscheidungen und Korrekturen aus Codex und Claude Code in private Persona-Erinnerungen.',
