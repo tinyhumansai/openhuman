@@ -190,6 +190,61 @@ async fn list_chunks_query_substring_works() {
     }));
 }
 
+/// Regression: whole-phrase LIKE let punctuation defeat the search — querying
+/// "Grade 4 Week 1" against a chunk containing "Grade 4: Week 1 Update"
+/// returned nothing, and an agent concluded the content was never ingested.
+/// Tokens now AND-match individually, in any order.
+#[tokio::test]
+async fn list_chunks_query_tokens_match_across_punctuation_and_order() {
+    let (_tmp, cfg) = test_config();
+    seed_chat_chunk(
+        &cfg,
+        "gmail-sync:ca_1",
+        "Subject: School announcement: Grade 4: Week 1 Update",
+    )
+    .await;
+    seed_chat_chunk(&cfg, "gmail-sync:ca_1", "different unrelated text").await;
+
+    // The exact query that used to return zero hits.
+    let punctuated = list_chunks_rpc(
+        &cfg,
+        ChunkFilter {
+            query: Some("Grade 4 Week 1".into()),
+            ..ChunkFilter::default()
+        },
+    )
+    .await
+    .unwrap()
+    .value;
+    assert_eq!(punctuated.chunks.len(), 1, "tokens must match through punctuation");
+
+    // Order-independent: same tokens shuffled still hit.
+    let shuffled = list_chunks_rpc(
+        &cfg,
+        ChunkFilter {
+            query: Some("Week Grade Update".into()),
+            ..ChunkFilter::default()
+        },
+    )
+    .await
+    .unwrap()
+    .value;
+    assert_eq!(shuffled.chunks.len(), 1, "token order must not matter");
+
+    // AND semantics: an absent token still excludes the chunk.
+    let miss = list_chunks_rpc(
+        &cfg,
+        ChunkFilter {
+            query: Some("Grade 4 zeppelin".into()),
+            ..ChunkFilter::default()
+        },
+    )
+    .await
+    .unwrap()
+    .value;
+    assert!(miss.chunks.is_empty(), "every token must be required");
+}
+
 #[tokio::test]
 async fn list_chunks_filters_by_source_kind_and_applies_limit_offset() {
     let (_tmp, cfg) = test_config();
