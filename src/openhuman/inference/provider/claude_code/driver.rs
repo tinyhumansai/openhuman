@@ -187,6 +187,33 @@ fn write_mcp_http_config(
     Ok(path)
 }
 
+/// Build the child's `PATH` so `claude` — and any tool it shells out to (git,
+/// ripgrep, node, …) — resolves even when OpenHuman was launched from
+/// Finder/Dock and inherited only the stripped launchd `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`, no `~/.local/bin`). Prepends the resolved
+/// CLI's own directory plus the common user/Homebrew bin dirs to whatever
+/// `PATH` we inherited; the inherited system entries are kept after them.
+/// Prepend-only — duplicate `PATH` entries are harmless, so this stays safe if
+/// a dir is already present (e.g. a terminal launch).
+fn child_path_with_user_bins(claude_bin: &std::path::Path) -> std::ffi::OsString {
+    let mut prefix: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = claude_bin.parent() {
+        if !parent.as_os_str().is_empty() {
+            prefix.push(parent.to_path_buf());
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        prefix.push(home.join(".local/bin"));
+        prefix.push(home.join("bin"));
+    }
+    prefix.push(PathBuf::from("/opt/homebrew/bin"));
+    prefix.push(PathBuf::from("/usr/local/bin"));
+
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(prefix.into_iter().chain(std::env::split_paths(&existing)))
+        .unwrap_or(existing)
+}
+
 /// Keep the potentially large harness prompt out of argv. Windows flattens
 /// argv into a command line capped at 32,767 UTF-16 code units, while Claude's
 /// file flag has no such limit. The per-turn scratch directory owns cleanup.
@@ -385,6 +412,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     if let Some(key) = &ctx.anthropic_api_key {
         cmd.env("ANTHROPIC_API_KEY", key);
     }
+    // A Finder/Dock launch inherits a stripped launchd PATH; make sure the CLI
+    // and anything it invokes resolve by prepending the user's bin dirs.
+    cmd.env("PATH", child_path_with_user_bins(&ctx.bin_path));
 
     let mut child = cmd
         .spawn()
@@ -517,6 +547,36 @@ mod tests {
         assert_eq!(server["headers"]["Authorization"], "Bearer tok-abc123");
         // It must NOT spawn a stdio child (the old jailed path).
         assert!(server.get("command").is_none());
+    }
+
+    #[test]
+    fn child_path_prepends_cli_dir_and_keeps_inherited_entries() {
+        let _env = super::super::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("PATH");
+        std::env::set_var("PATH", "/usr/bin:/bin");
+
+        let combined = child_path_with_user_bins(std::path::Path::new(
+            "/Users/test/.local/bin/claude",
+        ));
+        let dirs: Vec<PathBuf> = std::env::split_paths(&combined).collect();
+
+        // The resolved CLI's own dir is prepended, ahead of the inherited PATH.
+        assert_eq!(dirs.first().map(|p| p.as_path()),
+            Some(std::path::Path::new("/Users/test/.local/bin")));
+        // Inherited system entries survive (appended after the prefixes).
+        assert!(dirs.iter().any(|p| p == std::path::Path::new("/usr/bin")));
+        assert!(dirs.iter().any(|p| p == std::path::Path::new("/bin")));
+        // The CLI dir sorts before the inherited /usr/bin.
+        let cli_idx = dirs.iter().position(|p| p == std::path::Path::new("/Users/test/.local/bin"));
+        let usr_idx = dirs.iter().position(|p| p == std::path::Path::new("/usr/bin"));
+        assert!(cli_idx < usr_idx, "CLI dir must come before inherited /usr/bin");
+
+        match prev {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
     }
 
     #[test]
