@@ -336,8 +336,15 @@ impl Agent {
         // prompt-building call-site — main agent, sub-agent runner,
         // channel runtimes — shares one builder configuration.
         let mut prompt = self.context.build_system_prompt(&ctx)?;
+        // Append, never prepend. The boundary is session-varying
+        // (agent / channel / entrypoint / allowed tools). Putting it
+        // first moves the first diverging byte to offset 0 and defeats
+        // the inference backend's prefix cache for the stable sections
+        // behind it (safety preamble, tool catalogue, workspace). Same
+        // reason `DateTimeSection` is omitted from `for_subagent` and
+        // sits after the stable sections in `with_defaults()`.
         if let Some(boundary) = render_tool_policy_boundary(&self.tool_policy_session, 2048) {
-            prompt = format!("{boundary}\n\n{prompt}");
+            prompt = format!("{prompt}\n\n{boundary}");
         }
         Ok(prompt)
     }

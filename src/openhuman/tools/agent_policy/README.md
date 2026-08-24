@@ -39,7 +39,7 @@ Re-exported from `mod.rs`:
 
 - `src/openhuman/agent/harness/session/builder.rs` — builds the `ToolPolicySession` (`ToolPolicyEngine`, `ToolPolicySession`).
 - `src/openhuman/agent/harness/session/runtime.rs` — uses `ToolPolicyEngine`.
-- `src/openhuman/agent/harness/session/turn.rs` — calls `render_tool_policy_boundary` to inject the boundary into the prompt.
+- `src/openhuman/agent/harness/session/turn/context.rs` — appends `render_tool_policy_boundary` after the stable system-prompt prefix (session-varying policy must not lead the prompt or it busts the KV-cache prefix).
 - `src/openhuman/agent/harness/session/types.rs` — carries `ToolPolicySession` on the session.
 
 ## Notes / gotchas

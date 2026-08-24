@@ -428,6 +428,9 @@ fn make_agent_with_builder_and_dispatcher(
     context_config: crate::openhuman::config::ContextConfig,
     tool_dispatcher: Box<dyn ToolDispatcher>,
 ) -> Agent {
+    // Same seam wiring as `make_agent`: create_memory fails closed
+    // without an EmbeddingHost, which the host installs at startup.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
     std::mem::forget(workspace);
@@ -821,6 +824,19 @@ fn system_prompt_includes_tool_policy_boundary() {
     assert!(prompt.contains("Allowed tools: echo"));
     assert!(prompt.contains("Restricted tools: 1 omitted by policy"));
     assert!(!prompt.contains("write_notes"));
+
+    // Session-varying policy must not lead the prompt: that would bust
+    // the KV-cache prefix for the stable sections behind it (#5704).
+    let heading = "## Tool Policy Boundary";
+    assert!(
+        !prompt.starts_with(heading),
+        "tool policy boundary must not be the prompt prefix"
+    );
+    let heading_at = prompt.find(heading).expect("boundary heading");
+    assert!(
+        !prompt[heading_at + heading.len()..].contains("\n## "),
+        "boundary must be the last markdown section so it cannot bust the shared prefix"
+    );
 }
 
 #[test]
