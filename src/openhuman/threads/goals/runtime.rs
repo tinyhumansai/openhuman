@@ -90,6 +90,54 @@ pub async fn pause_for_current_thread(workspace_dir: &Path) {
     }
 }
 
+/// Mark the active goal for the ambient thread `Complete` (the originating
+/// task settled successfully). Best-effort; safe to call when there is no goal
+/// or no thread scope. Emits `ThreadGoalUpdated` so the UI chip refreshes.
+///
+/// This is the lifecycle counterpart the pause/resume pair was missing: without
+/// a settle, a goal a finished task left behind stays `Active` and is
+/// re-injected as an `[active_goal]` block on every later turn — including
+/// unrelated chat (#1725). A caller that owns a task's lifecycle calls this
+/// when the task reaches a terminal, satisfied state so the goal can't linger.
+pub async fn complete_for_current_thread(workspace_dir: &Path) {
+    let Some(thread_id) = current_thread_id() else {
+        return;
+    };
+    match store::complete(workspace_dir, &thread_id).await {
+        Ok(goal) => {
+            if matches!(goal.status, ThreadGoalStatus::Complete) {
+                BUS.publish(DomainEvent::ThreadGoalUpdated {
+                    thread_id: goal.thread_id.clone(),
+                    goal_id: goal.goal_id.clone(),
+                    status: goal.status.as_str().to_string(),
+                });
+            }
+        }
+        Err(e) => {
+            tracing::debug!(thread_id = %thread_id, error = %e, "[thread_goals] complete_for_current_thread failed");
+        }
+    }
+}
+
+/// Delete the goal row for the ambient thread entirely (the originating task was
+/// abandoned / superseded, and no completion contract should persist).
+/// Best-effort; safe to call when there is no goal or no thread scope.
+///
+/// Clearing removes the row rather than moving it to a terminal status, so a
+/// later turn loads `None` and injects no `[active_goal]` block at all — the
+/// strongest guarantee that a stale objective cannot leak forward (#1725).
+pub async fn clear_for_current_thread(workspace_dir: &Path) {
+    let Some(thread_id) = current_thread_id() else {
+        return;
+    };
+    match store::clear(workspace_dir, &thread_id).await {
+        Ok(_existed) => {}
+        Err(e) => {
+            tracing::debug!(thread_id = %thread_id, error = %e, "[thread_goals] clear_for_current_thread failed");
+        }
+    }
+}
+
 /// The per-turn token total used for budget accounting (prompt + completion).
 fn turn_tokens(input: u64, output: u64) -> u64 {
     crate_budget::turn_tokens(input, output)
@@ -270,6 +318,68 @@ mod tests {
             assert_eq!(g.tokens_used, 0, "paused goal must not accrue usage");
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn complete_for_current_thread_settles_active_goal() {
+        // A goal an originating task left behind is settled to `Complete` so a
+        // later turn stops re-injecting its `[active_goal]` block (#1725).
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        crate::openhuman::agent::tinyagents::thread_context::with_thread_id("t-complete", async {
+            store::set(&dir, "t-complete", "obj", Some(1000))
+                .await
+                .unwrap();
+            complete_for_current_thread(&dir).await;
+            let g = store::get(&dir, "t-complete").await.unwrap().unwrap();
+            assert_eq!(
+                g.status,
+                ThreadGoalStatus::Complete,
+                "an originating task's settle must mark the goal Complete, not leave it Active"
+            );
+            assert!(
+                !g.status.is_active(),
+                "a completed goal must not stay active (it would keep steering unrelated turns)"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn clear_for_current_thread_removes_the_goal_row() {
+        // Clearing deletes the row entirely, so a later turn loads `None` and
+        // injects no goal block at all — the strongest anti-leak guarantee.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        crate::openhuman::agent::tinyagents::thread_context::with_thread_id("t-clear", async {
+            store::set(&dir, "t-clear", "obj", Some(1000))
+                .await
+                .unwrap();
+            clear_for_current_thread(&dir).await;
+            let g = store::get(&dir, "t-clear").await.unwrap();
+            assert!(
+                g.is_none(),
+                "clearing must delete the goal row so no [active_goal] can leak forward"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn complete_and_clear_are_safe_without_a_goal_or_thread() {
+        // Best-effort contract: both are no-ops (never panic) when there is no
+        // goal for the thread, and when called outside any thread scope.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        crate::openhuman::agent::tinyagents::thread_context::with_thread_id("t-empty", async {
+            complete_for_current_thread(&dir).await;
+            clear_for_current_thread(&dir).await;
+            assert!(store::get(&dir, "t-empty").await.unwrap().is_none());
+        })
+        .await;
+        // No ambient thread scope at all.
+        complete_for_current_thread(&dir).await;
+        clear_for_current_thread(&dir).await;
     }
 
     #[tokio::test]
