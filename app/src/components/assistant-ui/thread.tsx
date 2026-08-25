@@ -333,6 +333,15 @@ const Composer: FC<{
   const commands = useContext(SlashCommandsContext);
   const slash = unstable_useSlashCommandAdapter({ commands, fallbackIcon: SlashIcon });
   const inputWrapperRef = useRef<HTMLDivElement>(null);
+  // IME composition writes pre-edit text into the contenteditable's
+  // `textContent` before Lexical commits it to editor state. Pushing that
+  // intermediate state through `aui.composer.setText` makes the package's
+  // SyncPlugin rebuild the editor mid-composition, which cancels the
+  // composition and commits each pre-edit stage as literal text
+  // ("n ni nihao 你好"). The gate keeps the DOM→store bridge below closed
+  // while composing; see the comment on the bridge for why the bridge itself
+  // must stay.
+  const isComposingTextRef = useRef(false);
   const { ComposerHeader, ComposerAttachments: HostComposerAttachments } =
     useContext(ThreadComponentsContext);
   useEffect(() => {
@@ -368,16 +377,51 @@ const Composer: FC<{
              * rather than literal text the model would read. `commands` is empty
              * unless the host supplies some, and with none the popover never
              * opens, so a host that wants a plain box still gets one.
+             *
+             * The input-level DOM→store bridge below must stay, gated on
+             * composition: Lexical's own editor-state commits do not reach the
+             * composer store in environments that bypass its input pipeline —
+             * jsdom tests drive the editable by setting `textContent` and
+             * firing a synthetic `input` event (see `setComposerText` in
+             * Conversations.render.test.tsx), so SyncPlugin never fires there
+             * and this bridge is the only path. During a real IME composition
+             * the same `textContent` read returns pre-edit text that Lexical
+             * has NOT committed, and pushing it would make SyncPlugin rebuild
+             * the editor mid-composition — hence the composition gate.
              */}
             <LexicalComposerInput
               ref={inputWrapperRef}
               placeholder="Send a message..."
               onInputCapture={event => {
+                if (isComposingTextRef.current) return;
+                const native = event.nativeEvent;
+                if ('isComposing' in native && native.isComposing) return;
                 const target = event.target;
                 if (target instanceof HTMLElement) {
                   const text = target.textContent ?? '';
                   globalThis.queueMicrotask(() => aui.composer.setText(text));
                 }
+              }}
+              onCompositionStartCapture={() => {
+                isComposingTextRef.current = true;
+              }}
+              onCompositionEndCapture={event => {
+                isComposingTextRef.current = false;
+                // Chrome finalizes the composed DOM before compositionend
+                // fires; WebKit only after the event — and Lexical re-owns
+                // (and may clear) the DOM while handling that same event, so
+                // neither a synchronous read nor a deferred one is right
+                // everywhere. Snapshot the text at capture time, then prefer
+                // the finalized DOM one macrotask later, falling back to the
+                // snapshot when Lexical has since re-owned the DOM (the jsdom
+                // bridge path, where the editor state never saw the text).
+                const target = event.target;
+                if (!(target instanceof HTMLElement)) return;
+                const textAtCompositionEnd = target.textContent ?? '';
+                globalThis.setTimeout(() => {
+                  const finalized = target.textContent ?? '';
+                  aui.composer.setText(finalized || textAtCompositionEnd);
+                }, 0);
               }}
               onKeyDownCapture={event => {
                 if (event.key === 'Escape' && onEscape) {

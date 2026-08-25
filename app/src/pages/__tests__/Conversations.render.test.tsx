@@ -858,6 +858,33 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatSend).not.toHaveBeenCalled();
   });
 
+  it('keeps IME pre-edit text out of the composer store until the composition commits (#5763)', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    // Mid-composition: the pre-edit string sits in the contenteditable's
+    // textContent, but pushing it into the composer store would make
+    // SyncPlugin rebuild the editor and cancel the composition — the bug in
+    // #5763. The send action must not appear off the back of pre-edit text.
+    fireEvent.compositionStart(textarea);
+    textarea.textContent = 'nihao';
+    fireEvent.input(textarea, { data: 'nihao', inputType: 'insertCompositionText' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+
+    // The composition commits: the final text reaches the store and the send
+    // action appears with it. The committed text is in the DOM before
+    // compositionend fires (Chrome semantics; WebKit finalizes after the
+    // event and Lexical may re-own the DOM in between — the component reads
+    // both times and prefers the finalized value).
+    textarea.textContent = '你好';
+    fireEvent.compositionEnd(textarea);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
   it('persists a local user message and sends through chat service for valid input', async () => {
     const { textarea, thread } = await renderSelectedConversation();
 
