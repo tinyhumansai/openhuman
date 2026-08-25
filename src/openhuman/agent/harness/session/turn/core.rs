@@ -180,6 +180,21 @@ impl Agent {
     /// 6. **Background Tasks**: Triggers episodic memory indexing and facts
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
+        // Consume any per-turn overrides the caller set for THIS turn (#1725).
+        // Taking them resets the field to the default, so they apply to exactly
+        // one turn — a chat/small-talk turn runs tool-less, memory-less and
+        // goal-less without permanently altering the agent, and the following
+        // turn is back to full-agentic behaviour. Callers that never opt in get
+        // `TurnOverrides::default()` (all-false) and the unchanged path.
+        let turn_overrides = std::mem::take(&mut self.pending_turn_overrides);
+        if turn_overrides != super::super::types::TurnOverrides::default() {
+            log::info!(
+                "[agent_loop] per-turn overrides active: suppress_active_goal={} suppress_tools={} suppress_memory_agent={}",
+                turn_overrides.suppress_active_goal,
+                turn_overrides.suppress_tools,
+                turn_overrides.suppress_memory_agent
+            );
+        }
         self.emit_progress(AgentProgress::TurnStarted).await;
         log::info!("[agent] turn started — awaiting user message processing");
         log::info!(
@@ -515,7 +530,16 @@ impl Agent {
         // Capture the workspace path for the budget stop hook built after the
         // `turn_body` coroutine (which borrows `&mut self`) is constructed.
         let goal_workspace_dir = self.workspace_dir.clone();
-        let active_goal = {
+        let active_goal = if turn_overrides.suppress_active_goal {
+            // Chat / small-talk turn: do NOT load, auto-resume, inject, or
+            // budget-arm this thread's goal. A goal an earlier task left
+            // uncompleted must not steer an unrelated greeting (#1725, the
+            // "stale goal replays every turn" half of the context leak).
+            log::debug!(
+                "[thread_goals] active_goal suppressed for this turn (chat/small-talk override)"
+            );
+            None
+        } else {
             let loaded = crate::openhuman::threads::goals::runtime::load_for_current_thread(
                 &self.workspace_dir,
             )
@@ -680,7 +704,12 @@ impl Agent {
         // turn and finishes in the background if the work runs long. So the recall
         // path is byte-for-byte identical across voice and chat.
         let (enriched, memory_agent_context_injected) = self
-            .inject_triggered_memory_agent_context(user_message, enriched, &parent_context)
+            .inject_triggered_memory_agent_context(
+                user_message,
+                enriched,
+                &parent_context,
+                turn_overrides.suppress_memory_agent,
+            )
             .await;
         if memory_agent_context_injected {
             agent_context_prepared_sources.push(harness::AgentContextPreparedSource {
@@ -747,6 +776,7 @@ impl Agent {
                 temperature,
                 max_iterations,
                 artifact_store,
+                turn_overrides.suppress_tools,
             ))
             .await
         }; // end of `turn_body` async block
@@ -867,6 +897,7 @@ impl Agent {
         artifact_store: Option<
             crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore,
         >,
+        suppress_tools: bool,
     ) -> Result<String> {
         let turn_started = std::time::Instant::now();
         // This turn's stamped user message is already the last entry in
@@ -932,10 +963,25 @@ impl Agent {
         .map(|prepared| prepared.messages)
         .unwrap_or(messages);
 
+        // Per-turn tool scope (#1725). A chat / small-talk turn runs with an
+        // EMPTY tool set: the provider request carries no tool schema, so the
+        // model cannot enter the tool loop and answers in a single call. The
+        // agent's durable `self.tools` / `self.visible_tool_names` are left
+        // untouched — the next un-overridden turn gets the full toolbelt back.
+        let (turn_tools, turn_visible_tool_names) = if suppress_tools {
+            (
+                std::sync::Arc::new(Vec::new()),
+                std::collections::HashSet::new(),
+            )
+        } else {
+            (self.tools.clone(), self.visible_tool_names.clone())
+        };
+
         tracing::info!(
             model = %effective_model,
             max_iterations,
-            tools = self.tools.len(),
+            tools = turn_tools.len(),
+            suppress_tools,
             "[agent_loop] routing chat turn through the tinyagents harness"
         );
 
@@ -978,8 +1024,8 @@ impl Agent {
                     turn_models,
                     model: effective_model.to_string(),
                     messages,
-                    tools: self.tools.clone(),
-                    visible_tool_names: self.visible_tool_names.clone(),
+                    tools: turn_tools,
+                    visible_tool_names: turn_visible_tool_names,
                     max_iterations,
                     on_progress: self.on_progress.clone(),
                     context_window,
@@ -1410,9 +1456,22 @@ impl Agent {
         user_message: &str,
         enriched: String,
         parent_context: &ParentExecutionContext,
+        force_skip: bool,
     ) -> (String, bool) {
         const MEMORY_AGENT_ID: &str = "agent_memory";
         const MAX_MEMORY_AGENT_BLOCK_CHARS: usize = 8000;
+
+        if force_skip {
+            // Per-turn override (#1725): a chat / small-talk turn skips the
+            // pre-turn memory-agent retrieval even when this agent's policy is
+            // `Always`, so a greeting never pulls a prior task's remembered
+            // context into an unrelated reply.
+            log::debug!(
+                "[agent_memory:trigger] skipped agent_id={} (per-turn suppress_memory_agent override)",
+                self.agent_definition_id
+            );
+            return (enriched, false);
+        }
 
         if self.trigger_memory_agent != TriggerMemoryAgent::Always {
             log::debug!(
