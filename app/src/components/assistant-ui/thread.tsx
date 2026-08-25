@@ -405,23 +405,16 @@ const Composer: FC<{
               onCompositionStartCapture={() => {
                 isComposingTextRef.current = true;
               }}
-              onCompositionEndCapture={event => {
+              onCompositionEndCapture={() => {
+                // Re-open the gate only — no store write of our own here. The
+                // commit's own `input` event (isComposing false) flows through
+                // the bridge above once the gate is open, and in a real browser
+                // Lexical's compositionend commit makes SyncPlugin the
+                // authoritative sync. Writing the DOM ourselves would race a
+                // new composition that starts before a deferred read (cancels
+                // it), and would resurrect the pre-edit text of a cancelled
+                // composition when the finalized DOM is legitimately empty.
                 isComposingTextRef.current = false;
-                // Chrome finalizes the composed DOM before compositionend
-                // fires; WebKit only after the event — and Lexical re-owns
-                // (and may clear) the DOM while handling that same event, so
-                // neither a synchronous read nor a deferred one is right
-                // everywhere. Snapshot the text at capture time, then prefer
-                // the finalized DOM one macrotask later, falling back to the
-                // snapshot when Lexical has since re-owned the DOM (the jsdom
-                // bridge path, where the editor state never saw the text).
-                const target = event.target;
-                if (!(target instanceof HTMLElement)) return;
-                const textAtCompositionEnd = target.textContent ?? '';
-                globalThis.setTimeout(() => {
-                  const finalized = target.textContent ?? '';
-                  aui.composer.setText(finalized || textAtCompositionEnd);
-                }, 0);
               }}
               onKeyDownCapture={event => {
                 if (event.key === 'Escape' && onEscape) {

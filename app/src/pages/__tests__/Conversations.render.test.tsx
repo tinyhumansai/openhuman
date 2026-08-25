@@ -873,13 +873,16 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
     expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
 
-    // The composition commits: the final text reaches the store and the send
-    // action appears with it. The committed text is in the DOM before
-    // compositionend fires (Chrome semantics; WebKit finalizes after the
-    // event and Lexical may re-own the DOM in between — the component reads
-    // both times and prefers the finalized value).
-    textarea.textContent = '你好';
+    // The composition commits: compositionend re-opens the gate, and the
+    // commit's own input event (isComposing false — fired by the browser after
+    // compositionend, or by Lexical's commit reconciliation) now flows through
+    // the ordinary bridge path. In jsdom the commit's input event is this
+    // synthetic one; in a real browser SyncPlugin's own commit is the
+    // authoritative sync for the same text.
     fireEvent.compositionEnd(textarea);
+    await act(async () => {
+      setComposerText(textarea, '你好');
+    });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
     });
