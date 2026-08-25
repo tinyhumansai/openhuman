@@ -120,7 +120,7 @@ impl SystemPromptBuilder {
         archetype_prompt_text: String,
         omit_identity: bool,
         omit_safety_preamble: bool,
-        _omit_skills_catalog: bool,
+        omit_skills_catalog: bool,
     ) -> Self {
         let mut sections: Vec<Box<dyn PromptSection>> =
             vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];
@@ -144,12 +144,9 @@ impl SystemPromptBuilder {
         if !omit_safety_preamble {
             sections.push(Box::new(SafetySection));
         }
-        // Skills catalogue and connected integrations are rendered by
-        // the individual agent's `prompt.rs` when that agent needs
-        // them (integrations_agent for the skill-executor voice,
-        // orchestrator/welcome for the delegator voice). The shared
-        // builder intentionally does not emit them — keeping
-        // agent-specific prose scoped to the agent that owns it.
+        if !omit_skills_catalog {
+            sections.push(Box::new(SkillsCatalogSection));
+        }
         sections.push(Box::new(WorkspaceSection));
 
         Self { sections }

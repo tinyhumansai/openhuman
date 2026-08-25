@@ -94,13 +94,9 @@ pub struct AgentsInstructionsSection;
 /// Renders the canonical grounding / anti-hallucination contract
 /// ([`GROUNDING_BODY`]). Always included; never gated.
 pub struct GroundingSection;
-// `WorkflowsSection` and `ConnectedIntegrationsSection` previously lived
-// here and branched on `ctx.agent_id` to pick between the skill-
-// executor and delegator voice. They've been removed — each agent's
-// `prompt.rs` now renders its own block inline (integrations_agent owns the
-// `## Available Skills` + executor-voice `## Connected Integrations`
-// blocks, orchestrator owns `## Delegation Guide — Integrations`,
-// welcome owns its onboarding-flavoured connected list).
+// Connected-integration guidance remains agent-owned because its voice and
+// available actions vary by agent. The generic installed-skills catalogue is
+// shared below and is gated by each definition's `omit_skills_catalog` flag.
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
@@ -136,6 +132,43 @@ pub struct UserIdentitySection;
 /// 2000-char cap and the load-once rule documented on
 /// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
+
+/// Renders the installed skills catalogue for agent definitions that opt in.
+pub struct SkillsCatalogSection;
+
+pub(crate) fn render_skills_catalog(skills: &[crate::openhuman::skills::Workflow]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from(
+        "## Available Skills\n\n\
+         The following skills are installed in this runtime. Use the available workflow tools \
+         to inspect or run a skill when it matches the task.\n\n",
+    );
+    for skill in skills {
+        let raw_id = if skill.dir_name.is_empty() {
+            &skill.name
+        } else {
+            &skill.dir_name
+        };
+        let id = crate::openhuman::util::sanitize::sanitize_for_llm(raw_id, 120)
+            .replace(['\n', '\t'], " ")
+            .trim()
+            .to_string();
+        let id = if id.is_empty() { "(unnamed)" } else { &id };
+        let description = if skill.description.is_empty() {
+            "(no description)".to_string()
+        } else {
+            crate::openhuman::util::sanitize::sanitize_for_llm(&skill.description, 240)
+                .replace(['\n', '\t'], " ")
+                .trim()
+                .to_string()
+        };
+        let _ = writeln!(out, "- **{id}**: {description}");
+    }
+    out
+}
 
 /// Framing preamble emitted immediately before the injected `MEMORY.md`
 /// (and, in the snapshot path, `USER.md`) block.
@@ -173,6 +206,16 @@ pub struct PersonalityRosterSection;
 // ─────────────────────────────────────────────────────────────────────────────
 // PromptSection implementations
 // ─────────────────────────────────────────────────────────────────────────────
+
+impl PromptSection for SkillsCatalogSection {
+    fn name(&self) -> &str {
+        "skills_catalog"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        Ok(render_skills_catalog(ctx.workflows))
+    }
+}
 
 impl PromptSection for PersonalityRosterSection {
     fn name(&self) -> &str {

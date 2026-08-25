@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::openhuman::agent::context::prompt::{
-    render_subagent_system_prompt_with_format, PromptContext, PromptTool, SubagentRenderOptions,
+    render_subagent_system_prompt_with_format_and_workflows, PromptContext, PromptTool,
+    SubagentRenderOptions,
 };
 use crate::openhuman::agent::file_state::with_file_state_agent_id;
 use crate::openhuman::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
@@ -1228,7 +1229,7 @@ async fn run_typed_mode(
         }
         PromptSource::Inline(_) | PromptSource::File { .. } => {
             let archetype_prompt_body = load_prompt_source(&definition.system_prompt, &prompt_ctx)?;
-            render_subagent_system_prompt_with_format(
+            render_subagent_system_prompt_with_format_and_workflows(
                 &parent.workspace_dir,
                 &model,
                 &allowed_indices,
@@ -1238,6 +1239,7 @@ async fn run_typed_mode(
                 render_options,
                 parent.tool_call_format,
                 &narrowed_integrations,
+                &parent.workflows,
                 agents_md.global.as_deref(),
                 agents_md.local.as_deref(),
             )
