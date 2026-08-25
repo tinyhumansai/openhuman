@@ -1581,53 +1581,50 @@ async fn test_save_then_corrupt_then_recover() {
 fn apply_env_overrides_commits_side_effects_to_runtime_proxy() {
     use crate::openhuman::config::schema::proxy::{runtime_proxy_config, set_runtime_proxy_config};
 
-    // Hold the env lock so no other test races on proxy-related env vars.
+    // Hold the env lock so concurrent tests that mutate process env or the
+    // runtime-proxy global cannot interleave with this assertion.
     let _g = env_lock();
-    clear_env(&[
-        "OPENHUMAN_PROXY_ENABLED",
-        "OPENHUMAN_HTTP_PROXY",
-        "HTTP_PROXY",
-        "OPENHUMAN_HTTPS_PROXY",
-        "HTTPS_PROXY",
-        "OPENHUMAN_ALL_PROXY",
-        "ALL_PROXY",
-    ]);
 
-    // Snapshot the global runtime proxy config so we can restore it afterwards
-    // and avoid leaking state into other tests.
-    let previous_runtime = runtime_proxy_config();
+    struct RestoreRuntimeProxy(crate::openhuman::config::schema::proxy::ProxyConfig);
+    impl Drop for RestoreRuntimeProxy {
+        fn drop(&mut self) {
+            set_runtime_proxy_config(self.0.clone());
+        }
+    }
+    let _restore = RestoreRuntimeProxy(runtime_proxy_config());
 
-    // Build a config with proxy fields set directly on the struct.
-    // We cannot pre-configure via apply_env_overlay_with + a HashMapEnv and
-    // then call apply_env_overrides(), because apply_env_overrides() internally
-    // re-runs apply_env_overlay_with(&ProcessEnv) which reads the real process
-    // environment — overwriting anything set via a HashMapEnv beforehand.
-    // Setting fields directly ensures they survive the ProcessEnv overlay
-    // (which only writes fields when the corresponding env var is present).
+    // Drive the overlay from a HashMapEnv rather than ProcessEnv. CI containers
+    // (and many developer shells) inject HTTP_PROXY / similar; overlaying those
+    // onto an enabled fixture can clear the URL, fail validate(), and force
+    // `enabled = false` before `set_runtime_proxy_config` — the exact failure
+    // Feature-Gate Smoke hit on this test.
     let mut cfg = Config::default();
     cfg.proxy.http_proxy = Some("http://proxy.test:8080".to_string());
     cfg.proxy.enabled = true;
 
-    // apply_env_overrides commits side effects: it calls set_runtime_proxy_config
-    // with the current proxy config after the ProcessEnv overlay.
-    cfg.apply_env_overrides();
+    cfg.apply_env_overrides_from(&HashMapEnv::new());
+
+    assert!(
+        cfg.proxy.enabled,
+        "empty overlay must not disable a valid in-memory proxy config"
+    );
+    assert_eq!(
+        cfg.proxy.http_proxy.as_deref(),
+        Some("http://proxy.test:8080")
+    );
 
     // `set_runtime_proxy_config` must have been called: the global should
     // reflect the proxy URL we set on cfg.proxy.
     let runtime = runtime_proxy_config();
     assert!(
         runtime.enabled,
-        "runtime proxy must be enabled after apply_env_overrides"
+        "runtime proxy must be enabled after apply_env_overrides_from"
     );
     assert_eq!(
         runtime.http_proxy.as_deref(),
         Some("http://proxy.test:8080"),
         "runtime proxy URL must match the value set on cfg.proxy"
     );
-
-    // Restore the global runtime proxy state so this test doesn't bleed into
-    // other tests that inspect runtime_proxy_config().
-    set_runtime_proxy_config(previous_runtime);
 }
 
 // ── config recovery (load_or_init with corrupted config.toml) ───
