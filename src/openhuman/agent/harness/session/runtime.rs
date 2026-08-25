@@ -415,6 +415,19 @@ impl Agent {
         self.history.clear();
     }
 
+    /// Set the overrides applied to the **next** [`Self::turn`] call.
+    ///
+    /// The overrides are consumed at the top of the next turn (they apply to a
+    /// single turn, then reset to the default), so a caller running a chat /
+    /// small-talk turn calls this immediately before [`Self::turn`]. Callers
+    /// that never touch this get the unchanged full-agentic behaviour. See
+    /// [`TurnOverrides`](super::types::TurnOverrides) for the fields and the
+    /// motivating case (#1725: a bare greeting must not run the task loop nor
+    /// inherit a prior task's goal / tools / memory).
+    pub fn set_next_turn_overrides(&mut self, overrides: super::types::TurnOverrides) {
+        self.pending_turn_overrides = overrides;
+    }
+
     /// Seed the next turn's LLM context from an authoritative message
     /// log (e.g. the web channel's per-thread conversation JSONL).
     ///

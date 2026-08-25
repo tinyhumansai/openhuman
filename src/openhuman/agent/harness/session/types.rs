@@ -22,6 +22,40 @@ use crate::openhuman::tools::{Tool, ToolSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Per-turn behaviour overrides applied to a **single** [`Agent::turn`] call.
+///
+/// Defaults to all-`false`, so an agent built and driven exactly as before
+/// behaves identically — the overrides only take effect when a caller opts in
+/// via [`Agent::set_next_turn_overrides`] before dispatching a turn. The turn
+/// consumes (takes) them at its start, so they apply to exactly one turn and
+/// then reset to the default; a caller that wants a run of chat turns re-sets
+/// them each time.
+///
+/// The motivating case (opencompany issue #1725) is a bare greeting / small-talk
+/// turn that should run as a cheap conversational reply instead of the full
+/// agentic task loop: no tools to loop on, no pre-turn memory-agent retrieval,
+/// and no stale per-thread goal re-injected from a prior task. Each field is an
+/// independent, additive suppression so a caller can compose exactly the
+/// reduction it wants.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnOverrides {
+    /// Skip loading, auto-resuming, and injecting this thread's durable
+    /// `[active_goal]` block for this turn (and skip arming the goal budget
+    /// stop hook). Prevents an uncompleted goal left by a prior task from
+    /// steering an unrelated chat turn.
+    pub suppress_active_goal: bool,
+    /// Run this turn with **no** tools regardless of the agent's built tool
+    /// set — the provider request carries an empty tool schema, so the model
+    /// cannot enter the tool loop and answers in one shot. The agent's durable
+    /// `tools` / `tool_specs` are left untouched, so the next (un-overridden)
+    /// turn has its full toolbelt back.
+    pub suppress_tools: bool,
+    /// Force [`TriggerMemoryAgent::Never`] behaviour for this turn — skip the
+    /// pre-turn `agent_memory` retrieval even when the agent's policy is
+    /// `Always`. The agent's built policy is left untouched for later turns.
+    pub suppress_memory_agent: bool,
+}
+
 /// An autonomous or semi-autonomous AI agent.
 ///
 /// The `Agent` is the central component that manages conversation state,
@@ -419,6 +453,14 @@ pub struct Agent {
     ///
     /// Empty at construction time and whenever `tools` is fully reconciled.
     pub(super) pending_synthesized_tools_mask: std::collections::HashSet<String>,
+    /// Overrides applied to the **next** [`Agent::turn`] call, then reset.
+    ///
+    /// Defaults to [`TurnOverrides::default`] (no suppression), so an agent
+    /// driven exactly as before is byte-for-byte unchanged. A caller sets this
+    /// via [`Agent::set_next_turn_overrides`] immediately before dispatching a
+    /// chat / small-talk turn; `turn()` takes it at the top so it applies to
+    /// one turn only. See [`TurnOverrides`] for the motivating case (#1725).
+    pub(super) pending_turn_overrides: TurnOverrides,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.

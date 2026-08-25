@@ -49,7 +49,7 @@ pub use migration::{migrate_session_layout_if_needed, MigrationOutcome};
 #[cfg(test)]
 mod tests;
 
-pub use types::{Agent, AgentBuilder};
+pub use types::{Agent, AgentBuilder, TurnOverrides};
 
 // Re-export the duplicate-tool-spec guard for sibling harness modules
 // (`session::runtime`, `subagent_runner`) so all provider call sites
