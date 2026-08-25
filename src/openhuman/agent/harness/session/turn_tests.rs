@@ -49,6 +49,10 @@ impl ChatModel<()> for DummyProvider {
 struct SequenceProvider {
     responses: AsyncMutex<Vec<anyhow::Result<ChatResponse>>>,
     requests: AsyncMutex<Vec<Vec<ChatMessage>>>,
+    /// Number of tool declarations the provider was offered on each call, in
+    /// call order. Lets a test assert per-turn tool suppression (#1725): a
+    /// chat/small-talk turn must send an empty tool schema.
+    tool_counts: AsyncMutex<Vec<usize>>,
 }
 
 #[async_trait]
@@ -64,6 +68,7 @@ impl ChatModel<()> for SequenceProvider {
         _state: &(),
         request: ModelRequest,
     ) -> tinyagents::Result<ModelResponse> {
+        self.tool_counts.lock().await.push(request.tools.len());
         self.requests.lock().await.push(
             request
                 .messages
@@ -877,6 +882,7 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let hook_calls = Arc::new(AsyncMutex::new(Vec::<TurnContext>::new()));
@@ -976,6 +982,7 @@ async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
@@ -1037,6 +1044,178 @@ async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
     }));
 }
 
+/// #1725: a per-turn `suppress_tools` override sends an EMPTY tool schema to the
+/// provider, so a chat / small-talk turn cannot enter the tool loop — even
+/// though the agent was built WITH a tool. The default (no override) path still
+/// offers the tool, proving the suppression is per-turn and not a rebuild.
+#[tokio::test]
+async fn turn_override_suppress_tools_sends_empty_tool_schema() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some("hi there".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        Vec::new(),
+        crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 3,
+            max_history_messages: 10,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    agent.set_next_turn_overrides(crate::openhuman::agent::harness::session::TurnOverrides {
+        suppress_tools: true,
+        ..Default::default()
+    });
+    let response = agent.turn("hey").await.expect("turn should succeed");
+    assert_eq!(response, "hi there");
+
+    let counts = provider_impl.tool_counts.lock().await;
+    assert_eq!(counts.len(), 1, "small-talk turn is a single provider call");
+    assert_eq!(
+        counts[0], 0,
+        "suppress_tools must send an empty tool schema (no tool loop possible)"
+    );
+}
+
+/// The control case for the test above: with NO override the same agent offers
+/// its tool, and the override state has reset after the previous turn — so the
+/// suppression is genuinely one-shot.
+#[tokio::test]
+async fn turn_without_override_offers_tools_and_resets_after_a_suppressed_turn() {
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("first".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            Ok(ChatResponse {
+                text: Some("second".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        Vec::new(),
+        crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 3,
+            max_history_messages: 10,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    // Turn 1: suppressed.
+    agent.set_next_turn_overrides(crate::openhuman::agent::harness::session::TurnOverrides {
+        suppress_tools: true,
+        ..Default::default()
+    });
+    agent.turn("hi").await.expect("turn 1 succeeds");
+    // Turn 2: no override set — the field must have reset to default.
+    agent
+        .turn("now do the work")
+        .await
+        .expect("turn 2 succeeds");
+
+    let counts = provider_impl.tool_counts.lock().await;
+    assert_eq!(counts.len(), 2);
+    assert_eq!(counts[0], 0, "turn 1 suppressed its tools");
+    assert!(
+        counts[1] >= 1,
+        "turn 2 must have the full toolbelt back (one-shot suppression, not a rebuild)"
+    );
+}
+
+/// #1725: a per-turn `suppress_memory_agent` override skips the pre-turn
+/// `agent_memory` retrieval even when the agent's policy is `Always`, so a
+/// greeting is a SINGLE provider call with no "## Memory agent context" block.
+#[tokio::test]
+async fn turn_override_suppress_memory_agent_skips_memory_trigger() {
+    crate::openhuman::memory::host_impls::install_for_tests();
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("built-in agent definitions should load");
+
+    let provider_impl = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some("parent final".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let _workspace_env = WorkspaceEnvGuard::set(&workspace_path);
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> =
+        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+
+    let mut agent = Agent::builder()
+        .chat_model(provider)
+        .tools(vec![Box::new(EchoTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .config(crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 3,
+            max_history_messages: 10,
+            ..crate::openhuman::config::AgentConfig::default()
+        })
+        .workspace_dir(workspace_path)
+        .auto_save(false)
+        .event_context("turn-test-session", "turn-test-channel")
+        .trigger_memory_agent(
+            crate::openhuman::agent::harness::definition::TriggerMemoryAgent::Always,
+        )
+        .build()
+        .unwrap();
+
+    agent.set_next_turn_overrides(crate::openhuman::agent::harness::session::TurnOverrides {
+        suppress_memory_agent: true,
+        suppress_tools: true,
+        suppress_active_goal: true,
+    });
+    let response = agent.turn("hi there").await.expect("turn should succeed");
+    assert_eq!(response, "parent final");
+
+    let requests = provider_impl.requests.lock().await;
+    assert_eq!(
+        requests.len(),
+        1,
+        "suppress_memory_agent must skip the memory-agent subagent call (only the parent turn runs)"
+    );
+    assert!(
+        !requests[0]
+            .iter()
+            .any(|msg| msg.content.contains("## Memory agent context")),
+        "no memory-agent context block may be injected on a suppressed turn"
+    );
+}
+
 #[tokio::test]
 async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
     let provider_impl = Arc::new(SequenceProvider {
@@ -1047,6 +1226,7 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
             reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
     let mut agent = make_agent_with_builder(
@@ -1098,6 +1278,7 @@ async fn turn_accepts_valid_required_output_without_repair() {
             reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1154,6 +1335,7 @@ async fn turn_repairs_missing_required_output_via_reprompt() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1216,6 +1398,7 @@ async fn turn_synthesizes_required_output_when_reprompt_also_omits() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1282,6 +1465,7 @@ async fn turn_appends_required_output_block_when_streamed_to_preserve_consistenc
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1387,6 +1571,7 @@ async fn turn_appends_only_block_not_restated_answer_when_streamed() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1478,6 +1663,7 @@ async fn turn_appends_synthesized_block_when_streamed_reprompt_also_omits() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1552,6 +1738,7 @@ async fn turn_synthesizes_required_output_when_reprompt_call_fails() {
             Err(anyhow::anyhow!("provider boom")),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
 
@@ -1613,6 +1800,7 @@ async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
@@ -1666,6 +1854,7 @@ async fn turn_errors_on_empty_provider_response() {
             reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
@@ -1707,6 +1896,7 @@ async fn turn_checkpoint_falls_back_to_deterministic_summary_when_model_summary_
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
@@ -1747,6 +1937,7 @@ async fn turn_checkpoint_rejects_pformat_wrapup_without_streaming_it() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let registry = crate::openhuman::agent::pformat::build_registry(&tools);
@@ -1820,6 +2011,7 @@ async fn turn_synthesizes_final_answer_when_tool_turn_yields_no_text() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
@@ -1899,6 +2091,7 @@ async fn turn_final_answer_falls_back_to_deterministic_summary_when_reprompt_emp
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
@@ -1956,6 +2149,7 @@ async fn summarize_turn_wrapup_rejects_prompt_tool_call_and_preserves_usage() {
             reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let agent = make_agent_with_builder(
         provider,
@@ -2009,6 +2203,7 @@ async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
         provider,
