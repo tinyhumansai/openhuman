@@ -71,9 +71,17 @@ pub fn base_tool_specs() -> Vec<McpToolSpec> {
         McpToolSpec {
             name: "memory.search",
             title: "Search Memory",
-            description: "Keyword-search OpenHuman's local memory tree and return matching chunks ordered by recency.",
+            description: "Keyword-search OpenHuman's local memory tree and return matching chunks \
+                          ordered by recency. Every whitespace-separated token in the query must \
+                          appear in a chunk (case-insensitive, any order); punctuation between \
+                          tokens does not matter. Zero hits means those tokens are absent — try \
+                          fewer/shorter tokens or `memory.recall` (semantic) before concluding \
+                          content is missing.",
             rpc_method: Some("openhuman.memory_tree_search"),
-            input_schema: query_schema("Substring to match against stored memory chunks."),
+            input_schema: query_schema(
+                "Space-separated keywords; each must appear in the chunk (any order). Prefer a few \
+                 short, distinctive tokens over long exact phrases.",
+            ),
             annotations: read_only_local_annotations(),
         },
         McpToolSpec {

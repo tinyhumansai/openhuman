@@ -93,8 +93,17 @@ pub(super) fn list_chunks_blocking(
         if let Some(query) = &filter.query {
             let q = query.trim();
             if !q.is_empty() {
-                where_clauses.push("c.content LIKE ?".into());
-                params_owned.push(Box::new(format!("%{}%", q)));
+                // Tokenized AND-matching: every whitespace-separated token must
+                // appear somewhere in the chunk, in any order. A literal phrase
+                // still matches (all of its tokens appear), so this is a strict
+                // superset of the old whole-phrase LIKE — which punctuation
+                // could silently defeat: querying "Grade 4 Week 1" against a
+                // chunk containing "Grade 4: Week 1" returned nothing, and an
+                // agent concluded the email was never ingested.
+                for token in q.split_whitespace() {
+                    where_clauses.push("c.content LIKE ?".into());
+                    params_owned.push(Box::new(format!("%{}%", token)));
+                }
             }
         }
 

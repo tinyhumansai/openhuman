@@ -197,13 +197,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "search" => ControllerSchema {
             namespace: NAMESPACE,
             function: "search",
-            description: "Keyword LIKE-search over chunk bodies. Cheap, deterministic; useful as a \
-                 fallback when semantic recall is unavailable.",
+            description: "Keyword search over chunk bodies: every whitespace-separated token must \
+                 appear in the chunk (case-insensitive, any order — punctuation between tokens \
+                 does not matter). Cheap, deterministic; useful as a fallback when semantic \
+                 recall is unavailable.",
             inputs: vec![
                 FieldSchema {
                     name: "query",
                     ty: TypeSchema::String,
-                    comment: "Substring to match against chunk content.",
+                    comment: "Space-separated keywords; each must appear in the chunk (any order). \
+                         Prefer a few short, distinctive tokens over long exact phrases.",
                     required: true,
                 },
                 FieldSchema {
