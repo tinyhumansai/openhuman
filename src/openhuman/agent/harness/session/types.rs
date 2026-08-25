@@ -54,6 +54,15 @@ pub struct TurnOverrides {
     /// pre-turn `agent_memory` retrieval even when the agent's policy is
     /// `Always`. The agent's built policy is left untouched for later turns.
     pub suppress_memory_agent: bool,
+    /// Skip auto-resuming this turn from the agent's most-recent on-disk
+    /// transcript (`try_load_session_transcript`, which resolves the *latest*
+    /// transcript for the agent name -- NOT thread-scoped). A host that has just
+    /// re-bound the in-memory history to a different chat sets this so a cleared
+    /// history is not silently repopulated from an unrelated thread's transcript
+    /// (opencompany #1725). Thread-correct resume via
+    /// `Agent::seed_resume_from_thread_transcript` still works -- it seeds
+    /// `cached_transcript_messages`, which this path never touches.
+    pub suppress_transcript_autoload: bool,
 }
 
 /// An autonomous or semi-autonomous AI agent.

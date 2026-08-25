@@ -1198,6 +1198,7 @@ async fn turn_override_suppress_memory_agent_skips_memory_trigger() {
         suppress_memory_agent: true,
         suppress_tools: true,
         suppress_active_goal: true,
+        suppress_transcript_autoload: false,
     });
     let response = agent.turn("hi there").await.expect("turn should succeed");
     assert_eq!(response, "parent final");

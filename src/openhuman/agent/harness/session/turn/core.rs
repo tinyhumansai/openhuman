@@ -213,7 +213,10 @@ impl Agent {
         // On a fresh session (empty history), look for a previous
         // transcript to pre-populate the exact provider messages for
         // KV cache prefix reuse.
-        if self.history.is_empty() && self.cached_transcript_messages.is_none() {
+        if self.history.is_empty()
+            && self.cached_transcript_messages.is_none()
+            && !turn_overrides.suppress_transcript_autoload
+        {
             self.try_load_session_transcript();
         }
 
