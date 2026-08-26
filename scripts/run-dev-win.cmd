@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 rem Change to the repository root so Git Bash receives a stable relative path.
 cd /d "%~dp0.."
@@ -13,7 +13,7 @@ if not defined GIT_BASH (
   where bash >nul 2>nul
   if not errorlevel 1 (
     bash "scripts/run-dev-win.sh"
-    exit /b %errorlevel%
+    exit /b !errorlevel!
   )
 
   echo [run-dev-win] Git Bash not found.
@@ -22,4 +22,4 @@ if not defined GIT_BASH (
 )
 
 "%GIT_BASH%" "scripts/run-dev-win.sh"
-exit /b %errorlevel%
+exit /b !errorlevel!
