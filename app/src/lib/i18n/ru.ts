@@ -1401,7 +1401,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'По умолчанию. Маршрутизируется через серверную часть OpenHuman, сейчас на базе Exa: ключ API не требуется.',
   'settings.search.localManagedUnavailable':
-    'Поиск OpenHuman Managed недоступен для локальных пользователей. Добавьте свой ключ API Parallel, Brave, Querit, Exa или Tavily, чтобы включить веб-поиск.',
+    'Поиск OpenHuman Управляемый недоступен для локальных пользователей. Добавьте свой ключ API Parallel, Brave, Querit, Exa или Tavily, чтобы включить веб-поиск.',
   'settings.search.engineParallelLabel': 'Параллельно',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: инструменты поиска, извлечения, общения, исследования, обогащения и набора данных.',

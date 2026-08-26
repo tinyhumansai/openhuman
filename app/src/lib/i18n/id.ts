@@ -1388,7 +1388,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Baku bagi OpenHuman- mengatur pencarian atau menghubungkan penyedia anda sendiri dengan kunci API.',
   'settings.search.description':
-    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. Managed menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, Exa, dan Tavily berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
+    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. OpenHuman Dikelola menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, Exa, dan Tavily berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
   'settings.search.engineAria': 'Mesin pencari',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1397,7 +1397,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Baku. Diarahkan melalui backend OpenHuman, saat ini didukung oleh Exa: tidak diperlukan kunci API.',
   'settings.search.localManagedUnavailable':
-    'Pencarian OpenHuman Managed tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, Exa, atau Tavily Anda sendiri untuk mengaktifkan pencarian web.',
+    'Pencarian OpenHuman Dikelola tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, Exa, atau Tavily Anda sendiri untuk mengaktifkan pencarian web.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Parallel Langsung API: pencarian, ekstrak, percakapan, penelitian, perkaya, alat dataset.',

@@ -634,8 +634,17 @@ impl Tool for TavilySearchTool {
 
         // A Tavily-generated answer is the provider's own synthesis of the
         // results; surface it when requested so the agent does not re-answer
-        // from the scraps.
-        let answer = non_empty(parsed.answer.as_deref());
+        // from the scraps. Gate on the requested flag — the response can carry
+        // an answer the agent never asked for.
+        let include_answer = args
+            .get("include_answer")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let answer = if include_answer {
+            non_empty(parsed.answer.as_deref())
+        } else {
+            None
+        };
         let include_raw_content = args
             .get("include_raw_content")
             .and_then(Value::as_bool)

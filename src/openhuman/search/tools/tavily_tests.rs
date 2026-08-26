@@ -307,6 +307,32 @@ async fn search_surfaces_the_tavily_generated_answer_when_requested() {
 }
 
 #[tokio::test]
+async fn search_drops_an_answer_the_agent_did_not_request() {
+    // `one_result_payload()` always carries an `answer`; the gate must keep it
+    // out of the output unless `include_answer` was requested.
+    let app = Router::new().route(
+        "/search",
+        post(|Json(_): Json<Value>| async move { Json(one_result_payload()) }),
+    );
+    let base_url = spawn(app).await;
+
+    let tool = TavilySearchTool::new(Some("test-key".into()), Some(base_url), 5, 15);
+    let result = tool
+        .execute_with_options(
+            json!({"query": "tavily byok"}),
+            ToolCallOptions {
+                prefer_markdown: true,
+            },
+        )
+        .await
+        .expect("execute() should succeed");
+
+    let production_output = result.output_for_llm(true);
+    assert!(!production_output.contains("## Answer"));
+    assert!(!production_output.contains("A concise answer to the query."));
+}
+
+#[tokio::test]
 async fn search_surfaces_requested_raw_content_and_images_in_markdown() {
     let app = Router::new().route(
         "/search",

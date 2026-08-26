@@ -1431,7 +1431,7 @@ const messages: TranslationMap = {
     'Ricerca neurale basata su Exa. Richiede la tua chiave API Exa. Aggiunge strumenti di ricerca, pagine simili e contenuti delle pagine.',
   'settings.search.engineTavilyLabel': 'Tavily',
   'settings.search.engineTavilyDesc':
-    'Ricerca web, notizie e finanza basata su Tavily. Richiede la tua chiave API Tavily. Aggiunge strumenti di ricerca ed estrazione di pagine.',
+    'Ricerca sul web, di notizie e finanziaria con Tavily. Richiede la tua chiave API Tavily. Aggiunge strumenti di ricerca ed estrazione di pagine.',
   'settings.search.statusConfigured': 'Configurato',
   'settings.search.statusNeedsKey': 'Richiede la chiave API',
   'settings.search.fallbackToManaged':

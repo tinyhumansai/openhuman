@@ -1432,7 +1432,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Standard. Wird über das OpenHuman-Backend geleitet, aktuell betrieben von Exa: kein API-Schlüssel erforderlich.',
   'settings.search.localManagedUnavailable':
-    'Die von OpenHuman verwaltete Suche ist für lokale Benutzer nicht verfügbar. Füge deinen eigenen Parallel-, Brave-, Querit-, Exa- oder Tavily-API-Schlüssel hinzu, um die Websuche zu aktivieren.',
+    'Die von OpenHuman verwaltete Suche ist für lokale Benutzer nicht verfügbar. Fügen Sie Ihren eigenen Parallel-, Brave-, Querit-, Exa- oder Tavily-API-Schlüssel hinzu, um die Websuche zu aktivieren.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: Such-, Extrahierungs-, Chat-, Recherche-, Anreicherungs- und Datensatz-Tools.',
