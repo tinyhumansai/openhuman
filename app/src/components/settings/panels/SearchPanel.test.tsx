@@ -44,6 +44,7 @@ function settings(overrides: Record<string, unknown> = {}) {
     brave_configured: false,
     querit_configured: false,
     exa_configured: false,
+    tavily_configured: false,
     allowed_domains: ['reuters.com'],
     allow_all: false,
     ...overrides,
@@ -356,5 +357,72 @@ describe('SearchPanel — unified web-access modes', () => {
     const link = keyEditor('settings.search.exaKeyLabel').getByRole('link');
 
     expect(link).toHaveAttribute('href', 'https://exa.ai');
+  });
+
+  test('Tavily is selectable and shows the needs-key badge until a key is stored', async () => {
+    renderWithProviders(<SearchPanel embedded />);
+    const tavily = await screen.findByTestId('search-engine-tavily');
+
+    expect(within(tavily).getByText('settings.search.statusNeedsKey')).toBeTruthy();
+    expect(tavily).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(tavily);
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ engine: 'tavily' })
+    );
+  });
+
+  test('a stored Tavily key flips the badge to configured', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({
+      result: settings({ engine: 'tavily', effective_engine: 'tavily', tavily_configured: true }),
+    });
+    renderWithProviders(<SearchPanel embedded />);
+
+    const tavily = await screen.findByTestId('search-engine-tavily');
+
+    expect(tavily).toHaveAttribute('aria-checked', 'true');
+    expect(within(tavily).getByText('settings.search.statusConfigured')).toBeTruthy();
+    expect(within(tavily).queryByText('settings.search.fallbackToManaged')).toBeNull();
+  });
+
+  test('Tavily key editor can reveal, save, and clear the stored API key', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({ result: settings({ tavily_configured: true }) });
+    renderWithProviders(<SearchPanel embedded />);
+    await screen.findByPlaceholderText('settings.search.placeholderStored');
+
+    const tavily = keyEditor('settings.search.tavilyKeyLabel');
+    const input = tavily.getByPlaceholderText(
+      'settings.search.placeholderStored'
+    ) as HTMLInputElement;
+    expect(input.type).toBe('password');
+
+    fireEvent.click(tavily.getByText('settings.search.show'));
+    expect(input.type).toBe('text');
+
+    fireEvent.change(input, { target: { value: 'tvly-tavily-test-key' } });
+    fireEvent.click(tavily.getByText('settings.search.save'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({
+        tavily_api_key: 'tvly-tavily-test-key',
+      })
+    );
+    expect(input.value).toBe('');
+
+    fireEvent.click(tavily.getByText('settings.search.clear'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ tavily_api_key: '' })
+    );
+  });
+
+  test('the Tavily key editor links out to tavily.com for a key', async () => {
+    renderWithProviders(<SearchPanel embedded />);
+    await screen.findByPlaceholderText('settings.search.placeholderTavily');
+
+    const link = keyEditor('settings.search.tavilyKeyLabel').getByRole('link');
+
+    expect(link).toHaveAttribute('href', 'https://tavily.com');
   });
 });

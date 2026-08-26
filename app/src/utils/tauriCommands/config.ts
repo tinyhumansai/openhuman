@@ -730,7 +730,14 @@ export async function openhumanGetAnalyticsSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit' | 'exa';
+export type SearchEngineId =
+  | 'disabled'
+  | 'managed'
+  | 'parallel'
+  | 'brave'
+  | 'querit'
+  | 'exa'
+  | 'tavily';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;
@@ -747,6 +754,11 @@ export interface SearchSettingsUpdate {
    * `engine: 'exa'` is selected, search calls go straight to api.exa.ai.
    */
   exa_api_key?: string;
+  /**
+   * Tavily API key (BYOK). Empty string clears the stored key. When set and
+   * `engine: 'tavily'` is selected, search calls go straight to api.tavily.com.
+   */
+  tavily_api_key?: string;
   /**
    * Websites the assistant may open/read (web_fetch / curl). Exact hosts
    * match their subdomains; `"*"` allows all public sites; an empty list
@@ -771,6 +783,7 @@ export interface SearchSettings {
   brave_configured: boolean;
   querit_configured: boolean;
   exa_configured: boolean;
+  tavily_configured: boolean;
   /** Current allowed-websites host list (may contain `"*"`). */
   allowed_domains: string[];
   /** True when the allowlist contains the `"*"` wildcard. */

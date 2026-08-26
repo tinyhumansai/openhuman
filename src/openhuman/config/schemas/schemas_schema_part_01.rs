@@ -410,7 +410,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
             inputs: vec![
                 optional_string(
                     "engine",
-                    "Active engine: disabled | managed | parallel | brave | querit | exa.",
+                    "Active engine: disabled | managed | parallel | brave | querit | exa | tavily.",
                 ),
                 FieldSchema {
                     name: "max_results",
@@ -439,6 +439,10 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 optional_string(
                     "exa_api_key",
                     "Exa API key (empty string clears the stored key).",
+                ),
+                optional_string(
+                    "tavily_api_key",
+                    "Tavily API key (empty string clears the stored key).",
                 ),
                 FieldSchema {
                     name: "allowed_domains",

@@ -130,6 +130,7 @@ fn handle_update_search_settings(params: Map<String, Value>) -> ControllerFuture
             brave_api_key: update.brave_api_key,
             querit_api_key: update.querit_api_key,
             exa_api_key: update.exa_api_key,
+            tavily_api_key: update.tavily_api_key,
             allowed_domains: update.allowed_domains,
             allow_all: update.allow_all,
         };

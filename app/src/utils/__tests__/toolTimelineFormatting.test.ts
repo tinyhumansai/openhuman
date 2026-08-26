@@ -320,6 +320,7 @@ describe('extractSearchProvider', () => {
     expect(extractSearchProvider('Search results for: q (via Exa)\n1. foo')).toBe('Exa');
     expect(extractSearchProvider('Search results for: q (via Brave)')).toBe('Brave');
     expect(extractSearchProvider('# Search results — `q` (via Querit)')).toBe('Querit');
+    expect(extractSearchProvider('# Search results -- `q` (via Tavily)')).toBe('Tavily');
   });
 
   it('returns undefined when there is no marker or no result', () => {
@@ -351,6 +352,7 @@ describe('extractSearchProvider', () => {
   it('reads the marker from an empty-result heading', () => {
     expect(extractSearchProvider('No results found for: q (via Exa)')).toBe('Exa');
     expect(extractSearchProvider('_No results for `q`_ (via Brave)')).toBe('Brave');
+    expect(extractSearchProvider('_No results for `q`_ (via Tavily)')).toBe('Tavily');
   });
 });
 

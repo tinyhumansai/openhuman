@@ -476,7 +476,7 @@ const MAX_SEARCH_PROVIDER_LENGTH = 32;
  * Extract the resolved search provider from a completed web-search result.
  * Every search engine tags its output with a `(via <Provider>)` marker on the
  * heading line (managed resolves to "Exa" by default, or to whatever the
- * backend reports; BYOK engines tag "Brave"/"Querit"/"Seltz"). Reading it back
+ * backend reports; BYOK engines tag "Brave"/"Querit"/"Seltz"/"Tavily"). Reading it back
  * keeps the timeline attribution dynamic: it is driven by what actually ran,
  * never by a hardcoded provider name (#5136).
  *

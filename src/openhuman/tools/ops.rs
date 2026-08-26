@@ -1363,6 +1363,7 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || name.starts_with("brave_")
         || name.starts_with("parallel_")
         || name.starts_with("querit_")
+        || name.starts_with("tavily_")
         || name.starts_with("google_places_")
         || name.starts_with("stock_")
         || name.starts_with("storage_")

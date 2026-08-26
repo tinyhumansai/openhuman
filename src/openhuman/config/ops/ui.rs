@@ -21,7 +21,8 @@ pub struct AnalyticsSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` | `exa`.
+    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` |
+    /// `exa` | `tavily`.
     /// Empty/unknown values are rejected by `apply_search_settings`.
     /// Runtime fallback to `managed` applies only to persisted/legacy config
     /// values resolved by `SearchConfig::effective_engine()`.
@@ -38,6 +39,8 @@ pub struct SearchSettingsPatch {
     pub querit_api_key: Option<String>,
     /// Exa API key (BYOK). An empty string clears the stored key.
     pub exa_api_key: Option<String>,
+    /// Tavily API key (BYOK). An empty string clears the stored key.
+    pub tavily_api_key: Option<String>,
     /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
     /// host allowlist. Entries are exact hosts (`reuters.com`), which also
     /// match their subdomains, or `"*"` for all public sites. Empty list
@@ -161,12 +164,12 @@ pub async fn apply_search_settings(
     if let Some(engine) = update.engine {
         let trimmed = engine.trim();
         match trimmed {
-            "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" => {
+            "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" | "tavily" => {
                 config.search.engine = trimmed.to_string();
             }
             other => {
                 return Err(format!(
-                    "engine must be one of disabled/managed/parallel/brave/querit/exa (got {other:?})"
+                    "engine must be one of disabled/managed/parallel/brave/querit/exa/tavily (got {other:?})"
                 ));
             }
         }
@@ -212,6 +215,14 @@ pub async fn apply_search_settings(
     if let Some(raw) = update.exa_api_key {
         let trimmed = raw.trim();
         config.search.exa.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.tavily_api_key {
+        let trimmed = raw.trim();
+        config.search.tavily.api_key = if trimmed.is_empty() {
             None
         } else {
             Some(trimmed.to_string())
@@ -280,6 +291,7 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
             crate::openhuman::config::SearchEngine::Brave => "brave",
             crate::openhuman::config::SearchEngine::Querit => "querit",
             crate::openhuman::config::SearchEngine::Exa => "exa",
+            crate::openhuman::config::SearchEngine::Tavily => "tavily",
         },
         "max_results": config.search.max_results,
         "timeout_secs": config.search.timeout_secs,
@@ -287,6 +299,7 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
         "brave_configured": config.search.brave.has_key(),
         "querit_configured": config.search.querit.has_key(),
         "exa_configured": config.search.exa.has_key(),
+        "tavily_configured": config.search.tavily.has_key(),
         "allowed_domains": config.http_request.allowed_domains,
         "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
     });
