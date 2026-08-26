@@ -10,7 +10,7 @@
     "dev:web": "vite",
     "dev:app": "bash ../scripts/run-dev-macos.sh",
     "dev:app:web": "bash ../scripts/run-dev-web.sh",
-    "dev:app:win": "C:/PROGRA~1/Git/bin/bash.exe ../scripts/run-dev-win.sh",
+    "dev:app:win": "..\\scripts\\run-dev-win.cmd",
     "core:stage": "echo '[core:stage] no-op — core is linked in-process; sidecar removed (PR #1061)'",
     "tauri:ios:init": "bash ../scripts/ios-init.sh",
     "tauri:ios:dev": "cd src-tauri-mobile && IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-16.0} npx --package=@tauri-apps/cli@^2 tauri ios dev",
