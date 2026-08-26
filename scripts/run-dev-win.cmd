@@ -11,11 +11,22 @@ if not defined GIT_BASH if exist "%LOCALAPPDATA%\Programs\Git\bin\bash.exe" set 
 
 if defined GIT_BASH goto :found
 
-where bash >nul 2>nul
-if errorlevel 1 goto :notfound
+rem Resolve bash from PATH, but only accept a Git for Windows bash.exe.
+set "BASH_PATH="
+for /f "delims=" %%i in ('where bash 2^>nul') do if not defined BASH_PATH set "BASH_PATH=%%i"
 
-bash "scripts/run-dev-win.sh"
-exit /b %errorlevel%
+if not defined BASH_PATH goto :notfound
+if /i not "%BASH_PATH:~-4%"==".exe" goto :notfound
+if not exist "%BASH_PATH%" goto :notfound
+
+for %%i in ("%BASH_PATH%") do set "BASH_DIR=%%~dpi"
+
+if exist "%BASH_DIR%..\cmd\git.exe" set "GIT_BASH=%BASH_PATH%"
+if not defined GIT_BASH if exist "%BASH_DIR%..\..\cmd\git.exe" set "GIT_BASH=%BASH_PATH%"
+if not defined GIT_BASH if exist "%BASH_DIR%..\..\mingw64\bin\git.exe" set "GIT_BASH=%BASH_PATH%"
+
+if not defined GIT_BASH goto :notfound
+goto :found
 
 :notfound
 echo [run-dev-win] Git Bash not found.
