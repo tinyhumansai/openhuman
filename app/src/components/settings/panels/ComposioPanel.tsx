@@ -76,6 +76,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error' | 'cleared'>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Confirmation gate for the Backend → Direct transition. The state
   // machine has two arms: `idle` (Save acts immediately) and
   // `awaiting` (Save was clicked while transitioning Backend → Direct
@@ -119,6 +120,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
   }, [allowManagedAuth]);
 
   const flashSaved = (status: 'saved' | 'cleared') => {
+    setSaveError(null);
     setSaveStatus(status);
     if (saveStatusTimer.current !== null) {
       clearTimeout(saveStatusTimer.current);
@@ -155,6 +157,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
   const performSave = async () => {
     const trimmed = apiKey.trim();
     setSaving(true);
+    setSaveError(null);
     try {
       if (mode === 'direct' && trimmed.length > 0) {
         // [composio-direct] persist new key + flip mode to direct.
@@ -184,6 +187,8 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
         clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = null;
       }
+      const message = err instanceof Error && err.message ? err.message : t('composio.saveFailed');
+      setSaveError(message);
       setSaveStatus('error');
     } finally {
       setSaving(false);
@@ -196,6 +201,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
     if (mode === 'direct' && trimmed.length === 0 && !apiKeyStored) {
       // Direct mode without a key is a no-op — flag it clearly instead
       // of round-tripping to the backend just to get an error string.
+      setSaveError(t('settings.composio.saveErrorNoKey'));
       setSaveStatus('error');
       return;
     }
@@ -388,7 +394,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
                     ? t('settings.composio.clearedToBackend')
                     : null
               }
-              error={saveStatus === 'error' ? t('settings.composio.saveErrorNoKey') : null}
+              error={saveStatus === 'error' ? (saveError ?? t('composio.saveFailed')) : null}
               savingLabel=""
             />
           </div>
