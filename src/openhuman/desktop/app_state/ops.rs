@@ -237,6 +237,13 @@ fn clear_current_user_failure() {
     *CURRENT_USER_FAILURE.lock() = None;
 }
 
+/// Clear all process-global current-user state after the session identity
+/// changes or is removed.
+pub fn clear_current_user_caches() {
+    *CURRENT_USER_CACHE.lock() = None;
+    clear_current_user_failure();
+}
+
 /// Record the timeout path's failure.
 ///
 /// The timeout is applied by the snapshot caller, wrapping the whole of

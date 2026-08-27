@@ -811,6 +811,7 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     let removed = auth
         .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
         .map_err(|e| e.to_string())?;
+    crate::openhuman::desktop::app_state::clear_current_user_caches();
 
     // The core process stays alive on logout. Tear down its authenticated
     // Socket.IO transport and the user-pinned workflow bridge so neither can

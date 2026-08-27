@@ -1093,3 +1093,38 @@ fn rename_stage_exhausts_retries_and_cleans_up_tmp() {
         "rename exhaustion must trigger best-effort tmp cleanup; leaked: {leaked:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn auth_profile_store_is_owner_only_after_create_and_update() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let profile = AuthProfile::new_token("anthropic", "default", "tok-create".into());
+    store.upsert_profile(profile, true).unwrap();
+
+    let created_mode = std::fs::metadata(store.path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        created_mode, 0o600,
+        "auth profile store must be owner-only after initial create"
+    );
+
+    let updated = AuthProfile::new_token("anthropic", "default", "tok-update".into());
+    store.upsert_profile(updated, true).unwrap();
+
+    let updated_mode = std::fs::metadata(store.path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        updated_mode, 0o600,
+        "auth profile store must stay owner-only after replacement writes"
+    );
+}

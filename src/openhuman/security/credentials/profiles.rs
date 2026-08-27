@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
@@ -1041,7 +1044,7 @@ impl AuthProfilesStore {
             PERSIST_RETRY_BASE_MS,
             || {
                 self.consume_test_transient_failure_write()?;
-                fs::write(&tmp_path, &json).context("write auth profile tmp")
+                write_auth_profile_tmp(&tmp_path, &json).context("write auth profile tmp")
             },
         )
         .with_context(|| {
@@ -1523,6 +1526,26 @@ impl AuthProfilesStore {
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn write_auth_profile_tmp(path: &Path, json: &[u8]) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(json)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_auth_profile_tmp(path: &Path, json: &[u8]) -> Result<()> {
+    fs::write(path, json)?;
+    Ok(())
 }
 
 /// Cross-platform best-effort check that a given OS process id is currently

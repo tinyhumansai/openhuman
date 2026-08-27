@@ -635,6 +635,36 @@ fn clearing_the_record_lets_the_next_attempt_through() {
     );
 }
 
+#[test]
+fn clearing_current_user_caches_drops_positive_and_negative_entries() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
+    let _reset = CurrentUserFailureResetGuard;
+
+    *CURRENT_USER_CACHE.lock() = Some(CachedCurrentUser {
+        api_base: "https://api.example.test".to_string(),
+        token: "token-a".to_string(),
+        fetched_at: Instant::now(),
+        user: json!({ "id": "user-a" }),
+    });
+    record_current_user_failure(
+        "https://api.example.test",
+        "token-a",
+        CurrentUserFetchError::FetchFailed("seeded outage".to_string()),
+    );
+
+    clear_current_user_caches();
+
+    assert!(
+        CURRENT_USER_CACHE.lock().is_none(),
+        "positive current-user cache must be cleared"
+    );
+    assert!(
+        suppressed_current_user_failure("https://api.example.test", "token-a").is_none(),
+        "negative current-user cache must be cleared"
+    );
+}
+
 #[tokio::test]
 async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_the_backend() {
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
