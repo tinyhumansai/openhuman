@@ -1,6 +1,6 @@
 //! The `hosting_*` agent tools.
 //!
-//! Nine tools over one hosting account. They are thin on purpose: argument
+//! Ten tools over one hosting account. They are thin on purpose: argument
 //! parsing, one call into [`tinyhosts`], and a result described for a model.
 //! Anything that looks like hosting logic belongs in the crate, where it is
 //! provider-independent and tested against a mock of the provider's API.
