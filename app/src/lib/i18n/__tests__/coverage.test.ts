@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import enAggregate from '../en';
 
 const LOCALES = [
+  'th',
   'zh-CN',
   'hi',
   'es',

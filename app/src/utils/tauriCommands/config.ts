@@ -6,24 +6,20 @@ import debug from 'debug';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { CORE_RPC_METHODS } from '../../services/rpcMethods';
-import { CommandResponse, isTauri, tauriErrorMessage } from './common';
+import { CommandResponse, tauriErrorMessage } from './common';
 
 const log = debug('composio:rpc');
-
 export interface ConfigSnapshot {
   config: Record<string, unknown>;
   workspace_dir: string;
   config_path: string;
 }
-
 export interface ModelRoute {
   hint: string;
   model: string;
 }
-
 /** Authentication header style. Matches Rust AuthStyle enum. */
 export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
-
 /** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
 export type CloudProviderType =
   | 'openhuman'
@@ -32,7 +28,6 @@ export type CloudProviderType =
   | 'openrouter'
   | 'orcarouter'
   | 'custom';
-
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
  * API keys are NOT carried here — they live in `auth-profiles.json`
@@ -48,7 +43,6 @@ export interface CloudProviderCreds {
   endpoint: string;
   auth_style: AuthStyle;
 }
-
 /**
  * Per-model registry entry. Mirrors the Rust `ModelRegistryEntry`
  * (`config/schema/types.rs`). Carries the user-set `vision` flag that lets a
@@ -69,7 +63,6 @@ export interface ModelRegistryEntry {
   context_window?: number;
   vision: boolean;
 }
-
 export interface ModelSettingsUpdate {
   /**
    * OpenHuman product backend URL. Almost always left untouched; the
@@ -118,21 +111,18 @@ export interface ModelSettingsUpdate {
   learning_provider?: string | null;
   subconscious_provider?: string | null;
 }
-
 /**
  * Stepped user-facing memory-context window preset. Mirrors the core
  * `MemoryContextWindow` enum (`src/openhuman/config/schema/agent.rs`)
  * — the actual char budgets are owned by the core, this is the label.
  */
 export type MemoryContextWindow = 'minimal' | 'balanced' | 'extended' | 'maximum';
-
 export const MEMORY_CONTEXT_WINDOWS: MemoryContextWindow[] = [
   'minimal',
   'balanced',
   'extended',
   'maximum',
 ];
-
 export interface MemorySettingsUpdate {
   backend?: string | null;
   auto_save?: boolean | null;
@@ -142,17 +132,14 @@ export interface MemorySettingsUpdate {
   /** One of `MEMORY_CONTEXT_WINDOWS`. */
   memory_window?: MemoryContextWindow | null;
 }
-
 export interface RuntimeSettingsUpdate {
   kind?: string | null;
   reasoning_enabled?: boolean | null;
 }
-
 export interface BrowserSettingsUpdate {
   enabled?: boolean | null;
   backend?: 'agent_browser' | 'playwright' | 'rust_native' | 'computer_use' | 'auto' | null;
 }
-
 export interface LocalAiSettingsUpdate {
   runtime_enabled?: boolean | null;
   /**
@@ -178,12 +165,10 @@ export interface LocalAiSettingsUpdate {
   usage_learning_reflection?: boolean | null;
   usage_subconscious?: boolean | null;
 }
-
 export interface RuntimeFlags {
   browser_allow_all: boolean;
   log_prompts: boolean;
 }
-
 export interface AIPreview {
   soul: {
     raw: string;
@@ -208,14 +193,9 @@ export interface AIPreview {
     errors: string[];
   };
 }
-
 export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({ method: CORE_RPC_METHODS.configGet });
 }
-
 /**
  * Safe client-facing config slice. Never contains the raw api_key — only
  * `api_key_set` indicates whether a custom backend key is stored. See
@@ -262,16 +242,11 @@ export interface ClientConfig {
   learning_provider: string | null;
   subconscious_provider: string | null;
 }
-
 export async function openhumanGetClientConfig(): Promise<CommandResponse<ClientConfig>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ClientConfig>>({
     method: 'openhuman.inference_get_client_config',
   });
 }
-
 /**
  * Status payload for the Claude Code CLI provider — mirrors Rust
  * `claude_code::types::CliStatus`. The `status` discriminator is the
@@ -283,21 +258,16 @@ export type ClaudeCodeStatus =
   | { status: 'not_installed' }
   | { status: 'outdated'; version: string; min_required: string; path: string }
   | { status: 'unusable'; path: string; reason: string };
-
 /**
  * Probe the local `claude` CLI binary (Claude Code CLI provider). Returns
  * install + version status; never throws on a missing binary — the
  * `not_installed` variant signals that case explicitly.
  */
 export async function openhumanClaudeCodeStatus(): Promise<CommandResponse<ClaudeCodeStatus>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ClaudeCodeStatus>>({
     method: 'openhuman.inference_claude_code_status',
   });
 }
-
 /**
  * Auth state for the Claude Code CLI provider — mirrors Rust
  * `claude_code::auth_status::AuthSource`. The `source` discriminator is
@@ -317,7 +287,6 @@ export type ClaudeCodeAuthStatus =
   | { source: 'api_key_env'; last_checked: number }
   | { source: 'none'; last_checked: number }
   | { source: 'unknown'; reason: string | null; last_checked: number };
-
 /**
  * Detect Claude Code CLI auth state via `claude auth status --json`
  * (cross-platform: abstracts the macOS Keychain vs. Linux/Windows file
@@ -325,9 +294,6 @@ export type ClaudeCodeAuthStatus =
  * Recheck, not on a tight loop.
  */
 export async function openhumanClaudeCodeAuthStatus(): Promise<ClaudeCodeAuthStatus> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   // The core handler returns the value via `RpcOutcome::new(_, vec![])` with no
   // logs, which `into_cli_compatible_json` serializes as the BARE value (not a
   // `{ result, logs }` envelope). `callCoreRpc` returns the JSON-RPC `result`,
@@ -336,7 +302,6 @@ export async function openhumanClaudeCodeAuthStatus(): Promise<ClaudeCodeAuthSta
     method: 'openhuman.inference_claude_code_auth_status',
   });
 }
-
 /**
  * Persisted Claude Code provider settings — mirrors Rust
  * `claude_code::settings::ClaudeCodeSettings`. `full_access=true` runs the
@@ -348,20 +313,15 @@ export async function openhumanClaudeCodeAuthStatus(): Promise<ClaudeCodeAuthSta
 export interface ClaudeCodeSettings {
   full_access: boolean;
 }
-
 /**
  * Read the persisted Claude Code full-access toggle. Bare value (no
  * `{ result, logs }` envelope) — see {@link openhumanClaudeCodeAuthStatus}.
  */
 export async function openhumanClaudeCodeSettings(): Promise<ClaudeCodeSettings> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<ClaudeCodeSettings>({
     method: 'openhuman.inference_claude_code_settings',
   });
 }
-
 /**
  * Persist the Claude Code full-access toggle. Returns the saved settings.
  * Takes effect on the next chat turn (the driver reads the file per-turn).
@@ -369,15 +329,11 @@ export async function openhumanClaudeCodeSettings(): Promise<ClaudeCodeSettings>
 export async function openhumanClaudeCodeSetFullAccess(
   enabled: boolean
 ): Promise<ClaudeCodeSettings> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<ClaudeCodeSettings>({
     method: 'openhuman.inference_claude_code_set_full_access',
     params: { enabled },
   });
 }
-
 /**
  * Open the user's native terminal and run `claude login` inside it. The
  * CLI's OAuth flow is interactive, so we can't host it in-app — we
@@ -387,70 +343,47 @@ export async function openhumanClaudeCodeSetFullAccess(
  * Returns the name of the terminal emulator that was launched.
  */
 export async function openhumanClaudeCodeLoginLaunch(): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await invoke<string>('claude_code_login_launch');
 }
-
 export async function openhumanUpdateModelSettings(
   update: ModelSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.inference_update_model_settings',
     params: update,
   });
 }
-
 export async function openhumanUpdateMemorySettings(
   update: MemorySettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateMemorySettings,
     params: update,
   });
 }
-
 export async function openhumanUpdateRuntimeSettings(
   update: RuntimeSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateRuntimeSettings,
     params: update,
   });
 }
-
 export async function openhumanUpdateBrowserSettings(
   update: BrowserSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateBrowserSettings,
     params: update,
   });
 }
-
 // ── Agent access mode (autonomy / filesystem permissions) ───────────────────
-
 export type AutonomyLevel = 'readonly' | 'supervised' | 'full';
 export type TrustedAccess = 'read' | 'readwrite';
-
 export interface TrustedRoot {
   path: string;
   access: TrustedAccess;
 }
-
 /** The full [autonomy] block as returned by config_get_autonomy_settings. */
 export interface AutonomySettings {
   level: AutonomyLevel;
@@ -473,7 +406,6 @@ export interface AutonomySettings {
    */
   auto_approve_all?: boolean;
 }
-
 /** Partial update — omitted fields are left unchanged. */
 export interface AutonomySettingsUpdate {
   level?: AutonomyLevel;
@@ -489,16 +421,11 @@ export interface AutonomySettingsUpdate {
   /** Blanket "auto-approve everything" bypass. See `AutonomySettings`. */
   auto_approve_all?: boolean;
 }
-
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<AutonomySettings>>({
     method: CORE_RPC_METHODS.configGetAutonomySettings,
   });
 }
-
 /**
  * Agent filesystem roots returned by `config_get_agent_paths`. All three are
  * already-canonicalised path strings; the UI renders them verbatim instead of
@@ -520,49 +447,33 @@ export interface AgentPaths {
   projects_dir: string;
   action_dir_source: 'env' | 'override' | 'default';
 }
-
 export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPaths>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<AgentPaths>>({
     method: CORE_RPC_METHODS.configGetAgentPaths,
   });
 }
-
 /** Partial update for the agent's editable filesystem roots (issue #3240). */
 export interface AgentPathsUpdate {
   action_dir?: string;
 }
-
 export async function openhumanUpdateAgentPaths(
   update: AgentPathsUpdate
 ): Promise<CommandResponse<AgentPaths>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<AgentPaths>>({
     method: CORE_RPC_METHODS.configUpdateAgentPaths,
     params: update,
   });
 }
-
 export async function openhumanUpdateAutonomySettings(
   update: AutonomySettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateAutonomySettings,
     params: update,
   });
 }
-
 // ── Sandbox execution backend settings ───────────────────────────────────────
-
 export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'firejail' | 'bubblewrap' | 'none';
-
 /** Current sandbox settings returned by config_get_sandbox_settings. */
 export interface SandboxSettings {
   enabled: boolean;
@@ -574,7 +485,6 @@ export interface SandboxSettings {
   detected_backend: string;
   env_passthrough: string[];
 }
-
 /** Partial update — omitted fields are left unchanged. */
 export interface SandboxSettingsUpdate {
   backend?: SandboxBackendId;
@@ -584,30 +494,20 @@ export interface SandboxSettingsUpdate {
   docker_cpu_limit?: number | null;
   env_passthrough?: string[];
 }
-
 export async function openhumanGetSandboxSettings(): Promise<CommandResponse<SandboxSettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<SandboxSettings>>({
     method: CORE_RPC_METHODS.configGetSandboxSettings,
   });
 }
-
 export async function openhumanUpdateSandboxSettings(
   update: SandboxSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateSandboxSettings,
     params: update,
   });
 }
-
 // ── Memory sync schedule (#3302) ─────────────────────────────────────────────
-
 /** Global memory-sync schedule returned by config_get_memory_sync_settings. */
 export interface MemorySyncSettings {
   /** Stored value: null = use the default cadence, 0 = Manual only, n>0 = seconds. */
@@ -623,38 +523,27 @@ export interface MemorySyncSettings {
   /** Preset cadences (seconds) offered in the UI: 4h / 12h / 24h. */
   presets: number[];
 }
-
 /** Partial update — set `sync_interval_secs` to `null` to reset to default. */
 export interface MemorySyncSettingsUpdate {
   /** null = default, 0 = Manual only, n>0 = sync every n seconds. */
   sync_interval_secs?: number | null;
 }
-
 export async function openhumanGetMemorySyncSettings(): Promise<
   CommandResponse<MemorySyncSettings>
 > {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
     method: CORE_RPC_METHODS.configGetMemorySyncSettings,
   });
 }
-
 export async function openhumanUpdateMemorySyncSettings(
   update: MemorySyncSettingsUpdate
 ): Promise<CommandResponse<MemorySyncSettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
     method: CORE_RPC_METHODS.configUpdateMemorySyncSettings,
     params: update,
   });
 }
-
 // ── Agent execution settings (action/tool timeout) ──────────────────────────
-
 /** Agent execution settings as returned by config_get_agent_settings. */
 export interface AgentSettings {
   /** Configured wall-clock timeout for a single tool/action, in seconds. */
@@ -668,70 +557,47 @@ export interface AgentSettings {
   /** Highest accepted timeout (seconds). */
   max_timeout_secs: number;
 }
-
 /** Partial update — omitted fields are left unchanged. */
 export interface AgentSettingsUpdate {
   agent_timeout_secs?: number;
 }
-
 export async function openhumanGetAgentSettings(): Promise<CommandResponse<AgentSettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<AgentSettings>>({
     method: CORE_RPC_METHODS.configGetAgentSettings,
   });
 }
-
 export async function openhumanUpdateAgentSettings(
   update: AgentSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateAgentSettings,
     params: update,
   });
 }
-
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.inference_update_local_settings',
     params: update,
   });
 }
-
 export async function openhumanUpdateAnalyticsSettings(update: {
   enabled?: boolean;
 }): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateAnalyticsSettings,
     params: update,
   });
 }
-
 export async function openhumanGetAnalyticsSettings(): Promise<
   CommandResponse<{ enabled: boolean }>
 > {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<{ enabled: boolean }>>({
     method: CORE_RPC_METHODS.configGetAnalyticsSettings,
   });
 }
-
 export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit' | 'exa';
-
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;
   max_results?: number;
@@ -761,7 +627,6 @@ export interface SearchSettingsUpdate {
    */
   allow_all?: boolean;
 }
-
 export interface SearchSettings {
   engine: SearchEngineId | string;
   effective_engine: SearchEngineId;
@@ -776,63 +641,43 @@ export interface SearchSettings {
   /** True when the allowlist contains the `"*"` wildcard. */
   allow_all: boolean;
 }
-
 export interface DiagramViewerSettings {
   enabled: boolean;
   source_url: string;
   refresh_interval_seconds: number;
 }
-
 export interface DashboardSettings {
   diagram_viewer: DiagramViewerSettings;
 }
-
 export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<DashboardSettings>>({
     method: CORE_RPC_METHODS.configGetDashboardSettings,
   });
 }
-
 export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<SearchSettings>>({
     method: CORE_RPC_METHODS.configGetSearchSettings,
   });
 }
-
 export async function openhumanUpdateSearchSettings(
   update: SearchSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateSearchSettings,
     params: update,
   });
 }
-
 export interface ComposioTriggerSettingsUpdate {
   triage_disabled?: boolean | null;
   triage_disabled_toolkits?: string[] | null;
 }
-
 export interface ComposioTriggerSettings {
   triage_disabled: boolean;
   triage_disabled_toolkits: string[];
 }
-
 export async function openhumanUpdateComposioTriggerSettings(
   update: ComposioTriggerSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   try {
     return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
       method: 'openhuman.config_update_composio_trigger_settings',
@@ -849,13 +694,9 @@ export async function openhumanUpdateComposioTriggerSettings(
     throw err;
   }
 }
-
 export async function openhumanGetComposioTriggerSettings(): Promise<
   CommandResponse<ComposioTriggerSettings>
 > {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   try {
     return await callCoreRpc<CommandResponse<ComposioTriggerSettings>>({
       method: 'openhuman.config_get_composio_trigger_settings',
@@ -871,28 +712,19 @@ export async function openhumanGetComposioTriggerSettings(): Promise<
     throw err;
   }
 }
-
 export async function openhumanGetRuntimeFlags(): Promise<CommandResponse<RuntimeFlags>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<RuntimeFlags>>({
     method: CORE_RPC_METHODS.configGetRuntimeFlags,
   });
 }
-
 export async function openhumanSetBrowserAllowAll(
   enabled: boolean
 ): Promise<CommandResponse<RuntimeFlags>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<RuntimeFlags>>({
     method: CORE_RPC_METHODS.configSetBrowserAllowAll,
     params: { enabled },
   });
 }
-
 export async function aiGetConfig(): Promise<AIPreview> {
   return {
     soul: {
@@ -913,7 +745,6 @@ export async function aiGetConfig(): Promise<AIPreview> {
     },
   };
 }
-
 export async function aiRefreshConfig(): Promise<AIPreview> {
   return aiGetConfig();
 }

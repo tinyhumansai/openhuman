@@ -132,8 +132,8 @@ function ModePicker({ onConfirm }: PickerProps) {
   // the render path below.
   const isDesktop = isTauri();
   const [selected, setSelected] = useState<'local' | 'cloud'>(isDesktop ? 'local' : 'cloud');
-  const [cloudUrl, setCloudUrl] = useState('');
-  const [cloudToken, setCloudToken] = useState('');
+  const [cloudUrl, setCloudUrl] = useState('http://127.0.0.1:7788/rpc');
+  const [cloudToken, setCloudToken] = useState('openhuman-local-token-12345');
   const [urlError, setUrlError] = useState<string | null>(null);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);

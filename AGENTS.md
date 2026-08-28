@@ -6,6 +6,19 @@ Architecture docs: [`gitbooks/developing/architecture.md`](gitbooks/developing/a
 
 ---
 
+## 🇹🇭 OpenHuman Thai Local Edition
+
+- **Full Thai Localization**: `app/src/lib/i18n/th.ts` (6,124 translated keys with complete coverage, Registered in `I18nContext.tsx` and `types.ts`).
+- **Local AI Provider**: Ollama (`http://localhost:11434`, default model `qwen3.5:4b`, embeddings `nomic-embed-text`).
+- **Obsidian Vault Mapping**: `D:\openhuman-local\OpenHuman-Obsidian` (Action Directory for Semantic Memory & Notes).
+- **Core Server**: `OpenHuman.exe core run --port 7788` (`OPENHUMAN_CORE_TOKEN=openhuman-local-token-12345`).
+- **One-Click Launcher**: `D:\openhuman-local\Start-OpenHuman-Thai.bat` / Desktop shortcut `OpenHuman (Thai).lnk`.
+- **New Device Setup Guide**: [`NewINSTALL.md`](./NewINSTALL.md)
+- **Detailed Config & .ENV Guide**: [`OPENHUMAN_SETUP_CONFIG_GUIDE_TH.md`](./OPENHUMAN_SETUP_CONFIG_GUIDE_TH.md)
+- **Autonomous Agent Instruction Prompt**: [`PROMPT_AGENTS.md`](./PROMPT_AGENTS.md)
+
+---
+
 ## Repository layout
 
 | Path                    | Role                                                                                                                          |

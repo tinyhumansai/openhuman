@@ -38,7 +38,7 @@
 </p>
 
 <p align="center">
-  🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./docs/README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./docs/README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./docs/README.ko.md">한국어</a> | 🇩🇪 <a href="./docs/README.de.md">Deutsch</a> | 🇵🇰 <a href="./docs/README.ur-pk.md">اردو</a>
+  🇹🇭 <a href="./README.th.md">ภาษาไทย</a> | 🇺🇸 <a href="./README.md">English</a> | 🇨🇳 <a href="./docs/README.zh-CN.md">简体中文</a> | 🇯🇵 <a href="./docs/README.ja-JP.md">日本語</a> | 🇰🇷 <a href="./docs/README.ko.md">한국어</a> | 🇩🇪 <a href="./docs/README.de.md">Deutsch</a> | 🇵🇰 <a href="./docs/README.ur-pk.md">اردو</a>
 </p>
 
 <p align="center">
@@ -58,7 +58,9 @@
 
 Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page.
 
-For terminal installs (Homebrew, Debian/Ubuntu `.deb`, AUR, install scripts, and platform notes), see **[INSTALL.md](./INSTALL.md)**.
+- 🇹🇭 **Thai Local Setup Guide (คู่มือติดตั้งภาษาไทย + Ollama + Obsidian)**: See **[NewINSTALL.md](./NewINSTALL.md)** and **[OPENHUMAN_SETUP_CONFIG_GUIDE_TH.md](./OPENHUMAN_SETUP_CONFIG_GUIDE_TH.md)**.
+- 🤖 **Automated Agent Setup Prompt (คำสั่ง Prompt สั่งงาน AI Agent ติดตั้งอัตโนมัติ)**: See **[PROMPT_AGENTS.md](./PROMPT_AGENTS.md)**.
+- For terminal installs (Homebrew, Debian/Ubuntu `.deb`, AUR, install scripts, and platform notes), see **[INSTALL.md](./INSTALL.md)**.
 
 # What is OpenHuman?
 

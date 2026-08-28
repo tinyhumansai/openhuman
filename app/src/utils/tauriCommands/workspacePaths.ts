@@ -1,7 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import { isTauri } from './common';
-
 interface RawWorkspaceTextPreview {
   path: string;
   absolute_path: string;
@@ -9,7 +7,6 @@ interface RawWorkspaceTextPreview {
   truncated: boolean;
   size_bytes: number;
 }
-
 export interface WorkspaceTextPreview {
   path: string;
   absolutePath: string;
@@ -17,23 +14,15 @@ export interface WorkspaceTextPreview {
   truncated: boolean;
   sizeBytes: number;
 }
-
-function assertTauri() {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-}
-
+function assertTauri() {}
 export async function openWorkspacePath(path: string): Promise<void> {
   assertTauri();
   await invoke<void>('open_workspace_path', { path });
 }
-
 export async function revealWorkspacePath(path: string): Promise<void> {
   assertTauri();
   await invoke<void>('reveal_workspace_path', { path });
 }
-
 export async function previewWorkspaceText(path: string): Promise<WorkspaceTextPreview> {
   assertTauri();
   const preview = await invoke<RawWorkspaceTextPreview>('preview_workspace_text', { path });
@@ -45,7 +34,6 @@ export async function previewWorkspaceText(path: string): Promise<WorkspaceTextP
     sizeBytes: preview.size_bytes,
   };
 }
-
 /**
  * Resolve a workspace-relative path to its canonical absolute path on disk,
  * after the Rust side validates it stays inside the active OpenHuman

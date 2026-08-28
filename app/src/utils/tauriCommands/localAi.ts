@@ -6,7 +6,7 @@
  * backend (for example an external Ollama endpoint).
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { CommandResponse, isTauri, tauriErrorMessage } from './common';
+import { CommandResponse, tauriErrorMessage } from './common';
 
 export interface LocalAiStatus {
   state: string;
@@ -38,7 +38,6 @@ export interface LocalAiStatus {
   prompt_toks_per_sec?: number | null;
   gen_toks_per_sec?: number | null;
 }
-
 export interface LocalAiAssetStatus {
   state: string;
   id: string;
@@ -46,7 +45,6 @@ export interface LocalAiAssetStatus {
   path?: string | null;
   warning?: string | null;
 }
-
 export interface LocalAiAssetsStatus {
   chat: LocalAiAssetStatus;
   vision: LocalAiAssetStatus;
@@ -60,7 +58,6 @@ export interface LocalAiAssetsStatus {
    */
   ollama_available: boolean;
 }
-
 export interface LocalAiDownloadProgressItem {
   id: string;
   provider: string;
@@ -73,7 +70,6 @@ export interface LocalAiDownloadProgressItem {
   warning?: string | null;
   path?: string | null;
 }
-
 export interface LocalAiDownloadsProgress {
   state: string;
   warning?: string | null;
@@ -89,34 +85,28 @@ export interface LocalAiDownloadsProgress {
   /** Mirrors `LocalAiAssetsStatus.ollama_available` — see that field. */
   ollama_available: boolean;
 }
-
 export interface LocalAiEmbeddingResult {
   model_id: string;
   dimensions: number;
   vectors: number[][];
 }
-
 export interface LocalAiSpeechResult {
   text: string;
   model_id: string;
 }
-
 export interface LocalAiTtsResult {
   output_path: string;
   voice_id: string;
 }
-
 export interface ReactionDecision {
   should_react: boolean;
   emoji: string | null;
 }
-
 export interface SentimentResult {
   emotion: string;
   valence: string;
   confidence: number;
 }
-
 export interface DeviceProfileResult {
   total_ram_bytes: number;
   cpu_count: number;
@@ -126,7 +116,6 @@ export interface DeviceProfileResult {
   has_gpu: boolean;
   gpu_description: string | null;
 }
-
 export interface ModelPresetResult {
   tier: string;
   label: string;
@@ -141,7 +130,6 @@ export interface ModelPresetResult {
   min_ram_gb: number;
   approx_download_gb: number;
 }
-
 export interface PresetsResponse {
   presets: ModelPresetResult[];
   recommended_tier: string;
@@ -153,7 +141,6 @@ export interface PresetsResponse {
   /** Current value of `config.local_ai.runtime_enabled`. When false, cloud fallback is in use. */
   local_ai_enabled?: boolean;
 }
-
 export interface ApplyPresetResult {
   applied_tier: string;
   chat_model_id?: string;
@@ -163,12 +150,10 @@ export interface ApplyPresetResult {
   vision_mode?: string;
   local_ai_enabled?: boolean;
 }
-
 export type RepairAction =
   | { action: 'install_ollama' }
   | { action: 'start_server'; binary_path: string | null }
   | { action: 'pull_model'; model: string };
-
 /**
  * Verdict for a model's native context window against the memory-layer
  * minimum. Mirrors the Rust `ContextEligibility` enum (serde tagged by
@@ -180,7 +165,6 @@ export type ModelContextEligibility =
   | { status: 'ok'; context_length: number }
   | { status: 'below_minimum'; context_length: number; required: number }
   | { status: 'unknown'; required: number };
-
 export interface InstalledModelInfo {
   name: string;
   size?: number | null;
@@ -196,7 +180,6 @@ export interface InstalledModelInfo {
    */
   chat_capable?: boolean | null;
 }
-
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
   ollama_runner_ok?: boolean;
@@ -220,21 +203,16 @@ export interface LocalAiDiagnostics {
   repair_actions: RepairAction[];
   ok: boolean;
 }
-
 export async function openhumanAgentChat(
   message: string,
   modelOverride?: string,
   temperature?: number
 ): Promise<CommandResponse<string>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<string>>({
     method: 'openhuman.agent_chat',
     params: { message, model_override: modelOverride, temperature },
   });
 }
-
 export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiStatus>> {
   try {
     return await callCoreRpc<CommandResponse<LocalAiStatus>>({
@@ -250,7 +228,6 @@ export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiS
     throw new Error(message);
   }
 }
-
 export async function openhumanLocalAiSummarize(
   text: string,
   maxTokens?: number
@@ -260,7 +237,6 @@ export async function openhumanLocalAiSummarize(
     params: { text, max_tokens: maxTokens },
   });
 }
-
 export async function openhumanLocalAiPrompt(
   prompt: string,
   maxTokens?: number,
@@ -271,7 +247,6 @@ export async function openhumanLocalAiPrompt(
     params: { prompt, max_tokens: maxTokens, no_think: noThink },
   });
 }
-
 export async function openhumanLocalAiVisionPrompt(
   prompt: string,
   imageRefs: string[],
@@ -282,7 +257,6 @@ export async function openhumanLocalAiVisionPrompt(
     params: { prompt, image_refs: imageRefs, max_tokens: maxTokens },
   });
 }
-
 export async function openhumanLocalAiEmbed(
   inputs: string[]
 ): Promise<CommandResponse<LocalAiEmbeddingResult>> {
@@ -291,7 +265,6 @@ export async function openhumanLocalAiEmbed(
     params: { inputs },
   });
 }
-
 export async function openhumanLocalAiTranscribe(
   audioPath: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
@@ -300,7 +273,6 @@ export async function openhumanLocalAiTranscribe(
     params: { audio_path: audioPath },
   });
 }
-
 export async function openhumanLocalAiTranscribeBytes(
   audioBytes: number[],
   extension?: string
@@ -310,7 +282,6 @@ export async function openhumanLocalAiTranscribeBytes(
     params: { audio_bytes: audioBytes, extension },
   });
 }
-
 export async function openhumanLocalAiTts(
   text: string,
   outputPath?: string
@@ -320,7 +291,6 @@ export async function openhumanLocalAiTts(
     params: { text, output_path: outputPath },
   });
 }
-
 /**
  * Ask the configured inference provider whether the assistant should react to
  * a user message with an emoji.
@@ -334,7 +304,6 @@ export async function openhumanLocalAiShouldReact(
     params: { message, channel_type: channelType },
   });
 }
-
 /**
  * Classify the emotion and sentiment of a user message via the configured
  * inference provider.
@@ -347,7 +316,6 @@ export async function openhumanLocalAiAnalyzeSentiment(
     params: { message },
   });
 }
-
 export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
@@ -355,7 +323,6 @@ export async function openhumanLocalAiAssetsStatus(): Promise<
     method: 'openhuman.inference_assets_status',
   });
 }
-
 export async function openhumanLocalAiDownloadsProgress(): Promise<
   CommandResponse<LocalAiDownloadsProgress>
 > {
@@ -363,7 +330,6 @@ export async function openhumanLocalAiDownloadsProgress(): Promise<
     method: 'openhuman.inference_downloads_progress',
   });
 }
-
 export async function openhumanLocalAiDownloadAsset(
   capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
 ): Promise<CommandResponse<LocalAiAssetsStatus>> {
@@ -372,35 +338,29 @@ export async function openhumanLocalAiDownloadAsset(
     params: { capability },
   });
 }
-
 export async function openhumanLocalAiDeviceProfile(): Promise<DeviceProfileResult> {
   return await callCoreRpc<DeviceProfileResult>({ method: 'openhuman.inference_device_profile' });
 }
-
 export async function openhumanLocalAiPresets(): Promise<PresetsResponse> {
   return await callCoreRpc<PresetsResponse>({ method: 'openhuman.inference_presets' });
 }
-
 export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPresetResult> {
   return await callCoreRpc<ApplyPresetResult>({
     method: 'openhuman.inference_apply_preset',
     params: { tier },
   });
 }
-
 export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics> {
   return await callCoreRpc<LocalAiDiagnostics>({
     method: 'openhuman.inference_diagnostics',
     params: {},
   });
 }
-
 export interface OllamaConnectionTestResult {
   reachable: boolean;
   error?: string | null;
   models_count?: number | null;
 }
-
 export async function openhumanLocalAiTestConnection(
   url: string
 ): Promise<OllamaConnectionTestResult> {

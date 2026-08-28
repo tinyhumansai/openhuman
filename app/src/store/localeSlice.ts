@@ -6,6 +6,7 @@ import type { Locale } from '../lib/i18n/types';
 // `in` (legacy Indonesian) must come after `id` (Bahasa) so neither shadows
 // the other, and `en` sits last so it loses to a more specific match.
 const PREFIX_TO_LOCALE: Array<[string, Locale]> = [
+  ['th', 'th'],
   ['zh', 'zh-CN'],
   ['hi', 'hi'],
   ['es', 'es'],
@@ -26,14 +27,14 @@ const PREFIX_TO_LOCALE: Array<[string, Locale]> = [
 function detectLocale(): Locale {
   try {
     const normalized = navigator.language?.toLowerCase();
-    if (!normalized) return 'en';
+    if (!normalized) return 'th';
     for (const [prefix, locale] of PREFIX_TO_LOCALE) {
       if (normalized.startsWith(prefix)) return locale;
     }
   } catch {
     // browser API unavailable
   }
-  return 'en';
+  return 'th';
 }
 
 interface LocaleState {

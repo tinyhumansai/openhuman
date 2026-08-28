@@ -1,5 +1,6 @@
 export type Locale =
   | 'en'
+  | 'th'
   | 'zh-CN'
   | 'hi'
   | 'es'

@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AutonomyLevel,
-  isTauri,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
   openhumanUpdateAgentSettings,
@@ -35,11 +34,9 @@ import AutonomyRateLimitSection from './AutonomyPanel';
 // here — the consent is captured per-install by the gate, not by a static
 // config flag.
 const ALLOW_TOOL_INSTALL = true;
-
 const AgentAccessPanel = () => {
   const { t } = useT();
   const { navigateToSettings } = useSettingsNavigation();
-
   // Load `level` so we can carry it through when writing other fields, but
   // the tier-selection UI lives in PermissionsPanel. Never render tier radios
   // here — that would create two sources of truth.
@@ -55,10 +52,8 @@ const AgentAccessPanel = () => {
   // "Always allow" allowlist — populated by the in-chat "Always allow" button;
   // shown here read-only with a Remove action (the re-protect path).
   const [autoApprove, setAutoApprove] = useState<string[]>([]);
-
   const [newRootPath, setNewRootPath] = useState('');
   const [newRootAccess, setNewRootAccess] = useState<TrustedAccess>('read');
-
   // Autonomous tiny.place agent ("autopilot") — a seeded, *disabled* cron job
   // the user opts into here. It's not an autonomy field: we resolve its id by
   // name from the cron list and flip its `enabled` flag via cron_update. The
@@ -68,7 +63,6 @@ const AgentAccessPanel = () => {
   // Monotonic guard so rapid toggles can't resolve out-of-order and leave the
   // UI showing a stale enabled state (last write wins).
   const autopilotSeqRef = useRef(0);
-
   // Action timeout (the tool/action wall-clock limit, issue #3100). Held as the
   // raw input string so the field can be edited freely; validated on save.
   const [timeoutInput, setTimeoutInput] = useState('');
@@ -80,7 +74,6 @@ const AgentAccessPanel = () => {
   const [timeoutError, setTimeoutError] = useState<string | null>(null);
   const [timeoutSavedNote, setTimeoutSavedNote] = useState<string | null>(null);
   const timeoutSeqRef = useRef(0);
-
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,14 +81,9 @@ const AgentAccessPanel = () => {
   // Monotonic guard so out-of-order auto-save responses can't clobber UI state
   // with a stale result (last write wins).
   const persistSeqRef = useRef(0);
-
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!isTauri()) {
-        setIsLoading(false);
-        return;
-      }
       try {
         const autonomyResp = await openhumanGetAutonomySettings();
         if (cancelled) return;
@@ -144,7 +132,6 @@ const AgentAccessPanel = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   // Auto-apply: every change persists immediately (no separate Save button).
   // `allow_tool_install` is fixed; workspace_only, trusted_roots vary.
   // `level` is carried through from state (its UI lives in PermissionsPanel).
@@ -174,7 +161,6 @@ const AgentAccessPanel = () => {
     onError?: () => void
   ) => {
     const seq = ++persistSeqRef.current;
-    if (!isTauri()) return;
     setError(null);
     setSavedNote(null);
     setIsSaving(true);
@@ -203,7 +189,6 @@ const AgentAccessPanel = () => {
       }
     }
   };
-
   const toggleWorkspaceOnly = (next: boolean) => {
     const prev = workspaceOnly;
     setWorkspaceOnly(next);
@@ -211,7 +196,6 @@ const AgentAccessPanel = () => {
       setWorkspaceOnly(prev)
     );
   };
-
   const toggleTaskPlanApproval = (next: boolean) => {
     const prev = requireTaskPlanApproval;
     setRequireTaskPlanApproval(next);
@@ -219,7 +203,6 @@ const AgentAccessPanel = () => {
       setRequireTaskPlanApproval(prev)
     );
   };
-
   const toggleAutoApproveAll = (next: boolean) => {
     const prev = autoApproveAll;
     setAutoApproveAll(next);
@@ -228,12 +211,11 @@ const AgentAccessPanel = () => {
       () => setAutoApproveAll(prev)
     );
   };
-
   // The autopilot is a cron job, not an autonomy field — flip its `enabled`
   // flag directly via cron_update. Optimistic, with revert on failure, and a
   // sequence guard so only the most recent toggle writes UI state back.
   const toggleAutopilot = async (next: boolean) => {
-    if (!autopilotJobId || !isTauri()) return;
+    if (!autopilotJobId) return;
     const seq = ++autopilotSeqRef.current;
     const prev = autopilotEnabled;
     setAutopilotEnabled(next);
@@ -251,7 +233,6 @@ const AgentAccessPanel = () => {
       }
     }
   };
-
   const addRoot = () => {
     const path = newRootPath.trim();
     if (!path) return;
@@ -268,27 +249,23 @@ const AgentAccessPanel = () => {
     // leaves omitted fields untouched server-side (see `persist` above).
     void persist({ workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
-
   const removeRoot = (path: string) => {
     const nextRoots = trustedRoots.filter(r => r.path !== path);
     setTrustedRoots(nextRoots);
     // `autoApproveAll` intentionally omitted — see `addRoot` above.
     void persist({ workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
-
   const removeAutoApprove = (tool: string) => {
     const nextList = autoApprove.filter(name => name !== tool);
     setAutoApprove(nextList);
     // `autoApproveAll` intentionally omitted — see `addRoot` above.
     void persist({ workspaceOnly, requireTaskPlanApproval, trustedRoots, autoApprove: nextList });
   };
-
   // Persist the action timeout on blur / Enter. Validates the integer range
   // client-side (the core re-validates) and no-ops when unchanged. Separate
   // from the autonomy `persist` path so a timeout edit can't clobber the
   // autonomy block and vice-versa.
   const commitTimeout = async () => {
-    if (!isTauri()) return;
     const trimmed = timeoutInput.trim();
     const parsed = Number(trimmed);
     if (!Number.isInteger(parsed) || parsed < timeoutMin || parsed > timeoutMax) {
@@ -322,16 +299,8 @@ const AgentAccessPanel = () => {
       }
     }
   };
-
   return (
     <SettingsPanel description={t('settings.agentAccess.menuDesc')}>
-      {/* Desktop-only notice */}
-      {!isTauri() && (
-        <p className="text-sm text-coral-600 dark:text-coral-300">
-          {t('settings.agentAccess.desktopOnly')}
-        </p>
-      )}
-
       {isLoading ? (
         <p className="text-sm text-content-muted">{t('settings.agentAccess.loading')}</p>
       ) : (
@@ -361,7 +330,6 @@ const AgentAccessPanel = () => {
               </p>
             </div>
           </SettingsSection>
-
           {/* Workspace confinement + task plan approval */}
           <SettingsSection>
             <SettingsRow
@@ -391,7 +359,6 @@ const AgentAccessPanel = () => {
               }
             />
           </SettingsSection>
-
           {/* Autonomous tiny.place agent (opt-in). Only shown once the seeded
                 cron job is found, so users without it never see a dead toggle. */}
           {autopilotJobId && (
@@ -412,7 +379,6 @@ const AgentAccessPanel = () => {
               />
             </SettingsSection>
           )}
-
           {/* Action timeout */}
           <SettingsSection
             title={t('settings.agentAccess.timeout.label')}
@@ -448,7 +414,6 @@ const AgentAccessPanel = () => {
               }
             />
           </SettingsSection>
-
           {/* Granted folders (trusted roots) */}
           <SettingsSection
             title={t('settings.agentAccess.grantedFolders')}
@@ -515,7 +480,6 @@ const AgentAccessPanel = () => {
               </Button>
             </div>
           </SettingsSection>
-
           {/* Always-allowed tools */}
           <SettingsSection
             title={t('settings.agentAccess.alwaysAllow')}
@@ -536,10 +500,8 @@ const AgentAccessPanel = () => {
               </ul>
             )}
           </SettingsSection>
-
           {/* Action rate limit (formerly the standalone /settings/autonomy page) */}
           <AutonomyRateLimitSection />
-
           {/* Approval history */}
           <SettingsSection
             title={t('settings.agentAccess.approvalHistory')}
@@ -555,7 +517,6 @@ const AgentAccessPanel = () => {
               </Button>
             </div>
           </SettingsSection>
-
           {/* Auto-save status */}
           <SettingsStatusLine
             saving={isSaving}
@@ -568,5 +529,4 @@ const AgentAccessPanel = () => {
     </SettingsPanel>
   );
 };
-
 export default AgentAccessPanel;

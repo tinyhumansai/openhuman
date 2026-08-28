@@ -176,7 +176,11 @@ async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<Ver
       return 'outdated';
     }
 
-    return coreVersion === APP_VERSION ? 'match' : 'outdated';
+    // Accept compatible 0.63.x versions or any matching core
+    const isCompatible =
+      coreVersion === APP_VERSION ||
+      (coreVersion.startsWith('0.63.') && APP_VERSION.startsWith('0.63.'));
+    return isCompatible ? 'match' : 'outdated';
   } catch (err) {
     if (isMethodNotFound(err)) {
       log('[boot-check] update_version method not found (-32601)');

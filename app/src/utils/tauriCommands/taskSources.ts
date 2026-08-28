@@ -7,19 +7,15 @@
  * payload.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { isTauri } from './common';
 
 export type TaskSourceProvider = 'github' | 'notion' | 'linear' | 'clickup';
-
 export type TaskSourceTarget = 'agent_todo_proactive' | 'todo_only';
-
 /** A selectable container a task source can target (e.g. a Notion database).
  *  Mirrors the Rust `TaskContainer` (`{ id, title }`). */
 export interface TaskContainer {
   id: string;
   title: string;
 }
-
 /** Per-provider filter, discriminated by `provider`. Mirrors the Rust
  *  `FilterSpec` (serde snake_case, tagged by `provider`). */
 export type TaskSourceFilter =
@@ -52,7 +48,6 @@ export type TaskSourceFilter =
       assignee_is_me?: boolean;
       extra?: Record<string, unknown>;
     };
-
 export interface TaskSource {
   id: string;
   provider: TaskSourceProvider;
@@ -70,7 +65,6 @@ export interface TaskSource {
   lastFetchAt?: string;
   lastStatus?: string;
 }
-
 export interface NormalizedTask {
   externalId: string;
   sourceId: string;
@@ -85,7 +79,6 @@ export interface NormalizedTask {
   priority?: string;
   updatedAt?: string;
 }
-
 export interface FetchOutcome {
   sourceId: string;
   provider: string;
@@ -95,14 +88,12 @@ export interface FetchOutcome {
   pruned: number;
   error?: string;
 }
-
 export interface TaskSourcesStatus {
   enabled: boolean;
   defaultIntervalSecs: number;
   sourceCount: number;
   enabledSourceCount: number;
 }
-
 export interface TaskSourcePatch {
   name?: string;
   enabled?: boolean;
@@ -114,7 +105,6 @@ export interface TaskSourcePatch {
   /** Executor routing (G7): personality/skill/agent handle to pre-assign. */
   assignedExecutor?: string;
 }
-
 export interface TaskSourceAddParams {
   provider: TaskSourceProvider;
   filter: TaskSourceFilter;
@@ -125,23 +115,15 @@ export interface TaskSourceAddParams {
   max_tasks_per_fetch?: number;
   assigned_executor?: string;
 }
-
-function ensureTauri(): void {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-}
-
+function ensureTauri(): void {}
 export async function openhumanTaskSourcesList(): Promise<TaskSource[]> {
   ensureTauri();
   return await callCoreRpc<TaskSource[]>({ method: 'openhuman.task_sources_list' });
 }
-
 export async function openhumanTaskSourcesGet(id: string): Promise<TaskSource> {
   ensureTauri();
   return await callCoreRpc<TaskSource>({ method: 'openhuman.task_sources_get', params: { id } });
 }
-
 export async function openhumanTaskSourcesAdd(params: TaskSourceAddParams): Promise<TaskSource> {
   ensureTauri();
   return await callCoreRpc<TaskSource>({
@@ -149,7 +131,6 @@ export async function openhumanTaskSourcesAdd(params: TaskSourceAddParams): Prom
     params: params as unknown as Record<string, unknown>,
   });
 }
-
 export async function openhumanTaskSourcesUpdate(
   id: string,
   patch: TaskSourcePatch
@@ -160,7 +141,6 @@ export async function openhumanTaskSourcesUpdate(
     params: { id, patch },
   });
 }
-
 export async function openhumanTaskSourcesRemove(
   id: string
 ): Promise<{ id: string; removed: boolean; pruned?: number }> {
@@ -170,7 +150,6 @@ export async function openhumanTaskSourcesRemove(
     params: { id },
   });
 }
-
 export async function openhumanTaskSourcesFetch(id: string): Promise<FetchOutcome> {
   ensureTauri();
   return await callCoreRpc<FetchOutcome>({
@@ -178,12 +157,10 @@ export async function openhumanTaskSourcesFetch(id: string): Promise<FetchOutcom
     params: { id },
   });
 }
-
 export async function openhumanTaskSourcesSync(): Promise<FetchOutcome[]> {
   ensureTauri();
   return await callCoreRpc<FetchOutcome[]>({ method: 'openhuman.task_sources_sync' });
 }
-
 export async function openhumanTaskSourcesListTasks(
   id: string,
   limit = 50
@@ -194,7 +171,6 @@ export async function openhumanTaskSourcesListTasks(
     params: { id, limit },
   });
 }
-
 export async function openhumanTaskSourcesPreviewFilter(
   provider: TaskSourceProvider,
   filter: TaskSourceFilter,
@@ -207,7 +183,6 @@ export async function openhumanTaskSourcesPreviewFilter(
     params: { provider, filter, connection_id: connectionId, max },
   });
 }
-
 /** List the selectable containers (e.g. Notion databases) a provider exposes
  *  for the given connection, so the create form can offer a picker instead of
  *  a raw-id text field. */
@@ -221,7 +196,6 @@ export async function openhumanTaskSourcesListDatabases(
     params: { provider, connection_id: connectionId },
   });
 }
-
 export async function openhumanTaskSourcesStatus(): Promise<TaskSourcesStatus> {
   ensureTauri();
   return await callCoreRpc<TaskSourcesStatus>({ method: 'openhuman.task_sources_status' });

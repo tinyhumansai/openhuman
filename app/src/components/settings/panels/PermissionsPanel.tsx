@@ -4,7 +4,6 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AgentPaths,
   type AutonomyLevel,
-  isTauri,
   openhumanGetAgentPaths,
   openhumanGetAutonomySettings,
   openhumanUpdateAgentPaths,
@@ -19,16 +18,13 @@ import SettingsPanel from '../layout/SettingsPanel';
 // each install in chat. There is no per-user "disable installs" knob here —
 // the consent is captured per-install by the gate, not by a static config flag.
 const ALLOW_TOOL_INSTALL = true;
-
 interface PresetOption {
   id: AutonomyLevel;
   title: string;
   description: string;
 }
-
 const PermissionsPanel = () => {
   const { t } = useT();
-
   // Tier presets — built inside the component so titles/descriptions resolve
   // through `t()` (i18n). Order matters: it's the display order.
   const presets: PresetOption[] = [
@@ -48,7 +44,6 @@ const PermissionsPanel = () => {
       description: t('settings.permissions.preset.full.desc'),
     },
   ];
-
   const [level, setLevel] = useState<AutonomyLevel>('supervised');
   // We need to carry workspace_only and trusted_roots when saving tier changes
   // so we don't overwrite them with defaults. Load them but don't expose UI for
@@ -58,30 +53,22 @@ const PermissionsPanel = () => {
   const [trustedRoots, setTrustedRoots] = useState<
     Array<{ path: string; access: 'read' | 'readwrite' }>
   >([]);
-
   const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
   const [actionDirEditing, setActionDirEditing] = useState(false);
   const [actionDirInput, setActionDirInput] = useState('');
   const [actionDirError, setActionDirError] = useState<string | null>(null);
   const [actionDirSaved, setActionDirSaved] = useState<string | null>(null);
   const [actionDirSaving, setActionDirSaving] = useState(false);
-
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
-
   // Monotonic guards so out-of-order async responses don't clobber UI state.
   const persistSeqRef = useRef(0);
   const dirSeqRef = useRef(0);
-
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!isTauri()) {
-        setIsLoading(false);
-        return;
-      }
       try {
         const autonomyResp = await openhumanGetAutonomySettings();
         if (cancelled) return;
@@ -110,12 +97,10 @@ const PermissionsPanel = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   // Persist tier change. Carries the other autonomy fields through unchanged
   // so we don't accidentally clobber what the advanced panel may have set.
   const persistTier = async (nextLevel: AutonomyLevel) => {
     const seq = ++persistSeqRef.current;
-    if (!isTauri()) return;
     setError(null);
     setSavedNote(null);
     setIsSaving(true);
@@ -140,30 +125,24 @@ const PermissionsPanel = () => {
       }
     }
   };
-
   const selectTier = (next: AutonomyLevel) => {
     setLevel(next);
     void persistTier(next);
   };
-
   // True when the env var pins action_dir — the edit button must be hidden.
   const actionDirEnvLocked = agentPaths?.action_dir_source === 'env';
-
   const startEditActionDir = () => {
     setActionDirInput(agentPaths?.action_dir ?? '');
     setActionDirError(null);
     setActionDirSaved(null);
     setActionDirEditing(true);
   };
-
   const cancelEditActionDir = () => {
     setActionDirEditing(false);
     setActionDirError(null);
     setActionDirInput('');
   };
-
   const saveActionDir = async () => {
-    if (!isTauri()) return;
     const seq = ++dirSeqRef.current;
     setActionDirSaving(true);
     setActionDirError(null);
@@ -185,16 +164,9 @@ const PermissionsPanel = () => {
       }
     }
   };
-
   return (
     <SettingsPanel>
       <div className="space-y-5">
-        {!isTauri() && (
-          <p className="text-sm text-coral-600 dark:text-coral-300">
-            {t('settings.agentAccess.desktopOnly')}
-          </p>
-        )}
-
         {isLoading ? (
           <p className="text-sm text-content-muted">{t('settings.agentAccess.loading')}</p>
         ) : (
@@ -245,7 +217,6 @@ const PermissionsPanel = () => {
                 )}
               </div>
             </section>
-
             {/* Folders the assistant can use */}
             <section className="space-y-2">
               <h2 className="text-sm font-semibold text-content">
@@ -336,7 +307,6 @@ const PermissionsPanel = () => {
                 </p>
               </div>
             </section>
-
             {/* Auto-save status */}
             <SettingsStatusLine
               saving={isSaving}
@@ -350,5 +320,4 @@ const PermissionsPanel = () => {
     </SettingsPanel>
   );
 };
-
 export default PermissionsPanel;

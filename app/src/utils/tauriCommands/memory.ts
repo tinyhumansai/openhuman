@@ -100,9 +100,6 @@ export async function syncMemoryClientToken(token: string): Promise<void> {
 }
 
 export async function memoryListDocuments(namespace?: string): Promise<unknown> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<unknown>({
     method: 'openhuman.memory_list_documents',
     params: { namespace },
@@ -115,9 +112,6 @@ export async function memoryListDocuments(namespace?: string): Promise<unknown> 
 }
 
 export async function memoryListNamespaces(): Promise<string[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<{ data?: { namespaces?: string[] }; namespaces?: string[] }>({
     method: 'openhuman.memory_list_namespaces',
   });
@@ -133,9 +127,6 @@ export async function memoryDeleteDocument(
   documentId: string,
   namespace: string
 ): Promise<unknown> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<unknown>({
     method: 'openhuman.memory_delete_document',
     params: { document_id: documentId, namespace },
@@ -145,9 +136,6 @@ export async function memoryDeleteDocument(
 export async function memoryClearNamespace(
   namespace: string
 ): Promise<{ cleared: boolean; namespace: string }> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const response = await callCoreRpc<{ result: { cleared: boolean; namespace: string } }>({
     method: 'openhuman.memory_clear_namespace',
     params: { namespace },
@@ -160,9 +148,6 @@ export async function memoryQueryNamespace(
   query: string,
   maxChunks?: number
 ): Promise<MemoryQueryResult> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<unknown>({
     method: 'openhuman.memory_query_namespace',
     params: { namespace, query, max_chunks: maxChunks },
@@ -174,9 +159,6 @@ export async function memoryRecallNamespace(
   namespace: string,
   maxChunks?: number
 ): Promise<MemoryQueryResult> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<unknown>({
     method: 'openhuman.memory_recall_context',
     params: { namespace, max_chunks: maxChunks },
@@ -189,9 +171,6 @@ export async function memoryGraphQuery(
   subject?: string,
   predicate?: string
 ): Promise<GraphRelation[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const raw = await callCoreRpc<GraphRelation[] | { result: GraphRelation[] }>({
     method: 'openhuman.memory_graph_query',
     params: { namespace, subject, predicate },
@@ -220,9 +199,6 @@ export async function memoryDocIngest(params: {
   session_id?: string;
   document_id?: string;
 }): Promise<unknown> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<unknown>({ method: 'openhuman.memory_doc_ingest', params });
 }
 
@@ -238,9 +214,6 @@ export async function memoryDocIngest(params: {
  * accepts `""` as "the memory root", so default to that.
  */
 export async function aiListMemoryFiles(relativeDir = ''): Promise<string[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<{ data?: { files?: string[] }; files?: string[] }>({
     method: 'openhuman.memory_list_files',
     params: { relative_dir: relativeDir },
@@ -255,9 +228,6 @@ export async function aiListMemoryFiles(relativeDir = ''): Promise<string[]> {
 }
 
 export async function aiReadMemoryFile(relativePath: string): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await callCoreRpc<{ data?: { content?: string }; content?: string } | string>({
     method: 'openhuman.memory_read_file',
     params: { relative_path: relativePath },
@@ -270,9 +240,6 @@ export async function aiReadMemoryFile(relativePath: string): Promise<string> {
 }
 
 export async function aiWriteMemoryFile(relativePath: string, content: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   await callCoreRpc<boolean>({
     method: 'openhuman.memory_write_file',
     params: { relative_path: relativePath, content },
@@ -306,9 +273,7 @@ export interface MemoryLearnAllResult {
  */
 export async function memorySyncChannel(channelId: string): Promise<MemorySyncChannelResult> {
   console.debug('[memory.sync] memorySyncChannel: entry channel_id=%s', channelId);
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
+
   const resp = await callCoreRpc<MemorySyncChannelResult>({
     method: 'openhuman.memory_sync_channel',
     params: { channel_id: channelId },
@@ -323,9 +288,7 @@ export async function memorySyncChannel(channelId: string): Promise<MemorySyncCh
  */
 export async function memorySyncAll(): Promise<MemorySyncAllResult> {
   console.debug('[memory.sync] memorySyncAll: entry');
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
+
   const resp = await callCoreRpc<MemorySyncAllResult>({ method: 'openhuman.memory_sync_all' });
   console.debug('[memory.sync] memorySyncAll: exit result=%o', resp);
   return resp;
@@ -337,9 +300,7 @@ export async function memorySyncAll(): Promise<MemorySyncAllResult> {
  */
 export async function memoryLearnAll(namespaces?: string[]): Promise<MemoryLearnAllResult> {
   console.debug('[memory.learn] memoryLearnAll: entry namespaces=%o', namespaces);
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
+
   const params: Record<string, unknown> = {};
   if (namespaces && namespaces.length > 0) {
     params.namespaces = namespaces;
@@ -389,9 +350,6 @@ export async function whatsappListChats(params?: {
   limit?: number;
   offset?: number;
 }): Promise<WhatsAppChat[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await safeInvoke<WhatsAppChat[]>('whatsapp_data_list_chats', { req: params ?? {} });
   return resp ?? [];
 }
@@ -406,9 +364,6 @@ export async function whatsappListMessages(params: {
   limit?: number;
   offset?: number;
 }): Promise<WhatsAppMessage[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   const resp = await safeInvoke<WhatsAppMessage[]>('whatsapp_data_list_messages', { req: params });
   return resp ?? [];
 }

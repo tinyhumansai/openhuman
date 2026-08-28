@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { cn } from '../../../lib/cn';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
-  isTauri,
   MEMORY_CONTEXT_WINDOWS,
   type MemoryContextWindow,
   openhumanGetConfig,
@@ -17,10 +16,8 @@ interface PresetMeta {
   badge: string;
   hint: string;
 }
-
 const isMemoryContextWindow = (value: unknown): value is MemoryContextWindow =>
   typeof value === 'string' && (MEMORY_CONTEXT_WINDOWS as readonly string[]).includes(value);
-
 const extractCurrentWindow = (snapshot: unknown): MemoryContextWindow => {
   if (!snapshot || typeof snapshot !== 'object') return 'balanced';
   const root = snapshot as Record<string, unknown>;
@@ -29,12 +26,10 @@ const extractCurrentWindow = (snapshot: unknown): MemoryContextWindow => {
   const candidate = agent?.memory_window;
   return isMemoryContextWindow(candidate) ? candidate : 'balanced';
 };
-
 interface Props {
   onError?: (message: string) => void;
   onSaved?: (window: MemoryContextWindow) => void;
 }
-
 /**
  * Stepped memory-context window selector.
  *
@@ -50,7 +45,6 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
   const [pending, setPending] = useState<MemoryContextWindow | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState<MemoryContextWindow | null>(null);
-
   const localizedMeta: Record<MemoryContextWindow, PresetMeta> = {
     minimal: {
       label: t('settings.memoryWindow.minimal.label'),
@@ -73,12 +67,7 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       hint: t('settings.memoryWindow.maximum.hint'),
     },
   };
-
   useEffect(() => {
-    if (!isTauri()) {
-      setLoaded(true);
-      return;
-    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -97,15 +86,12 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       cancelled = true;
     };
   }, [onError]);
-
   const select = async (next: MemoryContextWindow) => {
     if (next === current || saving) return;
     setPending(next);
     setSaving(next);
     try {
-      if (isTauri()) {
-        await openhumanUpdateMemorySettings({ memory_window: next });
-      }
+      await openhumanUpdateMemorySettings({ memory_window: next });
       setCurrent(next);
       onSaved?.(next);
     } catch (err) {
@@ -115,10 +101,8 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       setPending(null);
     }
   };
-
   const activeForUi = pending ?? current;
   const meta = localizedMeta[activeForUi];
-
   return (
     <Card
       title={t('settings.memoryWindow.title')}
@@ -170,5 +154,4 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
     </Card>
   );
 };
-
 export default MemoryWindowControl;
