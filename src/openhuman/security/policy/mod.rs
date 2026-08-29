@@ -12,7 +12,7 @@ pub use enforcement::{ensure_openhuman_scratch_dir, openhuman_scratch_dir};
 pub use types::{
     ActionTracker, ActiveProfileGuard, AutonomyLevel, CommandClass, CommandRiskLevel, GateDecision,
     SecurityPolicy, ToolOperation, TrustedAccess, TrustedRoot, POLICY_BLOCKED_MARKER,
-    POLICY_DENIED_MARKER,
+    POLICY_DENIED_MARKER, WORKSPACE_MISSING_MARKER,
 };
 
 #[cfg(test)]

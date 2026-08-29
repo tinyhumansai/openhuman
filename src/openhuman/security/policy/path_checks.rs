@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::types::{SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER};
+use super::types::{
+    SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER, WORKSPACE_MISSING_MARKER,
+};
 use super::types::{WORKSPACE_INTERNAL_DIRS, WORKSPACE_INTERNAL_FILES};
 
 impl SecurityPolicy {
@@ -270,6 +272,20 @@ impl SecurityPolicy {
         } else {
             self.action_dir.join(&expanded)
         };
+
+        // A missing workspace is a configuration/startup condition, not a
+        // path-traversal attempt. Keep the write boundary fail-closed, but
+        // only classify targets that are actually beneath that workspace. A
+        // separate action root may remain usable through its own trusted-root
+        // grant, while an unrelated untrusted target should keep its normal
+        // containment diagnosis.
+        if !self.workspace_dir.is_dir() && self.is_path_under_workspace(&full_path) {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} {WORKSPACE_MISSING_MARKER} Workspace directory does not exist: {}. Nothing can be written until it is created; this is not a path-traversal refusal.",
+                self.workspace_dir.display()
+            ));
+        }
+
         let parent = full_path
             .parent()
             .ok_or_else(|| format!("Invalid path (no parent): {path}"))?;
@@ -320,6 +336,19 @@ impl SecurityPolicy {
             resolved_parent.display()
         );
         Ok(result)
+    }
+
+    /// Check whether a not-yet-canonicalized target is lexically beneath the
+    /// configured workspace. This is used only while the workspace itself is
+    /// absent, so canonicalization of the target is not available. Keeping the
+    /// raw and canonical workspace forms covers both ordinary absolute paths
+    /// and symlinked workspace roots when the latter still exists.
+    fn is_path_under_workspace(&self, path: &Path) -> bool {
+        path.starts_with(&self.workspace_dir)
+            || self
+                .workspace_dir
+                .canonicalize()
+                .is_ok_and(|workspace| path.starts_with(workspace))
     }
 
     /// Cross-profile write guard (1b). A no-op unless the session runs under an
