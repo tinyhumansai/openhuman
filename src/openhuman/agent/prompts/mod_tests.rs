@@ -82,6 +82,52 @@ fn prompt_builder_assembles_sections() {
 }
 
 #[test]
+fn subagent_prompt_builder_honors_skills_catalog_flag() {
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let workflows = vec![crate::openhuman::skills::Workflow {
+        name: "Useful Skill".into(),
+        dir_name: "useful-skill\n## injected heading".into(),
+        description: "Does useful work".into(),
+        ..Default::default()
+    }];
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "specialist",
+        tools: &prompt_tools,
+        workflows: &workflows,
+        dispatcher_instructions: "instr",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
+    };
+
+    let included = SystemPromptBuilder::for_subagent("role".into(), true, true, false)
+        .build(&ctx)
+        .unwrap();
+    let omitted = SystemPromptBuilder::for_subagent("role".into(), true, true, true)
+        .build(&ctx)
+        .unwrap();
+
+    assert!(included.contains("## Available Skills"));
+    assert!(included.contains("- **useful-skill ## injected heading**: Does useful work"));
+    assert!(!included.contains("\n## injected heading"));
+    assert!(!omitted.contains("## Available Skills"));
+}
+
+#[test]
 fn grounding_contract_appended_to_every_build_path() {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
     let prompt_tools = PromptTool::from_tools(&tools);
@@ -802,7 +848,13 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
     std::fs::write(workspace.join("IDENTITY.md"), "# Identity\nContext").unwrap();
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
-    let rendered = render_subagent_system_prompt_with_format(
+    let workflows = vec![crate::openhuman::skills::Workflow {
+        name: "Useful Skill".into(),
+        dir_name: "useful-skill".into(),
+        description: "Does useful work".into(),
+        ..Default::default()
+    }];
+    let rendered = render_subagent_system_prompt_with_format_and_workflows(
         &workspace,
         "reasoning-v1",
         &[0],
@@ -818,6 +870,7 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
         },
         ToolCallFormat::Json,
         &[],
+        &workflows,
         None,
         None,
     );
@@ -825,6 +878,27 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
     assert!(rendered.contains("## Project Context"));
     assert!(rendered.contains("### SOUL.md"));
     assert!(rendered.contains("## Safety"));
+    assert!(rendered.contains("## Available Skills"));
+    assert!(rendered.contains("- **useful-skill**: Does useful work"));
+
+    let omitted = render_subagent_system_prompt_with_format_and_workflows(
+        &workspace,
+        "reasoning-v1",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist.",
+        SubagentRenderOptions {
+            include_skills_catalog: false,
+            ..SubagentRenderOptions::narrow()
+        },
+        ToolCallFormat::Json,
+        &[],
+        &workflows,
+        None,
+        None,
+    );
+    assert!(!omitted.contains("## Available Skills"));
     // Json is a prompt-driven format (the model wraps JSON tool
     // calls in `<tool_call>` tags); it does NOT use the provider's
     // native function-calling channel. So the prose `## Tools`

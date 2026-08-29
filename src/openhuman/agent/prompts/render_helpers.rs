@@ -72,11 +72,9 @@ pub fn render_grounding() -> &'static str {
     GROUNDING_BODY
 }
 
-// `render_skills` and `render_connected_integrations` helpers are
-// gone — `## Available Skills` lives in `integrations_agent/prompt.rs`, and
-// the connected-integrations / delegation-guide blocks each live in
-// their owning agent's `prompt.rs` so no branching-on-agent-id logic
-// needs to exist here.
+// Connected-integrations and delegation-guide blocks remain in their owning
+// agent prompts. The generic skills catalogue is shared by the static section
+// chain and the narrow sub-agent renderer.
 
 /// Render the `## Workspace` block (working directory + file listing
 /// bounds) — part of the dynamic, per-request suffix.
@@ -286,7 +284,39 @@ pub fn render_subagent_system_prompt_with_format(
     archetype_body: &str,
     options: SubagentRenderOptions,
     tool_call_format: ToolCallFormat,
+    connected_integrations: &[ConnectedIntegration],
+    agents_md_global: Option<&str>,
+    agents_md_local: Option<&str>,
+) -> String {
+    render_subagent_system_prompt_with_format_and_workflows(
+        workspace_dir,
+        model_name,
+        allowed_indices,
+        parent_tools,
+        extra_tools,
+        archetype_body,
+        options,
+        tool_call_format,
+        connected_integrations,
+        &[],
+        agents_md_global,
+        agents_md_local,
+    )
+}
+
+/// Workflow-aware variant used by the runtime when installed skills are available.
+#[allow(clippy::too_many_arguments)]
+pub fn render_subagent_system_prompt_with_format_and_workflows(
+    workspace_dir: &Path,
+    model_name: &str,
+    allowed_indices: &[usize],
+    parent_tools: &[Box<dyn crate::openhuman::tools::Tool>],
+    extra_tools: &[Box<dyn crate::openhuman::tools::Tool>],
+    archetype_body: &str,
+    options: SubagentRenderOptions,
+    tool_call_format: ToolCallFormat,
     _connected_integrations: &[ConnectedIntegration],
+    workflows: &[crate::openhuman::skills::Workflow],
     agents_md_global: Option<&str>,
     agents_md_local: Option<&str>,
 ) -> String {
@@ -482,14 +512,13 @@ pub fn render_subagent_system_prompt_with_format(
     out.push_str(GROUNDING_BODY);
     out.push_str("\n\n");
 
-    // 3c/3d. `## Available Skills` and `## Connected Integrations`
-    //        are no longer emitted here. Each agent that needs them
-    //        renders its own block in its `prompt.rs` (integrations_agent
-    //        owns the executor voice, orchestrator/welcome own the
-    //        delegator voice). Legacy Inline/File-sourced TOML agents
-    //        that still route through this helper simply don't get
-    //        either block — which matches the fact that none of them
-    //        currently opt in.
+    // 3c. Optional installed-skills catalogue.
+    if options.include_skills_catalog {
+        out.push_str(&super::sections::render_skills_catalog(workflows));
+        if !workflows.is_empty() {
+            out.push('\n');
+        }
+    }
 
     // 4. Workspace so the model knows where it is. Intentionally stable:
     //    no datetime, no hostname, no pid — see the KV-cache note above.
