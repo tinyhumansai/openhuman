@@ -10,10 +10,19 @@ use std::process::Command;
 
 use super::types::{CliStatus, MIN_CLI_VERSION};
 
-/// Locate the `claude` CLI binary on `PATH`.
+/// Locate the `claude` CLI binary.
 ///
-/// Honors `OPENHUMAN_CLAUDE_CLI` env override so tests and power users can
-/// point at a specific binary.
+/// Resolution order:
+/// 1. `OPENHUMAN_CLAUDE_CLI` env override (tests / power users / a fixed path).
+/// 2. `PATH` search.
+/// 3. Well-known absolute install locations ([`well_known_candidates`]).
+///
+/// Step 3 exists because a macOS app launched from Finder/Dock inherits only
+/// the stripped launchd `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which never
+/// contains the native installer's `~/.local/bin` — so a PATH-only lookup
+/// reports the CLI "not installed" even though it is present. (Terminal
+/// launches inherit the shell `PATH` and hit step 2, so this only bites GUI
+/// launches.)
 pub fn resolve_binary() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("OPENHUMAN_CLAUDE_CLI") {
         let p = PathBuf::from(explicit);
@@ -21,7 +30,44 @@ pub fn resolve_binary() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    which_on_path("claude")
+    if let Some(p) = which_on_path("claude") {
+        return Some(p);
+    }
+    // PATH miss — fall back to well-known install locations. This is the
+    // Finder/Dock-launch case where `~/.local/bin` is absent from `PATH`.
+    let found = first_existing(&well_known_candidates());
+    if let Some(p) = found.as_ref() {
+        log::debug!(
+            "[claude-code][version] `claude` not on PATH; resolved via well-known location {}",
+            p.display()
+        );
+    }
+    found
+}
+
+/// Absolute paths the `claude` CLI is commonly installed at, tried in order
+/// when it is not found on `PATH`. Ordered by how the native installer and the
+/// common package managers lay it down; the native installer's `~/.local/bin`
+/// is first because that is the default and the one a stripped launchd `PATH`
+/// omits.
+fn well_known_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        out.push(home.join(".local/bin/claude")); // native installer default
+        out.push(home.join(".claude/local/claude")); // legacy local install
+        out.push(home.join(".bun/bin/claude")); // bun global
+        out.push(home.join(".npm-global/bin/claude")); // npm global (custom prefix)
+        out.push(home.join("bin/claude"));
+    }
+    out.push(PathBuf::from("/opt/homebrew/bin/claude")); // Homebrew (Apple Silicon)
+    out.push(PathBuf::from("/usr/local/bin/claude")); // Homebrew (Intel) / npm default
+    out
+}
+
+/// First candidate that resolves to a file (follows symlinks — the native
+/// installer's `~/.local/bin/claude` is a symlink into a versioned dir).
+fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|p| p.is_file()).cloned()
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
@@ -163,5 +209,33 @@ mod tests {
     #[test]
     fn version_compare_strips_prerelease() {
         assert!(!version_lt("2.0.0-rc.1", "2.0.0"));
+    }
+
+    #[test]
+    fn first_existing_picks_the_first_real_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing_a = dir.path().join("nope-a/claude");
+        let missing_b = dir.path().join("nope-b/claude");
+        let real = dir.path().join("claude");
+        std::fs::write(&real, b"#!/bin/sh\n").expect("write fake binary");
+
+        // Nothing present → None (the "CLI not installed" path).
+        assert_eq!(first_existing(&[missing_a.clone(), missing_b.clone()]), None);
+        // Skips the absent candidates and returns the first file that exists.
+        assert_eq!(
+            first_existing(&[missing_a, missing_b, real.clone()]),
+            Some(real)
+        );
+    }
+
+    #[test]
+    fn well_known_candidates_lead_with_native_installer_path() {
+        // The native installer default (`~/.local/bin/claude`) is the one a
+        // stripped launchd PATH omits, so it must be the first fallback tried.
+        let candidates = well_known_candidates();
+        assert!(!candidates.is_empty());
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(candidates[0], home.join(".local/bin/claude"));
+        }
     }
 }
