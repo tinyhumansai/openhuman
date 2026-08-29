@@ -254,6 +254,36 @@ fn managed_credential_scope(config: &Config) -> (Option<PathBuf>, bool) {
 /// connection" passed (config-scoped) while the embed batch silently failed
 /// (keyless scope) — #5501.
 pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn EmbeddingProvider> {
+    // Honor the user's configured memory embedder before assuming the managed
+    // cloud one. The cloud embedder needs a signed-in session; on a local /
+    // offline install every embed batch 401s and documents persist
+    // vector-less — while the embedder the user actually configured (e.g.
+    // `[memory] embedding_provider = "ollama"`) sits unused. `cloud`/`managed`
+    // (and an unset provider) keep today's managed default.
+    let provider = config.memory.embedding_provider.trim();
+    if !provider.is_empty()
+        && !provider.eq_ignore_ascii_case("cloud")
+        && !provider.eq_ignore_ascii_case("managed")
+    {
+        let api_key = super::rpc::resolve_api_key(config, provider);
+        match create_embedding_provider_with_credentials(
+            provider,
+            &config.memory.embedding_model,
+            config.memory.embedding_dimensions,
+            &api_key,
+            None,
+        ) {
+            Ok(p) => {
+                log::debug!(
+                    "[embeddings::factory] default embedder honors configured `[memory] embedding_provider = \"{provider}\"`"
+                );
+                return Arc::from(p);
+            }
+            Err(e) => log::warn!(
+                "[embeddings::factory] configured embedding provider `{provider}` failed to build ({e}); falling back to the managed cloud embedder"
+            ),
+        }
+    }
     let (state_dir, encrypt_secrets) = managed_credential_scope(config);
     // Never log `state_dir`: the user-scoped path embeds the OS username and/or
     // `users/<uid>` (PII). Log only the non-identifying flag.
@@ -310,6 +340,48 @@ mod tests {
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
         config
+    }
+
+    /// A configured local embedder must win over the managed cloud default.
+    /// Regression: `[memory] embedding_provider = "ollama"` was ignored by
+    /// `default_embedding_provider_with_config` (hardcoded cloud), so on a
+    /// local install every sync-document embed batch 401'd against the
+    /// backend proxy and emails persisted vector-less while the user's
+    /// Ollama sat unused.
+    #[test]
+    fn default_embedder_honors_configured_local_provider() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = test_config(&tmp);
+        config.memory.embedding_provider = "ollama".into();
+        config.memory.embedding_model = "bge-m3".into();
+        config.memory.embedding_dimensions = 1024;
+
+        let provider = default_embedding_provider_with_config(&config);
+        assert_eq!(
+            provider.name(),
+            "ollama",
+            "configured ollama must not fall through to the cloud embedder"
+        );
+        assert_eq!(provider.model_id(), "bge-m3");
+        assert_eq!(provider.dimensions(), 1024);
+    }
+
+    /// `cloud`/`managed`/empty keep the managed default (no behavior change).
+    /// (The managed embedder is the OpenAI-compat client aimed at the backend
+    /// proxy, so its `name()` is never `"ollama"`.)
+    #[test]
+    fn default_embedder_keeps_cloud_for_managed_or_unset_provider() {
+        let tmp = TempDir::new().unwrap();
+        for value in ["cloud", "managed", ""] {
+            let mut config = test_config(&tmp);
+            config.memory.embedding_provider = value.into();
+            let provider = default_embedding_provider_with_config(&config);
+            assert_ne!(
+                provider.name(),
+                "ollama",
+                "provider `{value}` must resolve to the managed cloud embedder"
+            );
+        }
     }
 
     /// #5356 regression (the active production cause). Sign-in stores the
