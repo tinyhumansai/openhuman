@@ -544,6 +544,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// Asserts that the durable journal sink and underlying store handle multi-byte
+    /// UTF-8 sequences (emojis and Unicode strings) across lookback window boundaries
+    /// without failing validation or dropping observations (#5599).
+    #[tokio::test]
+    async fn journal_sink_handles_multibyte_utf8_payloads_and_boundary_splits() {
+        let tmp =
+            std::env::temp_dir().join(format!("oh-journal-utf8-test-{}", uuid::Uuid::new_v4()));
+        let run_id = mint_run_id();
+
+        let stores = open_session_stores(&tmp);
+        let journal: Arc<dyn HarnessEventJournal> =
+            Arc::new(StoreEventJournal::new(stores.journal));
+        let sink = EventSink::with_stream_id(run_id.as_str());
+        let journal_sink = Arc::new(JournalSink::new(journal, run_id.clone()));
+        sink.subscribe(Arc::new(FanOutSink::new().with(journal_sink.clone())));
+
+        // Emit events with multi-byte characters and padding that crosses the 4096-byte window.
+        for i in 0..30 {
+            sink.emit(AgentEvent::ModelStarted {
+                call_id: format!("call-{i}").into(),
+                model: format!("🚀✨—unicode-test-{}-{}", "x".repeat(150), i),
+            });
+        }
+        journal_sink.flush();
+
+        let replayed = read_run_events_at(&tmp, run_id.as_str(), 0).await;
+        assert_eq!(replayed.len(), 30, "all 30 observations should be retained");
+        for (i, obs) in replayed.iter().enumerate() {
+            assert_eq!(
+                obs.offset, i as u64,
+                "initial observation {i} offset must be contiguous"
+            );
+        }
+
+        // Reconnect / append after initial batch to verify next_offset handles multi-byte boundaries.
+        sink.emit(AgentEvent::ToolStarted {
+            call_id: "call-30".into(),
+            tool_name: "test_tool".to_string(),
+        });
+        journal_sink.flush();
+
+        let replayed_after = read_run_events_at(&tmp, run_id.as_str(), 0).await;
+        assert_eq!(replayed_after.len(), 31);
+        for (i, obs) in replayed_after.iter().enumerate() {
+            assert_eq!(
+                obs.offset, i as u64,
+                "replayed observation {i} offset must be contiguous"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// Workspace-parameterized twin of [`read_run_events`] for tests that supply
     /// an explicit store root instead of resolving one from config.
     async fn read_run_events_at(
