@@ -308,6 +308,49 @@ pub(crate) fn messages_to_history(messages: &[Message]) -> Vec<ChatMessage> {
     messages.iter().map(message_to_chat_message).collect()
 }
 
+/// Serialize a user [`Message`]'s content blocks back into a single string for a
+/// native provider request, **preserving image attachments** as inline
+/// `[IMAGE:<url>]` markers. This is the inverse of [`user_content_blocks`]: the
+/// forward hop lifts `[IMAGE:…]` markers into typed [`ContentBlock::Image`]
+/// blocks, so the reverse hop must re-emit them, or a native-tool provider that
+/// round-trips through a string-content [`ChatMessage`] (claude-code, and any
+/// other `supports_native_tools` provider) silently loses every pasted image —
+/// [`Message::text`] concatenates only [`ContentBlock::Text`] and drops the rest.
+/// The marker-aware provider input builders reinflate `[IMAGE:data:…]` back into
+/// real image content blocks. Text-only turns are byte-for-byte identical to
+/// `msg.text()` (fast path), so non-image traffic is unaffected.
+fn native_user_content(msg: &Message) -> String {
+    let Message::User(user) = msg else {
+        return msg.text();
+    };
+    // Fast path: no image blocks → identical to `msg.text()`.
+    if !user
+        .content
+        .iter()
+        .any(|b| matches!(b, ContentBlock::Image(_)))
+    {
+        return msg.text();
+    }
+    let mut out = String::new();
+    for block in &user.content {
+        let piece = match block {
+            ContentBlock::Text(text) => text.clone(),
+            ContentBlock::Image(image) => format!("[IMAGE:{}]", image.url),
+            // Json / ProviderExtension carry no user-visible text — `msg.text()`
+            // drops them too, so skip them to preserve that behaviour.
+            _ => continue,
+        };
+        if piece.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&piece);
+    }
+    out
+}
+
 /// Convert one harness [`Message`] into a [`ChatMessage`] for a **native**
 /// tool-calling provider request, preserving the structure the provider needs to
 /// round-trip a tool round: an assistant turn that made tool calls is encoded as
@@ -320,7 +363,7 @@ pub(crate) fn messages_to_history(messages: &[Message]) -> Vec<ChatMessage> {
 pub(crate) fn message_to_native_chat_message(msg: &Message) -> ChatMessage {
     match msg {
         Message::System(_) => ChatMessage::system(msg.text()),
-        Message::User(_) => ChatMessage::user(msg.text()),
+        Message::User(_) => ChatMessage::user(native_user_content(msg)),
         Message::Assistant(a) if !a.tool_calls.is_empty() => {
             let tool_calls: Vec<_> = a.tool_calls.iter().map(ta_call_to_oh_call).collect();
             let payload = serde_json::json!({
@@ -534,6 +577,47 @@ mod tests {
             }
             other => panic!("expected an image block, got {other:?}"),
         }
+    }
+
+    // Regression: the native-provider reverse hop must round-trip a pasted image.
+    // The forward hop lifts `[IMAGE:data:…]` into a `ContentBlock::Image`; the
+    // reverse hop (`message_to_native_chat_message`, feeding claude-code and any
+    // other `supports_native_tools` provider) must re-emit it as an `[IMAGE:…]`
+    // marker. Before the fix it called `msg.text()`, which drops image blocks, so
+    // pasted images reached the model as text-only — the certificate never arrived.
+    #[test]
+    fn native_reverse_hop_preserves_pasted_image_marker() {
+        let jpeg = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+        let harness_msg = chat_message_to_message(&ChatMessage::user(format!(
+            "here is my adhd certificate [IMAGE:{jpeg}]"
+        )));
+        // Sanity: the forward hop split prose + image (two blocks).
+        assert!(
+            matches!(&harness_msg, Message::User(u) if u.content.len() == 2),
+            "forward hop should lift the image into its own block"
+        );
+
+        let native = message_to_native_chat_message(&harness_msg);
+        assert_eq!(native.role, "user");
+        assert!(
+            native.content.contains(&format!("[IMAGE:{jpeg}]")),
+            "the image marker must survive the reverse hop: {}",
+            native.content
+        );
+        assert!(
+            native.content.contains("here is my adhd certificate"),
+            "prose must be preserved alongside the image: {}",
+            native.content
+        );
+    }
+
+    // Text-only native turns must be byte-for-byte identical to `msg.text()` —
+    // the image fix must not perturb the overwhelming majority of traffic.
+    #[test]
+    fn native_reverse_hop_text_only_is_unchanged() {
+        let harness_msg = chat_message_to_message(&ChatMessage::user("just some text".to_string()));
+        let native = message_to_native_chat_message(&harness_msg);
+        assert_eq!(native.content, "just some text");
     }
 
     // An image-only turn must not emit an empty text block (some providers 400
