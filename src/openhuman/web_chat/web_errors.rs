@@ -157,7 +157,10 @@ pub(crate) fn extract_provider_error_detail(err: &str) -> Option<String> {
                         '\\' => out.push('\\'),
                         'n' => out.push('\n'),
                         't' => out.push('\t'),
-                        other => out.push(other),
+                        other => {
+                            out.push('\\');
+                            out.push(other);
+                        }
                     }
                 }
             }
