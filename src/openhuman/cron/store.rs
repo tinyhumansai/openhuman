@@ -6,6 +6,9 @@ use crate::openhuman::cron::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 const MAX_CRON_OUTPUT_BYTES: usize = 16 * 1024;
@@ -766,19 +769,99 @@ fn add_column_if_missing(conn: &Connection, name: &str, sql_type: &str) -> Resul
     }
 }
 
-fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    let db_path = config.workspace_dir.join("cron").join("jobs.db");
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create cron directory: {}", parent.display()))?;
+/// Tracks which cron database files have already had their schema DDL (the
+/// `CREATE TABLE`/`CREATE INDEX` batch plus the `add_column_if_missing`
+/// migration probes) run against them in this process. `with_connection`
+/// deliberately keeps opening a fresh `rusqlite::Connection` per call —
+/// `Connection` is `!Sync`, so caching a single shared one would need a
+/// process-wide mutex that serializes every caller. What repeats needlessly on
+/// every open is the DDL batch itself: 8 statements plus 11
+/// `PRAGMA table_info(cron_jobs)` scans, paid before every one of the 16 store
+/// ops (`due_jobs` every scheduler tick, `record_run` /
+/// `reschedule_after_run` / `record_last_run` per executed job, every
+/// RPC-driven `list_jobs` / `get_job`, …). Gating just that batch behind a
+/// per-path "already initialized" set keeps it to one execution per process per
+/// database file while every call still gets its own connection.
+///
+/// This mirrors `flows::store`'s `INITIALIZED_SCHEMAS` (R-m8), which was itself
+/// derived from this store's `with_connection` idiom — bringing the accepted
+/// gating back to the store it was copied from.
+///
+/// Keyed by path rather than a single flag: tests each open an independent
+/// per-`TempDir` workspace within the same test binary, and a bare
+/// `OnceLock<()>` would silently skip schema creation for every database path
+/// after the first test to run in the process.
+static INITIALIZED_SCHEMAS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+/// On-disk schema version stamped into `PRAGMA user_version` by [`init_schema`]
+/// and checked by [`ensure_schema_initialized`] on a cache hit. **Bump this
+/// whenever a table or `add_column_if_missing` migration is added to
+/// [`init_schema`]** so a database replaced at runtime with an older/partial
+/// schema is re-migrated rather than trusted.
+const CRON_SCHEMA_VERSION: i64 = 1;
+
+/// Runs the one-time schema DDL + migrations against `conn` unless `db_path`
+/// has already been initialized in this process (see [`INITIALIZED_SCHEMAS`]).
+/// Only marks `db_path` as initialized *after* [`init_schema`] succeeds, so a
+/// transient failure is retried on the next call rather than permanently
+/// wedging the store into believing a schema exists that was never created.
+///
+/// **Trust, but verify.** A cache hit is confirmed against the file actually on
+/// disk before it is honoured. Before this gating existed, the DDL ran on every
+/// `with_connection` call, so a database deleted or replaced at runtime (a
+/// workspace reset, a manual deletion, a disk-recovery restore) self-healed on
+/// the very next call: `Connection::open` silently creates a fresh empty file,
+/// and `CREATE TABLE IF NOT EXISTS` immediately repopulated it. Caching removes
+/// that safety net, so one indexed `sqlite_master` lookup — far cheaper than the
+/// 8-statement DDL batch + 11 metadata scans — is paid on each hit to restore
+/// the self-healing rather than trusting a cache entry the filesystem may have
+/// invalidated.
+fn ensure_schema_initialized(conn: &Connection, db_path: &Path) -> Result<()> {
+    let initialized = INITIALIZED_SCHEMAS.get_or_init(|| Mutex::new(HashSet::new()));
+    // Hold the guard across the verify *and* `init_schema`, so two first callers
+    // for the same path cannot both observe a miss and both run the DDL
+    // (CodeRabbit: initialization must be atomic per path). On a cache hit the
+    // critical section is a single `PRAGMA user_version` read; on a miss it also
+    // covers the one-time init + insert.
+    let mut guard = initialized
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.contains(db_path) {
+        // Trust, but verify — against the *whole* schema, not just one table.
+        // `user_version` is stamped only after a full `init_schema` succeeds, so
+        // a database deleted (fresh file ⇒ version 0) or replaced at runtime
+        // with an older/partial schema — `cron_jobs` present but missing a
+        // migrated column such as `agent_id`/`profile_id`, or the `cron_runs`
+        // table ⇒ a stale version — fails this check and is re-migrated, rather
+        // than being trusted and later failing with `no such column`
+        // (CodeRabbit / Codex review on #5708).
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap_or(0);
+        if version == CRON_SCHEMA_VERSION {
+            return Ok(());
+        }
+        tracing::warn!(
+            target: "cron",
+            db = %db_path.display(),
+            cached_version = version,
+            expected_version = CRON_SCHEMA_VERSION,
+            "[cron] schema cached as initialized but the database's user_version does not match (deleted or replaced at runtime?) — re-running schema init"
+        );
     }
+    init_schema(conn)?;
+    guard.insert(db_path.to_path_buf());
+    Ok(())
+}
 
-    let conn = Connection::open(&db_path)
-        .with_context(|| format!("Failed to open cron DB: {}", db_path.display()))?;
-
+/// The actual schema DDL + post-hoc column migrations, split out of
+/// `with_connection` so [`ensure_schema_initialized`] can gate it. Does **not**
+/// carry `PRAGMA foreign_keys = ON`: that is a per-connection setting (it is not
+/// persisted in the database file) and must be reapplied on every open, so it
+/// lives in `with_connection` outside this gate.
+fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "PRAGMA foreign_keys = ON;
-         CREATE TABLE IF NOT EXISTS cron_jobs (
+        "CREATE TABLE IF NOT EXISTS cron_jobs (
             id               TEXT PRIMARY KEY,
             expression       TEXT NOT NULL,
             command          TEXT NOT NULL,
@@ -826,17 +909,46 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     )
     .context("Failed to initialize cron schema")?;
 
-    add_column_if_missing(&conn, "schedule", "TEXT")?;
-    add_column_if_missing(&conn, "job_type", "TEXT NOT NULL DEFAULT 'shell'")?;
-    add_column_if_missing(&conn, "prompt", "TEXT")?;
-    add_column_if_missing(&conn, "name", "TEXT")?;
-    add_column_if_missing(&conn, "session_target", "TEXT NOT NULL DEFAULT 'isolated'")?;
-    add_column_if_missing(&conn, "model", "TEXT")?;
-    add_column_if_missing(&conn, "enabled", "INTEGER NOT NULL DEFAULT 1")?;
-    add_column_if_missing(&conn, "delivery", "TEXT")?;
-    add_column_if_missing(&conn, "delete_after_run", "INTEGER NOT NULL DEFAULT 0")?;
-    add_column_if_missing(&conn, "agent_id", "TEXT")?;
-    add_column_if_missing(&conn, "profile_id", "TEXT")?;
+    add_column_if_missing(conn, "schedule", "TEXT")?;
+    add_column_if_missing(conn, "job_type", "TEXT NOT NULL DEFAULT 'shell'")?;
+    add_column_if_missing(conn, "prompt", "TEXT")?;
+    add_column_if_missing(conn, "name", "TEXT")?;
+    add_column_if_missing(conn, "session_target", "TEXT NOT NULL DEFAULT 'isolated'")?;
+    add_column_if_missing(conn, "model", "TEXT")?;
+    add_column_if_missing(conn, "enabled", "INTEGER NOT NULL DEFAULT 1")?;
+    add_column_if_missing(conn, "delivery", "TEXT")?;
+    add_column_if_missing(conn, "delete_after_run", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "agent_id", "TEXT")?;
+    add_column_if_missing(conn, "profile_id", "TEXT")?;
+
+    // Stamp the schema version last, so [`ensure_schema_initialized`] only
+    // trusts a cache hit whose on-disk schema is fully migrated. Bump
+    // CRON_SCHEMA_VERSION whenever a table or `add_column_if_missing` migration
+    // is added above.
+    conn.pragma_update(None, "user_version", CRON_SCHEMA_VERSION)
+        .context("Failed to stamp cron schema version")?;
+
+    Ok(())
+}
+
+fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    let db_path = config.workspace_dir.join("cron").join("jobs.db");
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create cron directory: {}", parent.display()))?;
+    }
+
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("Failed to open cron DB: {}", db_path.display()))?;
+
+    // Per-connection pragma: `foreign_keys` is NOT persisted in the database
+    // file, so it must be reapplied on every open regardless of the schema-init
+    // cache below — it is required on every connection for the `cron_runs`
+    // `ON DELETE CASCADE` FK to be enforced.
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .context("Failed to set cron DB connection pragmas")?;
+
+    ensure_schema_initialized(&conn, &db_path)?;
 
     f(&conn)
 }
