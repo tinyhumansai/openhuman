@@ -138,6 +138,9 @@ impl MemoryHostConfig for Config {
             entity_id: self.composio.entity_id.clone(),
             api_key: self.composio.api_key.clone(),
             triage_disabled: self.composio.triage_disabled,
+            gmail_sync_query: Some(self.composio.gmail_sync_query.trim())
+                .filter(|q| !q.is_empty())
+                .map(str::to_string),
         }
     }
 

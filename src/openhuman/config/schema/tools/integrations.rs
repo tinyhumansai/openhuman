@@ -63,6 +63,15 @@ pub struct ComposioConfig {
     /// the keychain-backed value over this field. Default `None`.
     #[serde(default)]
     pub api_key: Option<String>,
+
+    /// Gmail search query that scopes the background Gmail→memory sync to
+    /// matching messages only (full Gmail search syntax — `label:brain`,
+    /// `from:someone`, `newer_than:30d`; space-separated clauses AND).
+    /// Empty (the default) = the whole inbox window. On-demand agent access
+    /// to Gmail is unaffected — this gates only what auto-ingests into
+    /// memory.
+    #[serde(default)]
+    pub gmail_sync_query: String,
 }
 
 fn default_entity_id() -> String {
@@ -78,6 +87,7 @@ impl Default for ComposioConfig {
             triage_disabled_toolkits: Vec::new(),
             mode: default_composio_mode(),
             api_key: None,
+            gmail_sync_query: String::new(),
         }
     }
 }
