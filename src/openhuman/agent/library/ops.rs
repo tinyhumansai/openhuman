@@ -94,13 +94,9 @@ fn direct_tool_names(def: &AgentDefinition) -> Vec<String> {
         }
     }
     names.retain(|name| {
-        def.disallowed_tools.iter().all(|entry| {
-            if let Some(prefix) = entry.strip_suffix('*') {
-                !name.starts_with(prefix)
-            } else {
-                entry != name
-            }
-        })
+        def.disallowed_tools
+            .iter()
+            .all(|entry| !crate::openhuman::mcp::config_servers::registry::glob_match(entry, name))
     });
     names.sort();
     names

@@ -28,7 +28,7 @@
 //! The HTTP transport primitives live in the ungated sibling
 //! [`super::http_client`]; see that module for why it is not gated.
 
-mod registry;
+pub(crate) mod registry;
 pub mod setup_agent;
 #[cfg(test)]
 mod setup_agent_integration_test;

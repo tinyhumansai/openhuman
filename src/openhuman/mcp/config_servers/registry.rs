@@ -33,16 +33,45 @@ pub struct McpServerDefinition {
     client: Arc<McpTransportClient>,
 }
 
+/// Glob-style matching for tool-name filters, shared by both filtering sites
+/// (`McpServerDefinition::is_tool_allowed` and `direct_tool_names`) so a deny
+/// rule like `tinyplace_*` behaves identically everywhere.
+///
+/// Supports `*` as a wildcard: `foo*` (prefix), `*foo` (suffix), `*foo*`
+/// (contains), bare `*` (everything), and no `*` (exact match). A literal `*`
+/// in a real tool name is not representable — acceptable for this use.
+pub fn glob_match(pattern: &str, tool: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        // `foo*` — prefix match; also covers `*foo*`? No: `*foo*` strips to
+        // `*foo`, which is handled below.
+        if !prefix.contains('*') {
+            return tool.starts_with(prefix);
+        }
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        if !suffix.contains('*') {
+            return tool.ends_with(suffix);
+        }
+        // `*foo*` — contains match.
+        let inner = suffix.strip_suffix('*').unwrap_or(suffix);
+        return tool.contains(inner);
+    }
+    pattern == tool
+}
+
 impl McpServerDefinition {
     pub fn is_tool_allowed(&self, tool: &str) -> bool {
         let tool = tool.trim();
         if tool.is_empty() {
             return false;
         }
-        if self.disallowed_tools.iter().any(|name| name == tool) {
+        if self.disallowed_tools.iter().any(|name| glob_match(name, tool)) {
             return false;
         }
-        self.allowed_tools.is_empty() || self.allowed_tools.iter().any(|name| name == tool)
+        self.allowed_tools.is_empty() || self.allowed_tools.iter().any(|name| glob_match(name, tool))
     }
 
     pub fn filter_allowed_tools(&self, tools: Vec<McpRemoteTool>) -> Vec<McpRemoteTool> {
@@ -50,6 +79,56 @@ impl McpServerDefinition {
             .into_iter()
             .filter(|tool| self.is_tool_allowed(&tool.name))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod glob_match_tests {
+    use super::glob_match;
+    use crate::openhuman::config::{Config, McpServerConfig};
+    use crate::openhuman::mcp::config_servers::McpServerRegistry;
+    use std::collections::HashMap;
+
+    #[test]
+    fn glob_covers_prefix_suffix_contains_and_bare_star() {
+        assert!(glob_match("tinyplace_*", "tinyplace_trade"));
+        assert!(!glob_match("tinyplace_*", "trading_tinyplace"));
+        assert!(glob_match("*_admin", "mcp_admin"));
+        assert!(!glob_match("*_admin", "admin_mcp"));
+        assert!(glob_match("*place*", "tinyplace_trade"));
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("exact", "exact"));
+        assert!(!glob_match("exact", "exact_other"));
+    }
+
+    #[test]
+    fn is_tool_allowed_honours_globs_on_both_lists() {
+        let mut config = Config::default();
+        config.mcp_client.servers.push(McpServerConfig {
+            name: "t".into(),
+            endpoint: "https://example.com/mcp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            description: None,
+            enabled: true,
+            allowed_tools: vec!["tinyplace_*".into()],
+            disallowed_tools: vec!["*_dangerous".into()],
+            timeout_secs: 5,
+            auth: crate::openhuman::config::McpAuthConfig::None,
+        });
+        let registry = McpServerRegistry::from_config(&config);
+        let def = registry.get("t").expect("server t");
+        assert!(def.is_tool_allowed("tinyplace_trade"));
+        assert!(!def.is_tool_allowed("trading_dangerous"));
+        // Empty allow-list means "everything except the denied patterns".
+        let mut config_all = config.clone();
+        config_all.mcp_client.servers[0].allowed_tools.clear();
+        let binding = McpServerRegistry::from_config(&config_all);
+        let def_all = binding.get("t").unwrap();
+        assert!(def_all.is_tool_allowed("mcp_anything"));
+        assert!(!def_all.is_tool_allowed("tiny_dangerous"));
     }
 }
 
