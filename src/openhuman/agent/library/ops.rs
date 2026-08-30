@@ -93,7 +93,15 @@ fn direct_tool_names(def: &AgentDefinition) -> Vec<String> {
             names.push(tool.clone());
         }
     }
-    names.retain(|name| !def.disallowed_tools.contains(name));
+    names.retain(|name| {
+        def.disallowed_tools.iter().all(|entry| {
+            if let Some(prefix) = entry.strip_suffix('*') {
+                !name.starts_with(prefix)
+            } else {
+                entry != name
+            }
+        })
+    });
     names.sort();
     names
 }
