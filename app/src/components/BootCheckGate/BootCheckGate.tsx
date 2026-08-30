@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { useT } from '../../lib/i18n/I18nContext';
+import { getIsMobile } from '../../lib/platform';
 import {
   bootCheckTransport,
   forceQuitPortOwner,
@@ -794,6 +795,14 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
+
+  // Mobile targets (iOS/Android) never run the local/cloud core-mode picker —
+  // there is no in-process core to probe. They connect exclusively through QR
+  // pairing (AppRoutesIOS's /pair) and services/transport/TransportManager.
+  // Hooks above still run unconditionally; this is purely a render bypass.
+  if (getIsMobile()) {
+    return <>{children}</>;
+  }
 
   // Unset — show picker (even if Redux persisted something; phase reflects truth).
   if (phase === 'picker' || coreMode.kind === 'unset') {
