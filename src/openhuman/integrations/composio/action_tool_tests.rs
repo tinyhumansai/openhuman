@@ -96,6 +96,25 @@ fn display_label_is_human_and_detail_pulls_recipient() {
     );
 }
 
+#[test]
+fn per_action_tool_requires_approval_for_external_writes_only() {
+    let write = ComposioActionTool::new(
+        fake_config(),
+        "GMAIL_SEND_EMAIL".to_string(),
+        "send".to_string(),
+        None,
+    );
+    let read = ComposioActionTool::new(
+        fake_config(),
+        "GMAIL_FETCH_EMAILS".to_string(),
+        "fetch".to_string(),
+        None,
+    );
+
+    assert!(write.external_effect_with_args(&serde_json::Value::Null));
+    assert!(!read.external_effect_with_args(&serde_json::Value::Null));
+}
+
 #[tokio::test]
 async fn sandbox_read_only_blocks_per_action_write_call() {
     let t = ComposioActionTool::new(
