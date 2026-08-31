@@ -5,7 +5,10 @@ import { renderWithProviders } from '../../test/test-utils';
 import type { VaultHealthCheck } from '../../utils/tauriCommands';
 import { VaultHealthChecklist } from './VaultHealthChecklist';
 
-vi.mock('../../utils/tauriCommands', () => ({ memoryTreeVaultHealthCheck: vi.fn() }));
+vi.mock('../../utils/tauriCommands', () => ({
+  memoryTreeVaultHealthCheck: vi.fn(),
+  syncMemoryClientToken: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../../utils/openUrl', () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
@@ -32,6 +35,7 @@ const { resolveVaultHostMatch } = (await import('./vaultHostMatch')) as unknown 
 function health(overrides: Partial<VaultHealthCheck> = {}): VaultHealthCheck {
   return {
     content_root_abs: '/tmp/workspace/memory_tree/content',
+    host_os: 'windows',
     exists: true,
     readable: true,
     writable: true,

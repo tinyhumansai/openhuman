@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl, revealPath } from '../../utils/openUrl';
-import { memoryTreeVaultHealthCheck, type VaultHealthCheck } from '../../utils/tauriCommands';
+import { memoryTreeVaultHealthCheck, syncMemoryClientToken, type VaultHealthCheck } from '../../utils/tauriCommands';
 import Button from '../ui/Button';
 import { resolveVaultHostMatch, type VaultHostMatch } from './vaultHostMatch';
 
@@ -50,7 +50,18 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
   const runCheck = useCallback(async () => {
     setRefreshing(true);
     try {
-      const next = await memoryTreeVaultHealthCheck();
+      let next = await memoryTreeVaultHealthCheck();
+      if (next && !next.exists) {
+        try {
+          await syncMemoryClientToken('');
+          const retry = await memoryTreeVaultHealthCheck();
+          if (retry && typeof retry === 'object' && 'host_os' in retry) {
+            next = retry;
+          }
+        } catch {
+          // Keep probe result if initialization is not supported or fails
+        }
+      }
       setHealth(next);
       setHostMatch(await resolveVaultHostMatch(next.host_os));
       setError(null);

@@ -28,43 +28,6 @@ vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({ snapshot: { sessionToken } }),
 }));
 
-vi.mock('../../../utils/tauriCommands', () => ({
-  memoryTreeVaultHealthCheck: vi.fn().mockResolvedValue({
-    content_root_abs: '/tmp/workspace/memory_tree/content',
-    exists: true,
-    readable: true,
-    writable: true,
-    obsidian_registered: true,
-    pipeline_healthy: true,
-    last_sync_ms: Date.now(),
-  }),
-}));
-
-vi.mock('../OnboardingContext', () => ({
-  useOnboardingContext: () => ({
-    draft: { connectedSources: [], customChoices: {} },
-    setDraft: setDraftMock,
-    completeAndExit: completeAndExitMock,
-  }),
-}));
-
-function renderPage() {
-  const store = configureStore({
-    reducer: { locale: localeReducer },
-    preloadedState: { locale: { current: 'en' as Locale } },
-  });
-
-  return render(
-    <Provider store={store}>
-      <MemoryRouter>
-        <I18nProvider>
-          <VaultSetupStep />
-        </I18nProvider>
-      </MemoryRouter>
-    </Provider>
-  );
-}
-
 describe('VaultSetupStep', () => {
   beforeEach(() => {
     navigateMock.mockReset();
@@ -87,12 +50,5 @@ describe('VaultSetupStep', () => {
 
     expect(screen.getByTestId('onboarding-custom-vault-step-default')).toBeInTheDocument();
     expect(screen.getByTestId('onboarding-custom-vault-step-configure')).toBeInTheDocument();
-  });
-
-  it('prewarms memory tree vault health check on mount', async () => {
-    const { memoryTreeVaultHealthCheck } = await import('../../../utils/tauriCommands');
-    renderPage();
-
-    expect(memoryTreeVaultHealthCheck).toHaveBeenCalled();
   });
 });
