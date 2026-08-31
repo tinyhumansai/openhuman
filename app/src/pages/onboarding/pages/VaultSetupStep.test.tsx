@@ -28,6 +28,31 @@ vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({ snapshot: { sessionToken } }),
 }));
 
+vi.mock('../OnboardingContext', () => ({
+  useOnboardingContext: () => ({
+    draft: { connectedSources: [], customChoices: {} },
+    setDraft: setDraftMock,
+    completeAndExit: completeAndExitMock,
+  }),
+}));
+
+function renderPage() {
+  const store = configureStore({
+    reducer: { locale: localeReducer },
+    preloadedState: { locale: { current: 'en' as Locale } },
+  });
+
+  return render(
+    <Provider store={store}>
+      <MemoryRouter>
+        <I18nProvider>
+          <VaultSetupStep />
+        </I18nProvider>
+      </MemoryRouter>
+    </Provider>
+  );
+}
+
 describe('VaultSetupStep', () => {
   beforeEach(() => {
     navigateMock.mockReset();
