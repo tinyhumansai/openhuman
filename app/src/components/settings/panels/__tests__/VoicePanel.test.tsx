@@ -89,7 +89,7 @@ const ELEVENLABS_PROVIDER = {
   endpoint: 'https://api.elevenlabs.io/v1',
   auth_style: 'bearer',
   capability: 'both' as const,
-  stt_api_style: 'openai_audio',
+  stt_api_style: 'elevenlabs',
   tts_api_style: 'elevenlabs',
   default_stt_model: 'scribe_v1',
   default_tts_voice: 'JBFqnCBsd6RMkjVDRZzb',
