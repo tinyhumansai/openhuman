@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import MemoryDataPanel from '../../../components/settings/panels/MemoryDataPanel';
@@ -6,6 +6,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { trackEvent } from '../../../services/analytics';
 import { isLocalSessionToken } from '../../../utils/localSession';
+import { memoryTreeVaultHealthCheck } from '../../../utils/tauriCommands';
 import { CUSTOM_WIZARD_ROUTES, CUSTOM_WIZARD_STEPS } from '../customWizardSteps';
 import { type CustomStepChoice, useOnboardingContext } from '../OnboardingContext';
 import CustomWizardStep from '../steps/CustomWizardStep';
@@ -24,6 +25,12 @@ export default function VaultSetupStep() {
   const initialChoice = isLocalSession ? 'configure' : (draft.customChoices?.[STEP_KEY] ?? null);
   const [choice, setChoice] = useState<CustomStepChoice | null>(initialChoice);
   const [exitError, setExitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void memoryTreeVaultHealthCheck().catch(() => {
+      // Best-effort prewarm of vault health status during onboarding
+    });
+  }, []);
 
   if (isLocalSession && !appliedLocalRef.current) {
     appliedLocalRef.current = true;

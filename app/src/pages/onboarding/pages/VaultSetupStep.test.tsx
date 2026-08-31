@@ -28,6 +28,18 @@ vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({ snapshot: { sessionToken } }),
 }));
 
+vi.mock('../../../utils/tauriCommands', () => ({
+  memoryTreeVaultHealthCheck: vi.fn().mockResolvedValue({
+    content_root_abs: '/tmp/workspace/memory_tree/content',
+    exists: true,
+    readable: true,
+    writable: true,
+    obsidian_registered: true,
+    pipeline_healthy: true,
+    last_sync_ms: Date.now(),
+  }),
+}));
+
 vi.mock('../OnboardingContext', () => ({
   useOnboardingContext: () => ({
     draft: { connectedSources: [], customChoices: {} },
@@ -75,5 +87,12 @@ describe('VaultSetupStep', () => {
 
     expect(screen.getByTestId('onboarding-custom-vault-step-default')).toBeInTheDocument();
     expect(screen.getByTestId('onboarding-custom-vault-step-configure')).toBeInTheDocument();
+  });
+
+  it('prewarms memory tree vault health check on mount', async () => {
+    const { memoryTreeVaultHealthCheck } = await import('../../../utils/tauriCommands');
+    renderPage();
+
+    expect(memoryTreeVaultHealthCheck).toHaveBeenCalled();
   });
 });
