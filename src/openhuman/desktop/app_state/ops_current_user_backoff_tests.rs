@@ -26,11 +26,11 @@ use serde_json::json;
 /// whole point of that test is that `fetch_current_user_cached` consults the
 /// record. Kept distinct from `APP_STATE_CACHE_TEST_LOCK` because the two guard
 /// different globals and nothing here writes the positive cache.
-static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
+pub(super) static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
     TestLazy::new(|| tokio::sync::Mutex::new(()));
 
 /// Drops the seeded outage on the way out, so one test cannot leak into the next.
-struct CurrentUserFailureResetGuard;
+pub(super) struct CurrentUserFailureResetGuard;
 
 impl Drop for CurrentUserFailureResetGuard {
     fn drop(&mut self) {
@@ -40,7 +40,7 @@ impl Drop for CurrentUserFailureResetGuard {
 
 /// Overwrite the failure record with one that failed `age` ago, so a test can
 /// sit either side of a backoff window without sleeping.
-fn seed_current_user_failure(
+pub(super) fn seed_current_user_failure(
     api_base: &str,
     token: &str,
     consecutive: u32,
@@ -270,7 +270,7 @@ async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_th
         CurrentUserFetchError::FetchFailed("seeded outage marker".to_string()),
     );
 
-    let error = fetch_current_user_cached(&config, token, true)
+    let error = fetch_current_user_cached(&config, token, true, current_user_generation())
         .await
         .expect_err("a recorded failure inside its window must be replayed");
 
@@ -308,7 +308,7 @@ async fn a_replayed_failure_is_tagged_suppressed_and_keeps_the_original_message(
         CurrentUserFetchError::FetchFailed("request timed out after 5s".to_string()),
     );
 
-    let error = fetch_current_user_cached(&config, token, true)
+    let error = fetch_current_user_cached(&config, token, true, current_user_generation())
         .await
         .expect_err("a recorded failure inside its window must be replayed");
 
@@ -364,7 +364,7 @@ fn a_suppressed_replay_is_never_recorded_as_a_fresh_failure() {
 // ── Stale-snapshot age (#5930) ──────────────────────────────────────────────
 
 /// Drops both the outage and the success stamp on the way out.
-struct CurrentUserStalenessResetGuard;
+pub(super) struct CurrentUserStalenessResetGuard;
 
 impl Drop for CurrentUserStalenessResetGuard {
     fn drop(&mut self) {

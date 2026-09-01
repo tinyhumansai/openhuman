@@ -486,3 +486,6 @@ async fn current_user_fetch_carries_the_product_identity() {
 
     crate::api::product::reset_product_identity_for_test();
 }
+
+#[path = "ops_signout_cache_tests.rs"]
+mod signout_cache_tests;

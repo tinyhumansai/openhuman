@@ -43,7 +43,17 @@ struct CurrentUserSuccess {
 /// serving has become. Callers must not invoke this for an answer that carried
 /// no user — see [`LAST_CURRENT_USER_SUCCESS`].
 fn note_current_user_success(api_base: &str, token: &str) {
-    *LAST_CURRENT_USER_SUCCESS.lock() = Some(CurrentUserSuccess {
+    note_current_user_success_locked(&mut LAST_CURRENT_USER_SUCCESS.lock(), api_base, token);
+}
+
+/// The stamp itself, taking the guard rather than the lock, so a caller that
+/// must decide *under* the lock can do so without re-entering it.
+fn note_current_user_success_locked(
+    success: &mut Option<CurrentUserSuccess>,
+    api_base: &str,
+    token: &str,
+) {
+    *success = Some(CurrentUserSuccess {
         api_base: api_base.to_string(),
         token: token.to_string(),
         at: Instant::now(),
