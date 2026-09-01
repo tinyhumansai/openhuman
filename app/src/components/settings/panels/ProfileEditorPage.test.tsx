@@ -194,4 +194,15 @@ describe('ProfileEditorPage', () => {
       screen.getByText('SKILL.md files placed here are private to this profile.')
     ).toBeInTheDocument();
   });
+
+  it('shows the message when saving a profile fails', async () => {
+    mockUpsert.mockRejectedValueOnce(new Error('profile save failed'));
+    renderAt('/settings/profiles/new');
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Writer' } });
+    fireEvent.click(screen.getByText('Create'));
+
+    expect(await screen.findByText('profile save failed')).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
 });

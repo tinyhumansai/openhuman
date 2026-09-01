@@ -23,8 +23,12 @@ const initialState: AgentProfileState = {
   error: null,
 };
 
-function errorMessage(error: unknown): string {
+export function agentProfileErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
   return String(error);
 }
 
@@ -75,7 +79,7 @@ const agentProfileSlice = createSlice({
       })
       .addCase(loadAgentProfiles.rejected, (state, action) => {
         state.status = 'error';
-        state.error = errorMessage(action.error.message ?? action.error);
+        state.error = agentProfileErrorMessage(action.error.message ?? action.error);
       })
       .addCase(selectAgentProfile.pending, state => {
         state.status = 'saving';
@@ -87,7 +91,7 @@ const agentProfileSlice = createSlice({
       })
       .addCase(selectAgentProfile.rejected, (state, action) => {
         state.status = 'error';
-        state.error = errorMessage(action.error.message ?? action.error);
+        state.error = agentProfileErrorMessage(action.error.message ?? action.error);
       })
       .addCase(upsertAgentProfile.pending, state => {
         state.status = 'saving';
@@ -99,7 +103,7 @@ const agentProfileSlice = createSlice({
       })
       .addCase(upsertAgentProfile.rejected, (state, action) => {
         state.status = 'error';
-        state.error = errorMessage(action.error.message ?? action.error);
+        state.error = agentProfileErrorMessage(action.error.message ?? action.error);
       })
       .addCase(deleteAgentProfile.pending, state => {
         state.status = 'saving';
@@ -111,7 +115,7 @@ const agentProfileSlice = createSlice({
       })
       .addCase(deleteAgentProfile.rejected, (state, action) => {
         state.status = 'error';
-        state.error = errorMessage(action.error.message ?? action.error);
+        state.error = agentProfileErrorMessage(action.error.message ?? action.error);
       })
       .addCase(resetUserScopedState, () => initialState);
   },

@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
+  agentProfileErrorMessage,
   deleteAgentProfile,
   loadAgentProfiles,
   selectActiveAgentProfileId,
@@ -43,7 +44,7 @@ const ProfilesPanel = () => {
       try {
         await dispatch(selectAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        setActionError(agentProfileErrorMessage(err));
       }
     },
     [dispatch]
@@ -56,7 +57,7 @@ const ProfilesPanel = () => {
       try {
         await dispatch(deleteAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        setActionError(agentProfileErrorMessage(err));
       }
     },
     [dispatch, t]

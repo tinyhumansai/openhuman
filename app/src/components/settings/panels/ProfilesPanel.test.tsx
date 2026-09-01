@@ -129,4 +129,29 @@ describe('ProfilesPanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByText(/boom/)).toBeInTheDocument());
   });
+
+  it('shows the message when selecting a profile fails', async () => {
+    mockSelect.mockRejectedValueOnce(new Error('profile selection failed'));
+    renderPanel();
+
+    await screen.findByText('Writer');
+    fireEvent.click(screen.getAllByText('Set as active')[0]);
+
+    expect(await screen.findByText('profile selection failed')).toBeInTheDocument();
+  });
+
+  it('shows the message when deleting a profile fails', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      mockDelete.mockRejectedValueOnce(new Error('profile deletion failed'));
+      renderPanel();
+
+      await screen.findByText('Writer');
+      fireEvent.click(screen.getByText('Delete'));
+
+      expect(await screen.findByText('profile deletion failed')).toBeInTheDocument();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
 });

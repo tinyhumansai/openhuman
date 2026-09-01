@@ -16,7 +16,11 @@ import { LuX } from 'react-icons/lu';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { selectAgentProfiles, upsertAgentProfile } from '../../../store/agentProfileSlice';
+import {
+  agentProfileErrorMessage,
+  selectAgentProfiles,
+  upsertAgentProfile,
+} from '../../../store/agentProfileSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import type { AgentProfile } from '../../../types/agentProfile';
 import Alert from '../../ui/Alert';
@@ -168,7 +172,7 @@ const ProfileEditorPage = () => {
       await dispatch(upsertAgentProfile(profile)).unwrap();
       if (mountedRef.current) backToList();
     } catch (err) {
-      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+      if (mountedRef.current) setError(agentProfileErrorMessage(err));
     } finally {
       if (mountedRef.current) setSubmitting(false);
     }
