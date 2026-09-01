@@ -7865,6 +7865,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "crash-reporting")]
     #[test]
     fn session_expired_before_send_keeps_genuine_cron_failures() {
         // A genuine cron agent_job failure whose body is NOT a session-expired
@@ -7884,6 +7885,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "crash-reporting")]
     #[test]
     fn max_iterations_filter_matches_message_path() {
         // `report_error_message` calls `sentry::capture_message`, which
