@@ -54,7 +54,7 @@ impl ArchivistHook {
     /// This used to call `tinymemory_core::chat::build_chat_provider(&config)`
     /// and store the `Arc<dyn ChatProvider>` it returned. Nothing ever called
     /// that handle: the summariser the archivist drives is
-    /// `memory::tree::summarise::summarise`, which builds
+    /// `tinymemory_core::tree::summarise::summarise`, which builds
     /// its own provider from the same `Config` on every call. So the stored
     /// value was only ever read as `is_some()`, and what it actually asserted
     /// was "a chat model for the summarise role can be constructed".

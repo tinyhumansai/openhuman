@@ -69,6 +69,45 @@ pub(crate) fn store_corrupt_quarantined_user_error() -> WebChannelEvent {
 /// and `SQLITE_NOTADB` (code 26) and survive every flattening the wire
 /// applies. Mirrors the typed classifier inside `tinymemory-core` — the
 /// module side classifies before the error is stringified; this is the
+/// Host-owned `error_type` for "the memory module failed to load".
+///
+/// Host-owned (not a `tinymemory_api::host` constant) because the engine can
+/// never emit it: a module that failed to load has no code running to report
+/// anything. Only the host's loader observes this state, so the constant lives
+/// with the only producer.
+pub(crate) const MEMORY_MODULE_UNAVAILABLE_KIND: &str = "memory_module_unavailable";
+
+/// The metadata-only `user_error` payload for a memory module that failed to
+/// load. Same no-leak contract as its siblings: a stable kind plus the source,
+/// never the loader's raw reason (which can carry URLs and filesystem paths).
+pub(crate) fn memory_module_unavailable_user_error() -> WebChannelEvent {
+    WebChannelEvent {
+        event: "user_error".to_string(),
+        client_id: "system".to_string(),
+        error_type: Some(MEMORY_MODULE_UNAVAILABLE_KIND.to_string()),
+        error_source: Some(MEMORY_USER_ERROR_SOURCE.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Broadcast the module-unavailable user error once per process.
+///
+/// Once-guarded like [`notice_corrupt_store_once`]: the loader caches a load
+/// failure as terminal, so every subsequent memory call re-observes the same
+/// state, and a per-call broadcast would be a banner storm. `reason` is the
+/// loader's raw message — logged for the operator, never sent.
+pub(crate) fn notice_memory_module_unavailable_once(reason: &str) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::error!(
+            "[memory::host] action=broadcast_user_error kind={MEMORY_MODULE_UNAVAILABLE_KIND}              source={MEMORY_USER_ERROR_SOURCE} reason={reason}"
+        );
+        crate::openhuman::web_chat::publish_web_channel_event(
+            memory_module_unavailable_user_error(),
+        );
+    });
+}
+
 /// host-side fallback for paths that only ever see text.
 pub(crate) fn is_corrupt_store_error(message: &str) -> bool {
     let msg = message.to_ascii_lowercase();

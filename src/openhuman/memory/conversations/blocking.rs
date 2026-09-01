@@ -10,16 +10,15 @@
 //! is a move home rather than a re-routing — the same shape as
 //! `memory::rpc_models`, whose forty-five types were named only by this host.
 //!
-//! The only edit is the crate the store is addressed through:
-//! `crate::engine::backend::conversations` was
-//! `pub use tinycortex::memory::conversations`, so the item set is unchanged
-//! and `tinycortex` is a direct dependency this crate keeps. Function
-//! signatures, argument order, error strings and the `[conversations]` log
-//! prefix are byte-identical, because `web_chat::run_task` and the RPC layer
-//! read them.
+//! The store these wrappers address has since followed them home: `store` is
+//! now [`super`]'s own subtree rather than `tinycortex::memory::conversations`,
+//! and the import below is the only line that changed for it. The item set is
+//! the same one the engine exported, so function signatures, argument order,
+//! error strings and the `[conversations]` log prefix stay byte-identical —
+//! `web_chat::run_task` and the RPC layer read them.
 //!
-//! Every `tinycortex::memory::conversations` entry point is synchronous, and
-//! each one takes the process-global `CONVERSATION_STORE_LOCK` — a
+//! Every store entry point is synchronous, and each one takes the
+//! process-global `CONVERSATION_STORE_LOCK` — a
 //! `parking_lot::Mutex` — and then does fsync'd JSONL file IO while holding it.
 //! Calling one directly from an `async fn` therefore parks a tokio **worker**
 //! thread for the whole wait, and the wait is not short:
@@ -52,9 +51,9 @@
 
 use std::path::PathBuf;
 
-use tinycortex::memory::conversations as store;
+use crate::openhuman::memory::conversations as store;
 
-use tinycortex::memory::conversations::{
+use super::{
     ConversationMessage, ConversationMessagePatch, ConversationPurgeStats, ConversationStore,
     ConversationThread, CreateConversationThread, CrossThreadHit,
 };

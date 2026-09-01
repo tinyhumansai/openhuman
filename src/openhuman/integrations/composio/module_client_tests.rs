@@ -14,6 +14,17 @@ fn classified_errors_start_with_the_frontend_marker() {
 }
 
 #[test]
+fn classified_errors_stay_at_byte_zero_after_tinybus_failure_wrapping() {
+    assert_eq!(
+        super::normalize_error(
+            methods::EXECUTE,
+            "Execute: ai.tinyhumans.tinybus.Error.Failed: [composio:error:rate_limited] Please retry later".to_string()
+        ),
+        "[composio:error:rate_limited] Please retry later"
+    );
+}
+
+#[test]
 fn unclassified_errors_keep_the_member_context() {
     assert_eq!(
         super::normalize_error(methods::EXECUTE, "Execute: module unavailable".to_string()),

@@ -284,9 +284,20 @@ pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
         ctx.tool_calls.len(),
         ctx.assistant_response.chars().count()
     );
+    // Capture the ambient CoreContext before detaching: a bare `tokio::spawn`
+    // does not inherit the `CURRENT_CONTEXT` task-local, so under a scoped
+    // multi-tenant dispatch a detached hook would fall back to the process
+    // default context — and anything context-derived inside the hook (the
+    // archivist's `active_memory_guard`, goals enrichment) would read and
+    // write another tenant's workspace. Re-entering the scope inside the task
+    // keeps the hook on the dispatch it belongs to; when there is no scoped
+    // context (the desktop's single-tenant path), `current()` already answers
+    // the process default and re-scoping it is a no-op.
+    let core_ctx = crate::core::runtime::context::CoreContext::current();
     for (idx, hook) in hooks.iter().enumerate() {
         let hook = Arc::clone(hook);
         let ctx = ctx.clone();
+        let core_ctx = core_ctx.clone();
         log::trace!(
             "[learning] scheduling hook {}/{}: '{}'",
             idx + 1,
@@ -294,22 +305,30 @@ pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
             hook.name()
         );
         tokio::spawn(async move {
-            let started = std::time::Instant::now();
-            match hook.on_turn_complete(&ctx).await {
-                Ok(()) => {
-                    log::debug!(
-                        "[learning] hook '{}' completed in {}ms",
-                        hook.name(),
-                        started.elapsed().as_millis()
-                    );
+            let run = async move {
+                let started = std::time::Instant::now();
+                match hook.on_turn_complete(&ctx).await {
+                    Ok(()) => {
+                        log::debug!(
+                            "[learning] hook '{}' completed in {}ms",
+                            hook.name(),
+                            started.elapsed().as_millis()
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[learning] hook '{}' failed after {}ms: {e:#}",
+                            hook.name(),
+                            started.elapsed().as_millis()
+                        );
+                    }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "[learning] hook '{}' failed after {}ms: {e:#}",
-                        hook.name(),
-                        started.elapsed().as_millis()
-                    );
+            };
+            match core_ctx {
+                Some(scope_ctx) => {
+                    crate::core::runtime::context::CoreContext::scope(scope_ctx, run).await
                 }
+                None => run.await,
             }
         });
     }

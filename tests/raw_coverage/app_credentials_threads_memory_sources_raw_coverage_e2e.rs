@@ -701,7 +701,7 @@ async fn round19_memory_sources_registry_readers_sync_and_reconcile_edges() {
             .len(),
         0
     );
-    let disabled_sync = memory_sources::sync::sync_source(updated.clone(), Arc::new(config.clone()))
+    let disabled_sync = tinymemory_core::sources::sync::sync_source(updated.clone(), Arc::new(config.clone()))
         .await
         .expect_err("disabled source rejected");
     assert!(disabled_sync.contains("disabled"));
@@ -724,7 +724,7 @@ async fn round19_memory_sources_registry_readers_sync_and_reconcile_edges() {
     assert!(traversal.contains("path traversal") || traversal.contains("file not found"));
 
     let twitter = source_entry("src-twitter", SourceKind::TwitterQuery, "Tweets");
-    let twitter_sync = memory_sources::sync::sync_source(
+    let twitter_sync = tinymemory_core::sources::sync::sync_source(
         MemorySourceEntry {
             query: Some("openhuman".to_string()),
             ..twitter

@@ -52,6 +52,7 @@ export const INTENTIONALLY_NOT_FORWARDED = {
   // 'some-gate': 'Reason it must not ship in the desktop build.',
   tui: 'Terminal UI subcommand (openhuman tui/chat); the desktop app ships its own Tauri UI and never runs the ratatui terminal front-end. NOTE: `tui` is also default-OFF, so it is in NEITHER the contributor nor the product set and no ordinary lane compiles it — the feature-gate-smoke lane checks it explicitly. Any future entry here in the same position needs the same treatment.',
   medulla: 'Medulla orchestration-backend client; the desktop app is OpenHuman\'s own product and never dials a Medulla backend. Consumed by the Medulla TUI, which embeds this crate directly.',
+  'memory-engine-seams': 'Compiles `memory::host_impls` — the seven host seams for an IN-PROCESS `tinymemory-core` — and turns that optional engine dependency on. Forwarding it would undo openhuman#5560 exactly: the shipped app reaches memory through the loaded tinymemory TinyBus module over `tinymemory-api`, and a second in-process engine over the same `memory.db` is the duplicate this shed removed. It is in `default` (not the product set) because `tests/*.rs` integration targets link this lib as a NORMAL dependency, where `#[cfg(test)]` is false and the module would be invisible however the engine is declared — several of them do drive a real engine and fail with "no EmbeddingHost installed" without it.',
 };
 
 /**

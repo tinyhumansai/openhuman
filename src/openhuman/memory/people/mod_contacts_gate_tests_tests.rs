@@ -16,10 +16,18 @@
 ///
 /// Deliberately not a `cfg!(feature = ...)` self-assertion: that would pass
 /// while the forward is broken, which is the entire bug.
+///
+/// Names the engine crate directly rather than through `super::*`, which was
+/// the glob re-export until #5560 deleted it as unused. This is the one
+/// remaining reader, it is `#[cfg(test)]`, and a test reference does not link
+/// the crate into the shipped binary — so the gate keeps testing the forward
+/// without the production edge it used to travel over.
 #[test]
 #[cfg(all(target_os = "macos", feature = "contacts"))]
 fn contacts_feature_reaches_the_engine_reader() {
-    use super::address_book::{AddressBookError, ContactsSource, SystemContactsSource};
+    use tinycortex::memory::people::address_book::{
+        AddressBookError, ContactsSource, SystemContactsSource,
+    };
 
     // The stub arm returns Ok(vec![]) and can never report a permission
     // failure. Reaching a `PermissionDenied` — or real contacts — proves the
@@ -36,7 +44,7 @@ fn contacts_feature_reaches_the_engine_reader() {
 #[test]
 #[cfg(not(target_os = "macos"))]
 fn contacts_gate_is_a_no_op_off_macos() {
-    use super::address_book::{ContactsSource, SystemContactsSource};
+    use tinycortex::memory::people::address_book::{ContactsSource, SystemContactsSource};
 
     assert_eq!(
         SystemContactsSource

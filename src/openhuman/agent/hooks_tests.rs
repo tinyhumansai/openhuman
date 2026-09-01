@@ -113,3 +113,71 @@ async fn fire_hooks_accepts_empty_hook_list() {
     // Should not panic
     fire_hooks(&[], ctx);
 }
+
+// ── Detached hooks keep the dispatch's CoreContext ────────────────────────────
+
+/// A detached hook task must observe the same ambient [`CoreContext`] as the
+/// dispatch that fired it. A bare `tokio::spawn` loses the `CURRENT_CONTEXT`
+/// task-local — under a scoped multi-tenant dispatch that meant the hook fell
+/// back to the process default context, and the archivist/goals paths behind
+/// it read and wrote another tenant's workspace. `fire_hooks` now re-enters
+/// the captured scope inside the spawned task; this pins that.
+#[tokio::test]
+async fn fired_hooks_observe_the_firing_dispatchs_core_context() {
+    use crate::core::runtime::context::CoreContext;
+
+    struct ContextProbe {
+        seen: tokio::sync::Mutex<
+            Option<tokio::sync::oneshot::Sender<Option<std::sync::Arc<CoreContext>>>>,
+        >,
+    }
+
+    #[async_trait::async_trait]
+    impl PostTurnHook for ContextProbe {
+        fn name(&self) -> &str {
+            "context-probe"
+        }
+        async fn on_turn_complete(&self, _ctx: &TurnContext) -> anyhow::Result<()> {
+            if let Some(tx) = self.seen.lock().await.take() {
+                let _ = tx.send(CoreContext::current());
+            }
+            Ok(())
+        }
+    }
+
+    let tenant_ctx = CoreContext::for_test(
+        crate::core::runtime::DomainSet::full(),
+        Some(std::path::PathBuf::from("/tmp/tenant-a")),
+        None,
+    );
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let probe: std::sync::Arc<dyn PostTurnHook> = std::sync::Arc::new(ContextProbe {
+        seen: tokio::sync::Mutex::new(Some(tx)),
+    });
+    let turn = TurnContext {
+        user_message: String::new(),
+        assistant_response: String::new(),
+        tool_calls: Vec::new(),
+        turn_duration_ms: 0,
+        session_id: None,
+        agent_id: None,
+        entrypoint: None,
+        iteration_count: 0,
+    };
+
+    CoreContext::scope(std::sync::Arc::clone(&tenant_ctx), async {
+        fire_hooks(&[probe], turn);
+    })
+    .await;
+
+    let seen = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+        .await
+        .expect("hook must run")
+        .expect("probe sender must fire");
+    let seen = seen.expect("the hook must observe SOME ambient context");
+    assert!(
+        std::sync::Arc::ptr_eq(&seen, &tenant_ctx),
+        "the detached hook must observe the dispatch's scoped context, \
+         not the process default"
+    );
+}

@@ -362,6 +362,8 @@ const messages: TranslationMap = {
   'brain.empty':
     'Votre cerveau est vide pour l’instant: connectez une source pour commencer à constituer votre mémoire.',
   'brain.error': 'Impossible de charger votre cerveau. Veuillez réessayer.',
+  'brain.refreshError':
+    'Impossible de rafraîchir votre cerveau. Les dernières données chargées sont affichées.',
   'common.cancel': 'Annuler',
   'common.save': 'Enregistrer',
   'common.confirm': 'Confirmer',
@@ -3818,9 +3820,6 @@ const messages: TranslationMap = {
   'flows.suggest.trigger.manual': 'À la demande',
   'flows.copilot.open': 'Copilote',
   'flows.copilot.title': 'Copilote de flux',
-  'flows.copilot.subtitle':
-    'Demandez des modifications et examinez chaque proposition avant de l’appliquer.',
-  'flows.copilot.close': 'Fermer le copilote',
   'flows.copilot.placeholder': 'Demandez une modification…',
   'flows.copilot.send': 'Envoyer',
   'flows.copilot.thinking': 'Réflexion…',
@@ -3857,6 +3856,8 @@ const messages: TranslationMap = {
   'flows.import.error': "Impossible d'importer ce workflow. Vérifiez le fichier et réessayez.",
   'flows.import.warningTitle': "Avertissement d'importation",
   'flows.canvas.title': 'Workflow',
+  'flows.canvas.description':
+    'Créez cette automatisation étape par étape, puis enregistrez-la et exécutez-la.',
   'flows.canvas.loading': 'Chargement du workflow…',
   'flows.canvas.loadError': 'Impossible de charger ce workflow. Veuillez réessayer.',
   'flows.canvas.notFound': 'Ce workflow est introuvable.',

@@ -40,6 +40,16 @@ const navIcon = (d: string) => (
 const BRAIN_TABS: readonly BrainTab[] = ['welcome', 'graph', 'goals', 'sources', 'sync'];
 
 /**
+ * Backoff ladder for automatically retrying a failed graph load.
+ *
+ * Written out rather than computed from an exponent because the two things a
+ * reader needs — how long the wait is, and that there are exactly three of
+ * them — are then both visible. The last element is the bound: once the ladder
+ * is spent the error stays on screen and manual Refresh is the way back.
+ */
+const RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000];
+
+/**
  * Canonical text header (title + one-line description) per functional tab.
  */
 const BRAIN_HEADERS: Record<Exclude<BrainTab, 'welcome'>, { titleKey: string; descKey: string }> = {
@@ -93,22 +103,110 @@ export default function Brain() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      console.debug('[brain] graph fetch: entry mode=%s', mode);
-      setError(null);
+    // The pending automatic retry, if one is scheduled. Effect-scoped, so a
+    // dependency change or an unmount cancels it in the cleanup below.
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // Index into RETRY_DELAYS_MS. Effect-scoped too, which is what makes a
+    // manual Refresh (a `refreshKey` change re-runs this effect) start the
+    // ladder over rather than inheriting a spent one.
+    let attempt = 0;
+    // Monotonic request generation. Two `load()` calls can be in flight at once
+    // (the initial one and a `memory-tree-completed` event, or an automatic
+    // retry overtaken by an event), and they share `graph`, `error` and the
+    // retry ladder. Without this, a SUPERSEDED call's late result still writes:
+    // an obsolete rejection sets an error and schedules another retry even
+    // though a newer call has already succeeded, and an obsolete success can
+    // overwrite a newer graph. `cancelled` does not cover this — it only
+    // distinguishes this effect run from the next one, never two loads within
+    // the same run.
+    let generation = 0;
+    // Generation of the response currently ON SCREEN, which is NOT the same as
+    // the newest request. That difference is the whole point: `generation` says
+    // which request is newest, `renderedGeneration` says which one produced the
+    // data the user is looking at. They diverge exactly when a newer request
+    // FAILED — and that is the case where a superseded success must still be
+    // allowed through, because there is no newer data for it to clobber.
+    let renderedGeneration = 0;
+
+    const load = async (isAutomaticRetry = false) => {
+      const myGeneration = ++generation;
+      // Any load supersedes a retry still waiting, so a manual Refresh or a
+      // `memory-tree-completed` event cannot race a timer into a double fetch.
+      if (retryTimer !== undefined) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      console.debug(
+        '[brain] graph fetch: entry mode=%s attempt=%d retry=%s',
+        mode,
+        attempt,
+        isAutomaticRetry
+      );
+      // An AUTOMATIC retry must not clear the error while it is in flight.
+      // Clearing it here is right for a load the user or the app asked for —
+      // mount, Refresh, `memory-tree-completed` — because the previous failure
+      // is no longer what is being reported. A timer-driven retry is different:
+      // nothing has changed from the user's point of view, so blanking the
+      // alert (or the stale-data warning) for the duration of the request makes
+      // the failure flicker out and back for no reason they can perceive. The
+      // success path clears it on an accepted success, which is when the error
+      // has actually stopped being true.
+      if (!isAutomaticRetry) setError(null);
       try {
         const resp = await memoryTreeGraphExport(mode);
-        if (cancelled) return;
+        // Discard this success only if NEWER DATA already rendered — not merely
+        // because a newer request exists. Testing `myGeneration !== generation`
+        // here also dropped the older success when the newer request had
+        // failed, which leaves the user with an error and no graph: strictly
+        // worse than either behaviour this guard was meant to produce.
+        if (cancelled || myGeneration < renderedGeneration) {
+          console.debug('[brain] graph fetch: dropping success behind newer data');
+          return;
+        }
         console.debug(
           '[brain] graph fetch: exit n=%d edges=%d',
           resp.nodes.length,
           resp.edges.length
         );
         setGraph(resp);
+        renderedGeneration = myGeneration;
+        // Clear the error on an ACCEPTED SUCCESS, not only when a load starts.
+        // Two `load()` calls can overlap (the initial one and a
+        // `memory-tree-completed` event, or two events in quick succession),
+        // and they share this state with no request-generation guard. If the
+        // newer call fails and the older then succeeds, `error` stays set from
+        // the newer one while a perfectly good graph renders — which before
+        // this PR was invisible, and with the warning below would be a FALSE
+        // "your data is stale" on data that is not.
+        setError(null);
+        // Success resets the ladder: the NEXT transient failure gets the full
+        // set of retries rather than resuming where an old failure left off.
+        attempt = 0;
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || myGeneration !== generation) {
+          // A newer load has taken over. Dropping this rejection is what stops
+          // an obsolete failure from scheduling a retry against a graph that
+          // has already refreshed successfully.
+          console.debug('[brain] graph fetch: dropping superseded failure');
+          return;
+        }
         console.error('[brain] graph fetch failed', err);
         setError(err instanceof Error ? err.message : String(err));
+
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          // Bounded on purpose. Past this point the failure is very unlikely to
+          // be transient, and retrying forever would hammer the core and hide a
+          // real outage behind a spinner. The error stays on screen and the
+          // manual Refresh in `MemoryControls` remains the way back.
+          console.warn('[brain] graph fetch: retries exhausted after %d attempts', attempt);
+          return;
+        }
+        console.debug('[brain] graph fetch: scheduling retry %d in %dms', attempt + 1, delay);
+        attempt += 1;
+        retryTimer = setTimeout(() => {
+          void load(true);
+        }, delay);
       }
     };
     void load();
@@ -119,6 +217,7 @@ export default function Brain() {
     window.addEventListener('openhuman:memory-tree-completed', onTreeDone);
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
       window.removeEventListener('openhuman:memory-tree-completed', onTreeDone);
     };
     // `authUserId` is a dependency so a logout→login (identity becomes
@@ -241,6 +340,36 @@ export default function Brain() {
                         contentRootAbs={graph?.content_root_abs}
                       />
 
+                      {/*
+                        A failed refresh AFTER a good load keeps the graph on
+                        screen and warns, rather than replacing it with an
+                        error. The graph is expensive to rebuild and stays
+                        useful when a refresh blips, so destroying it would
+                        turn a transient failure into total data loss on
+                        screen. What is not acceptable is the third option —
+                        showing stale data with no indication at all, which is
+                        what this did before: the error branch below is
+                        reachable only while `graph` is null, and the catch in
+                        `load()` never clears `graph`, so a later failure was
+                        invisible.
+
+                        The two states are deliberately different components:
+                        this one means "what you see is old", the one below
+                        means "there is nothing to see".
+                      */}
+                      {/*
+                        `error !== null`, not truthiness: `load()`'s catch does
+                        `setError(err.message)`, and an Error carrying an empty
+                        message yields `''`, which is falsy. Under a truthiness
+                        test that failure suppresses BOTH alerts and is silent
+                        again — the exact defect this PR exists to remove.
+                      */}
+                      {error !== null && graph ? (
+                        <Alert variant="warning">
+                          <AlertDescription>{t('brain.refreshError')}</AlertDescription>
+                        </Alert>
+                      ) : null}
+
                       {graph ? (
                         <MemoryGraph
                           nodes={graph.nodes}
@@ -248,7 +377,7 @@ export default function Brain() {
                           mode={mode}
                           emptyHint={t('brain.empty')}
                         />
-                      ) : error ? (
+                      ) : error !== null ? (
                         <Alert variant="destructive">
                           <AlertDescription>{t('brain.error')}</AlertDescription>
                         </Alert>

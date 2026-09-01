@@ -34,6 +34,7 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
 
 const mockList = vi.mocked(agentRegistryApi.list);
 const mockSetEnabled = vi.mocked(agentRegistryApi.setEnabled);
+const mockRemove = vi.mocked(agentRegistryApi.remove);
 
 const renderPanel = () =>
   render(
@@ -115,5 +116,108 @@ describe('AgentsPanel', () => {
     mockList.mockRejectedValueOnce(new Error('boom'));
     renderPanel();
     await waitFor(() => expect(screen.getByText(/Couldn't load agents/)).toBeInTheDocument());
+  });
+  // --- Paths the original five cases left uncovered -----------------------
+  //
+  // Coverage before these: 79.03% stmts / 62.50% branch, with lines 65-66
+  // (the toggle failure branch), 77-87 (`handleRemove` in full) and 131 (its
+  // wiring) unexecuted. `handleRemove` is the destructive action on this
+  // panel and had no test at all.
+
+  it('surfaces the API error message when a toggle fails', async () => {
+    // The catch branch prefers `err.message` over the generic i18n fallback,
+    // so a caller sees *why* it failed rather than "Couldn't update the agent".
+    mockSetEnabled.mockRejectedValueOnce(new Error('registry is read-only'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole('switch')[1]);
+
+    await waitFor(() => expect(screen.getByText('registry is read-only')).toBeInTheDocument());
+    // The row must not be left stuck in its busy state after a failure.
+    await waitFor(() => expect(screen.getAllByRole('switch')[1]).not.toBeDisabled());
+  });
+
+  it('falls back to the generic message when a toggle rejects a non-Error', async () => {
+    // `err instanceof Error` is the branch under test: a string rejection
+    // must not render "undefined" into the banner.
+    mockSetEnabled.mockRejectedValueOnce('nope');
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole('switch')[1]);
+
+    await waitFor(() => expect(screen.getByText("Couldn't update the agent")).toBeInTheDocument());
+  });
+
+  it('deletes a custom agent and reloads the list', async () => {
+    mockRemove.mockResolvedValue(true);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Finance')).toBeInTheDocument());
+
+    // Built-ins offer "Reset to default"; only the custom agent offers Delete.
+    const deleteButtons = screen.getAllByRole('button', { name: /^Delete$/ });
+    expect(deleteButtons).toHaveLength(1);
+    fireEvent.click(deleteButtons[0]);
+
+    await waitFor(() => expect(mockRemove).toHaveBeenCalledWith('finance'));
+    // `handleRemove` re-runs `load()` rather than patching state locally, so a
+    // reset built-in comes back with its server-side defaults.
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  it('resets a built-in agent through the same remove endpoint', async () => {
+    // Built-ins are not deleted — the panel labels the action "Reset to
+    // default" but routes it through `remove`, which restores the shipped
+    // definition. Worth pinning: the label and the call diverge on purpose.
+    mockRemove.mockResolvedValue(true);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
+
+    const resetButtons = screen.getAllByRole('button', { name: /Reset to default/ });
+    // orchestrator + researcher are both built-in.
+    expect(resetButtons).toHaveLength(2);
+    fireEvent.click(resetButtons[1]);
+
+    await waitFor(() => expect(mockRemove).toHaveBeenCalledWith('researcher'));
+  });
+
+  it('shows an error and stops reloading when a delete fails', async () => {
+    mockRemove.mockRejectedValueOnce(new Error('agent is in use'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Finance')).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Delete$/ })[0]);
+
+    await waitFor(() => expect(screen.getByText('agent is in use')).toBeInTheDocument());
+    // A failed remove must NOT reload: reloading would redraw the row as if
+    // nothing happened and drop the error the user needs to read.
+    expect(mockList).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the orchestrator switch disabled so it cannot be toggled', async () => {
+    // Scope correction, from review: an earlier version of this case claimed to
+    // cover `handleToggle`'s ORCHESTRATOR_ID early-return (AgentsPanel.tsx:56)
+    // by clicking the switch as well as asserting it disabled. It does not —
+    // `AgentRow` renders the orchestrator's SettingsSwitch `disabled`, so the
+    // click never reaches the handler and removing the guard alone would not
+    // fail this test.
+    //
+    // My revert-proof did not catch that because the mutation removed the guard
+    // AND the `disabled` prop together, so the case went red for the second
+    // reason. A fault that changes two things proves neither individually.
+    //
+    // What this case honestly covers is the disabled control, which is the
+    // user-facing protection; the handler guard behind it is defence in depth
+    // and would need an enabled seam to exercise. Renamed to say so.
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Orchestrator')).toBeInTheDocument());
+
+    const orchestratorSwitch = screen.getAllByRole('switch')[0];
+    expect(orchestratorSwitch).toBeDisabled();
+    fireEvent.click(orchestratorSwitch);
+
+    await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
+    expect(mockSetEnabled).not.toHaveBeenCalled();
   });
 });

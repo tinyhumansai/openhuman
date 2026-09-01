@@ -1,3 +1,64 @@
+#[async_trait]
+impl MemorySourceSink for RecordingProvider {
+    async fn accept_source_items(
+        &self,
+        _source_id: &str,
+        _source_kind: &str,
+        items: Vec<SourceItem>,
+        taint: MemoryTaint,
+    ) -> Result<IngestOutcome, MemoryError> {
+        self.record(Call {
+            method: "sources.accept_source_items".into(),
+            content: items.first().map(|i| i.content.clone()),
+            taint: Some(taint),
+            scoped: None,
+        });
+        Ok(IngestOutcome::default())
+    }
+
+    async fn forget_source(&self, _source_id: &str) -> Result<u64, MemoryError> {
+        self.record(Call::plain("sources.forget_source"));
+        Ok(0)
+    }
+}
+
+#[async_trait]
+impl MemoryMaintenance for RecordingProvider {
+    async fn reembed(&self) -> Result<MaintenanceReport, MemoryError> {
+        self.record(Call::plain("maintenance.reembed"));
+        Ok(MaintenanceReport::default())
+    }
+
+    async fn compact(&self) -> Result<MaintenanceReport, MemoryError> {
+        self.record(Call::plain("maintenance.compact"));
+        Ok(MaintenanceReport::default())
+    }
+
+    async fn consolidate(&self) -> Result<MaintenanceReport, MemoryError> {
+        self.record(Call::plain("maintenance.consolidate"));
+        Ok(MaintenanceReport::default())
+    }
+
+    async fn doctor(&self) -> Result<MaintenanceReport, MemoryError> {
+        self.record(Call::plain("maintenance.doctor"));
+        Ok(MaintenanceReport::default())
+    }
+
+    async fn diagnose(
+        &self,
+    ) -> Result<crate::openhuman::memory::api::provider::diagnosis::Diagnosis, MemoryError> {
+        self.record(Call::plain("maintenance.diagnose"));
+        Ok(Default::default())
+    }
+
+    async fn degraded_state(
+        &self,
+    ) -> Result<crate::openhuman::memory::api::provider::diagnosis::DegradedCapabilities, MemoryError>
+    {
+        self.record(Call::plain("maintenance.degraded_state"));
+        Ok(Default::default())
+    }
+}
 
 #[async_trait]
 impl MemoryProvider for RecordingProvider {
@@ -356,6 +417,24 @@ impl MemoryChunks for RecordingProvider {
         _model_signature: &str,
     ) -> Result<Vec<ChunkEmbedding>, MemoryError> {
         self.record(Call::plain("chunks.chunk_embeddings"));
+        Ok(vec![])
+    }
+
+    async fn chunk_score(
+        &self,
+        _chunk_id: &str,
+    ) -> Result<Option<crate::openhuman::memory::api::provider::chunks::ChunkScore>, MemoryError>
+    {
+        self.record(Call::plain("chunks.chunk_score"));
+        Ok(None)
+    }
+
+    async fn source_ingest_status(
+        &self,
+        _source_prefixes: &[crate::openhuman::memory::api::provider::chunks::SourceIngestQuery],
+    ) -> Result<Vec<crate::openhuman::memory::api::provider::chunks::SourceIngestStatus>, MemoryError>
+    {
+        self.record(Call::plain("chunks.source_ingest_status"));
         Ok(vec![])
     }
 }

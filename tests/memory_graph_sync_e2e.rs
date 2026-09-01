@@ -15,10 +15,13 @@ use serde_json::json;
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::inference::embeddings::NoopEmbedding;
-use openhuman_core::openhuman::memory::{
-    MemoryIngestionConfig, MemoryIngestionRequest, NamespaceDocumentInput,
-};
-// Engine handles named on the crate — see the note in `personality_e2e.rs`.
+use openhuman_core::openhuman::memory::NamespaceDocumentInput;
+// Engine handles and the engine's own ingest request/config named on the
+// crates that define them — `memory::MemoryIngestion{Request,Config}` are the
+// host's WIRE shapes now (`rpc_models`), a different type from what
+// `UnifiedMemory::ingest_document` takes (#5560). See the note in
+// `personality_e2e.rs`.
+use tinycortex::memory::ingest::{MemoryIngestionConfig, MemoryIngestionRequest};
 use tinymemory_core::store::{MemoryClient, UnifiedMemory};
 
 /// Test config for the heuristic-only pipeline.

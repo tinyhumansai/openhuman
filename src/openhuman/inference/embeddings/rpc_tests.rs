@@ -105,22 +105,6 @@ fn resolve_api_key_normalizes_custom_prefix_to_custom_slug() {
     );
 }
 
-/// Issue #4056: a Custom endpoint is probed dimension-agnostically for any
-/// model that doesn't honour the OpenAI `dimensions` request param, so the
-/// user's guessed size can't fail an otherwise-valid endpoint. Only the
-/// `text-embedding-3-*` family (which honours the param) is probed at the
-/// requested size.
-#[test]
-fn probe_dims_for_zeroes_non_matryoshka_models() {
-    // text-embedding-3-* honours the param → probe at the requested size.
-    assert_eq!(probe_dims_for("text-embedding-3-large", 1024), 1024);
-    assert_eq!(probe_dims_for("text-embedding-3-small", 512), 512);
-    // Everything else → 0 (no param sent, no length guard).
-    assert_eq!(probe_dims_for("bge-m3", 1024), 0);
-    assert_eq!(probe_dims_for("nomic-embed-text", 768), 0);
-    assert_eq!(probe_dims_for("gpt-5-mini", 1024), 0);
-}
-
 /// Issue #4056: after a successful probe we adopt the endpoint's real
 /// returned length for auto-detected models, but keep the requested size for
 /// `text-embedding-3-*` (the server returned exactly that). A zero actual
@@ -435,10 +419,9 @@ fn classify_embed_probe_distinguishes_dimension_mismatch() {
 /// Issue #5017 regression — the request the app sends is correct: a conformant
 /// OpenAI-compatible `POST /v1/embeddings` host (right path, the user's model,
 /// Bearer key, `{"input":[…],"model":…}` body) verifies successfully. Builds
-/// the provider exactly as the save-time probe does
-/// (`create_embedding_provider_with_credentials("custom", …, custom_endpoint)`)
-/// and drives it against a mock that echoes the OpenAI embeddings wire shape,
-/// asserting the captured request AND that the probe classifies it as a pass.
+/// the live custom provider with the endpoint's known width and drives it
+/// against a mock that echoes the OpenAI embeddings wire shape, asserting the
+/// captured request AND that the probe classifies it as a pass.
 #[tokio::test]
 async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
     use std::sync::{Arc, Mutex};
@@ -493,12 +476,13 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
     );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    // Same construction as the save-time probe for a non-`text-embedding-3-*`
-    // model: probe dimension-agnostically (dims = 0).
+    // The live provider validates returned vectors against its configured width.
+    // Use the mock endpoint's known width; setup-time custom probing discovers
+    // that width separately before saving the live configuration.
     let embedder = create_embedding_provider_with_credentials(
         "custom",
         "gpt-5-mini",
-        0,
+        4,
         "sk-secret-key",
         Some(&base),
     )

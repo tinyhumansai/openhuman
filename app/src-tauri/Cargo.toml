@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.63.18"
+version = "0.63.19"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -263,6 +263,11 @@ e2e-test-support = ["openhuman_core/e2e-test-support"]
 [patch."https://github.com/tinyhumansai/tinymemory"]
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
 
+[patch."https://github.com/tinyhumansai/tinyinference"]
+# tinycortex depends on tinyinference by git rev; without this the shell world
+# resolves TWO copies of the same types. Mirrors root Cargo.toml:1345.
+tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+
 [patch.crates-io]
 # Keep reqwest defaults disabled in this independent Cargo world too. Without
 # this patch, the registry release reintroduces native-tls/OpenSSL on Linux.
@@ -270,11 +275,14 @@ motosan-ai-oauth = { path = "../../vendor/motosan-ai-oauth" }
 # TinyAgents vendored submodule (repo-root vendor/tinyagents, pinned at the
 # released tag) — same patch as the root Cargo world so both resolve the
 # in-tree SDK source. `git submodule update --init vendor/tinyagents` first.
-tinyagents = { path = "../../vendor/tinyagents" }
+# tinyagents is a workspace now — no patch entry (mirrors root Cargo.toml)
 # TinyTools rides in through tinyagents' own vendored checkout. The path must
 # match the one the core crate names, or cargo resolves two distinct packages
 # and the shell's `dyn Tool` stops being the core's. See the core manifest.
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+# tinymemory-core declares `tinyinference = "0.2"` (crates-io-shaped, unpublished),
+# so this world must patch it exactly as the root manifest does.
+tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
 # TinyFlows, TinyCortex, and TinyChannels are vendored beside
 # TinyAgents so integration work can test crate changes against OpenHuman before
 # publishing.

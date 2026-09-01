@@ -31,9 +31,14 @@ use chrono::{DateTime, TimeZone, Utc};
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::tree_runtime::{engine, store};
+// The host's `tree_runtime` re-export of these two engine modules is gone
+// (#5560): the RPC surface goes through the contract's runtime-tree doors, and
+// the fold itself is the driver's. This target still drives the engine
+// directly, so it names the engine crate — which is what the sibling
+// `memory::tree` globs' tests already do.
 use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
 use tinyinference::Error as TinyAgentsError;
+use tinymemory_core::tree::tree_runtime::{engine, store};
 
 // ── Env isolation ─────────────────────────────────────────────────────────
 

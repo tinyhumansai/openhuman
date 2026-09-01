@@ -776,6 +776,142 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(vi.mocked(setVoiceProviderKey)).toHaveBeenCalled());
   });
 
+  // ─── Modal: "Test Key" is a dry run (#5896) ───────────────────────────────
+  //
+  // The regression these guard: the Test handler used to call
+  // `handleEnableExternalProvider` before testing, which (a) wrote the key to
+  // the keychain and activated the provider before it was known to work, and
+  // (b) cleared `pendingKeySlug` — unmounting the modal, so the result alert
+  // it then set could never render.
+
+  it('clicking Test Key validates without saving or activating the provider', async () => {
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({ ok: true, detail: 'Key OK' });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    fireEvent.click(screen.getByTestId('voice-provider-chip-elevenlabs'));
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const keyInput = screen.getByPlaceholderText(/sk/i);
+    fireEvent.change(keyInput, { target: { value: 'sk-candidate-key-1234567890' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Test Key$/i }));
+
+    await waitFor(() => expect(vi.mocked(testVoiceProvider)).toHaveBeenCalled());
+
+    // The candidate key travels to the core for validation only.
+    expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith(
+      'stt',
+      'elevenlabs',
+      true,
+      'sk-candidate-key-1234567890'
+    );
+
+    // Nothing is persisted and nothing is activated by a test.
+    expect(vi.mocked(setVoiceProviderKey)).not.toHaveBeenCalled();
+    expect(vi.mocked(saveVoiceSettings)).not.toHaveBeenCalled();
+  });
+
+  it('keeps the modal mounted after Test Key so the result is visible', async () => {
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({
+      ok: true,
+      detail: 'Provider key is valid (12ms)',
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    fireEvent.click(screen.getByTestId('voice-provider-chip-elevenlabs'));
+    await screen.findByTestId('voice-provider-key-modal');
+
+    fireEvent.change(screen.getByPlaceholderText(/sk/i), {
+      target: { value: 'sk-candidate-key-1234567890' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Test Key$/i }));
+
+    // The alert is the whole point of the button — if the modal has unmounted
+    // by the time the result lands, this text never appears.
+    expect(await screen.findByText(/Provider key is valid/i)).toBeInTheDocument();
+    expect(screen.getByTestId('voice-provider-key-modal')).toBeInTheDocument();
+  });
+
+  it('surfaces a failed Test Key without saving the bad key', async () => {
+    vi.mocked(testVoiceProvider).mockResolvedValueOnce({
+      ok: false,
+      detail: 'Key test failed: API returned 401 Unauthorized',
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    fireEvent.click(screen.getByTestId('voice-provider-chip-elevenlabs'));
+    await screen.findByTestId('voice-provider-key-modal');
+
+    fireEvent.change(screen.getByPlaceholderText(/sk/i), {
+      target: { value: 'sk-wrong-key-1234567890' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Test Key$/i }));
+
+    expect(await screen.findByText(/401 Unauthorized/i)).toBeInTheDocument();
+    // The user is left free to correct the key: it was never written.
+    expect(vi.mocked(setVoiceProviderKey)).not.toHaveBeenCalled();
+    expect(screen.getByTestId('voice-provider-key-modal')).toBeInTheDocument();
+  });
+
+  it('renders a thrown Test Key error without saving the key', async () => {
+    // A rejected RPC (transport dead, core down) takes the `catch` branch,
+    // which is a different path from a resolved `{ ok: false }` verdict.
+    vi.mocked(testVoiceProvider).mockRejectedValueOnce(new Error('core unreachable'));
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    fireEvent.click(screen.getByTestId('voice-provider-chip-elevenlabs'));
+    await screen.findByTestId('voice-provider-key-modal');
+
+    fireEvent.change(screen.getByPlaceholderText(/sk/i), {
+      target: { value: 'sk-key-for-a-dead-core' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Test Key$/i }));
+
+    expect(await screen.findByText(/core unreachable/i)).toBeInTheDocument();
+    expect(screen.getByTestId('voice-provider-key-modal')).toBeInTheDocument();
+    expect(vi.mocked(setVoiceProviderKey)).not.toHaveBeenCalled();
+  });
+
+  it('discards an in-flight Test Key result when the key is edited', async () => {
+    // The key field stays editable during a test (it is disabled only while
+    // *saving*). Without the request-id guard, key A's verdict lands next to
+    // key B and reads as a validation of B.
+    let resolveTest: (r: { ok: boolean; detail: string }) => void = () => {};
+    vi.mocked(testVoiceProvider).mockReturnValueOnce(
+      // Annotated: `VoiceTestResult` is not exported, and a bare `new Promise`
+      // would infer `Promise<unknown>` and fail typecheck on the mock.
+      new Promise<{ ok: boolean; detail: string }>(resolve => {
+        resolveTest = resolve;
+      })
+    );
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    fireEvent.click(screen.getByTestId('voice-provider-chip-elevenlabs'));
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const keyInput = screen.getByPlaceholderText(/sk/i);
+    fireEvent.change(keyInput, { target: { value: 'sk-key-AAAA-1234567890' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Test Key$/i }));
+
+    // User edits to a different key before the verdict for the first arrives.
+    fireEvent.change(keyInput, { target: { value: 'sk-key-BBBB-0987654321' } });
+
+    resolveTest({ ok: true, detail: 'STALE VERDICT FOR KEY A' });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Test Key$/i })).toBeEnabled());
+    expect(screen.queryByText(/STALE VERDICT FOR KEY A/i)).not.toBeInTheDocument();
+  });
+
   it('the ElevenLabs modal Cancel button closes without saving', async () => {
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 

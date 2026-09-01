@@ -1,5 +1,5 @@
 //! Prompt section that injects tool-scoped memory rules into the system
-//! prompt — thin host shim over `tinycortex::memory::tool_memory::render` (W7).
+//! prompt (W7).
 //!
 //! ## Why a prompt section
 //!
@@ -10,15 +10,20 @@
 //! want to be **compression-resistant** therefore has to live in the system
 //! prompt — exactly where Critical and High priority [`ToolMemoryRule`]s belong.
 //!
-//! ## What this shim owns
+//! ## What this module owns
 //!
-//! The rendering (`render_tool_memory_rules`) and the section type
-//! ([`ToolMemoryRulesSection`], a byte-stable at-construction snapshot) are the
-//! crate's and are re-exported here. Host-retained: the [`PromptSection`] impl
-//! that plugs the crate section into the host system-prompt builder — a host
-//! trait we can implement for the crate type under the orphan rule.
+//! All of it, and the doc above this line used to say otherwise. The rendering
+//! ([`render_tool_memory_rules`]) and the section type
+//! ([`ToolMemoryRulesSection`], a byte-stable at-construction snapshot) were
+//! described as "the crate's, re-exported here" back when they were
+//! `tinycortex::memory::tool_memory::render`; they have been defined below for
+//! some time. What was always host-retained is the [`PromptSection`] impl that
+//! plugs the section into the host system-prompt builder.
 //!
-//! [`ToolMemoryRule`]: super::types::ToolMemoryRule
+//! The one contract dependency is the rule vocabulary itself
+//! ([`ToolMemoryRule`], [`ToolMemoryPriority`]), named at
+//! [`memory::api::tool_memory`](crate::openhuman::memory::api::tool_memory)
+//! because these are the types the module serialises across the bus.
 
 use anyhow::Result;
 

@@ -23,6 +23,12 @@ fn test_config() -> (TempDir, Arc<Config>) {
 
 fn adapter(autonomy: AutonomyLevel) -> (TempDir, OpenHumanMemory) {
     let (tmp, config) = test_config();
+    // `flavour` reads through `MemoryTree::flavour_profile` since #5560, so the
+    // workspace needs a driver serving the Tree family — the null driver a test
+    // workspace otherwise resolves to answers `Unsupported`, which the node
+    // reports as a capability error rather than as an absent profile. This is
+    // the driver the loaded module wraps.
+    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
     (
         tmp,
         OpenHumanMemory {

@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.63.18"
+version = "0.63.19"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 # The crate ships a verbatim GPLv3 `LICENSE` file but carried no `license` key,
@@ -16,23 +16,27 @@ autobins = false
 # collapsing them into one target removes ~75 full-crate link steps per test run.
 build = "build.rs"
 
-# `cargo machete` reports a dependency as unused when no `use` names it. These
-# two have no `use` and are still load-bearing, so they are suppressed here
-# rather than deleted — an unsuppressed false positive is how a real finding
-# gets ignored next time.
+# `cargo machete` reports a dependency as unused when no `use` names it, and
+# this list is empty because there is nothing left to excuse (#5560).
 #
-# `tinymemory` (the facade) and `tinymemory-tinycortex` (the TinyCortex
-# adapter) exist for DRIVER ADMISSION: the memory subsystem resolves its
-# engine through `tinymemory`'s driver registry, and the adapter is what makes
-# TinyCortex admissible as that engine. Both must stay linked so a second host
-# embedding the `flows` kernel profile can still bind a memory engine — see
-# the 2026-08-10 entry in `scripts/kernel-floor.limits`, which ratchets them in
-# deliberately. Dropping either would compile clean and fail at runtime.
+# It used to hold `tinymemory` (the facade) and `tinymemory-tinycortex` (the
+# TinyCortex adapter), on the reasoning that both were load-bearing for DRIVER
+# ADMISSION — the memory subsystem resolved its engine through `tinymemory`'s
+# driver registry, and the adapter made TinyCortex admissible as that engine —
+# so that dropping either would compile clean and fail at runtime.
 #
-# `tinymemory-api` and `tinymemory-core` are NOT listed: they are named
-# directly by `src/openhuman/memory/`, so machete is already satisfied.
+# **That reasoning expired rather than being wrong.** `memory::binding::admit`
+# is pure string matching against `MODULE_ID` and refuses
+# `DriverClass::Embedded` outright, so nothing here resolves an engine through
+# the facade's registry any more; the engine runs in the `tinymemory` TinyBus
+# module. The facade is deleted and the adapter moved to `[dev-dependencies]`,
+# where its only consumers (test fixtures) already lived.
+#
+# The principle it was written to protect still holds for whatever lands here
+# next: an unsuppressed false positive is how a real finding gets ignored the
+# time after.
 [package.metadata.cargo-machete]
-ignored = ["tinymemory", "tinymemory-tinycortex"]
+ignored = []
 
 [[bin]]
 name = "openhuman-core"
@@ -240,7 +244,24 @@ tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 # out of every configuration. tinycortex remains the sole libgit2 link in the
 # graph, and nothing in this crate enables it. Everything else tinycortex needs
 # is unconditional.
-tinycortex = { version = "0.1", features = [
+# `tinycortex` has left the product build (openhuman#5560). The engine still
+# runs — inside the prebuilt `tinymemory` TinyBus module, which links it and
+# enables its `contacts` feature for the macOS address-book reader. This host
+# reaches all of it through `tinymemory-api` over the bus.
+#
+# It is `optional` rather than deleted for one reason only: the two
+# `library_profile` bins measure the in-process engine and a `[[bin]]` cannot
+# use a dev-dependency, so `rss-bench` turns it on. `rss-bench` is NOT in
+# `scripts/ci/product-features.txt`, so nothing shipped enables it. Every test
+# that names the crate is served by the [dev-dependencies] entry instead.
+#
+# Its `[patch]` entry below stays, and that is not the same decision. Dropping
+# the direct dependency and dropping the patch are different things: the crate
+# is unpublished, and the engine crates still reached as [dev-dependencies]
+# name it by version requirement, so removing the patch fails *resolution* with
+# "no matching package named `tinycortex-api` found" long before anything is
+# compiled.
+tinycortex = { version = "0.1", optional = true, features = [
     "obsidian",
     "persona",
     "sync",
@@ -254,7 +275,10 @@ tinycortex = { version = "0.1", features = [
 # so a third-party driver can compile against the contract without pulling in
 # the embedded engine. No `[patch.crates-io]` entry is needed: cargo unifies
 # this with the `path = "api"` dependency the engine crate already declares.
-tinycortex-api = { path = "vendor/tinycortex/api" }
+# `tinycortex-api` is gone with it. It had become a deprecated re-export of
+# `tinymemory-bus`, so its one host use (`goals::GoalsDoc`) resolves to the
+# identical item through the contract. Its `[patch]` entry stays too, for the
+# reason given above.
 
 # tinymemory — the engine-neutral memory layer
 # (https://github.com/tinyhumansai/tinymemory). Owns the parts of the memory
@@ -288,7 +312,10 @@ tinycortex-api = { path = "vendor/tinycortex/api" }
 # After cloning: `git submodule update --init --recursive vendor/tinyruntime`.
 tinyruntime-bus = { path = "vendor/tinyruntime/crates/tinyruntime-bus" }
 
-tinymemory = { path = "vendor/tinymemory/crates/tinymemory" }
+# The `tinymemory` facade is gone: no file in `src/` ever named it. It was
+# kept for driver admission, but `memory::binding::admit` is pure string
+# matching against `MODULE_ID` and refuses `DriverClass::Embedded` outright,
+# so nothing here resolves an engine through the facade's registry.
 tinymemory-api = { path = "vendor/tinymemory/crates/tinymemory-api" }
 # tinyconnectors-bus — the OAuth connector wire contract
 # (https://github.com/tinyhumansai/tinyconnectors). Payload types and member
@@ -306,7 +333,26 @@ tinyconnectors-bus = { path = "vendor/tinyconnectors/crates/tinyconnectors-bus" 
 # directly (EXTRACT_ENTITIES, EMBED_TEXT, EMBEDDER_SLUG) — prefer compile
 # errors on renaming over MemberNotFound at runtime.
 tinymemory-bus = { path = "vendor/tinymemory/crates/tinymemory-bus" }
-tinymemory-tinycortex = { path = "vendor/tinymemory/crates/tinymemory-tinycortex" }
+# DONE 2026-08-31, and the measurement that forced it is worth keeping, because
+# it is the trap anyone auditing a shed here will fall into next.
+#
+# This entry had **no production consumer** — every `tinymemory_tinycortex::`
+# reference in the tree is test code (`memory::test_support`,
+# `agent::harness::archivist_tests`, `tests/raw_coverage/`) — yet it was a
+# **second, independent normal edge onto `tinymemory-core`**: `cargo tree -e
+# normal -i tinymemory-core` reported two parents, `openhuman` and this crate.
+# Dropping the `tinymemory-core` entry alone would therefore NOT have taken the
+# engine out of the shipped graph; this line would still have pulled it. Both
+# halves had to move together, and they did.
+#
+# The general lesson, which the `rss-bench` comment further down states from the
+# other direction: **a manifest that reads correctly is not a shed.** Verify with
+# `cargo tree -e normal -i <crate>` under the product feature set — it prints
+# "nothing to print" when a crate is genuinely gone.
+# `tinymemory-tinycortex` is a dev-dependency now (see [dev-dependencies]).
+# Its only host uses are the test fixtures that stand up an in-process engine,
+# and cargo does not link dev-dependency features into the shipped binary —
+# the same precedent the root `tinywallet` crate already sets.
 # `tinymemory-core` is the *substance* of the memory subsystem, extracted out of
 # `src/openhuman/memory/` — the SQLite/vector store, the markdown summary tree,
 # the provider sync pipelines, ingestion, recall/query/search, the ingest queue,
@@ -323,7 +369,12 @@ tinymemory-tinycortex = { path = "vendor/tinymemory/crates/tinymemory-tinycortex
 # The `schemars` feature is enabled because the memory config *section* structs
 # (`MemoryConfig`, `MemoryTreeConfig`, …) now live in `tinymemory_api::host` and
 # are still fields of OpenHuman's `Config`, which derives `JsonSchema`.
-tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core" }
+# `tinymemory-core` is optional and reached only by `rss-bench`, which is NOT
+# in `scripts/ci/product-features.txt` — so it is absent from the shipped
+# build. It is `optional` rather than dev-only because the two
+# `library_profile` bins need it and a bin target cannot use a
+# dev-dependency; every test is served by the [dev-dependencies] entry below.
+tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core", optional = true }
 # `tinymemory-sources` is the source registry, its types and its readers, in a
 # crate of its own. Taken directly rather than through `tinymemory-core`
 # (OpenHuman#5560): `tinymemory_core::sources` is a thin layer over it —
@@ -359,8 +410,8 @@ tinymemory-sources = { path = "vendor/tinymemory/crates/tinymemory-sources", fea
 #
 # The path dependency on `tinymcp` itself is still the step-one arrangement. The
 # registry entry step two calls for now exists — `src/openhuman/modules/registry.rs`
-# pins the v0.3.1 release — but the host still calls the library directly, because
-# `tinymcp-bus` v0.3.1 does not yet publish everything this host reaches for:
+# pins the v0.3.2 release — but the host still calls the library directly, because
+# `tinymcp-bus` v0.3.2 does not yet publish everything this host reaches for:
 # `OAuthComplete`, a member returning the already-exported `ConnectedServerOverview`,
 # the boot-connect and reconnect-supervisor passes, the `ServerDetail` /
 # `AuthDetection` / `AuthKind` reply types, the registry curation helpers, an error
@@ -759,6 +810,25 @@ coins-bip39 = { version = "0.8" }
 # downstream test harness cannot see those across a crate boundary, so the
 # extracted crate exposes them behind `test-support` instead.
 tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core", features = ["test-support"] }
+# `tinycortex` itself, for the ~11 test files that name it directly —
+# `memory::read_rpc`, the sync-pipeline and tree e2e suites, the archivist and
+# session suites, the composio user-scope tests. They reach engine-internal
+# canonicalisation and sync-state items (`memory::ingest::canonicalize::chat`,
+# `memory::sync::state::STATE_NAMESPACE`, `memory::tree::runtime`) that no
+# contract family exposes. The normal entry above is `optional` and off outside
+# `rss-bench`, so this is what keeps the crate available to `cargo test` — and
+# cargo does not link dev-dependency features into the shipped binary, which is
+# the whole point of the split.
+tinycortex = { version = "0.1", features = ["obsidian", "persona", "sync"] }
+# `tinymemory-tinycortex` moved here from `[dependencies]` (#5560). It is the
+# adapter between TinyCortex's contract types and TinyMemory's, and every
+# surviving host use of it is a test fixture standing up an in-process engine —
+# `memory::test_support`, `memory::ops::test_support` and the archivist /
+# session suites. Cargo does not link dev-dependency features into the shipped
+# binary, so this keeps the adapter (and the `tinycortex` it names by version
+# requirement) out of the product while the tests that need a real engine keep
+# working.
+tinymemory-tinycortex = { path = "vendor/tinymemory/crates/tinymemory-tinycortex" }
 # Dual-declared on purpose (same shape as the `sentry`/`axum` entries): the
 # optional dependency above is bin-only behind `bin-tools`, but
 # `agent_orchestration::tools::tools_e2e_tests` (a #[cfg(test)] LIB module),
@@ -840,7 +910,33 @@ proptest = "1"
 # (`modules`: Contrib=ON, Product=ON) and with `scripts/ci/product-features.txt`,
 # which already lists it. This does NOT move the kernel floor: that profile is
 # `--no-default-features --features flows` and never reads this list.
-default = ["media", "skills", "flows", "mcp", "channels", "medulla", "http-server", "scheduler-gate", "file-logging", "modules"]
+default = ["media", "skills", "flows", "mcp", "channels", "medulla", "http-server", "scheduler-gate", "file-logging", "modules", "memory-engine-seams"]
+# Compiles `memory::host_impls` and turns the optional `tinymemory-core` on with
+# it (openhuman#5560). Default-ON, product-OFF, allow-listed in
+# `INTENTIONALLY_NOT_FORWARDED` — forwarding it to the shell would undo the shed.
+#
+# **Why a feature and not `#[cfg(test)]`.** The seams install into an in-process
+# engine, and the crate's own unit tests reach them through `cfg(test)` happily.
+# A `tests/*.rs` integration target cannot: it links this lib as an ordinary
+# dependency, where `cfg(test)` is false and the module is invisible *however
+# the engine is declared*. Two dozen of those targets call
+# `install_memory_host_seams`, and the archivist / session-turn / memory-sync
+# cases in `raw_coverage_all` genuinely drive a real engine — they fail with
+# "no EmbeddingHost installed" when it is absent, which is the same failure the
+# first attempt at #5560 shipped to users. So the module needs a *feature*, and
+# a feature that turns the engine dependency on.
+#
+# **Why `default` and not the test lane.** Three separate places compose the
+# test feature string (`scripts/test-rust-with-mock.sh`,
+# `test-reusable.yml`, `scripts/ci/rust-coverage-changed.sh`) and one
+# `raw_coverage_all` invocation passes `--features` not at all. None of them
+# passes `--no-default-features`, so `default` reaches every one; a
+# test-lane-only feature would have to be added to each and would fail
+# confusingly wherever it was missed. It costs the contributor inner loop
+# nothing it was not already paying: before this change `tinycortex` and
+# `tinymemory-core` were unconditional normal dependencies, so a bare
+# `cargo check` linked them regardless.
+memory-engine-seams = ["dep:tinymemory-core"]
 # HTTP + Socket.IO server transport (#5048): the `/rpc` JSON-RPC endpoint and
 # its auth middleware/CORS layer (`core::jsonrpc`, `core::auth`), the `/v1`
 # OpenAI-compatible router (`inference::http`), the ad-hoc static-dir file
@@ -1070,7 +1166,16 @@ runtime-node = []
 # the build, it just quietly does nothing. Hence the forward below, and
 # `contacts_feature_reaches_the_engine_reader` in `memory/people/mod.rs`, which
 # fails if this is ever flattened back into local `dep:` entries.
-contacts = ["tinymemory-core/contacts"]
+# Nothing host-side is gated on `contacts` any more — its whole job was
+# forwarding into the engine so tinycortex's macOS CNContactStore reader
+# compiled. That reader now lives in the `tinymemory` module, whose own
+# manifest enables `tinycortex/contacts`, and `people.refresh_address_book`
+# reaches it through `MemoryPeople::seed_from_address_book` over the bus.
+#
+# The gate name is kept because `scripts/ci/product-features.txt` and the
+# shell's forwarded list are asserted equal by the Feature Forwarding Gate,
+# and removing it from one without the other fails that lane.
+contacts = []
 # Media-generation + image domains: the `media_generate_*` agent tools
 # (image/video via GMI through the backend) and the `openhuman::image` tool
 # contracts scaffold. Default-ON. Slim builds opt out via
@@ -1300,7 +1405,25 @@ file-logging = ["dep:tracing-appender", "dep:tracing-log"]
 scheduler-gate = ["dep:starship-battery"]
 
 bin-tools = ["dep:clap", "dep:env_logger"]
-rss-bench = []
+# That day arrived (#5560), and this is the other half of the flip.
+#
+# `src/bin/library_profile/scenarios/{cold_phases,memory_ingest}.rs` name
+# `tinymemory_core::` and `tinycortex::` on purpose — they measure the
+# in-process engine, and routing them through `memory::binding` would measure
+# the *null* driver instead — and **a `[[bin]]` cannot use a dev-dependency**.
+# So both crates stay in `[dependencies]` marked `optional = true` and are
+# reached only from here; without this list `--features rss-bench` would break
+# in a configuration no CI lane compiles.
+#
+# The warning this comment used to carry still stands for anyone reading it as
+# precedent: marking an entry `optional` while this list stayed empty was a
+# measured no-op, because the non-optional `[dev-dependencies]` entry activates
+# the optional normal one and `cargo tree -e normal -i tinymemory-core` came out
+# byte-identical. What made it real was draining the production callers first —
+# the appearance of a shed and an actual shed are only the same thing once
+# nothing in the product names the crate. Verify with `cargo tree -e normal -i`
+# under the product feature set, not by reading the manifest.
+rss-bench = ["dep:tinycortex", "dep:tinymemory-core"]
 # Adds dhat heap profiling on top of `rss-bench` for the `library-profile`
 # binary. Default-OFF, dev-only: installs dhat's global allocator, which
 # perturbs RSS/timing numbers, so it is a separate opt-in feature rather than

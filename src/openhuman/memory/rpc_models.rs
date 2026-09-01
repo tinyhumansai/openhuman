@@ -612,3 +612,8 @@ pub(crate) fn default_memory_relative_dir() -> String {
 #[cfg(test)]
 #[path = "rpc_models_tests.rs"]
 mod tests;
+
+// The document-ingestion wire shapes live in `ingestion_models.rs` (split for
+// the file-layout gate) and are re-exported here so `memory::…` paths keep
+// resolving.
+pub use super::ingestion_models::*;

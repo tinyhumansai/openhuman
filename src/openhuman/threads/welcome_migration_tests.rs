@@ -1,6 +1,8 @@
 use super::*;
+use crate::openhuman::memory::conversations::{
+    ensure_thread, list_threads, CreateConversationThread,
+};
 use tempfile::TempDir;
-use tinycortex::memory::conversations::{ensure_thread, list_threads, CreateConversationThread};
 
 fn make_thread(id: &str, labels: Vec<String>) -> CreateConversationThread {
     CreateConversationThread {

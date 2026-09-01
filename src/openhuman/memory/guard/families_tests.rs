@@ -506,3 +506,168 @@ async fn episodic_writes_are_not_redacted_for_an_embedded_driver() {
         .expect("insert_event");
     assert_eq!(driver.only_call().content.as_deref(), Some(secrety));
 }
+
+// ── The defaulted doors ─────────────────────────────────────────────────────
+//
+// Every method a family trait *defaults* is a method a decorator can silently
+// fail to forward: the impl compiles, and the default answers `Unsupported`
+// however capable the driver below is. `RecordingProvider` overrides the five
+// #5560 doors and `diagnose`, so a decorator that dropped one is the only way
+// these can come back unsupported.
+
+/// One summary context, so the fold tests read as the two things they differ
+/// in rather than as seven repeated budget fields.
+fn summary_context() -> crate::openhuman::memory::api::provider::content::SummaryContext {
+    crate::openhuman::memory::api::provider::content::SummaryContext {
+        tree_id: "segment-1".into(),
+        tree_kind: "source".into(),
+        target_level: 0,
+        token_budget: 2_000,
+        input_token_budget: 50_000,
+        overhead_reserve_tokens: 2_048,
+        ask: None,
+    }
+}
+
+fn summary_input(content: &str) -> crate::openhuman::memory::api::provider::content::SummaryInput {
+    let at = chrono::Utc::now();
+    crate::openhuman::memory::api::provider::content::SummaryInput {
+        id: "turn-1".into(),
+        content: content.into(),
+        token_count: 4,
+        entities: Vec::new(),
+        topics: Vec::new(),
+        time_range_start: at,
+        time_range_end: at,
+        score: 0.5,
+    }
+}
+
+#[tokio::test]
+async fn the_defaulted_doors_are_forwarded_rather_than_refused() {
+    let (driver, guard) = guarded(embedded_policy());
+
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input("hello")], &summary_context())
+        .await
+        .expect("summarise must reach the driver, not the trait default");
+    guard
+        .as_tree()
+        .expect("tree family")
+        .root_summaries_with_caps(8_000, 32_000)
+        .await
+        .expect("root_summaries_with_caps must reach the driver");
+    guard
+        .as_chunks()
+        .expect("chunks family")
+        .chunk_score("chunk-1")
+        .await
+        .expect("chunk_score must reach the driver");
+    guard
+        .as_chunks()
+        .expect("chunks family")
+        .source_ingest_status(&[])
+        .await
+        .expect("source_ingest_status must reach the driver");
+    guard
+        .as_maintenance()
+        .expect("maintenance family")
+        .degraded_state()
+        .await
+        .expect("degraded_state must reach the driver");
+    guard
+        .as_maintenance()
+        .expect("maintenance family")
+        .diagnose()
+        .await
+        .expect("diagnose must reach the driver");
+
+    // The seven the runtime-tree round added (contract 4.0). Six of them carry
+    // the `tree_summarizer_*` RPC surface and the `tree-summarizer` CLI; the
+    // seventh is what `memory_flavour` reads. A `GuardedTree` that forgot one
+    // would refuse a driver that serves it perfectly well — the shape of the
+    // `diagnose` bug this test was written for.
+    let tree = guard.as_tree().expect("tree family");
+    let at = chrono::Utc::now();
+    tree.runtime_buffer_write("team", "hello", at, None)
+        .await
+        .expect("runtime_buffer_write must reach the driver");
+    tree.runtime_read_node("team", "root")
+        .await
+        .expect("runtime_read_node must reach the driver");
+    tree.runtime_read_children("team", "root")
+        .await
+        .expect("runtime_read_children must reach the driver");
+    tree.runtime_tree_status("team")
+        .await
+        .expect("runtime_tree_status must reach the driver");
+    tree.runtime_summarize("team", at)
+        .await
+        .expect("runtime_summarize must reach the driver");
+    tree.runtime_rebuild("team")
+        .await
+        .expect("runtime_rebuild must reach the driver");
+    tree.flavour_profile("persona/communication")
+        .await
+        .expect("flavour_profile must reach the driver");
+
+    let methods: Vec<String> = driver.calls().into_iter().map(|call| call.method).collect();
+    assert_eq!(
+        methods,
+        vec![
+            "tree.summarise",
+            "tree.root_summaries_with_caps",
+            "chunks.chunk_score",
+            "chunks.source_ingest_status",
+            "maintenance.degraded_state",
+            "maintenance.diagnose",
+            "tree.runtime_buffer_write",
+            "tree.runtime_read_node",
+            "tree.runtime_read_children",
+            "tree.runtime_tree_status",
+            "tree.runtime_summarize",
+            "tree.runtime_rebuild",
+            "tree.flavour_profile",
+        ]
+    );
+}
+
+/// `summarise` is the only member of the tree family besides `append` that
+/// hands prose *out* of the host — to the driver's own chat provider — so it
+/// takes `append`'s outbound scrub.
+#[tokio::test]
+async fn summarise_inputs_are_redacted_for_a_foreign_driver() {
+    let secrety = "Authorization: Bearer abcdefghijklmnop";
+
+    let (driver, guard) = guarded(external_policy("trusted"));
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input(secrety)], &summary_context())
+        .await
+        .expect("summarise");
+    assert_ne!(
+        driver.only_call().content.as_deref(),
+        Some(secrety),
+        "the bearer token reached a foreign driver's summariser verbatim"
+    );
+}
+
+/// The other half: an embedded driver is the same address space, so scrubbing
+/// there would cost the fold fidelity for no privacy gain — and the borrowed
+/// slice must be forwarded untouched rather than re-owned.
+#[tokio::test]
+async fn summarise_inputs_are_not_redacted_for_an_embedded_driver() {
+    let secrety = "Authorization: Bearer abcdefghijklmnop";
+
+    let (driver, guard) = guarded(embedded_policy());
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input(secrety)], &summary_context())
+        .await
+        .expect("summarise");
+    assert_eq!(driver.only_call().content.as_deref(), Some(secrety));
+}

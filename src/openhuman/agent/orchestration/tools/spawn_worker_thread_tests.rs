@@ -1,10 +1,10 @@
 use super::*;
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
 use crate::openhuman::agent::harness::ParentExecutionContext;
+use crate::openhuman::memory::conversations::CreateConversationThread;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tinycortex::memory::conversations::CreateConversationThread;
 
 struct MockMemory;
 #[async_trait]

@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use crate::openhuman::agent::task_board::TaskBoardCard;
-use tinycortex::memory::conversations::{
+use crate::openhuman::memory::conversations::{
     self as conversations, ConversationMessage, CreateConversationThread,
 };
 

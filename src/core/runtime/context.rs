@@ -596,24 +596,34 @@ pub async fn init_stores(
         domains,
     );
     if plan.memory {
-        // The seams the in-process engine calls back through. They must be
-        // installed BEFORE the first memory call: they fail loudly when
-        // unwired rather than degrading, because a quiet degrade would write
-        // vectors into the wrong embedding space or make a sync run look empty
-        // instead of broken.
+        // The engine seams are gone from here (#5560). They installed embedding
+        // / chat / config / NLP / scheduler / shutdown / error-reporting
+        // callbacks into *this process's* copy of `tinymemory-core`, and that
+        // copy no longer exists: the crate has left `[dependencies]`, so
+        // `memory::host_impls` compiles only under `memory-engine-seams`
+        // (default-ON, product-OFF) and the module answers these
+        // over the bus through `modules::memory_host` instead.
         //
-        // #5560 removed this on the reasoning that "this process embeds no
-        // engine, so there is nothing to call back". That is not true yet.
-        // `tinymemory-core` is still a normal dependency of this crate, and
-        // `session::builder::factory` still reaches
+        // The first attempt at this removal shipped an outage, and the reason
+        // is worth keeping. It was not that the seams were needed in the
+        // abstract — it was that `session::builder::factory` still reached
         // `store::factories::create_session_memory_with_local_ai`, which calls
-        // `require_embedding_host()` on the chat hot path — so every chat turn
-        // failed with "no EmbeddingHost installed". The module installing its
-        // own seams does not help: a `cdylib` has its own statics, so what it
-        // sets is invisible here.
+        // `require_embedding_host()` on the chat hot path, so every chat turn
+        // died with "no EmbeddingHost installed". That caller is gone, along
+        // with `ops::helpers::active_memory_client`, the `global::{init,
+        // client_if_ready}` sites and the `tree_runtime` glob; the only
+        // remaining namers of the engine crate are test-only, served by
+        // the `[dev-dependencies]` entry. A dev-dependency is not linked into
+        // the shipped binary, so there is nothing left here to call back.
         //
-        // These go when the last in-process engine caller goes, not before.
-        crate::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(cfg.clone()));
+        // The event sink is NOT one of those seams and must stay. It installs
+        // into `tinymemory-api` — the contract crate, still a normal
+        // dependency — and `memory::sync::composio::bus` publishes
+        // `ComposioIntegrationsChanged` through it from production host code.
+        // `tinymemory_api::events::publish` *silently drops* when unwired, by
+        // design, so losing this install would be an invisible regression
+        // rather than a loud one.
+        crate::openhuman::memory::host::install_memory_event_sink();
         // Publish the config a module-backed memory driver should load
         // against, before the binding below can construct one. Boot-only and
         // idempotent (first call wins) — see `modules::memory::set_modules_policy`

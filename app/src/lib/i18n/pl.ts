@@ -356,6 +356,8 @@ const messages: TranslationMap = {
   'brain.tabs.sync': 'Synchronizacja',
   'brain.empty': 'Twój mózg jest na razie pusty: połącz źródło, aby zacząć budować pamięć.',
   'brain.error': 'Nie udało się załadować Twojego mózgu. Spróbuj ponownie.',
+  'brain.refreshError':
+    'Nie udało się odświeżyć Twojego mózgu. Wyświetlane są ostatnio załadowane dane.',
   'common.cancel': 'Anuluj',
   'common.save': 'Zapisz',
   'common.confirm': 'Potwierdź',
@@ -3778,8 +3780,6 @@ const messages: TranslationMap = {
   'flows.suggest.trigger.manual': 'Na żądanie',
   'flows.copilot.open': 'Kopilot',
   'flows.copilot.title': 'Kopilot przepływów',
-  'flows.copilot.subtitle': 'Poproś o zmiany i sprawdź każdą propozycję przed jej zastosowaniem.',
-  'flows.copilot.close': 'Zamknij kopilota',
   'flows.copilot.placeholder': 'Poproś o zmianę…',
   'flows.copilot.send': 'Wyślij',
   'flows.copilot.thinking': 'Myślę…',
@@ -3818,6 +3818,8 @@ const messages: TranslationMap = {
     'Nie udało się zaimportować tego przepływu pracy. Sprawdź plik i spróbuj ponownie.',
   'flows.import.warningTitle': 'Ostrzeżenie importu',
   'flows.canvas.title': 'Przepływ pracy',
+  'flows.canvas.description':
+    'Zbuduj tę automatyzację krok po kroku, a następnie zapisz ją i uruchom.',
   'flows.canvas.loading': 'Wczytywanie przepływu pracy…',
   'flows.canvas.loadError': 'Nie można wczytać tego przepływu pracy. Spróbuj ponownie.',
   'flows.canvas.notFound': 'Nie znaleziono tego przepływu pracy.',

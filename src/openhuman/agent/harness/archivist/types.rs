@@ -35,7 +35,7 @@ pub struct ArchivistHook {
     /// This was `chat_provider.is_some()` — the archivist built a chat provider
     /// in [`ArchivistHook::with_config`], stored it, and then never called it.
     /// It could not: the summariser it drives is
-    /// `memory::tree::summarise::summarise`, which builds
+    /// `tinymemory_core::tree::summarise::summarise`, which builds
     /// its **own** provider from the same `Config`. The stored handle was a
     /// probe result wearing the shape of a dependency, so it is recorded as
     /// what it always was — a yes/no — and the probe now runs against the

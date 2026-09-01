@@ -15,10 +15,23 @@
 //!
 //! A direct `tinymemory_core::…` call gets neither. It is a second, unpoliced
 //! door into the same subsystem, and two doors into one capability is a
-//! capability whose behaviour can diverge. `tinymemory-core` also stays linked
-//! into the shipped binary — 1.44 MB of `.text`, the 7th largest crate — for as
-//! long as any of these remain, which is the visible symptom rather than the
-//! disease (#5560).
+//! capability whose behaviour can diverge. That is the disease, and it is the
+//! only reason this lint still exists.
+//!
+//! **The symptom is gone: `tinymemory-core` is no longer linked into the
+//! shipped binary** (#5560). It used to cost 1.44 MB of `.text` as the 7th
+//! largest crate, and that sentence stood here for as long as any entry
+//! remained. It no longer follows. The crate left `[dependencies]` on
+//! 2026-08-31 while this list still held nine entries, because **every
+//! surviving entry is test-only code**, served by the `[dev-dependencies]`
+//! entry that cargo does not link into the product. `cargo tree -e normal -i
+//! tinymemory-core` under the product feature set prints "nothing to print".
+//!
+//! Read the consequence carefully, because it inverts what this file used to
+//! assume: **a non-empty list no longer means a linked engine.** Draining the
+//! rest is still worth doing — a second door is a correctness problem whether
+//! or not it ships — but it buys no bytes, and nobody should size it as though
+//! it did.
 //!
 //! # This lint is a ratchet, not an invariant
 //!
@@ -193,6 +206,20 @@
 //!
 //! # Known weaknesses, stated rather than hidden
 //!
+//! - **One needle, two crates — and #5560 sheds both.** [`NEEDLE`] is
+//!   `tinymemory_core::` alone, but `tinycortex` is a direct dependency of this
+//!   crate in its own right, not something reached through the engine crate. So
+//!   repointing a file from `tinymemory_core::x` to `tinycortex::x` clears its
+//!   entry here while leaving an engine linked, and the ratchet reads as
+//!   progress. **That is not a migration; it is the lint losing sight of the
+//!   file.** `memory::tree::health` moved that way legitimately — the taxonomy
+//!   was always `tinycortex`'s and the engine crate only re-exported it — and
+//!   `memory::tools::flavour` was a `tinycortex` caller this lint never saw at
+//!   all until it moved onto `MemoryTree::flavour_profile`. Before concluding
+//!   the crates have left the build, run the scan for **both** spellings; at
+//!   the time of writing `tinycortex::` finds one production file
+//!   (`src/bin/library_profile/scenarios/memory_ingest.rs`) and it is already
+//!   listed below for the other needle.
 //! - **The lint sees text, not types.** A reference reached through a
 //!   re-export under another name is invisible to it — and the memory tree is
 //!   full of those on purpose: `memory/mod.rs` re-exports twenty-five engine
@@ -287,7 +314,7 @@ const ALLOWED: &[(&str, Verdict, &str)] = &[
     (
         "src/openhuman/agent/harness/archivist/recap.rs",
         Verdict::NeedsWiderSeam,
-        "reaches engine storage below the contract (store::fts5, store::segments::ConversationSegment, store::chunks::types::approx_token_count); MemoryChunks is read-only (list_chunks/get_chunk/chunk_detail/storage_kinds/chunk_embeddings) with no write or transaction door",
+        "the engine-side chat provider seam (chat::test_override) plus the engine fold it scopes (tree::summarise::{summarise, SummaryInput, SummaryContext}, tree::tree::TreeKind), all named only from the `#[cfg(test)]` recap arm: the deterministic provider those tests install is a task-local inside this binary's copy of the engine, which a module in its own process cannot see. Named engine-direct since the memory::tree shims were deleted. The production fold is MemoryTree::summarise",
     ),
     (
         "src/openhuman/agent/harness/archivist/test_constructors.rs",
@@ -317,65 +344,28 @@ const ALLOWED: &[(&str, Verdict, &str)] = &[
     (
         "src/openhuman/memory/read_rpc/mod.rs",
         Verdict::NeedsWiderSeam,
-        "reaches engine storage below the contract (store::chunks::store::with_connection, store::chunks::types::SourceKind); MemoryChunks is read-only (list_chunks/get_chunk/chunk_detail/storage_kinds/chunk_embeddings) with no write or transaction door",
+        "one `#[cfg(test)]` re-export of store::chunks::store::with_connection, the raw SQLite door the read_rpc tests assert written rows through — asserting storage rather than re-reading through the handler under test. MemoryChunks is read-only (list_chunks/get_chunk/chunk_detail/storage_kinds/chunk_embeddings) with no transaction door, and a contract that had one would be a SQLite contract wearing a trait. Nothing production-side in read_rpc names the engine: SourceKind is tinymemory_api::chunks::SourceKind, and wipe_all/delete_source/flush_source_tree are purge_all, forget_matching and Tree::flush_source_tree",
     ),
     // ── Re-export shims: `pub use tinymemory_core::<domain>::*;` ────────────
     //
-    // These are the historical-path aliases `memory/mod.rs` documents. They
-    // name the crate once each and call nothing. Removing them is the
-    // re-export problem, not the direct-call problem.
-    (
-        "src/openhuman/agent/learning/candidate.rs",
-        Verdict::HostSide,
-        "re-export shim for learning_candidate types",
-    ),
-    (
-        "src/openhuman/agent/tinyagents/thread_context.rs",
-        Verdict::HostSide,
-        "re-export shim for the thread-id task-local",
-    ),
-    (
-        "src/openhuman/memory/mod.rs",
-        Verdict::HostSide,
-        "the re-export block itself — twenty-five engine modules under their historical paths",
-    ),
-    (
-        "src/openhuman/memory/sources/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::sources::*",
-    ),
-    (
-        "src/openhuman/memory/sources/reconcile.rs",
-        Verdict::HostSide,
-        "calls the engine's still-live apply_composio_source_caps_migration() after this host's \
-         own tinyconnectors-backed ensure_composio_sources() reconcile pass — see the module docs \
-         for why the reconcile itself moved but this one migration call did not",
-    ),
-    (
-        "src/openhuman/memory/tree/health/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::tree::health::*",
-    ),
-    (
-        "src/openhuman/memory/tree/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::tree::*",
-    ),
-    (
-        "src/openhuman/memory/tree/retrieval/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::tree::retrieval::*",
-    ),
-    (
-        "src/openhuman/memory/tree/tree/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::tree::tree::*",
-    ),
-    (
-        "src/openhuman/memory/tree/tree_runtime/mod.rs",
-        Verdict::HostSide,
-        "re-export shim: pub use tinymemory_core::tree::tree_runtime::*",
-    ),
+    // **Drained.** Four of these existed — `tree/mod.rs`, `tree/health/mod.rs`,
+    // `tree/tree/mod.rs` and `tree/tree_runtime/mod.rs` — carrying the
+    // historical-path aliases `memory/mod.rs` documented. The first three had
+    // no production consumer left, only tests; those tests name the engine
+    // crates directly now (served by the `[dev-dependencies]` tinymemory-core
+    // entry) and the globs went with them.
+    //
+    // `tree_runtime` was the last, and the only one that was still production-
+    // live: five `tree_summarizer_*` RPC handlers, the `tree-summarizer` CLI,
+    // `memory::ops::learn` and the channels-startup subscriber ran the markdown
+    // time tree in-process through it. It is gone because the seam grew the six
+    // doors it needed — `RuntimeBufferWrite`, `RuntimeReadNode`,
+    // `RuntimeReadChildren`, `RuntimeTreeStatus`, `RuntimeSummarize`,
+    // `RuntimeRebuild` — in tinymemory PR #123 (contract 4.0). That is the
+    // shape every remaining `NeedsWiderSeam` entry below is waiting for, and
+    // the first one to complete the loop: upstream door, host migration,
+    // entry deleted.
+    //
     // ── Host-seam installation: the host handing itself TO the engine ───────
     //
     // The direction of these is inbound, not outbound: they install embedding /
@@ -386,7 +376,7 @@ const ALLOWED: &[(&str, Verdict, &str)] = &[
     (
         "src/openhuman/memory/host_impls.rs",
         Verdict::HostSide,
-        "installs the seven host seams (embedding, chat, config, nlp, scheduler gate, shutdown, error reporter); mirrored over the bus by modules/memory_host.rs — composio had an eighth seam here until tinymemory v1.13.4 deleted ComposioHost with the rest of the in-process pipeline",
+        "installs the seven host seams (embedding, chat, config, nlp, scheduler gate, shutdown, error reporter) into an in-process engine, and the whole module sits behind the default-ON/product-OFF `memory-engine-seams` feature since #5560 — it is listed here only because this lint scans source text and does not track cfg. A feature rather than #[cfg(test)] because a tests/ integration target links this crate as an ordinary dependency, where cfg(test) is false and the module would be invisible however the engine is declared, and two dozen of them install these seams. Its production callers are gone: runtime::context, memory_cli and agent::debug install memory::host::install_memory_event_sink() instead, which is a tinymemory-api seam (still a normal dependency) with a live host-side publisher in memory::sync::composio::bus. That split is load-bearing — tinymemory_api::events::publish drops silently when unwired, so folding the sink in here would have removed a live event path with no error anywhere. What still needs these installs is install_for_tests, whose ~90 callers stand up a real in-process engine from the [dev-dependencies] entry. The seams themselves are also served for the LOADED module by modules/memory_host.rs, over the module's own inbound interfaces — a separate mechanism, since a cdylib has its own statics and never saw what was set here",
     ),
     // ── Retrieval: filters the seam's tree family has no room for ───────────
     // ── Agent tools: chunk reads, source listing, people, source scope ──────
@@ -465,21 +455,47 @@ fn render(paths: impl IntoIterator<Item = String>) -> String {
 /// A scanner that silently found nothing would turn every other test here into
 /// a rubber stamp, so refuse to pass vacuously.
 ///
-/// `memory/mod.rs` is the most stable pin available: it is the re-export block
-/// itself, so it names the crate by construction. If the scanner stops seeing
-/// it, the scanner is broken — fix it, do not relax this assertion.
+/// `memory/host_impls.rs` is the most stable pin available now that the
+/// `memory/mod.rs` re-export block has been drained: it installs the seven host
+/// seams, so it names the crate by construction for as long as the engine is
+/// linked at all. If the scanner stops seeing it, the scanner is broken — fix
+/// it, do not relax this assertion.
 #[test]
 fn direct_reference_scanner_is_not_vacuous() {
     let found = scan();
+    let allowed = allowed_set();
+
+    // The canary only holds while the allowlist still names it. Asserting it
+    // unconditionally would turn the last migration in this file into a
+    // failure, which is backwards: draining the list is the goal.
+    if allowed.contains("src/openhuman/memory/host_impls.rs") {
+        assert!(
+            found.contains("src/openhuman/memory/host_impls.rs"),
+            "scanner found no direct engine reference in memory/host_impls.rs, which installs \
+             the host seams; the scanner is broken"
+        );
+    }
+
+    // The real vacuity risk is `scan()` silently returning nothing — a broken
+    // walk, a moved `src/`, a needle that stopped matching — which would turn
+    // `no_new_files_call_the_engine_directly` into a rubber stamp. Pin it to
+    // the allowlist rather than to a literal, so the assertion stays true as
+    // the list drains instead of having to be hand-edited on every migration.
+    //
+    // It was a literal (`found.len() > 20`) until 2026-08-31, by which point
+    // ALLOWED itself had shrunk to exactly 20 — and because the two difference
+    // tests below force `found == allowed`, `20 > 20` made this test
+    // unsatisfiable on `main`. A ratchet that cannot pass is not a ratchet.
     assert!(
-        found.contains("src/openhuman/memory/mod.rs"),
-        "scanner found no direct engine reference in memory/mod.rs, which is the re-export block; \
-         the scanner is broken"
+        !allowed.is_empty() || found.is_empty(),
+        "the allowlist is empty but the scanner still found {} file(s): {}",
+        found.len(),
+        render(found.iter().cloned())
     );
     assert!(
-        found.len() > 20,
-        "scanner found only {} files; expected the full direct-reference surface",
-        found.len()
+        allowed.is_empty() || !found.is_empty(),
+        "scanner found nothing while the allowlist still names {} file(s); the scanner is broken",
+        allowed.len()
     );
 }
 
@@ -559,12 +575,23 @@ fn nothing_is_left_migratable() {
 }
 
 /// The blocked set is the upstream ask, so it must be non-empty for as long as
-/// the engine is still linked — and empty when it is not.
+/// any file still names the engine crate — and empty when none does.
 ///
-/// This is the test that makes "`tinymemory-core` left the build" self-proving:
-/// on the day the crate is dropped, [`scan`] returns nothing, `ALLOWED` empties,
-/// and this assertion is what forces the module docs above to be rewritten
-/// rather than left describing a world that no longer exists.
+/// **This test was written to be self-proving and was not.** Its premise was
+/// that "the crate is dropped" and "`ALLOWED` empties" are the same event, so
+/// that the day one happened the other would force the module docs above to be
+/// rewritten. #5560 falsified that on 2026-08-31: `tinymemory-core` left
+/// `[dependencies]` with **nine entries still listed**, and this assertion did
+/// not move, because [`scan`] reads source text and every surviving entry is
+/// test-only code that the `[dev-dependencies]` entry still compiles.
+///
+/// The rewrite happened anyway — by hand, not because a test demanded it. Do
+/// not restore the old wording, and do not add an assertion tying this list to
+/// the manifest: the two are genuinely independent now, and a lint that claimed
+/// otherwise would fail for a build that is correct.
+///
+/// What it still buys is the honest half: a list that empties while files
+/// remain, or files that remain while the list empties, is a broken scanner.
 #[test]
 fn the_blocked_set_matches_the_engine_still_being_linked() {
     let blocked = ALLOWED
@@ -577,8 +604,10 @@ fn the_blocked_set_matches_the_engine_still_being_linked() {
         .count();
     assert!(
         blocked > 0 || host_side > 0,
-        "nothing references tinymemory-core any more — drop the path dependency from Cargo.toml, \
-         remove its cargo-machete `ignored` entry, ratchet scripts/kernel-floor.limits, and rewrite \
-         this module's docs (#5560)"
+        "nothing references tinymemory-core any more — drop the remaining \
+         [dev-dependencies] entry from Cargo.toml and rewrite this module's docs. \
+         The [dependencies] entry, the cargo-machete `ignored` list and \
+         scripts/kernel-floor.limits were all settled in #5560, when the crate left \
+         the product build with this list still non-empty"
     );
 }

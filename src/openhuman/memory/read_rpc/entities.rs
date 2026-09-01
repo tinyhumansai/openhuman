@@ -2,9 +2,9 @@ use anyhow::Result;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::binding::MemoryBinding;
-use crate::openhuman::memory::tree::score::store as score_store;
 use crate::rpc::RpcOutcome;
 use tinymemory_api::error::MemoryError;
+use tinymemory_api::provider::chunks::ChunkScore;
 use tinymemory_api::provider::types::{EntityOccurrence, ForgetSelector};
 
 use super::types::{DeleteChunkResponse, EntityRef, ScoreBreakdown, ScoreSignal, MAX_LIST_LIMIT};
@@ -209,69 +209,112 @@ pub async fn top_entities_rpc(
 
 // ── chunk_score ─────────────────────────────────────────────────────────
 //
-// Still the engine's scorer, and deliberately so: `chunk_score` and
-// `DEFAULT_DROP_THRESHOLD` are engine-internal ranking that the contract
-// excludes by design, so there is no member to route this onto (#5560).
+// The admission verdict is the driver's and only the driver's: it is a row the
+// scorer wrote at ingest, under the policy in force *then*, and re-deriving it
+// today would answer under today's policy. `MemoryChunks::chunk_score` is that
+// door, and `DEFAULT_DROP_THRESHOLD` crosses on the contract beside it rather
+// than being copied here — a host-side `0.3` is the kind of copy that goes
+// wrong silently, leaving a stale line drawn under freshly-labelled rows.
+//
+// No `spawn_blocking` on either of the two handlers below: the driver owns
+// whether its own reads block, and the module's do not run on this thread at
+// all.
+
+/// One chunk's score row, or `None` when the scorer never wrote one.
+///
+/// Shared by [`chunk_score_rpc`], which renders it, and [`score_row_count`],
+/// which only counts it — the same split [`chunk_entity_rows`] makes for the
+/// entity index, and for the same reason: one read, two readings. `op` is the
+/// caller's name, so an error still reads as that handler's.
+///
+/// A driver with no chunk tier reports no row rather than failing: both callers
+/// are describing what the store recorded about one chunk, and it recorded
+/// nothing. A driver that *has* the tier but keeps no admission record answers
+/// `Unsupported`, which propagates — "this driver does not score" is not the
+/// same claim as "this chunk was not scored", and only the second is what
+/// `None` means here.
+async fn chunk_score_row(
+    binding: &MemoryBinding,
+    chunk_id: &str,
+    op: &str,
+) -> Result<Option<ChunkScore>, String> {
+    let Some(chunks) = binding.provider().as_chunks() else {
+        log::debug!(
+            "[memory_tree::read::chunk_score] {op}: driver '{}' does not serve Chunks; \
+             reporting no score",
+            binding.driver_id()
+        );
+        return Ok(None);
+    };
+    chunks
+        .chunk_score(chunk_id)
+        .await
+        .map_err(|e| format!("{op}: {e}"))
+}
+
+/// The seven signals the score panel renders, in the order it renders them.
+///
+/// The weights are **this handler's**, not the driver's: no contract member
+/// reports them, and they are what the panel has always shown beside each
+/// signal, so they stay written out here exactly as they were. `weight` on
+/// `llm_importance` is the one that varies, and it varies on the same predicate
+/// the response's `llm_consulted` carries.
+fn score_breakdown(row: ChunkScore) -> ScoreBreakdown {
+    let llm_consulted = row.signals.llm_importance > 0.0;
+    let signals = vec![
+        ScoreSignal {
+            name: "token_count".into(),
+            weight: 1.0,
+            value: row.signals.token_count,
+        },
+        ScoreSignal {
+            name: "unique_words".into(),
+            weight: 1.0,
+            value: row.signals.unique_words,
+        },
+        ScoreSignal {
+            name: "metadata_weight".into(),
+            weight: 1.5,
+            value: row.signals.metadata_weight,
+        },
+        ScoreSignal {
+            name: "source_weight".into(),
+            weight: 1.5,
+            value: row.signals.source_weight,
+        },
+        ScoreSignal {
+            name: "interaction".into(),
+            weight: 3.0,
+            value: row.signals.interaction,
+        },
+        ScoreSignal {
+            name: "entity_density".into(),
+            weight: 1.0,
+            value: row.signals.entity_density,
+        },
+        ScoreSignal {
+            name: "llm_importance".into(),
+            weight: if llm_consulted { 2.0 } else { 0.0 },
+            value: row.signals.llm_importance,
+        },
+    ];
+    ScoreBreakdown {
+        signals,
+        total: row.total,
+        threshold: tinymemory_bus::provider::chunks::DEFAULT_DROP_THRESHOLD,
+        kept: !row.dropped,
+        llm_consulted,
+    }
+}
 
 pub async fn chunk_score_rpc(
     config: &Config,
     chunk_id: String,
 ) -> Result<RpcOutcome<Option<ScoreBreakdown>>, String> {
-    let cfg = config.clone();
-    let id = chunk_id.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<Option<ScoreBreakdown>> {
-        let row = score_store::get_score(&cfg, &id)?;
-        Ok(row.map(|r| {
-            let llm_consulted = r.signals.llm_importance > 0.0;
-            let signals = vec![
-                ScoreSignal {
-                    name: "token_count".into(),
-                    weight: 1.0,
-                    value: r.signals.token_count,
-                },
-                ScoreSignal {
-                    name: "unique_words".into(),
-                    weight: 1.0,
-                    value: r.signals.unique_words,
-                },
-                ScoreSignal {
-                    name: "metadata_weight".into(),
-                    weight: 1.5,
-                    value: r.signals.metadata_weight,
-                },
-                ScoreSignal {
-                    name: "source_weight".into(),
-                    weight: 1.5,
-                    value: r.signals.source_weight,
-                },
-                ScoreSignal {
-                    name: "interaction".into(),
-                    weight: 3.0,
-                    value: r.signals.interaction,
-                },
-                ScoreSignal {
-                    name: "entity_density".into(),
-                    weight: 1.0,
-                    value: r.signals.entity_density,
-                },
-                ScoreSignal {
-                    name: "llm_importance".into(),
-                    weight: if llm_consulted { 2.0 } else { 0.0 },
-                    value: r.signals.llm_importance,
-                },
-            ];
-            ScoreBreakdown {
-                signals,
-                total: r.total,
-                threshold: crate::openhuman::memory::tree::score::DEFAULT_DROP_THRESHOLD,
-                kept: !r.dropped,
-                llm_consulted,
-            }
-        }))
-    })
-    .await
-    .map_err(|e| format!("chunk_score join error: {e}"))?
-    .map_err(|e| format!("chunk_score: {e:#}"))?;
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let result = chunk_score_row(&binding, &chunk_id, "chunk_score")
+        .await?
+        .map(score_breakdown);
     Ok(RpcOutcome::single_log(
         result,
         format!("memory_tree::read: chunk_score id={chunk_id}"),
@@ -280,24 +323,14 @@ pub async fn chunk_score_rpc(
 
 // ── delete_chunk ────────────────────────────────────────────────────────
 
-/// Whether `mem_tree_score` holds a row for this chunk, as a rowcount.
+/// Whether the driver holds a score row for this chunk, as a rowcount.
 ///
-/// The table is keyed by chunk id, so "is there a row" *is* the number the
-/// `DELETE` this replaced returned. It is read through the same
-/// `tree::score::store` door [`chunk_score_rpc`] above already uses — the
-/// scorer is engine-internal ranking the contract excludes by design, so there
-/// is no member to reach for and no second door being opened here.
-///
-/// `spawn_blocking` stays because this one genuinely still blocks: it is a
-/// synchronous SQLite read on the calling thread, unlike the driver calls
-/// around it.
-async fn score_row_count(config: &Config, chunk_id: &str) -> Result<u32, String> {
-    let cfg = config.clone();
-    let id = chunk_id.to_string();
-    let row = tokio::task::spawn_blocking(move || score_store::get_score(&cfg, &id))
-        .await
-        .map_err(|e| format!("delete_chunk join error: {e}"))?
-        .map_err(|e| format!("delete_chunk: {e:#}"))?;
+/// The admission record is keyed by chunk id, so "is there a row" *is* the
+/// number the `DELETE` this replaced returned. Read through the same
+/// [`chunk_score_row`] door [`chunk_score_rpc`] uses, so the panel and the
+/// delete cannot disagree about whether one chunk was ever scored.
+async fn score_row_count(binding: &MemoryBinding, chunk_id: &str) -> Result<u32, String> {
+    let row = chunk_score_row(binding, chunk_id, "delete_chunk").await?;
     Ok(u32::from(row.is_some()))
 }
 
@@ -340,7 +373,7 @@ pub async fn delete_chunk_rpc(
         .iter()
         .map(|occurrence| occurrence.mentions)
         .fold(0u32, u32::saturating_add);
-    let score_rows_removed = score_row_count(config, &chunk_id).await?;
+    let score_rows_removed = score_row_count(&binding, &chunk_id).await?;
 
     let selector = ForgetSelector::Chunk {
         chunk_id: chunk_id.clone(),

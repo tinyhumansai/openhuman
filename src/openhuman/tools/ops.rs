@@ -1435,16 +1435,16 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
 /// wrong default is worse than no rule. Hence enumeration plus two narrow
 /// prefix rules, backed by the drift guard.
 ///
-/// ## Honesty clause — three assignments run ahead of the plumbing
-///
-/// `goals_*` is filesystem-backed today (`tinycortex::memory::goals::store`), not
-/// `MemoryGoals`; `tool_stats` reads the legacy `Arc<dyn Memory>` plus
-/// `agent::learning::tool_tracker`, not `MemoryToolMemory`; `memory_diff` reads
-/// `memory::diff::ops`, not `MemoryDiff`. Filtering them on the driver's
-/// advertised set is nevertheless the correct M5 behaviour: §3.3 is a contract
-/// about what the *model is told exists*, and the later re-point onto
-/// `MemoryGuard` must not change the advertised surface. Assigning them `None`
-/// to dodge the mismatch would bake the wrong contract in.
+/// ## Honesty clause — two assignments still run ahead of the plumbing:
+/// `tool_stats` reads the legacy `Arc<dyn Memory>` + `tool_tracker`, not
+/// `MemoryToolMemory`; `memory_diff` reads `memory::diff::ops`, not
+/// `MemoryDiff`. Filtering both on the driver's advertised set is still the
+/// correct M5 behaviour: §3.3 contracts what the *model is told exists*, so
+/// the later re-point onto `MemoryGuard` must not change the advertised
+/// surface, and `None` to dodge the mismatch would bake the wrong contract in.
+/// `goals_*` was the third until #5560 routed it onto the guarded
+/// `MemoryGoals` family — the advertised capability did not change when
+/// the plumbing caught up: the exact property this clause protects.
 fn tool_capability(name: &str) -> Option<tinymemory_api::capabilities::Capability> {
     use tinymemory_api::capabilities::Capability;
 

@@ -348,12 +348,21 @@ fn local_override(config: &Config, id: &str) -> Option<PathBuf> {
         .iter()
         .find_map(|entry| (entry.id == id).then(|| PathBuf::from(entry.path.clone())));
 
-    configured.or_else(|| {
-        (id == super::memory::MODULE_ID)
-            .then(|| std::env::var_os("TINYMEMORY_TEST_MODULE"))
-            .flatten()
-            .map(PathBuf::from)
-    })
+    configured
+        .or_else(|| {
+            (id == super::memory::MODULE_ID)
+                .then(|| std::env::var_os("TINYMEMORY_TEST_MODULE"))
+                .flatten()
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            // TinyConnectors exposes its contract to the host, but has no
+            // host-side module namespace: it is resolved by its registry ID.
+            (id == "tinyconnectors")
+                .then(|| std::env::var_os("TINYCONNECTORS_TEST_MODULE"))
+                .flatten()
+                .map(PathBuf::from)
+        })
 }
 
 /// The artifact an earlier run extracted, if it is still there.

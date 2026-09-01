@@ -1,13 +1,19 @@
 //! Agent tool: diagnose the memory pipeline (#002 FR-009).
 //!
-//! Thin wrapper over [`health::run_doctor`] so the agent can self-diagnose an
-//! empty / stalled wiki and tell the user the single first blocking cause +
-//! how to fix it — the same report the `memory_tree_doctor` RPC and CLI
-//! return. Read-only: takes no arguments and mutates nothing, so it carries no
-//! security-gate (matching the read-only memory tools).
+//! Thin wrapper over
+//! [`health::report::run_doctor`](crate::openhuman::memory::tree::health::report::run_doctor)
+//! so the agent can self-diagnose an empty / stalled wiki and tell the user the
+//! single first blocking cause + how to fix it — the same report the
+//! `memory_tree_doctor` RPC and CLI return. Read-only: takes no arguments and
+//! mutates nothing, so it carries no security-gate (matching the read-only
+//! memory tools).
+//!
+//! The pass itself is the bound driver's since #5560
+//! (`MemoryMaintenance::diagnose`): the counters and the degradation flags only
+//! exist in the process that ran the pipeline, and that is the module.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::health::async_run_doctor;
+use crate::openhuman::memory::tree::health::report::run_doctor;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -42,7 +48,7 @@ impl Tool for MemoryDoctorTool {
     }
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let report = async_run_doctor(self.config.as_ref()).await;
+        let report = run_doctor(self.config.as_ref()).await;
         // Serialize the structured report so the model gets the typed stages +
         // first_blocking_cause + counters verbatim (it can summarize for the
         // user from there). serde of a plain struct can't fail here.

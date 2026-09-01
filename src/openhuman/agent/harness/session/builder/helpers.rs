@@ -1,4 +1,21 @@
 //! Utility helpers used during agent construction.
+//!
+//! # A note on the store this reaches (#5560)
+//!
+//! [`tool_memory_store`] is host-side now — see
+//! [`memory::tool_memory::store`](crate::openhuman::memory::tool_memory::store)
+//! — where it used to be `tinycortex`'s. No call site changed, because the
+//! convention it applies (the `tool-<name>` namespace, the `rule/<id>` key, the
+//! record's serde) comes from the contract that both ends read.
+//!
+//! **Do not "modernise" this onto `active_memory_guard().as_tool_memory()`.**
+//! `memory` here is the session's own subtree — `DriverMemory::for_subtree`,
+//! resolved in `factory` from the profile's `memory_subdir` — so a profile with
+//! `dedicatedMemory` prefetches its own rules. The ambient guard is the
+//! *shared* tree, and routing this through it would quietly merge every
+//! profile's tool rules into one prompt. The correct family call is the one
+//! reached through this session's own `binding::for_subtree(..)`, which needs
+//! the subtree passed in rather than the memory object.
 
 use crate::openhuman::memory::tool_memory::{tool_memory_store, ToolMemoryRule};
 use crate::openhuman::memory::Memory;

@@ -338,7 +338,7 @@ async fn save_workflow_surfaces_auto_disarm_warning_on_manual_to_automatic_trans
 }
 
 #[tokio::test]
-async fn save_workflow_rejects_unschemad_agent_binding() {
+async fn save_workflow_rejects_agent_binding_missing_declared_field() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let flow_id = seed_flow(&config, "Blank flow").await;

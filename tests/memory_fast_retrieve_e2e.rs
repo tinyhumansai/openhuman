@@ -24,9 +24,11 @@ use chrono::{TimeZone, Utc};
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
+// Named on the engine crate directly: the host `memory::tree::retrieval`
+// dropped its engine glob in #5560 (no production caller remained).
 use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
 use tinymemory_core::ingest_pipeline::ingest_chat;
+use tinymemory_core::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
 
 static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
 

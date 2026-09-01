@@ -337,3 +337,59 @@ async fn embed_takes_its_four_arguments_in_the_order_the_module_sends_them() {
         "a malformed call must be refused at decode, not inside the host: {error}"
     );
 }
+
+// ── The summarization role resolves through the consent ladder ───────────────
+
+/// A model the role factory can hand back through the test override, so the
+/// tests below prove the ladder refuses *despite* a resolvable factory.
+struct StubModel;
+
+#[async_trait::async_trait]
+impl tinyinference::model::ChatModel<()> for StubModel {
+    async fn invoke(
+        &self,
+        _state: &(),
+        _request: tinyinference::model::ModelRequest,
+    ) -> tinyinference::Result<tinyinference::model::ModelResponse> {
+        Ok(tinyinference::model::ModelResponse::assistant("stub"))
+    }
+}
+
+/// With local AI off and no cloud opt-in, a module-side `"summarization"`
+/// chat call must be refused by the ladder — even while the role factory
+/// demonstrably CAN hand back a model (the override is installed). This is
+/// the consent hole the ladder plugs: before it, the blind role factory
+/// resolved `"summarization"` to the configured cloud provider regardless of
+/// `memory_tree.cloud_summarization_opt_in`.
+#[test]
+fn summarization_role_is_refused_without_local_ai_or_cloud_opt_in() {
+    let _guard =
+        crate::openhuman::inference::provider::factory::test_provider_override::install_model(
+            std::sync::Arc::new(StubModel),
+        );
+    let mut config = Config::default();
+    config.local_ai.runtime_enabled = false;
+    config.memory_tree.cloud_summarization_opt_in = false;
+
+    let error = match super::resolve_chat_model("summarization", &config) {
+        Err(error) => error,
+        Ok(_) => panic!("no local AI and no cloud opt-in must refuse the fold"),
+    };
+    assert!(
+        error.to_string().contains("cloud_summarization_opt_in"),
+        "the refusal must name the setting that unlocks it: {error}"
+    );
+}
+
+/// Any other role keeps the role factory unchanged — the ladder is scoped to
+/// the summarization role, not to the seam.
+#[test]
+fn non_summarization_roles_keep_the_role_factory() {
+    let _guard =
+        crate::openhuman::inference::provider::factory::test_provider_override::install_model(
+            std::sync::Arc::new(StubModel),
+        );
+    let config = Config::default();
+    super::resolve_chat_model("chat", &config)
+        .expect("a non-summarization role resolves through the factory (test override)");
+}

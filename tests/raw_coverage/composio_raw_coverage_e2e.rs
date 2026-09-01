@@ -52,7 +52,7 @@ use openhuman_core::openhuman::integrations::composio::{
     all_composio_agent_tools, all_composio_controller_schemas, all_composio_registered_controllers,
     cached_active_integrations, connected_set_hash, connection_identity,
     fetch_connected_integrations, fetch_connected_integrations_status,
-    init_composio_trigger_history, invalidate_connected_integrations_cache, ComposioActionTool,
+    invalidate_connected_integrations_cache, ComposioActionTool,
     ComposioClient, FetchConnectedIntegrationsStatus,
 };
 use openhuman_core::openhuman::config::Config;
@@ -363,7 +363,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
 }
 
 #[tokio::test]
-async fn composio_ops_mode_and_trigger_history_are_local_and_deterministic() {
+async fn composio_ops_mode_is_local_and_trigger_history_reflects_module_archive_availability() {
     let dir = tempdir().expect("tempdir");
     let mut config = Config {
         workspace_dir: dir.path().to_path_buf(),
@@ -380,35 +380,32 @@ async fn composio_ops_mode_and_trigger_history_are_local_and_deterministic() {
     assert_eq!(mode.pointer("/result/mode"), Some(&json!("direct")));
     assert!(mode.pointer("/result/api_key_set").is_some());
 
-    init_composio_trigger_history(dir.path().to_path_buf())
-        .expect("global trigger history initializes for temp workspace");
-    let store = openhuman_core::openhuman::integrations::composio::global_composio_trigger_history()
-        .expect("global history store");
-    store
-        .record_trigger(
-            "gmail",
-            "GMAIL_NEW_GMAIL_MESSAGE",
-            "metadata-local",
-            "uuid-local",
-            &json!({ "subject": "ops coverage" }),
-        )
-        .expect("record global trigger");
-
-    let history =
-        openhuman_core::openhuman::integrations::composio::ops::composio_list_trigger_history(&config, Some(0))
-            .await
-            .expect("history listing is local")
-            .into_cli_compatible_json()
-            .expect("history outcome serializes");
-    assert_eq!(
-        history.pointer("/result/entries/0/metadata_id"),
-        Some(&json!("metadata-local"))
-    );
-    assert!(history
-        .pointer("/result/archive_dir")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .contains("state/triggers"));
+    match openhuman_core::openhuman::integrations::composio::ops::composio_list_trigger_history(
+        &config,
+        Some(0),
+    )
+    .await
+    {
+        // The module is process-global. If an earlier Composio operation
+        // loaded it with a state directory, history remains available through
+        // that module-owned archive even when this call's route is absent.
+        Ok(history) => {
+            let history = history
+                .into_cli_compatible_json()
+                .expect("history outcome serializes");
+            assert!(history
+                .pointer("/result/archive_dir")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("triggers"));
+        }
+        // A deliberately route-less module has no load-time archive. It must
+        // say that explicitly rather than report an empty history.
+        Err(error) => {
+            assert!(error.contains("trigger history is unavailable"), "{error}");
+            assert!(error.contains("state_dir"), "{error}");
+        }
+    }
 }
 
 #[test]
@@ -451,9 +448,12 @@ fn composio_action_tool_metadata_is_stable_without_network_execution() {
 }
 
 #[tokio::test]
-async fn composio_action_tool_execute_reports_factory_failures_without_network() {
+async fn composio_action_tool_execute_reports_missing_route_without_network() {
+    let tmp = tempfile::tempdir().expect("temp config directory");
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
     let tool = ComposioActionTool::new(
-        Arc::new(Config::default()),
+        Arc::new(config),
         "GMAIL_SEND_EMAIL".into(),
         "Send an email".into(),
         None,
@@ -465,7 +465,8 @@ async fn composio_action_tool_execute_reports_factory_failures_without_network()
         .expect("local validation returns a tool result");
     assert!(result.is_error);
     let rendered = serde_json::to_string(&result).unwrap();
-    assert!(rendered.contains("no backend session token"));
+    assert!(rendered.contains("without a connector route"), "{rendered}");
+    assert!(rendered.contains("proxy"), "{rendered}");
 }
 
 #[tokio::test]
@@ -1163,7 +1164,10 @@ async fn composio_agent_tools_cover_metadata_missing_params_and_scope_helpers() 
             "composio_execute",
         ]
     );
-    let no_tools = all_composio_agent_tools(&Config::default());
+    let anonymous_config_dir = tempfile::tempdir().expect("anonymous config directory");
+    let mut anonymous_config = Config::default();
+    anonymous_config.config_path = anonymous_config_dir.path().join("config.toml");
+    let no_tools = all_composio_agent_tools(&anonymous_config);
     assert!(no_tools.is_empty());
 
     assert_eq!(

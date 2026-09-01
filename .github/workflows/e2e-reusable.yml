@@ -168,8 +168,8 @@ jobs:
           # and leave a stale digest that only fails after the download. Both values
           # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
           # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.13.3"
-          memory_sha256="cc902b653b33386519cc8f49b33b6467d4ef8171e1bedadf71307eca03ad8aa4"
+          memory_version="1.13.6"
+          memory_sha256="d96be20eb93b0d5ed512c643dce6fdb2f53908a8d311c3cfe8d50ff6e7c7dd33"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
@@ -374,8 +374,8 @@ jobs:
           # and leave a stale digest that only fails after the download. Both values
           # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
           # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.13.3"
-          memory_sha256="cc902b653b33386519cc8f49b33b6467d4ef8171e1bedadf71307eca03ad8aa4"
+          memory_version="1.13.6"
+          memory_sha256="d96be20eb93b0d5ed512c643dce6fdb2f53908a8d311c3cfe8d50ff6e7c7dd33"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"

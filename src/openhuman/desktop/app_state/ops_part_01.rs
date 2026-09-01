@@ -654,7 +654,7 @@ async fn activate_revalidated_user_dir(user_id: &str) -> Result<Config, String> 
     );
     if previous_active.is_none() {
         let pre_ws = crate::openhuman::config::pre_login_user_dir(&root_dir).join("workspace");
-        if let Err(error) = tinycortex::memory::conversations::purge_threads(pre_ws) {
+        if let Err(error) = crate::openhuman::memory::conversations::purge_threads(pre_ws) {
             debug!(
                 "{LOG_PREFIX} pre-login conversation purge skipped after pending session revalidation: {error}"
             );

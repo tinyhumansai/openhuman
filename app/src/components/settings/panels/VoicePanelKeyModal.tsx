@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import type { VoiceInstallStatus } from '../../../services/api/voiceInstallApi';
 import { testVoiceProvider } from '../../../services/api/voiceSettingsApi';
@@ -106,6 +106,14 @@ const VoicePanelKeyModal = ({
 }: VoicePanelKeyModalProps) => {
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [keyTestResult, setKeyTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  // Monotonic id for the in-flight key test. The API-key field stays editable
+  // during a test (it is only disabled while *saving*), so without this a
+  // result for key A can land next to key B and read as a validation of B —
+  // the same "the UI is telling you something untrue about this key" failure
+  // this modal is being fixed for. Bumped on every edit and every new test;
+  // a response whose id is stale is dropped. Same guard as the LLM routing
+  // dialog's `testRequestIdRef`.
+  const testRequestIdRef = useRef(0);
   const isPiper = pendingKeySlug === 'piper';
 
   const close = () => {
@@ -174,24 +182,40 @@ const VoicePanelKeyModal = ({
                 disabled={!pendingKeyValue.trim() || isTestingKey || isSavingPendingKey}
                 onClick={async () => {
                   if (!pendingKeySlug || !pendingKeyValue.trim()) return;
+                  const requestId = testRequestIdRef.current + 1;
+                  testRequestIdRef.current = requestId;
                   setIsTestingKey(true);
                   setKeyTestResult(null);
                   try {
-                    await handleEnableExternalProvider(pendingKeySlug, pendingKeyValue);
+                    // Test is a DRY RUN. It must not call
+                    // `handleEnableExternalProvider`: that writes the key to
+                    // the keychain and activates the provider before it is
+                    // known to work, and it clears `pendingKeySlug`, which
+                    // unmounts this modal — so the result below would be set
+                    // on a dead component and the user would never see it
+                    // (#5896). The candidate key goes to the core for
+                    // validation only; "Save & Enable" remains the one way to
+                    // commit it.
                     const meta = BUILTIN_VOICE_PROVIDER_META[pendingKeySlug];
                     const workload = meta?.capability === 'tts' ? 'tts' : 'stt';
                     const result = await testVoiceProvider(
                       workload as 'stt' | 'tts',
                       pendingKeySlug,
-                      true
+                      true,
+                      pendingKeyValue
                     );
+                    if (testRequestIdRef.current !== requestId) return;
                     setKeyTestResult(result);
                   } catch (err) {
+                    if (testRequestIdRef.current !== requestId) return;
                     setKeyTestResult({
                       ok: false,
                       detail: err instanceof Error ? err.message : 'Test failed',
                     });
                   } finally {
+                    // Unconditional: the Test button is disabled while
+                    // `isTestingKey`, so there is only ever one test in
+                    // flight and this cannot strand the button on "Testing…".
                     setIsTestingKey(false);
                   }
                 }}>
@@ -263,6 +287,9 @@ const VoicePanelKeyModal = ({
                 onChange={e => {
                   setPendingKeyValue(e.target.value);
                   setKeyTestResult(null);
+                  // Any edit invalidates a test still in flight for the old
+                  // key, so its result cannot arrive and describe this one.
+                  testRequestIdRef.current += 1;
                 }}
                 disabled={isSavingPendingKey}
                 placeholder={t('voice.providers.chip.apiKeyPlaceholder')}

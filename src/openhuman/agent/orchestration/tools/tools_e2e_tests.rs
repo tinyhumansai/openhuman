@@ -5,6 +5,7 @@ use crate::openhuman::agent::context::prompt::{ConnectedIntegration, ToolCallFor
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::agent::messages::ChatMessage;
+use crate::openhuman::memory::conversations;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use crate::openhuman::tools::Tool;
 use async_trait::async_trait;
@@ -12,7 +13,6 @@ use parking_lot::Mutex;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
-use tinycortex::memory::conversations;
 use tinyinference::message::Message;
 use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 

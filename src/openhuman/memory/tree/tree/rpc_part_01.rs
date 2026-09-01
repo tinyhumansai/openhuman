@@ -1,89 +1,15 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::api::provider::ChunkQuery;
 use crate::rpc::RpcOutcome;
-use tinycortex::memory::ingest::canonicalize::{
-    chat::ChatBatch, document::DocumentInput, email::EmailThread,
-};
 use tinymemory_api::chunks::{Chunk, DataSource, SourceKind, SourceRef};
 use tinymemory_api::provider::types::{IngestItem, IngestOutcome};
 use tinymemory_api::types::MemoryTaint;
-
-/// Unified ingest request. The `payload` shape is adapter-specific and is
-/// validated inside the dispatch based on `source_kind`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IngestRequest {
-    /// Which kind of source the payload represents.
-    pub source_kind: SourceKind,
-    /// Logical source id (channel/group for chat, thread for email, doc id).
-    pub source_id: String,
-    /// Account/user this content belongs to.
-    #[serde(default)]
-    pub owner: String,
-    /// Optional labels/tags carried through.
-    #[serde(default)]
-    pub tags: Vec<String>,
-    /// Adapter-specific payload — shape matches the canonicaliser for
-    /// `source_kind`:
-    /// - `chat`     → [`ChatBatch`]
-    /// - `email`    → [`EmailThread`]
-    /// - `document` → [`DocumentInput`]
-    pub payload: Value,
-}
-
-/// Response body of the `memory_tree_ingest` RPC.
-///
-/// Declared here rather than returned as the engine's own summary type,
-/// because this is a wire shape the frontend reads: a body owned by a foreign
-/// crate is one an upstream field rename can reshape without anything in this
-/// repository failing to compile. Every key and JSON type is what that summary
-/// serialised and must stay that way —
-/// `the_response_body_serialises_exactly_as_the_engine_summary` is the pin, and
-/// it is what the chat and document arms' move onto the driver contract had to
-/// keep true. Those two build this body from an `IngestOutcome` now, mail still
-/// from the pipeline's summary, and both spell the same six keys.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IngestResponse {
-    /// Logical source id the ingest was scoped to — the one the caller
-    /// supplied, echoed back so a batched caller can pair a reply with its
-    /// request.
-    pub source_id: String,
-    /// Units persisted by this call.
-    pub chunks_written: usize,
-    /// Units produced and not admitted. Dropped units only: a call refused
-    /// outright is [`Self::already_ingested`], not a drop of everything.
-    pub chunks_dropped: usize,
-    /// Ids of the units this call produced. A caller fetches a chunk back by
-    /// these, so a write that names none is unusable even when the count is
-    /// right.
-    pub chunk_ids: Vec<String>,
-    /// Follow-up extraction jobs this call scheduled. Read next to
-    /// [`Self::chunks_written`] it answers whether the material just handed
-    /// over will be picked up at all — rows can land with nothing scheduled to
-    /// derive from them, and the write count alone reports that as success.
-    pub extract_jobs_enqueued: usize,
-    /// True when the call was a no-op because `(source_kind, source_id)` had
-    /// been ingested before.
-    ///
-    /// Distinct from a zero-write result, and the distinction is the point:
-    /// only a refusal is a reason to go and clear the source gate. The gate is
-    /// keyed on the logical source rather than on the content, so re-sending
-    /// *changed* material under a claimed `source_id` also writes nothing.
-    pub already_ingested: bool,
-}
-
-/// Build the validation error returned when an ingest payload does not match
-/// the canonicaliser schema for its `source_kind`.
-///
-/// Kept as the single construction site so the wording cannot drift away from
-/// [`is_invalid_ingest_payload_message`], which the transport layer uses to
-/// pick the Sentry severity. Same emit-site/classifier pairing as
-/// `dispatch::UNKNOWN_METHOD_PREFIX` / `dispatch::unknown_method_name`.
-fn invalid_payload_message(source_kind: SourceKind, err: &serde_json::Error) -> String {
-    format!("invalid {} payload: {err}", source_kind.as_str())
-}
+// The canonical payload shapes (and `invalid_payload_message`) live in
+// `canonicalize_types.rs`, split for the file-layout gate; re-exported here so
+// every existing path keeps resolving.
+pub use super::canonicalize_types::*;
 
 /// Returns `true` when `message` is an ingest-payload schema-validation
 /// failure produced by `invalid_payload_message`.

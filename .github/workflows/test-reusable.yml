@@ -159,22 +159,28 @@ jobs:
           workspaces: . -> target
           cache-on-failure: true
           key: core
-      - name: Install checksum-pinned TinyMemory test module
+      - name: Build native test modules
         run: |
-          # Memory unit tests exercise the host/module seam. Supplying the
-          # exact native fixture keeps them independent of GitHub's release
+          # Memory and connector tests exercise host/module seams. Supplying
+          # local native fixtures keeps them independent of GitHub's release
           # metadata API and mirrors the Rust E2E and desktop-E2E jobs.
           # tinybus validates every directory ancestor, so a container-root
           # owned directory outside the runner-owned checkout is required.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
+          connectors_dir="$module_root/tinyconnectors"
           rm -rf "$module_root"
-          mkdir -p "$memory_dir"
-          cargo build --release \
+          mkdir -p "$memory_dir" "$connectors_dir"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
             --manifest-path vendor/tinymemory/crates/tinymemory-module/Cargo.toml
           cp vendor/tinymemory/crates/tinymemory-module/target/release/libtinymemory_module.so \
             "$memory_dir/libtinymemory_module.so"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
+            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
+          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
+            "$connectors_dir/libtinyconnectors.so"
           echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" >> "$GITHUB_ENV"
+          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
       - name: Test core crate (openhuman)
         # This script uses Bash-only process substitution below. Reusable
         # workflows do not inherit the caller's `defaults.run.shell`, and

@@ -4,6 +4,7 @@ import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import ForwardSearch from './components/routing/ForwardSearch';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
@@ -143,9 +144,9 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
 
       {/* Connections page lives at /connections (Phase 2 rename from /skills).
           The old /skills path is kept as a back-compat redirect so bookmarks
-          and deep links continue to work.  `?tab=` query params are preserved
-          by Navigate (replace) so existing deep links still land on the right
-          sub-tab. */}
+          and deep links continue to work.  ForwardSearch copies the current
+          ?tab= (and any other query params) to the destination so existing
+          deep links still land on the right sub-tab. */}
       {/* `/workflows/run` is the single-purpose Skill runner page — the live
           destination of the Run button in the Automations tab (WorkflowsTab). */}
       <Route
@@ -167,7 +168,7 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
       />
 
       {/* Back-compat: /skills → /connections (preserves ?tab= deep links). */}
-      <Route path="/skills" element={<Navigate to="/connections" replace />} />
+      <Route path="/skills" element={<ForwardSearch to="/connections" />} />
 
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
@@ -235,7 +236,7 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
       />
 
       {/* Webhooks retired from the UI — land on the Integrations settings. */}
-      <Route path="/webhooks" element={<Navigate to="/settings/integrations" replace />} />
+      <Route path="/webhooks" element={<ForwardSearch to="/settings/integrations" />} />
 
       {/* Settings is a routed page like every other surface: the shared route
           table renders inside `SettingsLayout`, which projects the settings nav

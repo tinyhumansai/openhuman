@@ -22,6 +22,11 @@ mod helpers;
 mod hook_impl;
 mod lifecycle;
 mod recap;
+// The md-backed per-turn capture store the hook dual-writes into. It lives
+// here rather than behind the memory engine because nothing but this hook ever
+// called it — see the module's own docs for the round trip and for why the
+// contract's episodic family is not where it belongs (#5560).
+mod store;
 #[cfg(test)]
 mod test_constructors;
 mod tree_ingest;

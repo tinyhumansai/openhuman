@@ -182,7 +182,7 @@ export default function RootShellLayout({ sidebar, children, unframed }: RootShe
     function detach() {
       window.removeEventListener('pointerup', stop);
       window.removeEventListener('pointercancel', stop);
-      window.removeEventListener('blur-sm', stop);
+      window.removeEventListener('blur', stop);
       document.body.style.removeProperty('cursor');
       document.body.style.removeProperty('user-select');
       draggingRef.current = false;

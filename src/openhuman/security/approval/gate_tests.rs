@@ -2,6 +2,12 @@ use super::*;
 use tempfile::TempDir;
 
 fn test_gate() -> (ApprovalGate, TempDir) {
+    test_gate_with_ttl(Duration::from_secs(2))
+}
+
+/// Build an approval gate with an explicit park deadline for tests that must
+/// coordinate a decision with a concurrently loaded full-suite executor.
+fn test_gate_with_ttl(ttl: Duration) -> (ApprovalGate, TempDir) {
     let dir = TempDir::new().unwrap();
     let config = Config {
         workspace_dir: dir.path().to_path_buf(),
@@ -16,9 +22,9 @@ fn test_gate() -> (ApprovalGate, TempDir) {
     // runners — the row would expire (and get denied by
     // list_pending's lazy-expire) before `decide` could fire,
     // surfacing as "pending row never appeared". 2s gives the
-    // polling tests enough headroom while keeping
+    // most polling tests enough headroom while keeping
     // `timeout_returns_deny` fast (PR #2367 CI flake).
-    let gate = ApprovalGate::new(config, session, Duration::from_secs(2));
+    let gate = ApprovalGate::new(config, session, ttl);
     (gate, dir)
 }
 

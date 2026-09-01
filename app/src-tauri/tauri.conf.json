@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.63.18",
+  "version": "0.63.19",
   "identifier": "com.openhuman.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
@@ -20,7 +20,10 @@
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 20, "y": 28 },
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 28
+        },
         "resizable": true,
         "center": false
       }
@@ -47,7 +50,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../../src/openhuman/agent/prompts"],
+    "resources": [
+      "../../src/openhuman/agent/prompts"
+    ],
     "linux": {
       "deb": {
         "depends": [

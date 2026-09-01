@@ -463,6 +463,106 @@ impl MemoryTree for RecordingProvider {
         self.record(Call::plain("tree.cascade"));
         Ok(tree_status(namespace))
     }
+
+    /// Records the folded bodies as one blob, so a redaction test can assert on
+    /// what the driver's summariser would have been handed.
+    async fn summarise(
+        &self,
+        inputs: &[crate::openhuman::memory::api::provider::content::SummaryInput],
+        _context: &crate::openhuman::memory::api::provider::content::SummaryContext,
+    ) -> Result<crate::openhuman::memory::api::provider::content::SummaryOutput, MemoryError> {
+        self.record(Call {
+            method: "tree.summarise".into(),
+            content: Some(
+                inputs
+                    .iter()
+                    .map(|input| input.content.clone())
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+            taint: None,
+            scoped: None,
+        });
+        Ok(Default::default())
+    }
+
+    async fn root_summaries_with_caps(
+        &self,
+        _per_namespace_cap: usize,
+        _total_cap: usize,
+    ) -> Result<Vec<crate::openhuman::memory::api::provider::content::RootSummary>, MemoryError>
+    {
+        self.record(Call::plain("tree.root_summaries_with_caps"));
+        Ok(Vec::new())
+    }
+
+    // ── The runtime-tree and flavour doors ──────────────────────────────────
+    //
+    // Overridden for the same reason `summarise` and `root_summaries_with_caps`
+    // are: each is defaulted on the trait, so a `GuardedTree` that forgot to
+    // forward one still compiles and answers `Unsupported`. A driver that
+    // *succeeds* here is what makes `the_defaulted_doors_are_forwarded_rather_than_refused`
+    // able to tell the two apart.
+
+    /// Records the buffered body, so a redaction test can assert what the
+    /// driver's buffer would have been handed — [`Self::append`]'s twin.
+    async fn runtime_buffer_write(
+        &self,
+        _namespace: &str,
+        content: &str,
+        _timestamp: chrono::DateTime<chrono::Utc>,
+        _metadata: Option<serde_json::Value>,
+    ) -> Result<String, MemoryError> {
+        self.record(Call {
+            method: "tree.runtime_buffer_write".into(),
+            content: Some(content.to_string()),
+            taint: None,
+            scoped: None,
+        });
+        Ok("/buffer/2026/01/01/00.md".to_string())
+    }
+
+    async fn runtime_read_node(
+        &self,
+        _namespace: &str,
+        _node_id: &str,
+    ) -> Result<Option<crate::openhuman::memory::api::tree::TreeNode>, MemoryError> {
+        self.record(Call::plain("tree.runtime_read_node"));
+        Ok(None)
+    }
+
+    async fn runtime_read_children(
+        &self,
+        _namespace: &str,
+        _parent_id: &str,
+    ) -> Result<Vec<crate::openhuman::memory::api::tree::TreeNode>, MemoryError> {
+        self.record(Call::plain("tree.runtime_read_children"));
+        Ok(Vec::new())
+    }
+
+    async fn runtime_tree_status(&self, namespace: &str) -> Result<TreeStatus, MemoryError> {
+        self.record(Call::plain("tree.runtime_tree_status"));
+        Ok(tree_status(namespace))
+    }
+
+    async fn runtime_summarize(
+        &self,
+        _namespace: &str,
+        _timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<crate::openhuman::memory::api::tree::TreeNode>, MemoryError> {
+        self.record(Call::plain("tree.runtime_summarize"));
+        Ok(None)
+    }
+
+    async fn runtime_rebuild(&self, namespace: &str) -> Result<TreeStatus, MemoryError> {
+        self.record(Call::plain("tree.runtime_rebuild"));
+        Ok(tree_status(namespace))
+    }
+
+    async fn flavour_profile(&self, _scope: &str) -> Result<Option<String>, MemoryError> {
+        self.record(Call::plain("tree.flavour_profile"));
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -614,52 +714,5 @@ impl MemoryToolMemory for RecordingProvider {
     ) -> Result<bool, MemoryError> {
         self.record(Call::plain("tool_memory.delete_tool_rule"));
         Ok(false)
-    }
-}
-
-#[async_trait]
-impl MemorySourceSink for RecordingProvider {
-    async fn accept_source_items(
-        &self,
-        _source_id: &str,
-        _source_kind: &str,
-        items: Vec<SourceItem>,
-        taint: MemoryTaint,
-    ) -> Result<IngestOutcome, MemoryError> {
-        self.record(Call {
-            method: "sources.accept_source_items".into(),
-            content: items.first().map(|i| i.content.clone()),
-            taint: Some(taint),
-            scoped: None,
-        });
-        Ok(IngestOutcome::default())
-    }
-
-    async fn forget_source(&self, _source_id: &str) -> Result<u64, MemoryError> {
-        self.record(Call::plain("sources.forget_source"));
-        Ok(0)
-    }
-}
-
-#[async_trait]
-impl MemoryMaintenance for RecordingProvider {
-    async fn reembed(&self) -> Result<MaintenanceReport, MemoryError> {
-        self.record(Call::plain("maintenance.reembed"));
-        Ok(MaintenanceReport::default())
-    }
-
-    async fn compact(&self) -> Result<MaintenanceReport, MemoryError> {
-        self.record(Call::plain("maintenance.compact"));
-        Ok(MaintenanceReport::default())
-    }
-
-    async fn consolidate(&self) -> Result<MaintenanceReport, MemoryError> {
-        self.record(Call::plain("maintenance.consolidate"));
-        Ok(MaintenanceReport::default())
-    }
-
-    async fn doctor(&self) -> Result<MaintenanceReport, MemoryError> {
-        self.record(Call::plain("maintenance.doctor"));
-        Ok(MaintenanceReport::default())
     }
 }

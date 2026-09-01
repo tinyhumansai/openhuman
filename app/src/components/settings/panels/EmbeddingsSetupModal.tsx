@@ -68,17 +68,41 @@ const EmbeddingsSetupModal = ({
       contentClassName="px-5 py-4 space-y-4"
       footer={
         <div className="flex justify-between pt-1">
-          <Button
-            variant="secondary"
-            size="xs"
-            onClick={() => {
-              if (!isCustom) onTest();
-            }}
-            disabled={setupTesting || setupSaving || (!isCustom && !setupKey.trim())}>
-            {setupTesting
-              ? t('settings.embeddings.testing')
-              : t('settings.embeddings.testConnection')}
-          </Button>
+          {/* Disabled for a custom endpoint, deliberately. `setupTest` calls
+              `openhuman.embeddings_test_connection` with only
+              `{ provider, model, dimensions }` — there is no parameter for an
+              endpoint URL — so a custom provider has nothing to test against.
+              Previously the button stayed enabled and its handler opened with
+              `if (!isCustom)`, so a click did nothing at all: no request, no
+              result, no error.
+
+              The reason is rendered as visible text beside the button, not as a
+              `title` on it. `Button` applies `disabled:pointer-events-none`
+              (ui/Button.tsx:40), so a disabled control cannot be hovered — and a
+              disabled button is out of the tab order, so a `title` is
+              unreachable by keyboard too. Text that is simply on screen needs
+              neither. */}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={onTest}
+              disabled={setupTesting || setupSaving || isCustom || !setupKey.trim()}>
+              {setupTesting
+                ? t('settings.embeddings.testing')
+                : t('settings.embeddings.testConnection')}
+            </Button>
+            {isCustom && (
+              <span
+                data-testid="embeddings-test-unavailable-reason"
+                className="max-w-[18rem] text-[11px] text-content-muted">
+                {t(
+                  'settings.embeddings.testUnavailableCustom',
+                  'Testing a custom endpoint is not supported yet — save it and check the status on the Embeddings panel.'
+                )}
+              </span>
+            )}
+          </div>
 
           <div className="flex gap-2">
             <Button variant="tertiary" size="xs" onClick={onClose}>

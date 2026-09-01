@@ -30,7 +30,10 @@ use openhuman_core::openhuman::memory::{
     RecallContextRequest, RecallMemoriesRequest, RecallNamespaceParams, WriteMemoryFileRequest,
 };
 use openhuman_core::openhuman::memory::sources::readers::SourceReader;
-use openhuman_core::openhuman::memory::sources::sync::sync_source;
+// The engine's own source pipeline. `memory::sources::sync` is host-side now and
+// carries only `derive_scopes`; `sync_source` stayed upstream because nothing in
+// `src/` calls it any more (#5560).
+use tinymemory_core::sources::sync::sync_source;
 use openhuman_core::openhuman::memory::sources::{ContentType, MemorySourceEntry, SourceKind};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::welcome_migration::migrate_welcome_agent_artifacts;

@@ -357,6 +357,8 @@ const messages: TranslationMap = {
   'brain.empty':
     'Il tuo cervello è ancora vuoto: collega una fonte per iniziare a costruire la memoria.',
   'brain.error': 'Impossibile caricare il tuo cervello. Riprova.',
+  'brain.refreshError':
+    'Impossibile aggiornare il tuo cervello. Vengono mostrati gli ultimi dati caricati.',
   'common.cancel': 'Annulla',
   'common.save': 'Salva',
   'common.confirm': 'Conferma',
@@ -3788,8 +3790,6 @@ const messages: TranslationMap = {
   'flows.suggest.trigger.manual': 'Su richiesta',
   'flows.copilot.open': 'Copilota',
   'flows.copilot.title': 'Copilota dei flussi',
-  'flows.copilot.subtitle': 'Richiedi modifiche ed esamina ogni proposta prima di applicarla.',
-  'flows.copilot.close': 'Chiudi copilota',
   'flows.copilot.placeholder': 'Richiedi una modifica…',
   'flows.copilot.send': 'Invia',
   'flows.copilot.thinking': 'Sto pensando…',
@@ -3827,6 +3827,7 @@ const messages: TranslationMap = {
     'Impossibile importare questo flusso di lavoro. Controlla il file e riprova.',
   'flows.import.warningTitle': 'Avviso di importazione',
   'flows.canvas.title': 'Flusso di lavoro',
+  'flows.canvas.description': 'Crea questa automazione passo dopo passo, poi salvala ed eseguila.',
   'flows.canvas.loading': 'Caricamento flusso di lavoro…',
   'flows.canvas.loadError': 'Impossibile caricare questo flusso di lavoro. Riprova.',
   'flows.canvas.notFound': 'Flusso di lavoro non trovato.',

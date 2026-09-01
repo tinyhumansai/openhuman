@@ -13,6 +13,22 @@
 # Simulate with: scripts/dep-sim.py --cut <crates>
 #
 # History
+#   287/269/2  2026-08-31  openhuman#5560: the memory engine crates leave the
+#                      product build (see the PR for the full inventory).
+#                      Measured on CI Linux; macOS resolves one extra
+#                      target-specific package/name (288/270).
+#   NOTE 2026-09-01: the 293/275 lockfile-refresh entry below described
+#                      main's refreshed Cargo.lock; the shed branch's merge
+#                      kept its own lock, so the resolved graph here is the
+#                      287/269 shed measurement, not 293/275.
+#   293/275/2  2026-08-31  Cargo.lock was refreshed to the latest compatible
+#                      dependency releases. The `flows` profile now resolves
+#                      seven additional package versions and five additional
+#                      crate names; native builds remain the same two
+#                      (`libsqlite3-sys`, `ring`). This is a lockfile-wide
+#                      compatibility refresh, not a new always-on OpenHuman
+#                      dependency. Measured with `scripts/kernel-floor.sh
+#                      flows` on the CI Linux profile.
 #   286/270/2  2026-08-30  moving flows::store.rs / flows::draft_store.rs and
 #                      the copilot's authoring prompts upstream split the
 #                      `tinyflows` crate's catalog/storage/copilot surface into
@@ -525,4 +541,4 @@
 #                      (libsqlite3-sys, ring) — see docs/plans MIGRATION-PLAN G6.
 # 307/284  2026-08-12  Re-baseline after the upstream lockfile resolution;
 #                      `flows` remains at two native packages.
-flows:286:270:2
+flows:287:269:2

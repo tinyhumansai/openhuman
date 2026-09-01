@@ -528,6 +528,34 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
         if !entry.enabled {
             return Err(format!("source '{}' is disabled", entry.id));
         }
+        // Composio rows never reach the memory driver's pipeline: v1.13.4
+        // removed the engine's in-process Composio sync, and the driver now
+        // answers this id with "synced through the connector module, not this
+        // pipeline". The connector-backed run IS the sync for this kind, so
+        // the one Sync button dispatches there — same entry point the
+        // `openhuman.composio_sync` RPC uses, which reads the connected
+        // account through the module and ingests through this same binding.
+        if entry.kind == tinymemory_sources::types::SourceKind::Composio {
+            let connection_id = entry.connection_id.as_deref().ok_or_else(|| {
+                format!(
+                    "composio source '{}' has no connection_id; remove and re-add the source",
+                    entry.id
+                )
+            })?;
+            crate::openhuman::integrations::composio::ops::composio_sync(
+                &config,
+                connection_id,
+                Some("manual".to_string()),
+            )
+            .await?;
+            return Ok(RpcOutcome::new(
+                SyncResponse {
+                    requested: true,
+                    source_id: req.source_id,
+                },
+                vec![],
+            ));
+        }
     }
     sync.run_source_sync(&req.source_id)
         .await

@@ -1009,7 +1009,7 @@ pub enum DomainEvent {
     /// A document (chat batch, email thread, or standalone document) was
     /// fully canonicalised and its chunks written to the memory tree.
     ///
-    /// Emitted by `memory::tree::ingest::persist()` after the chunk upsert
+    /// Emitted by `tinymemory_core::tree::ingest::persist()` after the chunk upsert
     /// and extract-job enqueue complete. Subscribers (Phase 2 producers such
     /// as the email-signature parser) react to this to inspect the
     /// canonicalised content.

@@ -24,36 +24,32 @@ pub async fn test_connection(
         slug
     };
 
-    // Probe a Custom endpoint dimension-agnostically (issue #4056): the user's
-    // `dims` is a guess, so enforcing it here would make a valid endpoint fail
-    // the Test-connection button whenever the guess differs from the native
-    // size. Catalog providers keep their fixed `dims`. We still report the
-    // requested vs actual dimensions in the payload below.
-    let probe_dims = if provider_tag == "custom" {
-        probe_dims_for(model, dims)
-    } else {
-        dims
-    };
-
-    let embedder = create_embedding_provider_with_config(
-        config,
-        provider_tag,
-        model,
-        probe_dims,
-        &api_key,
-        custom_endpoint.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
-
     tracing::debug!(
         provider = provider_tag,
         model,
         dims,
-        probe_dims,
         "{LOG_PREFIX} test_connection starting"
     );
 
-    match embedder.embed(&["connection test"]).await {
+    let result = if let Some(endpoint) = custom_endpoint.as_deref() {
+        probe_custom_embeddings(endpoint, &api_key, model).await
+    } else {
+        let embedder = create_embedding_provider_with_config(
+            config,
+            provider_tag,
+            model,
+            dims,
+            &api_key,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        embedder
+            .embed(&["connection test"])
+            .await
+            .map_err(|e| e.to_string())
+    };
+
+    match result {
         Ok(vectors) => {
             let actual_dims = vectors.first().map(|v| v.len()).unwrap_or(0);
             let payload = serde_json::json!({

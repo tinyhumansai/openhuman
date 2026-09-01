@@ -116,6 +116,7 @@ export function setActiveCoreTransport(transport: CoreTransport | null): void {
 type CoreRpcErrorKind =
   | 'auth_expired'
   | 'provider_auth' // downstream provider 401 — NOT user session expiry
+  | 'core_auth' // the LOCAL core rejected our RPC bearer — NOT user session expiry
   | 'transport'
   | 'timeout'
   | 'rate_limited'
@@ -157,7 +158,6 @@ export function classifyRpcError(
   data?: unknown
 ): CoreRpcErrorKind {
   if (isThreadNotFoundRpcData(data)) return 'thread_not_found';
-  if (httpStatus === 401) return 'auth_expired';
   if (httpStatus === 429) return 'rate_limited';
   // The running core has no such method — a transport-boundary version skew
   // (older core than the UI bundle, a domain-gated `DomainSet`, or a slim
@@ -188,6 +188,28 @@ export function classifyRpcError(
     /unauthorized/i.test(message)
   )
     return 'auth_expired';
+  // Everything above matched an explicit backend marker in the message. What
+  // is left, if the transport gave us a 401, is the LOCAL core's bearer gate
+  // (`src/core/auth.rs` — "Missing or invalid Authorization header"), never the
+  // TinyHumans backend: the core proxies backend calls and surfaces their
+  // rejections as a JSON-RPC error inside a 200, with no `httpStatus` at all.
+  // Custom transports (cloud / LAN / tunnel) return before the branch that
+  // populates it.
+  //
+  // Ordered here, not before the marker arms, so a 401 whose body DOES carry an
+  // explicit expiry marker is still honoured — the status is the fallback, not
+  // the override.
+  //
+  // This used to return `auth_expired` from the top of the function, and
+  // `classifyAuthExpiredReason` paired it with `confirmed`, which skips
+  // corroboration in `CoreStateProvider` and calls `clearSession()` — wiping
+  // the auth profile from disk. So a stale RPC bearer (the core restarting and
+  // minting a new per-launch token while the renderer holds the old one, or a
+  // browser session against a stale `core.token`) signed the user out of their
+  // TinyHumans account when the TinyHumans server had said nothing at all.
+  // Recovery is to re-read the bearer or restart the core, never to destroy the
+  // session.
+  if (httpStatus === 401) return 'core_auth';
   // Downstream provider/integration 401 — NOT user session expiry.
   // e.g. "Discord API error: Discord list guilds failed (401): Unauthorized"
   // e.g. "OpenAI API error (401 Unauthorized): invalid api key"
@@ -227,8 +249,15 @@ export function classifyRpcError(
  */
 export type AuthExpiredReason = 'confirmed' | 'unconfirmed';
 
-export function classifyAuthExpiredReason(message: string, httpStatus?: number): AuthExpiredReason {
-  if (httpStatus === 401) return 'confirmed';
+export function classifyAuthExpiredReason(
+  message: string,
+  _httpStatus?: number
+): AuthExpiredReason {
+  // No `httpStatus === 401` arm — see `classifyRpcError`: a 401 on the RPC
+  // endpoint is the local core's bearer gate and no longer classifies as
+  // `auth_expired` at all, so it cannot reach here. Were one ever passed again,
+  // falling through to `unconfirmed` makes `CoreStateProvider` corroborate
+  // before signing out, which is the safe direction.
   if (/Session expired|SESSION_EXPIRED/i.test(message)) return 'confirmed';
   if (
     /^(GET|POST|PUT|DELETE|PATCH)\s+\//.test(message) &&
@@ -681,7 +710,11 @@ export async function callCoreRpc<T>({
   serviceManaged = false, // kept for compatibility; direct frontend RPC does not use relay-level routing.
   timeoutMs,
   suppressAuthExpiredEvent = false,
-}: CoreRpcRelayRequest): Promise<T> {
+  // Internal. Set only by the `core_auth` recovery below so the retry cannot
+  // itself retry — one refresh attempt per call, never a loop against a core
+  // that is genuinely rejecting us.
+  _retriedAfterTokenRefresh = false,
+}: CoreRpcRelayRequest & { _retriedAfterTokenRefresh?: boolean }): Promise<T> {
   void serviceManaged;
 
   if (method.startsWith('ai.')) {
@@ -780,6 +813,29 @@ export async function callCoreRpc<T>({
       const text = await response.text();
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
+      // The local core rejected our bearer. `getCoreRpcToken` caches the
+      // resolved value "for the lifetime of the frontend process", so an
+      // in-process core restart — which mints a fresh per-launch bearer —
+      // leaves this renderer holding the old one and EVERY subsequent RPC
+      // 401s, with no way back short of a page reload. Observed in the wild as
+      // a window that looks signed out while a sibling window, loaded after the
+      // restart, works fine.
+      //
+      // Drop the cache and try once more with a freshly-read bearer. Bounded to
+      // a single attempt: if the core is rejecting us for any other reason the
+      // retry fails and the error surfaces normally.
+      if (kind === 'core_auth' && !_retriedAfterTokenRefresh) {
+        coreRpcLog('core rejected the RPC bearer for %s — refreshing it and retrying once', method);
+        clearCoreRpcTokenCache();
+        return callCoreRpc<T>({
+          method,
+          params,
+          serviceManaged,
+          timeoutMs,
+          suppressAuthExpiredEvent,
+          _retriedAfterTokenRefresh: true,
+        });
+      }
       if (kind === 'auth_expired' && !suppressAuthExpiredEvent)
         dispatchAuthExpired(
           payload.method,

@@ -591,7 +591,10 @@ jobs:
         # storage/copilot surface split into three sibling path-crates in the
         # SAME vendored workspace (`tinyflows-catalog`, `tinyflows-sqlite`,
         # `tinyflows-copilot`) — one name each, no new external crate, native
-        # build count unchanged at 2. See the kernel-floor history for why
+        # build count unchanged at 2. 273 -> 275 on 2026-08-31: the compatible
+        # dependency refresh recorded in `kernel-floor.limits` raised the
+        # resolved Linux name count while keeping the native build count at 2.
+        # See the kernel-floor history for why
         # these raises are temporary/justified. macOS resolves one higher per
         # the host skew recorded in the limits history — this expects the CI
         # host.
@@ -600,7 +603,7 @@ jobs:
         # it is a second source of truth for the same Linux name count and is
         # not derived from that file. Bump both in the same PR that raises
         # (or lowers) the floor.
-        run: python3 scripts/dep-sim.py --cut-nothing --expect-names 270
+        run: python3 scripts/dep-sim.py --cut-nothing --expect-names 269
 
       - name: Guard — new feature-gated test modules must be acknowledged
         # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
@@ -793,15 +796,16 @@ jobs:
           # and leave a stale digest that only fails after the download. Both values
           # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
           # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.13.3"
-          memory_sha256="cc902b653b33386519cc8f49b33b6467d4ef8171e1bedadf71307eca03ad8aa4"
+          memory_version="1.13.6"
+          memory_sha256="d96be20eb93b0d5ed512c643dce6fdb2f53908a8d311c3cfe8d50ff6e7c7dd33"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
+          connectors_dir="$module_root/tinyconnectors"
           memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           juice_archive="$juice_dir/tinyjuice-module-0.2.2-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir" "$juice_dir"
-          mkdir -p "$memory_dir" "$juice_dir"
+          rm -rf "$memory_dir" "$juice_dir" "$connectors_dir"
+          mkdir -p "$memory_dir" "$juice_dir" "$connectors_dir"
           curl --fail --location --silent --show-error \
             "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
             --output "$memory_archive"
@@ -815,9 +819,15 @@ jobs:
           # Do not restore the release builder's uid into the trusted tree.
           tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
           tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
+            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
+          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
+            "$connectors_dir/libtinyconnectors.so"
           echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
             >> "$GITHUB_ENV"
           echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
+            >> "$GITHUB_ENV"
+          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
             >> "$GITHUB_ENV"
 
       - name: Run TinyJuice host-module regression

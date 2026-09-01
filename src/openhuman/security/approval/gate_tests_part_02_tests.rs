@@ -2,7 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
-    let (gate, _dir) = test_gate();
+    // This test polls a parked task while the full Rust suite runs thousands
+    // of other tests concurrently. Keep its coordination deadline independent
+    // of the short TTL used by the timeout behavior tests.
+    let (gate, _dir) = test_gate_with_ttl(Duration::from_secs(10));
     let gate = Arc::new(gate);
 
     // Run intercept inside a scoped chat context + matching WebChat
@@ -56,7 +59,9 @@ async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
 /// origin already carries, so the card can surface and be approved.
 #[tokio::test]
 async fn webchat_origin_routes_park_when_approval_chat_context_absent() {
-    let (gate, _dir) = test_gate();
+    // See the companion chat-context routing test above: this is a
+    // coordination deadline, not the timeout behavior under test.
+    let (gate, _dir) = test_gate_with_ttl(Duration::from_secs(10));
     let gate = Arc::new(gate);
 
     // WebChat origin scoped, but NO `APPROVAL_CHAT_CONTEXT` — exactly the

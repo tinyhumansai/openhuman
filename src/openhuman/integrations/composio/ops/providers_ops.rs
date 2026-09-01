@@ -301,7 +301,9 @@ pub(crate) async fn run_sync_pass(
     connection_id: &str,
     reason: &str,
 ) -> Result<SyncPassOutcome, String> {
-    let response = connectors::call::<_, ConnectorSyncResponse>(
+    // Sync pages the whole account inside the call; the default 30s bus
+    // deadline reported failure on runs the module then finished successfully.
+    let response = connectors::call_slow::<_, ConnectorSyncResponse>(
         config,
         methods::SYNC,
         ConnectorSyncRequest {

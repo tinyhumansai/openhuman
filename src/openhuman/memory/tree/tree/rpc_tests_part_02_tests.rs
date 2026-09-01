@@ -461,7 +461,7 @@ async fn pipeline_status_returns_idle_for_empty_store() {
     // #002: the degraded flags are process-global; reset+serialise so a
     // parallel test (factory None-path, extract transport-fail) can't leak
     // a "degraded" signal into this fresh-workspace assertion.
-    let _g = crate::openhuman::memory::tree::health::test_guard();
+    let _g = tinymemory_core::tree::health::test_guard();
     let (_tmp, cfg) = test_config();
     // An empty driver, bound explicitly. Without a binding installed this
     // resolves the real one, which means loading the compiled module — and
@@ -512,7 +512,7 @@ async fn pipeline_status_renders_the_drivers_chunk_aggregates() {
 
     // #002: reset+serialise the process-global degraded flags so this
     // "running" assertion isn't flipped to "degraded" by a parallel test.
-    let _g = crate::openhuman::memory::tree::health::test_guard();
+    let _g = tinymemory_core::tree::health::test_guard();
     let (_tmp, cfg) = test_config();
 
     let ingested_at = 1_800_000_000_000_i64;

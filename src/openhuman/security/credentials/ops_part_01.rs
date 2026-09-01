@@ -17,7 +17,7 @@ use crate::openhuman::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id,
 };
-use tinycortex::memory::conversations;
+use crate::openhuman::memory::conversations;
 
 const AUTH_ME_STORE_RETRY_DELAY: Duration = Duration::from_millis(150);
 const AUTH_ME_STORE_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];

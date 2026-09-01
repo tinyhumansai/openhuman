@@ -12,10 +12,10 @@
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
+use crate::openhuman::memory::conversations;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
-use tinycortex::memory::conversations;
 use tinytools::ToolRunContext;
 
 /// Spawns a sub-agent in a dedicated worker thread.

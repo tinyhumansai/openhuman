@@ -345,6 +345,17 @@ async fn load_config() -> Result<crate::openhuman::config::Config> {
         .await
         .unwrap_or_default();
     config.apply_env_overrides();
+
+    // Every subcommand reaches the memory driver, and since the round-2
+    // migration that is a module binding: without the host policy published
+    // the driver binds but its first call fails with "the module host policy
+    // was never published". The server publishes it during boot; this CLI is
+    // its own process and must do the same (the `memory` subcommand family
+    // already does, in memory_cli.rs). Idempotent, so once per load is fine.
+    crate::openhuman::memory::host::install_memory_event_sink();
+    #[cfg(feature = "modules")]
+    crate::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(config.clone()));
+
     Ok(config)
 }
 

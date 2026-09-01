@@ -18,23 +18,23 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::{Config, SchedulerGateMode};
-use openhuman_core::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
-use openhuman_core::openhuman::memory::tree::score::extract::{
-    EntityExtractor, EntityKind, ExtractedEntities, LlmEntityExtractor, LlmExtractorConfig,
-};
-use openhuman_core::openhuman::memory::tree::score::resolver::{canonicalise, CanonicalEntity};
-use openhuman_core::openhuman::memory::tree::score::store::{index_entity, lookup_entity};
 use openhuman_core::openhuman::memory::tree::tree::rpc::{
     get_chunk_rpc, ingest_rpc, list_chunks_rpc, set_enabled_rpc, GetChunkRequest, IngestRequest,
     ListChunksRequest, SetEnabledRequest,
 };
-use openhuman_core::openhuman::memory::tree::tree::set_summary_embedding;
-use openhuman_core::openhuman::memory::tree::tree::store as tree_store;
-use openhuman_core::openhuman::memory::tree::tree::TreeStatus;
 use tinymemory_core::chat::{ChatPrompt, ChatProvider};
 use tinymemory_core::store::chunks::store::{set_chunk_embedding, upsert_chunks, with_connection};
 use tinymemory_core::store::chunks::types::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
 use tinymemory_core::store::trees::types::{SummaryNode, Tree, TreeKind};
+use tinymemory_core::tree::score::embed::EMBEDDING_DIM;
+use tinymemory_core::tree::score::extract::{
+    EntityExtractor, EntityKind, ExtractedEntities, LlmEntityExtractor, LlmExtractorConfig,
+};
+use tinymemory_core::tree::score::resolver::{canonicalise, CanonicalEntity};
+use tinymemory_core::tree::score::store::{index_entity, lookup_entity};
+use tinymemory_core::tree::tree::set_summary_embedding;
+use tinymemory_core::tree::tree::store as tree_store;
+use tinymemory_core::tree::tree::TreeStatus;
 
 struct EnvVarGuard {
     key: &'static str,

@@ -75,28 +75,57 @@ fn effective_embedder_slug_from_config(config: &Config) -> &'static str {
     "unconfigured"
 }
 
-/// Dimension to run a Custom (OpenAI-compatible) verification probe at.
-///
-/// The user-entered `dimensions` field is a guess: for any model outside the
-/// `text-embedding-3-*` family we never send the OpenAI `dimensions` request
-/// param (see [`model_supports_dimensions`]), so the endpoint returns its own
-/// native vector length. Forcing the probe to enforce the guessed length makes
-/// every reachable, valid embedding endpoint fail verification whenever the
-/// guess (default 1024) differs from the native size — the root cause of
-/// issue #4056.
-///
-/// So we probe a `text-embedding-3-*` model at the configured size (the server
-/// honours the param and returns exactly that), but probe every other model at
-/// `0`, which disables both the request param and the post-response length
-/// guard in `OpenAiEmbedding::embed` — the probe then only has to prove the
-/// endpoint can embed, and we learn the real dimension from the returned
-/// vector (see [`final_probe_dims`]).
-fn probe_dims_for(model: &str, configured: usize) -> usize {
-    if model_supports_dimensions(model) {
-        configured
+/// Send one OpenAI-compatible embedding request without requesting or
+/// validating a vector width. This is intentionally separate from the live
+/// provider: a setup probe must discover a custom endpoint's native width,
+/// while a live provider must enforce the width persisted after that probe.
+async fn probe_custom_embeddings(
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<Vec<Vec<f32>>, String> {
+    let base = endpoint.trim_end_matches('/');
+    let url = if base.ends_with("/embeddings") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/embeddings")
     } else {
-        0
+        format!("{base}/v1/embeddings")
+    };
+    let mut request = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "model": model, "input": ["connection test"] }));
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
     }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("custom embeddings request to {url} failed: {e}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("custom embeddings response read failed: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("custom embeddings returned HTTP {status}: {body}"));
+    }
+    let data = serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("custom embeddings response was not JSON: {e}"))?
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .ok_or_else(|| "custom embeddings response missing data array".to_string())?;
+    data.into_iter()
+        .map(|item| {
+            item.get("embedding")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| "custom embeddings response missing embedding array".to_string())?
+                .iter()
+                .map(|value| value.as_f64().map(|value| value as f32).ok_or_else(|| "custom embeddings response contains a non-numeric vector".to_string()))
+                .collect()
+        })
+        .collect()
 }
 
 /// Dimension to persist after a successful Custom verification probe.
@@ -253,20 +282,21 @@ pub async fn update_settings(
         // Probe dimension-agnostically for non-`text-embedding-3-*` models so the
         // user's guessed `dimensions` can't fail an otherwise-valid endpoint; the
         // real length is detected from the returned vector below (issue #4056).
-        let probe_dims = probe_dims_for(&new_model, new_dims);
-        match build_embedder(&config, &effective_provider, &new_model, probe_dims) {
-            Ok(embedder) => {
+        let endpoint = effective_provider
+            .strip_prefix("custom:")
+            .expect("custom provider was checked above");
+        let api_key = resolve_api_key(&config, "custom");
+        let probe = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            probe_custom_embeddings(endpoint, &api_key, &new_model),
+        )
+        .await;
+        {
                 // Time-box the probe so a black-hole host can't hang the RPC.
                 tracing::debug!(
                     provider = effective_provider.as_str(),
-                    probe_dims,
                     "{LOG_PREFIX} update_settings verifying embeddings endpoint with a test embed"
                 );
-                let probe = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    embedder.embed(&["connection test"]),
-                )
-                .await;
                 // Normalize the timeout/result into one shape, then apply the
                 // pure verification policy (`classify_embed_probe`, unit-tested).
                 let outcome = match probe {
@@ -371,12 +401,6 @@ pub async fn update_settings(
                     "{LOG_PREFIX} update_settings test embed passed — accepting config"
                 );
             }
-            Err(e) => {
-                // Construction failure (unknown slug / bad config) — surface it
-                // rather than persisting a config that can never embed.
-                return Err(format!("invalid embedding provider configuration: {e}"));
-            }
-        }
     }
 
     // Only require a wipe when dimensions actually change — switching

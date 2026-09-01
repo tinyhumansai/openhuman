@@ -8,10 +8,152 @@ use super::cloud::{
 };
 use super::provider_trait::{EmbeddingProvider, TinyAgentsEmbeddingProvider};
 use crate::openhuman::config::Config;
+use tinyinference::embeddings::EmbeddingModel;
 use tinyinference::embeddings::{
     CohereEmbeddingModel, NoopEmbeddingModel, OllamaEmbeddingModel, OpenAiEmbeddingModel,
     VoyageEmbeddingModel,
 };
+
+/// Build the provider for an OpenAI-compatible custom endpoint.
+///
+/// `dims == 0` is the dimension-agnostic PROBE mode (issue #4056): send no
+/// `dimensions` param, accept whatever length comes back, let the caller adopt
+/// it. tinyinference's `OpenAiEmbeddingModel::embed` used to implement exactly
+/// that (its `parse_vectors` still skips the length guard when
+/// `dimensions == 0`), but the tinyagents pointer refresh brought a version
+/// whose `embed()` rejects `dimensions == 0` outright before the request is
+/// built — the two halves of that file now contradict, and the refusal breaks
+/// the Test-connection and save-time probes for every model outside the
+/// `text-embedding-3-*` family. Until that is reconciled upstream, the probe
+/// mode is served host-side by [`DimensionAgnosticOpenAiProbe`]; delete that
+/// type and route `dims == 0` back through `openai_model` once upstream
+/// honours it again.
+fn custom_openai_provider(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    dims: usize,
+) -> Box<dyn EmbeddingProvider> {
+    if dims == 0 {
+        Box::new(DimensionAgnosticOpenAiProbe::new(
+            openai_model(base_url, api_key, model, 0, false),
+            api_key,
+        ))
+    } else {
+        TinyAgentsEmbeddingProvider::boxed(openai_model(base_url, api_key, model, dims, false))
+    }
+}
+
+/// The dimension-agnostic probe for an OpenAI-compatible endpoint.
+///
+/// Exists only because upstream's `embed()` refuses `dimensions == 0` (see
+/// [`custom_openai_provider`]). One request shape, deliberately minimal: POST
+/// `{model, input}` — never a `dimensions` param — bearer auth when a key is
+/// present, and no vector-length guard, because learning the endpoint's real
+/// length is the entire point of the call.
+struct DimensionAgnosticOpenAiProbe {
+    /// Used for URL building, naming and the signature — not for `embed`.
+    inner: OpenAiEmbeddingModel,
+    /// Kept host-side because the inner model does not expose its key.
+    api_key: String,
+}
+
+impl DimensionAgnosticOpenAiProbe {
+    fn new(inner: OpenAiEmbeddingModel, api_key: &str) -> Self {
+        Self {
+            inner,
+            api_key: api_key.to_owned(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for DimensionAgnosticOpenAiProbe {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        0
+    }
+
+    fn signature(&self) -> String {
+        self.inner.signature()
+    }
+
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = self.inner.embeddings_url();
+        let mut request = reqwest::Client::new().post(&url).json(&serde_json::json!({
+            "model": self.inner.model(),
+            "input": texts,
+        }));
+        if !self.api_key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("openai embeddings request to {url} failed: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| anyhow::anyhow!("openai embeddings body read failed: {e}"))?;
+        if !status.is_success() {
+            anyhow::bail!("openai embeddings returned HTTP {status}: {text}");
+        }
+        let value: serde_json::Value = serde_json::from_str(&text)?;
+        let data = value
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("openai embeddings response missing `data` array"))?;
+        if data.len() != texts.len() {
+            anyhow::bail!(
+                "openai embed count mismatch: sent {} texts, got {} embeddings",
+                texts.len(),
+                data.len()
+            );
+        }
+        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for item in data {
+            let index = item
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .filter(|i| *i < texts.len())
+                .ok_or_else(|| anyhow::anyhow!("openai embedding is missing a valid `index`"))?;
+            let embedding = item
+                .get("embedding")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("openai embeddings response missing `embedding` array")
+                })?;
+            let vector = embedding
+                .iter()
+                .map(|n| {
+                    n.as_f64().map(|v| v as f32).ok_or_else(|| {
+                        anyhow::anyhow!("openai embeddings response contains a non-numeric value")
+                    })
+                })
+                .collect::<anyhow::Result<Vec<f32>>>()?;
+            vectors[index] = Some(vector);
+        }
+        vectors
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.ok_or_else(|| anyhow::anyhow!("openai embeddings response is missing index {i}"))
+            })
+            .collect()
+    }
+}
 
 fn openai_model(
     base_url: &str,
@@ -100,9 +242,7 @@ pub fn create_embedding_provider(
         )),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                base_url, "", model, dims, false,
-            )))
+            Ok(custom_openai_provider(base_url, "", model, dims))
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -156,15 +296,11 @@ pub fn create_embedding_provider_with_credentials(
         )),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                url, api_key, model, dims, false,
-            )))
+            Ok(custom_openai_provider(url, api_key, model, dims))
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                url, api_key, model, dims, false,
-            )))
+            Ok(custom_openai_provider(url, api_key, model, dims))
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(

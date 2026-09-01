@@ -83,9 +83,10 @@ use std::path::{Path, PathBuf};
 // engine at all — so there is no longer an API to rename them to. They matched
 // nothing, and a needle that matches nothing is a guard that guards nothing.
 //
-// `global::client_if_ready(` survives because it still matches: the remaining
-// callers are test fixtures, which the scanner reaches but production no longer
-// does.
+// `global::client_if_ready(` survives because the engine's identity matcher
+// still uses the process-global client to query profile-store identity rows.
+// This is below the module contract, so it belongs in the ratchet rather than
+// being mistaken for a host bypass.
 const BYPASS_PATTERNS: &[(&str, &str)] = &[
     (
         "global::client_if_ready(",
@@ -184,7 +185,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     // `flows/bus.rs`'s two entries are gone: the run-digest subscriber resolves
     // the guarded driver, and its `#[cfg(test)]` override now injects a real
     // `MemoryGuard` over an in-memory provider rather than a raw handle.
-    // ── Composio integration: &MemoryClientRef parameter shape ──
     // ── The driver and the binding: guarding these would be a cycle ──
     (
         "src/openhuman/memory/binding.rs",
@@ -227,31 +227,20 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         ".profile_conn(",
         "sole in-family call; wraps the raw handle in ProfileStore. profile_conn is pub(in crate::openhuman::memory), so the compiler — not this lint — is the primary enforcement",
     ),
-    // ── Composio memory sync: profile_store + &MemoryClientRef ──
+    // ── Engine-internal identity lookup ──
+    //
+    // v1.13.4 removed the in-process Composio sync pipeline. Its remaining
+    // profile-store consumer is the engine's identity matcher, which answers
+    // whether a canonical identity belongs to the user across connected tools.
     (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/composio/providers/profile.rs",
+        "vendor/tinymemory/crates/tinymemory-core/src/store/identity.rs",
         ".profile_store(",
-        "typed profile writes; the contract has no profile family, so still unguarded",
+        "engine-internal identity lookup over profile rows; it sits below the module contract",
     ),
     (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/composio/providers/profile.rs",
+        "vendor/tinymemory/crates/tinymemory-core/src/store/identity.rs",
         "global::client_if_ready(",
-        "resolved only to reach profile_store()",
-    ),
-    (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/composio/providers/types.rs",
-        "global::client_if_ready(",
-        "same provider trait shape",
-    ),
-    (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/composio/providers/types_test_support.rs",
-        "MemoryClient::from_workspace_dir(",
-        "#[cfg(test)] module, split out of the inline test blocks three earlier entries covered",
-    ),
-    (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/composio/providers/user_scopes.rs",
-        "global::client_if_ready(",
-        "same provider trait shape",
+        "resolves the global client solely for the engine-internal identity lookup",
     ),
     // ── Golden-workspace fixture seeder (test infrastructure) ──
     //
@@ -261,26 +250,16 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     // segment, event and profile tiers, which have no guard-routed writer — the
     // archivist and the learning cache reach them the same way, and those two
     // are already allowlisted below/above for the same reason.
-    // ── Inline test modules and the two sync seams ──
+    // ── Engine seam ──
     //
     // tinymemory#18 §C1 renamed `core/src/tinycortex/` to `core/src/engine/`,
-    // and §B1 added `core/src/sync/pipelines/host.rs` — the engine-FREE sync
-    // runner, an adapter over `MemoryClient` shaped exactly like the engine
-    // seam it sits beside. Both are beneath the contract, not above it: they
-    // are what a bound driver is built FROM, which is why they name the raw
-    // client. Their `from_workspace_dir` hits are all inside inline
-    // `#[cfg(test)]` modules (the #61 connection-guard tests), which the
-    // scanner does not brace-track.
+    // and its current engine seam remains beneath the contract, not above it:
+    // it is what a bound driver is built FROM, which is why it names the raw
+    // client.
     (
         "vendor/tinymemory/crates/tinymemory-core/src/engine/sync.rs",
         "global::client_if_ready(",
         "the TinyCortex engine seam; it sits beneath the contract, not above it",
-    ),
-    (
-        "vendor/tinymemory/crates/tinymemory-core/src/sync/pipelines/host.rs",
-        "global::client_if_ready(",
-        "the engine-free sync runner's seam over the bound client; beneath the contract, \
-         the same way the engine seam beside it is",
     ),
 ];
 

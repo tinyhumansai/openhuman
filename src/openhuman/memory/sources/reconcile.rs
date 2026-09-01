@@ -12,14 +12,35 @@
 //! host's own replacement built on the `tinyconnectors` module, instead of
 //! the deleted engine function of the same name.
 //!
-//! `apply_composio_source_caps_migration` itself is untouched and still comes
-//! from the engine (`tinymemory_core::sources::reconcile`) — it never read
-//! the deleted pipeline, only the registry.
+//! [`apply_composio_source_caps_migration`] came home in the same spirit, one
+//! step later (#5560). It was the last line in this domain naming
+//! `tinymemory_core`, and it named it for a **config migration over this
+//! host's own `config.toml`**: load the config, read `[[memory_sources]]`,
+//! fill in per-toolkit caps, bump the version guard, save. Nothing in it is
+//! engine-shaped — no store, no SQLite, no TinyCortex — and the two helpers it
+//! leans on (`memory_sync_defaults_for_toolkit`, `apply_kind_defaults`) are
+//! `tinymemory-sources`', already a direct dependency and already re-exported
+//! by [`registry`]. Same route, and the same argument, as the registry itself
+//! took when it moved into `sources::registry`.
+//!
+//! The port is function for function, with one simplification that is not a
+//! behaviour change: the engine reached the registry through
+//! `MemoryHostConfig::{memory_sources_json, set_memory_sources_json}`, a serde
+//! round-trip that exists only because `MemorySourceEntry` is foreign to the
+//! dependency-light contract crate. Here the entries are a field on the host's
+//! own `Config`, so they are edited in place. The version guard, the
+//! skip-when-current early return, the write-lock ordering and the
+//! save-even-when-nothing-migrated behaviour are all carried over unchanged.
 
 use std::collections::HashSet;
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::sources::registry;
+use crate::openhuman::memory::sources::types::{MemorySourceEntry, SourceKind};
+
+/// Current version of the caps migration. Bump when the migration logic
+/// changes, so installs that ran an earlier revision re-run it exactly once.
+const CURRENT_CAPS_MIGRATION_VERSION: u32 = 1;
 
 /// Reconcile active Composio connections into the memory sources registry and
 /// return the live active-connection set scanned this call.
@@ -84,12 +105,12 @@ pub async fn ensure_composio_sources() -> Option<HashSet<String>> {
         );
     }
 
-    // Run the one-time caps migration after the reconcile loop so any
-    // sources upserted just above are also considered. Still the engine's —
-    // it only ever read the registry, never the deleted pipeline.
-    if let Err(e) =
-        tinymemory_core::sources::reconcile::apply_composio_source_caps_migration().await
-    {
+    // Run the one-time caps migration after the reconcile loop so any sources
+    // upserted just above are also considered. Ordering, not decoration: a
+    // connection that only appeared in this pass would otherwise wait a whole
+    // extra reconcile for its caps, and sync at the provider's ceiling in the
+    // meantime.
+    if let Err(e) = apply_composio_source_caps_migration().await {
         tracing::warn!(
             error = %e,
             "[memory_sources:reconcile] caps migration failed (non-fatal, will retry next time)"
@@ -143,6 +164,102 @@ fn short_id(id: &str) -> &str {
     let skip = n - 8;
     let start = id.char_indices().nth(skip).map(|(idx, _)| idx).unwrap_or(0);
     &id[start..]
+}
+
+/// Apply conservative default caps in place to every cap-less source.
+///
+/// For a Composio source with no `max_items` / `sync_depth_days`, writes the
+/// per-toolkit defaults **and enables it** (a no-op when already enabled) — an
+/// already-enabled, cap-less source would otherwise sync at the provider's
+/// large internal ceiling instead of the cheap default, which is the cost this
+/// migration exists to avoid. For other kinds it fills any unset kind-specific
+/// caps through [`registry::apply_kind_defaults`]. Caps the user has
+/// customised (any non-`None` value) are never overwritten.
+///
+/// Returns the number of Composio entries that received defaults. Pure (no
+/// I/O) so it can be unit-tested directly.
+fn apply_caps_defaults_to_entries(sources: &mut [MemorySourceEntry]) -> u32 {
+    let mut applied = 0u32;
+    for source in sources.iter_mut() {
+        match source.kind {
+            SourceKind::Composio => {
+                // Applies to enabled AND disabled cap-less sources; skips
+                // entries the user has already customised (any non-None cap).
+                if source.max_items.is_none() && source.sync_depth_days.is_none() {
+                    let toolkit = source.toolkit.as_deref().unwrap_or("");
+                    let (max_items, sync_depth_days) =
+                        registry::memory_sync_defaults_for_toolkit(toolkit);
+                    tracing::debug!(
+                        id = %source.id,
+                        toolkit = %toolkit,
+                        was_enabled = source.enabled,
+                        max_items = ?max_items,
+                        sync_depth_days = ?sync_depth_days,
+                        "[memory_sources:reconcile] caps migration: applying conservative defaults"
+                    );
+                    source.enabled = true;
+                    source.max_items = max_items;
+                    source.sync_depth_days = sync_depth_days;
+                    applied += 1;
+                }
+            }
+            // Non-composio kinds get their kind defaults through the same
+            // helper the CRUD path uses, so one table of conservative values
+            // serves both.
+            _ => registry::apply_kind_defaults(source),
+        }
+    }
+    applied
+}
+
+/// Retroactive migration: give any cap-less Composio source — enabled or
+/// disabled — conservative per-toolkit caps so its first sync stays cheap.
+///
+/// Version-gated by `Config::composio_source_caps_migration_version`: it runs
+/// once per [`CURRENT_CAPS_MIGRATION_VERSION`] bump, so an install that already
+/// ran an earlier revision re-runs the current one exactly once. Entries the
+/// user has customised are left untouched.
+///
+/// Takes the registry write guard for the whole load-modify-save, because the
+/// migration rewrites the entire `[[memory_sources]]` table: without it a
+/// concurrent upsert would be read, mutated and written back over, with no
+/// error anywhere.
+///
+/// # Errors
+///
+/// Stringified, when the config cannot be loaded or saved.
+pub async fn apply_composio_source_caps_migration() -> Result<(), String> {
+    let _guard = registry::memory_sources_write_guard().await;
+    let mut config = config_rpc::load_config_with_timeout().await?;
+
+    if config.composio_source_caps_migration_version >= CURRENT_CAPS_MIGRATION_VERSION {
+        tracing::debug!(
+            version = config.composio_source_caps_migration_version,
+            "[memory_sources:reconcile] caps migration already at current version; skipping"
+        );
+        return Ok(());
+    }
+
+    tracing::info!(
+        from_version = config.composio_source_caps_migration_version,
+        to_version = CURRENT_CAPS_MIGRATION_VERSION,
+        "[memory_sources:reconcile] applying composio source caps migration"
+    );
+
+    let migrated_count = apply_caps_defaults_to_entries(&mut config.memory_sources);
+
+    config.composio_source_caps_migration_version = CURRENT_CAPS_MIGRATION_VERSION;
+    config
+        .save()
+        .await
+        .map_err(|e| format!("caps migration: failed to save config: {e:#}"))?;
+
+    tracing::info!(
+        migrated = migrated_count,
+        "[memory_sources:reconcile] caps migration complete"
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

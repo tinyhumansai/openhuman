@@ -98,3 +98,27 @@ fn wire_notice_is_latched_once_per_process() {
     notice_corrupt_store_once("test detector");
     notice_corrupt_store_once("test detector");
 }
+
+// ── memory module unavailable ────────────────────────────────────────────────
+
+/// Same no-leak contract as the corrupt-store payload: stable kind + source,
+/// and none of the loader's raw text (which carries release URLs and paths).
+#[test]
+fn module_unavailable_payload_is_metadata_only() {
+    let event = super::memory_module_unavailable_user_error();
+    assert_eq!(event.event, "user_error");
+    assert_eq!(event.client_id, "system");
+    assert_eq!(
+        event.error_type.as_deref(),
+        Some(super::MEMORY_MODULE_UNAVAILABLE_KIND)
+    );
+    assert_eq!(
+        event.error_source.as_deref(),
+        Some(tinymemory_api::host::MEMORY_USER_ERROR_SOURCE)
+    );
+    let wire = serde_json::to_string(&event).expect("payload serializes");
+    assert!(
+        !wire.contains("github") && !wire.contains("http") && !wire.contains('/'),
+        "no loader detail may reach the wire: {wire}"
+    );
+}

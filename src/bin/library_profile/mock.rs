@@ -319,7 +319,7 @@ impl ChatModel<()> for SubagentMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents_harness::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         Ok(model_response(
             self.dispatch(&joined_request(&request)).await,
         ))
@@ -376,7 +376,7 @@ impl ChatModel<()> for LatencyMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents_harness::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         self.latency.sleep_sampled().await;
         let joined = joined_request(&request);
         record(&self.prompts, &joined);
@@ -406,7 +406,7 @@ impl ChatModel<()> for PlainTextMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents_harness::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         let joined = joined_request(&request);
         record(&self.prompts, &joined);
         Ok(model_response(response(&self.text)))
@@ -492,7 +492,7 @@ impl ChatModel<()> for SkillRunMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents_harness::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         Ok(model_response(self.reply(&joined_request(&request))))
     }
 }

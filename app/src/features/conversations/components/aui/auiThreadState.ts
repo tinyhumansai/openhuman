@@ -58,8 +58,13 @@ export function useAuiThreadRunning(): boolean | undefined {
  * that faithfully, so this hook is the honest gate for those affordances rather
  * than a hard-coded `false` that would rot the day the adapter grows them.
  *
- * Nothing renders behind it today — see `EDIT_AND_BRANCH_SEAM` below for where
- * an edit composer / `BranchPickerPrimitive` would attach.
+ * Both affordances in `components/assistant-ui/thread.tsx` are gated on this
+ * (#5897): `UserActionBar` renders `ActionBarPrimitive.Edit` only when
+ * `canEdit`, and `BranchPicker` returns `null` unless `canSwitchToBranch`.
+ * Neither is reachable today, which is the point — an edit button that looks
+ * supported and silently does nothing is worse than no button. See
+ * `EDIT_AND_BRANCH_SEAM` below for where the edit composer itself attaches when
+ * the adapter grows `onEdit` / `setMessages`.
  */
 export function useAuiEditCapabilities(): { canEdit: boolean; canSwitchToBranch: boolean } {
   const canEdit = useAuiState(selectCanEdit) ?? false;
@@ -90,6 +95,11 @@ export function useAuiEditCapabilities(): { canEdit: boolean; canSwitchToBranch:
  *
  * They are deliberately absent rather than rendered-and-inert: an edit button
  * that looks supported and silently does nothing is worse than no button.
+ *
+ * That rule was stated here but not enforced anywhere until #5897 — this hook
+ * had zero production consumers while `ActionBarPrimitive.Edit` shipped
+ * unconditionally, so the button was rendered, clickable and inert. The gate is
+ * wired now; keep it wired when the affordances move into `TranscriptRow`.
  */
 export const EDIT_AND_BRANCH_SEAM = Object.freeze({
   editComposer: 'TranscriptRow — gated on useAuiEditCapabilities().canEdit',

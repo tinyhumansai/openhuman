@@ -2,7 +2,12 @@ use super::*;
 use chrono::Utc;
 use serde_json::json;
 use tempfile::TempDir;
-use tinycortex::memory::ingest::canonicalize::document::DocumentInput;
+// `DocumentInput` (and its `ChatBatch` / `EmailThread` siblings, which
+// `rpc_tests_part_01_tests` reaches the same way) now arrive through the
+// `use super::*` above: they are defined in `rpc_part_01.rs` rather than
+// imported from the engine crate. Naming the engine's copy here would compile
+// and then fail on the first call into `document_item`, since the two are
+// distinct types with identical fields.
 use tinymemory_api::chunks::SourceKind;
 
 fn test_config() -> (TempDir, Config) {

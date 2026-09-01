@@ -67,6 +67,26 @@ impl Drop for EnvVarGuard {
     }
 }
 
+/// Bind a tree driver for the workspace these subcommands will resolve to.
+///
+/// The subcommands go through the contract's runtime-tree doors now (#5560), so
+/// each one asks `memory::binding` for a provider. With none installed the
+/// binding tries to load the compiled TinyMemory module, which in a test
+/// process can *block* rather than fail — so every test that reaches a handler
+/// has to put one there first.
+///
+/// The config is resolved exactly the way [`load_config`] resolves it, rather
+/// than being constructed here: `OPENHUMAN_WORKSPACE` is set by
+/// [`WorkspaceEnvGuard`] and the env overlay is what turns it into the
+/// `workspace_dir` the binding is keyed on. Building a `Config::default()` and
+/// pointing it at the tempdir would key the binding on a *different* path than
+/// the one the CLI then asks for.
+fn bind_workspace_driver() {
+    let runtime = build_runtime().expect("runtime");
+    let config = runtime.block_on(load_config()).expect("config");
+    super::super::test_support::bind_tree_driver(&config);
+}
+
 #[test]
 fn is_help_matches_supported_aliases() {
     assert!(is_help("-h"));
@@ -154,6 +174,7 @@ fn help_paths_for_subcommands_return_ok() {
 fn ingest_status_and_query_run_against_isolated_workspace() {
     let tmp = TempDir::new().unwrap();
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
+    bind_workspace_driver();
 
     assert!(run_ingest(&[
         "ns".to_string(),
@@ -171,6 +192,7 @@ fn ingest_status_and_query_run_against_isolated_workspace() {
 fn ingest_reads_from_file_path() {
     let tmp = TempDir::new().unwrap();
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
+    bind_workspace_driver();
     let input = tmp.path().join("input.txt");
     std::fs::write(&input, "from file").unwrap();
 
@@ -222,6 +244,7 @@ fn run_summarize_errors_cleanly_without_provider() {
 fn query_prefers_explicit_node_flag_over_positional_node() {
     let tmp = TempDir::new().unwrap();
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
+    bind_workspace_driver();
 
     let err = run_query(&[
         "ns".to_string(),
@@ -287,6 +310,7 @@ fn run_and_rebuild_no_longer_block_on_local_ai_precondition() {
     // precondition. This test asserts that specific regression is gone.
     let tmp = TempDir::new().unwrap();
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
+    bind_workspace_driver();
 
     // Seed a namespace so the commands go through the runtime path
     // rather than failing argument validation.

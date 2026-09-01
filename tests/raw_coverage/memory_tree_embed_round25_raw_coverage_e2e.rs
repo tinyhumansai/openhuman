@@ -2,7 +2,7 @@ use axum::extract::Json;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::Router;
-use openhuman_core::openhuman::memory::tree::score::embed::EMBEDDING_DIM;
+use tinymemory_core::tree::score::embed::EMBEDDING_DIM;
 use tinyinference::embeddings::{
     EmbeddingModel, OllamaEmbeddingModel, RECOMMENDED_OLLAMA_CONTEXT_TOKENS,
 };
@@ -65,8 +65,11 @@ async fn round25_ollama_embedder_covers_success_and_error_edges_without_real_oll
         .await
         .expect_err("missing model should fail")
         .to_string();
-    assert!(missing_err.contains("embedding model `missing-round25` is not installed"));
-    assert!(missing_err.contains("ollama pull missing-round25"));
+    assert!(
+        missing_err.contains("ollama embed failed with status 404 Not Found"),
+        "{missing_err}"
+    );
+    assert!(missing_err.contains("model not found"));
 
     let dim_url = start_embed_server(Router::new().route(
         "/api/embed",

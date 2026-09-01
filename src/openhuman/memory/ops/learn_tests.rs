@@ -91,6 +91,18 @@ async fn write_config_with_runtime_enabled(
         .expect("load config");
     config.local_ai.runtime_enabled = runtime_enabled;
     config.save().await.expect("save config");
+    // `memory_learn_all` reaches the tree through
+    // `tree_runtime::ops::tree_summarizer_run`, which resolves a driver for
+    // *this* config's workspace since #5560 — the handler used to run the
+    // markdown time tree in-process. Enumeration is unaffected (it goes through
+    // `active_memory_guard`, whose test fallback is the shared fixture
+    // workspace the namespaces were seeded in); it is the per-namespace
+    // summarisation pass that now needs a binding here.
+    //
+    // The double resolves its summariser through `ops::create_provider`, the
+    // same resolver the handler used before the migration, so these tests keep
+    // asserting against the local-AI ladder `runtime_enabled` is flipping.
+    crate::openhuman::memory::tree::tree_runtime::test_support::bind_tree_driver(&config);
     guard
 }
 

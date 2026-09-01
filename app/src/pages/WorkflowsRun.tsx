@@ -25,7 +25,10 @@ export default function WorkflowsRun() {
     <div className="h-full p-4">
       <SettingsTabbedPage
         title={t('skills.run.title')}
-        headerAction={
+        /* `leading` (not `headerAction`) is the slot for a back control: it
+           sits before the title on the same row, which is where every settings
+           page puts its back button. */
+        leading={
           <Button
             variant="tertiary"
             size="xs"

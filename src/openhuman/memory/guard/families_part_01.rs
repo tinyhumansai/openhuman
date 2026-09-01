@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::openhuman::memory::api::capabilities::Capability;
@@ -5,8 +6,13 @@ use crate::openhuman::memory::api::chunks::Chunk;
 use crate::openhuman::memory::api::error::MemoryError;
 use crate::openhuman::memory::api::goals::GoalsDoc;
 use crate::openhuman::memory::api::provider::chunks::{
-    ChunkDetail, ChunkEmbedding, ChunkListRow, ChunkQuery, MemoryChunks, SourceTotal,
+    ChunkDetail, ChunkEmbedding, ChunkListRow, ChunkQuery, ChunkScore, MemoryChunks,
+    SourceIngestQuery, SourceIngestStatus, SourceTotal,
 };
+use crate::openhuman::memory::api::provider::content::{
+    RootSummary, SummaryContext, SummaryInput, SummaryOutput,
+};
+use crate::openhuman::memory::api::provider::diagnosis::{DegradedCapabilities, Diagnosis};
 use crate::openhuman::memory::api::provider::episodic::{
     ConversationSegment, EpisodicTurn, MemoryEpisodic,
 };
@@ -41,7 +47,7 @@ use crate::openhuman::memory::api::provider::{
 };
 use crate::openhuman::memory::api::tool_memory::ToolMemoryRule;
 use crate::openhuman::memory::api::tree::{
-    IngestRequest, QueryResult, SummaryForest, TreeLeaf, TreeStatus,
+    IngestRequest, QueryResult, SummaryForest, TreeLeaf, TreeNode, TreeStatus,
 };
 use crate::openhuman::memory::api::types::NamespaceMemoryHit;
 use crate::openhuman::memory::api::types::{
@@ -525,118 +531,192 @@ impl MemoryTree for GuardedTree {
             .recent_leaves(limit, effective.as_ref())
             .await
     }
-}
 
-// ── Entities ─────────────────────────────────────────────────────────────────
-
-#[async_trait]
-impl MemoryEntities for GuardedEntities {
-    async fn entities(
+    /// A **read** tier check even though the fold costs a provider call: it
+    /// writes nothing. `seal` and `cascade` take the write tier because they
+    /// persist the nodes they produce; this hands the summary back and leaves
+    /// the tree exactly as it found it, so refusing it under `readonly` would
+    /// stop a recap that stores nothing.
+    ///
+    /// It is nevertheless the only member of this family besides
+    /// [`Self::append`] that carries prose *outbound* — every input's body
+    /// crosses to the driver's own chat provider — so it declares
+    /// `carries_content: true` and applies `append`'s scrub to each of them.
+    /// Admitted against [`SummaryContext::tree_id`] rather than
+    /// `NO_NAMESPACE` for the reason [`Self::flush_source_tree`] gives: it
+    /// names the tree it acts on.
+    async fn summarise(
         &self,
-        namespace: &str,
-        query: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<EntityHit>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Entities,
-            "entities.entities",
-            namespace,
-            query.is_some(),
-        )?;
-        let redacted = query.map(|q| self.policy.redact_outbound(q).into_owned());
-        self.family()?
-            .entities(namespace, redacted.as_deref(), limit)
-            .await
+        inputs: &[SummaryInput],
+        context: &SummaryContext,
+    ) -> Result<SummaryOutput, MemoryError> {
+        self.policy
+            .admit_read(Capability::Tree, "tree.summarise", &context.tree_id, true)?;
+        // `redact_outbound` borrows for every driver class but `External`, so
+        // the re-owned slice is built only when the scrubber actually rewrote
+        // something — a recap folds every turn of a segment, and cloning them
+        // to hand back the same bytes is the one cost this can avoid.
+        let mut scrubbed: Option<Vec<SummaryInput>> = None;
+        for (index, input) in inputs.iter().enumerate() {
+            if let Cow::Owned(content) = self.policy.redact_outbound(&input.content) {
+                scrubbed.get_or_insert_with(|| inputs.to_vec())[index].content = content;
+            }
+        }
+        let effective = scrubbed.as_deref().unwrap_or(inputs);
+        trace_allowed(
+            &self.policy,
+            "tree.summarise",
+            &context.tree_id,
+            effective
+                .iter()
+                .map(|input| input.content.chars().count())
+                .sum(),
+        );
+        self.family()?.summarise(effective, context).await
     }
 
-    async fn entity_edges(
+    /// The markdown time tree's roots, one body per namespace.
+    ///
+    /// Takes no [`SourceScope`], so unlike [`Self::summary_forest`] there is
+    /// nothing here to intersect with the ambient allowlist — the contract
+    /// member has no scope parameter and the guard does not invent one. Both
+    /// caps are the caller's and cross unchanged: they bound the *response*,
+    /// and clipping them here would produce a body the driver did not choose
+    /// the truncation point of.
+    async fn root_summaries_with_caps(
         &self,
-        namespace: &str,
-        entity_id: &str,
-        limit: usize,
-    ) -> Result<Vec<GraphRelationRecord>, MemoryError> {
+        per_namespace_cap: usize,
+        total_cap: usize,
+    ) -> Result<Vec<RootSummary>, MemoryError> {
         self.policy.admit_read(
-            Capability::Entities,
-            "entities.entity_edges",
-            namespace,
+            Capability::Tree,
+            "tree.root_summaries_with_caps",
+            NO_NAMESPACE,
             false,
         )?;
         self.family()?
-            .entity_edges(namespace, entity_id, limit)
+            .root_summaries_with_caps(per_namespace_cap, total_cap)
             .await
     }
 
-    async fn touch_entities(
+    // ── The runtime-tree and flavour doors ──────────────────────────────────
+    //
+    // **Forwarding these is not optional.** All seven are defaulted on
+    // [`MemoryTree`], so a decorator that omits one still compiles — and then
+    // answers `Err(Unsupported)` for a driver that serves the member perfectly
+    // well, because the guard *is* the handle every product caller holds and
+    // its own default is what runs. That exact bug shipped once, on
+    // `MemoryMaintenance::diagnose`. The rule this family follows: a new
+    // defaulted member on a wrapped trait is a new override here, in the same
+    // change.
+    //
+    // None of them takes a [`SourceScope`], so step 2 does not apply — the
+    // contract members carry no scope parameter and the guard does not invent
+    // one; see [`Self::root_summaries_with_caps`] for the same reasoning.
+
+    /// Buffering raw content is [`Self::append`]'s write at a finer grain, so
+    /// it takes `append`'s admission exactly: the write tier, against the
+    /// namespace it names, `carries_content: true`, and the same outbound
+    /// scrub applied to the body before it crosses.
+    async fn runtime_buffer_write(
         &self,
         namespace: &str,
-        entity_ids: &[String],
-    ) -> Result<(), MemoryError> {
+        content: &str,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<String, MemoryError> {
         self.policy.admit_write(
-            Capability::Entities,
-            "entities.touch_entities",
+            Capability::Tree,
+            "tree.runtime_buffer_write",
+            namespace,
+            true,
+        )?;
+        let content = self.policy.redact_outbound(content);
+        trace_allowed(
+            &self.policy,
+            "tree.runtime_buffer_write",
+            namespace,
+            content.chars().count(),
+        );
+        self.family()?
+            .runtime_buffer_write(namespace, &content, timestamp, metadata)
+            .await
+    }
+
+    /// A single node read, admitted like [`Self::drill_down`] — the same tree
+    /// at the same grain, minus the child list.
+    async fn runtime_read_node(
+        &self,
+        namespace: &str,
+        node_id: &str,
+    ) -> Result<Option<TreeNode>, MemoryError> {
+        self.policy
+            .admit_read(Capability::Tree, "tree.runtime_read_node", namespace, false)?;
+        self.family()?.runtime_read_node(namespace, node_id).await
+    }
+
+    /// The other half of [`Self::drill_down`], admitted identically.
+    async fn runtime_read_children(
+        &self,
+        namespace: &str,
+        parent_id: &str,
+    ) -> Result<Vec<TreeNode>, MemoryError> {
+        self.policy.admit_read(
+            Capability::Tree,
+            "tree.runtime_read_children",
             namespace,
             false,
         )?;
-        self.family()?.touch_entities(namespace, entity_ids).await
+        self.family()?
+            .runtime_read_children(namespace, parent_id)
+            .await
     }
 
-    /// The occurrence index has no namespace and the contract gives this member
-    /// no scope argument, so there is nothing to intersect — the tier check is
-    /// the whole gate. Worth stating rather than leaving as an apparent
-    /// omission beside the scoped members above.
-    async fn top_entities(
-        &self,
-        kind: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<EntityOccurrence>, MemoryError> {
+    /// Counts and timestamps for one namespace: a read, and one that carries
+    /// no prose either way.
+    async fn runtime_tree_status(&self, namespace: &str) -> Result<TreeStatus, MemoryError> {
         self.policy.admit_read(
-            Capability::Entities,
-            "entities.top_entities",
-            NO_NAMESPACE,
+            Capability::Tree,
+            "tree.runtime_tree_status",
+            namespace,
             false,
         )?;
-        self.family()?.top_entities(kind, limit).await
+        self.family()?.runtime_tree_status(namespace).await
     }
 
-    /// Scoped by the chunk ids the caller already holds: it can only name
-    /// chunks a previous, scoped read handed it, so this adds no reach beyond
-    /// the read that produced them.
-    async fn chunk_entities(
+    /// The **write** tier, unlike [`Self::summarise`]: this drains the buffer
+    /// into hour leaves and persists them, which is what [`Self::seal`] does
+    /// and why `seal` takes the write tier too. `summarise` hands a fold back
+    /// and leaves the tree as it found it; this one does not.
+    ///
+    /// `carries_content: false`: the caller supplies a namespace and an
+    /// instant, never prose. The content the pass folds is already in the
+    /// driver's own buffer, put there by [`Self::runtime_buffer_write`], which
+    /// scrubbed it on the way in.
+    async fn runtime_summarize(
         &self,
-        chunk_ids: &[String],
-        kinds: Option<&[String]>,
-    ) -> Result<Vec<ChunkEntityOccurrence>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Entities,
-            "entities.chunk_entities",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.chunk_entities(chunk_ids, kinds).await
+        namespace: &str,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<TreeNode>, MemoryError> {
+        self.policy
+            .admit_write(Capability::Tree, "tree.runtime_summarize", namespace, false)?;
+        self.family()?.runtime_summarize(namespace, timestamp).await
     }
 
-    /// Returns ids only, never content. A caller still has to read those chunks
-    /// through [`MemoryChunks`] to see anything, and that path applies the
-    /// scope intersection.
-    async fn entity_chunk_ids(
-        &self,
-        entity_id: &str,
-        limit: usize,
-    ) -> Result<Vec<String>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Entities,
-            "entities.entity_chunk_ids",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.entity_chunk_ids(entity_id, limit).await
+    /// As [`Self::runtime_summarize`], on [`Self::cascade`]'s terms.
+    async fn runtime_rebuild(&self, namespace: &str) -> Result<TreeStatus, MemoryError> {
+        self.policy
+            .admit_write(Capability::Tree, "tree.runtime_rebuild", namespace, false)?;
+        self.family()?.runtime_rebuild(namespace).await
     }
-}
 
-// ── Graph ────────────────────────────────────────────────────────────────────
-
-/// Namespace label for the graph family's `Option<&str>` namespace — `None`
-/// addresses the global, namespace-less slice.
-fn graph_ns(namespace: Option<&str>) -> &str {
-    namespace.unwrap_or(NO_NAMESPACE)
+    /// A compiled profile read. The scope is the caller's naming scheme rather
+    /// than a namespace, and it is what this call acts on, so it is what the
+    /// admission names — the reasoning [`Self::flush_source_tree`] gives for
+    /// admitting against its own label instead of `NO_NAMESPACE`.
+    async fn flavour_profile(&self, scope: &str) -> Result<Option<String>, MemoryError> {
+        self.policy
+            .admit_read(Capability::Tree, "tree.flavour_profile", scope, false)?;
+        self.family()?.flavour_profile(scope).await
+    }
 }

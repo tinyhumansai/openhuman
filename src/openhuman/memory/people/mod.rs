@@ -1,36 +1,34 @@
-//! Host layer over the engine's people domain.
+//! Host layer over the people domain: its JSON-RPC surface, and nothing else.
 //!
-//! The domain itself lives in the engine crate; what stays here is its
-//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
-//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
-//! The glob re-export keeps every historical `memory::people::…` path resolving.
+//! Handlers and controller schemas name OpenHuman's `RpcOutcome` and
+//! `ControllerSchema`, which the driver cannot see; the ranking, scoring and
+//! address-book work happens driver-side, behind
+//! [`MemoryPeople`](crate::openhuman::memory::api::provider::MemoryPeople).
 //!
-//! # Why this names `tinycortex` rather than `tinymemory_core` (#5560)
+//! # The re-export is gone, because it had no readers left (#5560)
 //!
-//! It used to read `pub use tinymemory_core::people::*;`, and that path was
-//! itself a re-export: `tinymemory_core::people` is
-//! `pub use crate::engine::backend::people::{address_book, migrations,
-//! resolver, scorer, store, types};`, and `engine::backend::people` is
-//! `pub use tinycortex::memory::people`. Both spellings therefore resolve to
-//! the **same six items**; naming the engine crate directly changes no item,
-//! only which crate alias holds them in the build.
+//! This module opened with `pub use tinycortex::memory::people::*;` — six
+//! engine modules (`address_book`, `migrations`, `resolver`, `scorer`, `store`,
+//! `types`) poured into `memory::people::*` so every historical path kept
+//! resolving. That was worth keeping while something walked those paths.
 //!
-//! That matters because `tinymemory-core` is what #5560 is removing from the
-//! production dependency graph, while `tinycortex` stays — it is a direct
-//! dependency of this crate (`Cargo.toml`), it is where the memory engine
-//! actually lives, and ~40 files here already name `tinycortex::memory::…`.
-//! Same precedent as the `Memory` / `MemoryCategory` type re-exports in
-//! `memory/mod.rs`, which were repointed at the contract for the same reason.
+//! Nothing does. [`rpc`] took the family instead of a `PeopleStore` when it
+//! migrated, and it was the only production caller — a `grep` for the six names
+//! across `src/` now finds prose in `binding`'s module docs (an analogy to
+//! `people::store`'s workspace-keyed cache shape) and the `#[cfg(test)]`
+//! contacts gate below. A glob re-export with no consumer is not a
+//! compatibility surface; it is a dependency edge that keeps the engine crate
+//! named in production for the benefit of no call site.
 //!
-//! **The `contacts` gate has to follow.** `address_book`'s macOS reader is
-//! `#[cfg(all(target_os = "macos", feature = "contacts"))]` *inside tinycortex*,
-//! and this crate reaches it today through `contacts = ["tinymemory-core/contacts"]`
-//! → `tinymemory-core`'s `contacts = ["tinycortex/contacts"]`. When the
-//! `tinymemory-core` normal dependency is dropped, that forward has to become
-//! `contacts = ["tinycortex/contacts"]` directly, or the gate test below stops
-//! testing anything.
-
-pub use tinycortex::memory::people::*;
+//! **The `contacts` gate outlives it, and deliberately.** `address_book`'s
+//! macOS reader is `#[cfg(all(target_os = "macos", feature = "contacts"))]`
+//! *inside the engine*, and this crate's `contacts` feature has to forward
+//! there or the reader is compiled out while `refresh_address_book` reports
+//! success having seeded nothing — the exact bug the gate was written for. So
+//! `mod_contacts_gate_tests_tests.rs` still names the engine crate, from
+//! `#[cfg(test)]`, and asserts the forward end to end. A test reference does
+//! not link the crate into the shipped binary; that is the whole distinction
+//! this change is drawn along.
 
 pub mod rpc;
 pub mod schemas;

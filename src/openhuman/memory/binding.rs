@@ -8,10 +8,9 @@
 //! The binding is resolved by
 //! [`CoreContext::memory_binding`](crate::core::runtime::CoreContext::memory_binding),
 //! which keys on the context's workspace dir. The cache below is deliberately
-//! shaped like
-//! [`memory::people::store::for_workspace`](crate::openhuman::memory::people::store::for_workspace)
-//! — a **workspace-keyed map** — and deliberately *not* like
-//! [`memory::global`](crate::openhuman::memory::global), which is a single slot
+//! shaped like the engine's `people::store::for_workspace`
+//! — a **workspace-keyed map** — and deliberately *not* like the engine's
+//! `global` slot, which is a single slot
 //! holding "the one active-user workspace".
 //!
 //! That shape choice carries a real correctness property for free.

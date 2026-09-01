@@ -28,6 +28,7 @@ import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button
 import { Button } from '@/components/assistant-ui/ui/button';
 import { Skeleton } from '@/components/assistant-ui/ui/skeleton';
 import ModelQualityPill from '@/components/chat/ModelQualityPill';
+import { useAuiEditCapabilities } from '@/features/conversations/components/aui/auiThreadState';
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -630,8 +631,25 @@ const AssistantMessage: FC = () => {
   } = useContext(ThreadComponentsContext);
 
   const ACTION_BAR_PT = 'pt-1.5';
-  // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
-  const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
+  // `min-h` reserves the bar's height (`pt-1.5` + a `size-6` button = 7.5) so a
+  // bar revealed on hover does not shift the transcript, and `-mb` gives that
+  // reservation back to the flow so it does not stack on top of the spacing the
+  // message group already provides. Both MUST sit on this one element: the `-mb`
+  // had drifted onto the root, where it only cancelled that element's own `pb`,
+  // leaving the reservation uncompensated — a dead 30px band under every turn.
+  //
+  // The `-mb` step is `gap-y-6` from the message group, NOT the full `min-h`.
+  // The bar is pulled into the inter-message gap and must stay inside it: give
+  // back more than the gap and the bar's tail paints over the next message's
+  // first line, which sits at the same left inset (`ms-2` here, `px-2` there).
+  // So the bar occupies the gap exactly and the turns end up 7.5 apart.
+  // Keep this in step with `aui_message-group`'s `gap-y-*`; the pairing is
+  // asserted in `thread.actionBarSpacing.test.tsx`.
+  const ACTION_BAR_HEIGHT = `-mb-6 min-h-7.5 ${ACTION_BAR_PT}`;
+  // The root's own `-mb-7.5 pb-7.5` pair below is PAINT-ONLY and unrelated to
+  // the above: `content-visibility:auto` implies `contain: paint`, so `pb`
+  // widens the paint box to cover the bar that `-mb` pulls past the content
+  // box, and the root's `-mb` cancels that padding again in flow.
 
   return (
     <MessagePrimitive.Root
@@ -831,6 +849,29 @@ const UserMessage: FC = () => {
 };
 
 const UserActionBar: FC = () => {
+  // Edit is offered only when the bound runtime can honour it. The
+  // external-store adapter supplies `onNew` / `onCancel` and neither `onEdit`
+  // nor `setMessages`, so assistant-ui reports `edit: false` and
+  // `EditComposer` below never renders — the button was clickable and did
+  // nothing (#5897).
+  //
+  // Gated on the capability rather than hard-coded off, so the affordance
+  // appears by itself the day the adapter grows `onEdit`.
+  const { canEdit } = useAuiEditCapabilities();
+
+  // Hoisted out of the JSX rather than written as `{canEdit && (…)}` inline: a
+  // bare JSX logical expression emits no coverage record on its own line, so
+  // `diff-cover` reported the gate as an uncovered changed line even while the
+  // v8 report showed the surrounding function fully exercised. As a `const` it
+  // is an ordinary statement, instrumented like any other.
+  const editAction = canEdit ? (
+    <ActionBarPrimitive.Edit asChild>
+      <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
+        <PencilIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Edit>
+  ) : null;
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
@@ -841,11 +882,7 @@ const UserActionBar: FC = () => {
           <CopyIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
-          <PencilIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Edit>
+      {editAction}
     </ActionBarPrimitive.Root>
   );
 };
@@ -878,6 +915,15 @@ const EditComposer: FC = () => {
 };
 
 const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, ...rest }) => {
+  // The same defect class as the Edit button above, one step from biting: this
+  // is rendered unconditionally at both call sites and is invisible today only
+  // because `hideWhenSingleBranch` happens to hold — the adapter implements no
+  // `setMessages`, so there is never more than one branch. That is
+  // assistant-ui's guard doing the work this app intended to do itself, and it
+  // would become a second dead control if the prop ever went away.
+  const { canSwitchToBranch } = useAuiEditCapabilities();
+  if (!canSwitchToBranch) return null;
+
   return (
     <BranchPickerPrimitive.Root
       hideWhenSingleBranch

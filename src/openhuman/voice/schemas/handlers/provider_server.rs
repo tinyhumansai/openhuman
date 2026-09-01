@@ -6,8 +6,8 @@ use crate::core::all::ControllerFuture;
 use crate::openhuman::config::rpc as config_rpc;
 
 use crate::openhuman::voice::schemas::helpers::{
-    deserialize_params, generate_silent_wav, validate_stt_provider, validate_tts_provider,
-    validate_tts_provider_key,
+    deserialize_params, generate_silent_wav, validate_provider_key, validate_stt_provider,
+    validate_tts_provider,
 };
 use crate::openhuman::voice::schemas::params::{
     OverlaySttNotifyParams, OverlaySttState, SetProvidersParams, VoiceListModelsParams,
@@ -303,82 +303,107 @@ pub(crate) fn handle_voice_test_provider(params: Map<String, Value>) -> Controll
         let start = std::time::Instant::now();
 
         log::debug!(
-            "[voice-factory] voice_test_provider workload={} provider={}",
+            "[voice-factory] voice_test_provider workload={} provider={} validate_only={} \
+             candidate_key={}",
             p.workload,
-            p.provider
+            p.provider,
+            p.validate_only,
+            p.api_key.is_some()
         );
 
-        match p.workload.as_str() {
-            "stt" => {
-                let provider =
-                    crate::openhuman::voice::create_stt_provider(&p.provider, "", &config)
-                        .map_err(|e| e.to_string())?;
+        if !matches!(p.workload.as_str(), "stt" | "tts") {
+            return Err(format!(
+                "invalid workload '{}' (valid: 'stt', 'tts')",
+                p.workload
+            ));
+        }
 
-                // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
-                // The selected engine can transcribe it without an
-                // external binary (issue #3425).
-                let silent_wav = generate_silent_wav();
-                let audio_b64 = {
-                    use base64::Engine;
-                    base64::engine::general_purpose::STANDARD.encode(&silent_wav)
-                };
+        let trimmed = p.provider.trim();
 
-                match provider
-                    .transcribe(&config, &audio_b64, Some("audio/wav"), None, Some("en"))
-                    .await
-                {
-                    Ok(_outcome) => {
-                        let elapsed = start.elapsed().as_millis();
-                        Ok(serde_json::json!({
-                            "ok": true,
-                            "detail": format!("STT test passed ({elapsed}ms)"),
-                            "latency_ms": elapsed,
-                        }))
-                    }
-                    Err(e) => Ok(serde_json::json!({
-                        "ok": false,
-                        "detail": format!("STT test failed: {e}"),
-                    })),
-                }
+        // `validate_only` is a **dry run** and is honoured for both workloads.
+        // It used to be checked inside the "tts" arm alone, which made it a
+        // silent no-op for STT — and every provider the settings modal can
+        // reach maps to the "stt" workload, so the modal's dry-run request was
+        // always answered with a live transcription (#5896).
+        //
+        // Reserved slugs (`cloud`/`openhuman`/`backend`/`piper`/`whisper`/
+        // `local`/empty) are managed or local engines with no user-held API
+        // key, so there is nothing to validate. They must still return here
+        // rather than fall through: `validate_only` promises no inference
+        // call, and falling through would quietly bill the caller for a real
+        // transcription/synthesis. `ok: true` because nothing is wrong — a
+        // managed provider with no key to check is not a failed check.
+        if p.validate_only {
+            if crate::openhuman::config::schema::is_voice_slug_reserved(trimmed) {
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "detail": "No API key to validate — this provider is managed by OpenHuman.",
+                    "latency_ms": start.elapsed().as_millis(),
+                }));
             }
-            "tts" => {
-                let trimmed = p.provider.trim();
-                if p.validate_only && !matches!(trimmed, "cloud" | "openhuman" | "piper" | "") {
-                    match validate_tts_provider_key(trimmed, &config).await {
-                        Ok(detail) => {
-                            let elapsed = start.elapsed().as_millis();
-                            Ok(serde_json::json!({
-                                "ok": true,
-                                "detail": format!("{detail} ({elapsed}ms)"),
-                                "latency_ms": elapsed,
-                            }))
-                        }
-                        Err(e) => Ok(serde_json::json!({
-                            "ok": false,
-                            "detail": format!("TTS test failed: {e}"),
-                        })),
-                    }
-                } else {
-                    let provider =
-                        crate::openhuman::voice::create_tts_provider(trimmed, "", &config)
-                            .map_err(|e| e.to_string())?;
-                    match provider.synthesize(&config, "Hello", None).await {
-                        Ok(_outcome) => {
-                            let elapsed = start.elapsed().as_millis();
-                            Ok(serde_json::json!({
-                                "ok": true,
-                                "detail": format!("TTS test passed ({elapsed}ms)"),
-                                "latency_ms": elapsed,
-                            }))
-                        }
-                        Err(e) => Ok(serde_json::json!({
-                            "ok": false,
-                            "detail": format!("TTS test failed: {e}"),
-                        })),
-                    }
+            return match validate_provider_key(trimmed, &config, p.api_key.as_deref()).await {
+                Ok(detail) => {
+                    let elapsed = start.elapsed().as_millis();
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "detail": format!("{detail} ({elapsed}ms)"),
+                        "latency_ms": elapsed,
+                    }))
                 }
+                Err(e) => Ok(serde_json::json!({
+                    "ok": false,
+                    "detail": format!("Key test failed: {e}"),
+                })),
+            };
+        }
+
+        if p.workload == "stt" {
+            let provider = crate::openhuman::voice::create_stt_provider(&p.provider, "", &config)
+                .map_err(|e| e.to_string())?;
+
+            // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
+            // The selected engine can transcribe it without an
+            // external binary (issue #3425).
+            let silent_wav = generate_silent_wav();
+            let audio_b64 = {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(&silent_wav)
+            };
+
+            return match provider
+                .transcribe(&config, &audio_b64, Some("audio/wav"), None, Some("en"))
+                .await
+            {
+                Ok(_outcome) => {
+                    let elapsed = start.elapsed().as_millis();
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "detail": format!("STT test passed ({elapsed}ms)"),
+                        "latency_ms": elapsed,
+                    }))
+                }
+                Err(e) => Ok(serde_json::json!({
+                    "ok": false,
+                    "detail": format!("STT test failed: {e}"),
+                })),
+            };
+        }
+
+        let provider = crate::openhuman::voice::create_tts_provider(trimmed, "", &config)
+            .map_err(|e| e.to_string())?;
+        match provider.synthesize(&config, "Hello", None).await {
+            Ok(_outcome) => {
+                let elapsed = start.elapsed().as_millis();
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "detail": format!("TTS test passed ({elapsed}ms)"),
+                    "latency_ms": elapsed,
+                }))
             }
-            other => Err(format!("invalid workload '{other}' (valid: 'stt', 'tts')")),
+            Err(e) => Ok(serde_json::json!({
+                "ok": false,
+                "detail": format!("TTS test failed: {e}"),
+            })),
         }
     })
 }

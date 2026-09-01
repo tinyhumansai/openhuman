@@ -3,8 +3,18 @@ use anyhow::{Context, Result};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::api::provider::ForgetSelector;
 use crate::rpc::RpcOutcome;
-use tinycortex::memory::sync::state::STATE_NAMESPACE as KV_NAMESPACE;
+// The KV namespace the Composio sync pipelines keep their per-connection
+// cursor state under, named at the **contract** (#5560).
+//
+// It used to be `tinycortex::memory::sync::state::STATE_NAMESPACE`. The
+// contract publishes the same string under `composio::KV_NAMESPACE`, and its
+// own docs mark it a compatibility surface for exactly the reason this handler
+// cares about: the value is on disk, so a wipe that spelled it differently
+// would leave every cursor behind while reporting a clean sweep. Taking the
+// constant rather than copying the literal is what keeps that impossible —
+// and it is the same constant the driver writing those rows reads.
 use tinymemory_api::chunks::SourceKind;
+use tinymemory_api::composio::KV_NAMESPACE;
 
 use super::types::{
     DeleteSourceResponse, FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse,
@@ -274,19 +284,21 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
 
 /// Force a flush of one source's summary tree.
 ///
-/// # The last engine reference in this module (#5560)
+/// # Served by the driver, and `TreeFactory` is not a seam gap (#5560)
 ///
-/// **The upstream half of this is done. What is left is two host forwarders,
-/// and until they land migrating here would be a regression — read on before
-/// changing it.**
-///
-/// Served by the bound driver's `MemoryTree::flush_source_tree` (#5560).
+/// Served by the bound driver's `MemoryTree::flush_source_tree`. The wire
+/// member is `tinymemory_bus::names::FLUSH_SOURCE_TREE`, which the pinned
+/// 131-method contract carries, so this is a contract call and not a method
+/// that answers `Unsupported` at run time.
 ///
 /// This used to hold a live `Tree` object from the engine's
 /// `tree_source::get_or_create_source_tree`, because both things it did next
 /// wanted the object rather than a namespace: `TreeFactory::from_tree(&tree)
 /// .label_strategy(&cfg)` picked the labelling policy from the tree's own
-/// kind and scope, and `force_flush_tree` took `&tree.id`.
+/// kind and scope, and `force_flush_tree` took `&tree.id`. **Neither is an
+/// upstream ask** — they are not narrower doors waiting to be opened, they are
+/// the two halves of a handle-passing shape the contract deliberately does not
+/// have, and the member below replaces both.
 ///
 /// tinymemory v1.7.0 replaced that with a member answering the seal count and
 /// making the labelling decision driver-side — which is where it came from

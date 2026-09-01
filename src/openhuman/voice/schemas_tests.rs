@@ -485,6 +485,58 @@ fn deserialize_voice_test_provider_params() {
     let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
     assert_eq!(parsed.workload, "stt");
     assert_eq!(parsed.provider, "deepgram:nova-2");
+    // Absent `api_key` means "use the stored credential", not "empty key".
+    assert_eq!(parsed.api_key, None);
+    assert!(!parsed.validate_only);
+}
+
+#[test]
+fn deserialize_voice_test_provider_params_accepts_candidate_key() {
+    let params = Map::from_iter([
+        ("workload".to_string(), json!("stt")),
+        ("provider".to_string(), json!("elevenlabs")),
+        ("validate_only".to_string(), json!(true)),
+        ("api_key".to_string(), json!("sk-candidate-not-yet-saved")),
+    ]);
+    let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
+    assert!(parsed.validate_only);
+    assert_eq!(
+        parsed.api_key.as_deref(),
+        Some("sk-candidate-not-yet-saved")
+    );
+}
+
+#[test]
+fn voice_test_provider_params_debug_redacts_the_candidate_key() {
+    let params = Map::from_iter([
+        ("workload".to_string(), json!("stt")),
+        ("provider".to_string(), json!("elevenlabs")),
+        ("api_key".to_string(), json!("sk-super-secret-value")),
+    ]);
+    let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
+    let rendered = format!("{parsed:?}");
+    assert!(
+        !rendered.contains("sk-super-secret-value"),
+        "Debug must never render the raw key: {rendered}"
+    );
+    assert!(rendered.contains("[REDACTED]"), "got: {rendered}");
+    // The non-secret fields still have to be debuggable, or the manual impl
+    // has traded a leak for an undiagnosable handler.
+    assert!(rendered.contains("elevenlabs"), "got: {rendered}");
+}
+
+#[test]
+fn test_provider_schema_exposes_the_dry_run_candidate_key() {
+    let s = voice_schemas("voice_test_provider");
+    let api_key = s
+        .inputs
+        .iter()
+        .find(|i| i.name == "api_key")
+        .expect("voice_test_provider must accept a candidate api_key for the dry run");
+    assert!(
+        !api_key.required,
+        "api_key is optional — omitting it means 'use the stored credential'"
+    );
 }
 
 #[test]

@@ -170,18 +170,23 @@ fn schedule_trigger_graph() -> Value {
 // ── save_workflow: enforcing binding-resolvability gate ─────────────────────
 
 /// The proven live-failure shape (same as
-/// `tools_tests::propose_workflow_rejects_unschemad_agent_binding`): a
-/// `summarize` agent with no `output_parser.schema`, and a `notify` tool_call
-/// binding `args.channel` to its (unschemad, therefore unresolvable) output.
+/// `tools_tests::propose_workflow_rejects_agent_binding_missing_declared_field`):
+/// a `summarize` agent whose declared output schema omits `channel`, and a
+/// `notify` tool_call binding `args.channel` to that unaddressable output.
+/// A schema-less agent is deliberately accepted by TinyFlows: its host-defined
+/// output may contain structured JSON, so the field is unverifiable rather
+/// than certainly absent.
 fn unresolvable_binding_graph() -> Value {
     json!({
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "summarize", "kind": "agent", "name": "Summarize",
-              "config": { "agent_ref": "researcher", "prompt": "summarize" } },
+              "config": { "agent_ref": "researcher", "prompt": "summarize",
+                "output_parser": { "schema": { "type": "object",
+                  "properties": { "summary": { "type": "string" } } } } } },
             { "id": "notify", "kind": "tool_call", "name": "Notify",
               "config": { "slug": "SLACK_SEND_MESSAGE",
-                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+                "args": { "channel": "=nodes.summarize.item.json.channel", "text": "A notification" } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "summarize" },

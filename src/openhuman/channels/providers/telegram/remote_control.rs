@@ -5,7 +5,7 @@ use crate::openhuman::channels::context::{
     clear_sender_history, conversation_history_key, ChannelRouteSelection, ChannelRuntimeContext,
 };
 use crate::openhuman::channels::traits::ChannelMessage;
-use tinycortex::memory::conversations::{
+use crate::openhuman::memory::conversations::{
     self as conversations, ConversationThread, CreateConversationThread,
 };
 

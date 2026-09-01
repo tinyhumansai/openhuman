@@ -3,21 +3,22 @@
 //! Sync RPCs publish `DomainEvent::MemorySyncRequested` on the global event
 //! bus — they are fire-and-forget hooks for future ingestion subscribers.
 //!
-//! # One engine call is left here, and it is an openhuman#5560 blocker
+//! # The engine call that was here is gone (openhuman#5560)
 //!
-//! - **`spawn_manual_sync` → `tinycortex::run_composio_connection`.** The
-//!   engine's own `run_composio_connection_with_caps` opens with
-//!   `global::client_if_ready().ok_or(… "memory client is not ready")`, so with
-//!   the in-process engine gone every target fails and this handler emits
-//!   `MemorySyncStage::Failed` per connection. Loud, at least, but wrong. There
-//!   is no contract member to move to: the whole pipeline is `tinycortex`-shaped
-//!   (a `SyncPipeline` over provider-specific fetchers), and the loaded module
-//!   does not run it either — `tinymemory` v1.5.0's module carries a section
-//!   headed "The periodic sync loops are deliberately NOT started here" with
-//!   three named reasons. Manual sync and the periodic loop share this call, so
-//!   they move together or not at all, and the ordering that imposes lives next
-//!   to the loop it protects in
-//!   [`memory::sync::composio`](crate::openhuman::memory::sync::composio).
+//! This section used to name one blocker: `spawn_manual_sync` reached
+//! `tinycortex::run_composio_connection`, whose
+//! `run_composio_connection_with_caps` opens with
+//! `global::client_if_ready().ok_or(… "memory client is not ready")` — so with
+//! the in-process engine gone, every target failed and the handler emitted
+//! `MemorySyncStage::Failed` per connection. Loud, but wrong.
+//!
+//! [`spawn_manual_sync`] runs the pass through
+//! [`integrations::composio::ops::run_sync_pass`](crate::openhuman::integrations::composio::ops::run_sync_pass)
+//! now — the tinyconnectors module for the fetch, the bound driver's
+//! `MemorySourceSink` for the write. The one thing this handler still does for
+//! itself is resolve the binding *before* the spawn, so a driver that accepts
+//! no source items is an error the caller sees rather than a status line a
+//! detached task emits into a channel nobody is reading yet.
 //!
 //! # `memory_ingestion_status` was the quiet one, and it is fixed
 //!

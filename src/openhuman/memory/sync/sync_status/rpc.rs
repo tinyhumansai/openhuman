@@ -3,8 +3,9 @@
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
-use tinycortex::memory::sync::{FreshnessLabel, MemorySyncStatus, StatusListResponse};
 use tinymemory_api::provider::sync::{SourceSyncStatus, SyncFreshness};
+
+use super::{FreshnessLabel, MemorySyncStatus, StatusListResponse};
 
 /// Carry one status across as the wire type this RPC has always answered.
 ///
@@ -16,7 +17,12 @@ use tinymemory_api::provider::sync::{SourceSyncStatus, SyncFreshness};
 /// `rename_all = "snake_case"`. The response body is therefore byte-identical
 /// to what the engine call produced — `response_keeps_top_level_statuses_array`
 /// still holds.
-fn into_wire(status: SourceSyncStatus) -> MemorySyncStatus {
+///
+/// The destructure is deliberate and is the reason this function is not a
+/// `From` impl over `..`: it is the one seam between the contract's shape and
+/// the published one, so a field added, removed or renamed upstream has to fail
+/// here rather than quietly change what `memory_sync.status_list` answers.
+pub(super) fn into_wire(status: SourceSyncStatus) -> MemorySyncStatus {
     let SourceSyncStatus {
         provider,
         chunks_synced,

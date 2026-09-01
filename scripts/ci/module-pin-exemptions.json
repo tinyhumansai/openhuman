@@ -9,20 +9,20 @@
     "is a deliberate edit to this file, which is a reviewable diff.",
     "",
     "Delete an entry the moment the pins are reconciled. An exemption that has",
-    "stopped being true fails the gate too — `expect` must still match."
+    "stopped being true fails the gate too \u2014 `expect` must still match."
   ],
   "exemptions": [
     {
-      "id": "tinymcp",
-      "submodule": "vendor/tinymcp",
-      "expect": "v0.3.1-15-g5909bd1",
-      "reason": "openhuman takes tinymcp with default-features = false (Cargo.toml:296), which switches the module adapter off, so the 0.3.1 artifact this record would download is never loaded. The submodule is the compile-time contract; the record is inert. Tracked by openhuman#5727."
+      "id": "tinyruntime-nodejs",
+      "submodule": "vendor/tinyruntime",
+      "expect": "v0.2.4",
+      "reason": "The provider is published independently at v0.2.2 while tinyruntime shared source contract is v0.2.4; registry retains its matching published provider artifact."
     },
     {
-      "id": "tinywallet",
-      "submodule": "vendor/tinywallet",
-      "expect": "v0.5.0-8-g8c728de",
-      "reason": "v0.5.0 is still the newest tinywallet release, so there is no tag to re-pin the record to. The eight commits past it are dependabot bumps, two of them major (coins-bip32 0.8.7 to 0.13.1, sha3 0.10.9 to 0.12.0). Whether the loaded 0.5.0 cdylib and the compiled 8c728de bus crate still agree on the wire is UNDETERMINED. Tracked by openhuman#5727."
+      "id": "tinyruntime-python",
+      "submodule": "vendor/tinyruntime",
+      "expect": "v0.2.4",
+      "reason": "The provider is published independently at v0.2.2 while tinyruntime shared source contract is v0.2.4; registry retains its matching published provider artifact."
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use super::super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
 use super::super::module_client::{self as connectors, methods};
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
@@ -35,16 +36,28 @@ pub async fn composio_list_connections(
             vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
         ));
     }
-    // One call for both routes: the module owns the difference between the
-    // proxy's envelope and Composio's v3 shape, so the host no longer branches
-    // on which is live.
+    // The connector module owns the backend-proxied route. Direct mode stays
+    // host-side because its client accepts the local loopback overrides used
+    // by desktop development and its v3 response mapper lives here.
     let resp =
-        connectors::call_bare::<ComposioConnectionsResponse>(config, methods::LIST_CONNECTIONS)
-            .await
-            .map_err(|error| {
-                report_composio_op_error("list_connections", &anyhow::anyhow!("{error}"));
-                format!("[composio] list_connections failed: {error}")
-            })?;
+        if config.composio.mode.trim() == crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT {
+            let ComposioClientKind::Direct(direct) = create_composio_client(config)
+                .map_err(|error| format!("[composio-direct] list_connections: {error:#}"))?
+            else {
+                unreachable!("direct Composio mode must construct a direct client")
+            };
+            direct_list_connections(&direct).await.map_err(|error| {
+                report_composio_op_error("list_connections", &error);
+                format!("[composio-direct] list_connections: {error:#}")
+            })?
+        } else {
+            connectors::call_bare::<ComposioConnectionsResponse>(config, methods::LIST_CONNECTIONS)
+                .await
+                .map_err(|error| {
+                    report_composio_op_error("list_connections", &anyhow::anyhow!("{error}"));
+                    format!("[composio] list_connections failed: {error}")
+                })?
+        };
 
     let active = resp.connections.iter().filter(|c| c.is_active()).count();
     let total = resp.connections.len();

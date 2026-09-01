@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use tinycortex::memory::conversations::{
+use crate::openhuman::memory::conversations::{
     self as conversations, ConversationMessage, CreateConversationThread,
 };
 

@@ -1,9 +1,16 @@
 //! Controller schemas + JSON-RPC handlers for the `memory_goals` namespace.
 //!
 //! Methods are exposed as `openhuman.memory_goals_<function>`:
-//! `list`, `add`, `edit`, `delete`, `reflect`. Handlers load the active
-//! config (for `workspace_dir`), delegate to [`super::ops`], and serialise
-//! the [`RpcOutcome`] into the CLI-compatible JSON shape.
+//! `list`, `add`, `edit`, `delete`, `reflect`. Handlers resolve the guarded
+//! goals family for the dispatch, delegate to [`super::ops`], and serialise the
+//! [`RpcOutcome`] into the CLI-compatible JSON shape.
+//!
+//! The wire shape is a published compatibility surface and does not change
+//! here: `memory_goals.*` still answers with the same `GoalsDoc` /
+//! `{ id, goals }` / `{ ran, summary, goals }` bodies. What changed is where
+//! the document comes from — the bound driver rather than a path this handler
+//! passed down. `reflect` still loads the config, because the agent it runs is
+//! built from one.
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -12,6 +19,8 @@ use super::ops;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::memory::api::provider::MemoryProvider;
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::rpc::RpcOutcome;
 
 /// All `memory_goals` controller schemas (advertised to CLI + RPC consumers).
@@ -149,42 +158,63 @@ fn schemas(function: &str) -> ControllerSchema {
 
 // ── Handlers ─────────────────────────────────────────────────────────────
 
+/// The guarded driver for this dispatch, checked to serve the goals family.
+///
+/// Returned as the guard rather than as `&dyn MemoryGoals` because the family
+/// accessor borrows from it — a helper handing back the borrow directly would
+/// not outlive the call. Same shape, and the same reason, as
+/// `people::schemas::current_people_guard`.
+async fn current_goals_guard(
+) -> Result<std::sync::Arc<crate::openhuman::memory::guard::MemoryGuard>, String> {
+    let guard = active_memory_guard().await?;
+    if guard.as_goals().is_none() {
+        return Err("memory driver does not support the goals family".to_string());
+    }
+    Ok(guard)
+}
+
 fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::list(&config.workspace_dir).await?)
+        let guard = current_goals_guard().await?;
+        let goals = guard.as_goals().expect("checked in current_goals_guard");
+        to_json(ops::list(goals).await?)
     })
 }
 
 fn handle_add(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let guard = current_goals_guard().await?;
+        let goals = guard.as_goals().expect("checked in current_goals_guard");
         let req = parse_value::<AddParams>(Value::Object(params))?;
-        to_json(ops::add(&config.workspace_dir, &req.text).await?)
+        to_json(ops::add(goals, &req.text).await?)
     })
 }
 
 fn handle_edit(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let guard = current_goals_guard().await?;
+        let goals = guard.as_goals().expect("checked in current_goals_guard");
         let req = parse_value::<EditParams>(Value::Object(params))?;
-        to_json(ops::edit(&config.workspace_dir, &req.id, &req.text).await?)
+        to_json(ops::edit(goals, &req.id, &req.text).await?)
     })
 }
 
 fn handle_delete(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let guard = current_goals_guard().await?;
+        let goals = guard.as_goals().expect("checked in current_goals_guard");
         let req = parse_value::<DeleteParams>(Value::Object(params))?;
-        to_json(ops::delete(&config.workspace_dir, &req.id).await?)
+        to_json(ops::delete(goals, &req.id).await?)
     })
 }
 
 fn handle_reflect(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
+        let guard = current_goals_guard().await?;
+        let goals = guard.as_goals().expect("checked in current_goals_guard");
         let req = parse_value::<ReflectParams>(Value::Object(params))?;
-        to_json(ops::reflect_now(&config, req.context).await?)
+        to_json(ops::reflect_now(&config, goals, req.context).await?)
     })
 }
 

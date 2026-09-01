@@ -1019,13 +1019,48 @@ than in someone's memory. **Do not widen `memory::api` back out to the whole
 crate** — if a new path needs something not exported there, the question to
 answer first is whether it crosses the bus.
 
-**`tinymemory-api` stays; `tinymemory-core` has not left yet.** The API crate is
-the host-owned contract and is meant to be a dependency. The *engine* crate is
-still linked (1.44 MB of `.text`) because ~71 lines across 38 production files
-name `tinymemory_core::` directly, and ~687 more paths reach it through the
-twenty-five module re-exports in `memory/mod.rs`. `memory/direct_engine_refs_tests.rs`
-is the ratchet over the first number, with every file classified as a re-export
-shim, a host-seam installation, or a call that needs a wider bus surface.
+**`tinymemory-api` stays; `tinymemory-core` has left the product build (#5560,
+2026-08-31).** The API crate is the host-owned contract and is meant to be a
+dependency. The *engine* crate used to be linked beside it — 1.44 MB of `.text`
+— and is not any more: it, `tinycortex`, `tinycortex-api`, the `tinymemory`
+facade and `tinymemory-tinycortex` are all out of the **normal** dependency
+graph. Verify rather than trust the manifest, because the two can disagree:
+`cargo tree -e normal -i <crate>` under the product feature set prints "nothing
+to print" for each.
+
+Two survivals are deliberate and neither puts the engine back in the product:
+
+- **`[dev-dependencies]`** carries `tinycortex`, `tinymemory-core` and
+  `tinymemory-tinycortex` for the ~11 test files that drive a real in-process
+  engine. Cargo does not link dev-dependency features into the shipped binary —
+  the same precedent the root `tinywallet` entry already sets.
+- **`optional = true`**, reached by two default-OFF-for-the-product features.
+  `rss-bench` keeps `tinycortex` and `tinymemory-core` available to the two
+  `library_profile` bins, which measure the in-process engine and cannot use a
+  dev-dependency because a `[[bin]]` never sees one. `memory-engine-seams`
+  compiles `memory::host_impls` for the ~24 `tests/*.rs` integration targets
+  that install the host seams — a `tests/` target links this crate as an
+  ordinary dependency, where `cfg(test)` is false, so `#[cfg(test)]` would not
+  have reached them however the engine was declared. It is in `default`
+  (so every test lane picks it up without composing a new feature string) and
+  allow-listed in `INTENTIONALLY_NOT_FORWARDED`; neither feature is in
+  `scripts/ci/product-features.txt`.
+
+The `[patch]` entries for `tinycortex` / `tinycortex-api` stay in both manifests
+and must not be removed with the dependencies. Dropping a direct dependency and
+dropping its patch are different things: the crates are unpublished and the
+engine crates still reached as dev-dependencies name them by version
+requirement, so removing a patch fails **resolution** ("no matching package
+named `tinycortex-api` found") before anything compiles.
+
+`memory/direct_engine_refs_tests.rs` is still the ratchet over direct
+`tinymemory_core::` references, but **its non-empty list no longer implies a
+linked engine** — it scans source text and cannot see `cfg`, and none of its
+ten remaining entries is in the product build: seven are `#[cfg(test)]`-only,
+one is `memory/host_impls.rs` behind the default-only `memory-engine-seams`
+feature, and two are the `rss-bench` bins, behind a feature the product set
+never enables. Draining them is a correctness goal (a second,
+unpoliced door into the subsystem), not a binary-size one.
 
 **Most of what remains is blocked upstream, not here.** `modules::registry` pins
 the TinyMemory module to a released, SHA-256-verified artifact, so a new bus

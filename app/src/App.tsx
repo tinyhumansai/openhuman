@@ -224,11 +224,15 @@ export function AppShellDesktop() {
   const onHiddenChromePath = ['/', '/login'].some(
     path => location.pathname === path || location.pathname.startsWith(`${path}/`)
   );
-  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) owns the full
-  // viewport for a focused builder — no app sidebar. The `/flows` list (and its
-  // in-page Runs / Discoveries sub-views on `?view=`) keep their chrome.
-  const onWorkflowCanvas = location.pathname.startsWith('/flows/');
-  const chromeless = !token || onOnboardingRoute || onHiddenChromePath || onWorkflowCanvas;
+  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) used to be listed
+  // here too, as "a focused builder — no app sidebar". It is back in the shell:
+  // going chromeless cost it the app nav AND the sidebar slot, so the builder
+  // had to hand-roll its own 240px run-history rail inside the page (`hidden
+  // lg:flex w-60 border-r`) — a second sidebar sitting where the real one would
+  // have been. It now projects that rail through `SidebarContent` like every
+  // other page, and a user who wants the focused view collapses the sidebar,
+  // which is what `collapsible="icon"` is for.
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">

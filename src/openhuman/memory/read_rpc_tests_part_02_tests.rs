@@ -464,7 +464,7 @@ async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
     // `pipeline_status_rpc` → `current_degraded_state`), which sibling
     // `memory_tree` tests set and never clear. Serialise + reset to a clean
     // baseline so the assertion is deterministic. See #4691.
-    let _g = crate::openhuman::memory::tree::health::test_guard();
+    let _g = tinymemory_core::tree::health::test_guard();
     let (_tmp, cfg) = test_config();
     // `vault_health_check_rpc` folds in `pipeline_status_rpc`, which reads
     // through the bound driver. Bind an empty one explicitly: resolving the

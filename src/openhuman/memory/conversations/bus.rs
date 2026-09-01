@@ -1,6 +1,25 @@
 //! Event-bus subscriber that mirrors inbound channel messages into the
 //! workspace-backed conversation store, so non-web channels (Slack, Telegram,
 //! etc.) persist alongside UI-driven threads.
+//!
+//! # The engine's `bus.rs` is not this file, and did not replace it (#5560)
+//!
+//! When the conversation store lived in the memory engine it carried a second
+//! subscriber of its own. That one existed only because the engine could not
+//! name the host's channel layer: it declared a `ConversationEventBus` trait
+//! for a host to implement, a self-contained `ChannelEvent` enum standing in
+//! for `DomainEvent::ChannelMessage*`, and an inlined copy of
+//! `conversation_history_key`'s thread-id derivation — with a comment
+//! promising the copy stayed byte-identical to this one.
+//!
+//! No host ever implemented that trait. This file has always been the live
+//! subscriber, wired to `crate::core::bus::BUS` and calling the real
+//! [`conversation_history_key`], and moving the store home means the
+//! abstraction has nothing left to abstract. So the engine's version stayed
+//! where it was and only the store import below changed. Two things follow:
+//! there is exactly one thread-id derivation again rather than a copy and a
+//! promise, and this file's behaviour is untouched by the move — which matters,
+//! because it decides the id under which channel turns are persisted.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -15,7 +34,7 @@ use tinybus::SubscriptionHandle;
 use tinychannels_bus::context::conversation_history_key;
 use tinychannels_bus::ChannelMessage;
 
-use tinycortex::memory::conversations::{
+use super::{
     append_message, ensure_thread, get_messages, ConversationMessage, CreateConversationThread,
 };
 

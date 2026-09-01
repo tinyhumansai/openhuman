@@ -245,18 +245,15 @@ async fn try_deterministic_memory_retrieval(
             return None;
         }
     };
-    // Relevance guard (Codex review): require entity/topic grounding before we
-    // let a deterministic pass stand in for the model's relevance judgement. The
-    // extraction here is deterministic and cheap (regex, or one spaCy call);
-    // `fast_retrieve` repeats it internally, which is the same work its first
-    // model-driven tool call would have done.
-    //
-    // Extraction goes through the provider's scoring family so the host no longer
-    // calls `tinymemory_core::` directly. Any failure (binding unavailable,
-    // scoring not exposed, extraction error) is fail-safe: treat as entities_empty
-    // = true so the fast path is skipped and the model-driven walk runs instead.
-    // This preserves the pre-scoring behavior where an unavailable extractor
-    // returned empty entities, keeping the guard conservative.
+    // Relevance guard (Codex review): require entity/topic grounding before a
+    // deterministic pass stands in for the model's relevance judgement — the
+    // extraction is cheap (regex or one spaCy call) and `fast_retrieve` repeats
+    // it internally anyway. It goes through the provider's scoring family so
+    // the host no longer calls `tinymemory_core::` directly, and every failure
+    // (binding unavailable, scoring not exposed, extraction error) is fail-safe
+    // as entities_empty = true: the fast path is skipped and the model-driven
+    // walk runs — the same conservative outcome an unavailable extractor
+    // produced before scoring existed.
     let entities_empty = match crate::openhuman::memory::binding::for_config(config) {
         Ok(binding) => match binding.provider().as_scoring() {
             Some(scoring) => match scoring.extract_entities(query).await {

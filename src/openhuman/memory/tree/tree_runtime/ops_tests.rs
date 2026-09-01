@@ -2,6 +2,18 @@ use super::*;
 use chrono::TimeZone;
 use tempfile::TempDir;
 
+// `TreeNode`, `level_from_node_id` and `derive_parent_id` used to arrive
+// through `super::*` while `ops.rs` still globbed the engine crate's runtime
+// module. `ops.rs` names the contract explicitly now (#5560) and imports only
+// the two items it uses, so these are named here — the same items, from the
+// same crate the sibling `tree_runtime/mod.rs` re-exports them from.
+use crate::openhuman::memory::api::tree::{derive_parent_id, level_from_node_id, TreeNode};
+
+// The handlers under test resolve a `MemoryProvider` now, so these tests bind
+// one. See `tree_runtime::test_support` for what it is and why it is backed by
+// the real engine store rather than a fake.
+use crate::openhuman::memory::tree::tree_runtime::test_support::{bind_tree_driver, engine_store};
+
 fn rfc3339_z(ts: DateTime<Utc>) -> String {
     ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
@@ -79,6 +91,7 @@ fn create_provider_uses_cloud_when_opted_in_and_local_ai_off() {
 #[tokio::test]
 async fn tree_summarizer_ingest_rejects_blank_content() {
     let (_tmp, cfg) = config_in_tempdir();
+    bind_tree_driver(&cfg);
     let err = tree_summarizer_ingest(&cfg, "team", "   ", None, None)
         .await
         .expect_err("blank content should be rejected");
@@ -92,6 +105,7 @@ async fn tree_summarizer_ingest_writes_buffer_and_reports_metadata() {
         .with_ymd_and_hms(2026, 5, 24, 12, 30, 0)
         .unwrap();
     let meta = json!({"source": "unit-test"});
+    bind_tree_driver(&cfg);
     let outcome =
         tree_summarizer_ingest(&cfg, "Team / Notes", "hello world", Some(ts), Some(&meta))
             .await
@@ -120,6 +134,7 @@ async fn tree_summarizer_ingest_writes_buffer_and_reports_metadata() {
 #[tokio::test]
 async fn tree_summarizer_status_reports_empty_tree_defaults() {
     let (_tmp, cfg) = config_in_tempdir();
+    bind_tree_driver(&cfg);
     let outcome = tree_summarizer_status(&cfg, "fresh-ns")
         .await
         .expect("status on fresh namespace");
@@ -135,6 +150,7 @@ async fn tree_summarizer_status_reports_empty_tree_defaults() {
 #[tokio::test]
 async fn tree_summarizer_query_errors_when_node_is_missing() {
     let (_tmp, cfg) = config_in_tempdir();
+    bind_tree_driver(&cfg);
     let err = tree_summarizer_query(&cfg, "fresh-ns", Some("root"))
         .await
         .expect_err("missing node should error");
@@ -149,8 +165,9 @@ async fn tree_summarizer_query_returns_node_and_children() {
         .unwrap();
     let root = test_node("team", "root", "root summary", ts, 1);
     let year = test_node("team", "2026", "year summary", ts, 1);
-    store::write_node(&cfg, &root).expect("write root");
-    store::write_node(&cfg, &year).expect("write year");
+    engine_store::write_node(&cfg, &root).expect("write root");
+    engine_store::write_node(&cfg, &year).expect("write year");
+    bind_tree_driver(&cfg);
 
     let outcome = tree_summarizer_query(&cfg, "team", None)
         .await
@@ -191,8 +208,9 @@ async fn tree_summarizer_status_reports_populated_tree_details() {
         test_node("team", "2026/05/24/08", "hour one", early, 0),
         test_node("team", "2026/05/24/17", "hour two", late, 0),
     ] {
-        store::write_node(&cfg, &node).expect("write test node");
+        engine_store::write_node(&cfg, &node).expect("write test node");
     }
+    bind_tree_driver(&cfg);
 
     let outcome = tree_summarizer_status(&cfg, "team")
         .await
@@ -211,6 +229,7 @@ async fn tree_summarizer_status_reports_populated_tree_details() {
 async fn tree_summarizer_run_skips_when_buffer_is_empty() {
     let (_tmp, mut cfg) = config_in_tempdir();
     cfg.local_ai.runtime_enabled = true;
+    bind_tree_driver(&cfg);
 
     let outcome = tree_summarizer_run(&cfg, "team")
         .await
@@ -225,7 +244,7 @@ async fn tree_summarizer_run_skips_when_buffer_is_empty() {
         json!({ "skipped": true, "reason": "no buffered data" })
     );
     assert!(
-        !store::buffer_dir(&cfg, "team").exists(),
+        !engine_store::buffer_dir(&cfg, "team").exists(),
         "skip path should not create a buffer directory"
     );
 }
@@ -238,6 +257,7 @@ async fn tree_summarizer_run_skips_cleanly_with_cloud_fallback_and_empty_buffer(
     let (_tmp, mut cfg) = config_in_tempdir();
     cfg.local_ai.runtime_enabled = false;
     cfg.memory_tree.cloud_summarization_opt_in = true;
+    bind_tree_driver(&cfg);
 
     let outcome = tree_summarizer_run(&cfg, "team")
         .await

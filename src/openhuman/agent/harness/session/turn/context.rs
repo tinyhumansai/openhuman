@@ -234,9 +234,10 @@ impl Agent {
         // Pull every namespace's root-level summary from the tree
         // summarizer. This is the densest user memory we can hand the
         // orchestrator: each root holds up to 20 000 tokens of distilled
-        // long-term context. Done synchronously here because the calls
-        // are filesystem reads, not provider/network round-trips, and
-        // happen exactly once per session (only on the first turn).
+        // long-term context. Awaited inline, alongside the four memory reads
+        // above: the shared tree's roots come from the bound driver now
+        // (#5560) rather than from a host-side filesystem scan, and this
+        // happens exactly once per session (only on the first turn).
         //
         // Per-namespace + total caps come from the user-facing memory
         // window preset on `AgentConfig` so changing the slider in the
@@ -247,7 +248,8 @@ impl Agent {
             &self.memory_subdir,
             limits.per_namespace_max_chars,
             limits.total_tree_max_chars,
-        );
+        )
+        .await;
 
         LearnedContextData {
             observations: obs_entries

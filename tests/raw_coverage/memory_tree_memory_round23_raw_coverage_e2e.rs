@@ -14,15 +14,20 @@ use tempfile::TempDir;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::inference::embeddings::NoopEmbedding;
-use openhuman_core::openhuman::memory::{
-    ExtractionMode, MemoryIngestionConfig, MemoryIngestionRequest,
-};
-use tinymemory_core::store::{NamespaceDocumentInput, UnifiedMemory};
+// The engine's own ingest request/config — what `UnifiedMemory::ingest_document`
+// takes. `memory::MemoryIngestion*` are the host's WIRE shapes now
+// (`rpc_models`), distinct types (#5560).
 use openhuman_core::openhuman::memory::tree::tree_runtime::{
-    all_tree_summarizer_registered_controllers, engine, rpc as tree_runtime_rpc,
-    store as tree_runtime_store,
+    all_tree_summarizer_registered_controllers, rpc as tree_runtime_rpc,
 };
+use tinycortex::memory::ingest::{ExtractionMode, MemoryIngestionConfig, MemoryIngestionRequest};
+use tinymemory_core::store::{NamespaceDocumentInput, UnifiedMemory};
+// The host's `tree_runtime` re-export of these two engine modules is gone
+// (#5560): the RPC surface goes through the contract's runtime-tree doors now,
+// and the fold is the driver's. This target drives the engine directly, so it
+// names the engine crate.
 use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
+use tinymemory_core::tree::tree_runtime::{engine, store as tree_runtime_store};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -269,6 +274,18 @@ async fn tree_runtime_rpc_and_registered_handlers_cover_status_and_errors() {
     let config = config_in(&tmp);
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let timestamp = Utc.with_ymd_and_hms(2026, 5, 30, 11, 0, 0).unwrap();
+
+    // The summarizer RPC crosses the module binding since the round-2
+    // migration, and this raw-coverage target runs without the boot sequence
+    // that publishes the module host policy — publish it here exactly as the
+    // sync round23 target does, then load the CI-provisioned local module.
+    #[cfg(feature = "modules")]
+    openhuman_core::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(
+        config.clone(),
+    ));
+    openhuman_core::openhuman::modules::ops::ensure_loaded(&config, "tinymemory")
+        .await
+        .expect("load local TinyMemory test module");
 
     let ingest = tree_runtime_rpc::tree_summarizer_ingest(
         &config,

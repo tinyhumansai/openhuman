@@ -227,16 +227,19 @@ async fn load_dump_config(
     }
 
     // The `agent` CLI dispatches straight to this dumper and never runs the
-    // runtime bootstrap, so nothing else wires the `tinymemory-core` host
-    // seams. Building a session agent constructs a memory store, and the
-    // embedding seam fails loudly when unwired ("no EmbeddingHost installed")
-    // rather than degrading — so without this, every `agent dump-prompt` /
-    // `dump-all` invocation aborts before rendering a single prompt.
-    // Idempotent, so calling it per invocation is safe. Same rationale as
-    // `memory_cli` / `subconscious_cli`.
-    crate::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        config.clone(),
-    ));
+    // runtime bootstrap, so nothing else wires the host's memory seams.
+    //
+    // The `tinymemory-core` seams this used to install are gone with the crate
+    // (#5560). The reason they were needed — building a session agent
+    // constructed an in-process memory store whose embedding seam failed loudly
+    // when unwired — no longer holds: `session::builder::factory` stopped
+    // booting one, so `dump-prompt` reaches no engine to call back into.
+    //
+    // The contract event sink still installs, idempotently, for the same reason
+    // as in `runtime::context`: it is a `tinymemory-api` seam with a live
+    // production publisher, and it drops silently rather than loudly when
+    // unwired. Same rationale as `memory_cli` / `subconscious_cli`.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     Ok(config)
 }

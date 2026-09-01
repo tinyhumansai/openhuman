@@ -29,21 +29,28 @@ use openhuman_core::openhuman::memory::query::{
     MemoryQueryTool, MemoryTreeDrillDownTool, MemoryTreeFetchLeavesTool,
     MemoryTreeIngestDocumentTool, MemoryTreeQuerySourceTool, MemoryTreeSearchEntitiesTool,
 };
-use tinymemory_core::queue::types::ReembedBackfillPayload;
-use tinymemory_core::queue::{
-    self as memory_queue, AppendBufferPayload, AppendTarget, ExtractChunkPayload,
-    FlushStalePayload, JobKind, JobStatus, NewJob, NodeRef, SealPayload, DEFAULT_LOCK_DURATION_MS,
-};
 use openhuman_core::openhuman::memory::sources::readers::reader_for;
 use openhuman_core::openhuman::memory::sources::registry;
 use openhuman_core::openhuman::memory::sources::rpc as memory_sources_rpc;
-use openhuman_core::openhuman::memory::sources::status::{source_status, FreshnessLabel};
-use openhuman_core::openhuman::memory::sources::sync::sync_source;
+// The engine's per-source SQL read, which is what this suite seeds a store for.
+// `memory::sources::status` is host-side now and asks the bound driver, which an
+// integration test has no module to load (#5560).
+use tinymemory_core::sources::status::{source_status, FreshnessLabel};
+// The engine's own source pipeline. `memory::sources::sync` is host-side now and
+// carries only `derive_scopes`; `sync_source` stayed upstream because nothing in
+// `src/` calls it any more (#5560).
+use tinymemory_core::sources::sync::sync_source;
 use openhuman_core::openhuman::memory::sources::types::{
     ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind,
 };
 use openhuman_core::openhuman::memory::sources::{
     all_memory_sources_controller_schemas, all_memory_sources_registered_controllers,
+};
+use openhuman_core::openhuman::memory::sync::composio;
+use tinymemory_core::queue::types::ReembedBackfillPayload;
+use tinymemory_core::queue::{
+    self as memory_queue, AppendBufferPayload, AppendTarget, ExtractChunkPayload,
+    FlushStalePayload, JobKind, JobStatus, NewJob, NodeRef, SealPayload, DEFAULT_LOCK_DURATION_MS,
 };
 use tinymemory_core::store::chunks::store::{upsert_chunks, with_connection};
 use tinymemory_core::store::chunks::types::{
@@ -53,10 +60,7 @@ use tinymemory_core::store::chunks::types::{
 use tinymemory_core::store::trees::types::{
     SummaryNode, Tree, TreeKind, TreeStatus as StoredTreeStatus,
 };
-use tinymemory_core::store::{
-    MemoryClient, NamespaceDocumentInput, UnifiedMemory,
-};
-use openhuman_core::openhuman::memory::sync::composio;
+use tinymemory_core::store::{MemoryClient, NamespaceDocumentInput, UnifiedMemory};
 // `memory::sync::composio::providers::slack::schemas` is this host's own real,
 // current RPC schema module (`openhuman.slack_memory_sync_trigger` /
 // `_status`) — unrelated to the deleted per-action `post_process` (see below).
@@ -69,16 +73,18 @@ use openhuman_core::openhuman::memory::sync::composio::providers::slack::schemas
 use openhuman_core::openhuman::integrations::composio::identity_store::{
     delete_connected_identity_facets, load_connected_identities,
 };
-use openhuman_core::openhuman::integrations::composio::ops::{composio_get_user_profile, composio_sync};
+use openhuman_core::openhuman::integrations::composio::ops::{
+    composio_get_user_profile, composio_sync,
+};
 use openhuman_core::openhuman::integrations::composio::profile_md::{
     block_end, block_start, merge_provider_into_profile_md, remove_provider_from_profile_md,
     replace_managed_block,
 };
 use openhuman_core::openhuman::integrations::composio::providers::{
     agent_ready_toolkits, catalog_for_toolkit, classify_unknown, curated_scope_for, find_curated,
-    is_action_visible_with_pref, toolkit_from_slug, toolkit_has_scope, CuratedTool,
-    NormalizedTask, ProviderUserProfile, SyncOutcome as ComposioSyncOutcome, SyncReason,
-    TaskFetchFilter, ToolScope, UserScopePref,
+    is_action_visible_with_pref, toolkit_from_slug, toolkit_has_scope, CuratedTool, NormalizedTask,
+    ProviderUserProfile, SyncOutcome as ComposioSyncOutcome, SyncReason, TaskFetchFilter,
+    ToolScope, UserScopePref,
 };
 use tinymemory_api::composio::{
     canonicalize, extract_item_id, render_connected_identities_section, ConnectedIdentity,
@@ -90,7 +96,6 @@ use tinymemory_api::composio::{
 // indexer was never scoped to one toolkit to begin with. Note this is a
 // DIFFERENT (structurally identical) `IdentityKind` than
 // `tinymemory_api::composio::IdentityKind` above.
-use tinymemory_core::store::identity::is_self_identity_any_toolkit;
 use openhuman_core::openhuman::memory::sync::sync_status::{
     rpc as memory_sync_status_rpc, schemas as memory_sync_status_schemas,
 };
@@ -107,32 +112,35 @@ use openhuman_core::openhuman::memory::tools::tool_memory::{
 use openhuman_core::openhuman::memory::tools::{
     MemoryForgetTool, MemoryRecallTool, MemoryStoreTool,
 };
-use openhuman_core::openhuman::memory::tree::score::embed::Embedder;
-use openhuman_core::openhuman::memory::tree::score::extract::{
+use tinymemory_core::tree::score::embed;
+use tinymemory_core::tree::score::embed::Embedder;
+use tinymemory_core::tree::score::extract::{
     CompositeExtractor, EntityExtractor, EntityKind, ExtractedEntities, ExtractedEntity,
     ExtractedTopic,
 };
-use openhuman_core::openhuman::memory::tree::score::resolver::CanonicalEntity;
-use openhuman_core::openhuman::memory::tree::score::signals::{
+use tinymemory_core::tree::score::resolver::CanonicalEntity;
+use tinymemory_core::tree::score::signals::{
     combine, combine_cheap_only, compute as compute_score_signals, entity_density_score,
     interaction, metadata_weight, source_weight, token_count, unique_words, ScoreSignals,
     SignalWeights,
 };
-use openhuman_core::openhuman::memory::tree::score::store as score_store;
-use openhuman_core::openhuman::memory::tree::score::{resolver, ScoringConfig};
-use openhuman_core::openhuman::memory::tree::summarise::{
+use tinymemory_core::tree::score::store as score_store;
+use tinymemory_core::tree::score::{resolver, ScoringConfig};
+use tinymemory_core::tree::summarise::{
     fallback_summary, SummaryContext, SummaryInput,
 };
-use openhuman_core::openhuman::memory::tree::tree::bucket_seal::LeafRef;
-use openhuman_core::openhuman::memory::tree::tree_runtime::store as tree_runtime_store;
+use tinymemory_core::tree::tree::bucket_seal::LeafRef;
+use tinymemory_core::tree::tree_runtime::store as tree_runtime_store;
 use openhuman_core::openhuman::memory::tree::tree_runtime::{
     all_tree_summarizer_controller_schemas, all_tree_summarizer_registered_controllers,
     derive_node_ids, derive_parent_id, estimate_tokens, level_from_node_id, node_id_to_path,
     NodeLevel, TreeNode,
 };
-use openhuman_core::openhuman::memory::tree::{retrieval, score::embed};
-use tinymemory_core::tree_policy::TreePolicy;
-use tinymemory_core::tree_source;
+use tinymemory_core::store::identity::is_self_identity_any_toolkit;
+// `retrieval` is the engine module, not the host wrapper: the host stopped
+// re-exporting it in #5560. The `tree::score` / `tree::summarise` /
+// `tree::tree` imports above went engine-direct the same way once their host
+// re-export shims stopped serving production (#5560).
 use openhuman_core::openhuman::memory::{
     all_memory_controller_schemas, all_memory_registered_controllers,
     preferences::{
@@ -140,8 +148,14 @@ use openhuman_core::openhuman::memory::{
         USER_PREF_GENERAL_NAMESPACE, USER_PREF_SITUATIONAL_NAMESPACE,
     },
     read_rpc as memory_read_rpc,
-    MemoryIngestionConfig, MemoryIngestionRequest,
 };
+// The engine's own ingest request/config — what `UnifiedMemory::
+// ingest_document` and `extract_graph` take. `memory::MemoryIngestion*` are
+// the host's WIRE shapes now (`rpc_models`), distinct types (#5560).
+use tinycortex::memory::ingest::{MemoryIngestionConfig, MemoryIngestionRequest};
+use tinymemory_core::tree::retrieval;
+use tinymemory_core::tree_policy::TreePolicy;
+use tinymemory_core::tree_source;
 // `remember`, `rpc_models`, `traits` and `util` moved into the extracted engine
 // crate with the rest of the memory implementation; the host re-exports some of
 // their contents flat but not the modules themselves.
@@ -159,15 +173,6 @@ use openhuman_core::openhuman::memory::rpc_models::{
     ListMemoryFilesRequest, MemoryInitRequest, ReadMemoryFileRequest,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest, WriteMemoryFileRequest,
-};
-use tinymemory_core::{
-    remember::RememberSourceKind,
-    rpc_models::{
-        ApiEnvelope, ApiError, ApiMeta, PaginationMeta, QueryNamespaceRequest,
-        RecallContextRequest, RecallMemoriesRequest,
-    },
-    traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts},
-    util::redact::{redact, redact_endpoint},
 };
 use openhuman_core::openhuman::security::{AutonomyLevel, SecurityPolicy};
 use openhuman_core::openhuman::threads::ops as thread_ops;
@@ -196,6 +201,15 @@ use tinycortex::memory::ingest::canonicalize::email::{
 };
 use tinycortex::memory::ingest::canonicalize::email_clean;
 use tinycortex::memory::sync::{SyncOutcome as PipelineSyncOutcome, SyncPipelineKind};
+use tinymemory_core::{
+    remember::RememberSourceKind,
+    rpc_models::{
+        ApiEnvelope, ApiError, ApiMeta, PaginationMeta, QueryNamespaceRequest,
+        RecallContextRequest, RecallMemoriesRequest,
+    },
+    traits::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts},
+    util::redact::{redact, redact_endpoint},
+};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -671,7 +685,7 @@ Kitchen is north of Garden.
                 taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             &MemoryIngestionConfig {
-                extraction_mode: openhuman_core::openhuman::memory::ExtractionMode::Chunk,
+                extraction_mode: tinycortex::memory::ingest::ExtractionMode::Chunk,
                 ..Default::default()
             },
         )
@@ -1454,7 +1468,7 @@ fn memory_tree_scoring_signal_helpers_cover_boundaries_and_serialization() {
     assert!(!EntityKind::Person.is_mechanical());
     assert!(EntityKind::parse("unknown").is_err());
 
-    let regex_entities = openhuman_core::openhuman::memory::tree::score::extract::regex::extract(
+    let regex_entities = tinymemory_core::tree::score::extract::regex::extract(
         "Alice emailed bob@example.com from https://example.test and mentioned #coverage.",
     );
     assert!(regex_entities
@@ -1740,12 +1754,12 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         0
     );
 
-    let source_factory = openhuman_core::openhuman::memory::tree::tree::TreeFactory::source(
+    let source_factory = tinymemory_core::tree::tree::TreeFactory::source(
         "gmail:alice@example.com|bob@example.com",
     );
     assert_eq!(
         source_factory.profile(),
-        openhuman_core::openhuman::memory::tree::tree::TreeProfile::Source
+        tinymemory_core::tree::tree::TreeProfile::Source
     );
     assert_eq!(
         source_factory.scope_slug(),
@@ -1755,10 +1769,10 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         .get_or_create(&config)
         .expect("source tree from factory");
     assert_eq!(
-        openhuman_core::openhuman::memory::tree::tree::TreeFactory::from_tree(&source_tree).kind(),
+        tinymemory_core::tree::tree::TreeFactory::from_tree(&source_tree).kind(),
         TreeKind::Source
     );
-    let topic_factory = openhuman_core::openhuman::memory::tree::tree::TreeFactory::topic(
+    let topic_factory = tinymemory_core::tree::tree::TreeFactory::topic(
         "email:alice@example.com",
     );
     assert!(matches!(
@@ -1770,12 +1784,12 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         .expect("topic tree from factory");
     assert_ne!(source_tree.id, topic_tree.id);
     assert!(
-        openhuman_core::openhuman::memory::tree::tree::new_tree_id(TreeKind::Global)
+        tinymemory_core::tree::tree::new_tree_id(TreeKind::Global)
             .starts_with("global:")
     );
-    assert!(openhuman_core::openhuman::memory::tree::tree::new_summary_id(2).contains(":L2-"));
+    assert!(tinymemory_core::tree::tree::new_summary_id(2).contains(":L2-"));
     assert!(
-        openhuman_core::openhuman::memory::tree::tree::registry::is_unique_violation(
+        tinymemory_core::tree::tree::registry::is_unique_violation(
             &anyhow::anyhow!("UNIQUE constraint failed: mem_trees.kind, mem_trees.scope")
         )
     );
@@ -1783,7 +1797,7 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
         .archive(&config)
         .expect("archive source tree");
     assert_eq!(
-        openhuman_core::openhuman::memory::tree::tree::store::get_tree_by_scope(
+        tinymemory_core::tree::tree::store::get_tree_by_scope(
             &config,
             TreeKind::Source,
             "gmail:alice@example.com|bob@example.com"
@@ -1999,13 +2013,13 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
         ask: None,
     };
     let empty =
-        openhuman_core::openhuman::memory::tree::summarise::summarise(&config, &[], &empty_ctx)
+        tinymemory_core::tree::summarise::summarise(&config, &[], &empty_ctx)
             .await
             .expect("empty summarise avoids provider");
     assert_eq!(empty.token_count, 0);
 
     let embedder =
-        openhuman_core::openhuman::memory::tree::score::embed::factory::build_embedder_from_config(
+        tinymemory_core::tree::score::embed::factory::build_embedder_from_config(
             &config,
         )
         .expect("inert embedder");
@@ -2177,7 +2191,8 @@ async fn memory_preferences_remember_redaction_and_pipeline_traits_cover_public_
     // are host policy over a driver, not engine calls. `guarded_in_memory`
     // gives a real guard over a real store, so this still exercises the
     // decorator production uses rather than reaching past it.
-    let (_provider, memory) = openhuman_core::openhuman::memory::guard::in_memory::guarded_in_memory();
+    let (_provider, memory) =
+        openhuman_core::openhuman::memory::guard::in_memory::guarded_in_memory();
 
     memory
         .store(
@@ -2752,7 +2767,7 @@ async fn memory_source_sync_entrypoint_rejects_disabled_and_ingests_folder_items
 #[test]
 fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     let now = Utc.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap();
-    let payload = openhuman_core::openhuman::memory::tree::TreeLeafPayload {
+    let payload = tinycortex::memory::tree::TreeLeafPayload {
         chunk_id: "chunk-contract-1".into(),
         token_count: 42,
         timestamp: now,
@@ -2765,12 +2780,12 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(leaf_ref.chunk_id, payload.chunk_id);
     assert_eq!(leaf_ref.entities, payload.entities);
     let round_trip =
-        openhuman_core::openhuman::memory::tree::TreeLeafPayload::from(leaf_ref.clone());
+        tinycortex::memory::tree::TreeLeafPayload::from(leaf_ref.clone());
     assert_eq!(round_trip.content, payload.content);
     assert_eq!(round_trip.score, payload.score);
 
     let write_default_json =
-        serde_json::to_value(openhuman_core::openhuman::memory::tree::TreeWriteRequest {
+        serde_json::to_value(tinycortex::memory::tree::TreeWriteRequest {
             tree_id: "tree-contract".into(),
             tree_kind: TreeKind::Source,
             leaf: round_trip.clone(),
@@ -2781,7 +2796,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(write_default_json["label_strategy"], "inherit");
     assert_eq!(write_default_json["deferred"], false);
 
-    let decoded_write: openhuman_core::openhuman::memory::tree::TreeWriteRequest =
+    let decoded_write: tinycortex::memory::tree::TreeWriteRequest =
         serde_json::from_value(json!({
             "tree_id": "tree-contract",
             "tree_kind": "global",
@@ -2798,12 +2813,12 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(decoded_write.tree_kind, TreeKind::Global);
     assert_eq!(
         decoded_write.label_strategy,
-        openhuman_core::openhuman::memory::tree::TreeLabelStrategy::Empty
+        tinycortex::memory::tree::TreeLabelStrategy::Empty
     );
     assert!(decoded_write.leaf.entities.is_empty());
     assert!(decoded_write.deferred);
 
-    let outcome = openhuman_core::openhuman::memory::tree::TreeWriteOutcome {
+    let outcome = tinycortex::memory::tree::TreeWriteOutcome {
         new_summary_ids: vec!["summary-1".into()],
         seal_pending: true,
     };
@@ -2811,7 +2826,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(outcome_json["new_summary_ids"][0], "summary-1");
     assert_eq!(outcome_json["seal_pending"], true);
 
-    let read_request: openhuman_core::openhuman::memory::tree::TreeReadRequest =
+    let read_request: tinycortex::memory::tree::TreeReadRequest =
         serde_json::from_value(json!({
             "tree_id": "tree-contract",
             "max_depth": 2,
@@ -2823,14 +2838,14 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
     assert_eq!(read_request.max_depth, 2);
     assert_eq!(read_request.limit, Some(3));
 
-    let hit = openhuman_core::openhuman::memory::tree::TreeReadHit {
+    let hit = tinycortex::memory::tree::TreeReadHit {
         node_id: "summary-1".into(),
         node_kind: "summary".into(),
         level: 1,
         content: "Summary text".into(),
         score: 0.42,
     };
-    let result = openhuman_core::openhuman::memory::tree::TreeReadResult {
+    let result = tinycortex::memory::tree::TreeReadResult {
         hits: vec![hit],
         total: 4,
         tree_id: "tree-contract".into(),
@@ -2850,7 +2865,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
         created_at: now,
         last_sealed_at: None,
     };
-    let empty = openhuman_core::openhuman::memory::tree::TreeReadResult::empty(&tree);
+    let empty = tinycortex::memory::tree::TreeReadResult::empty(&tree);
     assert_eq!(empty.tree_id, "empty-tree");
     assert!(empty.hits.is_empty());
 }
@@ -3002,7 +3017,6 @@ async fn composio_get_user_profile_and_sync_refuse_cleanly_without_a_loaded_modu
         "sync must refuse to resolve toolkit for an unregistered connection"
     );
 }
-
 
 #[test]
 fn turn_state_mirror_persists_progress_edges_from_public_events() {
@@ -4478,29 +4492,69 @@ async fn memory_query_backend_and_tree_flush_wrappers_cover_public_edges() {
     assert!(leaves.is_empty());
 
     let no_stale =
-        openhuman_core::openhuman::memory::tree::tree::flush::flush_stale_buffers_default(
+        tinymemory_core::tree::tree::flush::flush_stale_buffers_default(
             &config,
-            &openhuman_core::openhuman::memory::tree::tree::LabelStrategy::Empty,
+            &tinymemory_core::tree::tree::LabelStrategy::Empty,
         )
         .await
         .expect("flush empty buffers");
     assert_eq!(no_stale, 0);
-    let missing_flush = openhuman_core::openhuman::memory::tree::tree::flush::force_flush_tree(
+    let missing_flush = tinymemory_core::tree::tree::flush::force_flush_tree(
         &config,
         "tree:missing",
         None,
-        &openhuman_core::openhuman::memory::tree::tree::LabelStrategy::Empty,
+        &tinymemory_core::tree::tree::LabelStrategy::Empty,
     )
     .await
     .unwrap_err();
     assert!(missing_flush.to_string().contains("no tree with id"));
 }
 
+/// The `tree_summarizer_*` handlers' validation, query and provider-consent
+/// edges — every one of them driven through the handler.
+///
+/// # One door, and why it is the handler's (#5560)
+///
+/// The subject is `tree_runtime::ops`, so the production path is the door: the
+/// five handlers resolve `memory::binding` and ask the loaded module over the
+/// contract's six runtime-tree members. This case used to seed its query with
+/// `tree_runtime_store::write_node` — the engine copy the `[dev-dependencies]`
+/// entry links into *this* binary — and after `d2697f00a` that is a different
+/// store from the one the handler reads, so the query answered "node 'root' not
+/// found in namespace 'ops_ns'" over a node that had just been written.
+///
+/// # The one assertion that could not survive the door change
+///
+/// The seed existed to reach `tree_summarizer_query`'s **success** branch, and
+/// no handler on this surface can create a node: `runtime_summarize` /
+/// `runtime_rebuild` are the only writers and both fold on the driver's own chat
+/// provider, which a hermetic case has no model for — and which this case
+/// deliberately refuses anyway, two asserts below. Seeding the module's store
+/// from the host's engine to get the branch back is precisely the divergence
+/// #5560 exists to remove, so the branch is asserted where a driver can be bound
+/// instead: `memory::tree::tree_runtime::ops_tests::
+/// tree_summarizer_query_returns_node_and_children` pins the whole
+/// `{node, children}` envelope and the `queried node 'root'` log line.
+///
+/// What replaces it here is the assertion the seed was in the way of: that an
+/// **ingest is not a node**. Buffering content leaves `total_nodes` at zero and
+/// leaves `root` absent, and the refusal names the trimmed namespace — the
+/// handler's own trim, over a padded input, which is what tells a
+/// namespace-mangling bug from an empty tree.
 #[tokio::test]
 async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() {
+    let _lock = env_lock();
     let tmp = TempDir::new().expect("tempdir");
+    // The handlers resolve a bound memory driver; `module_workspace` is where
+    // that driver lives for this whole process, and the env var has to agree
+    // with the config or the two halves address different stores.
+    let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", module_workspace());
     let mut config = config_in(&tmp);
+    use_module_workspace(&mut config);
+    // Local AI off and cloud summarization un-opted-in: the state the two
+    // provider guards below assert on.
     config.local_ai.runtime_enabled = false;
+    config.memory_tree.cloud_summarization_opt_in = false;
 
     let empty_content =
         openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_ingest(
@@ -4534,15 +4588,21 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
     assert_eq!(status.value["namespace"], "ops_ns");
     assert_eq!(status.value["total_nodes"], 0);
 
-    let node = tree_node("ops_ns", "root", "Root summary from ops");
-    tree_runtime_store::write_node(&config, &node).expect("write ops node");
-    let query = openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_query(
-        &config, "ops_ns", None,
-    )
-    .await
-    .expect("query root");
-    assert_eq!(query.value["node"]["node_id"], "root");
-    assert!(query.logs[0].contains("queried node 'root'"));
+    // An ingest buffers; it does not build a node. The default `root` target is
+    // therefore still absent, and the refusal names the namespace **trimmed**,
+    // from a padded argument — the handler's own wording, over the driver's
+    // `Ok(None)`.
+    let unbuilt_root =
+        openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_query(
+            &config, " ops_ns ", None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        unbuilt_root,
+        "node 'root' not found in namespace 'ops_ns'",
+        "buffering content must not create a tree node"
+    );
 
     let missing =
         openhuman_core::openhuman::memory::tree::tree_runtime::ops::tree_summarizer_query(

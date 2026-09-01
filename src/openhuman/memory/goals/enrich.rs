@@ -19,7 +19,8 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
-use tinycortex::memory::goals::store;
+use crate::openhuman::memory::api::goals::GoalsDoc;
+use crate::openhuman::memory::api::provider::MemoryProvider;
 
 /// Registry id of the bundled goals enrichment agent definition.
 pub const GOALS_AGENT_ID: &str = "goals_agent";
@@ -56,17 +57,51 @@ fn build_prompt(context_input: &str, first_run: bool) -> String {
     )
 }
 
+/// The current goals document, through the bound driver's goals family.
+///
+/// Resolved here rather than passed in because of [`spawn_enrich_goals`]: that
+/// entry point detaches a `'static` task, which cannot hold a borrowed
+/// `&dyn MemoryGoals` across the spawn. Inside that task, `CoreContext::current`
+/// answers the scope [`spawn_enrich_goals`] re-enters — the context captured at
+/// the spawn site — so a scoped multi-tenant dispatch resolves its own tenant's
+/// guard rather than the process default it would otherwise fall back to.
+///
+/// # Errors
+///
+/// When no workspace can be named, or when the driver's read fails. A driver
+/// that does not serve the family is reported rather than degraded to an empty
+/// document: this answer decides `first_run`, and a false "the list is empty"
+/// tells the agent to bootstrap a list that already exists.
+async fn read_goals() -> Result<GoalsDoc, String> {
+    let guard = crate::openhuman::memory::ops::guard::active_memory_guard()
+        .await
+        .map_err(|e| format!("goals load failed: {e}"))?;
+    let goals = guard
+        .as_goals()
+        .ok_or_else(|| "goals load failed: memory driver does not support goals".to_string())?;
+    goals
+        .goals()
+        .await
+        .map_err(|e| format!("goals load failed: {e}"))
+}
+
 /// Run the goals enrichment agent against `context_input` (typically a
 /// session recap/summary, or an on-demand nudge). Returns the agent's final
 /// text. Best-effort: the caller decides whether to ignore errors.
+///
+/// `workspace_dir` names the agent-definition registry's root, not the goals
+/// document — the list itself is reached through the driver (see
+/// [`read_goals`]).
 pub async fn enrich_goals(
     config: &Config,
     workspace_dir: &Path,
     context_input: &str,
 ) -> Result<String, String> {
     // Surface real storage failures instead of masking them as an empty
-    // first-run doc — `load` already maps a missing file to an empty doc.
-    let doc = store::load(workspace_dir).map_err(|e| format!("goals load failed: {e}"))?;
+    // first-run doc. The distinction still holds through the family: a driver
+    // with no goals yet answers an empty `GoalsDoc` rather than `NotFound`, so
+    // an `Err` here is a real backend failure and never "the file is missing".
+    let doc = read_goals().await?;
     let first_run = doc.is_empty();
     log::info!(
         "[memory_goals] enrich start (first_run={first_run}, existing_items={})",
@@ -117,10 +152,26 @@ pub fn spawn_enrich_goals(
     workspace_dir: std::path::PathBuf,
     context_input: String,
 ) {
+    // Capture the ambient CoreContext before detaching: `tokio::spawn` does
+    // not inherit the `CURRENT_CONTEXT` task-local, so under a scoped
+    // multi-tenant dispatch the detached task's `active_memory_guard` (see
+    // [`read_goals`]) would fall back to the process default context and
+    // enrich another tenant's goals document with this tenant's recap.
+    // Re-entering the scope keeps the task on the dispatch that spawned it;
+    // with no scoped context (the desktop path) this is a no-op.
+    let core_ctx = crate::core::runtime::context::CoreContext::current();
     tokio::spawn(async move {
-        match enrich_goals(&config, &workspace_dir, &context_input).await {
-            Ok(_) => log::debug!("[memory_goals] background enrich finished"),
-            Err(e) => log::warn!("[memory_goals] background enrich failed: {e}"),
+        let run = async move {
+            match enrich_goals(&config, &workspace_dir, &context_input).await {
+                Ok(_) => log::debug!("[memory_goals] background enrich finished"),
+                Err(e) => log::warn!("[memory_goals] background enrich failed: {e}"),
+            }
+        };
+        match core_ctx {
+            Some(scope_ctx) => {
+                crate::core::runtime::context::CoreContext::scope(scope_ctx, run).await
+            }
+            None => run.await,
         }
     });
 }

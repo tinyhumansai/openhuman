@@ -7,7 +7,7 @@ use tinymemory_api::capabilities::{Capabilities, Capability};
 /// Checked against the registry pin by `the_capability_list_matches_the_pinned_release`,
 /// so bumping the pin without re-reading the list is a red test rather than a
 /// silent over-claim.
-pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.13.3";
+pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.13.6";
 
 /// The capability families the **pinned artifact** actually serves.
 ///
@@ -138,19 +138,22 @@ use tinymemory_api::provider::types::{
     SourceItem, SourceScope, StoreStats,
 };
 use tinymemory_api::provider::{
-    AddressBookSeedOutcome, ChunkDetail, ChunkEmbedding, ChunkListRow, ChunkQuery,
-    ConversationSegment, CoverWindowQuery, Diagnosis, EntityMatch, EpisodicEvent, EpisodicTurn,
-    FacetType, FastRetrieveQuery, MemoryChunks, MemoryCodingSessions, MemoryCore, MemoryDiff,
-    MemoryDocuments, MemoryEntities, MemoryEpisodic, MemoryGoals, MemoryGraph, MemoryIngest,
-    MemoryMaintenance, MemoryPeople, MemoryPortability, MemoryProfile, MemoryProvider,
-    MemoryRecall, MemoryRetrieval, MemoryScoring, MemorySourceSink, MemorySourceSync,
-    MemoryToolMemory, MemoryTree, PersonHandle, PersonInteraction, PersonRecord, PersonScore,
-    ProfileFacet, RankedPerson, ResolvedPerson, RetrievalHit, RetrievalResponse,
-    SourceRetrievalQuery, SourceTotal, UserState,
+    AddressBookSeedOutcome, ChunkDetail, ChunkEmbedding, ChunkListRow, ChunkQuery, ChunkScore,
+    ConversationSegment, CoverWindowQuery, DegradedCapabilities, Diagnosis, EntityMatch,
+    EpisodicEvent, EpisodicTurn, FacetType, FastRetrieveQuery, MemoryChunks, MemoryCodingSessions,
+    MemoryCore, MemoryDiff, MemoryDocuments, MemoryEntities, MemoryEpisodic, MemoryGoals,
+    MemoryGraph, MemoryIngest, MemoryMaintenance, MemoryPeople, MemoryPortability, MemoryProfile,
+    MemoryProvider, MemoryRecall, MemoryRetrieval, MemoryScoring, MemorySourceSink,
+    MemorySourceSync, MemoryToolMemory, MemoryTree, PersonHandle, PersonInteraction, PersonRecord,
+    PersonScore, ProfileFacet, RankedPerson, ResolvedPerson, RetrievalHit, RetrievalResponse,
+    RootSummary, SourceIngestQuery, SourceIngestStatus, SourceRetrievalQuery, SourceTotal,
+    SummaryContext, SummaryInput, SummaryOutput, UserState,
 };
 use tinymemory_api::recall::OwnedRecallOpts;
 use tinymemory_api::tool_memory::ToolMemoryRule;
-use tinymemory_api::tree::{IngestRequest, QueryResult, SummaryForest, TreeLeaf, TreeStatus};
+use tinymemory_api::tree::{
+    IngestRequest, QueryResult, SummaryForest, TreeLeaf, TreeNode, TreeStatus,
+};
 use tinymemory_api::types::{
     GraphRelationRecord, MemoryCategory, MemoryEntry, MemoryKvRecord, MemoryTaint,
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext, NamespaceSummary,
@@ -333,9 +336,22 @@ impl ModuleMemoryProvider {
         // is admitted. Host callbacks must therefore exist before loading,
         // including in tests and explicit-path overrides where no boot policy
         // was available when the shared module runtime first started.
-        ops::ensure_loaded(config, MODULE_ID)
-            .await
-            .map_err(|message| MemoryError::Other(anyhow::anyhow!(message)))?;
+        // A load failure is terminal for the process (the loader caches it),
+        // so every memory member would otherwise return the loader's raw
+        // message — release URLs, digest text, "restart the app" repeated per
+        // call. Map it once into the subsystem's honest degraded state: a
+        // user_error broadcast (once per process, metadata only) plus a
+        // stable, actionable error for the caller. The raw reason goes to the
+        // log, where an operator can act on it.
+        ops::ensure_loaded(config, MODULE_ID).await.map_err(|message| {
+            crate::openhuman::memory::tree::health::user_error::notice_memory_module_unavailable_once(
+                &message,
+            );
+            MemoryError::Backend(
+                "memory is unavailable: the memory module failed to load. Restart the app to                  retry; the reason is in the log."
+                    .to_string(),
+            )
+        })?;
 
         let record = registry::find(MODULE_ID)
             .ok_or_else(|| MemoryError::Other(anyhow::anyhow!("unknown module '{MODULE_ID}'")))?;
@@ -457,7 +473,7 @@ impl MemoryProvider for ModuleMemoryProvider {
         }
         let proxy = self.proxy("shutdown").await?;
         proxy
-            .call::<()>("Shutdown", ())
+            .call::<()>(methods::SHUTDOWN, ())
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -542,7 +558,7 @@ impl MemoryCore for ModuleMemoryProvider {
         self.proxy("store")
             .await?
             .call::<()>(
-                "Store",
+                methods::STORE,
                 (
                     namespace,
                     key,
@@ -559,7 +575,7 @@ impl MemoryCore for ModuleMemoryProvider {
     async fn get(&self, namespace: &str, key: &str) -> Result<Option<MemoryEntry>, MemoryError> {
         self.proxy("get")
             .await?
-            .call("Get", (namespace, key))
+            .call(methods::GET, (namespace, key))
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -567,7 +583,7 @@ impl MemoryCore for ModuleMemoryProvider {
     async fn forget(&self, namespace: &str, key: &str) -> Result<bool, MemoryError> {
         self.proxy("forget")
             .await?
-            .call("Forget", (namespace, key))
+            .call(methods::FORGET, (namespace, key))
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -581,7 +597,7 @@ impl MemoryCore for ModuleMemoryProvider {
         self.proxy("list")
             .await?
             .call(
-                "List",
+                methods::LIST,
                 (
                     namespace.map(str::to_string),
                     category.cloned(),
@@ -595,7 +611,7 @@ impl MemoryCore for ModuleMemoryProvider {
     async fn namespaces(&self) -> Result<Vec<NamespaceSummary>, MemoryError> {
         self.proxy("namespaces")
             .await?
-            .call("Namespaces", ())
+            .call(methods::NAMESPACES, ())
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -615,7 +631,7 @@ impl MemoryRecall for ModuleMemoryProvider {
         // module spend its `limit` on entries the caller may not see.
         self.proxy("recall")
             .await?
-            .call("Recall", (query, limit, opts, scope.cloned()))
+            .call(methods::RECALL, (query, limit, opts, scope.cloned()))
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -630,7 +646,7 @@ impl MemoryPortability for ModuleMemoryProvider {
     ) -> Result<ExportPage, MemoryError> {
         self.proxy("export_page")
             .await?
-            .call("ExportPage", (cursor.map(str::to_string), limit))
+            .call(methods::EXPORT_PAGE, (cursor.map(str::to_string), limit))
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -641,7 +657,7 @@ impl MemoryPortability for ModuleMemoryProvider {
     ) -> Result<ImportOutcome, MemoryError> {
         self.proxy("import_records")
             .await?
-            .call("ImportRecords", (records,))
+            .call(methods::IMPORT_RECORDS, (records,))
             .await
             .map_err(|error| from_bus(&error))
     }
@@ -658,15 +674,35 @@ macro_rules! module_call {
     };
 }
 
+/// [`module_call!`] with a deadline sized for bulk work.
+///
+/// The default bus deadline (30s) fits request-shaped members. The bulk
+/// ingest members are not that: `AcceptSourceItems` embeds and writes a whole
+/// connector page of records inside the call — a 200-email Gmail handoff
+/// blew the 30s deadline live while the module went on to finish the work,
+/// and the sync retry loop then re-ran the same handoff forever. Same
+/// pathology, and same fix, as the connector module's `Sync` member.
+macro_rules! module_call_slow {
+    ($self:expr, $operation:literal, $method:expr, $args:expr) => {
+        $self
+            .proxy($operation)
+            .await?
+            .with_timeout(std::time::Duration::from_secs(15 * 60))
+            .call($method, $args)
+            .await
+            .map_err(|error| from_bus(&error))
+    };
+}
+
 #[async_trait]
 impl MemoryIngest for ModuleMemoryProvider {
     async fn ingest_document(&self, item: IngestItem) -> Result<IngestOutcome, MemoryError> {
-        module_call!(self, "ingest_document", "IngestDocument", (item,))
+        module_call!(self, "ingest_document", methods::INGEST_DOCUMENT, (item,))
     }
     async fn ingest_chat(&self, messages: Vec<IngestItem>) -> Result<IngestOutcome, MemoryError> {
-        module_call!(self, "ingest_chat", "IngestChat", (messages,))
+        module_call_slow!(self, "ingest_chat", methods::INGEST_CHAT, (messages,))
     }
     async fn ingest_email(&self, messages: Vec<IngestItem>) -> Result<IngestOutcome, MemoryError> {
-        module_call!(self, "ingest_email", "IngestEmail", (messages,))
+        module_call_slow!(self, "ingest_email", methods::INGEST_EMAIL, (messages,))
     }
 }

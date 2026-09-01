@@ -76,8 +76,8 @@ fn trim_history_snaps_past_orphaned_tool_results() {
     assert_eq!(agent.history.len(), 3);
 }
 
-#[test]
-fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
+#[tokio::test]
+async fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let mut agent = make_agent(None);
     agent.last_memory_context = Some("remember this".into());
     agent.workflows = vec![crate::openhuman::skills::Workflow {
@@ -100,7 +100,14 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     );
     let long = "x".repeat(500);
     assert_eq!(sanitize_learned_entry(&long).chars().count(), 200);
-    assert!(collect_tree_root_summaries(agent.workspace_dir(), "memory", 8_000, 32_000).is_empty());
+    // A profile subtree that was never written. Named rather than `"memory"`
+    // because the shared subtree is the driver's now (#5560), and what this
+    // line is here to cover is the host-local scan's empty answer.
+    assert!(
+        collect_tree_root_summaries(agent.workspace_dir(), "memory-absent", 8_000, 32_000)
+            .await
+            .is_empty()
+    );
 }
 
 #[test]
@@ -145,15 +152,20 @@ fn build_parent_context_has_no_descriptor_without_profile_or_parent() {
     assert!(parent.workspace_descriptor.is_none());
 }
 
-#[test]
-fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
+#[tokio::test]
+async fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
     // #2944: the wrapper must carry the root node's `updated_at` from the
     // store tuple into the `NamespaceSummary` the prompt renderer stamps.
+    //
+    // Asserted over a **profile** subtree since #5560: the mapping is the same
+    // one both arms share, and the profile arm is the one that still scans a
+    // caller-named workspace. The shared `"memory"` arm now answers from the
+    // bound driver, which has no way to be pointed at this temp directory.
     use crate::openhuman::config::Config;
-    use crate::openhuman::memory::tree::tree_runtime::store::write_node;
     use tinycortex::memory::tree::runtime::{
         derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
     };
+    use tinymemory_core::tree::tree_runtime::store::write_node;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let workspace = tmp.path().join("workspace");
@@ -180,21 +192,24 @@ fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
         metadata: None,
     };
     write_node(&config, &node).unwrap();
+    // `write_node` only knows `<workspace>/memory`; rename it into the profile
+    // layout the host-local arm reads.
+    std::fs::rename(workspace.join("memory"), workspace.join("memory-alice")).unwrap();
 
-    let summaries = collect_tree_root_summaries(&workspace, "memory", 8_000, 32_000);
+    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000).await;
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].namespace, "activities");
     assert_eq!(summaries[0].body, summary);
     assert_eq!(summaries[0].updated_at, updated_at);
 }
 
-#[test]
-fn collect_tree_root_summaries_reads_only_profile_memory_subtree() {
+#[tokio::test]
+async fn collect_tree_root_summaries_reads_only_profile_memory_subtree() {
     use crate::openhuman::config::Config;
-    use crate::openhuman::memory::tree::tree_runtime::store::write_node;
     use tinycortex::memory::tree::runtime::{
         derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
     };
+    use tinymemory_core::tree::tree_runtime::store::write_node;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let workspace = tmp.path().join("workspace");
@@ -219,8 +234,16 @@ fn collect_tree_root_summaries_reads_only_profile_memory_subtree() {
     write_node(&config, &node).unwrap();
     std::fs::rename(workspace.join("memory"), workspace.join("memory-alice")).unwrap();
 
-    assert!(collect_tree_root_summaries(&workspace, "memory", 8_000, 32_000).is_empty());
-    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000);
+    // A *different* profile's subtree, not `"memory"`: since #5560 the shared
+    // arm answers from the bound driver rather than from this temp workspace,
+    // so asking it here would be asserting about a store this test never
+    // wrote. Bob is the isolation the assertion is actually about.
+    assert!(
+        collect_tree_root_summaries(&workspace, "memory-bob", 8_000, 32_000)
+            .await
+            .is_empty()
+    );
+    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000).await;
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].body, "Alice-only context");
 }

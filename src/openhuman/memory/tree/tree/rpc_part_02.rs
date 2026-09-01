@@ -342,14 +342,31 @@ pub async fn pipeline_status_rpc(
     let is_paused = config.scheduler_gate.mode == SchedulerGateMode::Off;
     let is_syncing = pipeline_jobs.running > 0;
 
-    // #002: read the process-global degradation snapshot (set by the embed /
-    // extract stages) so a half-working sync surfaces as `degraded` with a
-    // cause rather than a misleading `running`. The structure-degraded latch is
-    // a liveness signal ("the extraction model is timing out") kept honest at
-    // its source in `extract::llm` — it self-clears on the next *completed*
+    // #002: read the degradation snapshot (set by the embed / extract stages)
+    // so a half-working sync surfaces as `degraded` with a cause rather than a
+    // misleading `running`. The structure-degraded latch is a liveness signal
+    // ("the extraction model is timing out") kept honest at its source in the
+    // driver's `extract::llm` — it self-clears on the next *completed*
     // extraction (#3365), so the status surface never consults the unrelated
     // `extraction_coverage` metric to second-guess it here.
-    let degraded = crate::openhuman::memory::tree::health::current_degraded_state();
+    //
+    // Asked of the driver rather than of this process's statics (#5560). Those
+    // flags live inside whichever process ran the embed and extract stages, and
+    // that is the module — a `cdylib` with its own statics — so the host-side
+    // read answered all-clear no matter what the pipeline had done. Same class
+    // of bug, and same fix, as `backfill_in_progress` above.
+    //
+    // Degraded to all-clear on a read failure, matching the two other reads
+    // this handler must not fail on (`backfill_in_progress` and
+    // `latest_failed_job_failure`): a status surface that errors tells the user
+    // less than one reporting an undegraded store, and all-clear is what the
+    // host-side read answered anyway.
+    let degraded = crate::openhuman::memory::tree::health::report::current_degraded_state(config)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("[memory-tree][rpc] pipeline_status: degraded state read failed: {error}");
+            Default::default()
+        });
 
     let (status, reason) = derive_pipeline_status(
         is_paused,
@@ -441,16 +458,20 @@ pub async fn pipeline_status_rpc(
 }
 
 /// `memory_tree_doctor` RPC handler (#002 FR-009). Runs the one-shot
-/// pipeline diagnostic and returns the [`DoctorReport`] — per-stage health,
-/// the first blocking cause, the degraded snapshot, and counters. Exposed for
-/// the agent tool + CLI so the agent can self-diagnose an empty/stalled wiki.
-/// Synchronous + cheap (config + queue counters + degraded flags), so no
-/// blocking-pool dispatch is needed.
+/// pipeline diagnostic and returns the
+/// [`DoctorReport`](crate::openhuman::memory::tree::health::report::DoctorReport)
+/// — per-stage health, the first blocking cause, the degraded snapshot, and
+/// counters. Exposed for the agent tool + CLI so the agent can self-diagnose an
+/// empty/stalled wiki.
+///
+/// The pass runs inside the driver now (`MemoryMaintenance::diagnose`), which
+/// is also where the blocking SQLite reads it makes have always been — this
+/// host no longer dispatches a blocking task for them, and the report's shape
+/// is unchanged.
 pub async fn doctor_rpc(
     config: &Config,
-) -> Result<RpcOutcome<crate::openhuman::memory::tree::health::DoctorReport>, String> {
-    // Offload the doctor's blocking SQLite reads off the async runtime thread.
-    let report = crate::openhuman::memory::tree::health::async_run_doctor(config).await;
+) -> Result<RpcOutcome<crate::openhuman::memory::tree::health::report::DoctorReport>, String> {
+    let report = crate::openhuman::memory::tree::health::report::run_doctor(config).await;
     let summary = if report.healthy {
         "memory_tree: doctor — healthy".to_string()
     } else {

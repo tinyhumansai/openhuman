@@ -90,7 +90,6 @@ interface Props {
   /** Reject the pending proposal (host reverts the overlay). */
   onReject: () => void;
   /** Close the panel. */
-  onClose: () => void;
   /**
    * Optional repair seed (from a failed run's "Fix with agent") — auto-sends a
    * repair turn once on mount so the copilot opens already diagnosing.
@@ -152,7 +151,6 @@ export default function WorkflowCopilotPanel({
   onProposal,
   onAccept,
   onReject,
-  onClose,
   repairSeed = null,
   buildSeed = null,
   onBuildSeedConsumed,
@@ -493,23 +491,13 @@ export default function WorkflowCopilotPanel({
       className={`flex h-full w-full flex-col border-l border-line bg-surface ${
         fullWidth ? '' : 'max-w-sm'
       }`}>
-      <header className="flex items-start gap-2 border-b border-line px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-content">{t('flows.copilot.title')}</p>
-          <p className="text-[11px] text-content-muted">{t('flows.copilot.subtitle')}</p>
-        </div>
-        <Button
-          type="button"
-          variant="tertiary"
-          size="xs"
-          iconOnly
-          data-testid="workflow-copilot-close"
-          aria-label={t('flows.copilot.close')}
-          onClick={onClose}
-          className="shrink-0 rounded-full">
-          ✕
-        </Button>
-      </header>
+      {/* No header. It carried a "Workflow copilot" title, a subtitle
+          describing the proposal flow, and a close ✕ — none of which earned
+          permanent height above a transcript. The panel is opened from a
+          `Copilot | Manual` toggle in the canvas header that both names it and
+          closes it (clicking the active segment collapses the rail), so the
+          title restated the control the user just pressed and the ✕ duplicated
+          it. `onClose` went with the button; nothing else called it. */}
 
       {/* Full builder transcript — the SAME rich renderer the home composer
           chat uses (message bubbles, past-turn insights, the shared tool

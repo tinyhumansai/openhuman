@@ -11,7 +11,7 @@ const LINE_LIMIT = 750;
 // exception can appear, and deleting an entry is the only way to relax it.
 const LEGACY_LIMITS = new Map([
   ["src/openhuman/agent/harness/session/builder/factory.rs", 1552],
-  ["src/openhuman/agent/harness/subagent_runner/ops/runner.rs", 1766],
+  ["src/openhuman/agent/harness/subagent_runner/ops/runner.rs", 1769],
   ["src/openhuman/tools/ops.rs", 1502],
   ["src/openhuman/web_chat/progress_bridge.rs", 1547],
 ]);

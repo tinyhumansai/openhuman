@@ -145,7 +145,6 @@ function renderPanel() {
         onProposal={vi.fn()}
         onAccept={vi.fn()}
         onReject={vi.fn()}
-        onClose={vi.fn()}
       />
     </Provider>
   );

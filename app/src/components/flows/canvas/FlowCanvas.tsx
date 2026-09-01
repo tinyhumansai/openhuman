@@ -44,6 +44,7 @@ import EditableFlowCanvas, {
   type EditableFlowCanvasHandle,
   type EditorSaveMeta,
 } from './EditableFlowCanvas';
+import { FLOW_FIT_VIEW_OPTIONS } from './fitView';
 import './flowCanvasStyles.css';
 import FlowNodeComponent from './FlowNodeComponent';
 import { StepNumberContext } from './stepNumbers';
@@ -129,6 +130,7 @@ function ReadonlyFlowCanvas({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEd
           edges={edges}
           nodeTypes={NODE_TYPES}
           fitView
+          fitViewOptions={FLOW_FIT_VIEW_OPTIONS}
           panOnScroll
           zoomOnScroll
           {...interactionProps}>

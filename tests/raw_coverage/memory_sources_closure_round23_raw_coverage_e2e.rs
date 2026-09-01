@@ -231,14 +231,14 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     )
     .await
     .expect("enable composio source");
-    let status = memory_sources::status::source_status(&config, &composio)
+    let status = tinymemory_core::sources::status::source_status(&config, &composio)
         .await
         .expect("composio status");
     assert_eq!(status.source_id, composio.id);
     assert_eq!(status.chunks_synced, 0);
     assert_eq!(
         status.freshness,
-        memory_sources::status::FreshnessLabel::Idle
+        tinymemory_core::sources::status::FreshnessLabel::Idle
     );
 
     let statuses = memory_sources::status::status_list(&config)

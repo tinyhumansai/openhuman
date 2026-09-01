@@ -68,9 +68,6 @@ use openhuman_core::openhuman::integrations::composio::periodic::record_sync_suc
 use openhuman_core::openhuman::memory::sync::composio::providers::slack::rpc::{
     sync_status_rpc, SyncStatusRequest,
 };
-use openhuman_core::openhuman::memory::tree::retrieval::source::query_source;
-use openhuman_core::openhuman::memory::tree::tree::store as tree_store;
-use openhuman_core::openhuman::memory::tree::tree::TreeStatus;
 use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
@@ -80,6 +77,10 @@ use tinymemory_core::store::chunks::store::with_connection;
 use tinymemory_core::store::content::atomic::stage_summary;
 use tinymemory_core::store::content::{SummaryComposeInput, SummaryTreeKind};
 use tinymemory_core::store::trees::types::{SummaryNode, Tree, TreeKind};
+use tinymemory_core::tree::retrieval::source::query_source;
+// Engine-direct for the same reason as the other retrieval e2e suites (#5560).
+use tinymemory_core::tree::tree::store as tree_store;
+use tinymemory_core::tree::tree::TreeStatus;
 
 static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
 static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
@@ -90,9 +91,9 @@ fn ensure_memory_seams() {
             .name("memory-sync-tree-round21-raw-coverage-seams".to_string())
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    Arc::new(Config::default()),
-                );
+                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(
+                    Config::default(),
+                ));
             })
             .expect("spawn round21 memory tree seam installer")
             .join()
@@ -271,7 +272,11 @@ async fn slack_sync_status_rpc_reports_the_degraded_zero_value_shape() {
     let outcome = sync_status_rpc(&config, SyncStatusRequest::default())
         .await
         .expect("status rpc");
-    assert_eq!(outcome.value.connections.len(), 1, "only the active slack connection qualifies");
+    assert_eq!(
+        outcome.value.connections.len(),
+        1,
+        "only the active slack connection qualifies"
+    );
     let row = &outcome.value.connections[0];
     assert_eq!(row.connection_id, "conn-slack-round21");
     assert_eq!(row.per_channel_cursors, "{}");
@@ -282,8 +287,7 @@ async fn slack_sync_status_rpc_reports_the_degraded_zero_value_shape() {
         outcome
             .logs
             .iter()
-            .any(|line| line.contains("connections=1")
-                && line.contains("no longer available")),
+            .any(|line| line.contains("connections=1") && line.contains("no longer available")),
         "status log should explain the degraded read: {:?}",
         outcome.logs
     );

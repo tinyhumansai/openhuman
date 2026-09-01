@@ -40,12 +40,19 @@ pub mod guard;
 pub mod host;
 /// Host implementations of the seam traits the ENGINE declares.
 ///
-/// `#[cfg(test)]` because the production host embeds no engine any more: the
+/// Behind `memory-engine-seams` (default-ON, product-OFF) because the
+/// production host embeds no engine any more: the
 /// module installs its own seams and this host answers it over the bus through
 /// [`crate::openhuman::modules::memory_host`] instead. What still needs these
 /// is the test suite, which binds the in-process TinyCortex driver directly —
 /// legitimate, because `tinymemory-core` is a dev-dependency there and a
 /// dev-dependency is not linked into the shipped binary.
+///
+/// The contract-side event sink is deliberately **not** in here: it installs
+/// into `tinymemory_api`, not the engine, and `memory::sync::composio::bus`
+/// publishes through it from production host code. It is installed directly by
+/// each boot site — see [`host::install_memory_event_sink`].
+#[cfg(any(test, feature = "memory-engine-seams"))]
 pub mod host_impls;
 /// Host desktop policy: is the memory content root a vault Obsidian already
 /// knows about? See the module docs for why this is OpenHuman's and not the
@@ -72,9 +79,11 @@ pub(crate) mod test_support;
 pub mod tools;
 
 // Domains that are *mostly* extracted but keep their JSON-RPC surface here.
-// Each of these is a thin wrapper: `pub use tinymemory_core::<domain>::*;`
-// plus the handler/schema modules that name `RpcOutcome` and
-// `ControllerSchema`. See the module docs on each for the split.
+// Each of these started as a thin wrapper: `pub use tinymemory_core::
+// <domain>::*;` plus the handler/schema modules that name `RpcOutcome` and
+// `ControllerSchema`. The globs are being deleted as their production
+// consumers drain — `tree`, `tree::health` and `tree::tree` no longer carry
+// one (#5560) — so see the module docs on each for where its split stands.
 pub mod conversations;
 pub mod goals;
 pub mod people;
@@ -142,41 +151,42 @@ pub use schemas::{
     all_tool_memory_controller_schemas as all_memory_tool_memory_controller_schemas,
     all_tool_memory_registered_controllers as all_memory_tool_memory_registered_controllers,
 };
-// The ingestion vocabulary, split by who actually defines it (#5560).
+// The ingestion vocabulary is host-owned now (#5560). What this block used to
+// re-export from `tinycortex::memory::ingest` was, by the end, pure WIRE
+// SHAPE: `doc_ingest` routes through `MemoryDocuments::put_document` and
+// nothing here drives the engine's extractor. The five shapes with live
+// consumers (`ExtractionMode`, `MemoryIngestionConfig`, `ExtractedEntity`,
+// `ExtractedRelation`, `MemoryIngestionResult`) live in `rpc_models.rs`,
+// which the `pub use rpc_models::*` below re-exports at the same paths —
+// consumers did not move. `MemoryIngestionRequest` and
+// `DEFAULT_MEMORY_EXTRACTION_MODEL` had no code consumers left and are gone.
+// The other four — `IngestionJob`, `IngestionQueue`, `IngestionState` and
+// `IngestionStatusSnapshot` — are genuinely `tinymemory-core`'s own: the
+// in-process ingest queue and its status snapshot, which `direct_engine_refs`
+// lists among the handful of things with no bus representation at all. They
+// used to be re-exported here beside the seven above, and that line is gone
+// (#5560).
 //
-// It was one `pub use tinymemory_core::ingestion::{…}` line of eleven names,
-// which read as eleven engine types. Seven of them are not: `tinymemory-core`'s
-// `ingestion` module re-exports them out of `engine::backend::ingest`, which is
-// `pub use tinycortex::memory::ingest`. So the line below names the **same
-// items** at the crate that defines them — `tinycortex` stays a direct
-// dependency of this crate, `tinymemory-core` is the one being shed — and no
-// type, wire byte or call site changes. Same move as `memory::people`,
-// `memory::tool_memory` and `memory::tree::health`'s taxonomy half.
-pub use tinycortex::memory::ingest::{
-    ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
-    MemoryIngestionRequest, MemoryIngestionResult, DEFAULT_MEMORY_EXTRACTION_MODEL,
-};
-// The remaining four are genuinely `tinymemory-core`'s own: the in-process
-// ingest queue (`ingestion::queue`) and its status snapshot
-// (`ingestion::state`). They have no contract equivalent — the ingest queue is
-// named in `direct_engine_refs_tests`' upstream-gap list as one of the four
-// things with no bus representation at all — so this is what still pins the
-// engine crate here, and it is now visible as such rather than hidden in a
-// list of eleven.
+// It was gone for want of a caller, not because the gap closed. Three of the
+// four had **no consumer anywhere** — not in `src/`, not in `tests/`, not in
+// the shell — and the fourth, `IngestionState`, had exactly one:
+// `tests/raw_coverage/memory_raw_coverage_e2e.rs`, an integration test, which
+// now names `tinymemory_core::ingestion` itself. That costs it nothing: the
+// engine crate stays a **dev-dependency**, which every `tests/` target links,
+// so the only thing this line was still buying was a *production* compile-time
+// link to the engine on behalf of nobody. Same reasoning, and the same
+// conclusion, as the `MemoryClient` / `UnifiedMemory` aliases dropped below.
 //
-// `IngestionState` is the one with a live consumer
-// (`tests/raw_coverage/memory_raw_coverage_e2e.rs`). The other three are kept
-// because they are one module's worth of a single domain and splitting a queue
-// from its own job type would leave a re-export that documents nothing; when
-// the queue moves behind the bus they go together.
-pub use tinymemory_core::ingestion::{
-    IngestionJob, IngestionQueue, IngestionState, IngestionStatusSnapshot,
-};
+// A production caller that genuinely needs the in-process queue should not get
+// it back through this facade — the queue belongs behind the bus, and reaching
+// it by re-export is the second unpoliced door `memory::binding` exists to
+// close.
 // The host's own JSON-RPC request/response shapes. They lived in
 // `tinymemory_core::rpc_models` and were re-exported here by a glob; nothing
 // in `tinymemory` ever named one, so the engine crate was carrying this host's
 // RPC surface (#5560). Same glob, same paths, same wire bytes — the definitions
 // are simply ours now. See `rpc_models`'s module docs.
+pub mod ingestion_models;
 pub mod rpc_models;
 pub use rpc_models::*;
 // Named on the crate directly — `traits` is engine scaffolding, not bus

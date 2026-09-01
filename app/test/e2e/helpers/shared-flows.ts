@@ -418,7 +418,15 @@ export async function navigateToSettings() {
 }
 
 export async function navigateToBilling() {
-  await navigateViaHash('/settings/billing');
+  // Direct hash navigation can fail transiently while the settings shell is
+  // still settling after a deep-link auth flow. Keep going so the established
+  // Settings → Billing recovery path below can make a second, UI-driven
+  // attempt instead of making that recovery unreachable.
+  try {
+    await navigateViaHash('/settings/billing');
+  } catch (err) {
+    console.log('[E2E] Initial billing navigation failed; running fallback:', err);
+  }
 
   const billingMarkers = ['Billing moved to the web', 'Open billing dashboard', 'Open dashboard'];
   const deadline = Date.now() + 15_000;
