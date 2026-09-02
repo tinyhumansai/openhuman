@@ -156,7 +156,7 @@ Neu hier? Beginne mit [`CONTRIBUTING.md`](../CONTRIBUTING.md) für den Fork-/PR-
 
 1. Installiere Git, Node.js 24+, pnpm 10.10.0, Rust 1.93.0 (`rustfmt` + `clippy`), CMake, Ninja, ripgrep sowie die plattformspezifischen Desktop-Build-Voraussetzungen.
 2. Forke und klone das Repo, führe dann `git submodule update --init --recursive` aus, bevor du `pnpm install` startest, damit die mitgelieferten Tauri/CEF-Quellen vorhanden sind.
-3. Nutze `pnpm dev` für reine Web-UI-Arbeit, `pnpm --filter openhuman-app dev:app` für die Desktop-Shell sowie gezielte Checks wie `pnpm typecheck`, `pnpm format:check` und `cargo check -p openhuman --lib`, bevor du einen PR öffnest.
+3. Nutze `pnpm dev` für reine Web-UI-Arbeit, `pnpm --filter openhuman-app dev:app` (macOS) oder `pnpm dev:app:win` (Windows) für die Desktop-Shell sowie gezielte Checks wie `pnpm typecheck`, `pnpm format:check` und `cargo check -p openhuman --lib`, bevor du einen PR öffnest.
 
 Tiefer einsteigen: [Architektur](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [Einrichtung](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [Cloud-Deployment](../gitbooks/features/cloud-deploy.md).
 

@@ -156,7 +156,7 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 
 1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.93.0（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep，以及各平台桌面构建的前置依赖。
 2. Fork 并克隆仓库，然后运行 `git submodule update --init --recursive` 之后再执行 `pnpm install`，确保内置的 Tauri/CEF 源码就位。
-3. 使用 `pnpm dev` 进行纯 Web UI 开发，`pnpm --filter openhuman-app dev:app` 用于桌面壳，在提交 PR 之前运行针对性的检查如 `pnpm typecheck`、`pnpm format:check` 和 `cargo check -p openhuman --lib`。
+3. 使用 `pnpm dev` 进行纯 Web UI 开发，`pnpm --filter openhuman-app dev:app` (macOS) 或 `pnpm dev:app:win` (Windows) 用于桌面壳，在提交 PR 之前运行针对性的检查如 `pnpm typecheck`、`pnpm format:check` 和 `cargo check -p openhuman --lib`。
 
 更多文档：[架构](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [环境搭建](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [云端部署](../gitbooks/features/cloud-deploy.md)。
 

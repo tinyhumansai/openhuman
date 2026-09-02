@@ -202,7 +202,7 @@ n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhuman
 
 1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.93.0 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
 2. ریپو کو fork اور کلون کریں، پھر `pnpm install` سے پہلے `git submodule update --init --recursive` چلائیں تاکہ وینڈرڈ Tauri/CEF سورس موجود ہوں۔
-3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app`، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
+3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app` (macOS) یا `pnpm dev:app:win` (Windows)، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
 
 مزید دستاویزات: [آرکیٹیکچر](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [سیٹ اپ](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [کلاؤڈ ڈیپلائے](../gitbooks/features/cloud-deploy.md)۔
 

@@ -156,7 +156,7 @@ n8n과 Zapier에서 깊은 영감을 받은 [워크플로우](https://tinyhumans
 
 1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.93.0(`rustfmt` + `clippy`), CMake, Ninja, ripgrep 및 플랫폼 데스크톱 빌드 필수 구성 요소를 설치합니다.
 2. 저장소를 포크하고 클론한 다음, `pnpm install` 전에 `git submodule update --init --recursive`를 실행하여 벤더링된 Tauri/CEF 소스가 존재하는지 확인합니다.
-3. 웹 전용 UI 작업에는 `pnpm dev`를, 데스크톱 쉘에는 `pnpm --filter openhuman-app dev:app`을 사용하고, PR을 열기 전에 `pnpm typecheck`, `pnpm format:check`, `cargo check -p openhuman --lib`와 같은 집중 점검을 수행합니다.
+3. 웹 전용 UI 작업에는 `pnpm dev`를, 데스크톱 쉘에는 `pnpm --filter openhuman-app dev:app` (macOS) 또는 `pnpm dev:app:win` (Windows)을 사용하고, PR을 열기 전에 `pnpm typecheck`, `pnpm format:check`, `cargo check -p openhuman --lib`와 같은 집중 점검을 수행합니다.
 
 상세 문서: [아키텍처](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [설정하기](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [클라우드 배포](../gitbooks/features/cloud-deploy.md).
 

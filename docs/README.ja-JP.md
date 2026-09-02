@@ -156,7 +156,7 @@ n8n と Zapier に強くインスパイアされた[ワークフロー](https://
 
 1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.93.0（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
 2. リポジトリを fork してクローンし、`pnpm install` の前に `git submodule update --init --recursive` を実行して、ベンダー化された Tauri/CEF のソースを取得します。
-3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
+3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` (macOS) または `pnpm dev:app:win` (Windows) を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
 
 詳細なドキュメント: [アーキテクチャ](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [セットアップガイド](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [クラウドデプロイ](../gitbooks/features/cloud-deploy.md)。
 
