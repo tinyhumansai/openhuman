@@ -125,15 +125,18 @@ event, and Claude Code's `UserPromptSubmit` aliases onto `beforeSubmitPrompt`.
 | `beforeMCPExecution` / `afterMCPExecution` | around an MCP tool | `permission` |
 | `beforeSubmitPrompt` | on a chat message, before the model | `continue`, `permission`, `additional_context` |
 | `subagentStart` | before a delegation | `permission` |
-| `subagentStop` | after one | `followup_message` |
+| `subagentStop` | after one — not fired yet, see below | `followup_message` |
 | `stop` | after a turn | `followup_message` |
 | `afterAgentResponse` | on the assistant's message | — |
 
-`sessionStart`, `sessionEnd`, `preCompact` and `afterAgentThought` are defined —
-they parse, match, execute, and can be exercised with `hooks test` — but the core
-does not fire them yet. Configuring one produces a load warning saying so, and
-`hooks list` reports `"wired": false` for it. That is deliberate: a hook that
-silently never runs is the worst thing this system can do to you.
+`sessionStart`, `sessionEnd`, `preCompact`, `afterAgentThought` and `subagentStop`
+are defined — they parse, match, execute, and can be exercised with `hooks test` —
+but the core does not fire them yet. (`subagentStop` is the near miss: the handler
+`hooks::ops::subagent_stopped` is complete, but `subagent_runner` fires only
+`subagentStart` and returns without ever calling the stop side.) Configuring one
+produces a load warning saying so, and `hooks list` reports `"wired": false` for
+it. That is deliberate: a hook that silently never runs is the worst thing this
+system can do to you.
 
 ### Derived events
 

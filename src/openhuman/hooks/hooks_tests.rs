@@ -490,3 +490,31 @@ fn a_bare_command_name_is_not_second_guessed() {
     let loaded = config::load(None, Some(dir.path()));
     assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 }
+
+/// `subagentStart` has a call site in `subagent_runner`; `subagentStop` does
+/// not — `ops::subagent_stopped` is never called. Reporting it as wired is the
+/// one outcome `is_wired`'s own documentation calls the worst this system can
+/// produce: the author believes a policy is enforced and nothing says otherwise.
+#[test]
+fn subagent_stop_is_reported_as_not_yet_fired() {
+    assert!(
+        HookEvent::SubagentStart.is_wired(),
+        "subagentStart is fired from subagent_runner"
+    );
+    assert!(
+        !HookEvent::SubagentStop.is_wired(),
+        "nothing calls ops::subagent_stopped yet"
+    );
+
+    let parsed = config::parse_one(
+        &PathBuf::from("/tmp/hooks.json"),
+        HookLayer::Project,
+        r#"{"version": 1, "hooks": {"subagentStop": [{"command": "x"}]}}"#,
+    );
+    assert_eq!(parsed.for_event(HookEvent::SubagentStop).len(), 1);
+    assert!(
+        parsed.warnings.iter().any(|w| w.contains("never run")),
+        "{:?}",
+        parsed.warnings
+    );
+}
