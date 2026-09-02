@@ -242,7 +242,7 @@ impl ExaClient {
             }
             if status == reqwest::StatusCode::PAYMENT_REQUIRED || status.as_u16() == 402 {
                 anyhow::bail!(
-                    "Exa search credits exhausted (HTTP 402). \
+                    "Exa credits exhausted (HTTP 402). \
                      Please top up your Exa account at dashboard.exa.ai or switch search provider."
                 );
             }
@@ -704,10 +704,18 @@ impl Tool for ExaGetContentsTool {
             "urls": urls,
             "text": true,
         });
-        if args.get("include_summary").and_then(Value::as_bool).unwrap_or(false) {
+        if args
+            .get("include_summary")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             body["summary"] = json!(true);
         }
-        if args.get("include_highlights").and_then(Value::as_bool).unwrap_or(false) {
+        if args
+            .get("include_highlights")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             body["highlights"] = json!(true);
         }
 

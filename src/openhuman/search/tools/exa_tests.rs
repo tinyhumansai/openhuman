@@ -337,7 +337,7 @@ async fn payment_required_status_surfaces_actionable_credits_error() {
         post(|| async {
             (
                 StatusCode::PAYMENT_REQUIRED,
-                r#"{"error":"You have exceeded your credits limit. Please top up to keep using Exa at dashboard.exa.ai","tag":"NO_MORE_CREDITS"}"#,
+                r#"{"error":"You have exceeded your credits limit for query: private search","tag":"NO_MORE_CREDITS"}"#,
             )
         }),
     );
@@ -350,7 +350,7 @@ async fn payment_required_status_surfaces_actionable_credits_error() {
         .expect_err("402 must fail with actionable message");
     let message = err.to_string();
 
-    assert!(message.contains("Exa search credits exhausted (HTTP 402)"));
+    assert!(message.contains("Exa credits exhausted (HTTP 402)"));
     assert!(message.contains("dashboard.exa.ai"));
     assert!(!message.contains("private search"));
 }
