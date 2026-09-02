@@ -354,10 +354,16 @@ function* walk(dir) {
  * is loose enough to trip on those, so only it skips them.
  */
 function holdsProseNotClasses(relative) {
+  // `path.relative` yields the platform separator, so on Windows these paths
+  // arrive as `src\\lib\\i18n\\en.ts` and every `/`-spelled test below misses.
+  // The skip then never fires and the catalogues are scanned as class lists:
+  // "text-to-speech" is read as `text-` + an undefined token.
+  const posix = relative.split(path.sep).join('/');
+
   return (
-    relative.startsWith('src/lib/i18n/') ||
-    relative.includes('/__tests__/') ||
-    /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(relative)
+    posix.startsWith('src/lib/i18n/') ||
+    posix.includes('/__tests__/') ||
+    /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(posix)
   );
 }
 
