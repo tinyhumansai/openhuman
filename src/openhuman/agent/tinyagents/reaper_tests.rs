@@ -105,8 +105,17 @@ async fn a_build_only_runtime_is_swept_before_it_can_be_invoked() {
 
     // Point the runtime at this workspace, then build it with no transport
     // and no services — the shape `examples/embed_headless.rs` documents.
-    // `OPENHUMAN_WORKSPACE` is process-global; take the same lock the other
-    // env-mutating tests do so a parallel test cannot read ours.
+    //
+    // Two process-global locks, because `build()` touches two kinds of global
+    // state. `TEST_ENV_LOCK` covers `OPENHUMAN_WORKSPACE`, which is read from
+    // the environment. `BUS_HANDLER_LOCK` covers the native-bus registrations
+    // `CoreContext::init` performs: without it this build re-registers the real
+    // `agent.run_turn` handler over a `mock_agent_run_turn` stub another test is
+    // relying on, and that test then reaches a real harness it never scripted.
+    // `bus_testing` states the rule — "any test that touches global native-bus
+    // registration state should acquire this lock first" — and building a core
+    // is exactly that.
+    let _bus = crate::core::bus_testing::BUS_HANDLER_LOCK.lock().await;
     let _env = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
