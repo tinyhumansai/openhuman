@@ -111,7 +111,7 @@ async fn intercept_with_external_channel_origin_persists_and_ttl_denies() {
     // Non-web channel inbound (Telegram / Discord / Slack / etc.):
     // persist an audit row but TTL-deny — there is no channel-routed
     // approval surface yet, and the input is remote-attacker text.
-    let (gate, _dir) = test_gate(); // 2s TTL
+    let (gate, _dir, _env) = expiry_gate();
     let gate = Arc::new(gate);
     let origin = AgentTurnOrigin::ExternalChannel {
         channel: "telegram".into(),
@@ -355,7 +355,10 @@ async fn flow_tool_trust_auto_allows_before_parking() {
     // short-circuit to `Allow` even for a `require_approval: true` flow —
     // that is the whole point of "approve always for this workflow": no
     // pending row is created and the call never parks.
-    let (gate, _dir) = test_gate();
+    //
+    // The second half of this test *does* wait a park out, so it needs the
+    // short window even though it never inspects the "timed out" reason.
+    let (gate, _dir, _env) = expiry_gate();
     store::insert_flow_trust(&gate.config, "flow-trusted", "composio").unwrap();
 
     let outcome = turn_origin::with_origin(
@@ -377,7 +380,8 @@ async fn flow_tool_trust_auto_allows_before_parking() {
     );
 
     // A different tool on the same trusted flow is unaffected — it still
-    // parks (TTL-denies on the 2s test gate).
+    // parks, and nothing decides it, so it TTL-denies after
+    // `EXPIRY_TEST_TTL`.
     let untrusted_outcome = turn_origin::with_origin(
         flow_origin("flow-trusted", true),
         APPROVAL_FLOW_RUN_CONTEXT.scope(

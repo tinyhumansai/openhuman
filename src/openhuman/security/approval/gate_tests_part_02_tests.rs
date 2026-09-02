@@ -5,7 +5,7 @@ async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
     // This test polls a parked task while the full Rust suite runs thousands
     // of other tests concurrently. Keep its coordination deadline independent
     // of the short TTL used by the timeout behavior tests.
-    let (gate, _dir) = test_gate_with_ttl(Duration::from_secs(10));
+    let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
 
     // Run intercept inside a scoped chat context + matching WebChat
@@ -40,8 +40,7 @@ async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
     };
 
     // Decide via the mapped request_id (as the chat ingress router will).
-    gate.decide(&request_id, ApprovalDecision::ApproveOnce)
-        .unwrap();
+    decide_parked(&gate, &request_id, ApprovalDecision::ApproveOnce);
     assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
 
     // Mapping is cleared once intercept returns.
@@ -61,7 +60,7 @@ async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
 async fn webchat_origin_routes_park_when_approval_chat_context_absent() {
     // See the companion chat-context routing test above: this is a
     // coordination deadline, not the timeout behavior under test.
-    let (gate, _dir) = test_gate_with_ttl(Duration::from_secs(10));
+    let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
 
     // WebChat origin scoped, but NO `APPROVAL_CHAT_CONTEXT` — exactly the
@@ -100,8 +99,7 @@ async fn webchat_origin_routes_park_when_approval_chat_context_absent() {
 
     // A decision on that mapped request resolves the park (the card can
     // surface and be approved), instead of silently TTL-denying.
-    gate.decide(&request_id, ApprovalDecision::ApproveOnce)
-        .unwrap();
+    decide_parked(&gate, &request_id, ApprovalDecision::ApproveOnce);
     assert!(matches!(handle.await.unwrap(), GateOutcome::Allow));
     assert!(gate.pending_for_thread("thread-async").is_none());
 }
@@ -187,7 +185,7 @@ async fn waiter_future_dropped_mid_park_evicts_waiter_clears_routing_and_denies_
 // card-click still resolves it in the DB.
 #[tokio::test]
 async fn intercept_audited_bounded_abandons_park_and_leaves_row_pending() {
-    let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+    let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
 
     let g = gate.clone();
@@ -200,7 +198,7 @@ async fn intercept_audited_bounded_abandons_park_and_leaves_row_pending() {
         client_id: "client-1".into(),
         request_id: Some("req-bound".into()),
     };
-    // 100ms caller bound — far below the 2s gate TTL — so the bound is what
+    // 100ms caller bound — far below the gate TTL — so the bound is what
     // elapses, not the gate's own timeout.
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
@@ -269,7 +267,7 @@ fn effective_ttl_uses_env_override_when_valid() {
     let _env = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+    let (gate, _dir) = test_gate_with_ttl(BOOT_TTL_UNDER_TEST);
     unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "42") };
     assert_eq!(
         gate.effective_ttl(),
@@ -284,11 +282,11 @@ fn effective_ttl_falls_back_to_boot_ttl_for_garbage_value() {
     let _env = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+    let (gate, _dir) = test_gate_with_ttl(BOOT_TTL_UNDER_TEST);
     unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "not-a-number") };
     assert_eq!(
         gate.effective_ttl(),
-        Duration::from_secs(2),
+        BOOT_TTL_UNDER_TEST,
         "garbage OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
     );
     unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
@@ -299,11 +297,11 @@ fn effective_ttl_falls_back_to_boot_ttl_when_unset() {
     let _env = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+    let (gate, _dir) = test_gate_with_ttl(BOOT_TTL_UNDER_TEST);
     unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
     assert_eq!(
         gate.effective_ttl(),
-        Duration::from_secs(2),
+        BOOT_TTL_UNDER_TEST,
         "unset OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
     );
 }
@@ -359,7 +357,7 @@ mod resolve_park_ttl_tests {
 /// above, but that alone doesn't prove `intercept_audited_inner` actually
 /// persists the clamped TTL when the copilot-streaming context is scoped.
 /// Builds a gate with the full `DEFAULT_APPROVAL_TTL` boot TTL (unlike
-/// `test_gate()`'s 2s, which is already shorter than either clamp and
+/// `test_gate()` before this suite stopped hard-coding a 2s window, which
 /// would make this assertion vacuous), scopes
 /// `APPROVAL_COPILOT_STREAM_CONTEXT` alongside the chat context + WebChat
 /// origin the way `flows::ops::flows_build` does in production, and
@@ -596,7 +594,7 @@ async fn intercept_with_workflow_require_approval_persists_and_ttl_denies() {
     // trust root — same conservative park-and-audit shape as
     // `GoalContinuation` / `ExternalChannel`, since there is no flow
     // review surface to route the prompt to yet (B3).
-    let (gate, _dir) = test_gate(); // 2s TTL
+    let (gate, _dir, _env) = expiry_gate();
     let gate = Arc::new(gate);
     let origin = AgentTurnOrigin::TrustedAutomation {
         job_id: "flow-2".into(),
