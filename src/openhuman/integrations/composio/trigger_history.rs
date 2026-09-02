@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 
 use chrono::Utc;
+#[cfg(not(windows))]
 use fs2::FileExt;
 
 use super::types::{ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult};

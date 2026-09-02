@@ -495,7 +495,7 @@ fn check_workspace(config: &Config, items: &mut Vec<DiagnosticItem>) {
 fn available_disk_space_mb(path: &Path) -> Option<u64> {
     #[cfg(target_os = "windows")]
     {
-        return available_disk_space_mb_windows(path);
+        available_disk_space_mb_windows(path)
     }
 
     #[cfg(not(target_os = "windows"))]

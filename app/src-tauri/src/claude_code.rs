@@ -30,7 +30,7 @@ pub fn claude_code_login_launch() -> Result<String, String> {
             .args(["/c", "start", "", "cmd", "/k", "claude login"])
             .spawn()
             .map_err(|e| format!("failed to open cmd: {e}"))?;
-        return Ok("cmd".into());
+        Ok("cmd".into())
     }
 
     #[cfg(target_os = "macos")]

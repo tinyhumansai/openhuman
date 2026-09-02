@@ -95,14 +95,17 @@ pub(crate) fn try_forward_deep_links() -> ForwardResult {
     ForwardResult::NoPrimary
 }
 
+/// Callback the app installs to receive deep-link URLs as they arrive.
+type LiveHandler = Box<dyn Fn(String) + Send + Sync>;
+
 static PENDING_URLS: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
-static LIVE_HANDLER: OnceLock<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>> = OnceLock::new();
+static LIVE_HANDLER: OnceLock<Mutex<Option<LiveHandler>>> = OnceLock::new();
 
 fn pending_queue() -> &'static Arc<Mutex<Vec<String>>> {
     PENDING_URLS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
 }
 
-fn live_handler() -> &'static Mutex<Option<Box<dyn Fn(String) + Send + Sync>>> {
+fn live_handler() -> &'static Mutex<Option<LiveHandler>> {
     LIVE_HANDLER.get_or_init(|| Mutex::new(None))
 }
 

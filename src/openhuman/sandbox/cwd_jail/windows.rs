@@ -38,7 +38,7 @@ use std::process::{Child, Command};
 use std::ptr;
 
 use windows_sys::core::PWSTR;
-use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HLOCAL};
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, SET_ACCESS,
     SE_FILE_OBJECT, TRUSTEE_IS_GROUP, TRUSTEE_IS_SID, TRUSTEE_W,
@@ -104,6 +104,12 @@ pub struct AppContainerBackend;
 impl AppContainerBackend {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for AppContainerBackend {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -305,7 +311,7 @@ unsafe fn grant_sid_access(path: &Path, sid: PSID, access: u32) -> io::Result<()
     // locking out the owner / SYSTEM / Administrators. Merge instead.
     let mut sd_ptr: *mut std::ffi::c_void = ptr::null_mut();
     let mut existing_dacl: *mut ACL = ptr::null_mut();
-    let mut dacl_present: i32 = 0;
+    let dacl_present: i32 = 0;
     let rc = GetNamedSecurityInfoW(
         path_w.as_ptr(),
         SE_FILE_OBJECT,
@@ -335,7 +341,7 @@ unsafe fn grant_sid_access(path: &Path, sid: PSID, access: u32) -> io::Result<()
     };
 
     let mut new_acl: *mut ACL = ptr::null_mut();
-    let rc = SetEntriesInAclW(1, &mut ea, existing_dacl, &mut new_acl);
+    let rc = SetEntriesInAclW(1, &ea, existing_dacl, &mut new_acl);
     if rc != 0 {
         return Err(io::Error::from_raw_os_error(rc as i32));
     }

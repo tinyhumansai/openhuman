@@ -166,7 +166,6 @@ pub async fn synthesize_piper(
     // every TTS request (piper.exe is a console subsystem binary).
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000);
     }
     let mut child = cmd
