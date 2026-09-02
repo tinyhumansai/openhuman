@@ -131,6 +131,12 @@ async fn run_inner(
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
     let tasks = fetch_tasks_unavailable(source, &fetch_filter)?;
     outcome.fetched = tasks.len();
+    // A fetch returns at most `fetch_filter.effective_max()` tasks (a hard
+    // per-fetch cap). When the provider returns a full page we cannot tell
+    // "these are all the currently-open tasks" from "the rest were truncated
+    // out of this window", so `current_external_ids` below is NOT a reliable
+    // authority on what still exists upstream — and must not drive deletions.
+    let hit_fetch_cap = tasks.len() >= fetch_filter.effective_max();
     let current_external_ids: HashSet<String> =
         tasks.iter().map(|task| task.external_id.clone()).collect();
 
@@ -212,7 +218,23 @@ async fn run_inner(
         outcome.routed += 1;
     }
 
-    outcome.pruned = reconcile_missing_tasks(config, source, &current_external_ids).await?;
+    // Only reconcile deletions against a fetch we know is complete. Pruning on
+    // a truncated (full-page) fetch would remove the board card AND the dedup
+    // ledger row for every task that merely fell outside the top-N window,
+    // thrashing them every poll: deleted now, then re-created as brand-new
+    // (fresh ledger row, new card id) the next time they re-enter the window.
+    outcome.pruned = if hit_fetch_cap {
+        tracing::warn!(
+            source_id = %source.id,
+            provider = %source.provider.as_str(),
+            fetched = outcome.fetched,
+            cap = fetch_filter.effective_max(),
+            "[task_sources:pipeline] fetch hit the per-fetch cap; skipping prune so tasks truncated out of this window are not deleted"
+        );
+        0
+    } else {
+        reconcile_missing_tasks(config, source, &current_external_ids).await?
+    };
 
     Ok(())
 }

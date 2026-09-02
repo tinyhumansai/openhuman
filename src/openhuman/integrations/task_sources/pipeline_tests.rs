@@ -107,6 +107,90 @@ async fn refusal_records_a_fetch_history_entry() {
 }
 
 #[tokio::test]
+async fn full_page_fetch_skips_prune_then_resumes_below_cap() {
+    let _guard = registry_lock();
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // A source capped at 2 tasks per fetch, so a 2-task fetch is a full page
+    // and cannot be trusted as the complete set of currently-open tasks.
+    let source = store::add_source(
+        &config,
+        ProviderSlug::Github,
+        None,
+        Some("Capped source".into()),
+        FilterSpec::Github {
+            repo: Some("o/r".into()),
+            labels: vec![],
+            assignee_is_me: true,
+            state: None,
+            fetch_mode: Default::default(),
+            extra: json!({}),
+        },
+        1800,
+        SourceTarget::TodoOnly,
+        2,
+    )
+    .unwrap();
+
+    // Pass 1: two tasks routed onto the board.
+    register_provider(Arc::new(StubProvider {
+        tasks: vec![
+            canned_task("1", "Task one", "2025-01-01T00:00:00Z"),
+            canned_task("2", "Task two", "2025-01-02T00:00:00Z"),
+        ],
+    }));
+    let p1 = run_source_once(&config, &source, FetchReason::Manual).await;
+    assert_eq!(p1.routed, 2, "error={:?}", p1.error);
+    assert_eq!(route::board_cards(&config).await.unwrap().len(), 2);
+
+    // Pass 2: a FULL PAGE (len == cap) that omits task 1 — it was pushed out of
+    // the top-2 window, not closed. Pruning here (the pre-fix behaviour) would
+    // delete task 1's card; the fix must keep it because the fetch is truncated.
+    register_provider(Arc::new(StubProvider {
+        tasks: vec![
+            canned_task("2", "Task two", "2025-01-02T00:00:00Z"),
+            canned_task("3", "Task three", "2025-01-03T00:00:00Z"),
+        ],
+    }));
+    let p2 = run_source_once(&config, &source, FetchReason::Manual).await;
+    assert_eq!(p2.fetched, 2);
+    assert_eq!(
+        p2.pruned, 0,
+        "a full-page fetch must not prune tasks truncated out of the window"
+    );
+    assert_eq!(p2.routed, 1, "task 3 is new");
+    assert_eq!(p2.skipped_dupe, 1, "task 2 is unchanged");
+    let cards = route::board_cards(&config).await.unwrap();
+    assert_eq!(cards.len(), 3, "task 1's card survives the truncated fetch");
+    let ids: Vec<String> = store::list_ingested(&config, &source.id, 10)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.external_id)
+        .collect();
+    assert!(
+        ids.contains(&"1".to_string()),
+        "task 1 stays in the dedup ledger, not deleted and re-minted"
+    );
+
+    // Pass 3: a SUB-CAP fetch (1 < 2) is a complete view, so a genuinely-missing
+    // task is now a reliable deletion signal — pruning resumes. Tasks 1 and 3
+    // are absent and get pruned.
+    register_provider(Arc::new(StubProvider {
+        tasks: vec![canned_task("2", "Task two", "2025-01-02T00:00:00Z")],
+    }));
+    let p3 = run_source_once(&config, &source, FetchReason::Manual).await;
+    assert_eq!(p3.fetched, 1);
+    assert_eq!(
+        p3.pruned, 2,
+        "a below-cap fetch prunes the genuinely-absent tasks"
+    );
+    let cards_after = route::board_cards(&config).await.unwrap();
+    assert_eq!(cards_after.len(), 1, "only task 2 remains after the prune");
+    assert!(cards_after[0].title.contains("Task two"));
+}
+
+#[tokio::test]
 async fn missing_provider_surfaces_error_in_outcome() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
