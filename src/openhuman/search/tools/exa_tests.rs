@@ -331,6 +331,55 @@ async fn unauthorized_status_names_the_key_without_leaking_the_body() {
 }
 
 #[tokio::test]
+async fn payment_required_status_surfaces_actionable_credits_error() {
+    let app = Router::new().route(
+        "/search",
+        post(|| async {
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                r#"{"error":"You have exceeded your credits limit. Please top up to keep using Exa at dashboard.exa.ai","tag":"NO_MORE_CREDITS"}"#,
+            )
+        }),
+    );
+    let base_url = spawn(app).await;
+
+    let tool = ExaSearchTool::new(Some("test-key".into()), Some(base_url), 5, 15);
+    let err = tool
+        .execute(json!({"query": "private search"}))
+        .await
+        .expect_err("402 must fail with actionable message");
+    let message = err.to_string();
+
+    assert!(message.contains("Exa search credits exhausted (HTTP 402)"));
+    assert!(message.contains("dashboard.exa.ai"));
+    assert!(!message.contains("private search"));
+}
+
+#[tokio::test]
+async fn rate_limited_status_surfaces_actionable_message() {
+    let app = Router::new().route(
+        "/search",
+        post(|| async {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate limit exceeded for query: private search",
+            )
+        }),
+    );
+    let base_url = spawn(app).await;
+
+    let tool = ExaSearchTool::new(Some("test-key".into()), Some(base_url), 5, 15);
+    let err = tool
+        .execute(json!({"query": "private search"}))
+        .await
+        .expect_err("429 must fail with rate limit message");
+    let message = err.to_string();
+
+    assert!(message.contains("Exa rate limit exceeded (HTTP 429)"));
+    assert!(!message.contains("private search"));
+}
+
+#[tokio::test]
 async fn non_success_status_does_not_expose_the_response_body() {
     let app = Router::new().route(
         "/search",
