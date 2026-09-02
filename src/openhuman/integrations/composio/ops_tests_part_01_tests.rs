@@ -388,6 +388,11 @@ async fn composio_delete_connection_via_mock() {
 
 #[tokio::test]
 async fn composio_delete_connection_clear_memory_deletes_slack_source() {
+    // The embedding seam fails loudly when unwired. Installed here rather
+    // than relied upon from another test: `install_for_tests` is
+    // `Once`-guarded, so a test that omits it passes only while some
+    // earlier test in the same binary happened to run first.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let _serialised = module_guard().await;
     let app = Router::new()
         .route(
@@ -444,6 +449,11 @@ async fn composio_delete_connection_clear_memory_deletes_slack_source() {
 /// content file sits at the production `content_path` location.
 #[tokio::test]
 async fn composio_delete_connection_clear_memory_cascades_source_tree_and_content_file() {
+    // The embedding seam fails loudly when unwired. Installed here rather
+    // than relied upon from another test: `install_for_tests` is
+    // `Once`-guarded, so a test that omits it passes only while some
+    // earlier test in the same binary happened to run first.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let _serialised = module_guard().await;
     use rusqlite::params;
     use tinymemory_core::store::trees::store as tree_store;

@@ -7,6 +7,11 @@ use super::*;
 /// tree, the summary row, AND the seal-produced content file away.
 #[tokio::test]
 async fn composio_delete_connection_clear_memory_cascades_live_sealed_tree_and_file() {
+    // The embedding seam fails loudly when unwired. Installed here rather
+    // than relied upon from another test: `install_for_tests` is
+    // `Once`-guarded, so a test that omits it passes only while some
+    // earlier test in the same binary happened to run first.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let _serialised = module_guard().await;
     use tinymemory_core::store::chunks::store::{
         get_summary_content_pointers, upsert_staged_chunks_tx,
@@ -138,6 +143,11 @@ async fn composio_delete_connection_clear_memory_cascades_live_sealed_tree_and_f
 
 #[tokio::test]
 async fn composio_delete_connection_clear_memory_keeps_other_gmail_connections() {
+    // The embedding seam fails loudly when unwired. Installed here rather
+    // than relied upon from another test: `install_for_tests` is
+    // `Once`-guarded, so a test that omits it passes only while some
+    // earlier test in the same binary happened to run first.
+    crate::openhuman::memory::host_impls::install_for_tests();
     let _serialised = module_guard().await;
     let app = Router::new()
         .route(
