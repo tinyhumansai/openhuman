@@ -12,13 +12,14 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../store/layoutSlice';
+import { IS_DEV } from '../../utils/config';
 import { Button } from '../ui';
 import { clampWidth, useResizableDivider } from './useResizableDivider';
 
 const namespace = 'two-panel-layout';
 
 function debug(message: string, payload?: Record<string, unknown>) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.debug(`[${namespace}] ${message}`, payload ?? {});
   }
 }

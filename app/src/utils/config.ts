@@ -77,6 +77,13 @@ export const E2E_DEFAULT_CORE_MODE =
  */
 export const IS_DEV_LIKE = IS_DEV || import.meta.env.MODE === 'development';
 
+/**
+ * True under vitest. Distinct from `IS_DEV`, which is *also* true there — so a
+ * dev-only default that must stay off in tests needs both, and reading `MODE`
+ * at the call site is exactly the direct access this module exists to absorb.
+ */
+export const IS_TEST = import.meta.env.MODE === 'test';
+
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */
 export const DEV_FORCE_ONBOARDING =
   import.meta.env.DEV && import.meta.env.VITE_DEV_FORCE_ONBOARDING === 'true';

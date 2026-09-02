@@ -228,6 +228,36 @@ export default [
     },
   },
 
+  // Frontend config is centralized in src/utils/config.ts (AGENTS.md). A direct
+  // import.meta.env read elsewhere bypasses the derived values that file owns --
+  // IS_DEV_LIKE exists precisely because import.meta.env.DEV is false under the
+  // E2E harness (vite build --mode development) -- and cannot be stubbed once the
+  // module graph has loaded, which is why the loopback OAuth test reads config
+  // instead. The rule was documented but unenforced, and had already drifted.
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: [
+      'src/utils/config.ts',
+      'src/test/**',
+      'src/**/__tests__/**',
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // Pin the meta-property to `import.meta` -- `new.target` is a MetaProperty
+          // too -- and match both `import.meta.env` and `import.meta['env']`.
+          selector:
+            'MemberExpression[object.type="MetaProperty"][object.meta.name="import"][object.property.name="meta"]:matches([computed=false][property.name="env"], [computed=true][property.value="env"])',
+          message:
+            'Read frontend config from src/utils/config.ts (IS_DEV, IS_DEV_LIKE, ...) instead of import.meta.env directly; add the value there if it is missing.',
+        },
+      ],
+    },
+  },
+
   // React files configuration
   {
     files: ['src/**/*.jsx', 'src/**/*.tsx'],
