@@ -33,14 +33,26 @@ async fn a_cache_miss_does_not_tell_the_model_to_re_run() {
         .await
         .unwrap()
         .output();
+    let lowered = msg.to_lowercase();
     assert!(
-        !msg.to_lowercase().contains("re-run the tool"),
-        "a miss must not instruct a blind re-run: {msg}"
-    );
-    assert!(
-        msg.to_lowercase().contains("do not re-run"),
+        lowered.contains("do not re-run"),
         "a miss must explicitly discourage re-running: {msg}"
     );
+    // Scan rather than match one phrase. `!contains("re-run the tool")` both
+    // accepts a bare "re-run the same call" elsewhere in the string — which
+    // reads to the model as permission, and is the loop this fixes — and
+    // rejects the perfectly good "Do not re-run the tool". Every mention of
+    // re-running has to be the negated one. Mirrors the assertion in
+    // `inference/tokenjuice/tools_tests.rs`.
+    let mut cursor = 0;
+    while let Some(found) = lowered[cursor..].find("re-run") {
+        let at = cursor + found;
+        assert!(
+            lowered[..at].trim_end().ends_with("do not"),
+            "every mention of re-running must be negated, found a bare one at {at}: {msg}"
+        );
+        cursor = at + "re-run".len();
+    }
     assert!(
         msg.contains("compacted summary"),
         "a miss must point the model at the summary it already has: {msg}"
