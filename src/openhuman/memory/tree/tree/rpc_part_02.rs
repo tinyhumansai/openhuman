@@ -224,6 +224,13 @@ pub struct PipelineStatusResponse {
     /// Reported until the rebuilt store holds a chunk again (`resynced`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine: Option<QuarantineStatus>,
+    /// Current `memory_tree.cloud_summarization_opt_in`. The status panel owns
+    /// the toggle for it (the remediation for `summarizer_unavailable` names
+    /// this flag), and a toggle that renders a default instead of the stored
+    /// value would misreport the machine's consent state. Additive
+    /// (`#[serde(default)]` → `false` for older clients).
+    #[serde(default)]
+    pub cloud_summarization_opt_in: bool,
 }
 
 /// `memory_tree_pipeline_status` RPC handler (#1856 Part 1).
@@ -439,6 +446,7 @@ pub async fn pipeline_status_rpc(
         degraded,
         first_blocking_cause,
         extraction_coverage,
+        cloud_summarization_opt_in: config.memory_tree.cloud_summarization_opt_in,
         quarantine,
     };
 

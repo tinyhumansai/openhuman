@@ -893,6 +893,10 @@ const messages: TranslationMap = {
   'memoryTree.status.title': '记忆树',
   'memoryTree.status.autoSyncLabel': '自动同步',
   'memoryTree.status.autoSyncDescription': '暂停后将停止新的摄取。现有 wiki 仍可查询。',
+  'memoryTree.status.cloudSummarizationLabel': '云端摘要',
+  'memoryTree.status.cloudSummarizationDescription':
+    '无需本地 AI 也能构建摘要树。记忆摘要会发送到你配置的云提供方。',
+  'memoryTree.status.cloudSummarizationToggleFailed': '无法更改云端摘要',
   'memoryTree.status.statusTile': '状态',
   'memoryTree.status.lastSyncTile': '上次同步',
   'memoryTree.status.totalChunksTile': '摘要树叶子节点',

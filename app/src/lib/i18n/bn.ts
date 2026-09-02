@@ -952,6 +952,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'স্বয়ংক্রিয়-sync',
   'memoryTree.status.autoSyncDescription':
     'নতুন অভিযান থামাতে বিরতি দাও। এখানে বিদ্যমান উইকি অনুসন্ধানের জন্য অপেক্ষা করছে।',
+  'memoryTree.status.cloudSummarizationLabel': 'ক্লাউড সারাংশ',
+  'memoryTree.status.cloudSummarizationDescription':
+    'স্থানীয় AI ছাড়াই সারাংশ ট্রি তৈরি করতে দেয়। মেমরি সারাংশ আপনার কনফিগার করা ক্লাউড প্রদানকারীর কাছে পাঠানো হয়।',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'ক্লাউড সারাংশ পরিবর্তন করা যায়নি',
   'memoryTree.status.statusTile': 'অবস্থা',
   'memoryTree.status.lastSyncTile': 'সর্বশেষ সুসংগতি',
   'memoryTree.status.totalChunksTile': 'সারাংশ-বৃক্ষের পাতা',

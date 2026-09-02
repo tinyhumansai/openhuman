@@ -26,7 +26,11 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { reportMemoryPipelineFailure, reportMemoryQuarantine } from '../../lib/userErrors/report';
 import { useAppDispatch } from '../../store/hooks';
 import type { ToastNotification } from '../../types/intelligence';
-import { memoryTreeRetryFailed, memoryTreeSetEnabled } from '../../utils/tauriCommands';
+import {
+  memoryTreeRetryFailed,
+  memoryTreeSetCloudSummarization,
+  memoryTreeSetEnabled,
+} from '../../utils/tauriCommands';
 import { trackAnalyticsEvent } from '../analytics';
 import { Card } from '../ui';
 import Button from '../ui/Button';
@@ -90,6 +94,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
     reportMemoryQuarantine(dispatch, quarantine);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the fields that matter
   }, [dispatch, quarantineKey]);
+  const [cloudBusy, setCloudBusy] = useState(false);
 
   const handleToggle = useCallback(async () => {
     if (!status || toggleBusy) return;
@@ -147,6 +152,27 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
       setRetryBusy(false);
     }
   }, [retryBusy, refresh, onToast, t]);
+  const handleCloudSummarizationToggle = useCallback(async () => {
+    if (!status || cloudBusy) return;
+    const next = !(status.cloud_summarization_opt_in ?? false);
+    console.debug('[ui-flow][memory-tree-status] cloud-summarization toggle: entry next=%s', next);
+    setCloudBusy(true);
+    try {
+      await memoryTreeSetCloudSummarization(next);
+      trackAnalyticsEvent('memory_tree_cloud_summarization_changed', { opted_in: next });
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[ui-flow][memory-tree-status] cloud-summarization toggle: error %s', message);
+      onToast?.({
+        type: 'error',
+        title: t('memoryTree.status.cloudSummarizationToggleFailed'),
+        message,
+      });
+    } finally {
+      setCloudBusy(false);
+    }
+  }, [status, cloudBusy, refresh, onToast, t]);
 
   const statusKind = status?.status ?? 'idle';
   // #5324: "Error — 936 unrecoverable failures need action" told the user
@@ -192,6 +218,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const failedJobs = status?.pipeline_jobs.failed ?? 0;
 
   const checked = !(status?.is_paused ?? false);
+  const cloudSummarizationOn = status?.cloud_summarization_opt_in ?? false;
 
   const labelClass = 'text-[11px] uppercase tracking-wide text-content-muted mb-1';
   const valueClass = 'text-xl font-semibold text-content';
@@ -407,6 +434,44 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           }}
           data-testid="memory-tree-status-toggle"
         />
+      </div>
+
+      {/* Cloud-summarization consent. Rendered unconditionally, next to the
+          auto-sync toggle, rather than only while `summarizer_unavailable` is
+          live: a control that appears with the error and vanishes once it is
+          fixed cannot be used to withdraw the consent it granted. */}
+      <div
+        className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2"
+        data-testid="memory-tree-cloud-summarization-row">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-content">
+            {t('memoryTree.status.cloudSummarizationLabel')}
+          </div>
+          <div className="text-xs text-content-muted">
+            {t('memoryTree.status.cloudSummarizationDescription')}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label={t('memoryTree.status.cloudSummarizationLabel')}
+          aria-checked={cloudSummarizationOn}
+          disabled={cloudBusy || loading || !status}
+          onClick={() => {
+            void handleCloudSummarizationToggle();
+          }}
+          data-analytics-id="memory-tree-cloud-summarization"
+          data-testid="memory-tree-cloud-summarization-toggle"
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${
+            cloudSummarizationOn ? 'bg-primary-500' : 'bg-surface-strong'
+          }`}>
+          <span
+            aria-hidden
+            className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow transition-transform ${
+              cloudSummarizationOn ? 'translate-x-4' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
       </div>
     </div>
   );

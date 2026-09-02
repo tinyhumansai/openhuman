@@ -384,6 +384,7 @@ fn handle_update_memory_settings(params: Map<String, Value>) -> ControllerFuture
             embedding_model: update.embedding_model,
             embedding_dimensions: update.embedding_dimensions,
             memory_window: update.memory_window,
+            cloud_summarization_opt_in: update.cloud_summarization_opt_in,
         };
         to_json(config_rpc::load_and_apply_memory_settings(patch).await?)
     })

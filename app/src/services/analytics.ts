@@ -106,6 +106,7 @@ const ALLOWED_EVENT_NAMES = [
   'automation_run_cancelled',
   'memory_repair_succeeded',
   'memory_tree_retry_succeeded',
+  'memory_tree_cloud_summarization_changed',
   'skill_install',
   'skill_uninstall',
   'tab_bar_change',

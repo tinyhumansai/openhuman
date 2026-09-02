@@ -951,6 +951,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'ऑटो सिंक',
   'memoryTree.status.autoSyncDescription':
     'नए अंतर्ग्रहण को रोकने के लिए रोकें। मौजूदा विकि क्वेरी योग्य रहता है।',
+  'memoryTree.status.cloudSummarizationLabel': 'क्लाउड सारांश',
+  'memoryTree.status.cloudSummarizationDescription':
+    'स्थानीय AI के बिना सारांश ट्री बनाने देता है। मेमोरी सारांश आपके कॉन्फ़िगर किए गए क्लाउड प्रदाता को भेजे जाते हैं।',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'क्लाउड सारांश नहीं बदला जा सका',
   'memoryTree.status.statusTile': 'स्थिति',
   'memoryTree.status.lastSyncTile': 'अंतिम सिंक',
   'memoryTree.status.totalChunksTile': 'सारांश-वृक्ष की पत्तियाँ',
