@@ -178,3 +178,47 @@ fn full_access_reads_persisted_toggle_when_env_unset() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// `String::truncate` takes a byte index and panics when it is not a character
+/// boundary, so bounding the stderr accumulator with `acc.truncate(16_384)`
+/// aborted the drain task whenever a multi-byte character straddled the cap.
+/// The join is `unwrap_or_default()`, so the operator saw `stderr=` and lost
+/// the whole error output for that turn.
+#[test]
+fn push_bounded_never_splits_a_character() {
+    // "aéb" is 4 bytes: a=0, é=1..2, b=3. A cap of 2 lands *inside* 'é', so the
+    // helper must back up to byte 1 -- `String::truncate(2)` would panic here.
+    let mut acc = String::new();
+    push_bounded(&mut acc, "aéb", 2);
+    assert_eq!(acc, "a", "must back up to the boundary, not split it");
+
+    // A cap of 3 lands exactly on a boundary, so nothing is given up needlessly.
+    let mut acc = String::new();
+    push_bounded(&mut acc, "aéb", 3);
+    assert_eq!(acc, "aé");
+    assert!(acc.len() <= 3);
+
+    // The same, driven the way the reader does it: many small chunks over the cap.
+    let mut acc = String::new();
+    for _ in 0..600 {
+        push_bounded(&mut acc, "日本語テキスト", 1024);
+    }
+    assert!(acc.len() <= 1024);
+    // The real assertion: it is still valid UTF-8 and did not panic getting here.
+    assert!(std::str::from_utf8(acc.as_bytes()).is_ok());
+}
+
+#[test]
+fn push_bounded_keeps_everything_below_the_cap() {
+    let mut acc = String::new();
+    push_bounded(&mut acc, "hello ", 64);
+    push_bounded(&mut acc, "world", 64);
+    assert_eq!(acc, "hello world");
+}
+
+#[test]
+fn push_bounded_handles_an_ascii_cap_exactly() {
+    let mut acc = String::new();
+    push_bounded(&mut acc, "abcdef", 3);
+    assert_eq!(acc, "abc");
+}

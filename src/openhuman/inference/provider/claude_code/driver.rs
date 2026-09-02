@@ -18,6 +18,28 @@ use tokio::sync::mpsc;
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
 const TURN_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How much of the child's stderr we keep for diagnostics.
+const STDERR_DIAGNOSTIC_CAP: usize = 16_384;
+
+/// Append `chunk` to `acc`, keeping at most `max_bytes` and never splitting a
+/// character.
+///
+/// `String::truncate` takes a *byte* index and panics when it is not a character
+/// boundary, so bounding this accumulator with `acc.truncate(16_384)` aborted the
+/// task the moment a multi-byte character straddled the cap. The panic happened
+/// inside `tokio::spawn`, and the join is `unwrap_or_default()`, so it surfaced as
+/// an empty stderr string: the operator lost the whole error output for that turn
+/// and saw `exit Some(1) stderr=`.
+fn push_bounded(acc: &mut String, chunk: &str, max_bytes: usize) {
+    acc.push_str(chunk);
+    if acc.len() > max_bytes {
+        let keep = utf8_safe_prefix_at_byte_boundary(acc, max_bytes).len();
+        acc.truncate(keep);
+    }
+}
+
+use crate::openhuman::util::text::utf8_safe_prefix_at_byte_boundary;
+
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
 use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
@@ -421,10 +443,11 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
             if n == 0 {
                 break;
             }
-            acc.push_str(&String::from_utf8_lossy(&tmp[..n]));
-            if acc.len() > 16_384 {
-                acc.truncate(16_384);
-            }
+            push_bounded(
+                &mut acc,
+                &String::from_utf8_lossy(&tmp[..n]),
+                STDERR_DIAGNOSTIC_CAP,
+            );
         }
         acc
     });
