@@ -154,7 +154,7 @@ n8n と Zapier に強くインスパイアされた[ワークフロー](https://
 
 新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
 
-1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.93.0（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
+1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
 2. リポジトリを fork してクローンし、`pnpm install` の前に `git submodule update --init --recursive` を実行して、ベンダー化された Tauri/CEF のソースを取得します。
 3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
 
