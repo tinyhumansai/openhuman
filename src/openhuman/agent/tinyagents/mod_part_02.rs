@@ -547,9 +547,32 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
     // (`defer_turn_completed_to_caller`, #4457 defect C) — so this is the single
     // emission point for callers with no post-run streaming (channel/CLI).
     if let Some(sink) = &turn_completed_sink {
-        let _ = sink.try_send(AgentProgress::TurnCompleted {
-            iterations: run.model_calls as u32,
-        });
+        // NOT best-effort. `TurnCompleted` is the web bridge's sole completion
+        // signal: drop it and `parent_completed` stays false, so the bridge
+        // marks a turn that actually finished as `interrupted` and never emits
+        // `chat_done`. The turn's output still reaches the journal, session
+        // transcript and memory tree, so the agent "remembers" replying while
+        // the user's thread shows silence. A heavy turn (many tools + long
+        // streaming) reliably fills the 256-slot channel, which is why only
+        // tool-heavy turns were affected.
+        //
+        // Blocking is safe *here specifically*: this site is guarded by
+        // `subagent_scope.is_none()`, so it only ever runs on a parent turn
+        // with nothing awaiting it. The sub-agent stall documented on
+        // `tool_progress::emit` comes from parking a *sub-agent's* loop while
+        // the orchestrator awaits its tool call — unreachable from this path.
+        // Deltas and sub-agent lifecycle events stay lossy via `emit`.
+        if let Err(err) = sink
+            .send(AgentProgress::TurnCompleted {
+                iterations: run.model_calls as u32,
+            })
+            .await
+        {
+            tracing::warn!(
+                error = %err,
+                "[tinyagents] TurnCompleted not delivered — progress receiver gone"
+            );
+        }
     }
 
     // Response-cache effectiveness for this turn (issue #4249, 03.2). Additive —
