@@ -264,3 +264,42 @@ fn slug_from_unicode_only_titles_are_unique_and_stable() {
     assert_eq!(slug_from("会议记录"), chinese);
     assert_eq!(slug_from("Протокол"), russian);
 }
+
+/// `agent.list_subagents` enumerates the whole registry and every entry's
+/// `when_to_use` reads as an invitation, but `agent.run_subagent` refuses
+/// `integrations_agent`. A brain following the invitation could only learn that
+/// from the error it got back, after paying for the round trip (#5755). These
+/// pin the marker to the same predicate dispatch refuses on, so the catalogue
+/// cannot drift back into advertising a delegate that will not run.
+#[test]
+fn integrations_agent_is_flagged_as_not_dispatchable_over_mcp() {
+    let reason =
+        mcp_dispatch_block_reason("integrations_agent").expect("integrations_agent is refused");
+    assert!(
+        reason.contains("does not yet support"),
+        "the reason should say what run_subagent does, got: {reason}"
+    );
+
+    let line = subagent_summary_line("integrations_agent", "Use for Gmail, Calendar, Notion");
+    assert!(
+        line.contains("not dispatchable over MCP"),
+        "the listing must carry the marker, got: {line}"
+    );
+    assert!(
+        line.contains(reason),
+        "the marker must carry the dispatch reason itself, got: {line}"
+    );
+    assert!(
+        line.contains("Use for Gmail, Calendar, Notion"),
+        "when_to_use must survive the marker, got: {line}"
+    );
+}
+
+#[test]
+fn dispatchable_subagents_are_listed_without_a_marker() {
+    assert_eq!(mcp_dispatch_block_reason("tools_agent"), None);
+    assert_eq!(mcp_dispatch_block_reason(""), None);
+
+    let line = subagent_summary_line("tools_agent", "Use for shell and file work");
+    assert_eq!(line, "- **tools_agent**: Use for shell and file work");
+}

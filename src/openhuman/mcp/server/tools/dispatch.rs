@@ -243,6 +243,31 @@ async fn core_tool_instructions() -> Result<Value, ToolCallError> {
     ))
 }
 
+/// Why `agent.run_subagent` will refuse `agent_id`, or `None` when it will run it.
+///
+/// One source for the refusal and for what `agent.list_subagents` publishes, so
+/// the catalogue cannot advertise a delegate that dispatch turns away. The list
+/// enumerates the whole registry and each entry's `when_to_use` invites the
+/// model to delegate; before this, a brain reached `integrations_agent` through
+/// that invitation and only learned it was unreachable from the error, after
+/// spending the round trip (#5755).
+pub fn mcp_dispatch_block_reason(agent_id: &str) -> Option<&'static str> {
+    (agent_id == "integrations_agent").then_some(
+        "agent.run_subagent does not yet support `integrations_agent`; first-level MCP support is currently limited to standalone agents that do not require toolkit binding",
+    )
+}
+
+/// One bullet of the `agent.list_subagents` summary.
+///
+/// Pure so the "not dispatchable" marker is asserted without standing up a
+/// config and an agent registry.
+pub fn subagent_summary_line(id: &str, when_to_use: &str) -> String {
+    match mcp_dispatch_block_reason(id) {
+        Some(reason) => format!("- **{id}** (not dispatchable over MCP — {reason}): {when_to_use}"),
+        None => format!("- **{id}**: {when_to_use}"),
+    }
+}
+
 async fn list_subagents() -> Result<Value, ToolCallError> {
     let config = load_config_and_init_registry().await?;
     let registry = AgentDefinitionRegistry::global().ok_or_else(|| {
@@ -263,6 +288,10 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
                 "tool_scope": def.tools,
                 "subagents": def.subagents,
                 "source": def.source,
+                // Advertised alongside the invitation, not discovered from the
+                // error of acting on it (#5755).
+                "dispatchable_over_mcp": mcp_dispatch_block_reason(&def.id).is_none(),
+                "not_dispatchable_reason": mcp_dispatch_block_reason(&def.id),
             })
         })
         .collect::<Vec<_>>();
@@ -275,7 +304,7 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
             .map(|def| {
                 let id = def.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
                 let when = def.get("when_to_use").and_then(Value::as_str).unwrap_or("");
-                format!("- **{id}**: {when}")
+                subagent_summary_line(id, when)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -298,10 +327,8 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
 
     let agent_id = required_non_empty_string(params, "agent_id")?;
     let prompt = required_non_empty_string(params, "prompt")?;
-    if agent_id == "integrations_agent" {
-        return Err(ToolCallError::InvalidParams(
-            "agent.run_subagent does not yet support `integrations_agent`; first-level MCP support is currently limited to standalone agents that do not require toolkit binding".to_string(),
-        ));
+    if let Some(reason) = mcp_dispatch_block_reason(&agent_id) {
+        return Err(ToolCallError::InvalidParams(reason.to_string()));
     }
 
     // Bound nested recursion per delegation chain (CC → run_subagent → CC → …).
