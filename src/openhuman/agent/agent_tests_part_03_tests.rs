@@ -12,16 +12,24 @@ use super::*;
 /// the positive autosave test uses, and report whether one ever landed.
 ///
 /// The user message is stored fire-and-forget (`tokio::spawn` in
-/// `turn/core.rs`, #3610), so both directions need the *same* window or the
+/// `turn/core_turn.rs`, #3610), so both directions need the *same* window or the
 /// negative tests are the weaker assertion: a broken guard whose spawned store
 /// lands after a short fixed sleep would pass them while failing in production.
 /// Returns as soon as one appears, so a genuinely broken guard fails fast
 /// instead of costing the full second.
+///
+/// Lists `CONVERSATION_RAW_NAMESPACE` explicitly rather than passing `None`.
+/// The autosave writes there (it no longer shares the default namespace), and a
+/// `None` listing comes back empty — which would make the two negative tests
+/// below pass without ever reading the store, exactly the false green this
+/// helper exists to avoid.
 async fn poll_for_stored_user_message(mem: &Arc<dyn Memory>) -> Vec<String> {
+    use crate::openhuman::agent::learning::transcript_ingest::CONVERSATION_RAW_NAMESPACE;
+
     let mut keys: Vec<String> = Vec::new();
     for _ in 0..50 {
         keys = mem
-            .list(None, None, None)
+            .list(Some(CONVERSATION_RAW_NAMESPACE), None, None)
             .await
             .expect(
                 "memory list must succeed; an empty list here would let the \
@@ -92,7 +100,6 @@ async fn a_direct_chat_turn_stores_the_user_message() {
         "a direct-chat message is a person typing and must be stored: {keys:?}"
     );
 }
-
 
 /// An internal agent runs on the same config as the chat, so it inherits
 /// `auto_save` — but its "user message" is the prompt the host wrote for it.
