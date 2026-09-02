@@ -4338,7 +4338,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude দিয়ে সাইন ইন করুন',
   'settings.ai.claudeCode.reconnect': 'পুনরায় সংযুক্ত করুন',
   'settings.ai.claudeCode.loginHint':
-    'claude login চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
+    'claude auth login --claudeai চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
   'settings.ai.claudeCode.loginError': 'লগইন টার্মিনাল খোলা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'settings.ai.claudeCode.fullAccess': 'সম্পূর্ণ অ্যাক্সেস',
   'settings.ai.claudeCode.fullAccessOn':

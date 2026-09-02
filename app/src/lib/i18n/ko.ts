@@ -4291,7 +4291,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude로 로그인',
   'settings.ai.claudeCode.reconnect': '다시 연결',
   'settings.ai.claudeCode.loginHint':
-    'claude login을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
+    'claude auth login --claudeai을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
   'settings.ai.claudeCode.loginError': '로그인 터미널을 열 수 없습니다. 다시 시도해 주세요.',
   'settings.ai.claudeCode.fullAccess': '전체 액세스',
   'settings.ai.claudeCode.fullAccessOn':

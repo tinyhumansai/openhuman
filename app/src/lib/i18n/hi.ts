@@ -4339,7 +4339,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude से साइन इन करें',
   'settings.ai.claudeCode.reconnect': 'फिर से कनेक्ट करें',
   'settings.ai.claudeCode.loginHint':
-    'claude login चलाने वाला एक टर्मिनल खोलता है। पूरा होने के बाद, फिर से जाँचें पर क्लिक करें।',
+    'claude auth login --claudeai चलाने वाला एक टर्मिनल खोलता है। पूरा होने के बाद, फिर से जाँचें पर क्लिक करें।',
   'settings.ai.claudeCode.loginError': 'लॉगिन टर्मिनल नहीं खोला जा सका। कृपया पुनः प्रयास करें।',
   'settings.ai.claudeCode.fullAccess': 'पूर्ण पहुँच',
   'settings.ai.claudeCode.fullAccessOn':

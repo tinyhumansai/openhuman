@@ -4460,7 +4460,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Mit Claude anmelden',
   'settings.ai.claudeCode.reconnect': 'Erneut verbinden',
   'settings.ai.claudeCode.loginHint':
-    'Öffnet ein Terminal, das claude login ausführt. Klicke nach Abschluss auf „Erneut prüfen“.',
+    'Öffnet ein Terminal, das claude auth login --claudeai ausführt. Klicke nach Abschluss auf „Erneut prüfen“.',
   'settings.ai.claudeCode.loginError':
     'Das Anmelde-Terminal konnte nicht geöffnet werden. Bitte versuche es erneut.',
   'settings.ai.claudeCode.fullAccess': 'Voller Zugriff',

@@ -4231,7 +4231,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'تسجيل الدخول عبر Claude',
   'settings.ai.claudeCode.reconnect': 'إعادة الاتصال',
   'settings.ai.claudeCode.loginHint':
-    'يفتح طرفية تُشغّل claude login. بعد اكتمالها، انقر على إعادة الفحص.',
+    'يفتح طرفية تُشغّل claude auth login --claudeai. بعد اكتمالها، انقر على إعادة الفحص.',
   'settings.ai.claudeCode.loginError': 'تعذّر فتح طرفية تسجيل الدخول. يُرجى المحاولة مرة أخرى.',
   'settings.ai.claudeCode.fullAccess': 'وصول كامل',
   'settings.ai.claudeCode.fullAccessOn':

@@ -4995,7 +4995,7 @@ const en: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Sign in with Claude',
   'settings.ai.claudeCode.reconnect': 'Reconnect',
   'settings.ai.claudeCode.loginHint':
-    'Opens a terminal running claude login. After it completes, click Recheck.',
+    'Opens a terminal running claude auth login --claudeai. After it completes, click Recheck.',
   'settings.ai.claudeCode.loginError': 'Could not open the login terminal. Please try again.',
   'settings.ai.claudeCode.fullAccess': 'Full access',
   'settings.ai.claudeCode.fullAccessOn':

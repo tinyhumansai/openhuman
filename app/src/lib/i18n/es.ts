@@ -4415,7 +4415,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Iniciar sesión con Claude',
   'settings.ai.claudeCode.reconnect': 'Reconectar',
   'settings.ai.claudeCode.loginHint':
-    'Abre un terminal que ejecuta claude login. Cuando termine, haz clic en Volver a comprobar.',
+    'Abre un terminal que ejecuta claude auth login --claudeai. Cuando termine, haz clic en Volver a comprobar.',
   'settings.ai.claudeCode.loginError':
     'No se pudo abrir el terminal de inicio de sesión. Inténtalo de nuevo.',
   'settings.ai.claudeCode.fullAccess': 'Acceso completo',

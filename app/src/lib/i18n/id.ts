@@ -4358,7 +4358,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Masuk dengan Claude',
   'settings.ai.claudeCode.reconnect': 'Hubungkan ulang',
   'settings.ai.claudeCode.loginHint':
-    'Membuka terminal yang menjalankan claude login. Setelah selesai, klik Periksa ulang.',
+    'Membuka terminal yang menjalankan claude auth login --claudeai. Setelah selesai, klik Periksa ulang.',
   'settings.ai.claudeCode.loginError': 'Tidak dapat membuka terminal login. Silakan coba lagi.',
   'settings.ai.claudeCode.fullAccess': 'Akses penuh',
   'settings.ai.claudeCode.fullAccessOn':

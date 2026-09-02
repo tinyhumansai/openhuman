@@ -379,7 +379,7 @@ export async function openhumanClaudeCodeSetFullAccess(
 }
 
 /**
- * Open the user's native terminal and run `claude login` inside it. The
+ * Open the user's native terminal and run `claude auth login` inside it. The
  * CLI's OAuth flow is interactive, so we can't host it in-app — we
  * detach into a terminal window and let the user complete the flow
  * there, then click Recheck back in the settings card.

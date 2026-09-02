@@ -4380,7 +4380,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Войти через Claude',
   'settings.ai.claudeCode.reconnect': 'Переподключить',
   'settings.ai.claudeCode.loginHint':
-    'Открывает терминал с командой claude login. После завершения нажмите «Проверить снова».',
+    'Открывает терминал с командой claude auth login --claudeai. После завершения нажмите «Проверить снова».',
   'settings.ai.claudeCode.loginError':
     'Не удалось открыть терминал входа. Пожалуйста, попробуйте снова.',
   'settings.ai.claudeCode.fullAccess': 'Полный доступ',

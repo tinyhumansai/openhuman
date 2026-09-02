@@ -4097,7 +4097,8 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.openingTerminal': '正在打开终端…',
   'settings.ai.claudeCode.signIn': '使用 Claude 登录',
   'settings.ai.claudeCode.reconnect': '重新连接',
-  'settings.ai.claudeCode.loginHint': '打开运行 claude login 的终端。完成后，点击“重新检查”。',
+  'settings.ai.claudeCode.loginHint':
+    '打开运行 claude auth login --claudeai 的终端。完成后，点击“重新检查”。',
   'settings.ai.claudeCode.loginError': '无法打开登录终端。请重试。',
   'settings.ai.claudeCode.fullAccess': '完全访问权限',
   'settings.ai.claudeCode.fullAccessOn': 'Claude Code 可以运行命令、使用网络并生成子智能体。',
