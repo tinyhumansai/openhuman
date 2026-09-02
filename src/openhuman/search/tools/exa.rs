@@ -240,6 +240,18 @@ impl ExaClient {
                      Check your Exa API key under Connections > Search engine."
                 );
             }
+            if status == reqwest::StatusCode::PAYMENT_REQUIRED || status.as_u16() == 402 {
+                anyhow::bail!(
+                    "Exa search credits exhausted (HTTP 402). \
+                     Please top up your Exa account at dashboard.exa.ai or switch search provider."
+                );
+            }
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                anyhow::bail!(
+                    "Exa rate limit exceeded (HTTP 429). \
+                     Please wait a moment before searching again."
+                );
+            }
             anyhow::bail!("Exa returned non-2xx status {status}");
         }
 
