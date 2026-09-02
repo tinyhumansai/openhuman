@@ -84,8 +84,31 @@ struct HandshakeAuth {
 /// A missing `Origin` header is treated as a native (non-browser) client
 /// and accepted — only the cross-origin browser-page case is the targeted
 /// bad actor here.
+/// Same env var the JSON-RPC CORS layer reads (`jsonrpc::ALLOWED_ORIGINS_ENV`).
+/// Comma-separated, exact-match origins for operator-controlled surfaces that
+/// are not on loopback — a tailnet host, an E2E driver, a reverse proxy.
+#[cfg(feature = "http-server")]
+const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
+
 #[cfg(feature = "http-server")]
 pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
+    origin_is_allowed_with_extra(origin, std::env::var(ALLOWED_ORIGINS_ENV).ok().as_deref())
+}
+
+/// Origin gate with the extra allowlist passed explicitly so tests do not have
+/// to mutate process-global env.
+///
+/// Chat is a socket-only transport (`chat:start` / `chat:cancel`) with no
+/// JSON-RPC equivalent. Before this consulted `OPENHUMAN_CORE_ALLOWED_ORIGINS`,
+/// a non-loopback browser origin that the RPC CORS layer already accepted was
+/// still dropped here: the page loaded and every read RPC succeeded, but the
+/// socket was disconnected at handshake and pressing Send did nothing, with no
+/// error surfaced to the user.
+#[cfg(feature = "http-server")]
+pub(crate) fn origin_is_allowed_with_extra(
+    origin: Option<&str>,
+    extra_origins: Option<&str>,
+) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
     };
@@ -104,10 +127,25 @@ pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
     };
     // `url::Url::host_str` returns IPv6 hosts with surrounding brackets,
     // hostnames bare. Accept both shapes.
-    matches!(
+    if matches!(
         parsed.host_str(),
         Some("localhost" | "127.0.0.1" | "::1" | "[::1]" | "tauri.localhost")
-    )
+    ) {
+        return true;
+    }
+
+    // Operator-controlled extra origins. Exact string match, same rule as the
+    // JSON-RPC layer — no host-only or prefix matching, so the decoy cases
+    // below stay rejected even when the allowlist is populated.
+    if let Some(extra) = extra_origins {
+        for candidate in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if candidate == origin {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// True when `socket` finished the handshake with a valid bearer token.
@@ -1376,6 +1414,7 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 mod tests {
     use super::{
         channel_connection_update_payload, event_alias, origin_is_allowed,
+        origin_is_allowed_with_extra,
         publish_companion_state_changed, subscribe_companion_state_changed,
     };
 
@@ -1492,6 +1531,52 @@ mod tests {
             "http://tauri.localhost.attacker.example"
         )));
         assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_env_allowlisted_origin() {
+        // Regression: a non-loopback browser origin that the JSON-RPC CORS
+        // layer accepts must also pass the socket handshake, or chat (a
+        // socket-only transport) silently never connects.
+        let extra = Some("https://box.example.ts.net:9000");
+        assert!(origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net:9000"),
+            extra
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_env_handles_comma_list_and_whitespace() {
+        let extra = Some("https://a.example:9000 , https://b.example:8443");
+        assert!(origin_is_allowed_with_extra(Some("https://a.example:9000"), extra));
+        assert!(origin_is_allowed_with_extra(Some("https://b.example:8443"), extra));
+        assert!(!origin_is_allowed_with_extra(Some("https://c.example"), extra));
+    }
+
+    #[test]
+    fn origin_allowlist_env_requires_exact_match() {
+        // Populating the allowlist must not loosen the decoy rules: no port
+        // wildcarding, no scheme swapping, no suffix matching.
+        let extra = Some("https://box.example.ts.net:9000");
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://box.example.ts.net:9000"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net:9001"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net.attacker.example:9000"),
+            extra
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_env_does_not_rescue_null_or_empty() {
+        let extra = Some("null,");
+        assert!(!origin_is_allowed_with_extra(Some("null"), extra));
+        assert!(!origin_is_allowed_with_extra(Some(""), extra));
     }
 
     #[test]
