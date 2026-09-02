@@ -230,6 +230,35 @@ describe('<MemoryTreeStatusPanel />', () => {
     });
   });
 
+  it('surfaces a failed consent change instead of leaving the switch lying', async () => {
+    // The toggle is optimistic about nothing: on failure the panel re-reads the
+    // stored value on the next poll, so the switch must not be left showing a
+    // consent state the core never recorded. The toast is how the user learns
+    // that — silently swallowing the rejection would show "off" for a machine
+    // still summarising in the cloud.
+    mockPipelineStatus.mockResolvedValue(payload({ cloud_summarization_opt_in: false }));
+    mockSetCloudSummarization.mockRejectedValueOnce(new Error('core unreachable'));
+    const onToast = vi.fn();
+
+    render(<MemoryTreeStatusPanel onToast={onToast} />);
+
+    const toggle = await screen.findByTestId('memory-tree-cloud-summarization-toggle');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'core unreachable' })
+      );
+    });
+
+    // And the control comes back — a toggle stuck disabled after one failure
+    // cannot be used to withdraw consent later.
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-checked')).toBe('false');
+      expect((toggle as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
   it('treats a core that predates the field as not opted in', async () => {
     // `cloud_summarization_opt_in` is `#[serde(default)]` on the wire, so an
     // older core omits it. Absent must read as "no consent", never as "on".

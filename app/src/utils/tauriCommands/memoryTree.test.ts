@@ -25,6 +25,7 @@ import {
   memoryTreeResetTree,
   memoryTreeRetryFailed,
   memoryTreeSearch,
+  memoryTreeSetCloudSummarization,
   memoryTreeSetLlm,
   memoryTreeTopEntities,
   memoryTreeWipeAll,
@@ -572,5 +573,45 @@ describe('memoryTreeBackfillConnectorTrees', () => {
     );
     expect(out.ingested).toBe(4);
     expect(out.more_pending).toBe(true);
+  });
+});
+
+describe('memoryTreeSetCloudSummarization', () => {
+  test('patches only the consent field, so sibling memory settings survive', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: {}, logs: [] });
+
+    await memoryTreeSetCloudSummarization(true);
+
+    // The method is the shared memory-settings mutator, and it applies only the
+    // fields it is given. Sending the whole settings object here would let this
+    // toggle silently rewrite the embedder or the memory window, so the params
+    // are asserted exactly rather than with `objectContaining`.
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.config_update_memory_settings',
+      params: { cloud_summarization_opt_in: true },
+    });
+  });
+
+  test('sends an explicit false rather than omitting the field', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: {}, logs: [] });
+
+    await memoryTreeSetCloudSummarization(false);
+
+    // Withdrawal has to travel as `false`. An omitted field means "leave this
+    // alone" to the core, so dropping it would make the off position of the
+    // toggle a no-op — consent that cannot be taken back.
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.config_update_memory_settings',
+      params: { cloud_summarization_opt_in: false },
+    });
+  });
+
+  test('propagates a transport failure instead of resolving', async () => {
+    mockCallCoreRpc.mockRejectedValueOnce(new Error('core unreachable'));
+
+    // The caller renders an error toast and re-reads the stored value off the
+    // next status poll. Swallowing the rejection here would leave the switch
+    // showing a consent state the core never recorded.
+    await expect(memoryTreeSetCloudSummarization(true)).rejects.toThrow('core unreachable');
   });
 });
