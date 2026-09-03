@@ -662,7 +662,7 @@ async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_th
         CurrentUserFetchError::FetchFailed("seeded outage marker".to_string()),
     );
 
-    let error = fetch_current_user_cached(&config, token, true)
+    let error = fetch_current_user_cached(&config, token, true, current_user_generation())
         .await
         .expect_err("a recorded failure inside its window must be replayed");
 
@@ -672,3 +672,6 @@ async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_th
         "the fetch must replay the recorded failure rather than issue a request"
     );
 }
+
+#[path = "ops_signout_cache_tests.rs"]
+mod signout_cache_tests;

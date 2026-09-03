@@ -28,6 +28,15 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // it directly on a tokio worker thread blocks that thread for the entire
     // wait, exhausting the thread pool under concurrent snapshot calls and
     // triggering `ERR_CONNECTION_TIMED_OUT` on all RPC connections.
+    // Read the sign-out generation BEFORE the profile load, not before the
+    // refresh. The token this snapshot is about is the one that load returns, so
+    // the generation has to be the one in force when that token was read.
+    // Capturing it later leaves a window — sign-out lands between the load and the
+    // refresh, the refresh reads the *new* generation, and then publishes an answer
+    // fetched with the *old* token, passing its own staleness check.
+    // `load_app_session_profile` busy-waits up to ~35s on a contended lock, so that
+    // window is not a narrow one.
+    let generation = current_user_generation();
     let config_for_profile = config.clone();
     let session_profile =
         tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
@@ -64,7 +73,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         }
         match tokio::time::timeout(
             AUTH_FETCH_TIMEOUT,
-            fetch_current_user_cached(&config, &token, !pending_backend_validation),
+            fetch_current_user_cached(&config, &token, !pending_backend_validation, generation),
         )
         .await
         {
@@ -161,7 +170,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                note_current_user_timeout(&config, &token);
+                note_current_user_timeout(generation, &config, &token);
                 snapshot_current_user_result(stored_user.clone())
             }
             Err(_) => {
@@ -169,7 +178,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
                     AUTH_FETCH_TIMEOUT.as_secs()
                 );
-                note_current_user_timeout(&config, &token);
+                note_current_user_timeout(generation, &config, &token);
                 snapshot_current_user_result(stored_user.clone())
             }
         }

@@ -138,8 +138,7 @@ async fn clear_deferred_session_after_backend_rejection(
         ))
     });
 
-    *CURRENT_USER_CACHE.lock() = None;
-    clear_current_user_failure();
+    forget_current_user_caches();
     crate::openhuman::cron::scheduler_gate::set_signed_out(true);
 
     match crate::openhuman::config::default_root_openhuman_dir() {
@@ -179,6 +178,7 @@ async fn fetch_current_user_cached(
     config: &Config,
     token: &str,
     allow_cache: bool,
+    generation: u64,
 ) -> Result<Option<Value>, CurrentUserFetchError> {
     let api_base = current_user_api_base(config);
 
@@ -219,30 +219,28 @@ async fn fetch_current_user_cached(
         }
     }
 
+    // `generation` belongs to the caller and was read when the TOKEN was read.
+    // Everything after this point is publishing an answer about an identity that
+    // sign-out may have dropped in the meantime; if it has, the answer is stale by
+    // definition and goes nowhere near the caches. The caller still gets it — it
+    // asked before the sign-out, and suppressing the reply is a different change
+    // from suppressing the cache.
     let fetched = match fetch_current_user(config, token).await {
         Ok(user) => sanitize_snapshot_user(user),
         Err(error) => {
-            record_current_user_failure(&api_base, token, error.clone());
+            if !record_current_user_failure_unless_stale(
+                generation,
+                &api_base,
+                token,
+                error.clone(),
+            ) {
+                debug!("{LOG_PREFIX} discarding current user failure that raced sign-out");
+            }
             return Err(error);
         }
     };
-    clear_current_user_failure();
-
-    let mut cache = CURRENT_USER_CACHE.lock();
-    match fetched.clone() {
-        Some(user) => {
-            debug!("{LOG_PREFIX} refreshed current user from backend");
-            *cache = Some(CachedCurrentUser {
-                api_base,
-                token: token.to_string(),
-                fetched_at: Instant::now(),
-                user,
-            });
-        }
-        None => {
-            debug!("{LOG_PREFIX} backend returned empty current user; clearing cache");
-            *cache = None;
-        }
+    if !publish_current_user_unless_stale(generation, &api_base, token, fetched.clone()) {
+        debug!("{LOG_PREFIX} discarding current user refresh that raced sign-out");
     }
 
     Ok(fetched)

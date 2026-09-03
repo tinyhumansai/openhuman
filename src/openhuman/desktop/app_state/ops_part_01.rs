@@ -213,19 +213,7 @@ fn record_current_user_failure(api_base: &str, token: &str, error: CurrentUserFe
         return;
     }
     let mut failure = CURRENT_USER_FAILURE.lock();
-    let consecutive = match failure.as_ref() {
-        Some(entry) if entry.api_base == api_base && entry.token == token => {
-            entry.consecutive.saturating_add(1)
-        }
-        _ => 1,
-    };
-    *failure = Some(CurrentUserFailure {
-        api_base: api_base.to_string(),
-        token: token.to_string(),
-        failed_at: Instant::now(),
-        consecutive,
-        error,
-    });
+    record_current_user_failure_locked(&mut failure, api_base, token, error);
 }
 
 /// Forget any recorded failure, so the next poll goes straight to the network.
@@ -244,8 +232,14 @@ fn clear_current_user_failure() {
 /// mid-flight** and nothing inside it runs — including the failure recording on
 /// its error path. Without this call the backoff would never engage for the one
 /// case #5624 is actually about, which is timeouts rather than returned errors.
-fn note_current_user_timeout(config: &Config, token: &str) {
-    record_current_user_failure(
+///
+/// Takes the generation read before the timeout started, for the same reason the
+/// refresh does: a sign-out during those `AUTH_FETCH_TIMEOUT` seconds means this
+/// outage belongs to an identity that no longer exists, and recording it would
+/// suppress the first poll of the next session.
+fn note_current_user_timeout(generation: u64, config: &Config, token: &str) {
+    record_current_user_failure_unless_stale(
+        generation,
         &current_user_api_base(config),
         token,
         CurrentUserFetchError::FetchFailed(format!(
