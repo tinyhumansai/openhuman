@@ -53,8 +53,8 @@ cargo check --manifest-path Cargo.toml
 cargo build --manifest-path Cargo.toml --bin openhuman-core
 cargo check --manifest-path app/src-tauri/Cargo.toml   # or: pnpm rust:check
 
-# macOS Apple Silicon workaround (llama.cpp)
-GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml
+# Standard root-crate validation
+cargo check --manifest-path Cargo.toml
 ```
 
 `pnpm core:stage` is a no-op (sidecar removed).
@@ -709,7 +709,7 @@ What it *did* change: **a lane that relies on default features no longer covers 
 
 ```bash
 # check / build without the voice family (incl. audio_toolkit)
-GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml \
+cargo check --manifest-path Cargo.toml \
   --no-default-features
 ```
 
@@ -854,7 +854,7 @@ Two rules follow, and both are load-bearing:
 
 **Scope note (`flows` deps):** the gate sheds `tinyflows` + its `jaq-core` / `jaq-std` / `jaq-json` JSON-query stack, and `rhai`. It does **not** shed `tinyagents` — 26+ domains consume that crate. The issue-level DoD line reading "sheds the rhai scripting engine" is therefore true only at the **feature** level: `rhai` arrives via `tinyagents/repl`, which the root `Cargo.toml` no longer enables directly — the `flows` feature turns it on. Dropping `flows` drops `repl`, which drops `rhai`; `tinyagents` itself stays. Verify a claimed shed with `cargo tree -i <crate> --no-default-features` (must return nothing) — compiling clean is **not** proof that a dep was dropped.
 
-**Testing gotcha (applies to every gate).** The CI smoke lane runs `cargo check` only — it never runs `cargo test --no-default-features`, so CI stays green while the disabled-build **test** suite is broken. Tests that hard-assert a gated family (`.expect("a flows.* method exists")`, `assert!(full_ns.contains("flows"))`, `group_for_namespace("flows")`, built-in-agent id lists) must be `#[cfg]`-gated in lockstep with the feature. Run `GGML_NATIVE=OFF cargo test --lib --no-default-features core::` locally before pushing any gate change.
+**Testing gotcha (applies to every gate).** The CI smoke lane runs `cargo check` only — it never runs `cargo test --no-default-features`, so CI stays green while the disabled-build **test** suite is broken. Tests that hard-assert a gated family (`.expect("a flows.* method exists")`, `assert!(full_ns.contains("flows"))`, `group_for_namespace("flows")`, built-in-agent id lists) must be `#[cfg]`-gated in lockstep with the feature. Run `cargo test --lib --no-default-features core::` locally before pushing any gate change.
 
 #### The `mcp` gate
 

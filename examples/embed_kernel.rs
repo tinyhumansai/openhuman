@@ -30,7 +30,7 @@
 //! Run with:
 //!
 //! ```bash
-//! GGML_NATIVE=OFF cargo run --example embed_kernel
+//! cargo run --example embed_kernel
 //! ```
 
 use openhuman_core::{CoreBuilder, DomainSet, HostKind, ServiceSet};

@@ -103,7 +103,7 @@ Default-feature builds link every compile-time domain gate (`voice`, `web3`,
 recipe. The slim recipe drops everything not required by the harness:
 
 ```bash
-GGML_NATIVE=OFF cargo build --release \
+cargo build --release \
   --no-default-features --features rss-bench \
   --bin library-profile --bin rss-bench
 ```

@@ -15,19 +15,15 @@ execution.**
 Opencompany recipe (production embed — no benchmark/harness code):
 
 ```bash
-GGML_NATIVE=OFF cargo build --release \
+cargo build --release \
   --no-default-features --features "skills,flows"
 ```
 
-- `GGML_NATIVE=OFF` was the Apple-Silicon dev workaround for whisper-rs/llama.
-  With whisper deleted it only matters for llama; on the x86-64 Linux target it
-  is unnecessary anyway (the historical always-on whisper build used the
-  AVX path). Keep it in the command for macOS developers.
 - To build the profiling harness against the same recipe, add the dev-only
   `rss-bench` feature and the two bench bins:
 
   ```bash
-  GGML_NATIVE=OFF cargo build --release \
+  cargo build --release \
     --no-default-features --features "rss-bench,skills,flows" \
     --bin library-profile --bin rss-bench
   ```
@@ -159,7 +155,7 @@ The disabled-build test gotcha (AGENTS.md: CI's smoke lane runs `cargo check`
 only and never compiles `--no-default-features` test code) was checked directly:
 
 ```bash
-GGML_NATIVE=OFF cargo test --lib --no-default-features --features "skills,flows" core::
+cargo test --lib --no-default-features --features "skills,flows" core::
 # result: ok. 660 passed; 0 failed; 1 ignored; 10513 filtered out
 ```
 
@@ -203,7 +199,7 @@ prioritization.
    gated — it was **deleted**. `whisper-rs` / `whisper-rs-sys` (and the
    `[patch.crates-io] whisper-rs-sys` fork entries in both Cargo worlds) are gone
    from every build, not just the slim one, and with them the whisper.cpp + GGML
-   C++ static link that was the reason for the `GGML_NATIVE=OFF` build dance.
+   C++ static link that previously required a platform-specific build workaround.
    Speech-to-text is a hosted call now, with the engine chosen by
    `voice_server.stt_engine` (see the AGENTS.md scope note). The `inference`
    feature survives with a narrower job: it gates `cpal` alone, which is what a
