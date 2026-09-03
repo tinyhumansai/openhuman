@@ -78,6 +78,29 @@ describe('ProfileEditorPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/settings/profiles');
   });
 
+  it('create mode: a name written outside ASCII still submits, id left to the core', async () => {
+    // `slugify` keeps ASCII only, so this name resolves to an empty id. The
+    // core derives `profile-<digest>` from the name; blocking submit here made
+    // that path unreachable and left the user with no name they could use.
+    renderAt('/settings/profiles/new');
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '研究アシスタント' } });
+    expect((screen.getByLabelText('ID') as HTMLInputElement).value).toBe('');
+
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalled());
+    const sent = mockUpsert.mock.calls[0][0];
+    expect(sent.id).toBe('');
+    expect(sent.name).toBe('研究アシスタント');
+  });
+
+  it('create mode: a punctuation-only name is still refused', async () => {
+    renderAt('/settings/profiles/new');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: '!!!' } });
+    fireEvent.click(screen.getByText('Create'));
+    await waitFor(() => expect(mockUpsert).not.toHaveBeenCalled());
+  });
+
   it('disables Create until a non-empty resolved id exists', () => {
     renderAt('/settings/profiles/new');
     const create = screen.getByText('Create').closest('button')!;

@@ -544,10 +544,7 @@ fn normalise_allowlist(list: Option<Vec<String>>) -> Option<Vec<String>> {
 }
 
 fn normalise_profile(mut profile: AgentProfile) -> AgentProfile {
-    profile.id = slugify_profile_id(&profile.id);
-    if profile.id.is_empty() {
-        profile.id = slugify_profile_id(&profile.name);
-    }
+    profile.id = normalise_profile_id(&profile.id, &profile.name);
     profile.name = profile.name.trim().to_string();
     if profile.name.is_empty() {
         profile.name = profile.id.clone();
@@ -615,9 +612,53 @@ fn next_available_suffix(existing: &std::collections::HashSet<String>) -> String
 /// Normalise a raw profile id into its persisted slug form, mirroring the
 /// transformation `normalise_profile` applies on upsert. Exposed so callers
 /// (e.g. `ops::upsert`) can locate the persisted profile by its stored id after
-/// the store has slugified it.
-pub(crate) fn normalise_profile_id(input: &str) -> String {
-    slugify_profile_id(input)
+/// the store has normalised it.
+///
+/// Takes the name as well as the id because the rule needs both: an id that
+/// slugifies to nothing falls back to the name, and a name that slugifies to
+/// nothing falls back to a digest of it. A caller that mirrors only the first
+/// step looks up an id the store never wrote.
+pub(crate) fn normalise_profile_id(id: &str, name: &str) -> String {
+    let from_id = slugify_profile_id(id);
+    if !from_id.is_empty() {
+        return from_id;
+    }
+    let from_name = slugify_profile_id(name);
+    if !from_name.is_empty() {
+        return from_name;
+    }
+    profile_id_from_name_digest(name)
+}
+
+/// Profile id for a name that slugifies to nothing.
+///
+/// `slugify_profile_id` keeps only ASCII alphanumerics, so a name written
+/// entirely outside that range - Japanese, Chinese, Greek, Cyrillic, Arabic -
+/// reduces to the empty string and `validate_profile_id` rejects the upsert
+/// with "profile id must not be empty". The user supplied a name; the error
+/// blames an id they never typed.
+///
+/// Derive one from the name instead. A digest keeps it deterministic, so
+/// saving the same profile twice updates it rather than creating a second one.
+///
+/// 16 bytes, not 4: at 32 bits the birthday bound is ~65k names, and upsert
+/// replaces by id, so a collision silently overwrites someone's profile. The
+/// resulting 40-character id stays under the 64-character cap in
+/// `validate_profile_id`.
+fn profile_id_from_name_digest(name: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let digest = Sha256::digest(trimmed.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("profile-{short}")
 }
 
 fn slugify_profile_id(input: &str) -> String {

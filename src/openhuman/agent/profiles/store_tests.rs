@@ -335,3 +335,137 @@ fn default_profile_has_master_and_memory_suffix() {
     assert_eq!(default.memory_dir_suffix.as_deref(), Some(""));
     assert!(default.include_agent_conversations);
 }
+
+/// A name written entirely outside ASCII slugifies to nothing, and the
+/// upsert used to fail with "profile id must not be empty" - an error about
+/// a field the user never filled in.
+#[test]
+fn a_profile_named_only_in_non_ascii_can_be_saved() {
+    let dir = tempdir().expect("tempdir");
+    let store = AgentProfileStore::new(dir.path().to_path_buf());
+    let name = "\u{7814}\u{7a76}\u{30a2}\u{30b7}\u{30b9}\u{30bf}\u{30f3}\u{30c8}";
+
+    let state = store
+        .upsert(custom("", name, "orchestrator"))
+        .expect("a profile named in Japanese must be saveable");
+
+    let saved = state
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .expect("the profile is in the list");
+    assert!(
+        super::super::home::validate_profile_id(&saved.id).is_ok(),
+        "derived id must be a valid one: {}",
+        saved.id
+    );
+}
+
+/// The id comes from a digest of the name, so re-saving the same profile
+/// edits it instead of adding a second copy.
+#[test]
+fn re_saving_a_non_ascii_profile_updates_it() {
+    let dir = tempdir().expect("tempdir");
+    let store = AgentProfileStore::new(dir.path().to_path_buf());
+    let name = "\u{7814}\u{7a76}\u{30a2}\u{30b7}\u{30b9}\u{30bf}\u{30f3}\u{30c8}";
+
+    store
+        .upsert(custom("", name, "orchestrator"))
+        .expect("first");
+    let state = store.upsert(custom("", name, "planner")).expect("second");
+
+    let matching: Vec<_> = state.profiles.iter().filter(|p| p.name == name).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "re-saving must not duplicate the profile"
+    );
+    assert_eq!(matching[0].agent_id, "planner", "the edit must be applied");
+}
+
+/// Two different non-ASCII names must not collapse onto one profile.
+#[test]
+fn two_non_ascii_profiles_keep_separate_ids() {
+    let dir = tempdir().expect("tempdir");
+    let store = AgentProfileStore::new(dir.path().to_path_buf());
+
+    store
+        .upsert(custom("", "\u{7814}\u{7a76}", "orchestrator"))
+        .expect("first");
+    let state = store
+        .upsert(custom("", "\u{5206}\u{6790}", "orchestrator"))
+        .expect("second");
+
+    assert!(state.profiles.iter().any(|p| p.name == "\u{7814}\u{7a76}"));
+    assert!(state.profiles.iter().any(|p| p.name == "\u{5206}\u{6790}"));
+}
+
+/// An ASCII name still gets the readable slug it always had.
+#[test]
+fn an_ascii_name_is_unaffected() {
+    let dir = tempdir().expect("tempdir");
+    let store = AgentProfileStore::new(dir.path().to_path_buf());
+    let state = store
+        .upsert(custom("", "Research Buddy", "orchestrator"))
+        .expect("upsert");
+    assert!(state.profiles.iter().any(|p| p.id == "research-buddy"));
+}
+
+/// `ops::upsert` looks the persisted profile up by re-deriving its id, and
+/// skips home materialization and SOUL.md sync when the lookup misses. The
+/// helper it uses has to produce exactly what the store wrote, including
+/// the digest fallback.
+#[test]
+fn normalise_profile_id_matches_what_the_store_persists() {
+    let dir = tempdir().expect("tempdir");
+    let store = AgentProfileStore::new(dir.path().to_path_buf());
+    let name = "\u{7814}\u{7a76}\u{30a2}\u{30b7}\u{30b9}\u{30bf}\u{30f3}\u{30c8}";
+
+    let state = store
+        .upsert(custom("", name, "orchestrator"))
+        .expect("upsert");
+    let persisted = state
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .expect("saved profile");
+
+    assert_eq!(normalise_profile_id("", name), persisted.id);
+    assert_eq!(
+        normalise_profile_id(" Custom Profile ", "ignored"),
+        "custom-profile"
+    );
+    assert_eq!(
+        normalise_profile_id("", " Custom Profile "),
+        "custom-profile"
+    );
+}
+
+/// Upsert replaces by id, so two names sharing one derived id silently
+/// overwrite each other. A 32-bit digest collides within ~65k names; these
+/// two are a measured collision at that width.
+#[test]
+fn the_derived_id_does_not_collide_for_known_32_bit_collisions() {
+    let a = "\u{7814}\u{7a76}\u{30d7}\u{30ed}\u{30d5}\u{30a3}\u{30fc}\u{30eb}110131";
+    let b = "\u{7814}\u{7a76}\u{30d7}\u{30ed}\u{30d5}\u{30a3}\u{30fc}\u{30eb}211703";
+    let id_a = profile_id_from_name_digest(a);
+    let id_b = profile_id_from_name_digest(b);
+    assert_ne!(id_a, id_b, "these two collide at a 4-byte digest");
+    for id in [&id_a, &id_b] {
+        assert!(id.len() <= 64, "id must fit the 64-char cap: {id}");
+        assert!(
+            super::super::home::validate_profile_id(id).is_ok(),
+            "derived id must be valid: {id}"
+        );
+    }
+}
+
+#[test]
+fn the_derived_id_is_stable_for_the_same_name() {
+    let name = "\u{7814}\u{7a76}";
+    assert_eq!(
+        profile_id_from_name_digest(name),
+        profile_id_from_name_digest("  \u{7814}\u{7a76}  "),
+    );
+    assert_eq!(profile_id_from_name_digest("   "), "");
+}

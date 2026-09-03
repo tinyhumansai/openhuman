@@ -205,12 +205,13 @@ pub async fn upsert(profile: AgentProfile) -> Result<Value, String> {
         }
     }
     let upserted_id = profile.id.clone();
+    let upserted_name = profile.name.clone();
     let (store, workspace_dir, action_dir) = store_and_roots().await?;
     // Keep the previous inline value so SOUL.md is rewritten only when the
     // persona field itself changed. The editor submits the full profile for
     // unrelated settings saves; comparing only against the file would clobber
     // a newer manual edit with the unchanged, stale inline value.
-    let normalised_id = super::store::normalise_profile_id(&upserted_id);
+    let normalised_id = super::store::normalise_profile_id(&upserted_id, &upserted_name);
     let previous_soul_md = store
         .load()
         .map_err(|e| {
