@@ -958,3 +958,70 @@ async fn embeddings_update_settings_adopts_custom_endpoint_native_dimension() {
 
     mock_join.abort();
 }
+
+/// The retained Custom profile must survive config loading and JSON-RPC
+/// serialization while another provider is active. The UI depends on this
+/// field to reopen the populated form after a reload in Disabled mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn embeddings_get_settings_returns_retained_custom_profile_while_disabled() {
+    let _lock = embeddings_e2e_env_lock();
+    let (rpc_base, tmp, _guards, _join) = setup_embeddings_test().await;
+    for config_path in [
+        tmp.path().join(".openhuman").join("config.toml"),
+        tmp.path()
+            .join(".openhuman")
+            .join("users")
+            .join("local")
+            .join("config.toml"),
+    ] {
+        let config = std::fs::read_to_string(&config_path).expect("read test config");
+        let config = config.replace(
+            "\n[secrets]",
+            r#"
+embeddings_provider = "none"
+
+[custom_embeddings]
+endpoint = "https://embeddings.example.com/v1"
+model = "remembered-embedding-model"
+dimensions = 2048
+
+[memory]
+embedding_provider = "none"
+embedding_model = "remembered-embedding-model"
+embedding_dimensions = 2048
+
+[secrets]"#,
+        );
+        std::fs::write(&config_path, config).expect("write retained Custom profile");
+    }
+
+    let get = post_json_rpc(
+        &rpc_base,
+        100,
+        "openhuman.embeddings_get_settings",
+        json!({}),
+    )
+    .await;
+    let get_result = assert_no_rpc_error(&get, "get settings after disabling custom");
+    let get_inner = get_result.get("result").unwrap_or(get_result);
+    let retained = get_inner
+        .get("custom_settings")
+        .unwrap_or_else(|| panic!("missing retained custom settings: {get_inner}"));
+
+    assert_eq!(
+        get_inner.get("provider").and_then(Value::as_str),
+        Some("none")
+    );
+    assert_eq!(
+        retained.get("endpoint").and_then(Value::as_str),
+        Some("https://embeddings.example.com/v1")
+    );
+    assert_eq!(
+        retained.get("model").and_then(Value::as_str),
+        Some("remembered-embedding-model")
+    );
+    assert_eq!(
+        retained.get("dimensions").and_then(Value::as_u64),
+        Some(2048)
+    );
+}

@@ -72,6 +72,19 @@ pub struct ModelRegistryEntry {
     pub vision: bool,
 }
 
+/// Last successfully verified Custom embeddings configuration.
+///
+/// The active provider lives in [`Config::embeddings_provider`] and
+/// [`MemoryConfig::embedding_provider`]. Keeping this profile separately lets
+/// users temporarily disable embeddings (or select another provider) without
+/// losing the endpoint/model they configured for a later switch back.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct CustomEmbeddingsConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub dimensions: usize,
+}
+
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -430,6 +443,12 @@ pub struct Config {
     /// Provider string for embedding generation.
     #[serde(default)]
     pub embeddings_provider: Option<String>,
+
+    /// Last successfully verified Custom embeddings profile. This is not the
+    /// active-provider selector; it is retained when embeddings are disabled
+    /// so the Custom setup dialog can be reopened for review or editing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_embeddings: Option<CustomEmbeddingsConfig>,
 
     /// Provider string for the heartbeat background-reasoning loop.
     #[serde(default)]

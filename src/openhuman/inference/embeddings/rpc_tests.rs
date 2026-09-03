@@ -80,6 +80,31 @@ async fn get_settings_reports_effective_provider_separately_from_the_setting() {
     );
 }
 
+#[tokio::test]
+async fn custom_profile_is_retained_and_returned_while_embeddings_are_disabled() {
+    let mut config = Config::default();
+    config.memory.embedding_provider = "custom:https://embeddings.example.com/v1".to_string();
+    config.memory.embedding_model = "acme-embed-v2".to_string();
+    config.memory.embedding_dimensions = 2048;
+
+    remember_active_custom_profile(&mut config);
+    config.memory.embedding_provider = "none".to_string();
+    config.embeddings_provider = Some("none".to_string());
+
+    let out = get_settings(&config)
+        .await
+        .expect("get_settings must return the retained Custom profile");
+    assert_eq!(out.value["provider"], "none");
+    assert_eq!(
+        out.value["custom_settings"],
+        serde_json::json!({
+            "endpoint": "https://embeddings.example.com/v1",
+            "model": "acme-embed-v2",
+            "dimensions": 2048,
+        })
+    );
+}
+
 /// `custom:<url>` providers must look up under the `embeddings:custom`
 /// slug (the inline URL is not part of the credential key), mirroring the
 /// slug normalization in `embed`/`set_api_key`.
