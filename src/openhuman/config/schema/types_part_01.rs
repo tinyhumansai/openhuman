@@ -444,9 +444,8 @@ pub struct Config {
     #[serde(default)]
     pub embeddings_provider: Option<String>,
 
-    /// Last successfully verified Custom embeddings profile. This is not the
-    /// active-provider selector; it is retained when embeddings are disabled
-    /// so the Custom setup dialog can be reopened for review or editing.
+    /// Retained Custom profile; not the active-provider selector. See
+    /// [`CustomEmbeddingsConfig`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_embeddings: Option<CustomEmbeddingsConfig>,
 

@@ -137,9 +137,8 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
     if (entry.slug !== 'managed') setManagedSessionMissing(false);
 
     if (entry.slug === 'custom') {
-      // Custom doubles as an editable saved profile. It must reopen even when
-      // already selected, and it must hydrate from the retained profile when
-      // embeddings are currently disabled or routed elsewhere.
+      // Custom is an editable profile, not a plain selection: reopen (and
+      // hydrate from the retained profile) even when already selected.
       const loadedSettings = settings!;
       const activeEndpoint = loadedSettings.provider.startsWith('custom:')
         ? loadedSettings.provider.slice('custom:'.length)
