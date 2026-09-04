@@ -385,6 +385,10 @@ fn spawn_module_preload(_config: &Config) {
 pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     run_legacy_migrations(config).await;
 
+    // The orphaned-run sweep does NOT live here. It runs in
+    // `CoreBuilder::build`, which every runtime goes through — these jobs only
+    // run from `serve()`, so a build-only embedder would never be swept.
+
     if services.harness_init {
         let cfg_for_init = config.clone();
         tokio::spawn(async move {
