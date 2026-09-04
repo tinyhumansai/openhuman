@@ -6656,6 +6656,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Model lokalny niedostępny',
   'userErrors.localModelUnavailable.body':
     'Ollama jest nieosiągalna pod skonfigurowanym punktem końcowym albo wymagany model nie jest tam zainstalowany. Uruchom Ollamę i pobierz model w tym punkcie końcowym lub przenieś tę pracę do dostawcy w chmurze.',
+  'userErrors.replyDeliveryFailed.title': 'Nie udało się pokazać odpowiedzi',
+  'userErrors.replyDeliveryFailed.body':
+    'Agent zakończył tę turę, ale jego odpowiedzi nie udało się zapisać ani odczytać ponownie. Zapytaj jeszcze raz, aby ją powtórzył.',
   'userErrors.memoryStoreCorrupt.title': 'Indeks pamięci był uszkodzony',
   'userErrors.memoryStoreCorrupt.body':
     'Baza danych drzewa pamięci była uszkodzona. Uszkodzony plik zachowano obok danych pamięci i odbudowano pusty indeks. Zsynchronizuj ponownie źródła pamięci, aby go wypełnić.',

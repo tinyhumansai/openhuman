@@ -23,6 +23,10 @@ async fn finalize_flow_stream(
                 // Builder/scout turns don't surface in the chat footer; their
                 // token/cost spend is still captured by the global cost tracker.
                 None,
+                // No workspace in scope on this path, so the viewing client
+                // stays the only persister of a flow turn's reply — unchanged
+                // from before #6034, which covered the chat surfaces.
+                None,
             )
             .await;
         }

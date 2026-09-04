@@ -6739,6 +6739,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Lokales Modell nicht verfügbar',
   'userErrors.localModelUnavailable.body':
     'Ollama ist unter dem konfigurierten Endpunkt nicht erreichbar, oder das benötigte Modell ist dort nicht installiert. Starte Ollama und lade das Modell auf diesem Endpunkt, oder verlagere diese Arbeit auf einen Cloud-Anbieter.',
+  'userErrors.replyDeliveryFailed.title': 'Antwort konnte nicht angezeigt werden',
+  'userErrors.replyDeliveryFailed.body':
+    'Der Agent hat diese Runde beendet, seine Antwort ließ sich aber weder speichern noch erneut lesen. Frag noch einmal, damit er sie wiederholt.',
   'userErrors.memoryStoreCorrupt.title': 'Gedächtnisindex war beschädigt',
   'userErrors.memoryStoreCorrupt.body':
     'Die Datenbank des Gedächtnisbaums war beschädigt. Die beschädigte Datei wurde neben deinen Gedächtnisdaten aufbewahrt und ein leerer Index neu aufgebaut. Synchronisiere deine Gedächtnisquellen erneut, um ihn wieder zu füllen.',

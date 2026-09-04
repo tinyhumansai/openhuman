@@ -6554,6 +6554,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'লোকাল মডেল অনুপলব্ধ',
   'userErrors.localModelUnavailable.body':
     'কনফিগার করা এন্ডপয়েন্টে Ollama-তে পৌঁছানো যাচ্ছে না, অথবা সেখানে প্রয়োজনীয় মডেলটি ইনস্টল করা নেই। Ollama চালু করে সেই এন্ডপয়েন্টে মডেলটি পুল করুন, অথবা এই কাজটি কোনো ক্লাউড প্রোভাইডারে সরিয়ে নিন।',
+  'userErrors.replyDeliveryFailed.title': 'উত্তরটি দেখানো যায়নি',
+  'userErrors.replyDeliveryFailed.body':
+    'এজেন্ট এই দফাটি শেষ করেছে, কিন্তু তার উত্তর সংরক্ষণ বা পুনরায় পড়া যায়নি। আবার জিজ্ঞাসা করলে সে উত্তরটি আবার দেবে।',
   'userErrors.memoryStoreCorrupt.title': 'মেমোরি ইনডেক্স নষ্ট হয়ে গেছে',
   'userErrors.memoryStoreCorrupt.body':
     'আপনার মেমোরি ট্রির ডেটাবেস নষ্ট হয়ে গিয়েছিল। নষ্ট ফাইলটি মেমোরি ডেটার পাশে সংরক্ষিত আছে এবং একটি খালি ইনডেক্স নতুন করে তৈরি হয়েছে। আবার পূরণ করতে মেমোরি উৎসগুলি পুনরায় সিঙ্ক করুন।',

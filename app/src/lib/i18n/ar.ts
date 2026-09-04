@@ -6404,6 +6404,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'النموذج المحلي غير متاح',
   'userErrors.localModelUnavailable.body':
     'لا يمكن الوصول إلى Ollama على النقطة الطرفية المُهيأة، أو أن النموذج المطلوب غير مثبّت عليها. شغّل Ollama ونزّل النموذج على تلك النقطة الطرفية، أو حوّل هذا العمل إلى مزوّد سحابي.',
+  'userErrors.replyDeliveryFailed.title': 'تعذّر عرض الرد',
+  'userErrors.replyDeliveryFailed.body':
+    'أنهى الوكيل هذه الجولة، لكن تعذّر حفظ ردّه أو قراءته مجددًا. اطلب منه تكرار الرد.',
   'userErrors.memoryStoreCorrupt.title': 'تلف فهرس الذاكرة',
   'userErrors.memoryStoreCorrupt.body':
     'كانت قاعدة بيانات شجرة الذاكرة تالفة. تم الاحتفاظ بالملف التالف بجوار بيانات الذاكرة وأعيد إنشاء فهرس فارغ. أعد مزامنة مصادر الذاكرة لإعادة تعبئته.',

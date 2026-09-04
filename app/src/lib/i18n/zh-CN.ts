@@ -6191,6 +6191,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': '本地模型不可用',
   'userErrors.localModelUnavailable.body':
     '无法在配置的端点连接 Ollama，或所需模型未安装在该端点。请启动 Ollama 并在该端点拉取模型，或将此工作切换到云端提供商。',
+  'userErrors.replyDeliveryFailed.title': '无法显示回复',
+  'userErrors.replyDeliveryFailed.body':
+    '智能体已完成这一轮，但它的回复既没能保存也没能重新读取。再问一次即可让它重复回复。',
   'userErrors.memoryStoreCorrupt.title': '记忆索引已损坏',
   'userErrors.memoryStoreCorrupt.body':
     '记忆树使用的数据库已损坏。受损文件已保留在记忆数据旁边，并已重建一个空索引。请重新同步记忆来源以重新填充。',

@@ -276,6 +276,7 @@ pub(crate) async fn run_chat_task(
                 full_response: response,
                 citations,
                 usage,
+                workspace_dir: config.workspace_dir.clone(),
             })
         }
         Err(err) => {
@@ -306,6 +307,7 @@ pub(crate) async fn run_chat_task(
                         full_response: inference_budget_exceeded_user_message().to_string(),
                         citations: Vec::new(),
                         usage: None,
+                        workspace_dir: config.workspace_dir.clone(),
                     })
                 }
                 BudgetCorrelation::UpgradeEmptyToBudget => {
@@ -324,6 +326,7 @@ pub(crate) async fn run_chat_task(
                         full_response: inference_budget_exceeded_user_message().to_string(),
                         citations: Vec::new(),
                         usage: None,
+                        workspace_dir: config.workspace_dir.clone(),
                     })
                 }
                 BudgetCorrelation::PassThrough => Err(err_message),

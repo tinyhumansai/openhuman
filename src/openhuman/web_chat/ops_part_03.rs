@@ -68,6 +68,9 @@ async fn spawn_parallel_turn(
                     &user_message,
                     &chat_result.citations,
                     chat_result.usage.as_ref(),
+                    // The workspace the turn ran in, so the reply is stored
+                    // there before it is announced (#6034).
+                    Some(chat_result.workspace_dir.as_path()),
                 )
                 .await;
             }

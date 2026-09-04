@@ -6698,6 +6698,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Modelo local no disponible',
   'userErrors.localModelUnavailable.body':
     'No se puede acceder a Ollama en el punto de conexión configurado, o el modelo necesario no está instalado allí. Inicia Ollama y descarga el modelo en ese punto de conexión, o cambia este trabajo a un proveedor en la nube.',
+  'userErrors.replyDeliveryFailed.title': 'No se pudo mostrar la respuesta',
+  'userErrors.replyDeliveryFailed.body':
+    'El agente terminó este turno, pero su respuesta no se pudo guardar ni volver a leer. Vuelve a preguntar para que la repita.',
   'userErrors.memoryStoreCorrupt.title': 'El índice de memoria se dañó',
   'userErrors.memoryStoreCorrupt.body':
     'La base de datos del árbol de memoria estaba dañada. El archivo dañado se conservó junto a tus datos de memoria y se reconstruyó un índice vacío. Vuelve a sincronizar tus fuentes de memoria para rellenarlo.',

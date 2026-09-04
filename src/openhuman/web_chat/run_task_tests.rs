@@ -5,6 +5,7 @@ fn ok() -> Result<WebChatTaskResult, String> {
         full_response: "hello".to_string(),
         citations: Vec::new(),
         usage: None,
+        workspace_dir: std::path::PathBuf::from("/tmp/ws"),
     })
 }
 

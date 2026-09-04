@@ -6554,6 +6554,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'लोकल मॉडल उपलब्ध नहीं है',
   'userErrors.localModelUnavailable.body':
     'कॉन्फ़िगर किए गए एंडपॉइंट पर Ollama तक पहुँच नहीं है, या ज़रूरी मॉडल वहाँ इंस्टॉल नहीं है। Ollama शुरू करके उसी एंडपॉइंट पर मॉडल पुल करें, या इस काम को किसी क्लाउड प्रोवाइडर पर ले जाएँ।',
+  'userErrors.replyDeliveryFailed.title': 'उत्तर दिखाया नहीं जा सका',
+  'userErrors.replyDeliveryFailed.body':
+    'एजेंट ने यह बारी पूरी कर ली, लेकिन उसका उत्तर न सहेजा जा सका और न दोबारा पढ़ा जा सका। दोबारा पूछें ताकि वह उत्तर फिर से दे।',
   'userErrors.memoryStoreCorrupt.title': 'मेमोरी इंडेक्स खराब हो गया',
   'userErrors.memoryStoreCorrupt.body':
     'आपकी मेमोरी ट्री का डेटाबेस खराब हो गया था। खराब फाइल आपके मेमोरी डेटा के पास सुरक्षित रखी गई है, और एक खाली इंडेक्स फिर से बनाया गया है। इसे दोबारा भरने के लिए अपने मेमोरी स्रोतों को फिर से सिंक करें।',

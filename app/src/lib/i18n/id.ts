@@ -6590,6 +6590,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Model lokal tidak tersedia',
   'userErrors.localModelUnavailable.body':
     'Ollama tidak dapat dijangkau di endpoint yang dikonfigurasi, atau model yang dibutuhkan belum terpasang di sana. Jalankan Ollama dan unduh modelnya di endpoint tersebut, atau alihkan pekerjaan ini ke penyedia cloud.',
+  'userErrors.replyDeliveryFailed.title': 'Balasan tidak dapat ditampilkan',
+  'userErrors.replyDeliveryFailed.body':
+    'Agen menyelesaikan giliran ini, tetapi balasannya tidak dapat disimpan atau dibaca ulang. Tanyakan lagi agar diulangi.',
   'userErrors.memoryStoreCorrupt.title': 'Indeks memori rusak',
   'userErrors.memoryStoreCorrupt.body':
     'Basis data pohon memori mengalami kerusakan. Berkas yang rusak disimpan di samping data memori Anda, dan indeks kosong telah dibangun ulang. Sinkronkan ulang sumber memori untuk mengisinya kembali.',

@@ -6667,6 +6667,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Modelo local indisponível',
   'userErrors.localModelUnavailable.body':
     'O Ollama não está acessível no endpoint configurado, ou o modelo necessário não está instalado nele. Inicie o Ollama e baixe o modelo nesse endpoint, ou mude este trabalho para um provedor na nuvem.',
+  'userErrors.replyDeliveryFailed.title': 'Não foi possível mostrar a resposta',
+  'userErrors.replyDeliveryFailed.body':
+    'O agente concluiu este turno, mas a resposta dele não pôde ser salva nem lida novamente. Pergunte de novo para que ele repita.',
   'userErrors.memoryStoreCorrupt.title': 'O índice de memória foi corrompido',
   'userErrors.memoryStoreCorrupt.body':
     'O banco de dados da árvore de memória estava danificado. O arquivo danificado foi preservado ao lado dos seus dados de memória e um índice vazio foi reconstruído. Sincronize novamente suas fontes de memória para preenchê-lo.',

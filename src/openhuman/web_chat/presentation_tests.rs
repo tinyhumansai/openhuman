@@ -309,3 +309,107 @@ fn single_bubble_delivery_emits_one_unsegmented_chat_done_without_reaction() {
     assert_eq!(done.reaction_emoji, None);
     assert!(done.usage.is_none());
 }
+
+// ── Delivery persists before it announces (#6034) ───────────────────────
+
+#[tokio::test]
+async fn delivery_stores_the_reply_before_announcing_it() {
+    use crate::openhuman::memory::conversations::{self, CreateConversationThread};
+
+    let ws = std::env::temp_dir().join(format!("deliver-persist-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&ws).unwrap();
+    conversations::ensure_thread(
+        ws.clone(),
+        CreateConversationThread {
+            id: "t-deliver".to_string(),
+            title: "Chat".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+        },
+    )
+    .expect("thread created");
+
+    let citation = crate::openhuman::memory::agent::memory_loader::MemoryCitation {
+        id: "mem-deliver".to_string(),
+        key: "summary-source".to_string(),
+        namespace: None,
+        score: Some(0.8),
+        timestamp: "2026-09-04T00:00:00Z".to_string(),
+        snippet: "source snippet".to_string(),
+    };
+    test_support::deliver_response_in_workspace_for_test(
+        "client-1",
+        "t-deliver",
+        "req-deliver",
+        "Here is the summary you asked for.",
+        "summarise this",
+        &[citation],
+        Some(ws.as_path()),
+    )
+    .await;
+
+    // `deliver_response` returns only after the terminal event is published, so
+    // a row present here proves the write happened no later than the announce.
+    // A client that never receives that event, or fails to append it, no longer
+    // decides whether the reply exists.
+    let messages = conversations::get_messages(ws.clone(), "t-deliver").expect("messages");
+    assert_eq!(messages.len(), 1, "delivery must leave exactly one row");
+    assert_eq!(messages[0].id, "agent:req-deliver");
+    assert_eq!(messages[0].content, "Here is the summary you asked for.");
+    assert_eq!(messages[0].sender, "agent");
+    // The client's append is deduped onto this row, so the citations it would
+    // have written must already be here or the chips render empty.
+    assert_eq!(
+        messages[0].extra_metadata["citations"][0]["id"],
+        "mem-deliver"
+    );
+}
+
+#[tokio::test]
+async fn delivery_still_announces_when_the_reply_cannot_be_stored() {
+    // The thread does not exist, so the store refuses the write. Delivery must
+    // continue regardless: a storage failure that also swallowed the
+    // announcement would turn a recoverable problem into a dead turn, and the
+    // client's own append is still a working fallback.
+    let ws = std::env::temp_dir().join(format!("deliver-nothread-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&ws).unwrap();
+
+    test_support::deliver_response_in_workspace_for_test(
+        "client-3",
+        "absent-thread",
+        "req-absent",
+        "an answer with nowhere to go",
+        "hi",
+        &[],
+        Some(ws.as_path()),
+    )
+    .await;
+
+    // `get_messages` answers `Ok(vec![])` for a thread it has never seen — only
+    // `append_message` refuses one — so absence is what proves the write was
+    // rejected and swallowed rather than silently creating a thread.
+    let messages =
+        crate::openhuman::memory::conversations::get_messages(ws.clone(), "absent-thread")
+            .expect("reading an unknown thread is not an error");
+    assert!(
+        messages.is_empty(),
+        "the thread was never created, so nothing should have been written"
+    );
+}
+
+#[tokio::test]
+async fn delivery_without_a_workspace_persists_nothing() {
+    // Callers with no workspace in scope (the flows stream finalizer) keep the
+    // pre-#6034 behaviour: the viewing client stays the only persister.
+    test_support::deliver_response_for_test(
+        "client-2",
+        "t-none",
+        "req-none",
+        "nothing to store",
+        "hi",
+        &[],
+    )
+    .await;
+}

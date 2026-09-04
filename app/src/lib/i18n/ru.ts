@@ -6629,6 +6629,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Локальная модель недоступна',
   'userErrors.localModelUnavailable.body':
     'Ollama недоступен по настроенному адресу, либо нужная модель там не установлена. Запустите Ollama и загрузите модель по этому адресу или переведите эту работу на облачного провайдера.',
+  'userErrors.replyDeliveryFailed.title': 'Не удалось показать ответ',
+  'userErrors.replyDeliveryFailed.body':
+    'Агент завершил этот ход, но его ответ не удалось сохранить или прочитать заново. Спросите ещё раз, чтобы он повторил.',
   'userErrors.memoryStoreCorrupt.title': 'Индекс памяти был повреждён',
   'userErrors.memoryStoreCorrupt.body':
     'База данных дерева памяти была повреждена. Повреждённый файл сохранён рядом с данными памяти, а пустой индекс создан заново. Заново синхронизируйте источники памяти, чтобы заполнить его.',

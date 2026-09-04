@@ -6726,6 +6726,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.body':
     "Ollama n'est pas joignable sur le point de terminaison configuré, ou le modèle requis n'y est pas installé. Lancez Ollama et téléchargez le modèle sur ce point de terminaison, ou basculez cette charge de travail vers un fournisseur cloud.",
   'userErrors.scope.chat': 'Chat',
+  'userErrors.replyDeliveryFailed.title': 'Impossible d’afficher la réponse',
+  'userErrors.replyDeliveryFailed.body':
+    'L’agent a terminé ce tour, mais sa réponse n’a pas pu être enregistrée ni récupérée. Redemande-lui de la répéter.',
   'userErrors.memoryStoreCorrupt.title': 'L’index mémoire a été corrompu',
   'userErrors.memoryStoreCorrupt.body':
     'La base de données de l’arbre mémoire était endommagée. Le fichier endommagé a été conservé à côté de vos données mémoire et un index vide a été reconstruit. Resynchronisez vos sources mémoire pour le remplir à nouveau.',

@@ -7069,6 +7069,9 @@ const en: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Local model unavailable',
   'userErrors.localModelUnavailable.body':
     'Ollama is not reachable at the configured endpoint, or the required model is not installed there. Start Ollama and pull the model at that endpoint, or switch this workload to a cloud provider.',
+  'userErrors.replyDeliveryFailed.title': 'Reply could not be shown',
+  'userErrors.replyDeliveryFailed.body':
+    'The agent finished this turn, but its reply could not be saved or read back. Ask again to have it repeated.',
   'userErrors.memoryStoreCorrupt.title': 'Memory index was corrupted',
   'userErrors.memoryStoreCorrupt.body':
     'The database behind your memory tree was damaged. The damaged file was preserved next to your memory data, and an empty index was rebuilt. Re-sync your memory sources to fill it again.',

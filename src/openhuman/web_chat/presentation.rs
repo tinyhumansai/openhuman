@@ -50,6 +50,12 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
 /// paragraphs into `chat_segment` messages duplicates tool/reasoning parts and
 /// turns one answer into several bubbles, so this path always emits exactly one
 /// `chat_done` with the model's original text.
+///
+/// `workspace_dir` is where the reply is stored **before** it is announced, so a
+/// client that never receives the `chat_done` — or receives it and fails to
+/// append — is not the difference between the answer existing and not existing
+/// (#6034). Pass `None` from a caller that has no workspace in scope; delivery
+/// then behaves exactly as it did when the renderer was the only writer.
 pub(crate) async fn deliver_response(
     client_id: &str,
     thread_id: &str,
@@ -58,6 +64,7 @@ pub(crate) async fn deliver_response(
     user_message: &str,
     citations: &[crate::openhuman::memory::agent::memory_loader::MemoryCitation],
     usage: Option<&LastTurnUsage>,
+    workspace_dir: Option<&std::path::Path>,
 ) {
     let usage_payload = usage_payload(usage);
 
@@ -75,6 +82,53 @@ pub(crate) async fn deliver_response(
     let reaction_emoji = reaction_handle.await.unwrap_or(None);
 
     if segments.len() <= 1 {
+        // Store the answer before announcing it. Ordering is the whole point:
+        // once the row is on disk, a `chat_done` that is never delivered, never
+        // painted, or never persisted by the client costs the user a repaint,
+        // not the reply (#6034). Only this single-bubble branch persists — the
+        // segmented branch below hands the client one row per segment to write,
+        // and a full-text row beside those would read as a duplicate answer.
+        if let Some(dir) = workspace_dir {
+            // The store appends under a process-wide lock and fsyncs, and its
+            // existence check folds the whole threads log (#5156) — blocking
+            // work that has no business holding a runtime worker while a turn
+            // is settling. Hand it to the blocking pool and await the handle,
+            // which keeps the ordering this whole change rests on.
+            let (dir, thread, request, reply, cites) = (
+                dir.to_path_buf(),
+                thread_id.to_string(),
+                request_id.to_string(),
+                full_response.to_string(),
+                citations.to_vec(),
+            );
+            let persisted = tokio::task::spawn_blocking(move || {
+                super::reply_persistence::persist_delivered_reply(
+                    &dir, &thread, &request, &reply, &cites,
+                )
+            })
+            .await;
+            match persisted {
+                Ok(Ok(stored)) => {
+                    if stored {
+                        log::debug!(
+                            "[web-channel] persisted reply before announcing it thread_id={thread_id} request_id={request_id}"
+                        );
+                    }
+                }
+                // Deliberately non-fatal: announce anyway. The client's own
+                // append still persists the reply in the common case, and a
+                // storage failure must not also cost the user the delivery.
+                Ok(Err(err)) => log::warn!(
+                    "[web-channel] could not persist reply before announcing it \
+                     thread_id={thread_id} request_id={request_id} error={err}"
+                ),
+                Err(err) => log::warn!(
+                    "[web-channel] reply persistence task did not run \
+                     thread_id={thread_id} request_id={request_id} error={err}"
+                ),
+            }
+        }
+
         // Single bubble — emit chat_done directly.
         publish_chat_done(
             client_id,

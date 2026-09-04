@@ -20,6 +20,29 @@ pub async fn deliver_response_for_test(
     user_message: &str,
     citations: &[MemoryCitation],
 ) {
+    deliver_response_in_workspace_for_test(
+        client_id,
+        thread_id,
+        request_id,
+        full_response,
+        user_message,
+        citations,
+        None,
+    )
+    .await;
+}
+
+/// `deliver_response` with an explicit workspace, so a test can assert the
+/// reply reached disk before the turn was announced (#6034).
+pub async fn deliver_response_in_workspace_for_test(
+    client_id: &str,
+    thread_id: &str,
+    request_id: &str,
+    full_response: &str,
+    user_message: &str,
+    citations: &[MemoryCitation],
+    workspace_dir: Option<&std::path::Path>,
+) {
     super::deliver_response(
         client_id,
         thread_id,
@@ -28,6 +51,7 @@ pub async fn deliver_response_for_test(
         user_message,
         citations,
         None,
+        workspace_dir,
     )
     .await;
 }

@@ -4,6 +4,7 @@ mod ops;
 // standalone `presentation` provider — it is the web channel's delivery formatter).
 pub mod presentation;
 mod progress_bridge;
+mod reply_persistence;
 mod run_task;
 mod schemas;
 mod session;
