@@ -125,9 +125,19 @@ impl Tool for TokenjuiceRetrieveTool {
 }
 
 fn miss_message(token: &str) -> String {
+    // Deliberately does NOT say "re-run the tool". Re-running regenerates the
+    // same oversized result, which is compacted and offloaded again under a new
+    // token that can be evicted just as fast — so a blind re-run turns one cache
+    // miss into an unbounded compact→retrieve→re-run loop (observed live: a
+    // parent agent re-delegated forever on an evicted subagent result). Tell the
+    // model to proceed with the compacted summary it already has instead.
     format!(
-        "tokenjuice_retrieve: no cached original for token '{token}' \
-         (it may have been evicted; re-run the tool to regenerate it)"
+        "tokenjuice_retrieve: the full original for token '{token}' is no longer cached \
+         (evicted, or from an earlier session). Do NOT re-run the same tool call to \
+         regenerate it — that will produce the same oversized result and be compacted \
+         again. Proceed using the compacted summary already shown above; only if a \
+         specific missing detail is essential, retry with narrower arguments (a tighter \
+         query, filter, or smaller limit) so the result is small enough to keep in full."
     )
 }
 
