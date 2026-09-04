@@ -249,7 +249,7 @@ const AIPanel = ({
                       saved={inferSharedModelRef(saved.routing)}
                       cloudProviders={draft.cloudProviders}
                       localModels={installed}
-                      ollamaRunning={ollama.state === 'running'}
+                      ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
                       modelRegistry={draft.modelRegistry}
                       onApply={async (next, vision) => {
                         const reg =
@@ -390,7 +390,7 @@ const AIPanel = ({
               initial={current}
               cloudProviders={draft.cloudProviders}
               localModels={installed}
-              ollamaRunning={ollama.state === 'running'}
+              ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
               modelRegistry={draft.modelRegistry}
               onClose={() => setPickerFor(null)}
               onSubmit={(next, vision) => {

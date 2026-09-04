@@ -14,6 +14,7 @@ use crate::openhuman::inference::model_ids;
 use crate::openhuman::inference::presets::{self, VisionMode};
 
 use super::super::LocalAiService;
+use super::health::OllamaHealthStatus;
 use super::util::lm_studio_models_error_means_unreachable;
 
 impl LocalAiService {
@@ -45,7 +46,8 @@ impl LocalAiService {
             return self.lm_studio_diagnostics(config).await;
         }
 
-        let healthy = self.ollama_healthy_at(&base_url).await;
+        let health_status = self.ollama_health_status_at(&base_url).await;
+        let healthy = health_status != OllamaHealthStatus::Stopped;
         let runner_ok = if healthy {
             self.ollama_runner_ok_at(&base_url).await
         } else {
@@ -53,13 +55,25 @@ impl LocalAiService {
         };
 
         log::debug!(
-            "[local_ai] diagnostics: entry base_url={} healthy={}",
+            "[local_ai] diagnostics: entry base_url={} health_status={:?}",
             base_url,
-            healthy
+            health_status
         );
 
+        // A `Degraded` daemon answered only on the 8s health retry, so model
+        // discovery must give it the same headroom — otherwise the default 5s
+        // budget times out, the catalog comes back empty, and local models are
+        // hidden despite the daemon being reachable (#6032).
+        let discovery_timeout = match health_status {
+            OllamaHealthStatus::Degraded => std::time::Duration::from_secs(8),
+            _ => std::time::Duration::from_secs(5),
+        };
+
         let (models, tags_error) = if healthy {
-            match self.list_models_at(&base_url).await {
+            match self
+                .list_models_at_with_timeout(&base_url, discovery_timeout)
+                .await
+            {
                 Ok(models) => (models, None),
                 Err(e) => (vec![], Some(e)),
             }
@@ -220,8 +234,15 @@ impl LocalAiService {
             repair_actions.len(),
         );
 
+        let ollama_status = match health_status {
+            OllamaHealthStatus::Running => "running",
+            OllamaHealthStatus::Degraded => "degraded",
+            OllamaHealthStatus::Stopped => "stopped",
+        };
+
         Ok(serde_json::json!({
             "ollama_running": healthy,
+            "ollama_status": ollama_status,
             "ollama_runner_ok": runner_ok,
             "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
@@ -250,18 +271,36 @@ impl LocalAiService {
         &self,
         base: &str,
     ) -> Result<Vec<OllamaModelTag>, String> {
+        self.list_models_at_with_timeout(base, std::time::Duration::from_secs(5))
+            .await
+    }
+
+    /// Same as [`list_models_at`] but with a caller-chosen request timeout.
+    ///
+    /// The diagnostics path widens this to cover the degraded-probe window
+    /// (#6032): a server that answers `/api/tags` in 5-8s is classified
+    /// `Degraded` by the health probe, but discovery on the default 5s budget
+    /// would time out and hand back an empty catalog — which hides local
+    /// models even though the daemon is reachable. Matching the timeout to the
+    /// health-probe window keeps a slow-but-alive Ollama's models selectable.
+    pub(in crate::openhuman::inference::local::service) async fn list_models_at_with_timeout(
+        &self,
+        base: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<OllamaModelTag>, String> {
         let url = format!("{base}/api/tags");
         tracing::debug!(
             target: "local_ai::ollama_admin",
             %base,
             %url,
+            ?timeout,
             "[local_ai:ollama_admin] list_models: sending GET"
         );
 
         let response = self
             .http
             .get(&url)
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(timeout)
             .send()
             .await
             .map_err(|e| {

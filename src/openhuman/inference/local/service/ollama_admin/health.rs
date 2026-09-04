@@ -8,7 +8,72 @@ use crate::openhuman::inference::paths::{find_workspace_ollama_binary, workspace
 use super::super::spawn_marker;
 use super::super::LocalAiService;
 
+/// Fine-grained result of a health probe against an Ollama endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::openhuman::inference::local::service) enum OllamaHealthStatus {
+    /// 2-second fast probe succeeded.
+    Running,
+    /// 2-second probe timed out but an 8-second retry succeeded — server is
+    /// alive but under load.
+    Degraded,
+    /// Both probes failed (connection refused, non-2xx, or 8s timeout).
+    Stopped,
+}
+
 impl LocalAiService {
+    /// Two-phase health probe against the given base URL (#6032).
+    ///
+    /// Fast path (2 s): if `/api/tags` succeeds → `Running`.
+    /// Slow path (8 s): if the fast probe timed out, retry once with more
+    /// headroom → `Degraded` (alive but busy). Anything else → `Stopped`.
+    pub(in crate::openhuman::inference::local::service) async fn ollama_health_status_at(
+        &self,
+        base_url: &str,
+    ) -> OllamaHealthStatus {
+        tracing::debug!(
+            target: "local_ai::ollama_admin",
+            %base_url,
+            "[local_ai:ollama_admin] ollama_health_status_at: fast probe"
+        );
+        let fast = self
+            .http
+            .get(format!("{base_url}/api/tags"))
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await;
+        match fast {
+            Ok(r) if r.status().is_success() => return OllamaHealthStatus::Running,
+            Err(ref e) if e.is_timeout() => {
+                tracing::debug!(
+                    target: "local_ai::ollama_admin",
+                    %base_url,
+                    "[local_ai:ollama_admin] ollama_health_status_at: fast probe timed out; retrying with 8s"
+                );
+                let slow = self
+                    .http
+                    .get(format!("{base_url}/api/tags"))
+                    .timeout(std::time::Duration::from_secs(8))
+                    .send()
+                    .await;
+                if matches!(slow, Ok(ref r) if r.status().is_success()) {
+                    tracing::debug!(
+                        target: "local_ai::ollama_admin",
+                        %base_url,
+                        "[local_ai:ollama_admin] ollama_health_status_at: degraded (slow)"
+                    );
+                    return OllamaHealthStatus::Degraded;
+                }
+            }
+            _ => {}
+        }
+        tracing::debug!(
+            target: "local_ai::ollama_admin",
+            %base_url,
+            "[local_ai:ollama_admin] ollama_health_status_at: stopped"
+        );
+        OllamaHealthStatus::Stopped
+    }
+
     /// Check Ollama health against the given base URL.
     pub(in crate::openhuman::inference::local::service) async fn ollama_healthy_at(
         &self,
