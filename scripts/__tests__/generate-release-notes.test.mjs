@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  DEFAULT_EXEC_MAX_BUFFER,
   buildOpenAiRequest,
   buildReleasePayload,
   ensureAllPullRequestsLinked,
@@ -210,4 +211,8 @@ test('deterministic notes omit new contributors section when there are none', ()
 
   const markdown = renderDeterministicNotes({ title: 'v1.0.0 to main', payload });
   assert.doesNotMatch(markdown, /## New Contributors/);
+});
+
+test('git execution buffer is sized to prevent ENOBUFS on long release tag spans', () => {
+  assert.ok(DEFAULT_EXEC_MAX_BUFFER >= 64 * 1024 * 1024);
 });

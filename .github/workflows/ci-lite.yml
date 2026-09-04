@@ -229,6 +229,7 @@ jobs:
               - '.github/workflows/ci-lite.yml'
               - 'scripts/mock-api/**'
               - 'scripts/*.mjs'
+              - 'scripts/release/**'
               - 'scripts/__tests__/**'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'

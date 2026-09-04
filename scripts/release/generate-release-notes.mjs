@@ -89,17 +89,21 @@ export function parseArgs(argv) {
   return options;
 }
 
-function runGit(args, options = {}) {
+export const DEFAULT_EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+
+export function runGit(args, options = {}) {
   return execFileSync('git', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', options.allowFailure ? 'pipe' : 'inherit'],
+    maxBuffer: options.maxBuffer ?? DEFAULT_EXEC_MAX_BUFFER,
   }).trim();
 }
 
-function runGh(args, options = {}) {
+export function runGh(args, options = {}) {
   return execFileSync('gh', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', options.allowFailure ? 'pipe' : 'inherit'],
+    maxBuffer: options.maxBuffer ?? DEFAULT_EXEC_MAX_BUFFER,
   }).trim();
 }
 
