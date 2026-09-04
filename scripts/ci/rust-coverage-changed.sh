@@ -230,6 +230,13 @@ run_integration_target() {
   fi
 }
 
+compile_raw_coverage_target() {
+  log "compiling raw coverage integration target for src/** change"
+  bash scripts/ci-cancel-aware.sh cargo test \
+    --features "${PRODUCT_FEATURES}" \
+    --test raw_coverage_all --no-run
+}
+
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
@@ -269,6 +276,8 @@ while IFS= read -r f; do
 done < <(printf '%s\n' "${CHANGED_FILES}" | xargs -n1 printf '%s\n' 2>/dev/null || true)
 log "received ${#files[@]} changed rust file(s)"
 
+src_changed=false
+
 if [ "${#files[@]}" -eq 0 ]; then
   run_full "empty changed-file list — scoping unsafe"
 fi
@@ -279,6 +288,9 @@ fi
 lib_filters_raw=""
 test_targets_raw=""
 for f in "${files[@]}"; do
+  case "${f}" in
+    src/*) src_changed=true ;;
+  esac
   if [ ! -e "${f}" ]; then
     # dorny/paths-filter includes deleted paths. They contain no changed lines
     # to cover and, for tests, no longer correspond to runnable Cargo targets.
@@ -385,6 +397,13 @@ done < <(printf '%s' "${test_targets_raw}" | sort -u)
 
 if [ "${#lib_filters[@]}" -eq 0 ] && [ "${#test_targets[@]}" -eq 0 ]; then
   run_full "no scoped test targets derivable from the change set"
+fi
+
+if [ "${src_changed}" = true ]; then
+  # Scoped lib tests cannot compile integration targets that are not selected by
+  # a domain mapping. Build the aggregate raw-coverage target on every src/**
+  # change so source-only PRs cannot leave a broken integration suite behind.
+  compile_raw_coverage_target
 fi
 
 # Drop artifacts from previous coverage runs so merged profdata only reflects
