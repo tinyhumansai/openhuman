@@ -29,10 +29,9 @@ function Get-OpenHumanMsiexecInstallArgumentList {
     [Parameter(Mandatory = $true)]
     [string]$MsiPath
   )
-  # Pass -ArgumentList as string[]: each entry is one argv token for msiexec, so spaces in
-  # $MsiPath do not split. Do not wrap $MsiPath in extra literal " characters here — that can
-  # double-escape when Start-Process builds the native command line (see PR #1187 review).
-  return @('/i', $MsiPath, '/qn', '/norestart')
+  # Start-Process joins ArgumentList entries into one command line, so preserve spaces by
+  # quoting the MSI path explicitly before it is passed to msiexec.
+  return @('/i', ('"{0}"' -f $MsiPath), '/qn', '/norestart')
 }
 
 function Test-OpenHumanWindowsProcessElevated {
@@ -46,6 +45,44 @@ function Test-OpenHumanWindowsProcessElevated {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = [Security.Principal.WindowsPrincipal]::new($identity)
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-OpenHumanInstallerExitCodeSucceeded {
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$ExitCode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("MSI", "EXE")]
+    [string]$InstallerType
+  )
+
+  return $ExitCode -eq 0 -or ($InstallerType -eq "MSI" -and $ExitCode -in @(1641, 3010))
+}
+
+function Assert-OpenHumanInstallerProcessSucceeded {
+  <#
+  .SYNOPSIS
+    Throw when a Windows installer process reports an unsuccessful exit code.
+  #>
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$ExitCode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("MSI", "EXE")]
+    [string]$InstallerType
+  )
+
+  if (Test-OpenHumanInstallerExitCodeSucceeded -ExitCode $ExitCode -InstallerType $InstallerType) {
+    return
+  }
+
+  if ($InstallerType -eq "MSI") {
+    throw "MSI install failed with exit code $ExitCode."
+  }
+
+  throw "Installer exited with code $ExitCode."
 }
 
 function Select-OpenHumanWindowsAssetFromRelease {
@@ -94,7 +131,6 @@ function Install-OpenHuman {
   function Write-Info([string]$Message) { Write-Host "-> $Message" -ForegroundColor Cyan }
   function Write-Ok([string]$Message) { Write-Host "OK $Message" -ForegroundColor Green }
   function Write-WarnMsg([string]$Message) { Write-Host "!  $Message" -ForegroundColor Yellow }
-  function Write-Err([string]$Message) { Write-Host "x  $Message" -ForegroundColor Red }
 
   function Show-Usage {
     @"
@@ -120,13 +156,11 @@ Examples:
   }
 
   if ($Channel -ne "stable") {
-    Write-Err "Only -Channel stable is currently supported."
-    return
+    throw "Only -Channel stable is currently supported."
   }
 
   if ($env:OS -ne "Windows_NT") {
-    Write-Err "This installer is for Windows only."
-    return
+    throw "This installer is for Windows only."
   }
 
   # Detect architecture — use environment variable as primary (always available),
@@ -142,8 +176,7 @@ Examples:
   $arch = "$arch".ToLowerInvariant()
 
   if ($arch -notin @("x64", "amd64")) {
-    Write-Err "Unsupported architecture: $arch (Windows x64 required)."
-    return
+    throw "Unsupported architecture: $arch (Windows x64 required)."
   }
 
   Write-Ok "Detected platform: windows/x64"
@@ -166,13 +199,11 @@ Examples:
       }
     }
   } catch {
-    Write-WarnMsg "Could not query release API: $($_.Exception.Message)"
+    throw
   }
 
   if (-not $assetUrl) {
-    Write-Err "No Windows x64 installer artifact found in latest release."
-    Write-Err "Ensure release workflow publishes Windows MSI/EXE assets."
-    return
+    throw "No Windows x64 installer artifact found in latest release. Ensure release workflow publishes Windows MSI/EXE assets."
   }
 
   Write-Ok "Resolved latest release ($releaseTag): $assetName"
@@ -191,10 +222,7 @@ Examples:
     } else {
       $fileHash = (Get-FileHash -Path $tmpFile -Algorithm SHA256).Hash.ToLowerInvariant()
       if ($fileHash -ne $assetDigest.ToLowerInvariant()) {
-        Write-Err "SHA256 mismatch for $assetName"
-        Write-Err "Expected: $assetDigest"
-        Write-Err "Actual:   $fileHash"
-        return
+        throw "SHA256 mismatch for $assetName. Expected: $assetDigest. Actual: $fileHash."
       }
       Write-Ok "Integrity verified (sha256)"
     }
@@ -227,20 +255,15 @@ Examples:
       Write-Info "Requesting administrator approval for machine-wide install (UAC)…"
       $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Verb RunAs -Wait -PassThru
     }
-    if ($proc.ExitCode -ne 0) {
-      Write-Err "MSI install failed with exit code $($proc.ExitCode)."
+    if (-not (Test-OpenHumanInstallerExitCodeSucceeded -ExitCode $proc.ExitCode -InstallerType "MSI")) {
       Write-WarnMsg "If this persists, capture a log: msiexec /i `"$tmpFile`" /l*v `"$env:TEMP\OpenHuman-msi.log`""
-      return
     }
+    Assert-OpenHumanInstallerProcessSucceeded -ExitCode $proc.ExitCode -InstallerType "MSI"
   } elseif ($assetName -like "*.exe") {
     $proc = Start-Process -FilePath $tmpFile -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-      Write-Err "Installer exited with code $($proc.ExitCode)."
-      return
-    }
+    Assert-OpenHumanInstallerProcessSucceeded -ExitCode $proc.ExitCode -InstallerType "EXE"
   } else {
-    Write-Err "Unsupported Windows installer type: $assetName"
-    return
+    throw "Unsupported Windows installer type: $assetName"
   }
 
   $expectedPaths = @(
