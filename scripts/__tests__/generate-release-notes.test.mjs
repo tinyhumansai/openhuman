@@ -11,6 +11,8 @@ import {
   parseGitHubRepoFromRemote,
   parseGitLog,
   renderDeterministicNotes,
+  runGh,
+  runGit,
 } from '../release/generate-release-notes.mjs';
 
 test('release notes args default to the latest GitHub release as the start ref', () => {
@@ -215,4 +217,7 @@ test('deterministic notes omit new contributors section when there are none', ()
 
 test('git execution buffer is sized to prevent ENOBUFS on long release tag spans', () => {
   assert.ok(DEFAULT_EXEC_MAX_BUFFER >= 64 * 1024 * 1024);
+  const gitVersion = runGit(['--version']);
+  assert.match(gitVersion, /^git version/);
+  assert.equal(typeof runGh, 'function');
 });
