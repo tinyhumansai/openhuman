@@ -618,3 +618,37 @@ fn classify_inference_error_empty_response_is_actionable_and_retryable() {
         classified.message
     );
 }
+
+/// A missing local CLI is the user's own machine to fix, and the provider's
+/// message already says how. Sending them to Discord instead (the generic
+/// `inference` copy) hides an error no maintainer can act on — #5993 field
+/// report: the shipped app resolved no `claude` binary and the chat showed
+/// only "Something went wrong".
+#[test]
+fn local_cli_setup_failures_surface_the_actionable_message_not_the_discord_copy() {
+    let raw = "[claude-code] `claude` CLI not installed. Install Claude Code CLI \
+               (https://docs.anthropic.com/en/docs/claude-code) >= 2.0.0 and retry.";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(!classified.retryable);
+    assert!(classified.message.contains("not installed"));
+    assert!(
+        !classified
+            .message
+            .contains(super::super::web_errors::generic_inference_error_user_message()),
+        "the Discord fallback must not be shown for a local setup problem"
+    );
+}
+
+#[test]
+fn outdated_local_cli_is_also_a_setup_failure() {
+    let raw =
+        "[claude-code] `claude` CLI at /usr/local/bin/claude is version 1.9.0; require >= 2.0.0";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(classified.message.contains("require >= 2.0.0"));
+}

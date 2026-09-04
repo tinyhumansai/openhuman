@@ -25,3 +25,29 @@ fn version_compare() {
 fn version_compare_strips_prerelease() {
     assert!(!version_lt("2.0.0-rc.1", "2.0.0"));
 }
+
+/// A macOS app launched from Finder gets launchd's minimal `PATH`, so the
+/// native-installer location must be probed directly — it is the default
+/// install route and the one that regressed in the field.
+#[test]
+fn well_known_candidates_cover_the_native_installer_and_homebrew() {
+    let home = Path::new("/Users/someone");
+    let candidates = super::well_known_candidates(Some(home));
+
+    assert_eq!(candidates.first(), Some(&home.join(".local/bin/claude")));
+    assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/claude")));
+    assert!(candidates.contains(&PathBuf::from("/usr/local/bin/claude")));
+}
+
+#[test]
+fn well_known_candidates_without_a_home_still_probe_system_prefixes() {
+    let candidates = super::well_known_candidates(None);
+
+    assert_eq!(
+        candidates,
+        vec![
+            PathBuf::from("/opt/homebrew/bin/claude"),
+            PathBuf::from("/usr/local/bin/claude"),
+        ]
+    );
+}

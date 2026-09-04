@@ -33,7 +33,24 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // before the generic provider-429 branch — otherwise users see
     // a confusing "your AI provider is rate-limiting you" message
     // for limits OpenHuman itself enforced (issue #2364).
-    let classified = if crate::core::observability::is_session_expired_message(err) {
+    let classified = if let Some(detail) = local_cli_provider_setup_detail(err) {
+        // A local-CLI provider (`claude-code`) refused before any network call:
+        // the binary is missing, too old, or unusable. The message it raises is
+        // already the fix ("install …", "upgrade to >= X"), and it is the user's
+        // own machine to repair — so surface it verbatim instead of the generic
+        // "something went wrong, report it on Discord", which sends the user to
+        // support for a problem no maintainer can see or act on. Non-retryable:
+        // retrying the same turn re-probes the same absent binary.
+        ClassifiedError {
+            error_type: "provider_setup",
+            message: detail,
+            source: "provider",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
+    } else if crate::core::observability::is_session_expired_message(err) {
         // The OpenHuman app-session JWT expired (or the scheduler gate flagged
         // signed-out / `SESSION_EXPIRED` sentinel). There is NO client-side
         // refresh — recovery is an interactive re-auth only — so this is
@@ -646,4 +663,18 @@ pub(crate) fn is_transient_unavailability_text(lower: &str) -> bool {
     TRANSIENT_MARKERS
         .iter()
         .any(|marker| lower.contains(marker))
+}
+
+/// Detect a local-CLI provider setup failure and return its message.
+///
+/// These errors are raised by [`crate::openhuman::inference::provider`] before
+/// any request leaves the machine, and every one of them is already phrased as
+/// an instruction to the user. The `[claude-code]` prefix is the marker the
+/// provider stamps on all four of its `CliStatus` failures (not installed,
+/// outdated, unusable, spawn failed).
+fn local_cli_provider_setup_detail(err: &str) -> Option<String> {
+    const MARKER: &str = "[claude-code] `claude` CLI";
+    let start = err.find(MARKER)?;
+    let detail = err[start..].trim();
+    (!detail.is_empty()).then(|| detail.to_string())
 }

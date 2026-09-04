@@ -5,7 +5,7 @@
 //! The first whitespace-delimited token is the semver string we compare
 //! against [`MIN_CLI_VERSION`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::types::{CliStatus, MIN_CLI_VERSION};
@@ -21,7 +21,84 @@ pub fn resolve_binary() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    which_on_path("claude")
+    which_on_path("claude").or_else(well_known_install)
+}
+
+/// Fallback locations for the `claude` CLI, probed when `PATH` does not carry
+/// it.
+///
+/// A macOS app launched from Finder/Dock inherits `launchd`'s minimal `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`), **not** the login shell's — so the same
+/// install that resolves fine from a terminal-launched build reports
+/// `NotInstalled` in the shipped app. The npm-global, Homebrew and native
+/// installer locations below cover every documented install route; the login
+/// shell is consulted last because spawning one costs ~50ms and only pays off
+/// for a genuinely unusual install prefix.
+fn well_known_install() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    for candidate in well_known_candidates(home.as_deref()) {
+        if candidate.is_file() {
+            log::debug!(
+                "[claude-code][version] resolved off-PATH candidate path={}",
+                candidate.display()
+            );
+            return Some(candidate);
+        }
+    }
+
+    login_shell_lookup()
+}
+
+/// The ordered fallback candidates, split out so the list is unit-testable
+/// without mutating the process environment.
+fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home {
+        for suffix in [
+            ".local/bin/claude",
+            ".claude/local/claude",
+            ".bun/bin/claude",
+            ".volta/bin/claude",
+            "Library/pnpm/claude",
+            ".npm-global/bin/claude",
+        ] {
+            candidates.push(home.join(suffix));
+        }
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/claude"));
+    candidates.push(PathBuf::from("/usr/local/bin/claude"));
+    candidates
+}
+
+/// Ask the user's login shell where `claude` lives.
+///
+/// `command -v` is used rather than `which` because it is POSIX-builtin and
+/// resolves the same way the user's own terminal would. A shell *function*
+/// named `claude` (a common wrapper) makes `command -v` print the function
+/// body rather than a path, so anything that is not an existing file is
+/// discarded instead of being handed to `Command::new`.
+fn login_shell_lookup() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+    let output = Command::new(&shell)
+        .args(["-lc", "command -v claude"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    path.is_file().then(|| {
+        log::debug!(
+            "[claude-code][version] resolved via login shell path={}",
+            path.display()
+        );
+        path
+    })
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
