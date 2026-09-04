@@ -54,6 +54,17 @@ EXCLUDE_PATTERNS=(
   'libxcb-dri3.so.*'
   'libxcb-glx.so.*'
   'libxcb-present.so.*'
+  # OpenSSL: strip the bundled libssl/libcrypto so the AppImage uses the host's
+  # OpenSSL. The AppImage is built on Ubuntu 24.04, which ships OpenSSL 3.0.x;
+  # linuxdeploy bundles those 3.0.x libs, which provide only OPENSSL_3.0.x
+  # versioned symbols. On modern host distros (Arch, Fedora, Ubuntu 24.10+)
+  # OpenSSL is 3.2+ or 3.5+, and the host's libcurl.so.4 / libngtcp2_crypto_ossl
+  # require OPENSSL_3.2.0+ symbols. When the AppImage's bundled 3.0.x libssl
+  # shadows the host's newer library those symbols are absent, causing dlopen
+  # failures at runtime. Stripping the bundled copies lets the AppImage fall
+  # back to the host's newer OpenSSL. (#3716)
+  'libssl.so.*'
+  'libcrypto.so.*'
 )
 
 # Default to a pinned release tag rather than the mutable `continuous` asset so
