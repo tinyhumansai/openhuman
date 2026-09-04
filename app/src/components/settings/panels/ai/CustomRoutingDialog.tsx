@@ -154,18 +154,18 @@ export const CustomRoutingDialog = ({
     setTestBusy(false);
   };
 
+  // The test call must name the same slug the save will persist, so this
+  // mirrors `registrySlug` above rather than assuming a non-cloud source is
+  // local: a `claude-code` route used to be tested as `ollama:<model>`, which
+  // asked Ollama for a model it has never heard of and reported the failure as
+  // the claude-code provider's.
   const currentProviderString =
-    source == null || source.kind === 'managed'
+    source == null || source.kind === 'managed' || registrySlug == null
       ? null
-      : source.kind === 'cloud'
-        ? appendTemperatureToProviderString(
-            `${source.providerSlug}:${model.trim()}`,
-            temperature == null || !Number.isFinite(temperature) ? null : temperature
-          )
-        : appendTemperatureToProviderString(
-            `ollama:${model.trim()}`,
-            temperature == null || !Number.isFinite(temperature) ? null : temperature
-          );
+      : appendTemperatureToProviderString(
+          `${registrySlug}:${model.trim()}`,
+          temperature == null || !Number.isFinite(temperature) ? null : temperature
+        );
 
   const handleSave = () => {
     if (!source || !canSave) return;
