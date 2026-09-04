@@ -618,3 +618,78 @@ fn classify_inference_error_empty_response_is_actionable_and_retryable() {
         classified.message
     );
 }
+
+/// A missing local CLI is the user's own machine to fix, and the provider's
+/// message already says how. Sending them to Discord instead (the generic
+/// `inference` copy) hides an error no maintainer can act on — #5993 field
+/// report: the shipped app resolved no `claude` binary and the chat showed
+/// only "Something went wrong".
+#[test]
+fn local_cli_setup_failures_surface_the_actionable_message_not_the_discord_copy() {
+    let raw = "[claude-code] `claude` CLI not installed. Install Claude Code CLI \
+               (https://docs.anthropic.com/en/docs/claude-code) >= 2.0.0 and retry.";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(!classified.retryable);
+    assert!(classified.message.contains("not installed"));
+    assert!(
+        !classified
+            .message
+            .contains(super::super::web_errors::generic_inference_error_user_message()),
+        "the Discord fallback must not be shown for a local setup problem"
+    );
+}
+
+#[test]
+fn outdated_local_cli_is_also_a_setup_failure() {
+    let raw =
+        "[claude-code] `claude` CLI at /usr/local/bin/claude is version 1.9.0; require >= 2.0.0";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(classified.message.contains("require >= 2.0.0"));
+}
+
+/// A spawn failure at turn time is the same class of problem as a failed
+/// version probe — the binary is gone or unusable on the user's own machine —
+/// and it reaches the classifier wrapped by `map_model_error`. Before this case
+/// carried the marker it fell through to the Discord copy.
+#[test]
+fn a_spawn_failure_at_turn_time_is_also_a_setup_failure() {
+    let raw = "claude-code model call failed: [claude-code] `claude` CLI at \
+               /Users/x/.local/bin/claude failed to start: No such file or directory (os error 2)";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(!classified.retryable);
+    assert!(classified.message.contains("failed to start"));
+}
+
+/// The `Unusable` arm had no coverage either, and it is where a non-executable
+/// or crashing binary lands.
+#[test]
+fn an_unusable_cli_is_a_setup_failure() {
+    let raw = "[claude-code] `claude` CLI at /usr/local/bin/claude unusable: spawn failed: \
+               Permission denied (os error 13)";
+
+    assert_eq!(classify_inference_error(raw).error_type, "provider_setup");
+}
+
+/// The marker is matched anchored, not as a substring. A model that echoes the
+/// phrase back, or a tool result that quotes it, must not be classified as the
+/// user's install being broken — that is wrong advice AND non-retryable.
+#[test]
+fn a_quoted_marker_inside_an_unrelated_error_is_not_a_setup_failure() {
+    let quoted = "provider returned 500: the assistant said \"[claude-code] `claude` CLI \
+                  not installed\" while explaining the earlier failure";
+
+    assert_ne!(
+        classify_inference_error(quoted).error_type,
+        "provider_setup",
+        "a quoted marker must not be read as this machine's install being broken"
+    );
+}

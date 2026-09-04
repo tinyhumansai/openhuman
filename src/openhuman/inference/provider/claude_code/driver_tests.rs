@@ -178,3 +178,62 @@ fn full_access_reads_persisted_toggle_when_env_unset() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// The turn budget is the difference between "the CLI is still working" and
+/// "the CLI is broken", so its parse rules are worth pinning. Exercised through
+/// the pure helper rather than the env var: an env-mutating test races every
+/// other test in this binary.
+#[test]
+fn turn_timeout_defaults_when_unset_or_unparseable() {
+    let default = Duration::from_secs(DEFAULT_TURN_TIMEOUT_SECS);
+
+    assert_eq!(parse_turn_timeout(None), default);
+    assert_eq!(parse_turn_timeout(Some("")), default);
+    assert_eq!(parse_turn_timeout(Some("not-a-number")), default);
+    assert_eq!(parse_turn_timeout(Some("-30")), default);
+}
+
+/// Zero is rejected rather than honoured — it would kill every child the
+/// instant it started, which reads as a broken CLI rather than a bad setting.
+#[test]
+fn turn_timeout_rejects_zero_and_honours_a_real_override() {
+    assert_eq!(
+        parse_turn_timeout(Some("0")),
+        Duration::from_secs(DEFAULT_TURN_TIMEOUT_SECS)
+    );
+    assert_eq!(parse_turn_timeout(Some("  120 ")), Duration::from_secs(120));
+}
+
+/// Only a spawn failure meaning "this binary is unusable" may carry the marker,
+/// because the marker classifies as a NON-RETRYABLE setup problem. ETXTBSY (the
+/// binary is being rewritten) and EAGAIN (fork pressure) are transient, and
+/// telling the user to reinstall would both mislead and suppress the retry that
+/// would have worked.
+#[test]
+fn only_permanent_spawn_failures_claim_the_setup_marker() {
+    const MARKER: &str = "[claude-code] `claude` CLI";
+    let path = std::path::Path::new("/usr/local/bin/claude");
+
+    for kind in [
+        std::io::ErrorKind::NotFound,
+        std::io::ErrorKind::PermissionDenied,
+    ] {
+        let err = spawn_error(kind, path, &"boom");
+        assert!(
+            err.to_string().contains(MARKER),
+            "{kind:?} is a broken install and must classify as provider_setup"
+        );
+    }
+
+    for kind in [
+        std::io::ErrorKind::ResourceBusy,
+        std::io::ErrorKind::WouldBlock,
+        std::io::ErrorKind::Interrupted,
+    ] {
+        let err = spawn_error(kind, path, &"boom");
+        assert!(
+            !err.to_string().contains(MARKER),
+            "{kind:?} is transient and must stay retryable"
+        );
+    }
+}

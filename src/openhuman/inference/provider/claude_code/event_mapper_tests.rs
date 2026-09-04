@@ -25,22 +25,58 @@ fn text_streams_through() {
     assert_eq!(m.final_text, "hello");
 }
 
+/// A native `tool_use` block is the CLI's own call — a builtin, or a server
+/// from the `--mcp-config` it was handed — and the CLI runs it inside its own
+/// loop. The matching `tool_result` was always dropped; surfacing the call
+/// while dropping its result handed OpenHuman's harness a tool it cannot run,
+/// which failed repeatedly until the circuit breaker halted the whole turn.
+/// Neither half is surfaced now.
 #[test]
-fn tool_call_assembles_input() {
+fn cli_internal_tool_calls_are_not_surfaced_to_the_harness() {
     let mut m = EventMapper::new();
-    let start = json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"memory_search"}});
-    let d_args = json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"q\":\"foo\"}"}});
+    let start = json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"Bash"}});
+    let d_args = json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"ls\"}"}});
     let stop = json!({"type":"content_block_stop","index":1});
-    let starts = m.handle(ClaudeCodeEvent::StreamEvent { event: start });
+
     assert!(
-        matches!(&starts[0], ProviderDelta::ToolCallStart { tool_name, .. } if tool_name == "memory_search")
+        m.handle(ClaudeCodeEvent::StreamEvent { event: start })
+            .is_empty(),
+        "no ToolCallStart reaches the harness"
     );
-    let args = m.handle(ClaudeCodeEvent::StreamEvent { event: d_args });
-    assert!(matches!(&args[0], ProviderDelta::ToolCallArgsDelta { .. }));
+    assert!(
+        m.handle(ClaudeCodeEvent::StreamEvent { event: d_args })
+            .is_empty(),
+        "no ToolCallArgsDelta reaches the harness"
+    );
     m.handle(ClaudeCodeEvent::StreamEvent { event: stop });
-    assert_eq!(m.tool_calls.len(), 1);
-    assert_eq!(m.tool_calls[0].name, "memory_search");
-    assert_eq!(m.tool_calls[0].arguments, r#"{"q":"foo"}"#);
+
+    assert!(
+        m.tool_calls.is_empty(),
+        "the aggregated response carries no tool calls for the harness to execute"
+    );
+}
+
+/// Text in the same turn still streams normally — dropping the tool block must
+/// not swallow the CLI's actual answer.
+#[test]
+fn text_in_a_turn_with_a_cli_tool_call_still_streams() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::StreamEvent {
+        event: json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"Write"}}),
+    });
+    m.handle(ClaudeCodeEvent::StreamEvent {
+        event: json!({"type":"content_block_stop","index":0}),
+    });
+    m.handle(ClaudeCodeEvent::StreamEvent {
+        event: text_block_start(1),
+    });
+    let deltas = m.handle(ClaudeCodeEvent::StreamEvent {
+        event: text_delta(1, "done"),
+    });
+
+    assert!(matches!(&deltas[0], ProviderDelta::TextDelta { delta } if delta == "done"));
+    assert_eq!(m.final_text, "done");
+    assert!(m.tool_calls.is_empty());
 }
 
 #[test]
