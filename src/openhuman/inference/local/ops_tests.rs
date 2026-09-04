@@ -312,15 +312,29 @@ fn grant_turn_cwd_is_the_only_mutation() {
 }
 
 /// No embedder scoped an origin: this RPC is the trusted desktop / operator
-/// entry point, so the turn keeps its historical `Cli` label rather than
-/// falling through to the gate's fail-closed `Unknown` arm.
+/// entry point, so the turn gets a real label rather than falling through to
+/// the gate's fail-closed `Unknown` arm.
+///
+/// `DirectChat`, not the historical `Cli`. The approval gate treats the two
+/// identically — see the shared arm in `security/approval/gate_intercept.rs` —
+/// so trust is unchanged. What differs is the *other* question `Cli` cannot
+/// answer: whether a person wrote the text. `message` here is something the
+/// user typed into the desktop Settings agent-chat panel, and `Cli`'s own
+/// documentation covers sub-agent and internal invocations, so
+/// `is_user_authored` reads `false` for it and the conversation autosave would
+/// silently drop a real user message (#5312).
 #[tokio::test]
-async fn effective_origin_defaults_to_cli_outside_any_scope() {
+async fn effective_origin_defaults_to_direct_chat_outside_any_scope() {
     use crate::openhuman::agent::turn_origin::AgentTurnOrigin;
-    assert!(matches!(
-        effective_agent_chat_origin(),
-        AgentTurnOrigin::Cli
-    ));
+    let origin = effective_agent_chat_origin();
+    assert!(
+        matches!(origin, AgentTurnOrigin::DirectChat),
+        "unscoped agent_chat must be labelled DirectChat, got {origin:?}"
+    );
+    assert!(
+        origin.is_user_authored(),
+        "a person typed this, so it must reach conversation memory"
+    );
 }
 
 /// An in-process embedder that labelled the turn keeps its label: a workflow

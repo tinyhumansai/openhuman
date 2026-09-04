@@ -63,6 +63,21 @@ pub enum AgentTurnOrigin {
     },
     /// Command-line / sub-agent / one-off internal invocation.
     Cli,
+    /// A person typing into a direct chat surface that is not the web thread —
+    /// today the `openhuman.agent_chat` RPC behind the desktop Settings agent
+    /// chat panel, and an operator running the same RPC by hand.
+    ///
+    /// Split out of [`Cli`](Self::Cli) rather than folded into it because the
+    /// two answer different questions with the same variant. `Cli` was chosen
+    /// for this RPC to tell the **approval gate** "trusted caller, do not fail
+    /// closed"; it says nothing about who wrote the text, and its own
+    /// documentation covers sub-agent and internal invocations too. Reusing it
+    /// for [`is_user_authored`](Self::is_user_authored) would have to answer
+    /// "did a person write this" with a trust answer, and would drop a real
+    /// person's message on the floor.
+    ///
+    /// Trust-wise this is exactly `Cli` — the gate treats them identically.
+    DirectChat,
     /// Unlabelled — gate fails closed. Every entry point MUST scope a real
     /// origin before invoking the agent.
     Unknown,
@@ -121,9 +136,46 @@ impl AgentTurnOrigin {
                 format!("TrustedAutomation({source:?})")
             }
             AgentTurnOrigin::Cli => "Cli".to_string(),
+            AgentTurnOrigin::DirectChat => "DirectChat".to_string(),
             AgentTurnOrigin::Unknown => "Unknown".to_string(),
         }
     }
+
+    /// Whether the turn's text was written by a **person**.
+    ///
+    /// `WebChat`, `ExternalChannel`, and `DirectChat` carry what a human sent.
+    /// Every other origin carries text the host wrote for an agent to act on: a
+    /// `TrustedAutomation` prompt (cron, subconscious, goal continuation,
+    /// workflow), a `Cli` invocation — which this module documents as
+    /// "command-line / **sub-agent** / one-off internal" — or an unscoped
+    /// `Unknown`.
+    ///
+    /// An allowlist, not a denylist, and for the same reason the permission
+    /// gate uses one: a new origin is a turn nobody has classified yet, and
+    /// mistaking a host-written prompt for a user message writes it into the
+    /// user's memory, where it is indistinguishable from something they said.
+    /// A caller that genuinely relays a person's text scopes one of the three
+    /// origins above.
+    ///
+    /// This is a **different question** from the one the approval gate asks,
+    /// and the two must not be collapsed onto one variant. The gate asks how
+    /// far to trust the caller; this asks who wrote the words. `DirectChat`
+    /// exists because `agent_chat` needs the first answer to be "trusted" and
+    /// the second to be "a person" — see that variant's note.
+    pub fn is_user_authored(&self) -> bool {
+        matches!(
+            self,
+            AgentTurnOrigin::WebChat { .. }
+                | AgentTurnOrigin::ExternalChannel { .. }
+                | AgentTurnOrigin::DirectChat
+        )
+    }
+}
+
+/// Whether the current turn's text was written by a person — `false` outside
+/// any origin scope, matching [`AgentTurnOrigin::is_user_authored`]'s allowlist.
+pub fn current_is_user_authored() -> bool {
+    current().is_some_and(|origin| origin.is_user_authored())
 }
 
 tokio::task_local! {

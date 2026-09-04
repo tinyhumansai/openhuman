@@ -119,13 +119,23 @@ fn grant_turn_cwd(config: &mut Config, root: &std::path::Path) {
 ///
 /// An ambient origin — scoped by an in-process embedder around its
 /// `invoke("openhuman.inference_agent_chat", …)` — is the caller's own,
-/// deliberate trust statement about the turn and is kept. Absent one, the
-/// historical [`AgentTurnOrigin::Cli`] label applies: this RPC is reached by
-/// trusted clients (desktop UI, operator CLI), and leaving it unlabelled would
-/// fail the approval gate closed on every external-effect tool.
+/// deliberate trust statement about the turn and is kept. Absent one,
+/// [`AgentTurnOrigin::DirectChat`] applies: this RPC is reached by trusted
+/// clients (the desktop Settings agent-chat panel, an operator running the RPC
+/// by hand), and leaving it unlabelled would fail the approval gate closed on
+/// every external-effect tool.
+///
+/// `DirectChat` rather than the historical `Cli`, and the difference is not
+/// cosmetic. The approval gate treats the two identically, so trust is
+/// unchanged — but `message` here is something a *person* typed, and `Cli`
+/// answers "who wrote this" with a trust answer. Its own documentation covers
+/// sub-agent and internal invocations, so
+/// [`is_user_authored`](crate::openhuman::agent::turn_origin::AgentTurnOrigin::is_user_authored)
+/// reads `false` for it and the conversation autosave would silently drop a
+/// real user message.
 fn effective_agent_chat_origin() -> crate::openhuman::agent::turn_origin::AgentTurnOrigin {
     crate::openhuman::agent::turn_origin::current()
-        .unwrap_or(crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli)
+        .unwrap_or(crate::openhuman::agent::turn_origin::AgentTurnOrigin::DirectChat)
 }
 
 /// Executes a single chat turn with an AI agent.

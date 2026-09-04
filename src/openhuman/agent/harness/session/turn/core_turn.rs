@@ -224,7 +224,22 @@ impl Agent {
             );
         }
 
-        if self.auto_save {
+        // `auto_save` says the workspace keeps its chat in memory; the origin says
+        // whether this turn is chat at all. An internal agent is built from the
+        // same config (`Agent::from_config_for_agent`), so it inherits the flag —
+        // and its "user message" is the prompt the host wrote for it, not
+        // anything the user said. Live, that stored `memory_goals::enrich`'s
+        // prompt as a `Conversation` document keyed `user_msg:…`, where it then
+        // competed for slots in every later recall (#5312). Gating here rather
+        // than at each caller keeps a new internal agent from having to remember
+        // to opt out, which is a thing nobody notices forgetting.
+        //
+        // Upstream of the same-session exclusion filter `main` added alongside
+        // `CONVERSATION_RAW_NAMESPACE`: that filter stops this document echoing
+        // back inside the turn that wrote it, but a host-written prompt stored
+        // here still surfaces in a *later* session's recall. This gate is what
+        // keeps it from being written at all.
+        if self.auto_save && crate::openhuman::agent::turn_origin::current_is_user_authored() {
             // Fire-and-forget: persisting the user message to the memory store
             // does an embedding round-trip (Voyage) + memory-tree write that the
             // in-flight turn never reads back. Awaiting it delayed the start of
