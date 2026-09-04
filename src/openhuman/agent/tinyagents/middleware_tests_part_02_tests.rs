@@ -541,6 +541,29 @@ fn approval_external_effect_resolution_walks_the_tool_sets() {
     assert!(!mw.has_external_effect("missing", &json!({})));
 }
 
+#[test]
+fn approval_identity_scopes_composio_dispatcher_grants_to_one_action() {
+    assert_eq!(
+        approval_tool_name(
+            "composio_execute",
+            &json!({ "tool": "  GMAIL_SEND_EMAIL  " })
+        ),
+        "composio_execute:GMAIL_SEND_EMAIL"
+    );
+    assert_eq!(
+        approval_tool_name("composio_execute", &json!({ "tool": "GMAIL_DELETE_EMAIL" })),
+        "composio_execute:GMAIL_DELETE_EMAIL"
+    );
+    assert_eq!(
+        approval_tool_name("composio_execute", &json!({})),
+        "composio_execute:<invalid-action>"
+    );
+    assert_eq!(
+        approval_tool_name("send_email", &json!({ "tool": "ignored" })),
+        "send_email"
+    );
+}
+
 #[tokio::test]
 async fn memory_write_without_index_read_gets_a_corrective_note() {
     let mw = MemoryProtocolMiddleware::new();
