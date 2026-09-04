@@ -1377,7 +1377,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Xqx1q1x - নিজ হাতে অনুসন্ধান অথবা তার নিজের উপলব্ধকারীর সাথে যোগাযোগ স্থাপন করুন। Xqxqxkey কী- র সাথে একযোগে কাজ করার জন্য',
   'settings.search.description':
-    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, এবং Exa আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
+    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, Exa, এবং Tavily আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
   'settings.search.engineAria': 'সার্চ ইঞ্জিন',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1386,7 +1386,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'ডিফল্ট। OpenHuman ব্যাক-এন্ডের মাধ্যমে রুট করা হয়, বর্তমানে Exa দ্বারা চালিত: কোনো API key প্রয়োজন নেই।',
   'settings.search.localManagedUnavailable':
-    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit বা Exa API key যোগ করুন।',
+    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit, Exa বা Tavily API key যোগ করুন।',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'সরাসরি xqxxxxxxxxxxxxqx; অনুসন্ধান, চ্যাট, গবেষণা, সমৃদ্ধ টুল।',
@@ -1399,6 +1399,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa দ্বারা চালিত নিউরাল সার্চ। আপনার নিজের Exa API key প্রয়োজন। সার্চ, সদৃশ পৃষ্ঠা খোঁজা এবং পৃষ্ঠার বিষয়বস্তু আনার টুল যোগ করে।',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily দ্বারা চালিত ওয়েব, সংবাদ এবং আর্থিক সার্চ। আপনার নিজের Tavily API key প্রয়োজন। সার্চ ও পেজ কনটেন্ট আনার টুল যোগ করে।',
   'settings.search.statusConfigured': 'কনফিগার করা',
   'settings.search.statusNeedsKey': 'API কী প্রয়োজন',
   'settings.search.fallbackToManaged':
@@ -1420,6 +1423,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'কিউ- টি xxqx কি',
   'settings.search.placeholderExa': 'আপনার Exa API কী পেস্ট করুন…',
+  'settings.search.tavilyKeyLabel': 'Tavily API কী',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'ওয়েবসাইটের অনুমতি দেওয়া হয়েছে',
   'settings.search.allowedSitesHint':
     'যেসব হোস্ট অ্যাসিস্ট্যান্ট খুলতে ও পড়তে পারবে (ওয়েব ফেচ এবং ব্রাউজার টুলের মাধ্যমে) প্রতি লাইনে একটি করে, যেমন reuters.com। একটি হোস্ট তার সাবডোমেইনগুলোও অন্তর্ভুক্ত করে। ওয়েব সার্চ নিজে এই তালিকা দ্বারা সীমাবদ্ধ নয়।',

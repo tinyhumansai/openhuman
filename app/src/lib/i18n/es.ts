@@ -1411,7 +1411,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Por defecto, usa la búsqueda gestionada por OpenHuman o conecta tu propio proveedor con una clave API.',
   'settings.search.description':
-    'Elige el motor de búsqueda que usa el agente, o deshabilita las herramientas de búsqueda por completo. Gestionado usa el backend de OpenHuman (sin configuración). Parallel, Brave, Querit y Exa se ejecutan directamente desde tu máquina usando tu clave de API.',
+    'Elige el motor de búsqueda que usa el agente, o deshabilita las herramientas de búsqueda por completo. Gestionado usa el backend de OpenHuman (sin configuración). Parallel, Brave, Querit, Exa y Tavily se ejecutan directamente desde tu máquina usando tu clave de API.',
   'settings.search.engineAria': 'motor de búsqueda',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1420,7 +1420,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Predeterminado. Enrutado a través del backend de OpenHuman, actualmente con tecnología de Exa: no se requiere clave API.',
   'settings.search.localManagedUnavailable':
-    'La búsqueda gestionada por OpenHuman no está disponible para usuarios locales. Añade tu propia API key de Parallel, Brave, Querit o Exa para habilitar la búsqueda web.',
+    'La búsqueda gestionada por OpenHuman no está disponible para usuarios locales. Añade tu propia API key de Parallel, Brave, Querit, Exa o Tavily para habilitar la búsqueda web.',
   'settings.search.engineParallelLabel': 'paralelo',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: buscar, extraer, chatear, investigar, enriquecer, herramientas de conjuntos de datos.',
@@ -1433,6 +1433,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Búsqueda neuronal con tecnología de Exa. Requiere tu propia API key de Exa. Añade herramientas de búsqueda, páginas similares y contenido de páginas.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Búsqueda web, noticias y finanzas con tecnología de Tavily. Requiere tu propia API key de Tavily. Añade herramientas de búsqueda y extracción de páginas.',
   'settings.search.statusConfigured': 'Configurado',
   'settings.search.statusNeedsKey': 'Necesita la clave API',
   'settings.search.fallbackToManaged':
@@ -1454,6 +1457,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit clave API',
   'settings.search.placeholderExa': 'Pega tu clave API de Exa…',
+  'settings.search.tavilyKeyLabel': 'Clave API de Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Sitios web permitidos',
   'settings.search.allowedSitesHint':
     'Hosts que el asistente puede abrir y leer (mediante recuperación web y la herramienta de navegador) uno por línea, p. ej. reuters.com. Un host también incluye sus subdominios. La búsqueda web en sí no está restringida por esta lista.',

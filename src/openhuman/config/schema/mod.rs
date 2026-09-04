@@ -123,7 +123,7 @@ pub use tools::{
     MultimodalFileConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
     SecretsConfig, SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
     SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

@@ -528,6 +528,8 @@ async fn setup() -> TestHarness {
         EnvVarGuard::unset("BACKEND_URL"),
         EnvVarGuard::unset("VITE_BACKEND_URL"),
         EnvVarGuard::unset("OPENHUMAN_API_URL"),
+        EnvVarGuard::unset("OPENHUMAN_TAVILY_API_KEY"),
+        EnvVarGuard::unset("TAVILY_API_KEY"),
         EnvVarGuard::unset("OPENHUMAN_CORE_RPC_URL"),
         EnvVarGuard::unset("OPENHUMAN_CORE_PORT"),
         EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file"),
@@ -2079,6 +2081,8 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
         EnvVarGuard::unset(APP_ENV_VAR),
         EnvVarGuard::unset(VITE_APP_ENV_VAR),
+        EnvVarGuard::unset("OPENHUMAN_TAVILY_API_KEY"),
+        EnvVarGuard::unset("TAVILY_API_KEY"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
@@ -2102,6 +2106,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     config.search.brave.api_key = Some("brave-secret".into());
     config.search.querit.api_key = Some("querit-secret".into());
     config.search.exa.api_key = Some("exa-secret".into());
+    config.search.tavily.api_key = Some("tavily-secret".into());
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-secret".into(),
         chat_id: None,
@@ -2186,6 +2191,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         "api-secret",
         "parallel-secret",
         "exa-secret",
+        "tavily-secret",
         "telegram-secret",
         "discord-secret",
         "slack-bot-secret",
@@ -2214,6 +2220,10 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         Some("parallel-secret")
     );
     assert_eq!(loaded.search.exa.api_key.as_deref(), Some("exa-secret"));
+    assert_eq!(
+        loaded.search.tavily.api_key.as_deref(),
+        Some("tavily-secret")
+    );
     assert_eq!(
         loaded
             .channels_config
@@ -3407,6 +3417,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
             "brave_api_key": " brave-rpc-key ",
             "querit_api_key": " querit-rpc-key ",
             "exa_api_key": " exa-rpc-key ",
+            "tavily_api_key": " tavily-rpc-key ",
             "allowed_domains": [" example.com ", "", "example.com", "docs.example.com"],
             "allow_all": false
         }),
@@ -3468,12 +3479,54 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
         Some(true)
     );
     assert_eq!(
+        search_payload
+            .get("tavily_configured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
         search_payload.get("allow_all").and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(
         search_payload.get("allowed_domains"),
         Some(&json!(["docs.example.com", "example.com"]))
+    );
+    let select_tavily = rpc(
+        &harness.rpc_base,
+        11_126,
+        "openhuman.config_update_search_settings",
+        json!({ "engine": "tavily" }),
+    )
+    .await;
+    let select_tavily_payload = payload(&select_tavily, "select Tavily search engine");
+    assert_eq!(
+        select_tavily_payload.pointer("/config/search/engine"),
+        Some(&json!("tavily"))
+    );
+    let tavily_readback = rpc(
+        &harness.rpc_base,
+        11_127,
+        "openhuman.config_get_search_settings",
+        json!({}),
+    )
+    .await;
+    let tavily_payload = payload(&tavily_readback, "get_search_settings for Tavily");
+    assert_eq!(
+        tavily_payload.get("engine").and_then(Value::as_str),
+        Some("tavily")
+    );
+    assert_eq!(
+        tavily_payload
+            .get("effective_engine")
+            .and_then(Value::as_str),
+        Some("tavily")
+    );
+    assert_eq!(
+        tavily_payload
+            .get("tavily_configured")
+            .and_then(Value::as_bool),
+        Some(true)
     );
     let allow_all_search = rpc(
         &harness.rpc_base,
@@ -3484,6 +3537,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
             "brave_api_key": " ",
             "querit_api_key": " ",
             "exa_api_key": " ",
+            "tavily_api_key": " ",
             "allow_all": true
         }),
     )

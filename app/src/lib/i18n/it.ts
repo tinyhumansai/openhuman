@@ -1410,7 +1410,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Imposta come predefinito la ricerca gestita da OpenHuman oppure collega il tuo provider con una chiave API.',
   'settings.search.description':
-    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit ed Exa vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
+    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit, Exa e Tavily vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
   'settings.search.engineAria': 'Motore di ricerca',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1419,7 +1419,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Predefinito. Instradato tramite il backend di OpenHuman, attualmente basato su Exa: nessuna chiave API necessaria.',
   'settings.search.localManagedUnavailable':
-    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit o Exa per abilitare la ricerca web.',
+    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit, Exa o Tavily per abilitare la ricerca web.',
   'settings.search.engineParallelLabel': 'parallelo',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: ricerca, estrai, chatta, ricerca, arricchisci, strumenti per set di dati.',
@@ -1432,6 +1432,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Ricerca neurale basata su Exa. Richiede la tua chiave API Exa. Aggiunge strumenti di ricerca, pagine simili e contenuti delle pagine.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Ricerca sul web, di notizie e finanziaria con Tavily. Richiede la tua chiave API Tavily. Aggiunge strumenti di ricerca ed estrazione di pagine.',
   'settings.search.statusConfigured': 'Configurato',
   'settings.search.statusNeedsKey': 'Richiede la chiave API',
   'settings.search.fallbackToManaged':
@@ -1453,6 +1456,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Chiave Querit API',
   'settings.search.placeholderExa': 'Incolla la tua chiave API Exa…',
+  'settings.search.tavilyKeyLabel': 'Chiave API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Siti web consentiti',
   'settings.search.allowedSitesHint':
     "Inserisci, uno per riga, gli host che l'assistente può aprire e leggere tramite il recupero web e lo strumento browser, ad es. reuters.com. Un host include anche i suoi sottodomini. La ricerca web stessa non è limitata da questo elenco.",

@@ -609,6 +609,46 @@ async fn apply_search_settings_accepts_disabled_engine() {
 }
 
 #[tokio::test]
+async fn apply_search_settings_stores_and_clears_tavily_key() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("tavily".to_string()),
+            tavily_api_key: Some(" tvly-test-key ".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("save Tavily settings");
+
+    assert_eq!(cfg.search.engine, "tavily");
+    assert_eq!(cfg.search.tavily.api_key.as_deref(), Some("tvly-test-key"));
+    assert_eq!(
+        cfg.search.effective_engine(),
+        crate::openhuman::config::SearchEngine::Tavily
+    );
+
+    apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            tavily_api_key: Some("  ".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("clear Tavily key");
+
+    assert!(cfg.search.tavily.api_key.is_none());
+    assert_eq!(
+        cfg.search.effective_engine(),
+        crate::openhuman::config::SearchEngine::Managed
+    );
+}
+
+#[tokio::test]
 async fn apply_search_settings_rejects_unknown_search_engine() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
@@ -623,5 +663,5 @@ async fn apply_search_settings_rejects_unknown_search_engine() {
     .await
     .expect_err("unknown engine should be rejected");
 
-    assert!(err.contains("disabled/managed/parallel/brave/querit/exa"));
+    assert!(err.contains("disabled/managed/parallel/brave/querit/exa/tavily"));
 }

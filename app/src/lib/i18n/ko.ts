@@ -1368,7 +1368,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'OpenHuman 관리 검색을 기본값으로 사용하거나 API 키로 자체 제공업체를 연결하세요.',
   'settings.search.description':
-    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
+    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa, Tavily는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
   'settings.search.engineAria': '검색 엔진',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1377,7 +1377,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     '기본값입니다. OpenHuman 백엔드를 통해 라우팅되며 현재 Exa로 구동됩니다. API 키가 필요하지 않습니다.',
   'settings.search.localManagedUnavailable':
-    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit 또는 Exa API 키를 추가하세요.',
+    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit, Exa 또는 Tavily API 키를 추가하세요.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     '직접 Parallel API: 검색, 추출, 채팅, 리서치, 보강, 데이터셋 도구.',
@@ -1389,6 +1389,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa 기반 신경망 검색. 본인의 Exa API 키가 필요합니다. 검색, 유사 페이지 찾기, 페이지 콘텐츠 도구를 추가합니다.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily 기반 웹, 뉴스, 금융 검색. 본인의 Tavily API 키가 필요합니다. 검색 및 페이지 콘텐츠 추출 도구를 추가합니다.',
   'settings.search.statusConfigured': '구성됨',
   'settings.search.statusNeedsKey': 'API 키 필요',
   'settings.search.fallbackToManaged':
@@ -1410,6 +1413,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API 키',
   'settings.search.placeholderExa': 'Exa API 키를 붙여넣으세요…',
+  'settings.search.tavilyKeyLabel': 'Tavily API 키',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': '허용된 웹사이트',
   'settings.search.allowedSitesHint':
     '리서치 중 어시스턴트가 열고 읽을 수 있는 웹사이트입니다(한 줄에 호스트 하나, 예: reuters.com). 호스트에는 하위 도메인도 포함됩니다. 모든 웹 접근을 차단하려면 비워 두세요.',

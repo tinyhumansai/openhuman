@@ -23,6 +23,7 @@ Pick the engine under **Connections → Search**. Exactly one engine is active a
 | ------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **OpenHuman Managed** (default) | Not needed             | The OpenHuman backend, currently powered by [Exa](https://exa.ai).                                                                                                                                                                                                       |
 | **Exa**                         | Your API key           | Straight to `https://api.exa.ai` with your key.                                                                                                                                                                                                                          |
+| **Tavily**                      | Your API key           | Straight to `https://api.tavily.com` with your key (web / news / finance search + page extraction).                                                                                                                                                                      |
 | **Parallel**                    | Local enablement value | Parallel-specific tools go through the OpenHuman backend to Parallel; the canonical `web_search_tool` keeps using the backend-resolved managed provider (currently Exa). The value selects the engine locally and is not sent to Parallel for authentication or billing. |
 | **Brave**                       | Your API key           | Straight to the Brave Search API with your key.                                                                                                                                                                                                                          |
 | **Querit**                      | Your API key           | Straight to the Querit API with your key.                                                                                                                                                                                                                                |
@@ -65,6 +66,35 @@ EXA_API_KEY=your-exa-api-key
 ```
 
 `OPENHUMAN_EXA_API_KEY` and `EXA_API_KEY` both override `search.exa.api_key`; treat environment-provided keys as sensitive secrets.
+
+### Tavily (bring your own key)
+
+Prefer to run search on your own [Tavily](https://tavily.com) account? Grab a key from [tavily.com](https://tavily.com) and paste it under **Connections → Search → Tavily**. Calls then go straight from your machine to `https://api.tavily.com` with your key and never touch the managed backend. When secret encryption is enabled, OpenHuman stores the key as ciphertext in `config.toml`; the OS keyring protects the master encryption key, not the Tavily key itself.
+
+Choosing Tavily registers Tavily's search + extract family for the agent, on top of the usual `web_search_tool`:
+
+- `tavily_search` - web, news, and finance results with titles, URLs, and snippets. Supports search-depth levels (`basic`/`advanced`/`fast`/`ultra-fast`), a publish/update `time_range` or explicit `start_date`/`end_date`, domain include/exclude filters, an optional LLM-generated `answer`, bounded cleaned page content, and image links.
+- `tavily_extract` - cleaned content from one or more URLs, in markdown or plain text, for deep-reading sources the agent found. Agent output is bounded to 8,000 characters per URL.
+
+You can also select it from `config.toml`:
+
+```toml
+[search]
+engine = "tavily"
+
+[search.tavily]
+api_key = "tvly-your-tavily-api-key"
+```
+
+Or via environment:
+
+```bash
+OPENHUMAN_SEARCH_ENGINE=tavily
+TAVILY_API_KEY=tvly-your-tavily-api-key
+# OPENHUMAN_TAVILY_API_KEY is accepted as well
+```
+
+`OPENHUMAN_TAVILY_API_KEY` and `TAVILY_API_KEY` both override `search.tavily.api_key`. Do not commit a plaintext API key.
 
 ## Self-hosted SearXNG
 

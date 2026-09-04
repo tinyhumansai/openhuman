@@ -1405,7 +1405,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Użyj domyślnie wyszukiwarki zarządzanej przez OpenHuman lub podłącz własnego dostawcę z kluczem API.',
   'settings.search.description':
-    'Wybierz wyszukiwarkę używaną przez agenta. Zarządzana korzysta z backendu OpenHuman (bez konfiguracji). Parallel, Brave, Querit i Exa działają bezpośrednio z Twojego urządzenia, używając Twojego klucza API.',
+    'Wybierz wyszukiwarkę używaną przez agenta. Zarządzana korzysta z backendu OpenHuman (bez konfiguracji). Parallel, Brave, Querit, Exa i Tavily działają bezpośrednio z Twojego urządzenia, używając Twojego klucza API.',
   'settings.search.engineAria': 'Wyszukiwarka',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1414,7 +1414,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Domyślnie. Kierowane przez backend OpenHuman, obecnie oparte na Exa: bez klucza API.',
   'settings.search.localManagedUnavailable':
-    'Wyszukiwarka zarządzana przez OpenHuman jest niedostępna dla użytkowników lokalnych. Dodaj własny klucz API Parallel, Brave, Querit lub Exa, aby włączyć wyszukiwanie w sieci.',
+    'Wyszukiwarka zarządzana przez OpenHuman jest niedostępna dla użytkowników lokalnych. Dodaj własny klucz API Parallel, Brave, Querit, Exa lub Tavily, aby włączyć wyszukiwanie w sieci.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Bezpośrednie API Parallel: szukaj, wyciąg, czat, badania, wzbogacenie, narzędzia datasetowe.',
@@ -1427,6 +1427,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Wyszukiwanie neuronowe oparte na Exa. Wymaga własnego klucza API Exa. Dodaje narzędzia wyszukiwania, podobnych stron i treści stron.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Wyszukiwanie w sieci, wiadomości i finansów oparte na Tavily. Wymaga własnego klucza API Tavily. Dodaje narzędzia wyszukiwania i wyodrębniania treści stron.',
   'settings.search.statusConfigured': 'Skonfigurowano',
   'settings.search.statusNeedsKey': 'Wymaga klucza API',
   'settings.search.fallbackToManaged':
@@ -1448,6 +1451,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Klucz API Querit',
   'settings.search.placeholderExa': 'Wklej swój klucz API Exa…',
+  'settings.search.tavilyKeyLabel': 'Klucz API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Dozwolone witryny',
   'settings.search.allowedSitesHint':
     'Hosty, które asystent może otwierać i odczytywać (poprzez pobieranie stron i narzędzie przeglądarki) jeden na linię, np. reuters.com. Host obejmuje również swoje subdomeny. Samo wyszukiwanie w internecie nie jest ograniczone przez tę listę.',
