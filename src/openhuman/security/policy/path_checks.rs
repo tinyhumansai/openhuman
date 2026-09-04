@@ -110,10 +110,7 @@ impl SecurityPolicy {
             if Self::is_always_forbidden(&canonical) {
                 return false;
             }
-            let workspace_root = self
-                .workspace_dir
-                .canonicalize()
-                .unwrap_or_else(|_| self.workspace_dir.clone());
+            let workspace_root = self.workspace_root_sync();
             let canonical_in_trusted = self.is_within_trusted_root(&canonical, false);
             if self.workspace_only
                 && !canonical.starts_with(&workspace_root)
@@ -214,6 +211,55 @@ impl SecurityPolicy {
             })
             .await
             .clone()
+    }
+
+    /// Synchronous counterpart to [`workspace_root`], hydrating the **same**
+    /// `canonical_workspace` cache via `OnceCell`'s sync `get`/`set`.
+    ///
+    /// The sync path validators (`is_path_string_allowed`,
+    /// `is_resolved_path_allowed_for`) run on every file tool call and each
+    /// previously re-invoked `self.workspace_dir.canonicalize()` — one
+    /// `stat(2)` + symlink walk on the same immutable input per call. They
+    /// cannot `.await` [`workspace_root`], so they reach the cache through this
+    /// helper.
+    ///
+    /// # Why one cell can serve both, and why a lost `set` is safe
+    ///
+    /// This is the load-bearing claim, so it is stated here rather than left to
+    /// a commit message. Sharing a cache between two producers is only sound if
+    /// they cannot disagree, and here they *cannot*: `tokio::fs::canonicalize`
+    /// is not a reimplementation, it is
+    /// `asyncify(move || std::fs::canonicalize(path)).await` — literally the
+    /// same `std` call, moved to a blocking thread. The async path and this one
+    /// therefore run identical code over an input that is immutable for the
+    /// life of a policy (`live_policy` rebuilds a fresh policy on reload, and
+    /// `security_for_tool_context` overrides only `action_dir`/`trusted_roots`).
+    ///
+    /// The consequence is that the `get`/`set` race below needs no lock and no
+    /// retry. If the async initializer wins between our `get` and our `set`,
+    /// `set` fails and we return the value we just computed — which is the
+    /// value the winner stored, because both are `std::fs::canonicalize` of the
+    /// same path. A lost race costs one redundant `stat(2)` walk, never a
+    /// divergent workspace root. Were that equivalence ever to break, this
+    /// helper would need `get_or_init`, not a comment.
+    ///
+    /// Fallback to the raw `workspace_dir` on canonicalize failure matches the
+    /// inline behavior these callers used before, and the async
+    /// [`workspace_root`] — including under the race, since the fallback is the
+    /// same immutable `workspace_dir` on both sides.
+    pub(super) fn workspace_root_sync(&self) -> PathBuf {
+        if let Some(cached) = self.canonical_workspace.get() {
+            return cached.clone();
+        }
+        let canonical = self
+            .workspace_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.workspace_dir.clone());
+        // Deliberately ignoring the result: a failed `set` means the async
+        // initializer won the race, and what it stored equals `canonical` —
+        // see the equivalence argument above.
+        let _ = self.canonical_workspace.set(canonical.clone());
+        canonical
     }
 
     /// Validate a path for file I/O: string checks, canonicalize, workspace containment,
@@ -517,10 +563,7 @@ impl SecurityPolicy {
         if Self::is_always_forbidden(resolved) {
             return false;
         }
-        let workspace_root = self
-            .workspace_dir
-            .canonicalize()
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root_sync();
         resolved.starts_with(&workspace_root)
             || self.is_within_trusted_root(resolved, require_write)
     }
