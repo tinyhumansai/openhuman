@@ -181,8 +181,6 @@ test.describe('Chat composer — caret on mid-string edits', () => {
    * "expected to fail but passed", and the marker has to be removed here.
    */
   test('typing mid-string leaves the caret after the inserted character', async ({ page }) => {
-    test.fail();
-
     const input = await openChat(page);
     await seed(page, input, 'hello world');
 
@@ -203,15 +201,12 @@ test.describe('Chat composer — caret on mid-string edits', () => {
   });
 
   /**
-   * The user-visible consequence, and the test that must stay GREEN so the
-   * `test.fail()` above is not the only record of the defect.
-   *
-   * Because the caret snaps to the end after the first character, the second
-   * character lands at the end too — so "hello world" + "AB" typed at offset 5
-   * produces `helloA worldB` instead of `helloAB world`. This is what the
-   * reporter actually experiences: the text is scrambled, not just the cursor.
+   * The user-visible consequence of the fix: successive mid-string keystrokes
+   * all land in-place. Before the fix the caret snapped to the end after the
+   * first character, so "hello world" + "AB" typed at offset 5 produced
+   * `helloA worldB`; now both characters land at offset 5, giving `helloAB world`.
    */
-  test('CHARACTERISES the bug: a second mid-string keystroke lands at the end', async ({
+  test('successive mid-string keystrokes each land after the previous character', async ({
     page,
   }) => {
     const input = await openChat(page);
@@ -221,14 +216,15 @@ test.describe('Chat composer — caret on mid-string edits', () => {
     await page.keyboard.type('A');
     await page.waitForTimeout(300);
 
-    // Caret has already jumped to the end of 'helloA world'.
-    expect(await caretOffset(input)).toBe(12);
+    // Caret stays right after the inserted 'A' (offset 6).
+    expect(await caretOffset(input)).toBe(6);
 
     await page.keyboard.type('B');
     await page.waitForTimeout(300);
 
-    // Correct behaviour would be 'helloAB world'.
-    expect(await composerText(input)).toBe('helloA worldB');
+    // Both characters land consecutively mid-string, caret after the second.
+    expect(await caretOffset(input)).toBe(7);
+    expect(await composerText(input)).toBe('helloAB world');
   });
 
   /**

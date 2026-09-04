@@ -496,6 +496,7 @@ const Composer: FC<{
                 }
                 const native = event.nativeEvent;
                 if (
+                  isComposingTextRef.current ||
                   native.isComposing ||
                   native.keyCode === 229 ||
                   ('which' in native && native.which === 229)

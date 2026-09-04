@@ -76,5 +76,10 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@assistant-ui/react-lexical@0.2.10": "app/patches/@assistant-ui__react-lexical@0.2.10.patch"
+    }
   }
 }
