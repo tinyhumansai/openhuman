@@ -16,7 +16,23 @@ use tokio::sync::mpsc;
 
 /// Hard timeout per turn (PLAN §8). If the CLI hangs (network stall,
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
-const TURN_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_TURN_TIMEOUT_SECS: u64 = 900;
+
+/// Hard timeout per turn, overridable with
+/// `OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS`.
+///
+/// The default matches the harness's own 900s wall-clock backstop. It used to
+/// be 300s, which is shorter than a turn the CLI is *expected* to take once
+/// full access lets it run its own tools: the child was killed mid-work and the
+/// turn surfaced as a provider timeout rather than a slow answer.
+fn turn_timeout() -> Duration {
+    let secs = std::env::var("OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
@@ -431,7 +447,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 
     // Wrap the streaming + wait in a timeout so a stuck CLI doesn't
     // block this task forever (PLAN §8).
-    let timed = tokio::time::timeout(TURN_TIMEOUT, async {
+    let timed = tokio::time::timeout(turn_timeout(), async {
         loop {
             let n = stdout
                 .read(&mut buf)
@@ -468,14 +484,15 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         Ok(inner) => inner?,
         Err(_elapsed) => {
             log::error!(
-                "[claude-code][driver] turn timeout ({TURN_TIMEOUT:?}) exceeded; killing child"
+                "[claude-code][driver] turn timeout ({:?}) exceeded; killing child",
+                turn_timeout()
             );
             // kill_on_drop handles cleanup, but explicit kill gives us
             // a chance to collect stderr.
             let _ = child.kill().await;
             anyhow::bail!(
                 "[claude-code][driver] turn timed out after {:?}",
-                TURN_TIMEOUT
+                turn_timeout()
             );
         }
     };
