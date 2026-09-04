@@ -240,6 +240,18 @@ impl ExaClient {
                      Check your Exa API key under Connections > Search engine."
                 );
             }
+            if status == reqwest::StatusCode::PAYMENT_REQUIRED || status.as_u16() == 402 {
+                anyhow::bail!(
+                    "Exa credits exhausted (HTTP 402). \
+                     Please top up your Exa account at dashboard.exa.ai or switch search provider."
+                );
+            }
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                anyhow::bail!(
+                    "Exa rate limit exceeded (HTTP 429). \
+                     Please wait a moment before searching again."
+                );
+            }
             anyhow::bail!("Exa returned non-2xx status {status}");
         }
 
@@ -449,16 +461,8 @@ impl Tool for ExaSearchTool {
                     "type": "string",
                     "description": "Restrict to an Exa category, e.g. 'company', 'research paper', 'news', 'financial report', 'personal site'."
                 },
-                "include_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Only return results from these domains."
-                },
-                "exclude_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Exclude results from these domains."
-                },
+                "include_domains": { "type": "array", "items": { "type": "string" }, "description": "Only return results from these domains." },
+                "exclude_domains": { "type": "array", "items": { "type": "string" }, "description": "Exclude results from these domains." },
                 "start_published_date": {
                     "type": "string",
                     "description": "Only results published on or after this ISO-8601 date."
@@ -553,16 +557,8 @@ impl Tool for ExaFindSimilarTool {
                     "type": "boolean",
                     "description": "Exclude other pages from the source URL's own domain."
                 },
-                "include_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Only return results from these domains."
-                },
-                "exclude_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Exclude results from these domains."
-                },
+                "include_domains": { "type": "array", "items": { "type": "string" }, "description": "Only return results from these domains." },
+                "exclude_domains": { "type": "array", "items": { "type": "string" }, "description": "Exclude results from these domains." },
                 "include_text": {
                     "type": "boolean",
                     "description": "Also crawl and return the page text for each result (slower)."
@@ -673,19 +669,9 @@ impl Tool for ExaGetContentsTool {
         json!({
             "type": "object",
             "properties": {
-                "urls": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "The page URLs to retrieve contents for."
-                },
-                "include_summary": {
-                    "type": "boolean",
-                    "description": "Also return an Exa-generated summary of each page."
-                },
-                "include_highlights": {
-                    "type": "boolean",
-                    "description": "Also return relevant highlight snippets for each page."
-                }
+                "urls": { "type": "array", "items": { "type": "string" }, "description": "The page URLs to retrieve contents for." },
+                "include_summary": { "type": "boolean", "description": "Also return an Exa-generated summary of each page." },
+                "include_highlights": { "type": "boolean", "description": "Also return relevant highlight snippets for each page." }
             },
             "required": ["urls"]
         })
