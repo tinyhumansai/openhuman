@@ -634,7 +634,10 @@ async fn boot_sweep_skips_a_run_started_after_the_process_floor() {
 
 #[test]
 fn sweep_error_formatting_preserves_root_cause() {
-    let inner = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "disk permission denied");
+    let inner = std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "disk permission denied",
+    );
     let err = anyhow::Error::new(inner).context("Failed to initialize flows schema");
     let formatted = format!("{err:#}");
     assert!(formatted.contains("Failed to initialize flows schema"));
