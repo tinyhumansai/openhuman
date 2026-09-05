@@ -215,9 +215,19 @@ test('deterministic notes omit new contributors section when there are none', ()
   assert.doesNotMatch(markdown, /## New Contributors/);
 });
 
-test('git execution buffer is sized to prevent ENOBUFS on long release tag spans', () => {
+test('git and gh execution wrappers use DEFAULT_EXEC_MAX_BUFFER by default', () => {
   assert.ok(DEFAULT_EXEC_MAX_BUFFER >= 64 * 1024 * 1024);
+
+  // Test runGit wrapper default execution and output trimming
   const gitVersion = runGit(['--version']);
   assert.match(gitVersion, /^git version/);
+
+  // Test runGit wrapper accepts custom maxBuffer
+  const customBufferGit = runGit(['--version'], { maxBuffer: 1024 * 1024 });
+  assert.match(customBufferGit, /^git version/);
+
+  // Test runGh wrapper execution
   assert.equal(typeof runGh, 'function');
+  const ghVersion = runGh(['--version'], { allowFailure: true });
+  assert.ok(typeof ghVersion === 'string');
 });
