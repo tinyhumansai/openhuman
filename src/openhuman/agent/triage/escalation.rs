@@ -25,7 +25,7 @@ use crate::openhuman::agent::orchestration::parent_context::build_root_parent;
 use crate::openhuman::config::Config;
 
 use super::decision::TriageAction;
-use super::envelope::{TaskCardLink, TriggerEnvelope};
+use super::envelope::{TaskCardLink, TriggerEnvelope, TriggerSource};
 use super::evaluator::TriageRun;
 use super::events;
 
@@ -50,8 +50,10 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
     match run.decision.action {
         TriageAction::Drop => {
             tracing::debug!(
+                source = %envelope.source.slug(),
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
+                card_linked = envelope.card_link.is_some(),
                 reason = %run.decision.reason,
                 "[triage::escalation] DROP — no downstream work"
             );
@@ -64,11 +66,31 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             gate_linked_card_terminal(envelope, "drop").await;
         }
         TriageAction::Acknowledge => {
+            // Acknowledge is a classification, not a write. What the trigger
+            // *was* is already durable in the composio trigger-history JSONL,
+            // and what it was *judged to be* went out as `TriggerEvaluated`
+            // above. Copying a summary into the memory store on top of that
+            // would duplicate a document the connector sync already ingested —
+            // same mail, second copy, competing for the same recall slots — so
+            // this arm deliberately writes nothing.
+            //
+            // What survives differs by source, so the log says which — only the
+            // composio path archives its input, and claiming otherwise sends an
+            // operator looking for a record that was never written.
+            //
+            // What is genuinely missing is not a copy of the input but a record
+            // of what happened *after* the verdict, for every action and every
+            // source, not just this one. That belongs in a progress surface of
+            // its own rather than bolted onto the acknowledge branch (#5408).
             tracing::info!(
+                source = %envelope.source.slug(),
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
+                card_linked = envelope.card_link.is_some(),
+                retained = %retained_input_note(&envelope.source),
                 reason = %run.decision.reason,
-                "[triage::escalation] ACKNOWLEDGE — logged (memory-write is a future addition)"
+                "[triage::escalation] ACKNOWLEDGE — no autonomous action; \
+                 recorded as TriggerEvaluated"
             );
             // Acknowledge means "seen, no autonomous action needed" — same as
             // drop, the linked card must not be picked up by the board poller.
@@ -323,6 +345,21 @@ async fn dispatch_linked_card(
         .find(|c| c.id == link.card_id)
         .ok_or_else(|| format!("card `{}` not found on board", link.card_id))?;
     crate::openhuman::agent::task_dispatcher::dispatch_card(link.location.clone(), card).await
+}
+
+/// What survives an acknowledged trigger, for the source it actually came from.
+///
+/// The composio webhook path archives every event to a daily JSONL before the
+/// triage gates, so its input is durable whatever the verdict. No other source
+/// has an equivalent: a webhook, cron, webview, or external trigger leaves only
+/// the `TriggerEvaluated` event. Saying "retained in trigger history" for all
+/// of them would tell an operator to go looking for a record that was never
+/// written.
+fn retained_input_note(source: &TriggerSource) -> &'static str {
+    match source {
+        TriggerSource::Composio { .. } => "trigger-history archive",
+        _ => "none — verdict only",
+    }
 }
 
 /// Terminally gate a card-linked trigger that triage decided to `drop` /

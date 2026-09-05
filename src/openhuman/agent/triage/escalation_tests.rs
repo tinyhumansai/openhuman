@@ -360,3 +360,40 @@ async fn apply_decision_escalate_failure_publishes_failed_event() {
             if external_id == "esc-escalate-fail"
     )));
 }
+
+/// Only the composio path archives its input before triage. Naming a
+/// trigger-history record for a webhook or cron acknowledge would send an
+/// operator looking for a file that was never written.
+#[test]
+fn only_composio_claims_a_retained_input() {
+    assert_eq!(
+        retained_input_note(&TriggerSource::Composio {
+            toolkit: "gmail".into(),
+            trigger: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+        }),
+        "trigger-history archive"
+    );
+
+    for source in [
+        TriggerSource::Webhook {
+            tunnel_id: "t".into(),
+            method: "POST".into(),
+            path: "/x".into(),
+        },
+        TriggerSource::Cron {
+            job_id: "j".into(),
+            job_name: "nightly".into(),
+        },
+        TriggerSource::WebviewIntegration {
+            provider: "gmail".into(),
+            account_id: "a".into(),
+        },
+    ] {
+        assert_eq!(
+            retained_input_note(&source),
+            "none — verdict only",
+            "{} has no archive to point at",
+            source.slug()
+        );
+    }
+}
