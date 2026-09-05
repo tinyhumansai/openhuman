@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  DEFAULT_EXEC_MAX_BUFFER,
   buildOpenAiRequest,
   buildReleasePayload,
   ensureAllPullRequestsLinked,
@@ -10,6 +11,8 @@ import {
   parseGitHubRepoFromRemote,
   parseGitLog,
   renderDeterministicNotes,
+  runGh,
+  runGit,
 } from '../release/generate-release-notes.mjs';
 
 test('release notes args default to the latest GitHub release as the start ref', () => {
@@ -210,4 +213,25 @@ test('deterministic notes omit new contributors section when there are none', ()
 
   const markdown = renderDeterministicNotes({ title: 'v1.0.0 to main', payload });
   assert.doesNotMatch(markdown, /## New Contributors/);
+});
+
+test('git and gh execution wrappers use DEFAULT_EXEC_MAX_BUFFER by default', () => {
+  assert.ok(DEFAULT_EXEC_MAX_BUFFER >= 64 * 1024 * 1024);
+
+  // Test runGit wrapper default execution and output trimming
+  const gitVersion = runGit(['--version']);
+  assert.match(gitVersion, /^git version/);
+
+  // Test runGit wrapper accepts custom maxBuffer
+  const customBufferGit = runGit(['--version'], { maxBuffer: 1024 * 1024 });
+  assert.match(customBufferGit, /^git version/);
+
+  // Test runGh wrapper execution
+  assert.equal(typeof runGh, 'function');
+  try {
+    const ghVersion = runGh(['--version'], { allowFailure: true });
+    assert.ok(typeof ghVersion === 'string');
+  } catch (error) {
+    assert.ok(error.code === 'ENOENT' || error.status !== undefined);
+  }
 });

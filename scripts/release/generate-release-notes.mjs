@@ -89,17 +89,34 @@ export function parseArgs(argv) {
   return options;
 }
 
-function runGit(args, options = {}) {
+/** Default buffer size (64 MiB) for child process execution to prevent ENOBUFS on large git logs. */
+export const DEFAULT_EXEC_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Executes a git command with child_process.execFileSync and returns trimmed stdout.
+ * @param {string[]} args - CLI arguments for git.
+ * @param {{ allowFailure?: boolean, maxBuffer?: number }} [options={}] - Execution options.
+ * @returns {string} Trimmed standard output.
+ */
+export function runGit(args, options = {}) {
   return execFileSync('git', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', options.allowFailure ? 'pipe' : 'inherit'],
+    maxBuffer: options.maxBuffer ?? DEFAULT_EXEC_MAX_BUFFER,
   }).trim();
 }
 
-function runGh(args, options = {}) {
+/**
+ * Executes a gh CLI command with child_process.execFileSync and returns trimmed stdout.
+ * @param {string[]} args - CLI arguments for gh.
+ * @param {{ allowFailure?: boolean, maxBuffer?: number }} [options={}] - Execution options.
+ * @returns {string} Trimmed standard output.
+ */
+export function runGh(args, options = {}) {
   return execFileSync('gh', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', options.allowFailure ? 'pipe' : 'inherit'],
+    maxBuffer: options.maxBuffer ?? DEFAULT_EXEC_MAX_BUFFER,
   }).trim();
 }
 
