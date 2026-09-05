@@ -178,3 +178,75 @@ fn full_access_reads_persisted_toggle_when_env_unset() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn one_session_key_resumes_one_cc_session() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SessionStore::open(dir.path());
+
+    let (first, first_is_new) = resolve_cc_session(&store, "key");
+    let (second, second_is_new) = resolve_cc_session(&store, "key");
+
+    assert!(first_is_new, "the opening turn mints the session");
+    assert!(!second_is_new, "the next turn resumes it");
+    assert_eq!(first, second);
+}
+
+#[test]
+fn distinct_session_keys_get_their_own_cc_session() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SessionStore::open(dir.path());
+
+    let (reasoning, _) = resolve_cc_session(&store, "key-reasoning");
+    let (coding, _) = resolve_cc_session(&store, "key-coding");
+
+    assert_ne!(reasoning, coding);
+}
+
+#[test]
+fn a_stored_pre_v4_session_is_replaced() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SessionStore::open(dir.path());
+    store.set("key", "cc_legacy_id").expect("seed store");
+
+    let (id, is_new) = resolve_cc_session(&store, "key");
+
+    assert!(is_new, "an unusable id cannot be resumed");
+    assert!(is_uuid_v4(&id));
+}
+
+#[test]
+fn services_sharing_a_thread_do_not_inject_one_turn_twice() {
+    // Two services handle the same user turn on the same thread. Each has to
+    // resume its own CC session and deliver that turn once, rather than both
+    // resuming one session and appending the turn to it twice over.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SessionStore::open(dir.path());
+    let messages = vec![
+        ChatMessage::user("earlier turn"),
+        ChatMessage::assistant("earlier reply"),
+        ChatMessage::user("list the files on your computer"),
+    ];
+
+    let mut resumed: Vec<(String, String)> = Vec::new();
+    for system_prompt in ["the reasoning service", "the coding service"] {
+        let key = super::super::session_key_from_request(&messages, Some(system_prompt));
+        // The thread is already underway, so this service's session exists
+        // and this turn takes the `--resume` path the duplication rides on.
+        resolve_cc_session(&store, &key);
+        let (session_id, is_new) = resolve_cc_session(&store, &key);
+        assert!(!is_new, "an established thread resumes");
+
+        let payload = String::from_utf8(build_stdin(&messages, is_new)).expect("utf-8 stdin");
+        resumed.push((session_id, payload));
+    }
+
+    assert_ne!(
+        resumed[0].0, resumed[1].0,
+        "two services must not resume one CC session"
+    );
+    for (_, payload) in &resumed {
+        assert_eq!(payload.lines().count(), 1, "one turn delivered per service");
+        assert!(payload.contains("list the files on your computer"));
+    }
+}

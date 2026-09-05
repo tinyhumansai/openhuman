@@ -223,25 +223,35 @@ fn append_system_prompt_args(
     ])
 }
 
+/// Resolve the CC session this turn runs against: reuse the one stored for
+/// `session_key`, or mint and persist a fresh UUID when there is none (or the
+/// stored value predates the v4 requirement). Returns the session id and
+/// whether it is new, which is what picks `--session-id` over `--resume` and
+/// decides how much history goes down stdin.
+///
+/// Split out of [`run_turn`] so the mapping from key to session can be tested
+/// without spawning the CLI.
+fn resolve_cc_session(store: &SessionStore, session_key: &str) -> (String, bool) {
+    let stored = store.get(session_key);
+    if let Some(existing) = stored.filter(|id| is_uuid_v4(id)) {
+        return (existing, false);
+    }
+    let id = generate_uuid_v4();
+    if let Err(e) = store.set(session_key, &id) {
+        log::warn!(
+            "[claude-code][driver] failed to persist session uuid for thread {}: {}",
+            session_key,
+            e
+        );
+    }
+    (id, true)
+}
+
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards
 /// `ProviderDelta`s through `ctx.stream` as they arrive and returns the
 /// aggregated `ChatResponse` when done.
 pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
-    let stored = ctx.session_store.get(&ctx.thread_id);
-    let is_new = !stored.as_deref().map(is_uuid_v4).unwrap_or(false);
-    let cc_session_id = if is_new {
-        let id = generate_uuid_v4();
-        if let Err(e) = ctx.session_store.set(&ctx.thread_id, &id) {
-            log::warn!(
-                "[claude-code][driver] failed to persist session uuid for thread {}: {}",
-                ctx.thread_id,
-                e
-            );
-        }
-        id
-    } else {
-        stored.expect("checked Some above")
-    };
+    let (cc_session_id, is_new) = resolve_cc_session(&ctx.session_store, &ctx.thread_id);
 
     // Set up a per-turn scratch dir for --mcp-config and any other transient
     // state. Best-effort cleanup at end of turn.
