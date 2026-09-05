@@ -269,3 +269,37 @@ fn estimate_resolves_decorated_model_ids() {
         5.00,
     );
 }
+
+#[test]
+fn minimax_rows_and_vision_normalization() {
+    assert_eq!(
+        lookup("minimax/minimax-m3").unwrap().context_window,
+        1_000_000
+    );
+    assert_eq!(
+        lookup("minimax-m2.7-highspeed")
+            .unwrap()
+            .output_per_mtok_usd,
+        2.40
+    );
+    assert!(model_accepts_image_input("MiniMax/minimax-m3:latest"));
+    assert!(default_registry_entries()
+        .iter()
+        .any(|entry| entry.id == "minimax-m3" && entry.vision));
+}
+
+#[test]
+fn minimax_m3_uses_standard_tier_through_512k() {
+    approx(estimate_cost_usd("minimax-m3", 512_000, 0, 0), 0.1536);
+    approx(estimate_cost_usd("minimax-m3", 512_001, 0, 0), 0.3072006);
+}
+
+#[test]
+fn enrich_backfills_minimax_vision() {
+    let mut entry = ModelRegistryEntry {
+        id: "minimax/minimax-m3".to_string(),
+        ..Default::default()
+    };
+    assert!(enrich_entry(&mut entry));
+    assert!(entry.vision);
+}
