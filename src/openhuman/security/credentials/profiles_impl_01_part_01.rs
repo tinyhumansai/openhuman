@@ -1,6 +1,4 @@
-
 impl AuthProfilesStore {
-
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         let user_id = user_id_from_state_dir(state_dir);
         let policy = crate::openhuman::security::keyring_consent::policy::check_secret_access();
@@ -214,7 +212,7 @@ impl AuthProfilesStore {
         }
 
         data.active_profiles
-            .insert(provider.to_string(), profile_id.to_string());
+            .insert(provider.to_ascii_lowercase(), profile_id.to_string());
         data.updated_at = Utc::now();
         self.save_locked(&data)
     }
@@ -222,7 +220,7 @@ impl AuthProfilesStore {
     pub fn clear_active_profile(&self, provider: &str) -> Result<()> {
         let _lock = self.acquire_lock()?;
         let mut data = self.load_locked()?;
-        data.active_profiles.remove(provider);
+        data.active_profiles.remove(&provider.to_ascii_lowercase());
         data.updated_at = Utc::now();
         self.save_locked(&data)
     }
@@ -593,12 +591,104 @@ impl AuthProfilesStore {
                 self.path.display(),
             );
         }
+
+        let mut key_migrated = false;
+        let mut new_active = BTreeMap::new();
+        for (k, v) in &persisted.active_profiles {
+            let lower = k.to_ascii_lowercase();
+            let lower_val = v.to_ascii_lowercase();
+            if &lower != k || &lower_val != v {
+                key_migrated = true;
+            }
+            if new_active.contains_key(&lower) {
+                // If this is the canonical lowercase key, it supersedes any non-canonical
+                // variant seen earlier in iteration order.
+                if k == &lower {
+                    let old_val = new_active.insert(lower.clone(), lower_val.clone());
+                    log::debug!(
+                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k} target_profile_id={:?}",
+                        old_val
+                    );
+                } else {
+                    log::debug!(
+                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k} target_profile_id={lower_val}"
+                    );
+                }
+            } else {
+                new_active.insert(lower, lower_val);
+            }
+        }
+        if key_migrated {
+            persisted.active_profiles = new_active;
+        }
+
+        let mut new_persisted_profiles: BTreeMap<String, PersistedAuthProfile> = BTreeMap::new();
+        let mut new_profiles: BTreeMap<String, AuthProfile> = BTreeMap::new();
+        let mut profile_casing_changed_count: usize = 0;
+        let mut profile_migration_conflicts: usize = 0;
+
+        for (id, mut p) in std::mem::take(&mut persisted.profiles) {
+            let lower_id = id.to_ascii_lowercase();
+            let lower_provider = p.provider.to_ascii_lowercase();
+            if lower_id != id || lower_provider != p.provider {
+                key_migrated = true;
+                profile_casing_changed_count += 1;
+                p.provider = lower_provider.clone();
+            }
+
+            if let Some(mut ap) = profiles.remove(&id) {
+                ap.id = lower_id.clone();
+                ap.provider = lower_provider;
+
+                if self.use_keychain
+                    && lower_id != id
+                    && (ap.token.is_some() || ap.token_set.is_some())
+                {
+                    let _ = self.keychain_store_secrets(&ap);
+                    self.keychain_delete_secrets(&id);
+                    keychain_migrated = true;
+                }
+
+                if new_profiles.contains_key(&lower_id) {
+                    profile_migration_conflicts += 1;
+                    if id == lower_id {
+                        let old = new_profiles.insert(lower_id.clone(), ap);
+                        new_persisted_profiles.insert(lower_id.clone(), p);
+                        log::debug!(
+                            "[auth] profile id migration collision: dropped mixed-case profile_id={:?}",
+                            old.map(|o| o.id)
+                        );
+                    } else {
+                        log::debug!(
+                            "[auth] profile id migration collision: dropped mixed-case profile_id={id}"
+                        );
+                    }
+                } else {
+                    new_profiles.insert(lower_id.clone(), ap);
+                    new_persisted_profiles.insert(lower_id, p);
+                }
+            }
+        }
+        if profile_casing_changed_count > 0 {
+            if profile_migration_conflicts > 0 {
+                log::warn!(
+                    "[auth] profile migration: {profile_migration_conflicts} case-variant \
+                     collision(s) resolved by preferring the existing lowercase entry"
+                );
+            }
+            log::debug!(
+                "[auth] profile migration: normalized {profile_casing_changed_count} profile id(s) to lowercase"
+            );
+        }
+        persisted.profiles = new_persisted_profiles;
+        profiles = new_profiles;
+
         // Persist opportunistic cleanup / migrations only on the locked write
         // path. The lock-free read-only fallback (`persist = false`, used when
         // the disk can't accept the lock file) intentionally skips this — the
         // write would fail on a full disk anyway, and the in-memory view above
         // is already correct.
-        if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated) {
+        if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated || key_migrated) {
             self.write_persisted_locked(&persisted)?;
         }
 
