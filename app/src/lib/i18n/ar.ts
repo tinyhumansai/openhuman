@@ -925,6 +925,10 @@ const messages: TranslationMap = {
   'memoryTree.status.title': 'شجرة الذاكرة',
   'memoryTree.status.autoSyncLabel': 'النظام الآلي',
   'memoryTree.status.autoSyncDescription': 'توقف عن الابتلاع (ويكي) الحالي يبقى قابلاً للتساؤل',
+  'memoryTree.status.cloudSummarizationLabel': 'التلخيص السحابي',
+  'memoryTree.status.cloudSummarizationDescription':
+    'يتيح إنشاء أشجار التلخيص دون ذكاء اصطناعي محلي. تُرسَل ملخصات الذاكرة إلى مزوّد السحابة الذي أعددته.',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'تعذّر تغيير التلخيص السحابي',
   'memoryTree.status.statusTile': 'الحالة',
   'memoryTree.status.lastSyncTile': 'آخر تزامن',
   'memoryTree.status.totalChunksTile': 'أوراق شجرة الملخصات',

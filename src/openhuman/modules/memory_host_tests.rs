@@ -17,8 +17,8 @@
 //! can be honest, in `tinymemory`'s own module E2E against a real module.
 
 use super::{
-    serve_interfaces, ComposioCallbacks, EmbeddingCallbacks, CHAT_NAME, CHAT_PATH, COMPOSIO_NAME,
-    COMPOSIO_PATH, EMBEDDING_NAME, EMBEDDING_PATH, RUNTIME_NAME, RUNTIME_PATH,
+    serve_interfaces, ChatCallbacks, ComposioCallbacks, EmbeddingCallbacks, CHAT_NAME, CHAT_PATH,
+    COMPOSIO_NAME, COMPOSIO_PATH, EMBEDDING_NAME, EMBEDDING_PATH, RUNTIME_NAME, RUNTIME_PATH,
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::client::create_composio_client;
@@ -392,4 +392,115 @@ fn non_summarization_roles_keep_the_role_factory() {
     let config = Config::default();
     super::resolve_chat_model("chat", &config)
         .expect("a non-summarization role resolves through the factory (test override)");
+}
+
+/// Write a `config.toml` under `dir` carrying just the consent flag, so a
+/// re-read has something on disk that can disagree with the held snapshot.
+fn write_consent_config(dir: &Path, opt_in: bool) {
+    std::fs::create_dir_all(dir).expect("config dir");
+    std::fs::write(
+        dir.join("config.toml"),
+        format!("[memory_tree]\ncloud_summarization_opt_in = {opt_in}\n"),
+    )
+    .expect("write config");
+}
+
+/// The consent flag is read at the point of use, not at boot.
+///
+/// `ChatCallbacks` holds one `Arc<Config>` for the life of the process, so
+/// without this a user who withdraws consent keeps having workspace memory
+/// summarised through their cloud provider until the core restarts — the
+/// withdrawal durable on disk and ignored where it matters.
+#[tokio::test]
+async fn summarization_role_re_reads_withdrawn_consent_from_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_consent_config(dir.path(), false);
+
+    // The boot snapshot still carries the grant the user has since withdrawn.
+    let mut snapshot = Config::default();
+    snapshot.workspace_dir = dir.path().join("workspace");
+    snapshot.config_path = dir.path().join("config.toml");
+    snapshot.memory_tree.cloud_summarization_opt_in = true;
+
+    let callbacks = ChatCallbacks(Arc::new(snapshot));
+    let fresh = callbacks
+        .config_for_role("summarization")
+        .await
+        .expect("a readable config must resolve");
+
+    assert!(
+        !fresh.memory_tree.cloud_summarization_opt_in,
+        "the withdrawal on disk must win over the boot snapshot"
+    );
+}
+
+/// Every other role keeps the snapshot. They carry no consent decision, and
+/// re-reading for all of them would put a file read in front of every
+/// module-side model call.
+#[tokio::test]
+async fn other_roles_keep_the_boot_snapshot() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_consent_config(dir.path(), false);
+
+    let mut snapshot = Config::default();
+    snapshot.workspace_dir = dir.path().join("workspace");
+    snapshot.config_path = dir.path().join("config.toml");
+    snapshot.memory_tree.cloud_summarization_opt_in = true;
+    let held = Arc::new(snapshot);
+
+    let callbacks = ChatCallbacks(Arc::clone(&held));
+    let resolved = callbacks.config_for_role("chat").await.expect("no refusal");
+
+    assert!(
+        Arc::ptr_eq(&held, &resolved),
+        "a non-summarization role must not pay for a re-read"
+    );
+}
+
+/// A config that cannot be read is not evidence that consent still holds, so
+/// the cloud route is refused rather than taken on a possibly-stale grant.
+#[tokio::test]
+async fn an_unreadable_config_refuses_the_cloud_route() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // A *directory* at the config path, not a missing file: `load_from_config_path`
+    // treats absence as "fresh install" and hands back defaults, which is a
+    // successful read and correctly not a refusal. Corruption is the case that
+    // actually errors, and it is the one where a held grant cannot be confirmed.
+    let config_path = dir.path().join("config.toml");
+    std::fs::create_dir_all(&config_path).expect("directory at the config path");
+    let mut snapshot = Config::default();
+    snapshot.workspace_dir = dir.path().join("workspace");
+    snapshot.config_path = config_path;
+    snapshot.local_ai.runtime_enabled = false;
+    snapshot.memory_tree.cloud_summarization_opt_in = true;
+
+    let callbacks = ChatCallbacks(Arc::new(snapshot));
+    match callbacks.config_for_role("summarization").await {
+        Err(error) => assert!(
+            error.to_string().contains("cloud_summarization_opt_in"),
+            "the refusal must name the setting it could not confirm: {error}"
+        ),
+        Ok(_) => panic!("an unconfirmable grant must not route memory to the cloud"),
+    }
+}
+
+/// ...but only the cloud route. A local-AI user never owed consent, and the
+/// ladder resolves their route without consulting the flag, so a transient
+/// read failure must not break their summarization.
+#[tokio::test]
+async fn an_unreadable_config_leaves_the_local_route_alone() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("config.toml");
+    std::fs::create_dir_all(&config_path).expect("directory at the config path");
+    let mut snapshot = Config::default();
+    snapshot.workspace_dir = dir.path().join("workspace");
+    snapshot.config_path = config_path;
+    snapshot.local_ai.runtime_enabled = true;
+    snapshot.memory_tree.cloud_summarization_opt_in = false;
+
+    let callbacks = ChatCallbacks(Arc::new(snapshot));
+    assert!(
+        callbacks.config_for_role("summarization").await.is_ok(),
+        "local AI needs no consent, so a failed re-read must not refuse it"
+    );
 }

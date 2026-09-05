@@ -941,6 +941,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': '자동 동기화',
   'memoryTree.status.autoSyncDescription':
     '새 수집을 중지하려면 일시 중지하세요. 기존 위키는 계속 쿼리할 수 있습니다.',
+  'memoryTree.status.cloudSummarizationLabel': '클라우드 요약',
+  'memoryTree.status.cloudSummarizationDescription':
+    '로컬 AI 없이도 요약 트리를 만듭니다. 메모리 요약이 설정된 클라우드 제공자로 전송됩니다.',
+  'memoryTree.status.cloudSummarizationToggleFailed': '클라우드 요약 설정을 변경할 수 없습니다.',
   'memoryTree.status.statusTile': '상태',
   'memoryTree.status.lastSyncTile': '마지막 동기화',
   'memoryTree.status.totalChunksTile': '요약 트리 리프',

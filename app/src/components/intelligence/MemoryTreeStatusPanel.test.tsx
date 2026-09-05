@@ -39,6 +39,7 @@ vi.mock('../../store/hooks', () => ({ useAppDispatch: () => mockDispatch }));
 vi.mock('../analytics', () => ({
   trackAnalyticsEvent: (...args: unknown[]) => mockTrackAnalyticsEvent(...args),
 }));
+const mockSetCloudSummarization = vi.fn();
 
 vi.mock('../../utils/tauriCommands', async importOriginal => {
   // Inherit everything else (types, sibling wrappers) verbatim so the panel
@@ -52,6 +53,7 @@ vi.mock('../../utils/tauriCommands', async importOriginal => {
     memorySyncStatusList: (...args: unknown[]) => mockSyncStatusList(...args),
     memoryTreeRetryFailed: (...args: unknown[]) => mockRetryFailed(...args),
     memoryNamespaceSummaries: (...args: unknown[]) => mockNamespaceSummaries(...args),
+    memoryTreeSetCloudSummarization: (...args: unknown[]) => mockSetCloudSummarization(...args),
   };
 });
 
@@ -87,6 +89,8 @@ describe('<MemoryTreeStatusPanel />', () => {
     mockRetryFailed.mockReset();
     mockNamespaceSummaries.mockReset();
     mockTrackAnalyticsEvent.mockReset();
+    mockSetCloudSummarization.mockReset();
+    mockSetCloudSummarization.mockResolvedValue(undefined);
     mockSyncStatusList.mockResolvedValue([]); // default: empty, harmless to existing tests
     // Same default the inline stub used to hard-code, now re-programmable
     // per test so the failure branch can be driven.
@@ -179,6 +183,90 @@ describe('<MemoryTreeStatusPanel />', () => {
     await waitFor(() => {
       expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/paused/i);
     });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('reflects stored cloud-summarization consent and can withdraw it', async () => {
+    // The remediation for `summarizer_unavailable` names this flag, and until
+    // now nothing in the app could set it. The control must show the STORED
+    // value — a default-rendered switch would misreport whether memory
+    // summaries are allowed to leave the machine.
+    mockPipelineStatus
+      .mockResolvedValueOnce(payload({ cloud_summarization_opt_in: true }))
+      .mockResolvedValue(payload({ cloud_summarization_opt_in: false }));
+
+    render(<MemoryTreeStatusPanel />);
+
+    const toggle = await screen.findByTestId('memory-tree-cloud-summarization-toggle');
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-checked')).toBe('true');
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(mockSetCloudSummarization).toHaveBeenCalledWith(false);
+    });
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-checked')).toBe('false');
+    });
+  });
+
+  it('offers the cloud-summarization toggle even when the summarizer is fine', async () => {
+    // A control that only appeared alongside the error could grant consent but
+    // never withdraw it: fixing the problem would take the switch away.
+    mockPipelineStatus.mockResolvedValue(
+      payload({ cloud_summarization_opt_in: false, first_blocking_cause: null })
+    );
+
+    render(<MemoryTreeStatusPanel />);
+
+    const toggle = await screen.findByTestId('memory-tree-cloud-summarization-toggle');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(mockSetCloudSummarization).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it('surfaces a failed consent change instead of leaving the switch lying', async () => {
+    // The toggle is optimistic about nothing: on failure the panel re-reads the
+    // stored value on the next poll, so the switch must not be left showing a
+    // consent state the core never recorded. The toast is how the user learns
+    // that — silently swallowing the rejection would show "off" for a machine
+    // still summarising in the cloud.
+    mockPipelineStatus.mockResolvedValue(payload({ cloud_summarization_opt_in: false }));
+    mockSetCloudSummarization.mockRejectedValueOnce(new Error('core unreachable'));
+    const onToast = vi.fn();
+
+    render(<MemoryTreeStatusPanel onToast={onToast} />);
+
+    const toggle = await screen.findByTestId('memory-tree-cloud-summarization-toggle');
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'core unreachable' })
+      );
+    });
+
+    // And the control comes back — a toggle stuck disabled after one failure
+    // cannot be used to withdraw consent later.
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-checked')).toBe('false');
+      expect((toggle as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it('treats a core that predates the field as not opted in', async () => {
+    // `cloud_summarization_opt_in` is `#[serde(default)]` on the wire, so an
+    // older core omits it. Absent must read as "no consent", never as "on".
+    mockPipelineStatus.mockResolvedValue(payload());
+
+    render(<MemoryTreeStatusPanel />);
+
+    const toggle = await screen.findByTestId('memory-tree-cloud-summarization-toggle');
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 

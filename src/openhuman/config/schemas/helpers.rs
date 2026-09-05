@@ -83,6 +83,9 @@ pub(super) struct MemorySettingsUpdate {
     pub(super) embedding_dimensions: Option<usize>,
     /// One of `"minimal" | "balanced" | "extended" | "maximum"`.
     pub(super) memory_window: Option<String>,
+    /// `memory_tree.cloud_summarization_opt_in` — consent to summarize
+    /// workspace memory through the configured cloud provider.
+    pub(super) cloud_summarization_opt_in: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

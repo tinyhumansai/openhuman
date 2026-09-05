@@ -977,6 +977,11 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Sincronizzazione automatica',
   'memoryTree.status.autoSyncDescription':
     'Pausa per interrompere la nuova ingestione. La wiki esistente rimane interrogabile.',
+  'memoryTree.status.cloudSummarizationLabel': 'Riepilogo nel cloud',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Consente di creare alberi di riepilogo senza IA locale. I riepiloghi della memoria vengono inviati al provider cloud configurato.',
+  'memoryTree.status.cloudSummarizationToggleFailed':
+    'Impossibile modificare il riepilogo nel cloud',
   'memoryTree.status.statusTile': 'Stato',
   'memoryTree.status.lastSyncTile': 'Ultima sincronizzazione',
   'memoryTree.status.totalChunksTile': "Foglie dell'albero dei riassunti",

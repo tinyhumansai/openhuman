@@ -967,6 +967,14 @@ export interface MemoryTreePipelineStatus {
    * not connected when it happened. Absent when nothing was quarantined.
    */
   quarantine?: MemoryTreeQuarantine | null;
+  /**
+   * Current `memory_tree.cloud_summarization_opt_in`. The panel owns the
+   * toggle for it — the remediation for `summarizer_unavailable` names this
+   * flag — so the control must render the stored value rather than a default.
+   * Optional for back-compat with cores that predate the field; absent ⇒
+   * treat as not opted in.
+   */
+  cloud_summarization_opt_in?: boolean;
 }
 
 /** A corrupt-store quarantine as `memory_tree_pipeline_status` reports it. */
@@ -1070,6 +1078,26 @@ export async function memoryTreeSetEnabled(
     out.mode
   );
   return out;
+}
+
+/**
+ * Set `memory_tree.cloud_summarization_opt_in`.
+ *
+ * Consent to summarize workspace memory through the configured cloud provider
+ * when local AI is off. Without it (and without local AI) "Build Summary
+ * Trees" has no summarizer, the tree stops growing, and the memory-health
+ * panel reports `summarizer_unavailable` — whose remediation names this flag.
+ *
+ * Backed by `openhuman.config_update_memory_settings`, which patches only the
+ * fields it is given, so the other memory settings are untouched.
+ */
+export async function memoryTreeSetCloudSummarization(optIn: boolean): Promise<void> {
+  console.debug('[memory-tree-rpc] memoryTreeSetCloudSummarization: entry opt_in=%s', optIn);
+  await callCoreRpc<unknown>({
+    method: 'openhuman.config_update_memory_settings',
+    params: { cloud_summarization_opt_in: optIn },
+  });
+  console.debug('[memory-tree-rpc] memoryTreeSetCloudSummarization: exit opt_in=%s', optIn);
 }
 
 // ── Sync Audit Log ─────────────────────────────────────────────────

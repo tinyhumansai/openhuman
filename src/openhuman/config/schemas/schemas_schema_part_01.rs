@@ -123,6 +123,12 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     "memory_window",
                     "Stepped long-term memory window preset: minimal | balanced | extended | maximum.",
                 ),
+                FieldSchema {
+                    name: "cloud_summarization_opt_in",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Summarize workspace memory through the configured cloud provider when local AI is off.",
+                    required: false,
+                },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),

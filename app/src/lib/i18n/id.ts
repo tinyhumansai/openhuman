@@ -962,6 +962,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Sinkronisasi otomatis',
   'memoryTree.status.autoSyncDescription':
     'Jeda untuk menghentikan ingest baru. Wiki yang ada tetap dapat dikueri.',
+  'memoryTree.status.cloudSummarizationLabel': 'Ringkasan cloud',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Memungkinkan pohon ringkasan dibuat tanpa AI lokal. Ringkasan memori dikirim ke penyedia cloud yang Anda konfigurasikan.',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'Tidak dapat mengubah ringkasan cloud',
   'memoryTree.status.statusTile': 'Status',
   'memoryTree.status.lastSyncTile': 'Sinkronisasi terakhir',
   'memoryTree.status.totalChunksTile': 'Daun pohon ringkasan',

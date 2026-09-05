@@ -58,6 +58,14 @@ pub struct MemorySettingsPatch {
     /// Unknown values are silently ignored so old clients can keep
     /// posting partial patches.
     pub memory_window: Option<String>,
+    /// Consent to summarize workspace memory through the configured cloud
+    /// provider when local AI is off (`memory_tree.cloud_summarization_opt_in`).
+    ///
+    /// Exposed here because the memory-health remediation names this flag as
+    /// the fix for `summarizer_unavailable`, and until now nothing in the app
+    /// could set it — the only routes were an env var or hand-editing
+    /// `config.toml` on the host.
+    pub cloud_summarization_opt_in: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -328,6 +336,9 @@ pub async fn apply_memory_settings(
     }
     if let Some(dimensions) = update.embedding_dimensions {
         config.memory.embedding_dimensions = dimensions;
+    }
+    if let Some(opt_in) = update.cloud_summarization_opt_in {
+        config.memory_tree.cloud_summarization_opt_in = opt_in;
     }
     if let Some(window_label) = update.memory_window.as_deref() {
         if let Some(window) =

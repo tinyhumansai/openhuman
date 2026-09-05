@@ -967,6 +967,11 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Automatyczna synchronizacja',
   'memoryTree.status.autoSyncDescription':
     'Wstrzymaj, aby zatrzymać nowe pobieranie. Istniejąca wiki pozostanie dostępna do zapytań.',
+  'memoryTree.status.cloudSummarizationLabel': 'Podsumowanie w chmurze',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Pozwala tworzyć drzewa podsumowań bez lokalnej AI. Podsumowania pamięci są wysyłane do skonfigurowanego dostawcy chmury.',
+  'memoryTree.status.cloudSummarizationToggleFailed':
+    'Nie udało się zmienić podsumowania w chmurze',
   'memoryTree.status.statusTile': 'Stan',
   'memoryTree.status.lastSyncTile': 'Ostatnia synchronizacja',
   'memoryTree.status.totalChunksTile': 'Liście drzewa podsumowań',

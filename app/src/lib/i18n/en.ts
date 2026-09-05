@@ -909,6 +909,10 @@ const en: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Auto-sync',
   'memoryTree.status.autoSyncDescription':
     'Pause to stop new ingestion. Existing wiki stays queryable.',
+  'memoryTree.status.cloudSummarizationLabel': 'Cloud summarization',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Lets summary trees build without local AI. Memory summaries are sent to your configured cloud provider.',
+  'memoryTree.status.cloudSummarizationToggleFailed': "Couldn't change cloud summarization",
   'memoryTree.status.statusTile': 'Status',
   'memoryTree.status.lastSyncTile': 'Last sync',
   'memoryTree.status.totalChunksTile': 'Summary-tree leaves',

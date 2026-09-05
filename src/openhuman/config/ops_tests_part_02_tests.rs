@@ -326,9 +326,11 @@ async fn apply_memory_settings_updates_all_provided_fields() {
         embedding_model: Some("nomic".into()),
         embedding_dimensions: Some(768),
         memory_window: Some("extended".into()),
+        cloud_summarization_opt_in: Some(true),
     };
     let _ = apply_memory_settings(&mut cfg, patch).await.expect("apply");
     assert_eq!(cfg.memory.backend, "sqlite");
+    assert!(cfg.memory_tree.cloud_summarization_opt_in);
     assert!(cfg.memory.auto_save);
     assert_eq!(cfg.memory.embedding_provider, "ollama");
     assert_eq!(cfg.memory.embedding_model, "nomic");
@@ -638,4 +640,51 @@ async fn apply_analytics_settings_updates_enabled() {
     .await
     .expect("apply");
     assert!(!cfg.observability.analytics_enabled);
+}
+
+/// The consent flag has to be settable *off* as well as on. A patch that only
+/// ever turned it on would leave the user unable to withdraw consent from the
+/// same control that granted it — which is the whole point of an opt-in.
+#[tokio::test]
+async fn apply_memory_settings_can_withdraw_cloud_summarization_consent() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.memory_tree.cloud_summarization_opt_in = true;
+
+    let _ = apply_memory_settings(
+        &mut cfg,
+        MemorySettingsPatch {
+            cloud_summarization_opt_in: Some(false),
+            ..MemorySettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply");
+
+    assert!(!cfg.memory_tree.cloud_summarization_opt_in);
+}
+
+/// An absent field must not be read as `false`. Older clients post partial
+/// patches, and one that omits this must not silently revoke consent the user
+/// granted elsewhere.
+#[tokio::test]
+async fn apply_memory_settings_leaves_cloud_summarization_alone_when_absent() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.memory_tree.cloud_summarization_opt_in = true;
+
+    let _ = apply_memory_settings(
+        &mut cfg,
+        MemorySettingsPatch {
+            backend: Some("sqlite".into()),
+            ..MemorySettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply");
+
+    assert!(
+        cfg.memory_tree.cloud_summarization_opt_in,
+        "a patch that does not mention the flag must not clear it"
+    );
 }

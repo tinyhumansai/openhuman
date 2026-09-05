@@ -89,8 +89,74 @@ impl ChatCallbacks {
         role: String,
         request: ModelRequest,
     ) -> tinybus::Result<ModelResponse> {
-        let model = resolve_chat_model(&role, &self.0).map_err(method_error)?;
+        let config = self.config_for_role(&role).await?;
+        let model = resolve_chat_model(&role, config.as_ref()).map_err(method_error)?;
         model.invoke(&(), request).await.map_err(method_error)
+    }
+}
+
+impl ChatCallbacks {
+    /// The config a role's route should be resolved against.
+    ///
+    /// `ChatCallbacks` is built **once**, at module-serve time, from an
+    /// `Arc<Config>` that is never refreshed. For most roles that is only a
+    /// staleness wart. For `"summarization"` it is a consent bug: the ladder in
+    /// [`resolve_chat_model`] refuses the cloud route unless
+    /// `memory_tree.cloud_summarization_opt_in` is set, and reading that flag
+    /// off the boot snapshot means a user who *withdraws* consent keeps having
+    /// workspace memory summarised through their cloud provider until the core
+    /// restarts. The withdrawal is durable on disk and ignored at the point of
+    /// use, which is the worst shape a consent control can have.
+    ///
+    /// So the summarization role — and only it — re-reads from disk, the way
+    /// [`ComposioCallbacks::live_config`] already does in this file. Every
+    /// other role keeps the snapshot: they carry no consent decision, and
+    /// re-reading for all of them would put a file read in front of every
+    /// module-side model call.
+    ///
+    /// # Why a read failure blocks only the cloud route
+    ///
+    /// A config that cannot be read is not evidence that consent still holds,
+    /// so continuing on the snapshot could route memory out on a permission
+    /// the user has since revoked. But refusing outright would break
+    /// summarization for local-AI users, who never owed consent at all and
+    /// whose route the ladder resolves without consulting the flag.
+    ///
+    /// So a failed re-read refuses **only** when the held snapshot says the
+    /// route would be the cloud one (local AI off and the opt-in granted) —
+    /// exactly the case where the answer might have changed to "no". Local AI
+    /// on, or consent never granted, falls through to the snapshot and lets
+    /// the ladder decide as it always has.
+    async fn config_for_role(&self, role: &str) -> tinybus::Result<Arc<Config>> {
+        if role != "summarization" {
+            return Ok(Arc::clone(&self.0));
+        }
+        match crate::openhuman::config::rpc::reload_config_snapshot_with_timeout(&self.0).await {
+            Ok(fresh) => {
+                log::debug!(
+                    "[memory_tree::summarise] consent re-read role={role} local_ai={} opted_in={}",
+                    fresh.local_ai.runtime_enabled,
+                    fresh.memory_tree.cloud_summarization_opt_in
+                );
+                Ok(Arc::new(fresh))
+            }
+            Err(error) => {
+                let would_route_to_cloud = !self.0.local_ai.runtime_enabled
+                    && self.0.memory_tree.cloud_summarization_opt_in;
+                log::warn!(
+                    "[memory_tree::summarise] consent re-read failed role={role} \
+                     snapshot_routes_to_cloud={would_route_to_cloud}: {error}"
+                );
+                if would_route_to_cloud {
+                    return Err(method_error(
+                        "cloud summarization refused: the consent setting \
+                         (memory_tree.cloud_summarization_opt_in) could not be re-read, and a \
+                         stale grant is not consent",
+                    ));
+                }
+                Ok(Arc::clone(&self.0))
+            }
+        }
     }
 }
 

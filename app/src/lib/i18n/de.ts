@@ -986,6 +986,11 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Auto Sync',
   'memoryTree.status.autoSyncDescription':
     'Pausieren Sie, um die erneute Einnahme zu stoppen. Vorhandenes Wiki bleibt abfragbar.',
+  'memoryTree.status.cloudSummarizationLabel': 'Cloud-Zusammenfassung',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Ermöglicht Zusammenfassungsbäume ohne lokale KI. Speicher-Zusammenfassungen werden an Ihren konfigurierten Cloud-Anbieter gesendet.',
+  'memoryTree.status.cloudSummarizationToggleFailed':
+    'Cloud-Zusammenfassung konnte nicht geändert werden',
   'memoryTree.status.statusTile': 'Status',
   'memoryTree.status.lastSyncTile': 'Letzte Synchronisierung',
   'memoryTree.status.totalChunksTile': 'Blätter des Zusammenfassungsbaums',

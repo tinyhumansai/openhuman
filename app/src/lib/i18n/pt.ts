@@ -972,6 +972,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Auto-sincronização',
   'memoryTree.status.autoSyncDescription':
     'Pausa para parar a nova ingestão. O wiki existente permanece consultável.',
+  'memoryTree.status.cloudSummarizationLabel': 'Resumo na nuvem',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Permite criar árvores de resumo sem IA local. Os resumos de memória são enviados ao provedor de nuvem configurado.',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'Não foi possível alterar o resumo na nuvem',
   'memoryTree.status.statusTile': 'Status',
   'memoryTree.status.lastSyncTile': 'Última sincronização',
   'memoryTree.status.totalChunksTile': 'Folhas da árvore de resumos',

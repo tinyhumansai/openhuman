@@ -961,6 +961,10 @@ const messages: TranslationMap = {
   'memoryTree.status.autoSyncLabel': 'Автосинхронизация',
   'memoryTree.status.autoSyncDescription':
     'Пауза, чтобы остановить новый прием. Существующая вики остается доступной для запросов.',
+  'memoryTree.status.cloudSummarizationLabel': 'Облачное резюмирование',
+  'memoryTree.status.cloudSummarizationDescription':
+    'Позволяет строить деревья сводок без локального ИИ. Сводки памяти отправляются вашему настроенному облачному провайдеру.',
+  'memoryTree.status.cloudSummarizationToggleFailed': 'Не удалось изменить облачное резюмирование',
   'memoryTree.status.statusTile': 'Статус',
   'memoryTree.status.lastSyncTile': 'Последняя синхронизация',
   'memoryTree.status.totalChunksTile': 'Листья дерева сводок',
