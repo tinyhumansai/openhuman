@@ -91,6 +91,7 @@ fn an_account_exposes_every_hosting_tool() {
             "hosting_launch_site",
             "hosting_deployment_status",
             "hosting_list_deployments",
+            "hosting_deployment_logs",
             "hosting_rollback",
             "hosting_list_sites",
             "hosting_set_env",
@@ -507,5 +508,109 @@ async fn domain_status_distinguishes_a_verified_domain_from_a_pending_one() {
         !verified_for("www.example.com"),
         "and the pending one must not — that difference is the entire reason to \
          read domains: {domains}"
+    );
+}
+
+/// The read an agent reaches for once `hosting_deployment_status` says a build
+/// failed. A status carries one error line; the reason is in the events.
+#[tokio::test]
+async fn deployment_logs_report_the_build_error_behind_a_failed_status() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/v3/deployments/dpl_broken/events"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "events": [
+                {"created": 1, "type": "stdout", "payload": "installing dependencies"},
+                {"created": 2, "type": "stderr", "payload": "error TS2304: cannot find name 'foo'"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let result = tools::DeploymentLogsTool::new(host_against(&server))
+        .execute(json!({"deployment_id": "dpl_broken"}))
+        .await
+        .expect("the tool reports rather than panics");
+
+    assert!(!result.is_error, "{result:?}");
+
+    let logs: serde_json::Value =
+        serde_json::from_str(&result.text()).expect("the tool answers with JSON");
+    let rows = logs.as_array().expect("an array of events");
+
+    assert_eq!(rows.len(), 2, "{logs}");
+    // Oldest first, as the crate documents, and each message bound to its kind:
+    // a log that reported the right lines against the wrong streams would show
+    // a build error as ordinary output and hide the one line worth reading.
+    assert_eq!(rows[0]["kind"], "stdout", "{logs}");
+    assert_eq!(rows[1]["kind"], "stderr", "{logs}");
+    assert!(
+        rows[1]["message"]
+            .as_str()
+            .expect("a message")
+            .contains("TS2304"),
+        "the build error must survive to the model: {logs}"
+    );
+}
+
+/// Trimming keeps the tail. A build that fails after a thousand lines of setup
+/// puts its error at the end, so a limit that kept the head would return a
+/// thousand lines of noise and drop the only one an agent came for.
+#[tokio::test]
+async fn a_limited_log_read_keeps_the_end_where_the_failure_is() {
+    let server = MockServer::start().await;
+
+    let events: Vec<serde_json::Value> = (0..10)
+        .map(|n| json!({"created": n, "type": "stdout", "payload": format!("line {n}")}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/v3/deployments/dpl_long/events"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"events": events})))
+        .mount(&server)
+        .await;
+
+    let result = tools::DeploymentLogsTool::new(host_against(&server))
+        .execute(json!({"deployment_id": "dpl_long", "limit": 3}))
+        .await
+        .expect("the tool reports rather than panics");
+
+    assert!(!result.is_error, "{result:?}");
+
+    let logs: serde_json::Value =
+        serde_json::from_str(&result.text()).expect("the tool answers with JSON");
+    let rows = logs.as_array().expect("an array of events");
+
+    assert_eq!(rows.len(), 3, "{logs}");
+    assert_eq!(rows[0]["message"], "line 7", "{logs}");
+    assert_eq!(rows[2]["message"], "line 9", "{logs}");
+}
+
+/// A read tool that calls out before checking its arguments turns a model's
+/// omission into a provider request.
+#[tokio::test]
+async fn reading_logs_without_a_deployment_id_is_refused_before_any_call() {
+    let server = MockServer::start().await;
+
+    let result = tools::DeploymentLogsTool::new(host_against(&server))
+        .execute(json!({}))
+        .await
+        .expect("the tool reports rather than panics");
+
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.text().contains("deployment_id"),
+        "the error should name the argument: {}",
+        result.text()
+    );
+    // Nothing was mounted, so any request would have been a miss; assert the
+    // absence rather than trusting that.
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "a missing argument must not reach the provider"
     );
 }

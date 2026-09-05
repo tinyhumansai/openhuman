@@ -16,6 +16,7 @@ pub fn hosting_tools(account: &Account) -> Vec<Box<dyn Tool>> {
         Box::new(LaunchSiteTool::new(account.clone())),
         Box::new(DeploymentStatusTool::new(account.host())),
         Box::new(ListDeploymentsTool::new(account.host())),
+        Box::new(DeploymentLogsTool::new(account.host())),
         Box::new(RollbackTool::new(account.host())),
         Box::new(ListSitesTool::new(account.host())),
         Box::new(SetEnvTool::new(account.host())),
@@ -419,6 +420,91 @@ impl Tool for ListDeploymentsTool {
             Ok(deployments) => Ok(ToolResult::success(serde_json::to_string_pretty(
                 &deployments,
             )?)),
+            Err(error) => Ok(ToolResult::error(error.to_string())),
+        }
+    }
+}
+
+// ── hosting_deployment_logs ─────────────────────────────
+
+/// Reads the build and runtime events a deployment recorded.
+///
+/// The other half of [`DeploymentStatusTool`]. That tool reports *that* a build
+/// failed and carries the provider's one-line error; this one is how an agent
+/// finds out *why*, which is the difference between reporting a broken deploy
+/// and fixing it.
+pub struct DeploymentLogsTool {
+    host: Arc<dyn Host>,
+}
+
+impl DeploymentLogsTool {
+    pub fn new(host: Arc<dyn Host>) -> Self {
+        Self { host }
+    }
+}
+
+#[async_trait]
+impl Tool for DeploymentLogsTool {
+    fn name(&self) -> &str {
+        "hosting_deployment_logs"
+    }
+
+    fn description(&self) -> &str {
+        "Read a deployment's build and runtime log events, oldest first. Use it \
+         after hosting_deployment_status reports a failed deployment to find the \
+         error that caused it. Takes the same deployment id as \
+         hosting_deployment_status."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["deployment_id"],
+            "properties": {
+                "deployment_id": {
+                    "type": "string",
+                    "description": "The id hosting_launch_site returned, or one \
+                                    from hosting_list_deployments."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "How many of the most recent events to return. \
+                                    Defaults to 100."
+                }
+            }
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let id = match required_str(&args, "deployment_id") {
+            Ok(id) => id,
+            Err(error) => return Ok(ToolResult::error(error.to_string())),
+        };
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 1000) as usize;
+
+        match self.host.deployment_logs(&id).await {
+            Ok(logs) => {
+                // The crate returns the whole log oldest-first and a build can
+                // record thousands of lines, which is a context window rather
+                // than a bill. Trimming takes the *tail*: the failure that sent
+                // an agent here is at the end, and dropping the head loses
+                // setup noise rather than the error.
+                let trimmed = if logs.len() > limit {
+                    &logs[logs.len() - limit..]
+                } else {
+                    &logs[..]
+                };
+
+                Ok(ToolResult::success(serde_json::to_string_pretty(&trimmed)?))
+            }
             Err(error) => Ok(ToolResult::error(error.to_string())),
         }
     }

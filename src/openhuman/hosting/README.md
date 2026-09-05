@@ -9,7 +9,7 @@ everything about a provider, and this module owns everything about OpenHuman.
 - Resolve the configured hosting account (`Account::from_config`) from
   `[hosting]`, falling back to the provider's own environment variables.
 - Decide which directory an agent may deploy (`resolve_in_workspace`).
-- Expose the nine `hosting_*` agent tools and describe their results to a model.
+- Expose the ten `hosting_*` agent tools and describe their results to a model.
 
 Everything else — Vercel's endpoints, the upload-then-build deployment protocol,
 how a marketplace database is provisioned and connected, the order a launch runs
@@ -21,7 +21,7 @@ mock of the provider's REST API. Nothing here knows the word `readyState`.
 | File | Role |
 | --- | --- |
 | `mod.rs` | `Account` (credential resolution + the shared `dyn Host`) and `resolve_in_workspace`. |
-| `tools.rs` | The nine agent tools. |
+| `tools.rs` | The ten agent tools. |
 | `test.rs` | Account resolution, workspace containment, and each tool's contract. |
 
 ## Agent tools
@@ -31,6 +31,7 @@ mock of the provider's REST API. Nothing here knows the word `readyState`.
 | `hosting_launch_site` | Deploys a workspace directory as a live site, optionally provisioning a database and wiring it in, setting environment variables, and attaching domains. External effect. |
 | `hosting_deployment_status` | Whether a build has finished. Read-only. |
 | `hosting_list_deployments` | A site's recent deployments, newest first, with status and target. Read-only. |
+| `hosting_deployment_logs` | A deployment's build and runtime log events, oldest first, trimmed to the most recent. Read-only. |
 | `hosting_rollback` | Points production back at an earlier deployment that already built. External effect. |
 | `hosting_list_sites` | The sites on the account. Read-only. |
 | `hosting_set_env` | Sets environment variables on an existing site. External effect. |

@@ -12,7 +12,7 @@
 //!
 //! # What the agent gets
 //!
-//! Nine tools, in [`tools`]. `hosting_launch_site` is the one that matters: it
+//! Ten tools, in [`tools`]. `hosting_launch_site` is the one that matters: it
 //! turns a directory in the workspace into a live site with a database behind
 //! it. `hosting_rollback` is its counterweight — it points production back at
 //! an earlier deployment, so an agent that ships a broken site has a way back
