@@ -230,6 +230,11 @@ jobs:
               - 'scripts/mock-api/**'
               - 'scripts/*.mjs'
               - 'scripts/__tests__/**'
+              # The release-notes generator has node --test coverage in
+              # scripts/__tests__/ but lives one directory down, so the
+              # 'scripts/*.mjs' glob above never armed this lane for it — its
+              # tests could not have caught the v0.63.21 git ENOBUFS regression.
+              - 'scripts/release/*.mjs'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'
               # Shared logic behind the gate CLIs, and the module-pin gate's own

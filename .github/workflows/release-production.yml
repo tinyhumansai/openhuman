@@ -292,7 +292,10 @@ jobs:
           TAG: ${{ needs.prepare-build.outputs.tag }}
         run: |
           set -euo pipefail
-          echo "::warning::AI release notes failed or timed out — using deterministic notes."
+          # `continue-on-error` hides the AI step's real failure, so this warning
+          # must not assert a cause: on v0.63.21 both steps died on the same git
+          # ENOBUFS and the "timed out" wording sent the investigation the wrong way.
+          echo "::warning::AI release notes step did not succeed (outcome=${{ steps.ai-notes.outcome }}) — using deterministic notes. See the 'Generate AI release notes' step log for the reason."
           node scripts/release/generate-release-notes.mjs \
             --from latest-release \
             --to "$TAG" \
