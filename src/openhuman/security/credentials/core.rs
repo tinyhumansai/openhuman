@@ -42,7 +42,8 @@ impl AuthService {
         metadata: HashMap<String, String>,
         set_active: bool,
     ) -> Result<AuthProfile> {
-        let mut profile = AuthProfile::new_token(provider, profile_name, token.to_string());
+        let provider = normalize_provider(provider)?;
+        let mut profile = AuthProfile::new_token(&provider, profile_name, token.to_string());
         profile.metadata.extend(metadata);
         self.store.upsert_profile(profile.clone(), set_active)?;
         Ok(profile)
@@ -73,7 +74,16 @@ impl AuthService {
     pub fn remove_profile(&self, provider: &str, requested_profile: &str) -> Result<bool> {
         let provider = normalize_provider(provider)?;
         let profile_id = resolve_requested_profile_id(&provider, requested_profile);
-        self.store.remove_profile(&profile_id)
+        if self.store.remove_profile(&profile_id)? {
+            return Ok(true);
+        }
+        if !profile_id.starts_with("provider:") {
+            let namespaced = format!("provider:{profile_id}");
+            if self.store.remove_profile(&namespaced)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn get_profile(
@@ -140,15 +150,32 @@ pub fn select_profile_id(
     provider: &str,
     profile_override: Option<&str>,
 ) -> Option<String> {
+    let normalized = provider.trim().to_ascii_lowercase();
+    let provider_key = if normalized.starts_with("provider:") {
+        normalized.clone()
+    } else {
+        format!("provider:{normalized}")
+    };
+
     if let Some(override_profile) = profile_override {
         let requested = resolve_requested_profile_id(provider, override_profile);
         if data.profiles.contains_key(&requested) {
             return Some(requested);
         }
+        if !requested.starts_with("provider:") {
+            let namespaced = format!("provider:{requested}");
+            if data.profiles.contains_key(&namespaced) {
+                return Some(namespaced);
+            }
+        }
         return None;
     }
 
-    if let Some(active) = data.active_profiles.get(provider) {
+    if let Some(active) = data
+        .active_profiles
+        .get(&normalized)
+        .or_else(|| data.active_profiles.get(&provider_key))
+    {
         if data.profiles.contains_key(active) {
             return Some(active.clone());
         }
@@ -158,10 +185,14 @@ pub fn select_profile_id(
     if data.profiles.contains_key(&default) {
         return Some(default);
     }
+    let namespaced_default = default_profile_id(&provider_key);
+    if data.profiles.contains_key(&namespaced_default) {
+        return Some(namespaced_default);
+    }
 
-    data.profiles
-        .iter()
-        .find_map(|(id, profile)| (profile.provider == provider).then(|| id.clone()))
+    data.profiles.iter().find_map(|(id, profile)| {
+        (profile.provider == normalized || profile.provider == provider_key).then(|| id.clone())
+    })
 }
 
 #[cfg(test)]

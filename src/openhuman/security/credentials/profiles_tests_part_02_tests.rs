@@ -462,3 +462,145 @@ fn rename_stage_exhausts_retries_and_cleans_up_tmp() {
         "rename exhaustion must trigger best-effort tmp cleanup; leaked: {leaked:?}"
     );
 }
+
+#[tokio::test]
+async fn load_migrates_un_lowercased_active_profiles_keys_and_providers() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Create a raw auth-profiles.json fixture with mixed-case provider key ("provider:DeepSeek")
+    // and mixed-case profile ID ("provider:DeepSeek:default")
+    let raw_json = serde_json::json!({
+        "schema_version": 1,
+        "updated_at": "2026-08-07T10:00:00Z",
+        "active_profiles": {
+            "provider:DeepSeek": "provider:DeepSeek:default"
+        },
+        "profiles": {
+            "provider:DeepSeek:default": {
+                "provider": "provider:DeepSeek",
+                "profile_name": "default",
+                "kind": "token",
+                "token": "sk-test-secret",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            }
+        }
+    });
+
+    std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
+
+    // Call store.load() to trigger automatic migration on load
+    let data = store.load().unwrap();
+
+    // 1. Assert memory representation is normalized for active_profiles
+    assert!(data.active_profiles.contains_key("provider:deepseek"));
+    assert_eq!(
+        data.active_profiles.get("provider:deepseek").unwrap(),
+        "provider:deepseek:default"
+    );
+
+    // 2. Assert memory representation is normalized for profiles map and profile fields
+    assert!(data.profiles.contains_key("provider:deepseek:default"));
+    assert!(!data.profiles.contains_key("provider:DeepSeek:default"));
+    let profile = data.profiles.get("provider:deepseek:default").unwrap();
+    assert_eq!(profile.id, "provider:deepseek:default");
+    assert_eq!(profile.provider, "provider:deepseek");
+
+    // 3. Assert file on disk was rewritten with normalized keys and fields
+    let disk_raw = std::fs::read_to_string(store.path()).unwrap();
+    assert!(disk_raw.contains("\"provider:deepseek\":"));
+    assert!(disk_raw.contains("\"provider:deepseek:default\":"));
+    assert!(!disk_raw.contains("\"provider:DeepSeek\":"));
+    assert!(!disk_raw.contains("\"provider:DeepSeek:default\":"));
+
+    // 4. Assert profile can be successfully deleted after migration
+    assert!(store.remove_profile("provider:deepseek:default").unwrap());
+    let reloaded = store.load().unwrap();
+    assert!(reloaded.profiles.is_empty());
+    assert!(reloaded.active_profiles.is_empty());
+}
+
+#[test]
+fn migration_collision_prefers_existing_lowercase_key() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let raw_json = serde_json::json!({
+        "schema_version": 1,
+        "updated_at": "2026-08-07T10:00:00Z",
+        "active_profiles": {
+            "provider:DeepSeek": "provider:deepseek:legacy",
+            "provider:deepseek": "provider:deepseek:canonical"
+        },
+        "profiles": {
+            "provider:deepseek:canonical": {
+                "provider": "provider:deepseek",
+                "profile_name": "canonical",
+                "kind": "token",
+                "token": "sk-test-canonical",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            },
+            "provider:deepseek:legacy": {
+                "provider": "provider:deepseek",
+                "profile_name": "legacy",
+                "kind": "token",
+                "token": "sk-test-legacy",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            }
+        }
+    });
+
+    std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
+
+    let data = store.load().unwrap();
+
+    assert_eq!(
+        data.active_profiles.get("provider:deepseek").unwrap(),
+        "provider:deepseek:canonical",
+        "lowercase key must win over mixed-case collision"
+    );
+}
+
+#[test]
+fn migration_profile_id_collision_prefers_canonical_lowercase() {
+    // Two profiles whose IDs differ only by casing.
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let raw_json = serde_json::json!({
+        "schema_version": 1,
+        "updated_at": "2026-08-07T10:00:00Z",
+        "active_profiles": {
+            "provider:deepseek": "provider:deepseek:default"
+        },
+        "profiles": {
+            "provider:DeepSeek:default": {
+                "provider": "provider:DeepSeek",
+                "profile_name": "default",
+                "kind": "token",
+                "token": "sk-mixed-case",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            },
+            "provider:deepseek:default": {
+                "provider": "provider:deepseek",
+                "profile_name": "default",
+                "kind": "token",
+                "token": "sk-canonical",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            }
+        }
+    });
+
+    std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
+
+    let data = store.load().unwrap();
+
+    assert_eq!(data.profiles.len(), 1);
+    let profile = data.profiles.get("provider:deepseek:default").unwrap();
+    assert_eq!(profile.token.as_deref(), Some("sk-canonical"));
+}
