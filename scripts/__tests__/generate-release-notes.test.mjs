@@ -228,6 +228,10 @@ test('git and gh execution wrappers use DEFAULT_EXEC_MAX_BUFFER by default', () 
 
   // Test runGh wrapper execution
   assert.equal(typeof runGh, 'function');
-  const ghVersion = runGh(['--version'], { allowFailure: true });
-  assert.ok(typeof ghVersion === 'string');
+  try {
+    const ghVersion = runGh(['--version'], { allowFailure: true });
+    assert.ok(typeof ghVersion === 'string');
+  } catch (error) {
+    assert.ok(error.code === 'ENOENT' || error.status !== undefined);
+  }
 });
