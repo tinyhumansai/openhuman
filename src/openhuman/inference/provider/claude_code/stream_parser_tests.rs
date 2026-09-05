@@ -47,3 +47,62 @@ fn bad_json_becomes_parse_error() {
     let events = p.feed("not json\n");
     assert!(matches!(events[0], ClaudeCodeEvent::ParseError { .. }));
 }
+
+// The three cases below carry over @Felyx-Fu's work from #5713, which was closed
+// in favour of this PR.
+
+#[test]
+fn parses_terminal_is_error_flag() {
+    let mut p = StreamJsonParser::new();
+    let events = p.feed(
+        r#"{"type":"result","subtype":"success","is_error":true}
+"#,
+    );
+
+    assert!(matches!(
+        &events[0],
+        ClaudeCodeEvent::Result { is_error: true, .. }
+    ));
+}
+
+#[test]
+fn parses_nested_error_message() {
+    let mut p = StreamJsonParser::new();
+    let events = p.feed(
+        r#"{"type":"error","error":{"message":"structured failure","type":"invalid_request"}}
+"#,
+    );
+
+    assert!(matches!(
+        &events[0],
+        ClaudeCodeEvent::Error { message } if message == "structured failure"
+    ));
+}
+
+#[test]
+fn missing_error_message_does_not_create_generic_diagnostic() {
+    let mut p = StreamJsonParser::new();
+    let events = p.feed(
+        r#"{"type":"error","error":{"type":"unknown"}}
+"#,
+    );
+
+    assert!(matches!(
+        &events[0],
+        ClaudeCodeEvent::Error { message } if message.is_empty()
+    ));
+}
+
+#[test]
+fn empty_nested_error_message_falls_back_to_top_level_message() {
+    let mut p = StreamJsonParser::new();
+    let events = p.feed(
+        r#"{"type":"error","error":{"message":"  "},"message":"top-level failure"}
+"#,
+    );
+
+    assert!(matches!(
+        &events[0],
+        ClaudeCodeEvent::Error { message } if message == "top-level failure"
+    ));
+}

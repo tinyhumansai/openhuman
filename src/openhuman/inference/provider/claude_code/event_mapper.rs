@@ -43,6 +43,11 @@ pub struct EventMapper {
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<UsageInfo>,
     pub error: Option<String>,
+    /// Whether the terminal result reported a semantic failure. Kept separate
+    /// from `error` so a turn that failed without saying why can still fall
+    /// through to stderr, rather than reporting a synthetic string that reads
+    /// like a diagnosis while carrying nothing.
+    pub terminal_error: bool,
     pub session_id: Option<String>,
     pub finished: bool,
 }
@@ -63,11 +68,15 @@ impl EventMapper {
                 Vec::new()
             }
             ClaudeCodeEvent::Error { message } => {
-                self.error = Some(message);
+                self.terminal_error = true;
+                if !message.trim().is_empty() {
+                    self.error = Some(message);
+                }
                 Vec::new()
             }
             ClaudeCodeEvent::Result {
                 subtype,
+                is_error,
                 usage,
                 total_cost_usd,
                 ..
@@ -82,8 +91,8 @@ impl EventMapper {
                     usage.charged_amount_usd = cost;
                 }
                 self.usage = parsed;
-                if subtype.as_deref() == Some("error") && self.error.is_none() {
-                    self.error = Some("claude reported `result.subtype=error`".into());
+                if is_error || subtype.as_deref() == Some("error") {
+                    self.terminal_error = true;
                 }
                 self.finished = true;
                 Vec::new()

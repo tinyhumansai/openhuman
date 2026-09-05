@@ -48,6 +48,7 @@ fn result_event_captures_usage() {
     let mut m = EventMapper::new();
     m.handle(ClaudeCodeEvent::Result {
         subtype: Some("success".into()),
+        is_error: false,
         usage: Some(json!({
             "input_tokens": 100,
             "output_tokens": 50,
@@ -70,6 +71,7 @@ fn cost_surfaced_even_without_usage_object() {
     let mut m = EventMapper::new();
     m.handle(ClaudeCodeEvent::Result {
         subtype: Some("success".into()),
+        is_error: false,
         usage: None,
         total_cost_usd: Some(0.05),
         raw: Value::Null,
@@ -89,4 +91,60 @@ fn final_assistant_message_is_skipped() {
         message: json!({"type":"message","role":"assistant","content":[]}),
     });
     assert!(deltas.is_empty());
+}
+
+// Carried over from #5713 (@Felyx-Fu), which was closed in favour of this PR.
+
+#[test]
+fn empty_cli_error_does_not_override_stderr_fallback() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: String::new(),
+    });
+
+    assert!(m.error.is_none());
+    assert!(m.terminal_error);
+}
+
+#[test]
+fn structured_cli_error_is_preserved() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: "structured failure".into(),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("structured failure"));
+    assert!(m.terminal_error);
+}
+
+#[test]
+fn result_error_is_recorded_without_masking_stderr_fallback() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: false,
+        usage: None,
+        total_cost_usd: None,
+        raw: Value::Null,
+    });
+
+    assert!(m.finished);
+    assert!(m.terminal_error);
+    assert!(m.error.is_none());
+}
+
+#[test]
+fn result_is_error_flag_marks_terminal_failure() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("success".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: Value::Null,
+    });
+
+    assert!(m.finished);
+    assert!(m.terminal_error);
+    assert!(m.error.is_none());
 }

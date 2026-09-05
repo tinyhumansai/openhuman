@@ -30,6 +30,9 @@ pub enum ClaudeCodeEvent {
     },
     Result {
         subtype: Option<String>,
+        /// The CLI reports a semantic failure either through `subtype` or
+        /// through this flag; keying on `subtype` alone misses the second.
+        is_error: bool,
         usage: Option<Value>,
         total_cost_usd: Option<f64>,
         raw: Value,
@@ -137,20 +140,40 @@ impl StreamJsonParser {
             "rate_limit_event" => ClaudeCodeEvent::RateLimit { raw: v },
             "result" => {
                 let subtype = v.get("subtype").and_then(Value::as_str).map(str::to_string);
+                let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
                 let usage = v.get("usage").cloned();
                 let total_cost_usd = v.get("total_cost_usd").and_then(Value::as_f64);
                 ClaudeCodeEvent::Result {
                     subtype,
+                    is_error,
                     usage,
                     total_cost_usd,
                     raw: v,
                 }
             }
+            // The CLI emits `{"error":{"message":"…"}}` for an API failure, so
+            // reading `error` as a string returns None and the actionable text was
+            // replaced by the literal "claude-code error". That placeholder is not
+            // empty, so it survived every downstream "is there a diagnosis?" filter
+            // and was reported as though it were one — while suppressing the stderr
+            // fallback that did hold the cause. An absent message is now empty,
+            // which is what makes that fallback reachable.
             "error" => ClaudeCodeEvent::Error {
                 message: v
                     .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("claude-code error")
+                    .and_then(|error| {
+                        error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .filter(|message| !message.trim().is_empty())
+                            .or_else(|| error.as_str().filter(|message| !message.trim().is_empty()))
+                    })
+                    .or_else(|| {
+                        v.get("message")
+                            .and_then(Value::as_str)
+                            .filter(|message| !message.trim().is_empty())
+                    })
+                    .unwrap_or_default()
                     .to_string(),
             },
             other => ClaudeCodeEvent::ParseError {

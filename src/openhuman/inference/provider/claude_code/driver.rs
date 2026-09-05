@@ -482,18 +482,70 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 
     let stderr_text = stderr_task.await.unwrap_or_default();
 
-    if !status.success() {
-        anyhow::bail!(
-            "[claude-code][driver] exit {:?} stderr={}",
-            status.code(),
-            stderr_text.trim()
-        );
-    }
-    if let Some(err) = mapper.error.clone() {
-        anyhow::bail!("[claude-code][driver] {}", err);
+    if let Some(message) = turn_failure(
+        status.success(),
+        status.code(),
+        mapper.error.as_deref(),
+        &stderr_text,
+        mapper.terminal_error,
+    ) {
+        anyhow::bail!("[claude-code][driver] {}", message);
     }
 
     Ok(mapper.into_response())
+}
+
+/// Decide whether the turn failed, and if so describe it — preferring Claude's
+/// own structured error. `None` means the turn succeeded.
+///
+/// A nonzero exit used to short-circuit straight to stderr, which threw away the
+/// parsed `error` event on exactly the turns that carry one: Claude prints the
+/// actionable text ("Failed to authenticate. API Error: 403 Request not allowed")
+/// on **stdout** and leaves stderr empty, so the user was shown
+/// `exit Some(1) stderr=` and nothing else.
+///
+/// stderr stays the fallback for process-level failures that never produced a
+/// structured error at all — a missing binary, a segfault.
+///
+/// `terminal_error` is the third signal, and it is independent of the other two:
+/// the CLI can report a semantic failure through `result.subtype` or its
+/// `is_error` flag while exiting 0 and saying nothing else. Without it such a
+/// turn returns an empty success — silence, which is worse than the unhelpful
+/// message this PR set out to fix.
+///
+/// The *decision* lives here rather than at the call site on purpose. Split
+/// across the two, reverting the wiring in `run_turn` left every test in this
+/// file green, because they exercised the formatting helper directly and never
+/// the branch that reaches it. Folded together, no part of this is reachable
+/// without the tests seeing it.
+fn turn_failure(
+    success: bool,
+    exit_code: Option<i32>,
+    structured: Option<&str>,
+    stderr: &str,
+    terminal_error: bool,
+) -> Option<String> {
+    if success && structured.is_none() && !terminal_error {
+        return None;
+    }
+    Some(failure_message(exit_code, structured, stderr))
+}
+
+/// Render the failure text. See [`turn_failure`] for when it is reached.
+fn failure_message(exit_code: Option<i32>, structured: Option<&str>, stderr: &str) -> String {
+    let stderr = stderr.trim();
+    // A blank structured error is *absent*, not present-and-empty. The parser
+    // yields an empty message for anything it cannot read a diagnosis out of, so
+    // `{"type":"error","error":""}` arrives as `Some("")` — and taking the `Some`
+    // branch on it yields " (exit Some(1))", a leading space where the diagnosis
+    // should be, with stderr discarded. Falling through to stderr is strictly
+    // better: it may hold the real cause, and it cannot be worse than nothing.
+    match structured.map(str::trim).filter(|err| !err.is_empty()) {
+        // Keep the exit code alongside the structured error: it distinguishes a
+        // provider error that still exited 0 from one that took the process down.
+        Some(err) => format!("{err} (exit {exit_code:?})"),
+        None => format!("exit {exit_code:?} stderr={stderr}"),
+    }
 }
 
 #[cfg(test)]
