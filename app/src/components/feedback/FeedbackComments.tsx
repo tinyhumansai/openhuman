@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useUser } from '../../hooks/useUser';
 import { useT } from '../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../services/api/feedbackApi';
+import { messageForApiError } from '../../services/apiError';
 import type { FeedbackComment } from '../../types/feedback';
 import { Button, TextArea } from '../ui';
 
@@ -53,7 +54,7 @@ export default function FeedbackComments({ feedbackId, onCommentAdded }: Feedbac
       .catch((error: unknown) => {
         if (requestId !== loadRequestIdRef.current) return;
         log('load comments failed id=%s error=%O', feedbackId, error);
-        setLoadError(error instanceof Error ? error.message : t('feedback.comments.loadError'));
+        setLoadError(messageForApiError(error, t('feedback.comments.loadError')));
       })
       .finally(() => {
         if (requestId === loadRequestIdRef.current) setIsLoading(false);
@@ -75,7 +76,7 @@ export default function FeedbackComments({ feedbackId, onCommentAdded }: Feedbac
       onCommentAdded();
     } catch (error) {
       log('post comment failed id=%s error=%O', feedbackId, error);
-      setPostError(error instanceof Error ? error.message : t('feedback.comments.postError'));
+      setPostError(messageForApiError(error, t('feedback.comments.postError')));
     } finally {
       setPosting(false);
     }

@@ -66,11 +66,39 @@ describe('<FeedbackComments />', () => {
     expect(onCommentAdded).toHaveBeenCalledTimes(1);
   });
 
+  it('surfaces an API error when posting a comment fails', async () => {
+    mockGetFeedback.mockResolvedValueOnce({ feedback: { id: 'f1' }, comments: [] });
+    mockAddComment.mockRejectedValueOnce({ success: false, error: 'Comment could not be posted.' });
+    const onCommentAdded = vi.fn();
+
+    renderWithProviders(<FeedbackComments feedbackId="f1" onCommentAdded={onCommentAdded} />);
+    await screen.findByText('No comments yet.');
+
+    fireEvent.change(screen.getByPlaceholderText('Add a comment'), {
+      target: { value: 'a new comment' },
+    });
+    fireEvent.click(screen.getByText('Post'));
+
+    expect(await screen.findByText('Comment could not be posted.')).toBeInTheDocument();
+    expect(onCommentAdded).not.toHaveBeenCalled();
+  });
+
   it('surfaces a load error', async () => {
     mockGetFeedback.mockRejectedValueOnce(new Error('nope'));
 
     renderWithProviders(<FeedbackComments feedbackId="f1" onCommentAdded={() => {}} />);
 
     expect(await screen.findByText('nope')).toBeInTheDocument();
+  });
+
+  it('surfaces the string from a plain apiClient rejection', async () => {
+    mockGetFeedback.mockRejectedValueOnce({
+      success: false,
+      error: 'Comments are temporarily unavailable.',
+    });
+
+    renderWithProviders(<FeedbackComments feedbackId="f1" onCommentAdded={() => {}} />);
+
+    expect(await screen.findByText('Comments are temporarily unavailable.')).toBeInTheDocument();
   });
 });

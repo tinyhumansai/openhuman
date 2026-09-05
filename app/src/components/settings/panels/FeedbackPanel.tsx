@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '../../../hooks/useUser';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../../services/api/feedbackApi';
+import { messageForApiError } from '../../../services/apiError';
 import type {
   FeedbackItem,
   FeedbackSort,
@@ -82,7 +83,7 @@ const FeedbackPanel = () => {
       } catch (error) {
         if (requestId !== loadRequestIdRef.current) return;
         log('load failed page=%d error=%O', page, error);
-        setLoadError(error instanceof Error ? error.message : t('feedback.loadError'));
+        setLoadError(messageForApiError(error, t('feedback.loadError')));
       } finally {
         if (requestId === loadRequestIdRef.current) setIsLoading(false);
       }
