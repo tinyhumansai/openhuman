@@ -659,4 +659,3 @@ async fn boot_sweep_handles_schema_init_failure_gracefully() {
     assert!(formatted.contains("Failed to initialize flows schema"));
     assert!(formatted.contains("disk permission denied"));
 }
-
