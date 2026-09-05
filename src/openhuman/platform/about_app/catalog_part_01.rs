@@ -506,6 +506,18 @@ Capability {
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.inspect_core_registries",
+        name: "Inspect Core registries",
+        domain: "youpet_registry",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Inspect exact Agent, Tool, and Connector records from a configured YouPet Core connection in a read-only desktop view.",
+        how_to:
+            "Home > Core Registries (desktop only; requires a configured YouPet Core connection).",
+        status: CapabilityStatus::Beta,
+        privacy: YOUPET_CORE_METADATA,
+    },
+    Capability {
         id: "intelligence.orchestrator_worker_thread",
         name: "Worker Thread Delegation",
         domain: "intelligence",

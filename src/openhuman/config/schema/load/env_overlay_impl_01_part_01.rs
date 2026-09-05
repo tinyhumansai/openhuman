@@ -108,6 +108,41 @@ impl Config {
             }
         }
 
+        if let Some(url) = env.get("YOUPET_CORE_API_URL") {
+            let trimmed = url.trim().trim_end_matches('/');
+            if !trimmed.is_empty() {
+                self.youpet.core_api_url = trimmed.to_string();
+            }
+        }
+        if let Some(token) = env.get("YOUPET_SERVICE_TOKEN") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                self.youpet.service_token = Some(trimmed.to_string());
+            }
+        }
+        if let Some(actor) = env.get("YOUPET_WORKBENCH_ACTOR_ID") {
+            let trimmed = actor.trim();
+            if !trimmed.is_empty() {
+                self.youpet.workbench_actor_id = trimmed.to_string();
+            }
+        }
+        if let Some(operator) = env.get("YOUPET_OPERATOR_USER_ID") {
+            let trimmed = operator.trim();
+            self.youpet.operator_user_id = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(tenant) = env.get("YOUPET_TENANT_ID") {
+            let trimmed = tenant.trim();
+            self.youpet.tenant_id = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
         if let Some(flag) = env.get_any(&["OPENHUMAN_REASONING_ENABLED", "REASONING_ENABLED"]) {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {

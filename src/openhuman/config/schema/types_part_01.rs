@@ -261,6 +261,9 @@ pub struct Config {
     pub task_sources: TaskSourcesConfig,
 
     #[serde(default)]
+    pub youpet: YouPetConfig,
+
+    #[serde(default)]
     pub channels_config: ChannelsConfig,
 
     #[serde(default)]

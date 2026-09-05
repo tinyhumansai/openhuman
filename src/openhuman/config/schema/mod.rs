@@ -70,6 +70,7 @@ mod task_sources;
 mod tokenjuice;
 mod tools;
 mod update;
+mod youpet;
 
 pub use agent::{
     AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
@@ -126,6 +127,7 @@ pub use tools::{
     SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
+pub use youpet::YouPetConfig;
 mod voice_server;
 pub use voice_server::{SttEngine, VoiceActivationMode, VoiceServerConfig};
 pub mod voice_providers;

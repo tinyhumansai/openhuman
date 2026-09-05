@@ -112,6 +112,12 @@ const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(Capab
     destinations: &["Configured SearXNG instance"],
 });
 
+const YOUPET_CORE_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["Configured YouPet Core API"],
+});
+
 // Direct-mode Composio: the user's API key and tool arguments leave the
 // device — they are sent to backend.composio.dev, not the OpenHuman backend.
 // LOCAL_CREDENTIALS was incorrect here because leaves_device must be true.

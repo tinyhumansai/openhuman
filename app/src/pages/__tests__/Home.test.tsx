@@ -14,7 +14,8 @@ vi.mock('../../utils/config', async importOriginal => {
   return { ...actual, APP_VERSION: '0.0.0-test' };
 });
 
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
+const navigateMock = vi.hoisted(() => vi.fn());
+vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
 
 const mockUseUsageState = vi.hoisted(() =>
   vi.fn(() => ({ shouldShowBudgetCompletedMessage: false }))
@@ -34,6 +35,7 @@ vi.mock('../../services/api/openrouterFreeModels', () => ({
 const useAppSelectorMock = vi.fn(() => 'ok' as string);
 const useAppDispatchMock = vi.fn(() => vi.fn());
 const themeModeProbe = { current: 'system' as 'system' | 'light' | 'dark' };
+const connectivityErrorsProbe = { current: {} as { core?: string } };
 /* eslint-disable react-hooks/rules-of-hooks -- mock factories, not real hooks */
 vi.mock('../../store/hooks', () => ({
   useAppSelector: (selector: unknown) => {
@@ -41,9 +43,26 @@ vi.mock('../../store/hooks', () => ({
       try {
         const probed = (selector as (s: unknown) => unknown)({
           theme: { mode: themeModeProbe.current },
+          connectivity: {
+            internet: 'online',
+            core: 'reachable',
+            backend: 'connected',
+            lastError: connectivityErrorsProbe.current,
+          },
         });
         if (probed === 'system' || probed === 'light' || probed === 'dark') {
           return probed;
+        }
+        if (
+          probed === 'ok' ||
+          probed === 'backend-only' ||
+          probed === 'core-unreachable' ||
+          probed === 'internet-offline'
+        ) {
+          return useAppSelectorMock();
+        }
+        if (probed && typeof probed === 'object') {
+          return connectivityErrorsProbe.current;
         }
       } catch {
         // Selector didn't tolerate the probe — fall through to default.
@@ -56,7 +75,11 @@ vi.mock('../../store/hooks', () => ({
 /* eslint-enable react-hooks/rules-of-hooks */
 
 vi.mock('../../store/socketSelectors', () => ({ selectSocketStatus: vi.fn() }));
-vi.mock('../../store/connectivitySelectors', () => ({ selectBlockingState: vi.fn() }));
+vi.mock('../../store/connectivitySelectors', () => ({
+  selectBlockingState: () => 'ok',
+  selectConnectivityErrors: (state: { connectivity: { lastError: { core?: string } } }) =>
+    state.connectivity.lastError,
+}));
 
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
@@ -105,6 +128,40 @@ describe('resolveHomeUserName', () => {
 });
 
 describe('Home page — handleRestartCore and blocking state rendering', () => {
+  it('links to Core Registries from Home', async () => {
+    useAppSelectorMock.mockReturnValue('ok');
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Core Registries/i }));
+    expect(navigateMock).toHaveBeenCalledWith('/registries');
+  });
+
+  it('shows missing-config copy on the Core Registries card', async () => {
+    useAppSelectorMock.mockReturnValue('core-unreachable');
+    connectivityErrorsProbe.current = { core: 'config missing' };
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    expect(screen.getByRole('button', { name: /Core integration required/i })).toBeInTheDocument();
+    expect(
+      screen.getByText('Complete the desktop Core integration before inspecting registries.')
+    ).toBeInTheDocument();
+  });
+
+  it('shows invalid-config copy on the Core Registries card', async () => {
+    useAppSelectorMock.mockReturnValue('core-unreachable');
+    connectivityErrorsProbe.current = { core: 'config invalid' };
+
+    const { default: Home } = await import('../Home');
+    render(<Home />);
+
+    expect(
+      screen.getByText('Repair the desktop Core integration before inspecting registries.')
+    ).toBeInTheDocument();
+  });
+
   it('shows "Restart Core" button when blocking=core-unreachable (lines 194, 200)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
 
@@ -116,6 +173,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('does NOT show "Restart Core" button when blocking=ok (line 194)', async () => {
     useAppSelectorMock.mockReturnValue('ok');
+    connectivityErrorsProbe.current = {};
 
     const { default: Home } = await import('../Home');
     render(<Home />);
@@ -125,6 +183,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore calls restartCoreProcess and resets state on success (lines 78-81, 85)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
+    connectivityErrorsProbe.current = {};
 
     restartCoreProcessMock.mockResolvedValueOnce(undefined);
 
@@ -146,6 +205,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore shows error message when restartCoreProcess throws (lines 78-83, 202)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
+    connectivityErrorsProbe.current = {};
 
     restartCoreProcessMock.mockRejectedValueOnce(new Error('sidecar not found'));
 
@@ -160,6 +220,7 @@ describe('Home page — handleRestartCore and blocking state rendering', () => {
 
   it('handleRestartCore shows string error when restartCoreProcess throws a non-Error (lines 83)', async () => {
     useAppSelectorMock.mockReturnValue('core-unreachable');
+    connectivityErrorsProbe.current = {};
 
     restartCoreProcessMock.mockRejectedValueOnce('raw string error');
 

@@ -376,7 +376,16 @@ pub(crate) async fn reset_local_data_for_paths(
 
 /// Serializes the current configuration into a JSON snapshot for the UI.
 pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
-    let value = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    if let Some(youpet) = value.get_mut("youpet").and_then(|value| value.as_object_mut()) {
+        let token_set = youpet
+            .get("service_token")
+            .and_then(|value| value.as_str())
+            .map(|token| !token.trim().is_empty())
+            .unwrap_or(false);
+        youpet.remove("service_token");
+        youpet.insert("service_token_set".to_string(), json!(token_set));
+    }
     Ok(json!({
         "config": value,
         "workspace_dir": config.workspace_dir.display().to_string(),

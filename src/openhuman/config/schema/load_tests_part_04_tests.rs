@@ -375,6 +375,35 @@ allowed_users = ["@admin"]
     );
 }
 
+#[tokio::test]
+async fn youpet_service_token_encrypted_on_save_decrypted_on_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    let known_secret = "youpet-service-token-sensitive";
+    let cfg = Config {
+        config_path: config_path.clone(),
+        workspace_dir,
+        secrets: crate::openhuman::config::schema::SecretsConfig { encrypt: true },
+        youpet: crate::openhuman::config::schema::YouPetConfig {
+            service_token: Some(known_secret.to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    cfg.save().await.unwrap();
+
+    let raw_contents = std::fs::read_to_string(&config_path).expect("config.toml should exist");
+    assert!(!raw_contents.contains(known_secret));
+    assert!(raw_contents.contains("service_token = \"enc"));
+
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+    assert_eq!(reloaded.youpet.service_token.as_deref(), Some(known_secret));
+}
+
 /// Regression for keyring-loss scenario: if a channel token was encrypted with
 /// a key that is no longer accessible (e.g. keyring reset, machine migration),
 /// config load must NOT fail hard. The field should be cleared and a warning

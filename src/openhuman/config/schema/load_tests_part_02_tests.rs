@@ -179,6 +179,55 @@ fn env_overlay_output_language_accepts_non_empty_value() {
 }
 
 #[test]
+fn env_overlay_youpet_config_trims_and_ignores_blanks() {
+    let mut cfg = Config::default();
+    cfg.youpet.core_api_url = "http://old.example.test".into();
+    cfg.youpet.service_token = Some("old-token".into());
+    cfg.youpet.workbench_actor_id = "old-actor".into();
+    cfg.youpet.operator_user_id = Some("old-operator".into());
+    cfg.youpet.tenant_id = Some("old-tenant".into());
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("YOUPET_CORE_API_URL", " https://core.example.test/// ")
+            .with("YOUPET_SERVICE_TOKEN", "  svc-token  ")
+            .with("YOUPET_WORKBENCH_ACTOR_ID", "  workbench-actor  ")
+            .with("YOUPET_OPERATOR_USER_ID", "  operator-user-id  ")
+            .with(
+                "YOUPET_TENANT_ID",
+                "  20000000-0000-0000-0000-000000000001  ",
+            ),
+    );
+
+    assert_eq!(cfg.youpet.core_api_url, "https://core.example.test");
+    assert_eq!(cfg.youpet.service_token.as_deref(), Some("svc-token"));
+    assert_eq!(cfg.youpet.workbench_actor_id, "workbench-actor");
+    assert_eq!(
+        cfg.youpet.operator_user_id.as_deref(),
+        Some("operator-user-id")
+    );
+    assert_eq!(
+        cfg.youpet.tenant_id.as_deref(),
+        Some("20000000-0000-0000-0000-000000000001")
+    );
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("YOUPET_CORE_API_URL", "   ")
+            .with("YOUPET_SERVICE_TOKEN", "   ")
+            .with("YOUPET_WORKBENCH_ACTOR_ID", "   ")
+            .with("YOUPET_OPERATOR_USER_ID", "   ")
+            .with("YOUPET_TENANT_ID", "   "),
+    );
+
+    assert_eq!(cfg.youpet.core_api_url, "https://core.example.test");
+    assert_eq!(cfg.youpet.service_token.as_deref(), Some("svc-token"));
+    assert_eq!(cfg.youpet.workbench_actor_id, "workbench-actor");
+    assert!(cfg.youpet.operator_user_id.is_none());
+    assert!(cfg.youpet.tenant_id.is_none());
+}
+
+#[test]
 fn env_overlay_reasoning_enabled_recognises_truthy_falsy_and_ignores_garbage() {
     let mut cfg = Config::default();
     cfg.runtime.reasoning_enabled = None;

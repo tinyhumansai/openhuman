@@ -16,6 +16,43 @@ import { resolveUserName } from '../utils/userName';
 /** @deprecated Use `resolveUserName` from `utils/userName`. Kept for back-compat. */
 export const resolveHomeUserName = resolveUserName;
 
+type TranslateFn = (key: string, fallback?: string) => string;
+
+function registryCardCopy(
+  t: TranslateFn,
+  blocking: 'internet-offline' | 'core-unreachable' | 'backend-only' | 'ok',
+  coreError: string | undefined
+) {
+  if (blocking === 'core-unreachable') {
+    const normalized = coreError?.toLowerCase() ?? '';
+    if (normalized.includes('config missing')) {
+      return {
+        title: t('home.coreRegistriesBlockedTitle'),
+        description: t('home.coreRegistriesBlockedMissingDescription'),
+      };
+    }
+    if (normalized.includes('config invalid')) {
+      return {
+        title: t('home.coreRegistriesBlockedTitle'),
+        description: t('home.coreRegistriesBlockedInvalidDescription'),
+      };
+    }
+    return {
+      title: t('home.coreRegistriesBlockedTitle'),
+      description: t('home.coreRegistriesBlockedBridgeDescription'),
+    };
+  }
+
+  if (blocking === 'internet-offline') {
+    return {
+      title: t('home.coreRegistriesBlockedTitle'),
+      description: t('home.coreRegistriesBlockedOfflineDescription'),
+    };
+  }
+
+  return { title: t('home.coreRegistries'), description: t('home.coreRegistriesDescription') };
+}
+
 const Home = () => {
   const { t } = useT();
   const { user } = useUser();
@@ -38,6 +75,7 @@ const Home = () => {
   // failure mode now has its own copy so the user knows *which* link is
   // broken instead of seeing a single conflated "device offline" line.
   const blocking = useAppSelector(selectBlockingState);
+  const connectivityErrors = useAppSelector(state => state.connectivity.lastError);
   const [isRestartingCore, setIsRestartingCore] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
 
@@ -67,6 +105,7 @@ const Home = () => {
     'core-unreachable': t('home.statusCoreUnreachable'),
     'internet-offline': t('home.statusInternetOffline'),
   }[blocking];
+  const registriesCard = registryCardCopy(t, blocking, connectivityErrors.core);
 
   // Open in-app chat.
   const handleStartCooking = async () => {
@@ -211,6 +250,92 @@ const Home = () => {
             {t('home.askAssistant')}
           </Button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => navigate('/registries')}
+          className="mt-3 w-full rounded-2xl border border-line bg-surface px-4 py-4 text-left shadow-soft transition-colors hover:border-primary-500/40 hover:bg-surface-muted">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary-500/10 text-primary-500">
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 7.5h16M4 12h16M4 16.5h16M6.75 5.25v13.5M12 5.25v13.5M17.25 5.25v13.5"
+                />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-content">{registriesCard.title}</div>
+              <div className="mt-1 text-xs leading-relaxed text-content-muted">
+                {registriesCard.description}
+              </div>
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigate('/workbench')}
+          className="mt-3 w-full rounded-2xl border border-line bg-surface px-4 py-4 text-left shadow-soft transition-colors hover:border-primary-500/40 hover:bg-surface-muted">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h10M4 18h7" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-content">{t('home.youpetWorkbench')}</div>
+              <div className="mt-1 text-xs leading-relaxed text-content-muted">
+                {t('home.youpetWorkbenchDescription')}
+              </div>
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigate('/action-requests')}
+          data-testid="home-action-request-inbox"
+          className="mt-3 w-full rounded-2xl border border-line bg-surface px-4 py-4 text-left shadow-soft transition-colors hover:border-primary-500/40 hover:bg-surface-muted">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-600">
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                viewBox="0 0 24 24"
+                aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-content">
+                {t('home.youpetActionRequests')}
+              </div>
+              <div className="mt-1 text-xs leading-relaxed text-content-muted">
+                {t('home.youpetActionRequestsDescription')}
+              </div>
+            </div>
+          </div>
+        </button>
 
         <DiscordBanner />
 

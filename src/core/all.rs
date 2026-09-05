@@ -1021,6 +1021,13 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         DomainGroup::Mcp,
         crate::openhuman::mcp::audit::all_mcp_audit_internal_controllers(),
     );
+    // Desktop-only YouPet bridge controllers: token-owned registry/action-request
+    // calls the renderer needs, intentionally hidden from agent discovery.
+    push(
+        &mut controllers,
+        DomainGroup::Desktop,
+        crate::openhuman::youpet::all_youpet_internal_controllers(),
+    );
     // Loadable native modules: list/status and an explicit load. Read-only apart
     // from that load, and it cannot name an artifact — the loadable set is
     // compiled into `modules::registry`, so this namespace can start a module

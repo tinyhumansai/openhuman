@@ -275,3 +275,92 @@ export const userScopedStorage = {
     }
   },
 };
+
+/**
+ * Synchronous, verified user-scoped storage for durable non-Redux client state
+ * (e.g. ActionRequest idempotency intents).
+ *
+ * Semantics match the repository user-scoping rules:
+ * - physical keys are `${activeUserId}:${logicalKey}`
+ * - no authenticated user ⇒ fail closed (no shared fallback namespace)
+ * - writes are round-trip verified so silent no-ops cannot pretend durability
+ *
+ * Read outcomes are distinct (critical for retry-key identity):
+ * - `null` means a successful read that found no value
+ * - backend/read exceptions throw `user_scoped_storage_read_failed`
+ *   (never collapsed into `null`, which would look like “no prior intent”)
+ *
+ * Unlike `userScopedStorage` (async, swallows write errors for redux-persist),
+ * this adapter throws when durability cannot be guaranteed so callers can
+ * block side-effecting mutations.
+ */
+export interface VerifiedUserScopedStorage {
+  hasActiveUser(): boolean;
+  /** `null` only when the key is absent after a successful read. */
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+export function createVerifiedUserScopedStorage(options?: {
+  /** Override for tests; defaults to `window.localStorage`. */
+  backend?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /** Override active-user lookup (defaults to `getActiveUserId`). */
+  resolveUserId?: () => string | null;
+}): VerifiedUserScopedStorage {
+  const backend = options?.backend ?? {
+    getItem: (key: string) => localStorage.getItem(key),
+    setItem: (key: string, value: string) => localStorage.setItem(key, value),
+    removeItem: (key: string) => localStorage.removeItem(key),
+  };
+  const resolveUserId = options?.resolveUserId ?? getActiveUserId;
+
+  return {
+    hasActiveUser() {
+      const id = resolveUserId();
+      return typeof id === 'string' && id.trim().length > 0;
+    },
+    getItem(key) {
+      const userId = resolveUserId();
+      if (!userId || !userId.trim()) {
+        throw new Error('user_scoped_storage_no_active_user');
+      }
+      try {
+        return backend.getItem(`${userId}:${key}`);
+      } catch (err) {
+        // Distinguish "key absent" (null) from "storage unreadable" (throw).
+        // Collapsing both into null would rotate idempotency keys on retry.
+        if (err instanceof Error && err.message === 'user_scoped_storage_read_failed') {
+          throw err;
+        }
+        throw new Error('user_scoped_storage_read_failed');
+      }
+    },
+    setItem(key, value) {
+      const userId = resolveUserId();
+      if (!userId || !userId.trim()) {
+        throw new Error('user_scoped_storage_no_active_user');
+      }
+      const ns = `${userId}:${key}`;
+      backend.setItem(ns, value);
+      let roundTrip: string | null;
+      try {
+        roundTrip = backend.getItem(ns);
+      } catch {
+        throw new Error('user_scoped_storage_verify_failed');
+      }
+      if (roundTrip !== value) {
+        throw new Error('user_scoped_storage_verify_failed');
+      }
+    },
+    removeItem(key) {
+      const userId = resolveUserId();
+      if (!userId || !userId.trim()) return;
+      try {
+        backend.removeItem(`${userId}:${key}`);
+      } catch {
+        // best-effort delete
+      }
+    },
+  };
+}

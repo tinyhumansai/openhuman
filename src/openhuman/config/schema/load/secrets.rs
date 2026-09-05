@@ -118,6 +118,11 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
         "search.querit.api_key",
     )?;
     decrypt_optional_secret(&store, &mut config.search.exa.api_key, "search.exa.api_key")?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.youpet.service_token,
+        "youpet.service_token",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -222,6 +227,11 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         "search.querit.api_key",
     )?;
     encrypt_optional_secret(&store, &mut config.search.exa.api_key, "search.exa.api_key")?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.youpet.service_token,
+        "youpet.service_token",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {

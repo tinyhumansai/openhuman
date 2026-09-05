@@ -244,6 +244,7 @@ if should_run_suite "navigation"; then
   run "test/e2e/specs/navigation-settings-panels.spec.ts"     "navigation-settings"       "navigation"
   run "test/e2e/specs/command-palette.spec.ts"                "command-palette"           "navigation"
   run "test/e2e/specs/channels-smoke.spec.ts"                 "channels-smoke"            "navigation"
+  run "test/e2e/specs/action-request-inbox.spec.ts"           "action-request-inbox"      "navigation"
   run "test/e2e/specs/insights-dashboard.spec.ts"             "insights-dashboard"        "navigation"
   run "test/e2e/specs/guided-tour-gates.spec.ts"              "guided-tour-gates"         "navigation"
   _mini_summary "navigation"

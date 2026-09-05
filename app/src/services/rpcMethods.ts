@@ -61,6 +61,25 @@ export const CORE_RPC_METHODS = {
   toolRegistryDiagnostics: 'openhuman.tool_registry_diagnostics',
   healthSnapshot: 'openhuman.health_snapshot',
   healthSystemInfo: 'openhuman.health_system_info',
+  youpetListAlerts: 'openhuman.youpet_list_alerts',
+  youpetAckAlert: 'openhuman.youpet_ack_alert',
+  youpetResolveAlert: 'openhuman.youpet_resolve_alert',
+  youpetTraceAlert: 'openhuman.youpet_trace_alert',
+  youpetListActionRequests: 'openhuman.youpet_list_action_requests',
+  youpetGetActionRequest: 'openhuman.youpet_get_action_request',
+  youpetApproveActionRequest: 'openhuman.youpet_approve_action_request',
+  youpetRejectActionRequest: 'openhuman.youpet_reject_action_request',
+  youpetRegistryListAgents: 'openhuman.youpet_registry_list_agents',
+  youpetRegistryGetAgentVersion: 'openhuman.youpet_registry_get_agent_version',
+  youpetRegistryListToolDefinitions: 'openhuman.youpet_registry_list_tool_definitions',
+  youpetRegistryGetToolDefinitionVersion: 'openhuman.youpet_registry_get_tool_definition_version',
+  youpetRegistryListToolEnablements: 'openhuman.youpet_registry_list_tool_enablements',
+  youpetRegistryGetToolEnablementVersion: 'openhuman.youpet_registry_get_tool_enablement_version',
+  youpetRegistryListConnectorTypes: 'openhuman.youpet_registry_list_connector_types',
+  youpetRegistryGetConnectorTypeVersion: 'openhuman.youpet_registry_get_connector_type_version',
+  youpetRegistryListConnectorBindings: 'openhuman.youpet_registry_list_connector_bindings',
+  // prettier-ignore
+  youpetRegistryGetConnectorBindingVersion: 'openhuman.youpet_registry_get_connector_binding_version',
 } as const;
 
 type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];

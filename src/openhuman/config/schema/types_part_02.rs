@@ -179,6 +179,7 @@ impl Default for Config {
             subconscious: crate::openhuman::config::schema::SubconsciousConfig::default(),
             cron: CronConfig::default(),
             task_sources: TaskSourcesConfig::default(),
+            youpet: YouPetConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             memory_tree: MemoryTreeConfig::default(),

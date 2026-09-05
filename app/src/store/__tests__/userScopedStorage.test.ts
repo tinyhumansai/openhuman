@@ -125,3 +125,50 @@ describe('userScopedStorage', () => {
     expect(stored).toContain('dark');
   });
 });
+
+describe('createVerifiedUserScopedStorage', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  test('null means successful miss; backend read throw is not collapsed to null', async () => {
+    const mod = await importModule();
+    mod.primeActiveUserId('user-v');
+
+    const store = mod.createVerifiedUserScopedStorage({
+      resolveUserId: () => 'user-v',
+      backend: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
+    });
+    expect(store.getItem('logical-key')).toBeNull();
+
+    const failing = mod.createVerifiedUserScopedStorage({
+      resolveUserId: () => 'user-v',
+      backend: {
+        getItem: () => {
+          throw new Error('disk io failed');
+        },
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+    });
+    expect(() => failing.getItem('logical-key')).toThrow('user_scoped_storage_read_failed');
+  });
+
+  test('throws when no active user rather than pretending the key is absent', async () => {
+    const mod = await importModule();
+    const store = mod.createVerifiedUserScopedStorage({
+      resolveUserId: () => null,
+      backend: {
+        getItem: () => {
+          throw new Error('should not be called');
+        },
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+    });
+    expect(() => store.getItem('any')).toThrow('user_scoped_storage_no_active_user');
+  });
+});

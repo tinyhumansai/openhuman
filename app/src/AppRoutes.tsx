@@ -5,9 +5,11 @@ import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import ForwardSearch from './components/routing/ForwardSearch';
+import CoreRegistriesPage from './features/coreRegistries/CoreRegistriesPage';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import ActionRequestInbox from './pages/ActionRequestInbox';
 import Activity from './pages/Activity';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
@@ -15,6 +17,7 @@ import AssistantUiDemoPage from './pages/dev/assistant-ui-demo';
 import UiGallery from './pages/dev/UiGallery';
 import FlowCanvasPage, { FlowCanvasDraftPage } from './pages/FlowCanvasPage';
 import FlowsPage from './pages/FlowsPage';
+import Home from './pages/Home';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
@@ -24,6 +27,7 @@ import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
+import Workbench from './pages/Workbench';
 import WorkflowsRun from './pages/WorkflowsRun';
 
 interface AppRoutesProps {
@@ -71,9 +75,23 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
       />
 
       {/* Protected routes */}
-      {/* Home is merged into the unified chat surface — /home redirects to /chat
-          (the chat's empty "new window" state is the former Home greeting). */}
-      <Route path="/home" element={<Navigate to="/chat" replace />} />
+      <Route
+        path="/home"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Home />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/registries"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <CoreRegistriesPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Human — the dedicated full-bleed mascot stage. The chat surface carries
           the same mascot docked on its composer; both read one set of mascot
@@ -207,6 +225,24 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Notifications />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/workbench"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Workbench />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/action-requests"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <ActionRequestInbox />
           </ProtectedRoute>
         }
       />

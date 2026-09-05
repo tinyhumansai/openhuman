@@ -376,6 +376,85 @@ fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
 }
 
 #[test]
+fn schema_for_rpc_method_finds_internal_youpet_methods() {
+    for (method, function) in [
+        ("openhuman.youpet_list_alerts", "list_alerts"),
+        ("openhuman.youpet_ack_alert", "ack_alert"),
+        ("openhuman.youpet_resolve_alert", "resolve_alert"),
+        ("openhuman.youpet_trace_alert", "trace_alert"),
+        (
+            "openhuman.youpet_list_action_requests",
+            "list_action_requests",
+        ),
+        ("openhuman.youpet_get_action_request", "get_action_request"),
+        (
+            "openhuman.youpet_approve_action_request",
+            "approve_action_request",
+        ),
+        (
+            "openhuman.youpet_reject_action_request",
+            "reject_action_request",
+        ),
+    ] {
+        let schema = schema_for_rpc_method(method)
+            .unwrap_or_else(|| panic!("{method} should be internally routable"));
+        assert_eq!(schema.namespace, "youpet");
+        assert_eq!(schema.function, function);
+    }
+}
+
+#[test]
+fn schema_for_rpc_method_finds_internal_youpet_registry_methods() {
+    for (method, function) in [
+        (
+            "openhuman.youpet_registry_list_agents",
+            "registry_list_agents",
+        ),
+        (
+            "openhuman.youpet_registry_get_agent_version",
+            "registry_get_agent_version",
+        ),
+        (
+            "openhuman.youpet_registry_list_tool_definitions",
+            "registry_list_tool_definitions",
+        ),
+        (
+            "openhuman.youpet_registry_get_tool_definition_version",
+            "registry_get_tool_definition_version",
+        ),
+        (
+            "openhuman.youpet_registry_list_tool_enablements",
+            "registry_list_tool_enablements",
+        ),
+        (
+            "openhuman.youpet_registry_get_tool_enablement_version",
+            "registry_get_tool_enablement_version",
+        ),
+        (
+            "openhuman.youpet_registry_list_connector_types",
+            "registry_list_connector_types",
+        ),
+        (
+            "openhuman.youpet_registry_get_connector_type_version",
+            "registry_get_connector_type_version",
+        ),
+        (
+            "openhuman.youpet_registry_list_connector_bindings",
+            "registry_list_connector_bindings",
+        ),
+        (
+            "openhuman.youpet_registry_get_connector_binding_version",
+            "registry_get_connector_binding_version",
+        ),
+    ] {
+        let schema = schema_for_rpc_method(method)
+            .unwrap_or_else(|| panic!("{method} should be internally routable"));
+        assert_eq!(schema.namespace, "youpet");
+        assert_eq!(schema.function, function);
+    }
+}
+
+#[test]
 fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
     assert!(
         rpc_method_from_parts("mcp_audit", "list").is_none(),
@@ -389,6 +468,46 @@ fn rpc_method_from_parts_does_not_expose_internal_orchestration_pairing() {
         rpc_method_from_parts("orchestration_pairing", "link_session").is_none(),
         "pairing write RPCs must not appear in the public controller registry"
     );
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_youpet_methods() {
+    for function in [
+        "list_alerts",
+        "ack_alert",
+        "resolve_alert",
+        "trace_alert",
+        "list_action_requests",
+        "get_action_request",
+        "approve_action_request",
+        "reject_action_request",
+    ] {
+        assert!(
+            rpc_method_from_parts("youpet", function).is_none(),
+            "internal YouPet RPC must not appear in the public controller registry"
+        );
+    }
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_youpet_registry_methods() {
+    for function in [
+        "registry_list_agents",
+        "registry_get_agent_version",
+        "registry_list_tool_definitions",
+        "registry_get_tool_definition_version",
+        "registry_list_tool_enablements",
+        "registry_get_tool_enablement_version",
+        "registry_list_connector_types",
+        "registry_get_connector_type_version",
+        "registry_list_connector_bindings",
+        "registry_get_connector_binding_version",
+    ] {
+        assert!(
+            rpc_method_from_parts("youpet", function).is_none(),
+            "internal YouPet registry RPC must not appear in the public controller registry"
+        );
+    }
 }
 
 #[test]

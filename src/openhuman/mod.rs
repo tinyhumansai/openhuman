@@ -73,3 +73,4 @@ pub mod util;
 pub mod voice;
 pub mod web3;
 pub mod web_chat;
+pub mod youpet;

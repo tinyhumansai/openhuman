@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode, Uri};
+use axum::http::{header::AUTHORIZATION, HeaderMap, Method, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::StreamExt;
@@ -1088,6 +1088,269 @@ fn peel_logs_envelope(v: &Value) -> &Value {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct JsonRpcYouPetCapturedRequest {
+    method: Method,
+    path_and_query: String,
+    authorization: Option<String>,
+    actor: Option<String>,
+    idempotency_key: Option<String>,
+    body: Value,
+}
+
+type JsonRpcYouPetRequests = Arc<Mutex<Vec<JsonRpcYouPetCapturedRequest>>>;
+
+const JSON_RPC_YOUPET_TENANT_ID: &str = "20000000-0000-0000-0000-000000000001";
+const JSON_RPC_YOUPET_ACTION_REQUEST_ID: &str = "55555555-5555-4555-8555-555555555555";
+const JSON_RPC_YOUPET_OPERATOR_USER_ID: &str = "44444444-4444-4444-8444-444444444444";
+
+fn capture_json_rpc_youpet_request(
+    requests: &JsonRpcYouPetRequests,
+    method: Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    idempotency_key: Option<String>,
+    body: Value,
+) {
+    requests.lock().unwrap().push(JsonRpcYouPetCapturedRequest {
+        method,
+        path_and_query: uri
+            .path_and_query()
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| uri.path().to_string()),
+        authorization: headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        actor: headers
+            .get("x-actor-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        idempotency_key,
+        body,
+    });
+}
+
+fn sample_json_rpc_action_request_envelope() -> Value {
+    json!({
+        "action_request": {
+            "id": JSON_RPC_YOUPET_ACTION_REQUEST_ID,
+            "approval": { "state": "pending" },
+            "execution": { "state": "not_started" }
+        },
+        "row_version": 2,
+        "id": JSON_RPC_YOUPET_ACTION_REQUEST_ID,
+        "tenant_id": JSON_RPC_YOUPET_TENANT_ID,
+        "approval_state": "pending",
+        "execution_state": "not_started",
+        "policy_outcome": "require_approval",
+        "correlation_id": "corr-json-rpc",
+        "created_at": "2026-08-08T12:00:00Z",
+        "updated_at": "2026-08-08T12:01:00Z"
+    })
+}
+
+fn json_rpc_youpet_registry_cursor(kind: &str) -> String {
+    use base64::Engine as _;
+
+    let payload = match kind {
+        "agent" => json!({
+            "agent_id": "20000000-0000-4000-8000-000000000101",
+            "agent_key": "agent.alpha",
+            "tenant_id": "10000000-0000-4000-8000-000000000001",
+            "v": 1
+        }),
+        "tool_definition" => json!({
+            "definition_id": "30000000-0000-4000-8000-000000000101",
+            "tool_key": "tool.alpha",
+            "v": 1
+        }),
+        "connector_type" => json!({
+            "key": "wecom",
+            "kind": "connector_types",
+            "schema_version": 1,
+            "version": 2
+        }),
+        "connector_binding" => json!({
+            "key": "wecom-primary",
+            "kind": "connector_bindings",
+            "schema_version": 1,
+            "version": 11
+        }),
+        other => panic!("unsupported registry cursor fixture kind: {other}"),
+    };
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string())
+}
+
+fn sample_json_rpc_registry_agent_summary() -> Value {
+    json!({
+        "id": "agent-version-123",
+        "agent_key": "agent.alpha",
+        "version": 7,
+        "lifecycle_state": "active",
+        "configuration_fingerprint": "cfg_fp_123",
+        "owner_actor_type": "service",
+        "owner_actor_id": "openhuman",
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_agent_detail() -> Value {
+    json!({
+        "id": "agent-version-123",
+        "agent_key": "agent.alpha",
+        "version": 7,
+        "lifecycle_state": "active",
+        "configuration": {
+            "schema_version": 1,
+            "domain_key": "care-plan",
+            "owner": {
+                "actor_type": "service",
+                "actor_id": "openhuman"
+            },
+            "allowed_tool_refs": [
+                {
+                    "tool_key": "tool.alpha",
+                    "version": 3
+                }
+            ],
+            "knowledge_scope_refs": [
+                {
+                    "source_key": "care-notes",
+                    "trust_version": "2026-08-31",
+                    "access_scope": "tenant"
+                }
+            ],
+            "risk_policy_ref": {
+                "policy_id": "policy.alpha",
+                "policy_version": "2026-08-31"
+            }
+        },
+        "configuration_fingerprint": "cfg_fp_123",
+        "owner_actor_type": "service",
+        "owner_actor_id": "openhuman",
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_tool_definition_summary() -> Value {
+    json!({
+        "tool_key": "tool.alpha",
+        "version": 3,
+        "lifecycle_state": "active",
+        "definition_fingerprint": "def_fp_123",
+        "schema_version": 1,
+        "display_name": "Tool Alpha",
+        "description": "Reads records",
+        "tool_effect_class": "read_only",
+        "abstract_auth_scopes": ["records:read"],
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_tool_definition_detail() -> Value {
+    json!({
+        "tool_key": "tool.alpha",
+        "version": 3,
+        "lifecycle_state": "active",
+        "definition_fingerprint": "def_fp_123",
+        "schema_version": 1,
+        "display_name": "Tool Alpha",
+        "description": "Reads records",
+        "tool_effect_class": "read_only",
+        "abstract_auth_scopes": ["records:read"],
+        "input_schema": { "type": "object", "properties": { "query": { "type": "string" } } },
+        "output_schema": { "type": "object", "properties": { "items": { "type": "array" } } },
+        "timeout_defaults": { "soft_ms": 5000 },
+        "retry_contract": { "policy": "none" },
+        "audit_contract": { "mode": "metadata_only" },
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_tool_enablement() -> Value {
+    json!({
+        "tool_key": "tool.alpha",
+        "version": 5,
+        "lifecycle_state": "enabled",
+        "generation": 9,
+        "timeout_cap_ms": 15000,
+        "approval_required": false,
+        "allow_ttl_seconds": 600,
+        "audit_mode": "metadata_only",
+        "updated_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_connector_type_summary() -> Value {
+    json!({
+        "connector_key": "wecom",
+        "version": 2,
+        "lifecycle_state": "active",
+        "source_type": "wecom",
+        "connector_type_fingerprint": "conn_fp_123",
+        "capabilities": ["messages"],
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_connector_type_detail() -> Value {
+    json!({
+        "connector_key": "wecom",
+        "version": 2,
+        "lifecycle_state": "active",
+        "source_type": "wecom",
+        "connector_type_fingerprint": "conn_fp_123",
+        "capabilities": ["messages"],
+        "normalization_contracts": [
+            {
+                "evidence_family": "chat_message",
+                "kernel_event_type": "wecom.message",
+                "kernel_event_schema_version": 1
+            }
+        ],
+        "delivery_behavior": {
+            "mode": "push",
+            "retry": true
+        },
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_connector_binding_summary() -> Value {
+    json!({
+        "binding_key": "wecom-primary",
+        "version": 11,
+        "lifecycle_state": "active",
+        "connector_type_key": "wecom",
+        "connector_type_version": 2,
+        "connector_type_fingerprint": "conn_fp_123",
+        "enabled_capabilities": ["messages"],
+        "binding_fingerprint": "binding_fp_123",
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
+fn sample_json_rpc_registry_connector_binding_detail() -> Value {
+    json!({
+        "binding_key": "wecom-primary",
+        "version": 11,
+        "lifecycle_state": "active",
+        "connector_type_key": "wecom",
+        "connector_type_version": 2,
+        "connector_type_fingerprint": "conn_fp_123",
+        "provider_account": {
+            "namespace": "wecom",
+            "external_account_ref": "tenant-primary"
+        },
+        "config_ref": "cfg://wecom/primary",
+        "credential_ref": "secret://wecom/primary",
+        "enabled_capabilities": ["messages"],
+        "binding_fingerprint": "binding_fp_123",
+        "created_at": "2026-08-31T12:34:56Z"
+    })
+}
+
 /// Extract the `is_error` flag from a tool_call response, tolerating both the
 /// handler's snake_case `is_error` and the MCP protocol's camelCase `isError`.
 fn tool_call_is_error(v: &Value) -> Option<bool> {
@@ -1542,6 +1805,1030 @@ async fn json_rpc_harness_init_status_returns_snapshot_envelope() {
     );
 
     rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_bridge_is_internal_only_but_routable() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    const YOUPET_ALERT_ID: &str = "33333333-3333-4333-8333-333333333333";
+    const YOUPET_ACTOR_USER_ID: &str = "44444444-4444-4444-8444-444444444444";
+
+    #[derive(Clone, Default)]
+    struct YouPetCapture {
+        authorization: Arc<Mutex<Option<String>>>,
+        actor: Arc<Mutex<Option<String>>>,
+        actions: Arc<Mutex<Vec<(String, Value, Option<String>)>>>,
+        traces: Arc<Mutex<Vec<(String, Option<String>, Option<String>)>>>,
+    }
+
+    async fn list_alerts_handler(
+        State(capture): State<YouPetCapture>,
+        headers: HeaderMap,
+    ) -> Json<Value> {
+        *capture.authorization.lock().unwrap() = headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        *capture.actor.lock().unwrap() = headers
+            .get("x-actor-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        Json(json!({
+            "items": [{
+                "id": YOUPET_ALERT_ID,
+                "alert_type": "missed_checkin",
+                "severity": "high",
+                "related_type": "task_instance",
+                "related_id": "task-json-rpc",
+                "status": "open",
+                "created_at": "2026-06-01T00:00:00Z",
+                "context": null
+            }]
+        }))
+    }
+
+    async fn alert_action_handler(
+        State(capture): State<YouPetCapture>,
+        uri: Uri,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Json<Value> {
+        let parsed_body = if body.is_empty() {
+            Value::Object(Default::default())
+        } else {
+            serde_json::from_slice::<Value>(&body).expect("json action body")
+        };
+        capture.actions.lock().unwrap().push((
+            uri.path().to_string(),
+            parsed_body,
+            headers
+                .get("idempotency-key")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string),
+        ));
+        let status = if uri.path().ends_with("/resolve") {
+            "resolved"
+        } else {
+            "acknowledged"
+        };
+        Json(json!({
+            "id": YOUPET_ALERT_ID,
+            "alert_type": "missed_checkin",
+            "severity": "high",
+            "related_type": "task_instance",
+            "related_id": "task-json-rpc",
+            "status": status,
+            "created_at": "2026-06-01T00:00:00Z"
+        }))
+    }
+
+    async fn trace_alert_handler(
+        State(capture): State<YouPetCapture>,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> Json<Value> {
+        capture.traces.lock().unwrap().push((
+            uri.path().to_string(),
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string),
+            headers
+                .get("x-actor-id")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string),
+        ));
+        Json(json!({
+            "alert_id": YOUPET_ALERT_ID,
+            "partial": true,
+            "warnings": [{
+                "code": "trace_truncated",
+                "message": "Trace limited to 50 entries",
+                "source": "event_outbox"
+            }],
+            "entries": [{
+                "id": format!("alert:{YOUPET_ALERT_ID}"),
+                "occurred_at": "2026-06-01T00:00:00Z",
+                "kind": "alert_created",
+                "source": "alerts",
+                "title": "Alert created",
+                "detail": null,
+                "actor": { "type": "system", "id": null },
+                "related_type": "task_instance",
+                "related_id": "task-json-rpc",
+                "severity": "high",
+                "metadata": { "alert_type": "missed_checkin" }
+            }]
+        }))
+    }
+
+    let capture = YouPetCapture::default();
+    let ack_route = format!("/api/v1/alerts/{YOUPET_ALERT_ID}/ack");
+    let resolve_route = format!("/api/v1/alerts/{YOUPET_ALERT_ID}/resolve");
+    let trace_route = format!("/api/v1/workbench/alerts/{YOUPET_ALERT_ID}/trace");
+    let youpet_app = Router::new()
+        .route("/api/v1/workbench/alerts", get(list_alerts_handler))
+        .route(&ack_route, post(alert_action_handler))
+        .route(&resolve_route, post(alert_action_handler))
+        .route(&trace_route, get(trace_alert_handler))
+        .with_state(capture.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard = EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", YOUPET_ACTOR_USER_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let list = post_json_rpc(
+        &rpc_base,
+        2026_1,
+        "openhuman.youpet_list_alerts",
+        json!({ "status": "open" }),
+    )
+    .await;
+    let list_result = assert_no_jsonrpc_error(&list, "youpet_list_alerts");
+    assert_eq!(list_result["result"][0]["id"], json!(YOUPET_ALERT_ID));
+    assert_eq!(
+        capture.authorization.lock().unwrap().as_deref(),
+        Some("Bearer rpc-youpet-token")
+    );
+    assert_eq!(
+        capture.actor.lock().unwrap().as_deref(),
+        Some("rpc-workbench-actor")
+    );
+
+    let ack = post_json_rpc(
+        &rpc_base,
+        2026_2,
+        "openhuman.youpet_ack_alert",
+        json!({ "alertId": YOUPET_ALERT_ID }),
+    )
+    .await;
+    let ack_result = assert_no_jsonrpc_error(&ack, "youpet_ack_alert");
+    assert_eq!(ack_result["result"]["status"], json!("acknowledged"));
+
+    let resolve = post_json_rpc(
+        &rpc_base,
+        2026_3,
+        "openhuman.youpet_resolve_alert",
+        json!({
+            "alertId": YOUPET_ALERT_ID,
+            "idempotencyKey": "idem-json-rpc-resolve"
+        }),
+    )
+    .await;
+    let resolve_result = assert_no_jsonrpc_error(&resolve, "youpet_resolve_alert");
+    assert_eq!(resolve_result["result"]["status"], json!("resolved"));
+
+    let trace = post_json_rpc(
+        &rpc_base,
+        2026_4,
+        "openhuman.youpet_trace_alert",
+        json!({ "alertId": YOUPET_ALERT_ID }),
+    )
+    .await;
+    let trace_result = assert_no_jsonrpc_error(&trace, "youpet_trace_alert");
+    assert_eq!(trace_result["result"]["alert_id"], json!(YOUPET_ALERT_ID));
+    assert_eq!(
+        trace_result["result"]["entries"][0]["metadata"]["alert_type"],
+        json!("missed_checkin")
+    );
+
+    let actions = capture.actions.lock().unwrap();
+    assert_eq!(actions.len(), 2);
+    let (ack_path, ack_body, ack_key) = &actions[0];
+    assert_eq!(ack_path, &ack_route);
+    assert_eq!(ack_body["actor_user_id"], json!(YOUPET_ACTOR_USER_ID));
+    assert!(
+        ack_body.get("note").is_none(),
+        "JSON-RPC ack must omit absent note rather than serialize null"
+    );
+    assert!(
+        ack_key
+            .as_ref()
+            .and_then(|key| uuid::Uuid::parse_str(key).ok())
+            .is_some(),
+        "JSON-RPC ack without caller key must generate a UUID idempotency key"
+    );
+
+    let (resolve_path, resolve_body, resolve_key) = &actions[1];
+    assert_eq!(resolve_path, &resolve_route);
+    assert_eq!(resolve_body["actor_user_id"], json!(YOUPET_ACTOR_USER_ID));
+    assert!(
+        resolve_body.get("resolution").is_none(),
+        "JSON-RPC resolve must omit absent resolution rather than serialize null"
+    );
+    assert_eq!(resolve_key.as_deref(), Some("idem-json-rpc-resolve"));
+    drop(actions);
+
+    let traces = capture.traces.lock().unwrap();
+    assert_eq!(traces.len(), 1);
+    let (trace_path, trace_auth, trace_actor) = &traces[0];
+    assert_eq!(trace_path, &trace_route);
+    assert_eq!(trace_auth.as_deref(), Some("Bearer rpc-youpet-token"));
+    assert_eq!(trace_actor.as_deref(), Some("rpc-workbench-actor"));
+    drop(traces);
+
+    let tools = post_json_rpc(&rpc_base, 2026_5, "openhuman.tool_registry_list", json!({})).await;
+    let tool_list = assert_no_jsonrpc_error(&tools, "tool_registry_list");
+    let tool_ids = tool_list
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("tools array");
+    assert!(
+        tool_ids.iter().all(|tool| {
+            !tool
+                .get("tool_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .starts_with("youpet.")
+        }),
+        "YouPet token-bearing bridge must not be agent-tool discoverable"
+    );
+
+    rpc_join.abort();
+    youpet_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_action_request_list_routes_with_tenant_query() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    let requests: JsonRpcYouPetRequests = Default::default();
+    let youpet_app =
+        Router::new()
+            .route(
+                "/api/v1/action-requests",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_action_request_envelope()],
+                            "count": 1
+                        }))
+                    },
+                ),
+            )
+            .with_state(requests.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard =
+        EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", JSON_RPC_YOUPET_OPERATOR_USER_ID);
+    let _youpet_tenant_guard = EnvVarGuard::set("YOUPET_TENANT_ID", JSON_RPC_YOUPET_TENANT_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let list = post_json_rpc(
+        &rpc_base,
+        2026_6,
+        "openhuman.youpet_list_action_requests",
+        json!({
+            "approvalState": "pending",
+            "executionState": "not_started",
+            "limit": 25
+        }),
+    )
+    .await;
+    let list_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &list,
+        "youpet_list_action_requests",
+    ));
+    assert_eq!(
+        list_result[0]["id"],
+        json!(JSON_RPC_YOUPET_ACTION_REQUEST_ID)
+    );
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].method, Method::GET);
+    assert!(captured[0]
+        .path_and_query
+        .contains(&format!("tenant_id={JSON_RPC_YOUPET_TENANT_ID}")));
+    assert!(captured[0]
+        .path_and_query
+        .contains("approval_state=pending"));
+    assert!(captured[0]
+        .path_and_query
+        .contains("execution_state=not_started"));
+    assert!(captured[0].path_and_query.contains("limit=25"));
+    assert_eq!(
+        captured[0].authorization.as_deref(),
+        Some("Bearer rpc-youpet-token")
+    );
+    assert_eq!(captured[0].actor.as_deref(), Some("rpc-workbench-actor"));
+
+    rpc_join.abort();
+    youpet_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_action_request_get_routes_by_id_only() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    let requests: JsonRpcYouPetRequests = Default::default();
+    let route = format!("/api/v1/action-requests/{JSON_RPC_YOUPET_ACTION_REQUEST_ID}");
+    let youpet_app =
+        Router::new()
+            .route(
+                &route,
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_action_request_envelope())
+                    },
+                ),
+            )
+            .with_state(requests.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard =
+        EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", JSON_RPC_YOUPET_OPERATOR_USER_ID);
+    let _youpet_tenant_guard = EnvVarGuard::set("YOUPET_TENANT_ID", JSON_RPC_YOUPET_TENANT_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let get = post_json_rpc(
+        &rpc_base,
+        2026_7,
+        "openhuman.youpet_get_action_request",
+        json!({ "actionRequestId": JSON_RPC_YOUPET_ACTION_REQUEST_ID }),
+    )
+    .await;
+    let get_result = peel_logs_envelope(assert_no_jsonrpc_error(&get, "youpet_get_action_request"));
+    assert_eq!(get_result["id"], json!(JSON_RPC_YOUPET_ACTION_REQUEST_ID));
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].method, Method::GET);
+    assert_eq!(captured[0].path_and_query, route);
+    assert_eq!(
+        captured[0].authorization.as_deref(),
+        Some("Bearer rpc-youpet-token")
+    );
+    assert_eq!(captured[0].actor.as_deref(), Some("rpc-workbench-actor"));
+
+    rpc_join.abort();
+    youpet_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_approve_action_request_routes_exact_decision_body() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    let requests: JsonRpcYouPetRequests = Default::default();
+    let route = format!("/api/v1/action-requests/{JSON_RPC_YOUPET_ACTION_REQUEST_ID}/approve");
+    let youpet_app = Router::new()
+        .route(
+            &route,
+            post(
+                |State(requests): State<JsonRpcYouPetRequests>,
+                 uri: Uri,
+                 headers: HeaderMap,
+                 body: axum::body::Bytes| async move {
+                    let parsed_body =
+                        serde_json::from_slice::<Value>(&body).expect("approve body json");
+                    capture_json_rpc_youpet_request(
+                        &requests,
+                        Method::POST,
+                        &uri,
+                        &headers,
+                        headers
+                            .get("idempotency-key")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        parsed_body,
+                    );
+                    Json(sample_json_rpc_action_request_envelope())
+                },
+            ),
+        )
+        .with_state(requests.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard =
+        EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", JSON_RPC_YOUPET_OPERATOR_USER_ID);
+    let _youpet_tenant_guard = EnvVarGuard::set("YOUPET_TENANT_ID", JSON_RPC_YOUPET_TENANT_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let approve = post_json_rpc(
+        &rpc_base,
+        2026_8,
+        "openhuman.youpet_approve_action_request",
+        json!({
+            "actionRequestId": JSON_RPC_YOUPET_ACTION_REQUEST_ID,
+            "reason": "looks safe",
+            "expectedRowVersion": 2,
+            "idempotencyKey": "ar-approve-json-rpc"
+        }),
+    )
+    .await;
+    let approve_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &approve,
+        "youpet_approve_action_request",
+    ));
+    assert_eq!(
+        approve_result["id"],
+        json!(JSON_RPC_YOUPET_ACTION_REQUEST_ID)
+    );
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].method, Method::POST);
+    assert_eq!(captured[0].path_and_query, route);
+    assert_eq!(
+        captured[0].authorization.as_deref(),
+        Some("Bearer rpc-youpet-token")
+    );
+    assert_eq!(captured[0].actor.as_deref(), Some("rpc-workbench-actor"));
+    assert_eq!(
+        captured[0].idempotency_key.as_deref(),
+        Some("ar-approve-json-rpc")
+    );
+    assert_eq!(
+        captured[0].body,
+        json!({
+            "decided_by": { "type": "user", "id": JSON_RPC_YOUPET_OPERATOR_USER_ID },
+            "reason": "looks safe",
+            "expected_row_version": 2
+        })
+    );
+
+    rpc_join.abort();
+    youpet_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_reject_action_request_routes_exact_decision_body() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    let requests: JsonRpcYouPetRequests = Default::default();
+    let route = format!("/api/v1/action-requests/{JSON_RPC_YOUPET_ACTION_REQUEST_ID}/reject");
+    let youpet_app = Router::new()
+        .route(
+            &route,
+            post(
+                |State(requests): State<JsonRpcYouPetRequests>,
+                 uri: Uri,
+                 headers: HeaderMap,
+                 body: axum::body::Bytes| async move {
+                    let parsed_body =
+                        serde_json::from_slice::<Value>(&body).expect("reject body json");
+                    capture_json_rpc_youpet_request(
+                        &requests,
+                        Method::POST,
+                        &uri,
+                        &headers,
+                        headers
+                            .get("idempotency-key")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_string),
+                        parsed_body,
+                    );
+                    Json(sample_json_rpc_action_request_envelope())
+                },
+            ),
+        )
+        .with_state(requests.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard =
+        EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", JSON_RPC_YOUPET_OPERATOR_USER_ID);
+    let _youpet_tenant_guard = EnvVarGuard::set("YOUPET_TENANT_ID", JSON_RPC_YOUPET_TENANT_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let reject = post_json_rpc(
+        &rpc_base,
+        2026_9,
+        "openhuman.youpet_reject_action_request",
+        json!({
+            "actionRequestId": JSON_RPC_YOUPET_ACTION_REQUEST_ID,
+            "reason": "too risky",
+            "expectedRowVersion": 2,
+            "idempotencyKey": "ar-reject-json-rpc"
+        }),
+    )
+    .await;
+    let reject_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &reject,
+        "youpet_reject_action_request",
+    ));
+    assert_eq!(
+        reject_result["id"],
+        json!(JSON_RPC_YOUPET_ACTION_REQUEST_ID)
+    );
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].method, Method::POST);
+    assert_eq!(captured[0].path_and_query, route);
+    assert_eq!(
+        captured[0].authorization.as_deref(),
+        Some("Bearer rpc-youpet-token")
+    );
+    assert_eq!(captured[0].actor.as_deref(), Some("rpc-workbench-actor"));
+    assert_eq!(
+        captured[0].idempotency_key.as_deref(),
+        Some("ar-reject-json-rpc")
+    );
+    assert_eq!(
+        captured[0].body,
+        json!({
+            "decided_by": { "type": "user", "id": JSON_RPC_YOUPET_OPERATOR_USER_ID },
+            "reason": "too risky",
+            "expected_row_version": 2
+        })
+    );
+
+    rpc_join.abort();
+    youpet_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_youpet_registry_families_route_and_unwrap_payloads() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+
+    let requests: JsonRpcYouPetRequests = Default::default();
+    let agent_cursor = json_rpc_youpet_registry_cursor("agent");
+    let tool_definition_cursor = json_rpc_youpet_registry_cursor("tool_definition");
+    let connector_type_cursor = json_rpc_youpet_registry_cursor("connector_type");
+    let connector_binding_cursor = json_rpc_youpet_registry_cursor("connector_binding");
+
+    let youpet_app =
+        Router::new()
+            .route(
+                "/api/v1/kernel/agents",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_registry_agent_summary()],
+                            "next_cursor": null
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/agents/agent.alpha/versions/7",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_registry_agent_detail())
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/tool-definitions",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_registry_tool_definition_summary()],
+                            "next_cursor": null
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/tool-definitions/tool.alpha/versions/3",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_registry_tool_definition_detail())
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/tool-enablement",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_registry_tool_enablement()]
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/tool-enablement/tool.alpha/versions/5",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_registry_tool_enablement())
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/connector-types",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_registry_connector_type_summary()],
+                            "next_cursor": null
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/connector-types/wecom/versions/2",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_registry_connector_type_detail())
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/connector-bindings",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(json!({
+                            "items": [sample_json_rpc_registry_connector_binding_summary()],
+                            "next_cursor": null
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/kernel/connector-bindings/wecom-primary/versions/11",
+                get(
+                    |State(requests): State<JsonRpcYouPetRequests>,
+                     uri: Uri,
+                     headers: HeaderMap| async move {
+                        capture_json_rpc_youpet_request(
+                            &requests,
+                            Method::GET,
+                            &uri,
+                            &headers,
+                            None,
+                            Value::Null,
+                        );
+                        Json(sample_json_rpc_registry_connector_binding_detail())
+                    },
+                ),
+            )
+            .with_state(requests.clone());
+    let (youpet_addr, youpet_join) = serve_on_ephemeral(youpet_app).await;
+    let _youpet_url_guard =
+        EnvVarGuard::set("YOUPET_CORE_API_URL", &format!("http://{youpet_addr}"));
+    let _youpet_token_guard = EnvVarGuard::set("YOUPET_SERVICE_TOKEN", "rpc-youpet-token");
+    let _youpet_actor_guard = EnvVarGuard::set("YOUPET_WORKBENCH_ACTOR_ID", "rpc-workbench-actor");
+    let _youpet_operator_guard =
+        EnvVarGuard::set("YOUPET_OPERATOR_USER_ID", JSON_RPC_YOUPET_OPERATOR_USER_ID);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let agents = post_json_rpc(
+        &rpc_base,
+        2026_10,
+        "openhuman.youpet_registry_list_agents",
+        json!({ "limit": 50, "cursor": agent_cursor }),
+    )
+    .await;
+    let agents_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &agents,
+        "youpet_registry_list_agents",
+    ));
+    assert_eq!(agents_result["items"][0]["agent_key"], json!("agent.alpha"));
+
+    let agent = post_json_rpc(
+        &rpc_base,
+        2026_11,
+        "openhuman.youpet_registry_get_agent_version",
+        json!({ "agentKey": "agent.alpha", "version": 7 }),
+    )
+    .await;
+    let agent_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &agent,
+        "youpet_registry_get_agent_version",
+    ));
+    assert_eq!(
+        agent_result["configuration"]["domain_key"],
+        json!("care-plan")
+    );
+
+    let tool_definitions = post_json_rpc(
+        &rpc_base,
+        2026_12,
+        "openhuman.youpet_registry_list_tool_definitions",
+        json!({ "limit": 50, "cursor": tool_definition_cursor }),
+    )
+    .await;
+    let tool_definitions_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &tool_definitions,
+        "youpet_registry_list_tool_definitions",
+    ));
+    assert_eq!(
+        tool_definitions_result["items"][0]["tool_key"],
+        json!("tool.alpha")
+    );
+
+    let tool_definition = post_json_rpc(
+        &rpc_base,
+        2026_13,
+        "openhuman.youpet_registry_get_tool_definition_version",
+        json!({ "toolKey": "tool.alpha", "version": 3 }),
+    )
+    .await;
+    let tool_definition_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &tool_definition,
+        "youpet_registry_get_tool_definition_version",
+    ));
+    assert_eq!(
+        tool_definition_result["input_schema"]["properties"]["query"]["type"],
+        json!("string")
+    );
+
+    let tool_enablements = post_json_rpc(
+        &rpc_base,
+        2026_14,
+        "openhuman.youpet_registry_list_tool_enablements",
+        json!({}),
+    )
+    .await;
+    let tool_enablements_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &tool_enablements,
+        "youpet_registry_list_tool_enablements",
+    ));
+    assert_eq!(tool_enablements_result["items"][0]["generation"], json!(9));
+
+    let tool_enablement = post_json_rpc(
+        &rpc_base,
+        2026_15,
+        "openhuman.youpet_registry_get_tool_enablement_version",
+        json!({ "toolKey": "tool.alpha", "version": 5 }),
+    )
+    .await;
+    let tool_enablement_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &tool_enablement,
+        "youpet_registry_get_tool_enablement_version",
+    ));
+    assert_eq!(tool_enablement_result["audit_mode"], json!("metadata_only"));
+
+    let connector_types = post_json_rpc(
+        &rpc_base,
+        2026_16,
+        "openhuman.youpet_registry_list_connector_types",
+        json!({ "limit": 50, "cursor": connector_type_cursor }),
+    )
+    .await;
+    let connector_types_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &connector_types,
+        "youpet_registry_list_connector_types",
+    ));
+    assert_eq!(
+        connector_types_result["items"][0]["connector_key"],
+        json!("wecom")
+    );
+
+    let connector_type = post_json_rpc(
+        &rpc_base,
+        2026_17,
+        "openhuman.youpet_registry_get_connector_type_version",
+        json!({ "connectorKey": "wecom", "version": 2 }),
+    )
+    .await;
+    let connector_type_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &connector_type,
+        "youpet_registry_get_connector_type_version",
+    ));
+    assert_eq!(
+        connector_type_result["delivery_behavior"]["mode"],
+        json!("push")
+    );
+
+    let connector_bindings = post_json_rpc(
+        &rpc_base,
+        2026_18,
+        "openhuman.youpet_registry_list_connector_bindings",
+        json!({ "limit": 50, "cursor": connector_binding_cursor }),
+    )
+    .await;
+    let connector_bindings_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &connector_bindings,
+        "youpet_registry_list_connector_bindings",
+    ));
+    assert_eq!(
+        connector_bindings_result["items"][0]["binding_key"],
+        json!("wecom-primary")
+    );
+
+    let connector_binding = post_json_rpc(
+        &rpc_base,
+        2026_19,
+        "openhuman.youpet_registry_get_connector_binding_version",
+        json!({ "bindingKey": "wecom-primary", "version": 11 }),
+    )
+    .await;
+    let connector_binding_result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &connector_binding,
+        "youpet_registry_get_connector_binding_version",
+    ));
+    assert_eq!(
+        connector_binding_result["provider_account"]["namespace"],
+        json!("wecom")
+    );
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.path_and_query.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            format!("/api/v1/kernel/agents?limit=50&cursor={agent_cursor}"),
+            "/api/v1/kernel/agents/agent.alpha/versions/7".to_string(),
+            format!("/api/v1/kernel/tool-definitions?limit=50&cursor={tool_definition_cursor}"),
+            "/api/v1/kernel/tool-definitions/tool.alpha/versions/3".to_string(),
+            "/api/v1/kernel/tool-enablement".to_string(),
+            "/api/v1/kernel/tool-enablement/tool.alpha/versions/5".to_string(),
+            format!("/api/v1/kernel/connector-types?limit=50&cursor={connector_type_cursor}"),
+            "/api/v1/kernel/connector-types/wecom/versions/2".to_string(),
+            format!("/api/v1/kernel/connector-bindings?limit=50&cursor={connector_binding_cursor}"),
+            "/api/v1/kernel/connector-bindings/wecom-primary/versions/11".to_string(),
+        ]
+    );
+    assert!(requests.iter().all(|request| request.method == Method::GET));
+    assert!(requests
+        .iter()
+        .all(|request| request.authorization.as_deref() == Some("Bearer rpc-youpet-token")));
+    assert!(requests
+        .iter()
+        .all(|request| request.actor.as_deref() == Some("rpc-workbench-actor")));
+
+    rpc_join.abort();
+    youpet_join.abort();
 }
 
 #[tokio::test]
@@ -3135,8 +4422,7 @@ async fn json_rpc_thread_generate_title_falls_back_when_provider_path_is_unavail
 
     assert_ne!(generated_title, original_title);
     assert_eq!(
-        generated_title,
-        "summarize latest five",
+        generated_title, "summarize latest five",
         "fallback title should be the 3-word shape derived from the first user message (filler stripped), got: {generated_title}"
     );
 
@@ -6487,7 +7773,9 @@ async fn json_rpc_wallet_solana_prepare_execute_round_trips() {
     );
     assert_eq!(
         exec_result.get("transactionHash").and_then(Value::as_str),
-        Some("5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3"),
+        Some(
+            "5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3"
+        ),
     );
 
     mock_join.abort();

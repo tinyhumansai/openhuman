@@ -36,6 +36,38 @@ function loadLocale(locale: string): Record<string, string> {
 }
 
 const enFlat = enAggregate as Record<string, string>;
+const REQUIRED_REGISTRY_INSPECTION_KEYS = [
+  'home.coreRegistries',
+  'home.coreRegistriesDescription',
+  'home.coreRegistriesBlockedTitle',
+  'home.coreRegistriesBlockedMissingDescription',
+  'home.coreRegistriesBlockedInvalidDescription',
+  'home.coreRegistriesBlockedBridgeDescription',
+  'home.coreRegistriesBlockedOfflineDescription',
+  'registries.page.eyebrow',
+  'registries.page.title',
+  'registries.page.description',
+  'registries.page.retry',
+  'registries.detail.empty',
+  'registries.detail.copyFingerprint',
+  'registries.drawer.title',
+] as const;
+
+function isExplicitTechnicalLiteral(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === '') return true;
+  if (!/[A-Za-z]{2,}/.test(trimmed)) return true;
+  if (/^\{[^}]*\}[%s]?$/.test(trimmed)) return true;
+  if (/^https?:\/\//.test(trimmed)) return true;
+  if (
+    !/\s/.test(trimmed) &&
+    /[0-9._:/@+%{}#-]/.test(trimmed) &&
+    /^[A-Za-z0-9._:/@+%·✓•…#—–{}'-]+$/.test(trimmed)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 describe('i18n coverage', () => {
   it.each(LOCALES)('locale %s has a translation file', locale => {
@@ -69,4 +101,31 @@ describe('i18n coverage', () => {
     const flat = locale === 'en' ? enFlat : loadLocale(locale);
     expect(flat['settings.search.engineManagedDesc']).toContain('Exa');
   });
+
+  it('registry inspection keys exist in English', () => {
+    for (const key of REQUIRED_REGISTRY_INSPECTION_KEYS) {
+      expect(enFlat[key]).toBeDefined();
+    }
+  });
+
+  it.each(LOCALES)('locale %s includes the registry inspection keys', locale => {
+    const flat = loadLocale(locale);
+    for (const key of REQUIRED_REGISTRY_INSPECTION_KEYS) {
+      expect(flat[key]).toBeDefined();
+    }
+  });
+
+  it.each(LOCALES)(
+    'locale %s translates ordinary registry inspection values instead of copying English',
+    locale => {
+      const flat = loadLocale(locale);
+      const identicalEnglish = Object.keys(enFlat).filter(
+        key =>
+          (key.startsWith('home.coreRegistries') || key.startsWith('registries.')) &&
+          flat[key] === enFlat[key] &&
+          !isExplicitTechnicalLiteral(flat[key])
+      );
+      expect(identicalEnglish).toEqual([]);
+    }
+  );
 });

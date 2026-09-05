@@ -4,6 +4,46 @@ import { describe, expect, test } from 'vitest';
 
 import { CORE_RPC_METHODS, LEGACY_METHOD_ALIASES, normalizeRpcMethod } from '../rpcMethods';
 
+const EXPECTED_REGISTRY_METHODS = {
+  youpetRegistryListAgents: 'openhuman.youpet_registry_list_agents',
+  youpetRegistryGetAgentVersion: 'openhuman.youpet_registry_get_agent_version',
+  youpetRegistryListToolDefinitions: 'openhuman.youpet_registry_list_tool_definitions',
+  youpetRegistryGetToolDefinitionVersion: 'openhuman.youpet_registry_get_tool_definition_version',
+  youpetRegistryListToolEnablements: 'openhuman.youpet_registry_list_tool_enablements',
+  youpetRegistryGetToolEnablementVersion: 'openhuman.youpet_registry_get_tool_enablement_version',
+  youpetRegistryListConnectorTypes: 'openhuman.youpet_registry_list_connector_types',
+  youpetRegistryGetConnectorTypeVersion: 'openhuman.youpet_registry_get_connector_type_version',
+  youpetRegistryListConnectorBindings: 'openhuman.youpet_registry_list_connector_bindings',
+  youpetRegistryGetConnectorBindingVersion:
+    'openhuman.youpet_registry_get_connector_binding_version',
+} as const;
+
+function parseCoreRpcMethodsFromSource(): Record<string, string> {
+  const source = fs.readFileSync(path.resolve(__dirname, '../rpcMethods.ts'), 'utf8');
+  const start = source.indexOf('export const CORE_RPC_METHODS = {');
+  const end = source.indexOf('} as const;', start);
+
+  if (start === -1 || end === -1) {
+    throw new Error('CORE_RPC_METHODS source block not found');
+  }
+
+  const body = source
+    .slice(start + 'export const CORE_RPC_METHODS = {'.length, end)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('//'));
+
+  return Object.fromEntries(
+    body.map(line => {
+      const entry = line.match(/^([A-Za-z0-9]+):\s*(['"])(.+)\2,$/);
+      if (!entry) {
+        throw new Error(`CORE_RPC_METHODS entry is not a single-line quoted value: ${line}`);
+      }
+      return [entry[1], entry[3]];
+    })
+  );
+}
+
 describe('rpcMethods catalog', () => {
   describe('normalizeRpcMethod', () => {
     test('resolves all legacy aliases to their canonical core method', () => {
@@ -42,6 +82,21 @@ describe('rpcMethods catalog', () => {
     expect(LEGACY_METHOD_ALIASES['openhuman.workspace_onboarding_flag_set']).toBe(
       CORE_RPC_METHODS.configWorkspaceOnboardingFlagSet
     );
+  });
+
+  test('registers all ten Core Registries RPC methods with the Rust spellings', () => {
+    expect(
+      Object.fromEntries(
+        Object.keys(EXPECTED_REGISTRY_METHODS).map(key => [
+          key,
+          CORE_RPC_METHODS[key as keyof typeof EXPECTED_REGISTRY_METHODS],
+        ])
+      )
+    ).toEqual(EXPECTED_REGISTRY_METHODS);
+  });
+
+  test('keeps every CORE_RPC_METHODS entry parseable as a single-line quoted source value', () => {
+    expect(parseCoreRpcMethodsFromSource()).toEqual(CORE_RPC_METHODS);
   });
 
   describe('MCP client legacy alias resolution (Sentry CORE-RUST-DW/DV/DT/DS/DR)', () => {
@@ -144,33 +199,47 @@ describe('rpcMethods catalog', () => {
       return [fs.readFileSync(abs, 'utf8'), ...parts].join('\n');
     };
 
+    const configSchemaSource = readWithParts(
+      '../../../../src/openhuman/config/schemas/schema_defs.rs'
+    );
+    const inferenceProviderSchemaSource = readWithParts(
+      '../../../../src/openhuman/inference/provider/schemas.rs'
+    );
+    const inferenceSchemaSource = readWithParts('../../../../src/openhuman/inference/schemas.rs');
+    const inferenceLocalSchemaSource = readWithParts(
+      '../../../../src/openhuman/inference/local/schemas.rs'
+    );
+    const embeddingsSchemaSource = readWithParts(
+      '../../../../src/openhuman/inference/embeddings/schemas.rs'
+    );
+    const mcpRegistrySchemaSource = readWithParts(
+      '../../../../src/openhuman/mcp/registry/schemas.rs'
+    );
+    const toolRegistrySchemaSource = readWithParts(
+      '../../../../src/openhuman/tools/registry/schemas.rs'
+    );
+    const healthSchemaSource = readWithParts(
+      '../../../../src/openhuman/platform/health/schemas.rs'
+    );
+    const youpetSchemaSource = readWithParts('../../../../src/openhuman/youpet/schemas.rs');
+    const youpetRegistrySchemaSource = readWithParts(
+      '../../../../src/openhuman/youpet/registry/schemas.rs'
+    );
+    const channelsSchemaSource = readWithParts(
+      '../../../../src/openhuman/channels/controllers/schemas.rs'
+    );
     const schemaSources = [
-      readWithParts('../../../../src/openhuman/config/schemas/schema_defs.rs'),
-      readWithParts('../../../../src/openhuman/inference/provider/schemas.rs'),
-      readWithParts('../../../../src/openhuman/inference/schemas.rs'),
-      readWithParts('../../../../src/openhuman/inference/local/schemas.rs'),
-      readWithParts('../../../../src/openhuman/inference/embeddings/schemas.rs'),
-      readWithParts('../../../../src/openhuman/mcp/registry/schemas.rs'),
-      readWithParts('../../../../src/openhuman/tools/registry/schemas.rs'),
-      readWithParts('../../../../src/openhuman/platform/health/schemas.rs'),
-      readWithParts('../../../../src/openhuman/channels/controllers/schemas.rs'),
-      // The channels_* namespace/function literals now live in the vendored
-      // tinychannels workspace (`ChannelControllerSchema`), not in the thin
-      // `src/openhuman/channels/controllers/schemas.rs` adapter above, which
-      // only converts from it (#4557 "Use tinychannels provider
-      // implementations") — read both so this drift guard still sees them.
-      //
-      // Controller metadata is contract, so it lives in the `tinychannels-bus`
-      // crate rather than the implementation crate. `readFileSync` throws on a
-      // missing path, which is what we want: if this file moves again the guard
-      // fails loudly instead of silently checking a shorter corpus and passing.
-      fs.readFileSync(
-        path.resolve(
-          __dirname,
-          '../../../../vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs'
-        ),
-        'utf8'
-      ),
+      configSchemaSource,
+      inferenceProviderSchemaSource,
+      inferenceSchemaSource,
+      inferenceLocalSchemaSource,
+      embeddingsSchemaSource,
+      mcpRegistrySchemaSource,
+      toolRegistrySchemaSource,
+      healthSchemaSource,
+      youpetSchemaSource,
+      youpetRegistrySchemaSource,
+      channelsSchemaSource,
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {
@@ -189,12 +258,20 @@ describe('rpcMethods catalog', () => {
                 ? 'health'
                 : methodRoot.startsWith('channels_')
                   ? 'channels'
-                  : methodRoot.startsWith('tool_registry_')
-                    ? 'tool_registry'
-                    : 'config';
+                  : methodRoot.startsWith('youpet_registry_')
+                    ? 'youpet'
+                    : methodRoot.startsWith('youpet_')
+                      ? 'youpet'
+                      : methodRoot.startsWith('tool_registry_')
+                        ? 'tool_registry'
+                        : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
-      expect(schemaSources).toContain(`namespace: "${namespace}"`);
-      expect(schemaSources).toContain(`function: "${fnName}"`);
+      if (namespace === 'channels') {
+        expect(channelsSchemaSource).toContain(`schemas("${fnName}")`);
+      } else {
+        expect(schemaSources).toContain(`namespace: "${namespace}"`);
+        expect(schemaSources).toContain(`function: "${fnName}"`);
+      }
     }
   });
 });

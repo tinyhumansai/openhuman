@@ -85,7 +85,6 @@ function landingFor(entry: string) {
 // is added there and not here, `every redirect in the route table is covered`
 // below fails — the list cannot silently fall behind the code.
 const REDIRECTS: Array<{ from: string; pathname: string; search: string }> = [
-  { from: '/home', pathname: '/chat', search: '' },
   { from: '/activity', pathname: '/settings/notifications', search: '' },
   { from: '/intelligence', pathname: '/settings/notifications', search: '' },
   { from: '/skills', pathname: '/connections', search: '' },

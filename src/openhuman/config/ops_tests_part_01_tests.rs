@@ -331,6 +331,22 @@ fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     assert!(ws.contains(tmp.path().to_str().unwrap_or("")));
 }
 
+#[test]
+fn snapshot_config_json_masks_youpet_service_token() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = Config::default();
+    cfg.workspace_dir = tmp.path().join("workspace");
+    cfg.config_path = tmp.path().join("config.toml");
+    cfg.youpet.service_token = Some("youpet-secret-token".into());
+
+    let snap = snapshot_config_json(&cfg).expect("snapshot should succeed");
+    let youpet = &snap["config"]["youpet"];
+
+    assert_eq!(youpet["service_token_set"], true);
+    assert!(youpet.get("service_token").is_none());
+    assert!(!snap.to_string().contains("youpet-secret-token"));
+}
+
 // ── agent_server_status ────────────────────────────────────────
 
 #[test]

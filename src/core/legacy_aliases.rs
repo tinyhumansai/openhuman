@@ -643,13 +643,14 @@ mod tests {
         let missing: Vec<_> = core_methods
             .values()
             .filter(|method| !registered.contains(*method))
+            .filter(|method| crate::core::all::schema_for_rpc_method(method).is_none())
             .filter(|method| !is_compiled_out_method(method))
             .cloned()
             .collect();
 
         assert!(
             missing.is_empty(),
-            "frontend CORE_RPC_METHODS contains methods absent from all_http_method_schemas(): {missing:?}"
+            "frontend CORE_RPC_METHODS contains methods absent from public and internal controller schemas: {missing:?}"
         );
     }
 
