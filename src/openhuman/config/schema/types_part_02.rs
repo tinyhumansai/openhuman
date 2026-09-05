@@ -216,6 +216,7 @@ impl Default for Config {
             vision_provider: None,
             memory_provider: None,
             embeddings_provider: None,
+            custom_embeddings: None,
             heartbeat_provider: None,
             learning_provider: None,
             subconscious_provider: None,

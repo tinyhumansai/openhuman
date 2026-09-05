@@ -135,20 +135,37 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
   function handleProviderClick(entry: EmbeddingProviderEntry) {
     if (entry.slug !== 'managed') setManagedSessionMissing(false);
+
+    if (entry.slug === 'custom') {
+      // Custom is an editable profile, not a plain selection: reopen (and
+      // hydrate from the retained profile) even when already selected.
+      const loadedSettings = settings!;
+      const activeEndpoint = loadedSettings.provider.startsWith('custom:')
+        ? loadedSettings.provider.slice('custom:'.length)
+        : '';
+      const profile = activeEndpoint
+        ? {
+            endpoint: activeEndpoint,
+            model: loadedSettings.model,
+            dimensions: loadedSettings.dimensions,
+          }
+        : loadedSettings.custom_settings;
+      setCustomEndpoint(profile?.endpoint ?? customEndpoint);
+      setCustomModel(profile?.model ?? customModel);
+      setCustomDims(String(profile?.dimensions ?? customDims));
+      setSetupProvider(entry);
+      setSetupKey('');
+      setSetupShowKey(false);
+      setSetupTestResult(null);
+      setSetupError('');
+      return;
+    }
+
     if (entry.slug === selectedProvider) return;
 
     if (entry.slug === 'managed' && isLocalSession) {
       setManagedSessionMissing(true);
       setStatus({ kind: 'error', message: managedLoginMessage });
-      return;
-    }
-
-    if (entry.slug === 'custom') {
-      // For custom, open setup popup to enter endpoint
-      setSetupProvider(entry);
-      setSetupKey('');
-      setSetupTestResult(null);
-      setSetupError('');
       return;
     }
 
