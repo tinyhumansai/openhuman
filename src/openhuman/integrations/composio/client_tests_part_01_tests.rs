@@ -278,6 +278,65 @@ async fn authorize_merges_gmail_required_oauth_scopes_with_extra_params() {
     assert_eq!(resp.connection_id, "conn-gmail");
 }
 
+/// Verifies that `authorize()` for Reddit automatically attaches mandatory non-sensitive OAuth scopes (#5507)
+/// ensuring permissions for identity, reading, and subscribed subreddits.
+#[tokio::test]
+async fn authorize_merges_reddit_required_oauth_scopes() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|Json(body): Json<Value>| async move {
+            assert_eq!(body["toolkit"].as_str(), Some("reddit"));
+            let scopes: Vec<&str> = body["oauth_scopes"]
+                .as_array()
+                .expect("reddit authorize should include oauth_scopes")
+                .iter()
+                .map(|item| item.as_str().expect("scope should be a string"))
+                .collect();
+            let expected = ["identity", "read", "mysubreddits"];
+            assert_eq!(scopes.len(), expected.len());
+            for &exp in &expected {
+                assert!(scopes.contains(&exp), "missing expected scope: {exp}");
+            }
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connectUrl": "https://composio.example/reddit/consent",
+                    "connectionId": "conn-reddit"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.authorize("reddit", None).await.unwrap();
+    assert_eq!(resp.connect_url, "https://composio.example/reddit/consent");
+    assert_eq!(resp.connection_id, "conn-reddit");
+}
+
+/// Verifies that unmapped toolkits (such as Notion) do not have artificial `oauth_scopes` injected into authorize payload.
+#[tokio::test]
+async fn authorize_omits_oauth_scopes_for_unmapped_toolkit() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|Json(body): Json<Value>| async move {
+            assert_eq!(body["toolkit"].as_str(), Some("notion"));
+            assert!(body.get("oauth_scopes").is_none());
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connectUrl": "https://composio.example/notion/consent",
+                    "connectionId": "conn-notion"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.authorize("notion", None).await.unwrap();
+    assert_eq!(resp.connect_url, "https://composio.example/notion/consent");
+    assert_eq!(resp.connection_id, "conn-notion");
+}
+
 #[tokio::test]
 async fn authorize_forwards_extra_params_and_returns_connect_url() {
     let app = Router::new().route(
