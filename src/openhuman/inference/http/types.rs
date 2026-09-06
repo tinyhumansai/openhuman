@@ -4,16 +4,25 @@ use serde::{Deserialize, Serialize};
 
 // ── Chat Completions ──────────────────────────────────────────────────────────
 
+/// Request payload for OpenAI-compatible chat completions (`POST /v1/chat/completions`).
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionRequest {
+    /// Identifier of the model to query.
     pub model: String,
+    /// List of input messages in conversation order.
     pub messages: Vec<ChatCompletionMessage>,
+    /// Whether to stream back partial progress via SSE chunks.
     #[serde(default)]
     pub stream: bool,
+    /// Sampling temperature between 0.0 and 2.0.
     #[serde(default)]
     pub temperature: Option<f64>,
+    /// Legacy maximum tokens limit (superseded by `max_completion_tokens`).
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Maximum number of output tokens for newer OpenAI / reasoning models (#5498).
+    #[serde(default)]
+    pub max_completion_tokens: Option<u32>,
     /// Optional tool definitions (ignored if the provider doesn't support them).
     #[serde(default)]
     pub tools: Option<serde_json::Value>,
