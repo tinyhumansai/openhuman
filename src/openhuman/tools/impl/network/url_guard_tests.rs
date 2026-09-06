@@ -484,3 +484,54 @@ async fn wildcard_still_blocks_private_hosts() {
         .to_string();
     assert!(err.contains("local/private"), "got: {err}");
 }
+
+#[test]
+fn exported_ssrf_predicates_classify_non_global_ips_accurately() {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // IPv4 Non-global checks
+    assert!(is_non_global_v4(Ipv4Addr::new(127, 0, 0, 1)));
+    assert!(is_non_global_v4(Ipv4Addr::new(10, 0, 0, 1)));
+    assert!(is_non_global_v4(Ipv4Addr::new(172, 16, 0, 1)));
+    assert!(is_non_global_v4(Ipv4Addr::new(192, 168, 1, 1)));
+    assert!(is_non_global_v4(Ipv4Addr::new(169, 254, 1, 1)));
+    assert!(is_non_global_v4(Ipv4Addr::new(100, 64, 0, 1))); // CGNAT
+    assert!(is_non_global_v4(Ipv4Addr::new(240, 0, 0, 1))); // Class E
+    assert!(is_non_global_v4(Ipv4Addr::new(192, 0, 2, 1))); // TEST-NET-1
+    assert!(is_non_global_v4(Ipv4Addr::new(198, 51, 100, 1))); // TEST-NET-2
+    assert!(is_non_global_v4(Ipv4Addr::new(203, 0, 113, 1))); // TEST-NET-3
+    assert!(is_non_global_v4(Ipv4Addr::new(0, 0, 0, 0))); // 0.0.0.0/8
+    assert!(is_non_global_v4(Ipv4Addr::new(0, 1, 2, 3))); // 0.0.0.0/8
+
+    // IPv4 Global public IPs
+    assert!(!is_non_global_v4(Ipv4Addr::new(8, 8, 8, 8)));
+    assert!(!is_non_global_v4(Ipv4Addr::new(1, 1, 1, 1)));
+    assert!(!is_non_global_v4(Ipv4Addr::new(140, 82, 121, 4)));
+    // Non-TEST-NET IPs in adjacent /24 blocks should not be classified as non-global
+    assert!(!is_non_global_v4(Ipv4Addr::new(198, 51, 1, 1)));
+    assert!(!is_non_global_v4(Ipv4Addr::new(203, 0, 1, 1)));
+
+    // IPv6 Non-global checks
+    assert!(is_non_global_v6(Ipv6Addr::LOCALHOST));
+    assert!(is_non_global_v6(Ipv6Addr::UNSPECIFIED));
+    assert!(is_non_global_v6("fc00::1".parse().unwrap()));
+    assert!(is_non_global_v6("fe80::1".parse().unwrap()));
+    assert!(is_non_global_v6("2001:db8::1".parse().unwrap()));
+
+    // IPv6 Global public IPs
+    assert!(!is_non_global_v6("2606:4700:4700::1111".parse().unwrap()));
+
+    // Host helper checks (including ASCII case-insensitivity and trailing dot)
+    assert!(is_private_or_local_host("localhost"));
+    assert!(is_private_or_local_host("LOCALHOST"));
+    assert!(is_private_or_local_host("localhost."));
+    assert!(is_private_or_local_host("my-service.localhost"));
+    assert!(is_private_or_local_host("MY-SERVICE.LOCALHOST"));
+    assert!(is_private_or_local_host("device.local"));
+    assert!(is_private_or_local_host("DEVICE.LOCAL"));
+    assert!(is_private_or_local_host("device.local."));
+    assert!(is_private_or_local_host("127.0.0.1"));
+    assert!(is_private_or_local_host("[::1]"));
+    assert!(!is_private_or_local_host("github.com"));
+    assert!(!is_private_or_local_host("api.openai.com"));
+}
