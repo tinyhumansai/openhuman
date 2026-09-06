@@ -121,3 +121,113 @@ async fn read_run_events_at(
         .await
         .unwrap()
 }
+
+/// Asserts that the durable journal sink and underlying append store handle
+/// multi-byte UTF-8 sequences straddling the 4096-byte lookback window boundary
+/// without failing validation or dropping observations (#5599).
+///
+/// `JsonlAppendStore::next_offset` seeks to `len - 4096`. When that byte offset lands
+/// mid-character, older implementations using `read_to_string` failed with "stream did
+/// not contain valid UTF-8". This test asserts that such boundary straddles are genuinely
+/// induced (`assert!(!torn.is_empty())`) and that subsequent appends and late-attach
+/// replays succeed contiguously.
+#[tokio::test]
+async fn journal_sink_handles_multibyte_utf8_spanning_window_boundary() {
+    const WINDOW: usize = 4096;
+    let mut torn = Vec::new();
+
+    // Walk a padding range to sweep the (len - 4096) lookback boundary across
+    // the continuation bytes of a multi-byte UTF-8 sequence.
+    for pad in 0..20usize {
+        let tmp = std::env::temp_dir().join(format!(
+            "oh-journal-utf8-test-{pad}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let run_id = mint_run_id();
+
+        let stores = open_session_stores(&tmp);
+        let journal: Arc<dyn HarnessEventJournal> =
+            Arc::new(StoreEventJournal::new(stores.journal));
+        let sink = EventSink::with_stream_id(run_id.as_str());
+        let journal_sink = Arc::new(JournalSink::new(journal, run_id.clone()));
+        sink.subscribe(Arc::new(FanOutSink::new().with(journal_sink.clone())));
+
+        // 10 base events with multi-byte emoji payloads to approach and exceed WINDOW (4096 bytes).
+        for i in 0..10 {
+            sink.emit(AgentEvent::ModelStarted {
+                call_id: format!("call-{i}").into(),
+                model: "🦀".repeat(50),
+            });
+        }
+
+        // An 11th event whose model string is padded byte-by-byte to sweep the window boundary.
+        sink.emit(AgentEvent::ModelStarted {
+            call_id: "call-10".into(),
+            model: "x".repeat(pad),
+        });
+        journal_sink.flush();
+
+        // Inspect the underlying stream file to verify whether this pad placed the
+        // 4096-byte lookback window start inside a multi-byte UTF-8 character.
+        let stream_path = tmp
+            .join("tinyagents_store")
+            .join("journal")
+            .join(format!("{}.jsonl", run_id.as_str()));
+        let raw = std::fs::read(&stream_path).expect("read stream file");
+        if raw.len() > WINDOW {
+            let start = raw.len() - WINDOW;
+            let text = std::str::from_utf8(&raw).expect("stream file itself is valid UTF-8");
+            if !text.is_char_boundary(start) {
+                torn.push(pad);
+            }
+        }
+
+        // Emit a subsequent tool event across the boundary: this forces next_offset
+        // to resolve the stream tail and assign the next sequential offset.
+        sink.emit(AgentEvent::ToolStarted {
+            call_id: "call-11".into(),
+            tool_name: "test_tool".to_string(),
+        });
+        journal_sink.flush();
+
+        // Verify replay: all 12 events must be present and contiguous from offset 0.
+        let replayed = read_run_events_at(&tmp, run_id.as_str(), 0).await;
+        assert_eq!(
+            replayed.len(),
+            12,
+            "pad {pad}: all observations must be retained"
+        );
+        for (i, obs) in replayed.iter().enumerate() {
+            assert_eq!(
+                obs.offset, i as u64,
+                "pad {pad}: observation {i} offset must be contiguous"
+            );
+            assert_eq!(
+                obs.event_id.as_str(),
+                format!("{}-evt-{i}", run_id.as_str()),
+                "pad {pad}: event id should follow stable prefix pattern"
+            );
+        }
+
+        // Verify model contents on the first and 11th observations match exactly.
+        if let AgentEvent::ModelStarted { model, .. } = &replayed[0].event {
+            assert_eq!(model, &"🦀".repeat(50));
+        } else {
+            panic!("pad {pad}: expected ModelStarted at offset 0");
+        }
+        if let AgentEvent::ModelStarted { model, .. } = &replayed[10].event {
+            assert_eq!(model, &"x".repeat(pad));
+        } else {
+            panic!("pad {pad}: expected ModelStarted at offset 10");
+        }
+        assert!(matches!(replayed[11].event, AgentEvent::ToolStarted { .. }));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    assert!(
+        !torn.is_empty(),
+        "no pad put the 4096-byte window start inside a multi-byte character; \
+         adjust padding range so the test proves boundary recovery"
+    );
+}
