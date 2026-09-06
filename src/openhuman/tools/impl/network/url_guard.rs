@@ -31,7 +31,7 @@ use std::net::{IpAddr, ToSocketAddrs};
 
 /// Validate a URL against the allowlist + SSRF rules. Returns the
 /// original URL on success.
-pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow::Result<String> {
+pub fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow::Result<String> {
     let url = raw_url.trim();
 
     if url.is_empty() {
@@ -97,7 +97,7 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
 ///
 /// Callers should use this function instead of `validate_url` in all
 /// paths that make outbound HTTP requests.
-pub(super) async fn validate_url_with_dns_check(
+pub(crate) async fn validate_url_with_dns_check(
     raw_url: &str,
     allowed_domains: &[String],
 ) -> anyhow::Result<String> {
@@ -164,7 +164,7 @@ async fn resolve_host_ips(host: String, port: u16) -> anyhow::Result<Vec<IpAddr>
     })?
 }
 
-pub(super) fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
+pub fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
     if domains.is_empty() {
         return Vec::new();
     }
@@ -188,7 +188,7 @@ pub(super) fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
     normalized
 }
 
-pub(super) fn normalize_domain(raw: &str) -> Option<String> {
+pub fn normalize_domain(raw: &str) -> Option<String> {
     let mut d = raw.trim().to_lowercase();
     if d.is_empty() {
         return None;
@@ -217,7 +217,7 @@ pub(super) fn normalize_domain(raw: &str) -> Option<String> {
     Some(d)
 }
 
-pub(super) fn extract_host(url: &str) -> anyhow::Result<String> {
+pub fn extract_host(url: &str) -> anyhow::Result<String> {
     let rest = url
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))
@@ -255,7 +255,7 @@ pub(super) fn extract_host(url: &str) -> anyhow::Result<String> {
     Ok(host)
 }
 
-fn extract_port(url: &str) -> anyhow::Result<u16> {
+pub fn extract_port(url: &str) -> anyhow::Result<u16> {
     let is_http = url.starts_with("http://");
     let rest = url
         .strip_prefix("http://")
@@ -283,7 +283,7 @@ fn extract_port(url: &str) -> anyhow::Result<u16> {
     Ok(if is_http { 80 } else { 443 })
 }
 
-pub(super) fn host_matches_allowlist(host: &str, allowed_domains: &[String]) -> bool {
+pub fn host_matches_allowlist(host: &str, allowed_domains: &[String]) -> bool {
     allowed_domains.iter().any(|domain| {
         // `"*"` is the explicit allow-all wildcard (the "Allow all sites"
         // toggle), mirroring the browser tool. Local/private hosts are still
@@ -297,18 +297,21 @@ pub(super) fn host_matches_allowlist(host: &str, allowed_domains: &[String]) -> 
     })
 }
 
-pub(super) fn is_private_or_local_host(host: &str) -> bool {
-    let bare = host
+pub fn is_private_or_local_host(host: &str) -> bool {
+    let unbracketed = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
+    let bare = unbracketed.strip_suffix('.').unwrap_or(unbracketed);
 
-    let has_local_tld = bare
+    let lower = bare.to_ascii_lowercase();
+
+    let has_local_tld = lower
         .rsplit('.')
         .next()
         .is_some_and(|label| label == "local");
 
-    if bare == "localhost" || bare.ends_with(".localhost") || has_local_tld {
+    if lower == "localhost" || lower.ends_with(".localhost") || has_local_tld {
         return true;
     }
 
@@ -322,7 +325,7 @@ pub(super) fn is_private_or_local_host(host: &str) -> bool {
     false
 }
 
-fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
+pub fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
     let [a, b, c, _] = v4.octets();
     v4.is_loopback()
         || v4.is_private()
@@ -333,12 +336,16 @@ fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
         || (a == 100 && (64..=127).contains(&b))
         || a >= 240
         || (a == 192 && b == 0 && (c == 0 || c == 2))
-        || (a == 198 && b == 51)
-        || (a == 203 && b == 0)
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
         || (a == 198 && (18..=19).contains(&b))
+        // 0.0.0.0/8 — "this network" (RFC 1122 §3.2.1.3). `is_unspecified()` only
+        // covers 0.0.0.0 itself, but the whole /8 routes to the local host on
+        // Linux. Carried over from the `ops_install` copy this replaces.
+        || a == 0
 }
 
-fn is_non_global_v6(v6: std::net::Ipv6Addr) -> bool {
+pub fn is_non_global_v6(v6: std::net::Ipv6Addr) -> bool {
     let segs = v6.segments();
     v6.is_loopback()
         || v6.is_unspecified()

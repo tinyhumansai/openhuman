@@ -25,6 +25,10 @@ pub use mcp_setup::{
     McpSetupGetTool, McpSetupInstallAndConnectTool, McpSetupRequestSecretTool, McpSetupSearchTool,
     McpSetupTestConnectionTool,
 };
+pub use url_guard::{
+    extract_host, extract_port, host_matches_allowlist, is_non_global_v4, is_non_global_v6,
+    is_private_or_local_host, normalize_allowed_domains, normalize_domain, validate_url,
+};
 pub use web_fetch::WebFetchTool;
 
 /// Shared test helper for the network tools' local-only enforcement tests
