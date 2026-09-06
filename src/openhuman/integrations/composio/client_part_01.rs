@@ -21,6 +21,9 @@ const POST_OAUTH_ACTION_RETRY_DELAY: Duration = Duration::from_secs(10);
 const POST_OAUTH_AUTH_ERROR_STRINGS: &[&str] = &["connection error, try to authenticate"];
 const AUTHORIZE_OAUTH_SCOPES_FIELD: &str = "oauth_scopes";
 const GMAIL_REQUIRED_OAUTH_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
+/// Required OAuth scopes for Reddit integration covering user verification,
+/// post/comment reading, and subscribed subreddit listing (#5507).
+const REDDIT_REQUIRED_OAUTH_SCOPES: &[&str] = &["identity", "read", "mysubreddits"];
 
 /// High-level client for all backend-proxied Composio operations.
 #[derive(Clone)]
@@ -603,6 +606,11 @@ fn required_oauth_scopes_for_toolkit(toolkit: &str) -> &'static [&'static str] {
         // profile-only Google token and trigger enable fails with 403 insufficient
         // authentication scopes (#2186).
         "gmail" => GMAIL_REQUIRED_OAUTH_SCOPES,
+        // Reddit actions require `identity` for user verification, `read` for
+        // retrieving posts and comments, and `mysubreddits` for listing subscribed
+        // communities. Without these explicit scopes, Reddit OAuth handoffs fail
+        // with HTTP 400 Bad Request or omit necessary token permissions (#5507).
+        "reddit" => REDDIT_REQUIRED_OAUTH_SCOPES,
         _ => &[],
     }
 }
