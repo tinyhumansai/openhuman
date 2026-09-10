@@ -6,6 +6,7 @@
 //! detach into the user's native terminal so they complete login there,
 //! then return to OpenHuman and click Recheck in the settings card.
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::process::Command;
 
 /// Open the user's native terminal and run `claude login` inside it.
@@ -19,7 +20,7 @@ use std::process::Command;
 ///   - Linux:   try `x-terminal-emulator`, then `gnome-terminal`,
 ///              `konsole`, `xterm` in that order
 #[tauri::command]
-pub fn claude_code_login_launch() -> Result<String, String> {
+pub async fn claude_code_login_launch() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // `start ""` opens a new console window; the empty quoted title
@@ -39,10 +40,12 @@ pub fn claude_code_login_launch() -> Result<String, String> {
     activate
     do script "claude login"
 end tell"#;
-        Command::new("osascript")
-            .args(["-e", script])
-            .spawn()
-            .map_err(|e| format!("failed to open Terminal.app: {e}"))?;
+        // Starting osascript does not prove Terminal opened: Automation denial
+        // is reported by its exit status. Await it off the UI thread and bound
+        // the wait while macOS may be showing a permission prompt.
+        let mut command = tokio::process::Command::new("/usr/bin/osascript");
+        command.args(["-e", script]);
+        wait_for_terminal(command, std::time::Duration::from_secs(30)).await?;
         Ok("Terminal.app".into())
     }
 
@@ -69,3 +72,33 @@ end tell"#;
         Err("claude_code_login_launch is not supported on this platform".into())
     }
 }
+
+#[cfg(any(target_os = "macos", test))]
+async fn wait_for_terminal(
+    mut command: tokio::process::Command,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let output = tokio::time::timeout(timeout, command.kill_on_drop(true).output())
+        .await
+        .map_err(|_| {
+            log::warn!("[claude-code][login] Terminal launch timed out");
+            "Timed out opening Terminal.app".to_string()
+        })?
+        .map_err(|e| {
+            log::warn!("[claude-code][login] Terminal launch spawn failed: {e}");
+            format!("failed to open Terminal.app: {e}")
+        })?;
+    if !output.status.success() {
+        log::warn!(
+            "[claude-code][login] Terminal launch failed: {}",
+            output.status
+        );
+        return Err(format!("Terminal.app launch failed: {}", output.status));
+    }
+    log::debug!("[claude-code][login] Terminal.app opened");
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "claude_code_tests.rs"]
+mod tests;
