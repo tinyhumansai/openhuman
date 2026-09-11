@@ -271,8 +271,7 @@ write_summary() {
 
 ZeroClaw self-reports (unverified) idling under 5 MiB RAM and roughly 8-12 MiB
 under load. OpenHuman's Rust core currently settles around 35-50 MiB depending
-on scenario and feature set (see docs/library-benchmarking.md and
-docs/resource-profiling-session-2026-07-21.md for scope/caveats). Treat this as
+on scenario and feature set. Treat this as
 a north star, not a like-for-like comparison: ZeroClaw's feature surface and
 scope differ substantially from the OpenHuman core.
 EOF

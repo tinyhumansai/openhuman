@@ -2,9 +2,7 @@
 
 Reproducible benchmarking scripts for the OpenHuman Rust core as an embedded
 library (no RPC server), built around the `library-profile` and `rss-bench`
-binaries (see `src/bin/library_profile/main.rs`). Full write-up:
-[`docs/library-benchmarking.md`](../../docs/library-benchmarking.md). Prior
-findings: [`docs/resource-profiling-session-2026-07-21.md`](../../docs/resource-profiling-session-2026-07-21.md).
+binaries (see `src/bin/library_profile/main.rs`).
 
 Five driver scripts: `library-bench.sh` (per-scenario RSS/duration),
 `library-cpu.sh` (samply), `library-heap.sh` (dhat), `library-fleet.sh`
@@ -64,9 +62,7 @@ projected footprint at the target agent count fits the RAM budget.
 
 Results land in `target/profile/rust-library/fleet-<timestamp>/` (or
 `--out DIR`). Exits nonzero if any swept N reports `fits: false` (use
-`--no-gate` to report only). See
-[`docs/library-benchmarking.md`](../../docs/library-benchmarking.md#the-2-gb--2-vcpu-server-budget)
-for the budget math.
+`--no-gate` to report only). The script's `--help` documents the budget math.
 
 ### `library-instances.sh` — multi-instance (many-processes) sweep
 
@@ -90,9 +86,7 @@ Results land in `target/profile/rust-library/instances-<timestamp>/` (or
 `--out DIR`). Refuses to spawn more than `--max-instances` (default 200)
 without an explicit raise — see the script's `--help` for the RAM math. Exits
 nonzero with `--gate` if any instance failed to complete cleanly (nonzero
-exit or missing/invalid JSON); default is report-only. See
-[`docs/library-benchmarking.md`](../../docs/library-benchmarking.md#fleet-one-process-vs-instances-many-processes)
-for the fleet-vs-instances framing.
+exit or missing/invalid JSON); default is report-only.
 
 ### `library-pool-gate.sh` — runtime pool regression gate (#5106)
 
