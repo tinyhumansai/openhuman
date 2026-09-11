@@ -40,7 +40,9 @@ fn managed_search_quota_error(message: &str) -> Option<&'static str> {
     // Only inspect the structured provider envelope before any echoed JSON
     // body. The body may contain the submitted query, so searching all of it
     // would let an unrelated query such as "HTTP 429" trigger this mapping.
-    let envelope = message.split_once('{').map_or(message, |(prefix, _)| prefix);
+    let envelope = message
+        .split_once('{')
+        .map_or(message, |(prefix, _)| prefix);
     let envelope_lowered = envelope.to_ascii_lowercase();
     let provider_json = message
         .find('{')
