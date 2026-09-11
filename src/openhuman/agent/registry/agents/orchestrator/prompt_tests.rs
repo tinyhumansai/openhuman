@@ -682,18 +682,9 @@ fn the_archetype_never_names_a_withheld_tool() {
     );
 }
 
-/// The same rule over the whole rendered prompt, not just the static half.
-///
-/// `render_installed_skills` was the other offender — it named five packed
-/// tools in a Rust string literal, where the archetype check above cannot see
-/// them.
 #[test]
 fn the_rendered_prompt_never_names_a_withheld_tool() {
     let body = build(&ctx_with(&[])).unwrap();
-    // The generated withheld-specialist block names packed tools on purpose —
-    // that is the route, not a claim they are callable. It is absent here
-    // because `ctx_with` supplies an empty visible set (the "everything is
-    // visible" sentinel), so nothing is withheld and nothing is rendered.
     assert!(
         !body.contains("## Capabilities not in your tool list"),
         "an empty visible set means no filter, so nothing can be withheld"
@@ -706,22 +697,6 @@ fn the_rendered_prompt_never_names_a_withheld_tool() {
     );
 }
 
-/// Withheld tool names that `text` presents as directly callable.
-///
-/// Three exemptions, and all are about telling a *route* from a *call*:
-///
-/// * The generated `## Capabilities not in your tool list` block names withheld
-///   tools on purpose — that block is the route, and it is the one sanctioned
-///   place to write one. It is removed wholesale before scanning.
-/// * A pack **id** may be backticked anywhere, since naming the skill is how a
-///   route reads in prose. Two pack ids (`composio`, `goals`) are also tool
-///   names inside their own pack, so a bare substring check cannot tell the
-///   two apart; routes are always spelled ``skill `<id>` ``, so removing that
-///   exact form is what makes the remaining occurrences calls.
-/// * A full route — ``skill `<id>`, tool `<name>` ``, the exact spelling the
-///   generated block emits — may name the tool it routes to, but only in that
-///   form and only under the pack that owns it. A packed name backticked on its
-///   own is still a call.
 fn withheld_names_presented_as_callable(text: &str) -> Vec<&'static str> {
     let packed = crate::openhuman::tools::toolpacks::all_packed_tool_names();
     const HEADING: &str = "## Capabilities not in your tool list";
