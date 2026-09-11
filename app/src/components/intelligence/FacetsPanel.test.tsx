@@ -128,8 +128,9 @@ describe('<FacetsPanel />', () => {
 
   it('shows action errors and load errors', async () => {
     listFacets.mockRejectedValueOnce(new Error('load failed'));
-    render(<FacetsPanel />);
+    const firstView = render(<FacetsPanel />);
     expect(await screen.findByTestId('facets-panel-error')).toHaveTextContent('load failed');
+    firstView.unmount();
     listFacets.mockResolvedValue([{ key: 'style/x', value: 'y', state: 'active', stability: 1 }]);
     pinFacet.mockRejectedValueOnce(new Error('pin failed'));
     render(<FacetsPanel />);
