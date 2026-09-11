@@ -7,7 +7,7 @@ use crate::openhuman::agent::context::prompt::{LearnedContextData, PromptContext
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::tools::agent_policy::render_tool_policy_boundary;
-use crate::openhuman::tools::Tool;
+use crate::openhuman::tools::{Tool, ToolSpec};
 
 use anyhow::Result;
 
