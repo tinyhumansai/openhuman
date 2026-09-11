@@ -3035,7 +3035,9 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
         AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
         RUN_WORKFLOW_TOOL_NAME,
     };
-    use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
+    use openhuman_core::openhuman::tools::{
+        ArchetypeDelegationTool, DelegationTarget, SkillDelegationTool,
+    };
 
     let ask = AskClarificationTool::new();
     assert_eq!(ask.name(), "ask_user_clarification");
@@ -3083,7 +3085,11 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
     let archetype = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".into(),
-        agent_id: "researcher".into(),
+        // `DelegationTarget` is deliberately not `From<&str>`: the newtype exists
+        // so the `Any` host-extension slot cannot be satisfied by any other tool
+        // that parked a `String` there, and a blanket conversion would make the
+        // distinction easy to lose again. Construct it.
+        agent_id: DelegationTarget("researcher".to_string()),
         tool_description: "Use for research.".into(),
     };
     assert_eq!(
