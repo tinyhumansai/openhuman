@@ -40,7 +40,7 @@ impl Tool for MemoryTreeCoverWindowTool {
                 },
                 "source_id": {
                     "type": "string",
-                    "description": "Exact source id, copied from `tree.list_sources`. Source ids are provider-specific strings that only that listing can tell you."
+                    "description": "Exact source id, copied from a source listing returned by the host (`openhuman.memory_tree_list_sources` over JSON-RPC). Source ids are provider-specific strings that only that listing can tell you."
                 },
                 "source_kind": {
                     "type": "string",

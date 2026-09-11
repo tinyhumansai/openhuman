@@ -178,12 +178,18 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
     assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
+/// The wrapper reads readiness off the process-wide `BUS` singleton. Unit
+/// tests never stand that bus up (see `core::bus::init` on runtime affinity),
+/// so the observable contract here is the deferred case: with no bus the
+/// token is *not* consumed, and a later call can still claim it. The
+/// consumed/not-consumed transitions are pinned above through
+/// `group_first_time_when_bus_ready`.
 #[test]
-fn domain_subscriber_registration_wrapper_uses_the_global_bus() {
+fn domain_subscriber_registration_wrapper_defers_without_a_global_bus() {
     use crate::core::all::DomainGroup;
 
-    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
-    assert!(group_first_time(DomainGroup::Media));
+    assert!(crate::core::bus::BUS.get().is_none());
+    assert!(!group_first_time(DomainGroup::Media));
     assert!(!group_first_time(DomainGroup::Media));
 }
 
