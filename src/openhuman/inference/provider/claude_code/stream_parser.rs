@@ -50,8 +50,57 @@ pub enum ClaudeCodeEvent {
 #[derive(Debug, Default)]
 pub struct StreamJsonParser {
     buffer: String,
+    /// Bytes of an incomplete UTF-8 sequence carried over from the previous chunk.
+    ///
+    /// `feed_bytes` is handed arbitrary read boundaries, so a multi-byte character
+    /// can straddle two chunks. Decoding each chunk on its own replaced both halves
+    /// with U+FFFD, and the JSON still parsed -- the replacement character is legal
+    /// inside a string -- so the corruption reached the transcript silently.
+    pending: Vec<u8>,
     /// First-seen `schema_version` from a `system` event, if any.
     pub schema_version: Option<String>,
+}
+
+/// Decode `bytes` as UTF-8, returning the text and any incomplete trailing
+/// sequence to carry into the next chunk.
+///
+/// Invalid bytes are replaced, as `from_utf8_lossy` would — the stream must not
+/// stall on input that will never become valid. The difference is that only the
+/// invalid *sequence* is consumed, and decoding then continues, so an incomplete
+/// character at the very end is still carried.
+///
+/// Handing the whole remainder to `from_utf8_lossy` after the first bad byte
+/// looks equivalent and is not: it replaces a trailing partial character before
+/// its other half has arrived, which is the corruption this parser carries
+/// `pending` to avoid. One stray byte earlier in the chunk was enough to bring
+/// it back.
+fn decode_carrying_tail(bytes: &[u8]) -> (String, Vec<u8>) {
+    let mut decoded = String::new();
+    let mut rest = bytes;
+
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                decoded.push_str(text);
+                return (decoded, Vec::new());
+            }
+            Err(err) => {
+                let valid = err.valid_up_to();
+                // `valid_up_to` guarantees this prefix is valid UTF-8.
+                decoded.push_str(&String::from_utf8_lossy(&rest[..valid]));
+                match err.error_len() {
+                    // An incomplete tail: hold it for the next chunk.
+                    None => return (decoded, rest[valid..].to_vec()),
+                    // One replacement per invalid sequence, matching lossy
+                    // semantics, then carry on with what follows it.
+                    Some(len) => {
+                        decoded.push(char::REPLACEMENT_CHARACTER);
+                        rest = &rest[valid + len..];
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl StreamJsonParser {
@@ -61,8 +110,21 @@ impl StreamJsonParser {
 
     /// Append a UTF-8 byte chunk and return any events whose terminating
     /// newline arrived in this chunk.
+    ///
+    /// See [`decode_carrying_tail`] for the decode contract.
     pub fn feed_bytes(&mut self, chunk: &[u8]) -> Vec<ClaudeCodeEvent> {
-        self.buffer.push_str(&String::from_utf8_lossy(chunk));
+        // Decode only complete sequences and carry the trailing partial one into the
+        // next chunk. `valid_up_to()` is the boundary; anything after it is either an
+        // incomplete tail (keep it) or genuinely invalid input (replace it, as before).
+        let bytes: &[u8] = if self.pending.is_empty() {
+            chunk
+        } else {
+            self.pending.extend_from_slice(chunk);
+            &self.pending[..]
+        };
+        let (decoded, carry) = decode_carrying_tail(bytes);
+        self.pending = carry;
+        self.buffer.push_str(&decoded);
         self.flush()
     }
 
@@ -74,6 +136,15 @@ impl StreamJsonParser {
 
     /// Drain any remaining buffered content. Call on EOF.
     pub fn end(&mut self) -> Vec<ClaudeCodeEvent> {
+        // No further chunk is coming, so a held incomplete sequence can never be
+        // completed. Release it lossily rather than dropping it: that is what the
+        // per-chunk decode produced before the carry-over existed, and silently
+        // discarding trailing bytes would be a different kind of data loss than the
+        // one this parser is fixing.
+        if !self.pending.is_empty() {
+            let tail = std::mem::take(&mut self.pending);
+            self.buffer.push_str(&String::from_utf8_lossy(&tail));
+        }
         if !self.buffer.is_empty() && !self.buffer.ends_with('\n') {
             self.buffer.push('\n');
         }

@@ -542,6 +542,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'Selalu aktif di build pengembangan',
   'settings.clearAppData': 'Bersihkan Data Aplikasi',
   'settings.clearAppDataDesc': 'Keluar dan hapus permanen semua data aplikasi lokal',
+  'settings.clearAppDataIrreversible': 'Tindakan ini tidak dapat dibatalkan.',
+  'settings.clearAppDataAction': 'Hapus data',
   'settings.logOut': 'Keluar',
   'settings.logOutDesc': 'Keluar dari akun Anda',
   'settings.exitLocalSession': 'Keluar dari sesi lokal',
@@ -1390,7 +1392,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Baku bagi OpenHuman- mengatur pencarian atau menghubungkan penyedia anda sendiri dengan kunci API.',
   'settings.search.description':
-    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. Managed menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, dan Exa berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
+    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. OpenHuman Dikelola menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, Exa, dan Tavily berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
   'settings.search.engineAria': 'Mesin pencari',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1399,7 +1401,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Baku. Diarahkan melalui backend OpenHuman, saat ini didukung oleh Exa: tidak diperlukan kunci API.',
   'settings.search.localManagedUnavailable':
-    'Pencarian OpenHuman Managed tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, atau Exa Anda sendiri untuk mengaktifkan pencarian web.',
+    'Pencarian OpenHuman Dikelola tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, Exa, atau Tavily Anda sendiri untuk mengaktifkan pencarian web.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Parallel Langsung API: pencarian, ekstrak, percakapan, penelitian, perkaya, alat dataset.',
@@ -1412,6 +1414,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Pencarian neural yang didukung Exa. Memerlukan API key Exa Anda sendiri. Menambahkan alat pencarian, halaman serupa, dan konten halaman.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Pencarian web, berita, dan keuangan yang didukung Tavily. Memerlukan API key Tavily Anda sendiri. Menambahkan alat pencarian dan ekstraksi konten halaman.',
   'settings.search.statusConfigured': 'Dikonfigurasi',
   'settings.search.statusNeedsKey': 'Memerlukan kunci API',
   'settings.search.fallbackToManaged':
@@ -1433,6 +1438,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'kunci Querit API',
   'settings.search.placeholderExa': 'Tempelkan kunci API Exa Anda…',
+  'settings.search.tavilyKeyLabel': 'Kunci API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Situs yang diijinkan',
   'settings.search.allowedSitesHint':
     'Host yang boleh dibuka dan dibaca oleh asisten (melalui pengambilan web dan alat browser) satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
@@ -4377,7 +4384,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Masuk dengan Claude',
   'settings.ai.claudeCode.reconnect': 'Hubungkan ulang',
   'settings.ai.claudeCode.loginHint':
-    'Membuka terminal yang menjalankan claude login. Setelah selesai, klik Periksa ulang.',
+    'Membuka terminal yang menjalankan claude auth login --claudeai. Setelah selesai, klik Periksa ulang.',
   'settings.ai.claudeCode.loginError': 'Tidak dapat membuka terminal login. Silakan coba lagi.',
   'settings.ai.claudeCode.fullAccess': 'Akses penuh',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4979,6 +4986,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Terputus',
   'settings.developerMenu.eventLog.waiting': 'Menunggu peristiwa...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Peristiwa muncul di sini saat agen, alat, dan sistem bekerja. Belum ada yang terjadi.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Hubungkan kembali ke core untuk melanjutkan aliran.',
   'settings.developerMenu.eventLog.notConnected': 'Tidak terhubung ke inti',
   'settings.developerMenu.eventLog.jumpToLatest': 'Lompat ke terbaru',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6107,6 +6118,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Petunjuk rute',
   'settings.agents.editor.modelTiers': 'Tingkatan model',
   'settings.agents.editor.modelCustom': 'ID model kustom…',
+  'settings.agents.editor.modelManaged': 'Model terkelola',
   'settings.agents.editor.modelCustomPlaceholder': 'mis. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Tambah alat',
   'settings.agents.editor.toolsAllSelected': 'Semua alat',
@@ -6254,6 +6266,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Mode penyimpanan rahasia',
   'keyring.settings.mode.osKeychain': 'Keychain OS',
   'keyring.settings.mode.encryptedFile': 'Lokal terenkripsi',
+  'keyring.settings.mode.localEncryptedFile': 'Berkas terenkripsi',
+  'keyring.settings.mode.localPlaintextFile': 'Berkas tanpa enkripsi',
   'keyring.settings.mode.consentPending': 'Belum dikonfigurasi',
   'keyring.settings.mode.declined': 'Ditolak',
   'keyring.settings.availability': 'Ketersediaan keychain',
@@ -6637,6 +6651,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+  'settings.ai.openaiOauthTitle': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Masuk dengan akun ChatGPT untuk menggunakan model OpenAI tanpa kunci API.',
+  'settings.ai.openaiOauthConnect': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Terhubung ke ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Membuka proses masuk…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (diawali dengan http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Selesaikan proses masuk ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Putuskan ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'Masuk dengan ChatGPT hanya tersedia di aplikasi desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Tidak dapat memulai proses masuk ChatGPT. Coba lagi atau gunakan kunci API.',
+  'settings.ai.openaiOauthCompleteError':
+    'Proses masuk ChatGPT tidak selesai. Periksa URL pengalihan lalu coba lagi.',
+  'settings.ai.openaiOauthCallbackRequired': 'Tempel URL pengalihan dari browser setelah masuk.',
+  'settings.ai.openaiOauthDisconnectError': 'Tidak dapat memutuskan ChatGPT. Silakan coba lagi.',
   'memorySources.codingSessions.title': 'Sesi agen pemrograman',
   'memorySources.codingSessions.description':
     'Ubah keputusan dan koreksi Codex serta Claude Code menjadi memori persona pribadi.',

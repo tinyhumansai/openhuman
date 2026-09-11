@@ -4,7 +4,6 @@ use super::*;
 async fn turn_with_native_dispatcher_handles_tool_results_variant() {
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -30,12 +29,11 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
         ]),
     });
 
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     let mut agent = Agent::builder()
         .chat_model(provider)
@@ -58,7 +56,6 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
 async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -82,12 +79,11 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
         ]),
     });
 
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     let mut agent = Agent::builder()
         .chat_model(provider)
@@ -182,7 +178,6 @@ fn turn_dispatches_spawn_subagent_through_full_path() {
 async fn system_prompt_and_model_are_byte_stable_across_turns() {
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
 
@@ -210,12 +205,11 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
         captures: Mutex::new(Vec::new()),
     });
 
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     let mut agent = Agent::builder()
         .chat_model(provider.clone() as Arc<dyn ChatModel<()>>)
@@ -502,4 +496,221 @@ fn bound_cached_transcript_messages_snaps_past_leading_orphan_tool() {
             .collect::<Vec<_>>(),
         vec!["u2", "a2", "u3"]
     );
+}
+
+/// A durable tool with a caller-chosen name, for the tests that pin how the
+/// durable registry and the synthesised delegation set relate.
+struct NamedTool(&'static str);
+
+#[async_trait]
+impl Tool for NamedTool {
+    /// The caller-chosen name.
+    fn name(&self) -> &str {
+        self.0
+    }
+
+    /// Fixed marker text, so a test can tell it from a synthesised delegate.
+    fn description(&self) -> &str {
+        "durable"
+    }
+
+    /// A schema no synthesised delegate produces, so a spec can be attributed.
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"durable": {"type": "boolean"}}})
+    }
+
+    /// Returns a fixed success; dispatch itself is not under test here.
+    async fn execute(
+        &self,
+        _args: serde_json::Value,
+    ) -> Result<crate::openhuman::tools::ToolResult> {
+        Ok(crate::openhuman::tools::ToolResult::success("durable"))
+    }
+}
+
+/// A connected Composio toolkit with the given slug, for driving refreshes.
+fn connected(slug: &str) -> crate::openhuman::agent::context::prompt::ConnectedIntegration {
+    crate::openhuman::agent::context::prompt::ConnectedIntegration {
+        toolkit: slug.into(),
+        description: slug.into(),
+        tools: vec![],
+        gated_tools: vec![],
+        connected: true,
+        connections: Vec::new(),
+        non_active_status: None,
+    }
+}
+
+/// Regression for #6145, revoke direction: a delegate whose toolkit was
+/// disconnected must leave the executable set and the policy snapshot in the
+/// same pass its spec is withdrawn, even while an in-flight turn holds clones.
+///
+/// This was the damaging half of the drift: the spec went, but the instance
+/// stayed in the shared `tools` Arc, the policy session built from that Arc
+/// kept allowing it, and the adapter registered from it kept advertising it —
+/// so a disconnected integration's delegate remained callable.
+#[test]
+fn revoked_delegate_leaves_instances_and_policy_with_its_spec_while_tool_arc_is_shared() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+    const DELEGATE: &str = "delegate_to_integrations_agent";
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+
+    agent.set_connected_integrations(vec![connected("gmail"), connected("notion")]);
+    agent.refresh_delegation_tools();
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string(), "notion".to_string()]
+    );
+
+    // An in-flight turn holds both sets for its whole duration.
+    let _durable_in_flight = agent.tools_arc();
+    let synthesized_in_flight = agent.synthesized_tools_arc();
+
+    // notion is disconnected: the enum shrinks and the instance follows it.
+    agent.set_connected_integrations(vec![connected("gmail")]);
+    agent.refresh_delegation_tools();
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec!["gmail".to_string()]
+    );
+    super::assert_synthesized_delegates_are_executable(&agent);
+
+    // Everything is disconnected: the delegate leaves every surface at once.
+    agent.set_connected_integrations(Vec::new());
+    agent.refresh_delegation_tools();
+    assert!(
+        !agent.tool_specs().iter().any(|spec| spec.name == DELEGATE),
+        "the withdrawn delegate must not keep a spec"
+    );
+    assert!(
+        !agent
+            .synthesized_tools_arc()
+            .iter()
+            .any(|tool| tool.name() == DELEGATE),
+        "the executable instance must go with the spec — this is what stayed \
+         behind before #6145"
+    );
+    assert!(!agent
+        .all_tool_refs()
+        .iter()
+        .any(|tool| tool.name() == DELEGATE));
+    assert!(
+        !agent.tool_policy_session.is_allowed(DELEGATE)
+            && !agent.tool_policy_session.decisions.contains_key(DELEGATE),
+        "a withdrawn delegate must not keep a policy allowance"
+    );
+    super::assert_synthesized_delegates_are_executable(&agent);
+
+    // The turn that started before the revoke still sees its own coherent set.
+    assert!(
+        synthesized_in_flight
+            .iter()
+            .any(|tool| tool.name() == DELEGATE),
+        "an in-flight turn keeps the snapshot it started with"
+    );
+}
+
+/// A durable tool that owns a delegate's name wins on every surface, at build
+/// time and on every refresh — and a refresh must never withdraw the durable
+/// tool's spec when it re-synthesises the colliding delegate.
+///
+/// The old refresh put the unfiltered synthesised names into its mask, so the
+/// next refresh's spec `retain` dropped the durable tool's spec and appended
+/// the delegate's: the model then read the delegate's schema for a name whose
+/// first-wins dispatch ran the durable tool.
+#[test]
+fn a_durable_tool_owning_a_delegate_name_wins_everywhere_across_refreshes() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+    const DELEGATE: &str = "delegate_to_integrations_agent";
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_tool_sets(
+        vec![Box::new(MockTool), Box::new(NamedTool(DELEGATE))],
+        Vec::new(),
+        Some("orchestrator"),
+    );
+    let durable_schema = NamedTool(DELEGATE).parameters_schema();
+
+    for toolkits in [vec!["gmail"], vec!["gmail", "notion"], vec!["notion"]] {
+        agent.set_connected_integrations(toolkits.iter().map(|slug| connected(slug)).collect());
+        agent.refresh_delegation_tools();
+
+        assert!(
+            !agent
+                .synthesized_tools_arc()
+                .iter()
+                .any(|tool| tool.name() == DELEGATE),
+            "the colliding delegate must not be synthesised beside the durable tool"
+        );
+        let specs: Vec<&std::sync::Arc<crate::openhuman::tools::ToolSpec>> = agent
+            .tool_specs()
+            .iter()
+            .filter(|spec| spec.name == DELEGATE)
+            .collect();
+        assert_eq!(specs.len(), 1, "exactly one spec may carry the name");
+        assert_eq!(
+            specs[0].parameters, durable_schema,
+            "and it must be the durable tool's schema — a refresh must not swap it \
+             for the delegate's"
+        );
+        assert_eq!(
+            agent
+                .all_tool_refs()
+                .iter()
+                .filter(|tool| tool.name() == DELEGATE)
+                .count(),
+            1
+        );
+        assert!(agent.tool_policy_session.is_allowed(DELEGATE));
+        super::assert_synthesized_delegates_are_executable(&agent);
+    }
+}
+
+/// The builder keeps the synthesised set beside the durable registry, never
+/// inside it, and drops a synthesised name a durable tool already owns.
+#[test]
+fn builder_holds_synthesized_tools_apart_from_the_durable_registry() {
+    let agent = build_minimal_agent_with_tool_sets(
+        vec![Box::new(MockTool)],
+        vec![
+            Box::new(NamedTool("delegate_probe")),
+            Box::new(NamedTool("echo")),
+        ],
+        None,
+    );
+
+    assert!(
+        agent.tools().iter().all(|tool| tool.name() == "echo"),
+        "the durable registry must hold only what was handed to `tools`"
+    );
+    let synthesized: Vec<String> = agent
+        .synthesized_tools_arc()
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect();
+    assert_eq!(
+        synthesized,
+        vec!["delegate_probe".to_string()],
+        "the synthesised `echo` collides with the durable tool and must be dropped"
+    );
+    assert_eq!(
+        agent
+            .tool_specs()
+            .iter()
+            .filter(|spec| spec.name == "echo")
+            .count(),
+        1,
+        "the durable tool keeps the only `echo` spec"
+    );
+    assert!(agent
+        .tool_specs()
+        .iter()
+        .any(|spec| spec.name == "delegate_probe"));
+    assert!(agent.tool_policy_session.is_allowed("delegate_probe"));
+    let expected_mask: std::collections::HashSet<String> =
+        std::iter::once("delegate_probe".to_string()).collect();
+    assert_eq!(agent.synthesized_tool_names, expected_mask);
+    super::assert_synthesized_delegates_are_executable(&agent);
 }

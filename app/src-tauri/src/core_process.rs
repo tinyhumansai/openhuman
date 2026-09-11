@@ -1035,6 +1035,7 @@ fn find_pid_on_port(port: u16) -> Option<u32> {
 }
 
 /// Pure parse of `lsof -t` output (one pid per line; first wins).
+#[cfg(unix)]
 fn parse_lsof_pid(stdout: &str) -> Option<u32> {
     stdout
         .lines()

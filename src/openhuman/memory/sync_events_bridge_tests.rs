@@ -36,6 +36,11 @@ async fn document_canonicalized_emits_stored_and_queued_stages() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS
@@ -76,6 +81,11 @@ async fn memory_ingestion_started_emits_ingesting_stage() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS
@@ -168,6 +178,11 @@ async fn bridge_populates_source_id_for_stored_and_queued_from_mem_src() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS
@@ -217,6 +232,11 @@ async fn bridge_source_id_is_none_for_non_mem_src_canonicalized() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS
@@ -265,6 +285,11 @@ async fn bridge_populates_source_id_for_ingesting_from_mem_src() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS
@@ -319,6 +344,11 @@ async fn bridge_source_id_is_none_for_ingesting_non_mem_src() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     crate::core::bus::init().await.expect("bus init");
+    // The bridge emits through `tinymemory_api::events`' sink, and these tests
+    // used to get it installed as a side effect of the memory host seams. Those
+    // are gone with the in-process engine (#6161), so install the one seam this
+    // actually needs — it is the host's own bus sink and names no engine.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     let collector = StageCollector::default();
     let _subscription = BUS

@@ -52,7 +52,6 @@ export const INTENTIONALLY_NOT_FORWARDED = {
   // 'some-gate': 'Reason it must not ship in the desktop build.',
   tui: 'Terminal UI subcommand (openhuman tui/chat); the desktop app ships its own Tauri UI and never runs the ratatui terminal front-end. NOTE: `tui` is also default-OFF, so it is in NEITHER the contributor nor the product set and no ordinary lane compiles it — the feature-gate-smoke lane checks it explicitly. Any future entry here in the same position needs the same treatment.',
   medulla: 'Medulla orchestration-backend client; the desktop app is OpenHuman\'s own product and never dials a Medulla backend. Consumed by the Medulla TUI, which embeds this crate directly.',
-  'memory-engine-seams': 'Compiles `memory::host_impls` — the seven host seams for an IN-PROCESS `tinymemory-core` — and turns that optional engine dependency on. Forwarding it would undo openhuman#5560 exactly: the shipped app reaches memory through the loaded tinymemory TinyBus module over `tinymemory-api`, and a second in-process engine over the same `memory.db` is the duplicate this shed removed. It is in `default` (not the product set) because `tests/*.rs` integration targets link this lib as a NORMAL dependency, where `#[cfg(test)]` is false and the module would be invisible however the engine is declared — several of them do drive a real engine and fail with "no EmbeddingHost installed" without it.',
 };
 
 /**
@@ -96,10 +95,21 @@ function readArray(text, open) {
   return null;
 }
 
-/** Pull the quoted string items out of a raw TOML array body. */
+/**
+ * Pull the quoted string items out of a raw TOML array body.
+ *
+ * TOML has two single-line string forms and both are valid in a manifest:
+ * basic `"voice"` and literal `'voice'`. Matching only the first reported
+ * `default = ['voice']` as an EMPTY array — and empty is the answer that makes
+ * every caller here pass vacuously, which is the failure mode this module
+ * exists to prevent (`checkProductForwarding` has nothing to compare, and the
+ * e2e coverage gate reads every feature as OFF and accepts its exclusions
+ * unchecked). Basic strings are tried first at each position, so an apostrophe
+ * inside `"don't"` cannot be mistaken for the start of a literal string.
+ */
 function arrayItems(raw) {
   if (raw === null) return [];
-  return [...raw.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+  return [...raw.matchAll(/"([^"]+)"|'([^']+)'/g)].map(m => m[1] ?? m[2]);
 }
 
 /**
@@ -175,6 +185,55 @@ export function parseCoreFeatureNames(coreToml) {
   const section = nextTable === -1 ? rest : rest.slice(0, nextTable);
   const names = [...section.matchAll(/^[ \t]*([A-Za-z0-9_-]+)[ \t]*=/gm)].map(m => m[1]);
   return names.filter(name => name !== 'default');
+}
+
+/**
+ * The core's whole `[features]` table as `name -> [items]`, `default` included.
+ *
+ * `parseCoreDefaultFeatures` answers "what is directly in `default`", which is
+ * not the same question as "what is ON". Cargo features are transitive:
+ * `documents = ["modules", …]` turns `modules` on for anyone who enables
+ * `documents`. A caller deciding whether some gate is compiled has to follow
+ * those edges or it will read a gate as OFF while cargo has it ON — see
+ * `resolveEnabledFeatures`.
+ */
+export function parseCoreFeatureGraph(coreToml) {
+  const text = stripComments(coreToml);
+  const header = text.match(/^[ \t]*\[features\][ \t]*$/m);
+  if (!header) return new Map();
+  const rest = text.slice(header.index + header[0].length);
+  const nextTable = rest.search(/^[ \t]*\[[^[\]]+\][ \t]*$/m);
+  const section = nextTable === -1 ? rest : rest.slice(0, nextTable);
+  const graph = new Map();
+  for (const match of section.matchAll(/^[ \t]*([A-Za-z0-9_-]+)[ \t]*=[ \t]*\[/gm)) {
+    // `match[0]` ends on the `[` that opens the array, so its last index is
+    // exactly where `readArray` must start scanning for the balanced close.
+    const open = match.index + match[0].length - 1;
+    graph.set(match[1], arrayItems(readArray(section, open)));
+  }
+  return graph;
+}
+
+/**
+ * Every gate cargo has ON once `seeds` are enabled, following the graph.
+ *
+ * Two item shapes are deliberately NOT followed. `dep:foo` turns an optional
+ * dependency on and `foo/bar` forwards a feature into a dependency; neither
+ * names a gate in THIS crate, and a `#[cfg(feature = "…")]` here can only ever
+ * read a local one. Following them would put `tinybus/modules` in the result
+ * and let a caller believe a gate by that name exists.
+ */
+export function resolveEnabledFeatures(graph, seeds) {
+  const enabled = new Set();
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const name = queue.pop();
+    if (name.startsWith('dep:') || name.includes('/')) continue;
+    if (enabled.has(name)) continue;
+    enabled.add(name);
+    for (const item of graph.get(name) ?? []) queue.push(item);
+  }
+  return enabled;
 }
 
 /**

@@ -2,6 +2,9 @@
 #[path = "ops_current_user_backoff_tests.rs"]
 mod current_user_backoff_tests;
 #[cfg(test)]
+#[path = "ops_snapshot_latency_tests.rs"]
+mod snapshot_latency_tests;
+#[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
 include!("ops_auth_timeout.rs");

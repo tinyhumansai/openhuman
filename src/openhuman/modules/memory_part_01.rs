@@ -8,7 +8,7 @@ use tinymemory_api::capabilities::{Capabilities, Capability};
 /// Checked against the registry pin by `the_capability_list_matches_the_pinned_release`,
 /// so bumping the pin without re-reading the list is a red test rather than a
 /// silent over-claim.
-pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.15.2";
+pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.16.0";
 
 /// The capability families the **pinned artifact** actually serves.
 ///
@@ -362,6 +362,9 @@ const BOUNDED_READ_OPERATIONS: &[&str] = &[
     "runtime_tree_status",
     "score_person",
     "search_entities",
+    // #6186. Selects closed segments with no summary; it writes nothing.
+    // The write it leads to is `set_segment_summary`, classified separately.
+    "segments_pending_summary",
     "session_turns",
     "snapshots",
     "source_ingest_status",

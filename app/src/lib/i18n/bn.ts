@@ -535,6 +535,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'ডেভেলপমেন্ট বিল্ডে সবসময় চালু',
   'settings.clearAppData': 'অ্যাপ ডেটা মুছুন',
   'settings.clearAppDataDesc': 'সাইন আউট করুন এবং সব লোকাল ডেটা স্থায়ীভাবে মুছুন',
+  'settings.clearAppDataIrreversible': 'এটি আর ফেরানো যাবে না।',
+  'settings.clearAppDataAction': 'ডেটা মুছুন',
   'settings.logOut': 'লগ আউট',
   'settings.logOutDesc': 'আপনার অ্যাকাউন্ট থেকে সাইন আউট করুন',
   'settings.exitLocalSession': 'স্থানীয় সেশন থেকে প্রস্থান করুন',
@@ -1377,7 +1379,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Xqx1q1x - নিজ হাতে অনুসন্ধান অথবা তার নিজের উপলব্ধকারীর সাথে যোগাযোগ স্থাপন করুন। Xqxqxkey কী- র সাথে একযোগে কাজ করার জন্য',
   'settings.search.description':
-    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, এবং Exa আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
+    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, Exa, এবং Tavily আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
   'settings.search.engineAria': 'সার্চ ইঞ্জিন',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1386,7 +1388,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'ডিফল্ট। OpenHuman ব্যাক-এন্ডের মাধ্যমে রুট করা হয়, বর্তমানে Exa দ্বারা চালিত: কোনো API key প্রয়োজন নেই।',
   'settings.search.localManagedUnavailable':
-    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit বা Exa API key যোগ করুন।',
+    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit, Exa বা Tavily API key যোগ করুন।',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'সরাসরি xqxxxxxxxxxxxxqx; অনুসন্ধান, চ্যাট, গবেষণা, সমৃদ্ধ টুল।',
@@ -1399,6 +1401,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa দ্বারা চালিত নিউরাল সার্চ। আপনার নিজের Exa API key প্রয়োজন। সার্চ, সদৃশ পৃষ্ঠা খোঁজা এবং পৃষ্ঠার বিষয়বস্তু আনার টুল যোগ করে।',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily দ্বারা চালিত ওয়েব, সংবাদ এবং আর্থিক সার্চ। আপনার নিজের Tavily API key প্রয়োজন। সার্চ ও পেজ কনটেন্ট আনার টুল যোগ করে।',
   'settings.search.statusConfigured': 'কনফিগার করা',
   'settings.search.statusNeedsKey': 'API কী প্রয়োজন',
   'settings.search.fallbackToManaged':
@@ -1420,6 +1425,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'কিউ- টি xxqx কি',
   'settings.search.placeholderExa': 'আপনার Exa API কী পেস্ট করুন…',
+  'settings.search.tavilyKeyLabel': 'Tavily API কী',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'ওয়েবসাইটের অনুমতি দেওয়া হয়েছে',
   'settings.search.allowedSitesHint':
     'যেসব হোস্ট অ্যাসিস্ট্যান্ট খুলতে ও পড়তে পারবে (ওয়েব ফেচ এবং ব্রাউজার টুলের মাধ্যমে) প্রতি লাইনে একটি করে, যেমন reuters.com। একটি হোস্ট তার সাবডোমেইনগুলোও অন্তর্ভুক্ত করে। ওয়েব সার্চ নিজে এই তালিকা দ্বারা সীমাবদ্ধ নয়।',
@@ -4357,7 +4364,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude দিয়ে সাইন ইন করুন',
   'settings.ai.claudeCode.reconnect': 'পুনরায় সংযুক্ত করুন',
   'settings.ai.claudeCode.loginHint':
-    'claude login চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
+    'claude auth login --claudeai চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
   'settings.ai.claudeCode.loginError': 'লগইন টার্মিনাল খোলা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'settings.ai.claudeCode.fullAccess': 'সম্পূর্ণ অ্যাক্সেস',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4950,6 +4957,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'লাইভ',
   'settings.developerMenu.eventLog.disconnected': 'বিচ্ছিন্ন',
   'settings.developerMenu.eventLog.waiting': 'ইভেন্টের অপেক্ষা করা হচ্ছে...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'এজেন্ট, টুল ও সিস্টেম কাজ করলে ঘটনাগুলি এখানে দেখা যাবে। এখনও কিছু ঘটেনি।',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'স্ট্রিম আবার চালু করতে কোরের সঙ্গে পুনরায় সংযোগ করুন।',
   'settings.developerMenu.eventLog.notConnected': 'সংযুক্ত নয়',
   'settings.developerMenu.eventLog.jumpToLatest': 'সর্বশেষ গুরুত্বপূর্ণ',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6078,6 +6089,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'রুট হিন্টস',
   'settings.agents.editor.modelTiers': 'মডেল স্তর',
   'settings.agents.editor.modelCustom': 'কাস্টম মডেল আইডি…',
+  'settings.agents.editor.modelManaged': 'পরিচালিত মডেল',
   'settings.agents.editor.modelCustomPlaceholder': 'যেমন anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'টুল যোগ করুন',
   'settings.agents.editor.toolsAllSelected': 'সব টুল',
@@ -6224,6 +6236,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'গোপনীয়তা সঞ্চয়স্থান মোড',
   'keyring.settings.mode.osKeychain': 'OS কীচেইন',
   'keyring.settings.mode.encryptedFile': 'স্থানীয় এনক্রিপ্টেড',
+  'keyring.settings.mode.localEncryptedFile': 'এনক্রিপ্টেড ফাইল',
+  'keyring.settings.mode.localPlaintextFile': 'এনক্রিপ্ট করা হয়নি এমন ফাইল',
   'keyring.settings.mode.consentPending': 'কনফিগার করা হয়নি',
   'keyring.settings.mode.declined': 'প্রত্যাখ্যান করা হয়েছে',
   'keyring.settings.availability': 'কিচেন প্রাপ্যতা',
@@ -6601,6 +6615,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'মুছুন',
   'flows.delete.deleting': 'মুছে ফেলা হচ্ছে…',
   'flows.canvas.renameLabel': 'ওয়ার্কফ্লো পুনঃনামকরণ করুন',
+  'settings.ai.openaiOauthTitle': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthDescription':
+    'API কী ছাড়াই OpenAI মডেল ব্যবহার করতে আপনার ChatGPT অ্যাকাউন্ট দিয়ে সাইন ইন করুন।',
+  'settings.ai.openaiOauthConnect': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthConnected': 'ChatGPT-এর সাথে সংযুক্ত',
+  'settings.ai.openaiOauthOpening': 'সাইন-ইন খোলা হচ্ছে…',
+  'settings.ai.openaiOauthCallbackHint':
+    'সাইন ইন করার পর ব্রাউজার থেকে সম্পূর্ণ রিডাইরেক্ট URL পেস্ট করুন (http://127.0.0.1:1455/ দিয়ে শুরু)।',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT সাইন-ইন সম্পূর্ণ করুন',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT সংযোগ বিচ্ছিন্ন করুন',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT সাইন-ইন শুধু ডেস্কটপ অ্যাপে পাওয়া যায়।',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT সাইন-ইন শুরু করা যায়নি। আবার চেষ্টা করুন অথবা একটি API কী ব্যবহার করুন।',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT সাইন-ইন সম্পূর্ণ হয়নি। রিডাইরেক্ট URL পরীক্ষা করে আবার চেষ্টা করুন।',
+  'settings.ai.openaiOauthCallbackRequired':
+    'সাইন ইন করার পর ব্রাউজার থেকে রিডাইরেক্ট URL পেস্ট করুন।',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT সংযোগ বিচ্ছিন্ন করা যায়নি। আবার চেষ্টা করুন।',
   'memorySources.codingSessions.title': 'কোডিং-এজেন্ট সেশন',
   'memorySources.codingSessions.description':
     'Codex ও Claude Code-এর সিদ্ধান্ত এবং সংশোধনকে ব্যক্তিগত পারসোনা মেমরিতে রূপ দিন।',

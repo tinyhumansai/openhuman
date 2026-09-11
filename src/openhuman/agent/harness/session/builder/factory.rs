@@ -740,7 +740,7 @@ impl Agent {
                     archivist_provider,
                     true,
                 )
-                .with_config(config.clone()),
+                .with_config(Arc::clone(&base_config)),
             );
             post_turn_hooks
                 .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
@@ -983,20 +983,10 @@ impl Agent {
             agent_id,
         );
 
-        // De-duplicate: some synthesised tool names may collide with
-        // already-registered tools (unlikely for `delegate_*` names but
-        // cheap to guard against).
-        let existing_names: std::collections::HashSet<String> =
-            tools.iter().map(|t| t.name().to_string()).collect();
-        let inserted_delegation_tools: Vec<Box<dyn Tool>> = delegation_tools
-            .into_iter()
-            .filter(|t| !existing_names.contains(t.name()))
-            .collect();
-        let synthesized_tool_names: std::collections::HashSet<String> = inserted_delegation_tools
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
-        tools.extend(inserted_delegation_tools);
+        // The delegation tools stay beside the durable registry rather than
+        // inside it: the builder holds them in `Agent::synthesized_tools`,
+        // drops any name a durable tool already owns, and
+        // `refresh_delegation_tools` replaces the whole set later (#6145).
 
         // Pre-fetch Critical + High priority tool-scoped memory rules so they
         // pin into the (compression-resistant) system prompt for the whole
@@ -1007,8 +997,11 @@ impl Agent {
         // or when the runtime cannot host a synchronous bridge (single-threaded
         // test harnesses).
         if config.learning.enabled && config.learning.tool_memory_capture_enabled {
-            let agent_tool_names: Vec<String> =
-                tools.iter().map(|t| t.name().to_string()).collect();
+            let agent_tool_names: Vec<String> = tools
+                .iter()
+                .chain(delegation_tools.iter())
+                .map(|t| t.name().to_string())
+                .collect();
             let pinned = prefetch_tool_memory_rules_blocking(memory.clone(), &agent_tool_names);
             if !pinned.is_empty() {
                 log::info!(
@@ -1023,7 +1016,12 @@ impl Agent {
         // (including orchestrator tools) so every tool gets a signature
         // entry. The registry is self-contained — it doesn't hold a
         // reference back into the tools Vec.
-        let pformat_registry = crate::openhuman::agent::pformat::build_registry(&tools);
+        let pformat_registry = crate::openhuman::agent::pformat::build_registry_from_refs(
+            tools
+                .iter()
+                .chain(delegation_tools.iter())
+                .map(|t| t.as_ref()),
+        );
         let dispatcher_kind =
             resolve_dispatcher_kind(&dispatcher_choice, supports_native, agent_id);
         let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
@@ -1188,6 +1186,7 @@ impl Agent {
         let mut builder = Agent::builder()
             .crate_native_provider(provider_role, Arc::clone(&base_config))
             .tools(tools)
+            .synthesized_tools(delegation_tools)
             .visible_tool_names(visible)
             .memory(memory)
             .shared_experience_memory(shared_experience_memory)
@@ -1246,12 +1245,15 @@ impl Agent {
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        agent.runtime_config = Some(Arc::new(config.clone()));
+        // The same snapshot `base_config` already holds — `Config` is immutable
+        // after construction, so a second deep clone bought nothing but a
+        // second resident copy of a 95-field struct with nested `Vec`s
+        // (openhuman#6218).
+        agent.runtime_config = Some(Arc::clone(&base_config));
         agent.last_seen_integrations_hash =
             crate::openhuman::integrations::composio::connected_set_hash(
                 &agent.connected_integrations,
             );
-        agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
     }
 }

@@ -1,21 +1,28 @@
 //! Where Lane C reads from.
 //!
-//! The lane is written against a one-method trait rather than the guard
+//! The lane is written against a two-method trait rather than the guard
 //! directly so the turn tests can script hits without a memory driver, and so
 //! the lane's own tests can exercise the timeout and error paths on demand.
 //! Production binds [`GuardSource`], which goes through the bound driver's
 //! guard: scope narrowing, taint stamping and the recall budget all apply
 //! exactly as they do for the memory tools.
+//!
+//! Both methods are required, neither defaulted. A default answering "nothing"
+//! would compile for every implementor and be a silent no-op in production —
+//! the exact shape of #6041, where a `Memory` trait default returned `Ok(vec![])`
+//! under every module-backed install while every test stayed green.
 
 use crate::openhuman::memory::api::error::MemoryError;
 use crate::openhuman::memory::api::provider::retrieval::{FastRetrieveQuery, RetrievalResponse};
 use crate::openhuman::memory::api::provider::MemoryProvider as _;
+use crate::openhuman::memory::api::types::NamespaceMemoryHit;
 use crate::openhuman::memory::guard::MemoryGuard;
 use crate::openhuman::memory::source_scope::as_bus_scope;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// A retrieval the lane can run.
+/// The retrievals the lane can run: the tree walk, and the scored recall over
+/// one namespace (#6063).
 #[async_trait]
 pub trait AutoRecallSource: Send + Sync {
     /// The driver's `fast_retrieve` for `query`, bounded by `options`.
@@ -24,6 +31,15 @@ pub trait AutoRecallSource: Send + Sync {
         query: &str,
         options: FastRetrieveQuery,
     ) -> Result<RetrievalResponse, MemoryError>;
+
+    /// The driver's scored recall over `namespace` for `query`: at most `limit`
+    /// hits, each carrying the vector similarity the lane floors on.
+    async fn recall_namespace_scored(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<NamespaceMemoryHit>, MemoryError>;
 }
 
 /// The production source: the session's bound driver, behind its guard.
@@ -60,6 +76,27 @@ impl AutoRecallSource for GuardSource {
         let scope = as_bus_scope();
         retrieval
             .fast_retrieve(query, options, scope.as_ref())
+            .await
+    }
+
+    async fn recall_namespace_scored(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<NamespaceMemoryHit>, MemoryError> {
+        // Same degradation as the tree leg: no retrieval family, no notes.
+        let Some(retrieval) = self.guard.as_retrieval() else {
+            log::debug!(
+                "[auto_recall] bound driver exposes no retrieval family; no notes to recall"
+            );
+            return Ok(Vec::new());
+        };
+        // No session to exclude: the notes namespace is never auto-saved per
+        // session, and the lane runs before this turn is archived, so there is
+        // no self-echo for the engine's exclusion to catch.
+        retrieval
+            .recall_namespace_scored(namespace, query, limit, None)
             .await
     }
 }

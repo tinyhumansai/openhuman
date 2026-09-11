@@ -12,12 +12,12 @@
 //!
 //! Three parts, and the split is about ownership rather than size:
 //!
-//! - `store` — the implementation: on-disk format, the process-wide write
-//!   lock, the warm index cache, CRUD and search. Everything below is
+//! - `store` — the implementation: on-disk format, root lifecycle and sharded
+//!   metadata/message locks, the warm index cache, CRUD and search. Everything below is
 //!   re-exported from here, so callers name
 //!   `crate::openhuman::memory::conversations::{…}` and never the subtree.
 //! - [`blocking`] — `spawn_blocking` wrappers. Every store entry point is
-//!   synchronous and takes a `parking_lot` mutex across fsync'd file IO, so an
+//!   synchronous and can take `parking_lot` locks across fsync'd file IO, so an
 //!   `async fn` that calls one directly parks a tokio **worker** thread for the
 //!   whole wait. Request paths must use these (#5156).
 //! - `bus` — the `core::bus` subscriber that mirrors inbound and processed

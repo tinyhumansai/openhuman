@@ -40,6 +40,7 @@ use crate::openhuman::agent::harness::definition::{
 #[allow(unused_imports)]
 use super::SpawnWorkerThreadTool;
 use super::{ArchetypeDelegationTool, SkillDelegationTool, Tool};
+use crate::openhuman::agent::orchestration::tools::DelegationTarget;
 
 /// Synthesise the delegation tool list for an agent based on its
 /// declarative `subagents` field.
@@ -133,7 +134,7 @@ pub fn collect_orchestrator_tools(
                 // paying for it on every delegate schema on every turn.
                 tools.push(Box::new(ArchetypeDelegationTool {
                     tool_name,
-                    agent_id: target.id.clone(),
+                    agent_id: DelegationTarget(target.id.clone()),
                     tool_description: target.when_to_use.clone(),
                 }));
             }
@@ -205,6 +206,28 @@ pub fn collect_orchestrator_tools(
                     };
                     connected.push((slug, description));
                 }
+                // Order the enum by slug, because the order it arrives in is
+                // not a contract and the order it is *advertised* in is.
+                //
+                // This tool's schema and description both enumerate the
+                // toolkits, and the tool block is rendered ahead of the
+                // conversation in every provider's cached prefix — so a
+                // backend that returns the same integrations in a different
+                // order would otherwise re-write the schema, and with it
+                // invalidate the whole prefix including the system prompt the
+                // turn loop freezes for exactly that reason. The rest of the
+                // pipeline already treats order as meaningless:
+                // `connected_set_hash` sorts before hashing, which is what
+                // stops a reordering from reaching a reconcile at the turn
+                // boundary in the first place. Sorting here makes the
+                // advertised surface agree with that view instead of
+                // contradicting it a layer down.
+                //
+                // Sorting AFTER the dedup loop, never before: the collision
+                // rule above is "the first arrival keeps the slug", which is a
+                // statement about arrival order and would change meaning if the
+                // list were sorted first.
+                connected.sort_by(|(a, _), (b, _)| a.cmp(b));
                 match SkillDelegationTool::for_connected(connected) {
                     Some(tool) => {
                         log::debug!(

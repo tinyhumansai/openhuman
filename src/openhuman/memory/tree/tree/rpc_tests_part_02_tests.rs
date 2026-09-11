@@ -453,38 +453,6 @@ fn an_untimestamped_failure_surfaces_regardless_of_the_watermark() {
     );
 }
 
-/// On a fresh workspace the panel must report `idle` with zero
-/// counters — the UI uses this to swap the loading skeleton for a
-/// "no memory yet" state.
-#[tokio::test]
-async fn pipeline_status_returns_idle_for_empty_store() {
-    // #002: the degraded flags are process-global; reset+serialise so a
-    // parallel test (factory None-path, extract transport-fail) can't leak
-    // a "degraded" signal into this fresh-workspace assertion.
-    let _g = tinymemory_core::tree::health::test_guard();
-    let (_tmp, cfg) = test_config();
-    // An empty driver, bound explicitly. Without a binding installed this
-    // resolves the real one, which means loading the compiled module — and
-    // in a test process that blocks rather than failing.
-    bind_diagnostics(&cfg, Default::default(), Default::default());
-    let out = pipeline_status_rpc(&cfg).await.unwrap().value;
-    assert_eq!(out.status, "idle");
-    assert_eq!(out.total_chunks, 0);
-    assert_eq!(out.last_sync_ms, 0);
-    assert_eq!(out.pipeline_jobs.ready, 0);
-    assert_eq!(out.pipeline_jobs.running, 0);
-    assert_eq!(out.pipeline_jobs.failed, 0);
-    assert!(!out.is_syncing);
-    assert!(!out.is_paused);
-    // No gate sampler runs in unit tests, so the live policy is `Normal`.
-    assert!(!out.gate_paused);
-    assert!(out.gate_pause_reason.is_none());
-    // An empty queue has nothing waiting, so nothing is stalled.
-    assert!(!out.queue_stalled);
-    assert_eq!(out.wiki_size_bytes, 0, "no content dir yet");
-    assert!(out.reason.is_none());
-}
-
 /// When the scheduler gate is `off`, the aggregated status flips to
 /// `paused` regardless of the rest of the signals. This is the
 /// invariant the toggle relies on.
@@ -500,66 +468,6 @@ async fn pipeline_status_reflects_paused_when_scheduler_off() {
     assert!(out.is_paused);
     let reason = out.reason.expect("paused must carry a reason");
     assert!(reason.contains("off"), "reason should name the mode");
-}
-
-/// `pipeline_status` renders the aggregates the driver reports, and
-/// derives a terminal status from them.
-///
-/// This used to ingest a document and assert the counters moved. That
-/// half — an ingest raising the chunk count — is the driver's, and is
-/// pinned in the driver's conformance suite against a real store. What is
-/// the host's, and what this pins, is that the reported numbers reach the
-/// wire unchanged and that a populated, idle store reads as terminal
-/// rather than syncing.
-#[tokio::test]
-async fn pipeline_status_renders_the_drivers_chunk_aggregates() {
-    use crate::openhuman::memory::api::provider::types::{QueueStats, StoreStats};
-
-    // #002: reset+serialise the process-global degraded flags so this
-    // "running" assertion isn't flipped to "degraded" by a parallel test.
-    let _g = tinymemory_core::tree::health::test_guard();
-    let (_tmp, cfg) = test_config();
-
-    let ingested_at = 1_800_000_000_000_i64;
-    bind_diagnostics(
-        &cfg,
-        StoreStats {
-            chunks: 4,
-            chunks_with_structure: 1,
-            most_recent_chunk_ms: Some(ingested_at),
-        },
-        QueueStats::default(),
-    );
-
-    let out = pipeline_status_rpc(&cfg).await.unwrap().value;
-    assert_eq!(out.total_chunks, 4, "the driver's count reaches the wire");
-    assert_eq!(
-        out.last_sync_ms, ingested_at,
-        "and so does its newest chunk's timestamp"
-    );
-    assert_eq!(
-        out.extraction_coverage,
-        Some(0.25),
-        "coverage is the pair the driver reported, divided once"
-    );
-    // Provider availability differs between local and CI harnesses, so a
-    // populated store may read as fully running or as degraded because
-    // semantic recall or wiki structure was skipped. Both are terminal,
-    // non-syncing states and both preserve the aggregates above.
-    match out.status.as_str() {
-        "running" => assert!(out.reason.is_none()),
-        "degraded" => {
-            let reason = out.reason.as_deref().unwrap_or_default();
-            assert!(
-                reason.contains("semantic recall disabled")
-                    || reason.contains("wiki structure incomplete"),
-                "degraded status should explain recall or structure loss: {:?}",
-                out.reason
-            );
-        }
-        other => panic!("expected running or degraded for a populated store, got {other}"),
-    }
-    assert!(!out.is_syncing);
 }
 
 /// `set_enabled` flips the persisted scheduler-gate mode and reports

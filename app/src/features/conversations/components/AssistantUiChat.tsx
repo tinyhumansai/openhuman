@@ -9,6 +9,7 @@ import type { Attachment } from '../../../lib/attachments';
 import { useRegisterAction } from '../../../lib/commands/useRegisterAction';
 import { useSlashCommands } from '../../../lib/commands/useSlashCommands';
 import { useT } from '../../../lib/i18n/I18nContext';
+import type { TurnProcessTrail } from '../../../providers/assistantUiMessages';
 import { AssistantUiRuntimeProvider } from '../../../providers/AssistantUiRuntimeProvider';
 import { emptySessionTokenUsage } from '../../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../../store/hooks';
@@ -16,6 +17,8 @@ import { DEFAULT_MASCOT_COLOR } from '../../../store/mascotSlice';
 import { MascotChipAvatar } from '../../human/Mascot/MascotChipAvatar';
 import { AssistantUiInferenceStatus } from './AssistantUiInferenceStatus';
 import { SubagentDrawerHost } from './aui/subagentDrawerHost';
+import { TurnFooter } from './aui/TurnFooter';
+import { TurnFooterHost } from './aui/turnFooterHost';
 import { ChatToolFallback, ChatToolGroup } from './ChatToolParts';
 import { contextUsageFromTokenUsage, ContextWindowPill } from './composer/ContextWindowPill';
 import {
@@ -81,6 +84,7 @@ export function AssistantUiChat({
   onSwitchToMicCloud,
   onOpenSubagent,
   canOpenSubagent,
+  onOpenTurnProcess,
 }: {
   threadGoal: ThreadGoalController;
   model: string | null;
@@ -115,6 +119,8 @@ export function AssistantUiChat({
   onOpenSubagent?: (taskId: string) => void;
   /** Whether the host's drawer can resolve that delegation; see the same file. */
   canOpenSubagent?: (taskId: string) => boolean;
+  /** Opens the host's process rail on one settled turn's trail (`TurnFooter`). */
+  onOpenTurnProcess?: (trail: TurnProcessTrail) => void;
 }) {
   const { t } = useT();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -260,6 +266,9 @@ export function AssistantUiChat({
       // Phase / reasoning round / active tool for the turn in flight. Reads the
       // runtime's `extras`, so it needs no props and no dependency here.
       RunningStatus: AssistantUiInferenceStatus,
+      // One-line process summary under a settled answer, and the only door to
+      // the reasoning / narration / tool detail that no longer renders inline.
+      TurnFooter,
       onSwitchToMicCloud,
       ...(attachmentsEnabled
         ? {
@@ -286,16 +295,18 @@ export function AssistantUiChat({
   return (
     <AssistantUiRuntimeProvider>
       <ComposerTextBridge value={inputValue} onChange={onInputValueChange} />
-      <SubagentDrawerHost onOpenSubagent={onOpenSubagent} canOpenSubagent={canOpenSubagent}>
-        <Thread
-          components={components}
-          model={model}
-          onModelChange={onModelChange}
-          loadError={loadError}
-          onEscape={onEscape}
-          slashCommands={slashCommands}
-        />
-      </SubagentDrawerHost>
+      <TurnFooterHost onOpenTurnProcess={onOpenTurnProcess}>
+        <SubagentDrawerHost onOpenSubagent={onOpenSubagent} canOpenSubagent={canOpenSubagent}>
+          <Thread
+            components={components}
+            model={model}
+            onModelChange={onModelChange}
+            loadError={loadError}
+            onEscape={onEscape}
+            slashCommands={slashCommands}
+          />
+        </SubagentDrawerHost>
+      </TurnFooterHost>
     </AssistantUiRuntimeProvider>
   );
 }

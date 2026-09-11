@@ -16,22 +16,32 @@
 #   --scenarios "a,b,c"    Comma-separated scenario list (default: all seven)
 #   --turns N               OPENHUMAN_PROFILE_TURNS for long-agent (default binary default: 25)
 #   --skip-build           Reuse the existing target/release binaries
-#   --warm                 Also run PREWARM_SUBAGENTS=1 variants for subagents + subconscious
+#   --warm                 Also run PREWARM_SUBAGENTS=1 variants for subagent-storm
 #   --out DIR              Output directory (default: target/profile/rust-library/bench-<timestamp>)
 #   -h, --help             Show this help
 #
 # Examples:
 #   ./scripts/profile/library-bench.sh
 #   ./scripts/profile/library-bench.sh --slim --repeat 7
-#   ./scripts/profile/library-bench.sh --scenarios "long-agent,subagents" --turns 50 --warm
+#   ./scripts/profile/library-bench.sh --scenarios "long-agent,subagent-storm" --turns 50 --warm
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-ALL_SCENARIOS="memory-ingest,subagents,agent-turn,long-agent,workflow,subconscious,cold-phases"
-WARM_ELIGIBLE=("subagents" "subconscious")
+# The scenarios `library-profile` actually dispatches — keep in sync with
+# `src/bin/library_profile/scenarios/mod.rs`, which is the source of truth.
+#
+# This list had drifted before openhuman#6161 touched it: `subagents` and
+# `subconscious` are named here and neither has been a scenario for some time
+# (the subconscious domain was removed from the product outright). `dispatch`
+# answers "unknown scenario: …" for those, so a full sweep exited non-zero on
+# two entries that could never run. `memory-ingest` and `cold-phases` leave now
+# for a different reason: both measured the in-process memory engine, which
+# this binary no longer links.
+ALL_SCENARIOS="agent-turn,long-agent,workflow,fleet,skill-run,subagent-storm"
+WARM_ELIGIBLE=("subagent-storm")
 
 SLIM=0
 REPEAT=5

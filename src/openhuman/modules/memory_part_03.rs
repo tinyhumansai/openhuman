@@ -265,6 +265,20 @@ impl MemoryEpisodic for ModuleMemoryProvider {
             (segment_id, summary, now)
         )
     }
+    /// Forwarded rather than left to the trait default (#6186). The default
+    /// answers an empty list, which here would read as "no segment needs
+    /// re-summarising" — indistinguishable from a healthy store, and silent.
+    async fn segments_pending_summary(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<ConversationSegment>, MemoryError> {
+        module_call!(
+            self,
+            "segments_pending_summary",
+            methods::SEGMENTS_PENDING_SUMMARY,
+            (limit,)
+        )
+    }
     async fn upsert_segment_embedding(
         &self,
         segment_id: &str,

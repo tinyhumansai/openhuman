@@ -13,13 +13,13 @@
 //! does with the answer.
 //!
 //! One test binds the real in-process driver instead
-//! ([`install_tinycortex_for_test`]): the source gate has to be proved end
+//! ([`install_memory_driver_for_test`]): the source gate has to be proved end
 //! to end, because "the handler passed a scope" and "a restricted profile
 //! cannot read another source" are different claims and only the second one
 //! is the security property. It is the driver the loadable module wraps,
 //! which is as close to production as a test process can get.
 //!
-//! [`install_tinycortex_for_test`]: crate::openhuman::memory::test_support::install_tinycortex_for_test
+//! [`install_memory_driver_for_test`]: crate::openhuman::memory::test_support::install_memory_driver_for_test
 use std::sync::{Arc, Mutex};
 
 use super::*;
@@ -50,7 +50,6 @@ use crate::openhuman::memory::source_scope::with_source_scope;
 // test-only, which is exactly the pair `direct_engine_refs_tests`'
 // line-based scanner cannot tell apart when the reference sits inside an
 // inline `#[cfg(test)]` module. See that module's docs.
-use crate::openhuman::memory::tree::retrieval::test_support::{stage_test_chunks, upsert_chunks};
 use tinymemory_api::chunks::{chunk_id, Chunk, Metadata, SourceRef};
 use tinymemory_api::null::NullMemoryProvider;
 

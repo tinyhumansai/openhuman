@@ -1,11 +1,13 @@
 //! Unit tests for the memory `ops` helpers (retrieval context construction,
 //! hit filtering, and LLM context message formatting).
 
+// The engine's re-export and the contract's are the same item; name the
+// contract, which is what this crate still links (openhuman#6161).
 use serde_json::json;
+use tinymemory_api::types::{MemoryItemKind, NamespaceMemoryHit, RetrievalScoreBreakdown};
 
 use super::{build_retrieval_context, filter_hits_by_document_ids, format_llm_context_message};
 use crate::openhuman::memory::api::types::GraphRelationRecord;
-use tinymemory_core::store::{MemoryItemKind, NamespaceMemoryHit, RetrievalScoreBreakdown};
 
 fn sample_hit() -> NamespaceMemoryHit {
     NamespaceMemoryHit {
@@ -152,9 +154,8 @@ fn format_llm_context_message_includes_entity_types_when_present() {
 
 use super::{
     chunk_metadata, default_category, default_priority, default_source_type, error_envelope,
-    extract_entity_type, maybe_retrieval_context, memory_counts, memory_kind_label,
-    memory_request_id, relation_identity, relation_metadata, timestamp_to_rfc3339,
-    validate_memory_relative_path,
+    extract_entity_type, maybe_retrieval_context, memory_counts, memory_request_id,
+    relation_identity, relation_metadata, timestamp_to_rfc3339, validate_memory_relative_path,
 };
 use crate::openhuman::memory::{ApiEnvelope, MemoryRetrievalContext};
 use crate::rpc::RpcOutcome;
@@ -196,14 +197,6 @@ fn timestamp_to_rfc3339_rejects_non_finite_and_negative() {
     assert!(timestamp_to_rfc3339(f64::NAN).is_none());
     assert!(timestamp_to_rfc3339(f64::INFINITY).is_none());
     assert!(timestamp_to_rfc3339(-1.0).is_none());
-}
-
-#[test]
-fn memory_kind_label_maps_each_variant() {
-    assert_eq!(memory_kind_label(&MemoryItemKind::Document), "document");
-    assert_eq!(memory_kind_label(&MemoryItemKind::Kv), "kv");
-    assert_eq!(memory_kind_label(&MemoryItemKind::Episodic), "episodic");
-    assert_eq!(memory_kind_label(&MemoryItemKind::Event), "event");
 }
 
 fn relation_fixture(namespace: Option<&str>) -> GraphRelationRecord {

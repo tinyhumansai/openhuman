@@ -469,7 +469,7 @@ impl CoreBuilder {
     }
 
     /// Choose how each tool group reaches the model (default: every group
-    /// withheld behind `load_skill` / `use_skill`, the desktop app's shape).
+    /// withheld behind `use_skill`, the desktop app's shape).
     ///
     /// The third narrowing axis, independent of both `services` and `domains`:
     /// `ServiceSet` picks the background services, `DomainSet` picks which
@@ -601,6 +601,20 @@ impl CoreBuilder {
             self.config,
         )
         .await?;
+
+        // Reap agent runs orphaned by a previous process (crash / restart /
+        // deploy). Here, and not with the other boot-once jobs, because those
+        // run from `serve()`: an embedder that only calls `build()` and then
+        // `invoke()` never reaches them, and `openhuman.agent_runs_active` is
+        // dispatchable the moment this returns. The core is a single in-process
+        // runtime, so a run left Pending/Running/Interrupted in the durable
+        // status store has no executor to advance it and would be listed as
+        // active forever. Best-effort — a store that cannot be read logs and
+        // reaps nothing rather than failing the build.
+        if let Some(cfg) = config.as_ref() {
+            crate::openhuman::agent::tinyagents::reaper::reap_orphaned_runs(&cfg.workspace_dir)
+                .await;
+        }
 
         Ok(CoreRuntime {
             ctx,

@@ -7,7 +7,6 @@
 
 use super::*;
 use once_cell::sync::Lazy as TestLazy;
-use serde_json::json;
 
 // ── Current-user failure backoff (#5624) ────────────────────────────────────
 //
@@ -26,6 +25,10 @@ use serde_json::json;
 /// whole point of that test is that `fetch_current_user_cached` consults the
 /// record. Kept distinct from `APP_STATE_CACHE_TEST_LOCK` because the two guard
 /// different globals and nothing here writes the positive cache.
+///
+/// `pub(super)` because `ops_tests.rs` needs it too: a successful fetch calls
+/// `clear_current_user_failure`, which wipes this global, so a test that lets a
+/// real fetch complete has to serialise against the tests seeding outages here.
 pub(super) static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
     TestLazy::new(|| tokio::sync::Mutex::new(()));
 

@@ -121,7 +121,7 @@ pub(super) fn add_memory_prompt_sections(
 ) -> SystemPromptBuilder {
     use crate::openhuman::agent::learning::{
         any_tool_offered, MemoryAccessSection, MemoryWriteSection, MEMORY_READ_TOOLS,
-        MEMORY_STORE_TOOL, SAVE_PREFERENCE_TOOL,
+        MEMORY_STORE_TOOL, MEMORY_WRITE_DELEGATE_TOOL, SAVE_PREFERENCE_TOOL,
     };
     let mut prompt_builder = prompt_builder;
     if any_tool_offered(&MEMORY_READ_TOOLS, tools, delegation_tools, visible) {
@@ -138,17 +138,31 @@ pub(super) fn add_memory_prompt_sections(
     // about the other (review finding).
     let preferences = any_tool_offered(&[SAVE_PREFERENCE_TOOL], tools, delegation_tools, visible);
     let facts = any_tool_offered(&[MEMORY_STORE_TOOL], tools, delegation_tools, visible);
-    if preferences || facts {
-        prompt_builder =
-            prompt_builder.add_section(Box::new(MemoryWriteSection::new(preferences, facts)));
+    // #6200: asked for as well as the pair, not instead of it. An agent whose
+    // only write path is the delegate held the tool and no rule about using it
+    // — the write-side twin of the read-side gap #6183 closed.
+    let delegate = any_tool_offered(
+        &[MEMORY_WRITE_DELEGATE_TOOL],
+        tools,
+        delegation_tools,
+        visible,
+    );
+    if preferences || facts || delegate {
+        prompt_builder = prompt_builder.add_section(Box::new(MemoryWriteSection::new(
+            preferences,
+            facts,
+            delegate,
+        )));
         log::debug!(
             "[memory_write] prompt section registered for agent={agent_id} \
-             save_preference={preferences} memory_store={facts}"
+             save_preference={preferences} memory_store={facts} \
+             manage_profile_memory={delegate}"
         );
     } else {
         log::debug!(
-            "[memory_write] skipping MemoryWriteSection — neither memory_store nor \
-             save_preference is registered+visible for agent={agent_id}"
+            "[memory_write] skipping MemoryWriteSection — none of memory_store, \
+             save_preference or manage_profile_memory is registered+visible for \
+             agent={agent_id}"
         );
     }
     prompt_builder

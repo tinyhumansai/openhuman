@@ -20,6 +20,33 @@ impl ToolPolicyEngine {
         tools: &[Box<dyn Tool>],
         visible_tool_names: &HashSet<String>,
     ) -> super::ToolPolicySession {
+        let tools: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
+        Self::build_session_from_refs(
+            agent_id,
+            channel,
+            entrypoint,
+            channel_permissions,
+            &tools,
+            visible_tool_names,
+        )
+    }
+
+    /// [`Self::build_session`] over a borrowed tool set that need not be one
+    /// contiguous slice.
+    ///
+    /// A session agent's callable surface is split across two `Arc`s — the
+    /// durable registry and the freshly-synthesised delegation set (see
+    /// `Agent::synthesized_tools`). Both must be classified, or a delegate tool
+    /// the model can see and call would carry no policy decision at all and
+    /// fall through the per-channel permission gate.
+    pub fn build_session_from_refs(
+        agent_id: impl Into<String>,
+        channel: impl Into<String>,
+        entrypoint: impl Into<String>,
+        channel_permissions: &HashMap<String, String>,
+        tools: &[&dyn Tool],
+        visible_tool_names: &HashSet<String>,
+    ) -> super::ToolPolicySession {
         let channel = channel.into();
         let allowed_permission = permission_for_channel(channel_permissions, &channel);
         let profile = TaskProfile {

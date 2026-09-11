@@ -14,6 +14,24 @@ describe('billingApi', () => {
     mockCallCoreCommand.mockReset();
   });
 
+  describe('getSummary', () => {
+    it('calls the aggregate billing summary RPC', async () => {
+      const summary = {
+        credits: { promotionBalanceUsd: 2, teamTopupUsd: 3, totalUsd: 5 },
+        plan: { plan: 'FREE', hasActiveSubscription: false },
+        links: {
+          topUpUrl: 'https://tinyhumans.ai/dashboard?tab=billing',
+          manageUrl: 'https://tinyhumans.ai/dashboard?tab=plans',
+          apiKeysUrl: 'https://tinyhumans.ai/dashboard?tab=api-keys',
+        },
+      };
+      mockCallCoreCommand.mockResolvedValue(summary);
+
+      await expect(billingApi.getSummary()).resolves.toEqual(summary);
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_get_summary');
+    });
+  });
+
   describe('getCurrentPlan', () => {
     it('should call openhuman.billing_get_current_plan', async () => {
       const planData = {

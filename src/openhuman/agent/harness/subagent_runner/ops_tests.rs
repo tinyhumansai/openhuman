@@ -240,8 +240,8 @@ fn make_parent(
     provider: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
 ) -> ParentExecutionContext {
-    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
-        tools.iter().map(|t| t.spec()).collect();
+    let tool_specs: Vec<Arc<crate::openhuman::tools::ToolSpec>> =
+        tools.iter().map(|t| Arc::new(t.spec())).collect();
     ParentExecutionContext {
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
@@ -253,6 +253,7 @@ fn make_parent(
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),

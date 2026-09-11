@@ -55,7 +55,7 @@ fn bound_config() -> (tempfile::TempDir, Config) {
     config.memory_tree.embedding_endpoint = None;
     config.memory_tree.embedding_model = None;
     config.memory_tree.embedding_strict = false;
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
     (tmp, config)
 }
 

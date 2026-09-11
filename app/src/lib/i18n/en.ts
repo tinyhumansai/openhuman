@@ -338,8 +338,11 @@ const en: TranslationMap = {
   'settings.developerMode.title': 'Developer mode',
   'settings.developerMode.description': 'Show advanced developer & diagnostic tools',
   'settings.developerMode.enabledByBuild': 'Always on in development builds',
-  'settings.clearAppData': 'Clear App Data',
-  'settings.clearAppDataDesc': 'Sign out and permanently clear all local app data',
+  'settings.clearAppData': 'Clear app data',
+  'settings.clearAppDataDesc':
+    'Signs you out and deletes every thread, setting, and cached file stored on this device.',
+  'settings.clearAppDataIrreversible': 'This cannot be undone.',
+  'settings.clearAppDataAction': 'Clear data',
   'settings.logOut': 'Log out',
   'settings.logOutDesc': 'Sign out of your account',
   'settings.exitLocalSession': 'Exit local session',
@@ -430,7 +433,7 @@ const en: TranslationMap = {
   'settings.ai.llmProviderDesc': 'Choose and configure your AI provider',
 
   // Clear App Data modal
-  'clearData.title': 'Clear App Data',
+  'clearData.title': 'Clear app data',
   'clearData.warning': 'This will sign you out and permanently delete local app data including:',
   'clearData.bulletSettings': 'App settings and conversations',
   'clearData.bulletCache': 'All local integration cache data',
@@ -1578,7 +1581,7 @@ const en: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, Querit, and Exa run direct from your machine using your API key.",
+    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, Querit, Exa, and Tavily run direct from your machine using your API key.",
   'settings.search.engineAria': 'Search engine',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1587,7 +1590,7 @@ const en: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Default. Routed through the OpenHuman backend, currently powered by Exa: no API key required.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, Querit, or Exa API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, Querit, Exa, or Tavily API key to enable web search.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
@@ -1599,6 +1602,9 @@ const en: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Neural search powered by Exa. Requires your own Exa API key. Adds search, find similar, and page contents tools.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Web, news, and finance search powered by Tavily. Requires your own Tavily API key. Adds search and page extract tools.',
   'settings.search.statusConfigured': 'Configured',
   'settings.search.statusNeedsKey': 'Needs API key',
   'settings.search.fallbackToManaged':
@@ -1615,11 +1621,13 @@ const en: TranslationMap = {
   'settings.search.braveKeyLabel': 'Brave Search API key',
   'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.exaKeyLabel': 'Exa API key',
+  'settings.search.tavilyKeyLabel': 'Tavily API key',
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API key',
   'settings.search.placeholderExa': 'Paste your Exa API key…',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Allowed websites',
   'settings.search.allowedSitesHint':
     'Enter one host per line, such as reuters.com. The assistant may open and read these hosts through web fetch and the browser tool. Each host also covers its subdomains. This list does not restrict web search.',
@@ -5015,7 +5023,7 @@ const en: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Sign in with Claude',
   'settings.ai.claudeCode.reconnect': 'Reconnect',
   'settings.ai.claudeCode.loginHint':
-    'Opens a terminal running claude login. After it completes, click Recheck.',
+    'Opens a terminal running claude auth login --claudeai. After it completes, click Recheck.',
   'settings.ai.claudeCode.loginError': 'Could not open the login terminal. Please try again.',
   'settings.ai.claudeCode.fullAccess': 'Full access',
   'settings.ai.claudeCode.fullAccessOn':
@@ -5062,6 +5070,26 @@ const en: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
   'settings.ai.connecting': 'Connecting...',
+  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
+  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+  'settings.ai.openaiOauthCallbackHint':
+    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
+  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthStartError':
+    'Could not start ChatGPT sign-in. Try again or use an API key.',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Paste the redirect URL from your browser after signing in.',
+  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
   'settings.ai.codexAuthButton': 'Connect Codex',
   'settings.ai.codexAuthHelper': 'Uses the existing Codex CLI login from ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Background loops',
@@ -5654,6 +5682,9 @@ const en: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Disconnected',
   'settings.developerMenu.eventLog.waiting': 'Waiting for events...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Events appear here as agents, tools, and the system do work. Nothing has happened yet.',
+  'settings.developerMenu.eventLog.notConnectedHint': 'Reconnect to the core to resume the stream.',
   'settings.developerMenu.eventLog.notConnected': 'Not connected to core',
   'settings.developerMenu.eventLog.jumpToLatest': 'Jump to latest',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6872,6 +6903,7 @@ const en: TranslationMap = {
   'settings.agents.editor.modelHints': 'Route hints',
   'settings.agents.editor.modelTiers': 'Model tiers',
   'settings.agents.editor.modelCustom': 'Custom model id…',
+  'settings.agents.editor.modelManaged': 'Managed models',
   'settings.agents.editor.modelCustomPlaceholder': 'e.g. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Add tools',
   'settings.agents.editor.toolsAllSelected': 'All tools',
@@ -6963,6 +6995,8 @@ const en: TranslationMap = {
   'keyring.settings.storageMode': 'Secret storage mode',
   'keyring.settings.mode.osKeychain': 'OS Keychain',
   'keyring.settings.mode.encryptedFile': 'Local Encrypted',
+  'keyring.settings.mode.localEncryptedFile': 'Encrypted file',
+  'keyring.settings.mode.localPlaintextFile': 'Unencrypted file',
   'keyring.settings.mode.consentPending': 'Not configured',
   'keyring.settings.mode.declined': 'Declined',
   'keyring.settings.availability': 'Keychain availability',

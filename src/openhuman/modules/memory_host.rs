@@ -1,9 +1,11 @@
 //! Host-owned callbacks used by the separately compiled TinyMemory module.
 //!
-//! This file is the bus-served twin of `memory/host_impls.rs`. That file
-//! installs the engine's seam traits as process globals, which only works while
-//! the engine is compiled into this binary; these interfaces serve the same
-//! capabilities to an engine that is *not*, over the module's connection.
+//! This file was the bus-served twin of `memory/host_impls.rs`, and is now the
+//! only one of the pair. That file installed the engine's seam traits as
+//! process globals, which only works while the engine is compiled into this
+//! binary — so it went when the engine left the test build too
+//! (openhuman#6161). These interfaces serve the same capabilities to an engine
+//! that is *not* compiled in, over the module's connection.
 //!
 //! # Which seams are here, and why only these
 //!
@@ -169,10 +171,10 @@ fn resolve_chat_model(
 /// the sync layer treats that as *skip silently* — the exact
 /// looks-empty-rather-than-broken failure the seam exists to prevent.
 ///
-/// `memory/host_impls.rs` gets liveness a cheaper way: its async methods
-/// re-read from disk, and its two synchronous probes recover the caller's
-/// config, which the engine's own loops keep fresh. With no caller config to
-/// recover, a fresh read is what "current as of the call" costs here. It is
+/// `memory/host_impls.rs` got liveness a cheaper way while it existed: its
+/// async methods re-read from disk, and its two synchronous probes recovered
+/// the caller's config, which the engine's own loops kept fresh. With no caller
+/// config to recover, a fresh read is what "current as of the call" costs here. It is
 /// bounded — the probes sit on periodic sync paths, a handful of reads per
 /// tick, next to network calls that dominate them.
 ///

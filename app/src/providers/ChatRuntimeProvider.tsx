@@ -42,6 +42,7 @@ import {
   clearStreamingAssistantForThread,
   endInferenceTurn,
   fetchAndHydrateCompletedTurnState,
+  fetchAndHydrateTurnState,
   markInferenceTurnStreaming,
   parseToolFailure,
   recordChatTurnUsage,
@@ -1634,6 +1635,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         // emitted, and dropping the id here would strand that thread until the
         // user reselected it; keeping it means the next connection retries.
         if (joined) interruptedThreadsRef.current.delete(threadId);
+        // Re-read the messages AND rehydrate the turn snapshot — the same
+        // pair the thread-switch path dispatches (`Conversations.tsx`).
+        // Messages alone recover the final text of a turn that finished in
+        // the gap, but nothing of a turn still running: every frame emitted
+        // while `thread:<id>` had no member was dropped (the emit is
+        // fire-and-forget), so the live lifecycle, iteration counter and tool
+        // timeline can only come back from the core's persisted snapshot.
+        // Without this a turn that outlives the reconnect renders nothing at
+        // all until the user reselects the thread or restarts the app.
+        void dispatch(fetchAndHydrateTurnState(threadId));
         return dispatch(loadThreadMessages(threadId));
       });
     }

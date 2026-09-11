@@ -70,3 +70,40 @@ fn to_json_helper() {
     let outcome = RpcOutcome::single_log(serde_json::json!({"ok": true}), "log");
     assert!(to_json(outcome).is_ok());
 }
+
+/// Every declared output type must match the JSON the handler actually emits.
+///
+/// `pid` drifted exactly this way (#6074): the schema said `TypeSchema::String`
+/// while `SystemInfo.pid` is a `u32` that serializes as a JSON number, so the
+/// generated frontend types and the model-facing tool `output_schema` both
+/// advertised a type the wire never carried. Output fields are not validated at
+/// dispatch, so nothing at runtime would have caught it — checking the
+/// declaration against a live response is what keeps the two from separating
+/// again.
+#[tokio::test]
+async fn system_info_declared_output_types_match_emitted_json() {
+    let schema = schemas("system_info");
+    let json = handle_system_info(Map::new())
+        .await
+        .expect("system_info handler succeeds");
+
+    assert_eq!(schema.outputs.len(), 4, "version, os, arch, pid");
+    for field in &schema.outputs {
+        let value = json
+            .get(field.name)
+            .unwrap_or_else(|| panic!("`{}` missing from the response", field.name));
+        let ok = match field.ty {
+            TypeSchema::String => value.is_string(),
+            TypeSchema::U64 => value.is_u64(),
+            // Deliberately exhaustive-by-panic: a field declared as some other
+            // type has no check here yet, and silently passing would defeat the
+            // point of this test.
+            ref other => panic!("`{}` declares {other:?}; add a check for it", field.name),
+        };
+        assert!(
+            ok,
+            "`{}` declares {:?} but the handler emitted {value}",
+            field.name, field.ty
+        );
+    }
+}

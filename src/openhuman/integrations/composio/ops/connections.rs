@@ -16,7 +16,10 @@ use super::super::types::{
     ComposioAuthorizeRequest, ComposioAuthorizeResponse, ComposioConnectionsResponse,
     ComposioDeleteConnectionRequest, ComposioDeleteResponse,
 };
-use super::error_utils::{direct_mode_without_key, report_composio_op_error, OpResult};
+use super::error_utils::{
+    backend_mode_without_session, direct_mode_without_key, report_composio_op_error, OpResult,
+    COMPOSIO_NO_SESSION,
+};
 use super::memory_cleanup::composio_memory_targets_for_connection;
 use tinymemory_api::composio::normalize_connection_identifier;
 
@@ -35,6 +38,34 @@ pub async fn composio_list_connections(
             },
             vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
         ));
+    }
+    if backend_mode_without_session(config) {
+        // No session means no proxy route, so the connector module cannot
+        // answer — but the connections may well exist server-side. That makes
+        // this "unavailable", not "none": callers that tell the two apart
+        // (`memory::sources::reconcile` hides nothing on `Err`,
+        // `flows::validate_connection_refs` fails open on `Err`) must keep
+        // doing so, which an empty `Ok` would silently defeat. It is also not
+        // a fault, so it is not reported here: nothing reaches Sentry for a
+        // user who has simply not signed in yet (#6176). The wording is the one
+        // every other backend-mode member gives in this state, which the
+        // JSON-RPC boundary also recognises as expected.
+        tracing::debug!(
+            "[composio] list_connections: backend mode selected, not signed in yet \
+             — connections unavailable until sign-in (valid setup state, not reported)"
+        );
+        // A module configured while the user was signed in still holds that
+        // bearer, and the per-call route reconciliation that would tell it to
+        // drop it is exactly what answering here skips. Give an already-loaded
+        // module the instruction now; a module that was never loaded holds no
+        // credential and is not loaded for this.
+        if let Err(error) = connectors::reconcile_route_if_loaded(config).await {
+            tracing::warn!(
+                "[composio] list_connections: could not drop the connector module's route \
+                 after sign-out ({error}); the next routed call retries"
+            );
+        }
+        return Err(COMPOSIO_NO_SESSION.to_string());
     }
     // The connector module owns the backend-proxied route. Direct mode stays
     // host-side because its client accepts the local loopback overrides used

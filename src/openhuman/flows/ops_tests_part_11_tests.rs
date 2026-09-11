@@ -14,7 +14,6 @@ async fn flows_discover_applies_the_flow_discovery_definitions_effective_iterati
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("agent registry init");
     let def = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()

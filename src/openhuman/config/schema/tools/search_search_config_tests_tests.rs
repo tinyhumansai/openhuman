@@ -73,6 +73,27 @@ fn exa_key_does_not_disturb_the_managed_default() {
 }
 
 #[test]
+fn tavily_requires_key() {
+    let mut cfg = SearchConfig {
+        engine: SEARCH_ENGINE_TAVILY.into(),
+        ..Default::default()
+    };
+    assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+    cfg.tavily.api_key = Some("  ".into());
+    assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+    cfg.tavily.api_key = Some("real".into());
+    assert_eq!(cfg.effective_engine(), SearchEngine::Tavily);
+}
+
+#[test]
+fn tavily_key_does_not_disturb_the_managed_default() {
+    // BYOK Tavily must be opt-in: a stored key alone never flips the engine.
+    let mut cfg = SearchConfig::default();
+    cfg.tavily.api_key = Some("real".into());
+    assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+}
+
+#[test]
 fn http_request_defaults_to_allow_all() {
     // Web research works out of the box: the default allowlist is the
     // wildcard. The SSRF guard (url_guard) still blocks local/private

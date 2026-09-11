@@ -67,7 +67,7 @@ fn tool_group_classifies_gate_and_harness_families() {
 
     // Harness-mapped families → kept under harness().
     assert_eq!(tool_group("memory_store"), DomainGroup::Memory);
-    assert_eq!(tool_group("goals_add"), DomainGroup::Memory);
+    assert_eq!(tool_group("goals"), DomainGroup::Memory);
     assert_eq!(tool_group("update_memory_md"), DomainGroup::Memory);
     assert_eq!(tool_group("todo_add"), DomainGroup::Threads);
     assert_eq!(tool_group("goal_get"), DomainGroup::Threads);

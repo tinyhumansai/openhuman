@@ -93,3 +93,101 @@ async fn list_slack_connections_resolves_direct_variant_when_mode_is_direct() {
     // a valid empty envelope), that's also acceptable — the
     // factory still routed correctly.
 }
+
+// ── the status surface's degraded shape ─────────────────────────────────────
+//
+// `sync_status_rpc` does two things nothing asserted: it filters the connection
+// list to slack rows that are ACTIVE, and it answers a fixed zero-value shape
+// because per-connection sync detail is no longer readable — the connector
+// module keeps its cursor internally.
+//
+// The deleted `slack_sync_status_rpc_reports_the_degraded_zero_value_shape`
+// covered exactly this, in `tests/raw_coverage/memory_sync_tree_round21_*`,
+// which went with the engine (#6161) although the assertion was never about the
+// engine. Restored here against a local mock backend (#6172).
+
+#[tokio::test]
+async fn status_filters_to_active_slack_and_reports_the_degraded_zero_value_shape() {
+    use crate::openhuman::security::credentials::{
+        AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/agent-integrations/composio/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": { "connections": [
+                // The one row that must survive both filters.
+                { "id": "conn-slack-active",  "toolkit": "slack", "status": "ACTIVE" },
+                // Dropped by the status filter…
+                { "id": "conn-slack-pending", "toolkit": "slack", "status": "PENDING" },
+                // …and this one by the toolkit filter.
+                { "id": "conn-gmail-active",  "toolkit": "gmail", "status": "ACTIVE" },
+            ] }
+        })))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config {
+        config_path: tmp.path().join("config.toml"),
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        ..Config::default()
+    };
+    config.secrets.encrypt = false;
+    config.api_url = Some(server.uri());
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace dir");
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "test-session-token",
+            HashMap::new(),
+            true,
+        )
+        .expect("store app session token");
+
+    let outcome = sync_status_rpc(&config, SyncStatusRequest::default())
+        .await
+        .expect("status rpc");
+
+    // ── the filter ──────────────────────────────────────────────────────────
+    assert_eq!(
+        outcome.value.connections.len(),
+        1,
+        "only the ACTIVE slack connection qualifies; got {:?}",
+        outcome.value.connections
+    );
+    let row = &outcome.value.connections[0];
+    assert_eq!(row.connection_id, "conn-slack-active");
+
+    // ── the degraded shape ──────────────────────────────────────────────────
+    //
+    // Four fixed zero values, asserted individually rather than as a struct
+    // comparison: each one is a separate promise to the status table, and a
+    // struct literal would hide which of them a future change broke.
+    assert_eq!(row.per_channel_cursors, "{}");
+    assert_eq!(row.synced_ids_count, 0);
+    assert_eq!(row.requests_used_today, 0);
+    assert_eq!(row.daily_request_limit, 0);
+
+    // ── and the log that explains it ────────────────────────────────────────
+    //
+    // The zeros are indistinguishable from "a connection that has synced
+    // nothing yet", so the log line is what tells an operator the detail is
+    // gone rather than empty. Without it the shape above is a silent lie.
+    assert!(
+        outcome
+            .logs
+            .iter()
+            .any(|line| line.contains("connections=1") && line.contains("no longer available")),
+        "the status log must explain the degraded read: {:?}",
+        outcome.logs
+    );
+}

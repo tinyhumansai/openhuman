@@ -1,4 +1,4 @@
-//! Tests for the four agent-facing goals tools.
+//! Tests for the agent-facing `goals` tool.
 //!
 //! These used to sandbox each tool with its own `tempfile::tempdir()`, because
 //! the tool held the workspace path and opened `MEMORY_GOALS.md` under it. The
@@ -75,15 +75,14 @@ async fn add_then_list_reflects_change() {
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
     reset_shared_goals().await;
 
-    let add = GoalsAddTool::new(tmp.path().to_path_buf());
-    let res = add
-        .execute(json!({ "text": "help ship the app" }))
+    let goals = GoalsTool::new(tmp.path().to_path_buf());
+    let res = goals
+        .execute(json!({ "op": "add", "text": "help ship the app" }))
         .await
         .unwrap();
     assert!(!res.is_error, "add failed: {}", res.text());
 
-    let list = GoalsListTool::new(tmp.path().to_path_buf());
-    let res = list.execute(json!({})).await.unwrap();
+    let res = goals.execute(json!({ "op": "list" })).await.unwrap();
     assert!(res.text().contains("help ship the app"));
 }
 
@@ -96,15 +95,17 @@ async fn edit_and_delete_unknown_id_error() {
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
     reset_shared_goals().await;
 
-    let edit = GoalsEditTool::new(tmp.path().to_path_buf());
-    let res = edit
-        .execute(json!({ "id": "g9", "text": "x" }))
+    let goals = GoalsTool::new(tmp.path().to_path_buf());
+    let res = goals
+        .execute(json!({ "op": "edit", "id": "g9", "text": "x" }))
         .await
         .unwrap();
     assert!(res.is_error);
 
-    let del = GoalsDeleteTool::new(tmp.path().to_path_buf());
-    let res = del.execute(json!({ "id": "g9" })).await.unwrap();
+    let res = goals
+        .execute(json!({ "op": "delete", "id": "g9" }))
+        .await
+        .unwrap();
     assert!(res.is_error);
 }
 
@@ -120,9 +121,9 @@ async fn add_refuses_pii_bearing_text_with_the_specific_reason() {
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
     reset_shared_goals().await;
 
-    let add = GoalsAddTool::new(tmp.path().to_path_buf());
+    let add = GoalsTool::new(tmp.path().to_path_buf());
     let res = add
-        .execute(json!({ "text": "follow up with alice@example.com" }))
+        .execute(json!({ "op": "add", "text": "follow up with alice@example.com" }))
         .await
         .unwrap();
     assert!(res.is_error);
@@ -137,26 +138,64 @@ async fn add_refuses_pii_bearing_text_with_the_specific_reason() {
 /// so it holds whatever the driver is.
 #[tokio::test]
 async fn missing_arguments_are_reported_as_tool_errors() {
-    let dir = std::env::temp_dir();
+    let goals = GoalsTool::new(std::env::temp_dir());
+    // No `op` at all.
+    assert!(goals.execute(json!({})).await.unwrap().is_error);
+    // An op that is not one of the four.
     assert!(
-        GoalsAddTool::new(dir.clone())
-            .execute(json!({}))
+        goals
+            .execute(json!({ "op": "archive" }))
             .await
             .unwrap()
             .is_error
     );
     assert!(
-        GoalsEditTool::new(dir.clone())
-            .execute(json!({ "id": "g1" }))
+        goals
+            .execute(json!({ "op": "add" }))
             .await
             .unwrap()
             .is_error
     );
     assert!(
-        GoalsDeleteTool::new(dir)
-            .execute(json!({}))
+        goals
+            .execute(json!({ "op": "edit", "id": "g1" }))
             .await
             .unwrap()
             .is_error
     );
+    assert!(
+        goals
+            .execute(json!({ "op": "delete" }))
+            .await
+            .unwrap()
+            .is_error
+    );
+}
+
+/// `list` must not be gated as a write, and every mutation must be.
+///
+/// A flat `Write` would put an approval prompt in front of reading the goals
+/// list; a flat `ReadOnly` would admit an edit on a channel that refuses one.
+#[test]
+fn permission_is_per_op_and_unknown_ops_report_the_ceiling() {
+    use crate::openhuman::tools::traits::PermissionLevel;
+
+    let goals = GoalsTool::new(std::env::temp_dir());
+    assert_eq!(
+        goals.permission_level_with_args(&json!({ "op": "list" })),
+        PermissionLevel::ReadOnly
+    );
+    for op in ["add", "edit", "delete"] {
+        assert_eq!(
+            goals.permission_level_with_args(&json!({ "op": op })),
+            PermissionLevel::Write,
+            "op `{op}` was not gated as a write"
+        );
+    }
+    // Absent or unrecognised: the call fails anyway, so report the ceiling.
+    assert_eq!(
+        goals.permission_level_with_args(&json!({})),
+        PermissionLevel::Write
+    );
+    assert_eq!(goals.permission_level(), PermissionLevel::Write);
 }

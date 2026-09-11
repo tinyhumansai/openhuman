@@ -64,5 +64,58 @@ async fn execute_without_question_uses_fallback() {
     let tool = AskClarificationTool::new();
     let result = tool.execute(json!({})).await.unwrap();
     assert!(!result.is_error);
-    assert!(result.output().contains("CLARIFICATION NEEDED"));
+    assert!(result.output().contains("clarify"));
+}
+
+/// The output is the message the user reads (the early-exit hook captures it
+/// verbatim as the pause question), so it must not carry a machine marker no
+/// reader parses.
+#[tokio::test]
+async fn output_is_the_bare_question_with_no_marker() {
+    let tool = AskClarificationTool::new();
+    let result = tool
+        .execute(json!({ "question": "Which branch should I target?" }))
+        .await
+        .unwrap();
+    assert_eq!(result.output(), "Which branch should I target?");
+}
+
+/// A blank question must fall back to the generic prompt, not park the turn on
+/// an empty one (#6213 review).
+///
+/// The schema has no `minLength`, so `{"question":""}` is a legal call. The
+/// early-exit hook captures this output verbatim as the pause question, so an
+/// empty one reaches the user as a blank assistant reply on the channel path
+/// and an empty answer box on a delegated sub-agent's card. The old
+/// `[CLARIFICATION NEEDED]` prefix masked this by keeping the string non-empty.
+#[tokio::test]
+async fn a_blank_question_falls_back_to_the_generic_prompt() {
+    let tool = AskClarificationTool::new();
+    for blank in ["", "   ", "\n\t "] {
+        let result = tool
+            .execute(serde_json::json!({ "question": blank }))
+            .await
+            .expect("execute");
+        assert!(
+            !result.output().trim().is_empty(),
+            "a blank question must never produce an empty pause prompt, got {:?}",
+            result.output()
+        );
+        assert_eq!(
+            result.output(),
+            "Could you clarify?",
+            "a blank question must use the same fallback as a missing one"
+        );
+    }
+}
+
+/// The fallback must not swallow a real question that merely has padding.
+#[tokio::test]
+async fn a_padded_question_is_trimmed_but_kept() {
+    let tool = AskClarificationTool::new();
+    let result = tool
+        .execute(serde_json::json!({ "question": "  Which three sources?  " }))
+        .await
+        .expect("execute");
+    assert_eq!(result.output(), "Which three sources?");
 }

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.63.22"
+version = "0.63.25"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4296,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.63.22"
+version = "0.63.25"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -7180,7 +7180,7 @@ dependencies = [
 
 [[package]]
 name = "tinyconnectors-bus"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

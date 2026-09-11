@@ -80,9 +80,28 @@ describe('AppSidebar — collapsed rail', () => {
     expect(screen.getByRole('button', { name: 'nav.chat' })).toBeInTheDocument();
   });
 
-  it('reserves a draggable strip above the reopen trigger for the macOS traffic lights', () => {
+  it('reserves a strip above the reopen trigger for the macOS traffic lights', () => {
     const { container } = renderAppSidebar({ initialEntries: ['/chat'] }, { open: false });
-    expect(container.querySelector('[data-tauri-drag-region]')).toBeInTheDocument();
+    // A spacer now, not a drag region of its own — the column around it drags.
+    expect(container.querySelector('.h-7.w-full.flex-none')).toBeInTheDocument();
+  });
+
+  // The drag region is the whole column, not just that strip. `drag.js` drags a
+  // bare region only on a direct hit, so the ~12px of column either side of each
+  // 32px rail button — the band sitting between the traffic lights and the rail
+  // — was dead chrome. Assert the *value* and that the controls are inside it:
+  // presence alone passed before the fix and would pass again after a revert.
+  it('marks the whole collapsed column as a deep drag region', () => {
+    const { container } = renderAppSidebar({ initialEntries: ['/chat'] }, { open: false });
+    const region = container.querySelector('[data-tauri-drag-region]') as HTMLElement;
+    expect(region.getAttribute('data-tauri-drag-region')).toBe('deep');
+    expect(region.className).toContain('h-full');
+    // Only `"deep"` reaches descendants, so containment is what makes the
+    // margins around these controls draggable. They stay clickable because
+    // `isDragRegion` short-circuits on a clickable element first — which is
+    // what resolving them by button role here asserts.
+    expect(region).toContainElement(screen.getByTestId('root-shell-reopen'));
+    expect(region).toContainElement(screen.getByRole('button', { name: 'nav.chat' }));
   });
 
   it('gives the reopen trigger the expected analytics id and label', () => {

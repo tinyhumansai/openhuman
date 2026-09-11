@@ -61,11 +61,7 @@ pub(crate) fn parse_source_kind_str(s: &str) -> Option<tinymemory_api::chunks::S
 #[cfg(test)]
 pub(crate) use crate::openhuman::config::Config;
 #[cfg(test)]
-pub(crate) use admin::clear_composio_sync_state;
-#[cfg(test)]
 pub(crate) use tinymemory_api::chunks::SourceKind;
-#[cfg(test)]
-pub(crate) use tinymemory_core::store::chunks::store::with_connection;
 
 #[cfg(test)]
 #[path = "../read_rpc_tests.rs"]

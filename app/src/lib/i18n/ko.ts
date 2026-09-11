@@ -528,6 +528,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': '개발 빌드에서 항상 활성화',
   'settings.clearAppData': '앱 데이터 삭제',
   'settings.clearAppDataDesc': '로그아웃하고 모든 로컬 앱 데이터를 영구적으로 삭제',
+  'settings.clearAppDataIrreversible': '되돌릴 수 없습니다.',
+  'settings.clearAppDataAction': '데이터 삭제',
   'settings.logOut': '로그아웃',
   'settings.logOutDesc': '계정에서 로그아웃',
   'settings.exitLocalSession': '로컬 세션 종료',
@@ -1368,7 +1370,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'OpenHuman 관리 검색을 기본값으로 사용하거나 API 키로 자체 제공업체를 연결하세요.',
   'settings.search.description':
-    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
+    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa, Tavily는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
   'settings.search.engineAria': '검색 엔진',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1377,7 +1379,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     '기본값입니다. OpenHuman 백엔드를 통해 라우팅되며 현재 Exa로 구동됩니다. API 키가 필요하지 않습니다.',
   'settings.search.localManagedUnavailable':
-    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit 또는 Exa API 키를 추가하세요.',
+    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit, Exa 또는 Tavily API 키를 추가하세요.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     '직접 Parallel API: 검색, 추출, 채팅, 리서치, 보강, 데이터셋 도구.',
@@ -1389,6 +1391,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa 기반 신경망 검색. 본인의 Exa API 키가 필요합니다. 검색, 유사 페이지 찾기, 페이지 콘텐츠 도구를 추가합니다.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily 기반 웹, 뉴스, 금융 검색. 본인의 Tavily API 키가 필요합니다. 검색 및 페이지 콘텐츠 추출 도구를 추가합니다.',
   'settings.search.statusConfigured': '구성됨',
   'settings.search.statusNeedsKey': 'API 키 필요',
   'settings.search.fallbackToManaged':
@@ -1410,6 +1415,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API 키',
   'settings.search.placeholderExa': 'Exa API 키를 붙여넣으세요…',
+  'settings.search.tavilyKeyLabel': 'Tavily API 키',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': '허용된 웹사이트',
   'settings.search.allowedSitesHint':
     '리서치 중 어시스턴트가 열고 읽을 수 있는 웹사이트입니다(한 줄에 호스트 하나, 예: reuters.com). 호스트에는 하위 도메인도 포함됩니다. 모든 웹 접근을 차단하려면 비워 두세요.',
@@ -4310,7 +4317,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude로 로그인',
   'settings.ai.claudeCode.reconnect': '다시 연결',
   'settings.ai.claudeCode.loginHint':
-    'claude login을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
+    'claude auth login --claudeai을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
   'settings.ai.claudeCode.loginError': '로그인 터미널을 열 수 없습니다. 다시 시도해 주세요.',
   'settings.ai.claudeCode.fullAccess': '전체 액세스',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4896,6 +4903,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': '실시간',
   'settings.developerMenu.eventLog.disconnected': '연결 끊김',
   'settings.developerMenu.eventLog.waiting': '이벤트 대기 중...',
+  'settings.developerMenu.eventLog.waitingHint':
+    '에이전트, 도구, 시스템이 작업하면 여기에 이벤트가 나타납니다. 아직 아무 일도 없었습니다.',
+  'settings.developerMenu.eventLog.notConnectedHint': '스트림을 재개하려면 코어에 다시 연결하세요.',
   'settings.developerMenu.eventLog.notConnected': '코어에 연결되지 않음',
   'settings.developerMenu.eventLog.jumpToLatest': '최신으로 이동',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6007,6 +6017,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': '라우트 힌트',
   'settings.agents.editor.modelTiers': '모델 등급',
   'settings.agents.editor.modelCustom': '사용자 정의 모델 ID…',
+  'settings.agents.editor.modelManaged': '관리형 모델',
   'settings.agents.editor.modelCustomPlaceholder': '예: anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': '도구 추가',
   'settings.agents.editor.toolsAllSelected': '모든 도구',
@@ -6153,6 +6164,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': '비밀 저장 모드',
   'keyring.settings.mode.osKeychain': 'OS 키체인',
   'keyring.settings.mode.encryptedFile': '로컬 암호화',
+  'keyring.settings.mode.localEncryptedFile': '암호화된 파일',
+  'keyring.settings.mode.localPlaintextFile': '암호화되지 않은 파일',
   'keyring.settings.mode.consentPending': '구성되지 않음',
   'keyring.settings.mode.declined': '거부됨',
   'keyring.settings.availability': '키체인 가용성',
@@ -6527,6 +6540,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+  'settings.ai.openaiOauthTitle': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthDescription':
+    'API 키 없이 OpenAI 모델을 사용하려면 ChatGPT 계정으로 로그인하세요.',
+  'settings.ai.openaiOauthConnect': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthConnected': 'ChatGPT에 연결됨',
+  'settings.ai.openaiOauthOpening': '로그인 페이지를 여는 중…',
+  'settings.ai.openaiOauthCallbackHint':
+    '로그인 후 브라우저의 전체 리디렉션 URL을 붙여넣으세요(http://127.0.0.1:1455/ 로 시작).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT 로그인 완료',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT 연결 해제',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT 로그인이 완료되지 않았습니다. 리디렉션 URL을 확인하고 다시 시도하세요.',
+  'settings.ai.openaiOauthCallbackRequired': '로그인 후 브라우저의 리디렉션 URL을 붙여넣으세요.',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT 연결을 해제할 수 없습니다. 다시 시도하세요.',
   'memorySources.codingSessions.title': '코딩 에이전트 세션',
   'memorySources.codingSessions.description':
     'Codex와 Claude Code의 결정 및 수정 사항을 비공개 페르소나 메모리로 변환합니다.',

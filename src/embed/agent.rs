@@ -322,6 +322,8 @@ impl Turn<'_> {
             self.request.cwd.is_some(),
         );
 
+        validate_route(&self.request)?;
+
         // Never transmit the bearer over a non-TLS channel. The route accepts
         // an arbitrary base URL, so guard here — before any request is built —
         // rather than trusting every embedder to only name https endpoints. A
@@ -377,6 +379,7 @@ impl Turn<'_> {
                 crate::embed::error::CoreError::Encode { .. } => "encode",
                 crate::embed::error::CoreError::Decode { .. } => "decode",
                 crate::embed::error::CoreError::InsecureRoute { .. } => "insecure_route",
+                crate::embed::error::CoreError::InvalidRoute { .. } => "invalid_route",
             };
             log::debug!("[embed][agent] turn_failed session={session_id} kind={tag}");
         })?;
@@ -388,6 +391,23 @@ impl Turn<'_> {
 
         Ok(TurnOutcome { reply, session_id })
     }
+}
+
+fn validate_route(request: &TurnRequest) -> Result<(), CoreError> {
+    let route_requested = request.inference_url.is_some() || request.api_key.is_some();
+    if route_requested
+        && (request
+            .inference_url
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            || request
+                .api_key
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty()))
+    {
+        return Err(CoreError::InvalidRoute { method: AGENT_CHAT });
+    }
+    Ok(())
 }
 
 /// Absolute form of `dir`, for callers assembling a [`Turn::cwd`] from a

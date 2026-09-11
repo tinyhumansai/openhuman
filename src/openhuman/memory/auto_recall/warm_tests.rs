@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::memory::api::error::MemoryError;
 use crate::openhuman::memory::api::provider::retrieval::RetrievalResponse;
+use crate::openhuman::memory::api::types::NamespaceMemoryHit;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -53,6 +54,17 @@ impl AutoRecallSource for Scripted {
             Ok(()) => Ok(RetrievalResponse::default()),
             Err(message) => Err(MemoryError::Backend(message.clone())),
         }
+    }
+
+    async fn recall_namespace_scored(
+        &self,
+        _namespace: &str,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<NamespaceMemoryHit>, MemoryError> {
+        // The warm-up is one tree retrieval: that is what loads the NLP server
+        // and the embedder, and the notes leg needs only the second of those.
+        panic!("the warm-up must not read the notes namespace");
     }
 }
 

@@ -42,7 +42,7 @@ type Status =
 type AccessMode = 'all' | 'custom' | 'block';
 
 /** Search engines that route directly from this machine with the user's own key. */
-type ByokEngine = 'parallel' | 'brave' | 'querit' | 'exa';
+type ByokEngine = 'parallel' | 'brave' | 'querit' | 'exa' | 'tavily';
 
 /** Patch field that carries each BYOK engine's key. Empty string clears it. */
 const BYOK_KEY_FIELD: Record<ByokEngine, keyof SearchSettingsUpdate> = {
@@ -50,6 +50,7 @@ const BYOK_KEY_FIELD: Record<ByokEngine, keyof SearchSettingsUpdate> = {
   brave: 'brave_api_key',
   querit: 'querit_api_key',
   exa: 'exa_api_key',
+  tavily: 'tavily_api_key',
 };
 
 /**
@@ -77,10 +78,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const [braveKey, setBraveKey] = useState<string>('');
   const [queritKey, setQueritKey] = useState<string>('');
   const [exaKey, setExaKey] = useState<string>('');
+  const [tavilyKey, setTavilyKey] = useState<string>('');
   const [showParallel, setShowParallel] = useState(false);
   const [showBrave, setShowBrave] = useState(false);
   const [showQuerit, setShowQuerit] = useState(false);
   const [showExa, setShowExa] = useState(false);
+  const [showTavily, setShowTavily] = useState(false);
   // Editor text for the allowed-websites host list (one host per line). The
   // "*" wildcard is represented by the access mode, not shown here.
   const [allowedText, setAllowedText] = useState<string>('');
@@ -126,6 +129,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
       id: 'exa',
       label: t('settings.search.engineExaLabel'),
       description: t('settings.search.engineExaDesc'),
+      requiresKey: true,
+    },
+    {
+      id: 'tavily',
+      label: t('settings.search.engineTavilyLabel'),
+      description: t('settings.search.engineTavilyDesc'),
       requiresKey: true,
     },
   ];
@@ -183,6 +192,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     brave: () => setBraveKey(''),
     querit: () => setQueritKey(''),
     exa: () => setExaKey(''),
+    tavily: () => setTavilyKey(''),
   };
 
   const persistKey = async (engine: ByokEngine, rawKey: string) => {
@@ -239,6 +249,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     if (engine === 'brave') return settings.brave_configured;
     if (engine === 'querit') return settings.querit_configured;
     if (engine === 'exa') return settings.exa_configured;
+    if (engine === 'tavily') return settings.tavily_configured;
     return false;
   };
 
@@ -341,6 +352,23 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
                 onClear={() => void persistKey('exa', '')}
                 configured={settings.exa_configured}
                 docUrl="https://exa.ai"
+                t={t}
+              />
+              <KeyEditor
+                label={t('settings.search.tavilyKeyLabel')}
+                placeholder={
+                  settings.tavily_configured
+                    ? t('settings.search.placeholderStored')
+                    : t('settings.search.placeholderTavily')
+                }
+                show={showTavily}
+                onToggleShow={() => setShowTavily(s => !s)}
+                value={tavilyKey}
+                onChange={setTavilyKey}
+                onSave={() => void persistKey('tavily', tavilyKey)}
+                onClear={() => void persistKey('tavily', '')}
+                configured={settings.tavily_configured}
+                docUrl="https://tavily.com"
                 t={t}
               />
             </div>

@@ -241,6 +241,23 @@ fn execute_tool_requires_tool_argument() {
     assert_eq!(required, vec!["tool"]);
 }
 
+#[test]
+fn execute_tool_requires_approval_for_external_writes_only() {
+    let tool = ComposioExecuteTool::new(fake_config_arc());
+
+    assert!(tool.external_effect_with_args(&serde_json::json!({
+        "tool": "GMAIL_SEND_EMAIL"
+    })));
+    assert!(tool.external_effect_with_args(&serde_json::json!({
+        "tool": "GMAIL_DELETE_EMAIL"
+    })));
+    assert!(!tool.external_effect_with_args(&serde_json::json!({
+        "tool": "GMAIL_FETCH_EMAILS"
+    })));
+    assert!(tool.external_effect_with_args(&serde_json::json!({})));
+    assert!(tool.external_effect_with_args(&serde_json::json!({ "tool": "  " })));
+}
+
 #[tokio::test]
 async fn execute_tool_execute_rejects_missing_tool() {
     let t = ComposioExecuteTool::new(fake_config_arc());

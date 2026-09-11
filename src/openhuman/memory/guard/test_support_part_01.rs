@@ -21,8 +21,10 @@ use crate::openhuman::memory::api::provider::types::{
     MaintenanceReport, SnapshotRef, SourceItem, SourceScope,
 };
 use crate::openhuman::memory::api::provider::{
-    AddressBookSeedOutcome, ChunkDetail, ChunkEmbedding, ChunkQuery, CoverWindowQuery, EntityMatch,
-    EpisodicEvent, FacetType, FastRetrieveQuery, MemoryChunks, MemoryCodingSessions, MemoryCore,
+    AddressBookSeedOutcome, ChunkDetail, ChunkEmbedding, ChunkQuery, ConversationSegment,
+    CoverWindowQuery, EntityMatch, EpisodicEvent, EpisodicTurn, FacetType, FastRetrieveQuery,
+    MemoryChunks, MemoryCodingSessions,
+    MemoryCore,
     MemoryDiff, MemoryDocuments, MemoryEntities, MemoryEpisodic, MemoryGoals, MemoryGraph,
     MemoryIngest, MemoryMaintenance, MemoryPeople, MemoryPortability, MemoryProfile,
     MemoryProvider, MemoryRecall, MemoryRetrieval, MemoryScoring, MemorySourceSink,
@@ -86,66 +88,17 @@ pub struct RecordingProvider {
     /// What `namespaces` returns, so a namespace can look populated (Lane B
     /// asks for the count before it pays for an embed) without a real store.
     namespace_summaries: Mutex<Vec<NamespaceSummary>>,
+    /// What `session_turns` returns, so the archivist's finalize path can be
+    /// driven past its empty-entries early return without an engine behind it.
+    session_turns: Mutex<Vec<EpisodicTurn>>,
+    /// What `segments_pending_summary` returns, so the re-summarisation pass
+    /// (#6186) can be driven over a known queue.
+    pending_segments: Mutex<Vec<ConversationSegment>>,
 }
 
 impl Default for RecordingProvider {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl RecordingProvider {
-    pub fn new() -> Self {
-        Self {
-            calls: Mutex::new(Vec::new()),
-            recall_result: Mutex::new(Vec::new()),
-            fast_retrieve_result: Mutex::new(RetrievalResponse::default()),
-            namespace_hits: Mutex::new(Vec::new()),
-            namespace_summaries: Mutex::new(Vec::new()),
-        }
-    }
-
-    pub fn with_recall_result(self, entries: Vec<MemoryEntry>) -> Self {
-        *self.recall_result.lock().unwrap() = entries;
-        self
-    }
-
-    pub fn with_fast_retrieve_result(self, response: RetrievalResponse) -> Self {
-        *self.fast_retrieve_result.lock().unwrap() = response;
-        self
-    }
-
-    pub fn with_namespace_hits(self, hits: Vec<NamespaceMemoryHit>) -> Self {
-        *self.namespace_hits.lock().unwrap() = hits;
-        self
-    }
-
-    pub fn with_namespace_summaries(self, summaries: Vec<NamespaceSummary>) -> Self {
-        *self.namespace_summaries.lock().unwrap() = summaries;
-        self
-    }
-
-    fn record(&self, call: Call) {
-        self.calls.lock().unwrap().push(call);
-    }
-
-    pub fn calls(&self) -> Vec<Call> {
-        self.calls.lock().unwrap().clone()
-    }
-
-    pub fn call_count(&self) -> usize {
-        self.calls.lock().unwrap().len()
-    }
-
-    /// The single recorded call, panicking when there is not exactly one.
-    pub fn only_call(&self) -> Call {
-        let calls = self.calls();
-        assert_eq!(
-            calls.len(),
-            1,
-            "expected exactly one driver call: {calls:?}"
-        );
-        calls.into_iter().next().unwrap()
     }
 }
 

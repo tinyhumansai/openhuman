@@ -11,7 +11,13 @@ use crate::openhuman::memory::api::error::MemoryError;
 use crate::openhuman::memory::api::provider::retrieval::{
     FastRetrieveQuery, RetrievalHit, RetrievalNodeKind, RetrievalResponse,
 };
-use crate::openhuman::memory::auto_recall::{AutoRecall, AutoRecallSource, AUTO_RECALL_BANNER};
+use crate::openhuman::memory::api::types::NamespaceMemoryHit;
+use crate::openhuman::memory::auto_recall::{
+    AutoRecall, AutoRecallSource, AUTO_RECALL_BANNER, AUTO_RECALL_HINT,
+};
+use crate::openhuman::memory::guard::test_support::{
+    embedded_policy, guarded_with, namespace_hit, RecordingProvider,
+};
 
 const IDOL_QUESTION: &str = "who is my idol and why?";
 const IDOL_FACT: &str = "Idol: Virat Kohli, because of his dedication and consistency";
@@ -20,6 +26,7 @@ struct ScriptedAutoRecallSource {
     hits: Vec<RetrievalHit>,
     delay: Duration,
     calls: AtomicUsize,
+    notes_calls: AtomicUsize,
 }
 
 impl ScriptedAutoRecallSource {
@@ -43,6 +50,7 @@ impl ScriptedAutoRecallSource {
             }],
             delay: Duration::ZERO,
             calls: AtomicUsize::new(0),
+            notes_calls: AtomicUsize::new(0),
         })
     }
 
@@ -56,6 +64,10 @@ impl ScriptedAutoRecallSource {
 
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    fn notes_calls(&self) -> usize {
+        self.notes_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -76,6 +88,18 @@ impl AutoRecallSource for ScriptedAutoRecallSource {
             truncated: false,
         })
     }
+
+    async fn recall_namespace_scored(
+        &self,
+        _namespace: &str,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<NamespaceMemoryHit>, MemoryError> {
+        // This fake scripts the tree; the notes leg is exercised through the
+        // production wiring below, over a `RecordingProvider`.
+        self.notes_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
 }
 
 /// A turn-capable agent with Lane C bound (or deliberately absent), over the
@@ -87,13 +111,11 @@ fn make_agent_with_auto_recall(
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
     std::mem::forget(workspace);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     Agent::builder()
         .chat_model(provider)
@@ -137,6 +159,7 @@ async fn auto_recall_block_rides_the_user_message_for_a_personal_question() {
     let reply = agent.turn(IDOL_QUESTION).await.expect("turn succeeds");
     assert!(reply.contains("Virat"));
     assert_eq!(source.calls(), 1, "one bounded lookup for one gated turn");
+    assert_eq!(source.notes_calls(), 1, "and one notes lookup beside it");
 
     let (system, user) = first_request(&provider_impl).await;
     let last_user = user.last().expect("a user message");
@@ -212,4 +235,66 @@ async fn a_session_without_the_lane_turns_as_before() {
     assert_eq!(reply, "Hello.");
     let (_, user) = first_request(&provider_impl).await;
     assert!(user.iter().all(|u| !u.contains(AUTO_RECALL_BANNER)));
+}
+
+// ── Lane C: the notes leg (#6063) ────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_recall_injects_a_note_written_by_memory_store_when_the_tree_is_empty() {
+    // The #6063 repro through the production wiring: `memory_store` filed the
+    // fact in `global`, the tree never saw it, and the lane is bound from the
+    // guard exactly as `bind_session_memory` binds it.
+    let provider = RecordingProvider::new().with_namespace_hits(vec![namespace_hit(
+        "global",
+        "favourite_tea_oolong",
+        "User's favourite tea is oolong.",
+        0.72,
+    )]);
+    let (provider, guard) = guarded_with(provider, embedded_policy());
+    let lane = Arc::new(AutoRecall::from_guard(Arc::new(guard)));
+    let model_impl = scripted_reply("Oolong.");
+    let model: Arc<dyn ChatModel<()>> = model_impl.clone();
+    let mut agent = make_agent_with_auto_recall(model, Some(lane));
+
+    let reply = agent
+        .turn("What's my favourite tea?")
+        .await
+        .expect("turn succeeds");
+    assert_eq!(reply, "Oolong.");
+
+    let (system, user) = first_request(&model_impl).await;
+    let last_user = user.last().expect("a user message");
+    assert!(last_user.contains(AUTO_RECALL_BANNER), "{last_user}");
+    assert!(
+        last_user.contains(AUTO_RECALL_HINT),
+        "the block says what it is: {last_user}"
+    );
+    assert!(
+        last_user.contains("- User's favourite tea is oolong. (note: favourite_tea_oolong)"),
+        "the note rides the user message: {last_user}"
+    );
+    assert!(
+        system.iter().all(|s| !s.contains(AUTO_RECALL_BANNER)),
+        "the block must never land in the system prompt"
+    );
+
+    let mut methods: Vec<String> = provider.calls().into_iter().map(|c| c.method).collect();
+    methods.sort();
+    assert_eq!(
+        methods,
+        vec![
+            "retrieval.fast_retrieve".to_string(),
+            "retrieval.recall_namespace_scored".to_string()
+        ],
+        "both legs, once each, through the guard"
+    );
+    let notes_call = provider
+        .calls()
+        .into_iter()
+        .find(|c| c.method == "retrieval.recall_namespace_scored")
+        .expect("the notes leg");
+    assert_eq!(
+        notes_call.content.as_deref(),
+        Some("namespace=global limit=3")
+    );
 }

@@ -3,13 +3,42 @@ use super::*;
 #[test]
 fn all_controller_schemas_lists_registered_functions() {
     let schemas = all_controller_schemas();
-    assert_eq!(schemas.len(), 9);
+    assert_eq!(schemas.len(), 3);
+    // The six read-only `session_db` controllers were removed in #6082; only the
+    // durable run-ledger read surface remains here.
     assert!(schemas
         .iter()
-        .any(|schema| schema.namespace == "session_db"));
-    assert!(schemas
-        .iter()
-        .any(|schema| schema.namespace == "run_ledger"));
+        .all(|schema| schema.namespace == "run_ledger"));
+}
+
+/// The removed `session_db` surface must stay removed: none of the six read
+/// controllers may reappear in this module's aggregators (#6082).
+#[test]
+fn session_db_controllers_are_absent() {
+    let removed = [
+        "list",
+        "get",
+        "search",
+        "get_messages",
+        "get_tool_calls",
+        "get_children",
+    ];
+    let schemas = all_controller_schemas();
+    assert!(
+        schemas
+            .iter()
+            .all(|schema| schema.namespace != "session_db"),
+        "the removed `session_db` namespace must not be registered"
+    );
+    let registered = all_registered_controllers();
+    for name in removed {
+        assert!(
+            registered
+                .iter()
+                .all(|rc| rc.schema.namespace != "session_db" || rc.schema.function != name),
+            "removed session_db controller '{name}' must not be registered"
+        );
+    }
 }
 
 #[test]
@@ -26,40 +55,6 @@ fn all_registered_controllers_match_schemas() {
             rc.schema.function
         );
     }
-}
-
-#[test]
-fn schema_for_list_has_optional_inputs() {
-    let s = schema_for("session_db_list");
-    assert_eq!(s.function, "list");
-    assert!(s.inputs.iter().all(|i| !i.required));
-}
-
-#[test]
-fn schema_for_get_requires_id() {
-    let s = schema_for("session_db_get");
-    assert_eq!(s.function, "get");
-    assert_eq!(s.inputs.len(), 1);
-    assert!(s.inputs[0].required);
-    assert_eq!(s.inputs[0].name, "id");
-}
-
-#[test]
-fn schema_for_search_has_query_and_filters() {
-    let s = schema_for("session_db_search");
-    assert_eq!(s.function, "search");
-    let names: Vec<&str> = s.inputs.iter().map(|i| i.name).collect();
-    assert!(names.contains(&"query"));
-    assert!(names.contains(&"agentId"));
-    assert!(names.contains(&"toolName"));
-    assert!(names.contains(&"sourceChannel"));
-    assert!(names.contains(&"threadId"));
-}
-
-#[test]
-fn schema_for_unknown_returns_error_shape() {
-    let s = schema_for("session_db_nonexistent");
-    assert_eq!(s.function, "unknown");
 }
 
 #[test]

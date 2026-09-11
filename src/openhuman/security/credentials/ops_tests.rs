@@ -65,17 +65,6 @@ fn jwt_with_payload(payload: serde_json::Value) -> String {
     format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
 }
 
-fn count_reembed_backfill_jobs(config: &Config) -> i64 {
-    tinymemory_core::store::chunks::store::with_connection(config, |conn| {
-        Ok(conn.query_row(
-            "SELECT COUNT(*) FROM mem_tree_jobs WHERE kind = 'reembed_backfill'",
-            [],
-            |row| row.get(0),
-        )?)
-    })
-    .unwrap()
-}
-
 async fn spawn_auth_me_status(status: StatusCode) -> String {
     let app = Router::new().route("/auth/me", get(move || async move { status }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

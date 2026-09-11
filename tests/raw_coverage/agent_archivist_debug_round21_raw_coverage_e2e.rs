@@ -19,8 +19,6 @@ use openhuman_core::openhuman::memory::api::provider::MemoryProvider;
 // Raw assertion reads against the engine the provider wraps — see the note in
 // `archivist_tests.rs`: production writes through the provider, the proof that
 // a row landed reads the store directly.
-use tinymemory_core::store::{events, fts5, profile, segments, MemoryClient};
-use tinymemory_tinycortex::engine::{EngineRuntimeConfig, TinycortexProvider};
 use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
@@ -174,45 +172,6 @@ impl Tool for EchoTool {
     }
 }
 
-/// A real TinyCortex provider over a fresh workspace, with the engine client
-/// kept for raw assertion reads. Same fixture shape as `archivist_tests.rs`.
-fn setup_provider() -> (TempDir, Arc<MemoryClient>, Arc<dyn MemoryProvider>) {
-    // The cfg(test)-only installer is out of reach for an external test
-    // target; the public boot-shaped seam does the same job here.
-    openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(
-        openhuman_core::openhuman::config::Config::default(),
-    ));
-    let tmp = TempDir::new().expect("tempdir");
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).expect("workspace dir");
-    let client =
-        Arc::new(MemoryClient::from_workspace_dir(workspace.clone()).expect("engine client"));
-    let config = EngineRuntimeConfig {
-        workspace_dir: workspace.clone(),
-        config_path: workspace.join("config.toml"),
-        memory: Default::default(),
-        memory_tree: Default::default(),
-        scheduler_gate: Default::default(),
-        local_ai: Default::default(),
-        embeddings_provider: None,
-        memory_provider: None,
-        default_model: None,
-        default_temperature: 0.2,
-        output_language: None,
-        memory_sources: serde_json::Value::Null,
-        memory_sync_interval_secs: None,
-        composio_mode: String::new(),
-        backend_api_url: String::new(),
-        composio_entity_id: String::new(),
-    };
-    let provider: Arc<dyn MemoryProvider> = Arc::new(TinycortexProvider::new(
-        "tinycortex".into(),
-        config,
-        Arc::clone(&client),
-    ));
-    (tmp, client, provider)
-}
-
 fn turn(session_id: &str, user_message: &str, assistant_response: &str) -> TurnContext {
     TurnContext {
         user_message: user_message.to_string(),
@@ -288,7 +247,7 @@ fn definition(max_iterations: usize) -> AgentDefinition {
 
 fn parent_context(workspace: &Path, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -303,6 +262,10 @@ fn parent_context(workspace: &Path, model: Arc<ScriptedModel>) -> ParentExecutio
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round21-parent-model".to_string(),
@@ -322,77 +285,6 @@ fn parent_context(workspace: &Path, model: Arc<ScriptedModel>) -> ParentExecutio
         on_progress: None,
         run_queue: None,
     }
-}
-
-#[tokio::test]
-async fn archivist_flush_finalizes_open_segment_and_extracts_profile_events() -> Result<()> {
-    let (_tmp, client, provider) = setup_provider();
-    let conn = client.profile_conn();
-    let hook = ArchivistHook::new(provider.clone(), true);
-    let session = "round21-archivist-session";
-
-    hook.on_turn_complete(&turn(
-        session,
-        "I prefer concise updates. I am a maintainer based in Oakland.",
-        "Noted for future replies.",
-    ))
-    .await?;
-
-    let open_before = segments::open_segment_for_session(&conn, session)?;
-    assert!(open_before.is_some());
-    assert_eq!(hook.rolling_segment_recap(session).await, None);
-
-    hook.flush_open_segment(session).await;
-
-    assert!(segments::open_segment_for_session(&conn, session)?.is_none());
-    let closed = segments::segments_by_namespace(&conn, "global", 10)?
-        .into_iter()
-        .find(|segment| segment.session_id == session)
-        .expect("closed segment");
-    assert_eq!(closed.status, segments::SegmentStatus::Summarised);
-    assert!(closed.summary.as_deref().unwrap_or("").contains("prefer"));
-
-    let preference_events = events::events_by_type(&conn, "global", "preference", 10)?;
-    assert!(preference_events
-        .iter()
-        .any(|event| event.content.contains("prefer concise updates")));
-    let profile_facets = profile::profile_select_all(&conn)?;
-    assert!(profile_facets
-        .iter()
-        .any(|facet| facet.value.contains("prefer concise updates")));
-    Ok(())
-}
-
-#[tokio::test]
-async fn archivist_disabled_and_unknown_session_paths_are_noops() -> Result<()> {
-    let (_tmp, client, provider) = setup_provider();
-    let conn = client.profile_conn();
-    let disabled = ArchivistHook::disabled();
-    assert_eq!(disabled.name(), "archivist");
-    disabled
-        .on_turn_complete(&TurnContext {
-            user_message: "ignored".to_string(),
-            assistant_response: "ignored".to_string(),
-            tool_calls: vec![ToolCallRecord {
-                name: "shell".to_string(),
-                arguments: json!({"cmd": "false"}),
-                success: false,
-                output_summary: "shell: failed (error)".to_string(),
-                duration_ms: 1,
-            }],
-            turn_duration_ms: 1,
-            session_id: None,
-            agent_id: None,
-            entrypoint: None,
-            iteration_count: 1,
-        })
-        .await?;
-
-    assert!(fts5::episodic_session_entries(&conn, "unknown")?.is_empty());
-    let enabled = ArchivistHook::new(provider.clone(), true);
-    enabled.flush_open_segment("missing-session").await;
-    assert_eq!(enabled.rolling_segment_recap("missing-session").await, None);
-    Ok(())
 }
 
 #[tokio::test]

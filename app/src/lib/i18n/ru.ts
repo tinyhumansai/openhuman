@@ -543,6 +543,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'Всегда включён в сборках разработки',
   'settings.clearAppData': 'Очистить данные приложения',
   'settings.clearAppDataDesc': 'Выйти из аккаунта и удалить все локальные данные приложения',
+  'settings.clearAppDataIrreversible': 'Это действие нельзя отменить.',
+  'settings.clearAppDataAction': 'Удалить данные',
   'settings.logOut': 'Выйти',
   'settings.logOutDesc': 'Выйти из своего аккаунта',
   'settings.exitLocalSession': 'Выход из локального сеанса',
@@ -1394,7 +1396,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'По умолчанию используется поиск, управляемый OpenHuman, или подключите собственного провайдера с помощью ключа API.',
   'settings.search.description':
-    'Выберите поисковую систему, которую использует агент, или полностью отключите инструменты поиска. Управляемый режим использует серверную часть OpenHuman (настройка не требуется). Parallel, Brave, Querit и Exa работают напрямую с вашего устройства, используя ваш API-ключ.',
+    'Выберите поисковую систему, которую использует агент, или полностью отключите инструменты поиска. Управляемый режим использует серверную часть OpenHuman (настройка не требуется). Parallel, Brave, Querit, Exa и Tavily работают напрямую с вашего устройства, используя ваш API-ключ.',
   'settings.search.engineAria': 'Поисковая система',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1403,7 +1405,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'По умолчанию. Маршрутизируется через серверную часть OpenHuman, сейчас на базе Exa: ключ API не требуется.',
   'settings.search.localManagedUnavailable':
-    'Поиск OpenHuman Managed недоступен для локальных пользователей. Добавьте свой ключ API Parallel, Brave, Querit или Exa, чтобы включить веб-поиск.',
+    'Поиск OpenHuman Управляемый недоступен для локальных пользователей. Добавьте свой ключ API Parallel, Brave, Querit, Exa или Tavily, чтобы включить веб-поиск.',
   'settings.search.engineParallelLabel': 'Параллельно',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: инструменты поиска, извлечения, общения, исследования, обогащения и набора данных.',
@@ -1416,6 +1418,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Нейропоиск на базе Exa. Требуется ваш собственный ключ API Exa. Добавляет инструменты поиска, похожих страниц и содержимого страниц.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Веб-, новостной и финансовый поиск на базе Tavily. Требуется ваш собственный ключ API Tavily. Добавляет инструменты поиска и извлечения страниц.',
   'settings.search.statusConfigured': 'Настроено',
   'settings.search.statusNeedsKey': 'Требуется ключ API',
   'settings.search.fallbackToManaged':
@@ -1437,6 +1442,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Запросить ключ API',
   'settings.search.placeholderExa': 'Вставьте ваш ключ API Exa…',
+  'settings.search.tavilyKeyLabel': 'Ключ API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Разрешенные веб-сайты',
   'settings.search.allowedSitesHint':
     'Хосты, которые ассистент может открывать и читать (через веб-запросы и браузерный инструмент) по одному на строку, например reuters.com. Хост также охватывает все его поддомены. Веб-поиск не ограничивается этим списком.',
@@ -4400,7 +4407,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Войти через Claude',
   'settings.ai.claudeCode.reconnect': 'Переподключить',
   'settings.ai.claudeCode.loginHint':
-    'Открывает терминал с командой claude login. После завершения нажмите «Проверить снова».',
+    'Открывает терминал с командой claude auth login --claudeai. После завершения нажмите «Проверить снова».',
   'settings.ai.claudeCode.loginError':
     'Не удалось открыть терминал входа. Пожалуйста, попробуйте снова.',
   'settings.ai.claudeCode.fullAccess': 'Полный доступ',
@@ -5002,6 +5009,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Жить',
   'settings.developerMenu.eventLog.disconnected': 'Отключено',
   'settings.developerMenu.eventLog.waiting': 'Ждем событий...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'События появляются здесь по мере работы агентов, инструментов и системы. Пока ничего не произошло.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Подключитесь к ядру снова, чтобы возобновить поток.',
   'settings.developerMenu.eventLog.notConnected': 'Не подключен к ядру',
   'settings.developerMenu.eventLog.jumpToLatest': 'Перейти к последней версии',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6142,6 +6153,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Подсказки маршрутизации',
   'settings.agents.editor.modelTiers': 'Уровни моделей',
   'settings.agents.editor.modelCustom': 'Идентификатор модели…',
+  'settings.agents.editor.modelManaged': 'Управляемые модели',
   'settings.agents.editor.modelCustomPlaceholder': 'напр. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Добавить инструменты',
   'settings.agents.editor.toolsAllSelected': 'Все инструменты',
@@ -6289,6 +6301,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Режим хранения секретов',
   'keyring.settings.mode.osKeychain': 'Связка ключей ОС',
   'keyring.settings.mode.encryptedFile': 'Локальное шифрование',
+  'keyring.settings.mode.localEncryptedFile': 'Зашифрованный файл',
+  'keyring.settings.mode.localPlaintextFile': 'Незашифрованный файл',
   'keyring.settings.mode.consentPending': 'Не настроено',
   'keyring.settings.mode.declined': 'Отклонено',
   'keyring.settings.availability': 'Доступность связки ключей',
@@ -6676,6 +6690,27 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Удалить',
   'flows.delete.deleting': 'Удаление…',
   'flows.canvas.renameLabel': 'Переименовать рабочий процесс',
+  'settings.ai.openaiOauthTitle': 'Войти через ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Войдите в аккаунт ChatGPT, чтобы использовать модели OpenAI без ключа API.',
+  'settings.ai.openaiOauthConnect': 'Войти через ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Подключено к ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Открываем вход…',
+  'settings.ai.openaiOauthCallbackHint':
+    'После входа вставьте полный URL перенаправления из браузера (начинается с http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Завершить вход в ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Отключить ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'Вход через ChatGPT доступен только в настольном приложении.',
+  'settings.ai.openaiOauthStartError':
+    'Не удалось начать вход в ChatGPT. Повторите попытку или используйте ключ API.',
+  'settings.ai.openaiOauthCompleteError':
+    'Вход в ChatGPT не завершён. Проверьте URL перенаправления и повторите попытку.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'После входа вставьте URL перенаправления из браузера.',
+  'settings.ai.openaiOauthDisconnectError': 'Не удалось отключить ChatGPT. Повторите попытку.',
   'memorySources.codingSessions.title': 'Сеансы агентов программирования',
   'memorySources.codingSessions.description':
     'Превратите решения и исправления из Codex и Claude Code в приватную память персоны.',

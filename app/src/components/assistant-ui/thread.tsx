@@ -111,6 +111,16 @@ export type ThreadComponents = {
    * component returns `null` when it has nothing to say.
    */
   RunningStatus?: ComponentType | undefined;
+  /**
+   * Host-owned one-line footer for a **settled** assistant message — the
+   * turn's process summary and the single door to its detail.
+   *
+   * A seam for the same reason `RunningStatus` is one: this file knows the
+   * message, not what the host recorded while producing it. The host component
+   * reads the message's own metadata and returns `null` when the turn has no
+   * process behind it, so a plain answer gets no footer.
+   */
+  TurnFooter?: ComponentType | undefined;
   /** Host-owned attachment previews rendered above the editor. */
   ComposerAttachments?: ComponentType | undefined;
   /** Host-owned attachment picker rendered in the action row. */
@@ -149,6 +159,31 @@ export type ThreadProps = {
    */
   slashCommands?: readonly Unstable_SlashCommand[] | undefined;
 };
+
+/**
+ * Whether Lexical's own `SyncPlugin` is driving the composer store, making the
+ * host's DOM→store bridge below not merely redundant but harmful.
+ *
+ * Lexical reconciles from `beforeinput` and needs `getTargetRanges()` to know
+ * what the event will change. jsdom implements neither, so there the plugin
+ * never commits editor state and the bridge is the ONLY path from a synthetic
+ * `input` to the store — which is exactly why #5763 gated that bridge rather
+ * than deleting it, and why 54 composer tests depend on it.
+ *
+ * In a real browser the plugin does commit, and then the bridge's write moves
+ * the store through the *external* path. `SyncPlugin`'s runtime subscription
+ * reads that as a foreign edit, calls `root.clear()` and rebuilds the editor —
+ * and the rebuild restores the caret to the offset captured from the editor
+ * state, which still lags the DOM by one keystroke. So the caret never
+ * advances: typing `hello` one key at a time produced `holle` with the caret
+ * stuck at 1 (#6163).
+ *
+ * Feature-detected rather than `import.meta.env` because the condition is a
+ * real capability, not a build mode: any environment that reconciles from
+ * `beforeinput` must not be bridged, and any that cannot must be.
+ */
+const lexicalDrivesTheStore = (): boolean =>
+  typeof InputEvent !== 'undefined' && 'getTargetRanges' in InputEvent.prototype;
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
@@ -502,6 +537,7 @@ const Composer: FC<{
                 if ('isComposing' in event.nativeEvent && event.nativeEvent.isComposing) {
                   return;
                 }
+                if (lexicalDrivesTheStore()) return;
                 syncComposerFromDom(event.target);
               }}
               onCompositionEndCapture={event => {
@@ -707,6 +743,7 @@ const AssistantMessage: FC = () => {
     ToolFallback: ToolFallbackComponent = ToolFallback,
     ToolGroup,
     ReasoningGroup,
+    TurnFooter,
   } = useContext(ThreadComponentsContext);
 
   const ACTION_BAR_PT = 'pt-1.5';
@@ -839,6 +876,7 @@ const AssistantMessage: FC = () => {
             Stopped
           </span>
         </AuiIf>
+        {TurnFooter ? <TurnFooter /> : null}
         <BranchPicker />
         <AssistantActionBar />
       </div>

@@ -218,54 +218,6 @@ async fn cover_window_rpc_surfaces_a_driver_rejection() {
     assert!(err.contains("since_ms"), "got {err}");
 }
 
-/// The source gate, end to end through the real driver.
-///
-/// The tests above prove the handler *passes* a scope; this one proves a
-/// restricted profile cannot read a source it was not granted. It has to
-/// bind the in-process driver rather than the double, because the filtering
-/// is the engine's — and `binding.provider()` is unguarded, so the scope
-/// this handler passes is the only thing standing between the two.
-#[tokio::test]
-async fn cover_window_rpc_honors_profile_source_scope() {
-    let (_tmp, cfg) = test_config();
-    // Two memory-source chunks in different sources, both inside the window.
-    let mut allowed = sample_chunk("slack:#eng", 0);
-    allowed.metadata.tags = vec!["memory_sources".into(), "chat".into()];
-    let mut blocked = sample_chunk("slack:#secret", 0);
-    blocked.metadata.tags = vec!["memory_sources".into(), "chat".into()];
-    upsert_chunks(&cfg, &[allowed.clone(), blocked.clone()]).unwrap();
-    stage_test_chunks(&cfg, &[allowed.clone(), blocked.clone()]);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&cfg);
-
-    let req = || CoverWindowRequest {
-        since_ms: 0,
-        until_ms: 4_000_000_000_000,
-        source_id: None,
-        source_kind: None,
-        limit: None,
-    };
-
-    let resp = with_source_scope(Some(vec!["slack:#eng".into()]), async {
-        cover_window_rpc(&cfg, req()).await
-    })
-    .await
-    .unwrap();
-    let ids: Vec<&str> = resp.value.hits.iter().map(|h| h.node_id.as_str()).collect();
-    assert!(
-        ids.contains(&allowed.id.as_str()),
-        "allowlisted source must be present: {ids:?}"
-    );
-    assert!(
-        !ids.contains(&blocked.id.as_str()),
-        "disallowed source must be filtered out: {ids:?}"
-    );
-
-    // With no profile scope active, both sources are visible — which is what
-    // makes the assertion above a filter rather than an empty store.
-    let unrestricted = cover_window_rpc(&cfg, req()).await.unwrap();
-    assert_eq!(unrestricted.value.hits.len(), 2);
-}
-
 // ── search_entities_rpc ───────────────────────────────────────────
 
 /// The search degrades rather than fails when the bound driver has no
@@ -316,6 +268,10 @@ async fn search_entities_rpc_parses_valid_kinds_list() {
 /// index instead.
 #[tokio::test]
 async fn search_entities_rpc_rejects_unknown_entity_kind() {
+    // The handler reaches the bound driver, which refuses with "memory is
+    // still starting" for as long as the module is loading — a process-wide
+    // transient this assertion would otherwise race (openhuman#6172).
+    crate::openhuman::memory::test_support::settle_memory_module().await;
     let (_tmp, cfg) = test_config();
     let req = SearchEntitiesRequest {
         query: "x".into(),

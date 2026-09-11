@@ -9,7 +9,6 @@ use super::*;
 
 #[tokio::test]
 async fn memory_write_instruction_is_present_with_learning_disabled() {
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -41,7 +40,6 @@ async fn memory_write_instruction_is_present_with_learning_disabled() {
 
 #[tokio::test]
 async fn memory_write_instruction_is_absent_when_no_write_tool_is_visible() {
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -79,7 +77,6 @@ async fn memory_write_instruction_is_absent_when_no_write_tool_is_visible() {
 /// exists to prevent.
 #[tokio::test]
 async fn memory_write_instruction_names_only_the_write_tool_a_scoped_agent_holds() {
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 

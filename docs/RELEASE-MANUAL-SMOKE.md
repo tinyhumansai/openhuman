@@ -20,6 +20,10 @@ This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-M
 
 Applies to every release, all platforms.
 
+### Checkbox appearance
+
+- [ ] **Skill source filters show their selection** — In Connections → Skills, open the catalog source filter and toggle a source off and on. Verify that the rows filter correctly, the menu stays open, and the selected source has a visible checkmark. Repeat in light and dark themes, including Matrix, Ocean and Sepia dark; selected and indeterminate shared checkboxes must show a contrasting mark, while unchecked boxes remain empty.
+
 ### Public installer script
 
 - [ ] **`scripts/install.sh` downloads the latest asset on a proxy/VPN network** — From a clean checkout, run `bash scripts/install.sh --dry-run --verbose`, then run the public `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` flow on one macOS or Linux host. Expected: release metadata resolves, the asset downloads successfully, and transient GitHub/CDN HTTP/2 failures retry over HTTP/1.1 instead of surfacing `curl: (16) Error in the HTTP2 framing layer`.
@@ -54,6 +58,7 @@ Applies to every release, all platforms.
 
 ### Cross-platform
 
+- [ ] **ChatGPT sign-in works after onboarding** — In desktop Settings > AI > Providers, add OpenAI and complete ChatGPT sign-in from its provider dialog. Expected: OpenAI is registered without an API key and existing workload routes are preserved. Reopen the provider dialog and disconnect. Expected: the connected badge clears, OpenAI is removed, and workloads no longer reference it. A failed callback shows a localized error without logging the redirect URL.
 - [ ] **First launch flow completes for a brand-new user** — Fresh OS user account, no `~/.openhuman` directory. Walk through onboarding to first agent reply. Expected: no crashes, no permission deadlocks, no stale-config errors.
 - [ ] **A background sub-agent result lands in Chat exactly once** — Ask for something that delegates to a background sub-agent (e.g. "how's my day looking?" with a calendar connected, or any `delegate_*` archetype), then wait for it to finish. Expected: the delivered reply appears once, as a normal agent message; no user-side (right-aligned) bubble showing raw `**markdown**`, and still one copy after switching to another thread and back (#5933).
 - [ ] **Auto-update download + relaunch succeeds** — Install the previous release, point the updater feed at this release, trigger an update check. Expected: download completes, relaunch installs the new binary, version string in `Settings > About` matches the release tag.

@@ -512,6 +512,40 @@ fn read_skill_resource_rejects_symlinked_leaf() {
     );
 }
 
+/// The leaf-symlink pre-check (`symlink_metadata` on the requested path) only
+/// catches a symlinked *file*. A symlinked *intermediate directory component*
+/// slips past it — `leaf_meta.file_type().is_symlink()` is false because the
+/// leaf itself is a plain file, just reached through a symlinked ancestor.
+/// This is what the second, full-path `canonicalize` + `starts_with` check
+/// exists to catch, and is untested independently of the leaf-symlink case.
+#[cfg(unix)]
+#[test]
+fn read_skill_resource_rejects_an_intermediate_symlinked_directory() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path();
+    let skill_dir = make_legacy_skill(ws, "demo");
+
+    // Target lives outside the skill root, and the leaf inside it is an
+    // ordinary file — nothing about the leaf itself is a symlink.
+    let external = tempfile::tempdir().unwrap();
+    write(&external.path().join("leaked.txt"), "leaked content");
+
+    // <skill>/scripts -> external, so <skill>/scripts/leaked.txt resolves to
+    // a real, non-symlink file that nonetheless lives outside the skill root.
+    symlink(external.path(), skill_dir.join("scripts")).unwrap();
+
+    let err = read_workflow_resource(ws, "demo", Path::new("scripts/leaked.txt"))
+        .expect_err("an intermediate symlinked directory must not leak a file outside the root");
+    assert!(
+        err.to_lowercase().contains("symlink")
+            || err.to_lowercase().contains("escape")
+            || err.to_lowercase().contains("outside"),
+        "unexpected error: {err}"
+    );
+}
+
 #[test]
 fn read_skill_resource_rejects_oversized_file() {
     let dir = tempfile::tempdir().unwrap();

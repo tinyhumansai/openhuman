@@ -19,4 +19,4 @@ omit_memory_md = true
 hint = "agentic"
 
 [tools]
-named = ["goals_list", "goals_add", "goals_edit", "goals_delete", "memory_recall"]
+named = ["goals", "memory_recall"]

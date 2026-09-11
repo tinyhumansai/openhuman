@@ -61,6 +61,49 @@ fn tool_records_from_conversation(
     records
 }
 
+/// The cap checkpoint's view of this turn's tool calls: name, status, and a
+/// truncated slice of the **actual output** (issue #6014).
+///
+/// The sibling of [`tool_records_from_conversation`] above, and separate from
+/// it on purpose. That one builds `hooks::ToolCallRecord`s, whose
+/// `output_summary` is deliberately sanitized to carry no raw output — right
+/// for the learning pipeline it feeds, useless for a checkpoint the user reads
+/// in place of the answer the turn ran out of room to write. Reading
+/// `ToolCallOutcome::content` directly here keeps the raw payload on the one
+/// path that needs it instead of widening the sanitized type for everyone.
+fn checkpoint_results_from_conversation(
+    conversation: &[ConversationMessage],
+    tool_outcomes: &[crate::openhuman::agent::tinyagents::ToolCallOutcome],
+) -> Vec<super::super::turn_checkpoint::CheckpointToolResult> {
+    let mut results = Vec::new();
+    for msg in conversation {
+        if let ConversationMessage::AssistantToolCalls { tool_calls, .. } = msg {
+            for call in tool_calls {
+                let outcome = tool_outcomes.iter().find(|o| o.call_id == call.id);
+                // Same missing-outcome rule as `tool_records_from_conversation`:
+                // a call the crate recovered without running `after_tool` never
+                // reached the capture sink, so it is reported as failed rather
+                // than silently as a success.
+                let success = outcome.map(|o| o.success).unwrap_or(false);
+                let content = outcome
+                    .map(|o| {
+                        super::super::turn_checkpoint::truncate_chars(
+                            &o.content,
+                            super::super::turn_checkpoint::CHECKPOINT_RESULT_CHARS,
+                        )
+                    })
+                    .unwrap_or_default();
+                results.push(super::super::turn_checkpoint::CheckpointToolResult {
+                    name: call.name.clone(),
+                    success,
+                    content,
+                });
+            }
+        }
+    }
+    results
+}
+
 /// Stamp each **failed** tool-result [`ChatMessage`] with its failure outcome
 /// before persistence, so the derived transcript view can render an error tool
 /// row instead of a false success.
@@ -128,6 +171,21 @@ fn short_failure_detail(content: &str) -> Option<String> {
 /// row is touched — when the tail is not an assistant `Chat` (defensive; a clean
 /// finish, a cap checkpoint, and the #4093 close all end on one) a fresh
 /// assistant message is appended rather than mutating an older entry.
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;
+
+/// Whether a history row is an assistant `Chat` with nothing in it.
+///
+/// The cap path's concluding call can answer with empty text, and that message
+/// is folded into the history before the out-of-band wrap-up builds its request
+/// from it. Anthropic rejects a message with empty content, so it has to go
+/// (CodeRabbit on #6068).
+pub(super) fn is_empty_assistant_chat(message: &ConversationMessage) -> bool {
+    matches!(message, ConversationMessage::Chat(chat)
+        if chat.role == "assistant" && chat.content.trim().is_empty())
+}
+
 fn replace_last_assistant_reply(history: &mut Vec<ConversationMessage>, text: &str) {
     match history.last_mut() {
         Some(ConversationMessage::Chat(chat)) if chat.role == "assistant" => {

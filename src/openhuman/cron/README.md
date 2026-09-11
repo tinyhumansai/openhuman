@@ -6,7 +6,7 @@ Scheduled-job runtime. Owns cron-expression and human-delay parsing, the persist
 
 - `pub struct CronJob` / `pub struct CronJobPatch` / `pub struct CronRun` / `pub enum JobType` / `pub enum Schedule` / `pub enum SessionTarget` / `pub struct DeliveryConfig` — `types.rs:1-100` — durable job + run model.
 - `pub fn add_once` / `pub fn add_once_at` / `pub fn parse_human_delay` / `pub fn pause_job` / `pub fn resume_job` / `pub fn update_cron_job` — `ops.rs` (re-exported `mod.rs:12`).
-- `pub fn schedule_cron_expression` / `pub fn next_run_for_schedule` / `pub fn normalize_expression` / `pub fn validate_schedule` — `schedule.rs` (re-exported `mod.rs:14-16`).
+- `pub fn schedule_cron_expression` / `pub fn next_run_for_schedule` / `pub fn normalize_expression` / `pub fn validate_schedule` / `pub fn validate_agent_schedule` / `pub fn runs_closer_than` / `pub const MIN_AGENT_JOB_INTERVAL` — `schedule.rs` (re-exported `mod.rs`).
 - `pub fn add_job` / `pub fn add_agent_job` / `pub fn add_agent_job_with_definition` / `pub fn add_shell_job` / `pub fn due_jobs` / `pub fn get_job` / `pub fn list_jobs` / `pub fn list_runs` / `pub fn record_last_run` / `pub fn record_run` / `pub fn remove_job` / `pub fn reschedule_after_run` / `pub fn update_job` — `store.rs` (re-exported `mod.rs:22-26`).
 - `pub mod scheduler` (`pub async fn run(config: Config)`) — `scheduler.rs:19` — main poll loop.
 - `pub mod seed` — `seed.rs` — install built-in jobs on first launch.
@@ -49,6 +49,24 @@ The `[Channel context]` block injected by `channels::runtime::dispatch` for
 non-web inbound turns instructs the model to default to `announce` with the
 current channel + reply target — that is the routing path for the Telegram
 "remind me to drink water" use case in #928.
+
+## Agent-job minimum interval
+
+An agent job is a full inference turn per run, so `schedule.rs` enforces a floor
+of `MIN_AGENT_JOB_INTERVAL` (5 minutes) between consecutive runs of an agent job.
+`validate_agent_schedule` is applied by `add_agent_job*` and by `update_job`
+whenever an agent job's schedule is set, so every creation path (`cron_add`
+tool, `cron.add` RPC, the one-shot `schedule` tool, the settings form) gets the
+same rejection, and the message names the two runs that would be too close.
+Shell and flow jobs are not subject to it.
+
+The check is `runs_closer_than`: it walks consecutive occurrences (bounded) and
+reports the first pair closer than the floor, so an irregular expression such as
+`1,2,30 * * * *` is judged by its tightest gap and the verdict does not depend
+on the instant it runs at. Wrap-around gaps count: `*/7 * * * *` fires at :56
+and then at :00. Rows that predate the floor keep running; the scheduler logs
+`Cron agent job '<id>' is scheduled more frequently than every 5 minutes` with
+that evidence on each run instead (#6158).
 
 ## Tests
 

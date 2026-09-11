@@ -574,3 +574,118 @@ fn to_provider_messages_treats_unrecognized_role_as_user() {
     );
     assert_eq!(out[0].content, "hi");
 }
+
+// ── KV-cache prefix stability ────────────────────────────────────────────────
+//
+// Every turn of a session replays the whole history, and a prefix cache reuses
+// only a *byte-identical* prefix. So the serialization of turn N must survive
+// as the opening of turn N+1 unchanged: a message that renders differently on
+// its second outing does not merely cost its own tokens, it invalidates
+// everything after it for the rest of the thread — including the system prompt,
+// which `Agent::turn` goes to considerable lengths to freeze.
+//
+// `to_provider_messages` is the one place that can violate this without any
+// caller doing anything wrong, because `pair_tool_cycles` *drops* entries. The
+// verdict it reaches for an entry must depend only on that entry and its
+// immediate neighbour — never on anything appended later — or an earlier
+// message's presence flips retroactively and the prefix moves under the cache.
+
+/// Every proper prefix of a history must serialize to a prefix of the whole
+/// history's serialization.
+///
+/// Written as a sweep over every split point rather than one hand-picked pair:
+/// the interesting splits are exactly the ones that land inside a tool cycle,
+/// and enumerating them is how the awkward case gets covered without someone
+/// having to notice it.
+fn assert_serialization_is_append_only(history: &[ConversationMessage]) {
+    let dispatcher = NativeToolDispatcher;
+    let full = dispatcher.to_provider_messages(history);
+    for split in 0..=history.len() {
+        let partial = dispatcher.to_provider_messages(&history[..split]);
+        assert!(
+            partial.len() <= full.len(),
+            "history[..{split}] serialized to {} messages, longer than the full \
+             history's {} — a later turn cannot un-send what an earlier one sent",
+            partial.len(),
+            full.len()
+        );
+        for (index, message) in partial.iter().enumerate() {
+            assert_eq!(
+                (message.role.as_str(), message.content.as_str()),
+                (full[index].role.as_str(), full[index].content.as_str()),
+                "history[..{split}] diverges from the full history at message \
+                 {index}: appending a later turn rewrote an earlier message, so \
+                 every provider prefix cache re-prefills from here on"
+            );
+        }
+    }
+}
+
+#[test]
+fn appending_a_turn_never_rewrites_an_earlier_message() {
+    assert_serialization_is_append_only(&[
+        user_chat("hi"),
+        assistant_chat("hello"),
+        user_chat("run something"),
+        assistant_tool_calls("tc-1"),
+        tool_results("tc-1"),
+        assistant_chat("done"),
+        user_chat("and again"),
+        assistant_tool_calls("tc-2"),
+        tool_results("tc-2"),
+        assistant_chat("done again"),
+    ]);
+}
+
+#[test]
+fn completing_an_aborted_tool_cycle_only_appends() {
+    // The turn that matters most: a run capped mid-cycle persists the opener
+    // with no results, so that turn's request drops it. When the results
+    // arrive, the opener becomes sendable — and must appear *after* everything
+    // already sent, never before it. (A dropped entry that later reappears
+    // in place would be the retroactive rewrite this whole property forbids.)
+    let history = vec![
+        user_chat("hi"),
+        assistant_chat("hello"),
+        assistant_tool_calls("tc-1"),
+        tool_results("tc-1"),
+        assistant_chat("done"),
+    ];
+    let dispatcher = NativeToolDispatcher;
+
+    // Turn N: the opener at index 2 has no results yet, so it is withheld.
+    let aborted = dispatcher.to_provider_messages(&history[..3]);
+    assert_eq!(
+        aborted.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(),
+        vec!["user", "assistant"],
+        "an unpaired opener must not reach the wire"
+    );
+
+    // Turn N+1: with the results persisted the cycle is sendable, and the two
+    // messages already sent are still the first two, unchanged.
+    assert_serialization_is_append_only(&history);
+}
+
+#[test]
+fn serializing_the_same_history_twice_is_byte_identical() {
+    // Guards against a serializer that folds in anything ambient — a
+    // timestamp, an iteration counter, a HashMap iteration order. Such a thing
+    // would cost the whole cached prefix on every turn while every other test
+    // here still passed.
+    let history = vec![
+        user_chat("hi"),
+        assistant_tool_calls("tc-1"),
+        tool_results("tc-1"),
+        assistant_chat("done"),
+    ];
+    let dispatcher = NativeToolDispatcher;
+    let first = dispatcher.to_provider_messages(&history);
+    let second = dispatcher.to_provider_messages(&history);
+    let render = |messages: &[crate::openhuman::agent::messages::ChatMessage]| {
+        messages
+            .iter()
+            .map(|m| format!("{}:{}", m.role, m.content))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(render(&first), render(&second));
+}

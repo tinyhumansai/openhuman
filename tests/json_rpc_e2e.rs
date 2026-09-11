@@ -122,9 +122,6 @@ fn ensure_json_rpc_e2e_memory_seams() {
                     workspace_dir: json_rpc_e2e_shared_workspace().to_path_buf(),
                     ..openhuman_core::openhuman::config::Config::default()
                 });
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    config.clone(),
-                );
                 #[cfg(feature = "modules")]
                 openhuman_core::openhuman::modules::memory::set_modules_policy(config);
             })

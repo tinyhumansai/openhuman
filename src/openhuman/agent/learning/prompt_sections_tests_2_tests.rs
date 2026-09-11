@@ -332,19 +332,22 @@ fn visible(names: &[&str]) -> HashSet<String> {
 
 #[test]
 fn memory_write_section_states_the_rule_the_bug_needed() {
-    let section = MemoryWriteSection::new(true, true);
+    let section = MemoryWriteSection::new(true, true, false);
     assert_eq!(section.name(), "memory_write");
     let rendered = section
         .build(&prompt_context(LearnedContextData::default()))
         .unwrap();
-    assert_eq!(rendered.trim(), memory_write_instruction(true, true).trim());
+    assert_eq!(
+        rendered.trim(),
+        memory_write_instruction(true, true, false).trim()
+    );
     assert!(rendered.contains("## Remembering"), "{rendered}");
     assert!(
         rendered.contains("Never say saved"),
         "the instruction must forbid claiming a save that did not happen: {rendered}"
     );
     // Not context-gated: it renders for an empty learned context too.
-    let empty = MemoryWriteSection::new(true, true)
+    let empty = MemoryWriteSection::new(true, true, false)
         .build(&prompt_context(LearnedContextData::default()))
         .unwrap();
     assert!(!empty.trim().is_empty());
@@ -355,13 +358,13 @@ fn memory_write_section_states_the_rule_the_bug_needed() {
 /// registering the section with no write tool at all.
 #[test]
 fn memory_write_instruction_names_only_the_offered_tools() {
-    let both = memory_write_instruction(true, true);
+    let both = memory_write_instruction(true, true, false);
     assert!(
         both.contains("`save_preference`") && both.contains("`memory_store`"),
         "{both}"
     );
 
-    let preferences_only = memory_write_instruction(true, false);
+    let preferences_only = memory_write_instruction(true, false, false);
     assert!(
         preferences_only.contains("`save_preference`"),
         "{preferences_only}"
@@ -371,7 +374,7 @@ fn memory_write_instruction_names_only_the_offered_tools() {
         "a session without memory_store must not be sent to it: {preferences_only}"
     );
 
-    let facts_only = memory_write_instruction(false, true);
+    let facts_only = memory_write_instruction(false, true, false);
     assert!(facts_only.contains("`memory_store`"), "{facts_only}");
     assert!(
         !facts_only.contains("`save_preference`"),
@@ -395,8 +398,8 @@ fn memory_write_instruction_names_only_the_offered_tools() {
 /// a tool the session lacks.
 #[test]
 fn memory_write_instruction_is_empty_without_a_write_tool() {
-    assert!(memory_write_instruction(false, false).is_empty());
-    let rendered = MemoryWriteSection::new(false, false)
+    assert!(memory_write_instruction(false, false, false).is_empty());
+    let rendered = MemoryWriteSection::new(false, false, false)
         .build(&prompt_context(LearnedContextData::default()))
         .unwrap();
     assert!(rendered.is_empty(), "{rendered}");
@@ -461,4 +464,106 @@ fn write_tool_gate_counts_delegation_tools_and_either_write_tool() {
         &none,
         &visible(&[])
     ));
+}
+
+// ── The write rule reaches a delegated agent (#6200) ─────────────────────────
+
+/// An agent whose only write path is the delegate gets the rule, and the rule
+/// names the delegate.
+///
+/// This is the write-side twin of the gap #6183 closed on the read side. The
+/// orchestrator is configured exactly this way — its visible set carries
+/// `manage_profile_memory` and neither direct tool — so before this it held a
+/// write path and no rule about using it: the #6048 case, "got it, saved" with
+/// no tool call behind it.
+///
+/// Naming matters as much as presence. Pointing it at `memory_store`, a tool it
+/// cannot see, is the failure `any_tool_offered` exists to prevent.
+#[test]
+fn a_delegate_only_agent_gets_the_write_rule_naming_the_delegate() {
+    let delegate = named(&[MEMORY_WRITE_DELEGATE_TOOL]);
+    let none: Vec<Box<dyn Tool>> = Vec::new();
+
+    assert!(
+        any_tool_offered(
+            &[MEMORY_WRITE_DELEGATE_TOOL],
+            &delegate,
+            &none,
+            &visible(&[])
+        ),
+        "the gate must see the delegate"
+    );
+
+    let rendered = memory_write_instruction(false, false, true);
+    assert!(
+        rendered.contains(MEMORY_WRITE_DELEGATE_TOOL),
+        "the rule must name the delegate: {rendered}"
+    );
+    // #6200 review (Codex P1). `ArchetypeDelegationTool` defaults an omitted
+    // `blocking` to `false` and dispatches async, returning before the worker
+    // runs. Without demanding `blocking: true` this section would tell the model
+    // to confirm a save that has not happened — #6048 arriving by a new route,
+    // through the very rule meant to prevent it.
+    assert!(
+        rendered.contains("blocking: true"),
+        "a delegated write must be demanded as blocking, or the reply can \
+         confirm before the write lands: {rendered}"
+    );
+    for absent in [MEMORY_STORE_TOOL, SAVE_PREFERENCE_TOOL] {
+        assert!(
+            !rendered.contains(absent),
+            "the rule named `{absent}`, which a delegate-only agent cannot see: {rendered}"
+        );
+    }
+}
+
+/// An agent holding a direct write tool renders exactly what it rendered before
+/// the delegate arm existed.
+///
+/// The regression that would matter most here is a silent prompt change for
+/// every agent that was already working, so the delegate flag is asserted to be
+/// inert whenever either direct tool is present.
+#[test]
+fn a_direct_write_tool_renders_the_same_text_with_or_without_the_delegate() {
+    for (preferences, facts) in [(true, true), (true, false), (false, true)] {
+        assert_eq!(
+            memory_write_instruction(preferences, facts, false),
+            memory_write_instruction(preferences, facts, true),
+            "the delegate flag changed the text for ({preferences}, {facts})"
+        );
+    }
+    // And the no-write case is still empty rather than falling into the
+    // delegate arm by accident.
+    assert!(memory_write_instruction(false, false, false).is_empty());
+}
+
+/// Read and write both admit their delegate, and neither list admits the
+/// other's.
+///
+/// #6183 fixed the read side and left the write side behind; the two drifting
+/// apart is what produced a half-fixed release. Pinning both directions here
+/// makes that specific mistake fail a test rather than ship.
+#[test]
+fn read_and_write_rules_are_symmetric_about_their_delegates() {
+    let none: Vec<Box<dyn Tool>> = Vec::new();
+    let readers = named(&["retrieve_memory"]);
+    let writers = named(&[MEMORY_WRITE_DELEGATE_TOOL]);
+
+    assert!(
+        any_tool_offered(&MEMORY_READ_TOOLS, &readers, &none, &visible(&[])),
+        "the read list must admit its delegate"
+    );
+    assert!(
+        !any_tool_offered(&MEMORY_READ_TOOLS, &writers, &none, &visible(&[])),
+        "the read list must not admit the write delegate"
+    );
+    assert!(
+        !any_tool_offered(
+            &[MEMORY_WRITE_DELEGATE_TOOL],
+            &readers,
+            &none,
+            &visible(&[])
+        ),
+        "the write delegate must not be satisfied by the read delegate"
+    );
 }

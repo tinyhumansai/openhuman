@@ -112,6 +112,23 @@ label = "E2E Mock"
 endpoint = "http://127.0.0.1:${E2E_MOCK_PORT}/openai/v1"
 auth_style = "none"
 default_model = "e2e-mock-model"
+
+# The managed backend row. The unify_ai_provider_settings migration seeds this
+# on a real install, but its seed_cloud_providers step returns early when
+# cloud_providers is already non-empty -- and this fixture ships one entry, so
+# the managed row was never seeded here. Without it every managed-source model
+# listing fails with: no cloud provider with id or slug 'openhuman' found.
+#
+# auth_style MUST be spelled openhumanjwt. AuthStyle derives
+# serde rename_all = lowercase, so that -- not the openhuman_jwt that
+# AuthStyle::as_str returns -- is the wire value. An entry spelled the other
+# way fails to deserialize and is dropped from the array in silence.
+[[cloud_providers]]
+id = "p_e2e_openhuman"
+slug = "openhuman"
+label = "OpenHuman"
+endpoint = "http://127.0.0.1:${E2E_MOCK_PORT}/v1"
+auth_style = "openhumanjwt"
 EOF
 
 node "$REPO_ROOT/scripts/mock-api-server.mjs" --port "$E2E_MOCK_PORT" >"$OPENHUMAN_WORKSPACE/mock.log" 2>&1 &

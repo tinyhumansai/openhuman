@@ -106,15 +106,11 @@ pub(crate) use crate::openhuman::integrations::composio::providers::SyncReason;
 pub(crate) use connections::enrich_connections_with_identity;
 #[cfg(test)]
 pub(crate) use error_utils::{
-    classify_composio_failure_tag, direct_mode_without_key, extract_backend_returned_status,
-    resolve_client,
+    backend_mode_without_session, classify_composio_failure_tag, direct_mode_without_key,
+    extract_backend_returned_status, resolve_client,
 };
 #[cfg(test)]
-pub(crate) use memory_cleanup::{composio_memory_targets_for_connection, MemoryCleanupTarget};
-#[cfg(test)]
 pub(crate) use providers_ops::parse_sync_reason;
-#[cfg(test)]
-pub(crate) use tinymemory_core::store::MemoryClient;
 
 #[cfg(test)]
 #[path = "../ops_tests.rs"]

@@ -212,3 +212,40 @@ printf '%s\n' '{"type":"result","result":"Calling.<tool_call>{\"name\":\"lookup\
         Some("claude-agent-sdk")
     );
 }
+
+/// The CLI takes one `--system-prompt`, so every system message has to be
+/// folded into it. Taking only the first dropped the artifact contents list and
+/// the turn-cap wrap-up, which are appended as system messages exactly so the
+/// context ladder cannot remove them (codex on #6068).
+#[test]
+fn every_system_message_reaches_the_cli_prompt() {
+    let messages = vec![
+        Message::system("you are a helpful agent"),
+        Message::user("fetch the issues"),
+        Message::system("## Stored results from this turn\n\n- `file_read` → `a.json`"),
+    ];
+
+    let system = coalesce_system_prompt(&messages).expect("a system prompt");
+
+    assert!(
+        system.contains("you are a helpful agent"),
+        "the persona must survive: {system}"
+    );
+    assert!(
+        system.contains("Stored results from this turn"),
+        "a later system message must not be dropped: {system}"
+    );
+    assert!(
+        system.find("you are a helpful agent") < system.find("Stored results"),
+        "order must be preserved so the persona still leads: {system}"
+    );
+}
+
+#[test]
+fn a_conversation_with_no_system_message_yields_none() {
+    let messages = vec![Message::user("hello")];
+    assert!(coalesce_system_prompt(&messages).is_none());
+    // Blank system messages are not a prompt either.
+    let blank = vec![Message::system("   ")];
+    assert!(coalesce_system_prompt(&blank).is_none());
+}

@@ -135,12 +135,6 @@ const BYPASS_PATTERNS: &[(&str, &str)] = &[
 /// Sorted by path, then pattern — [`scan`] returns a `BTreeSet`, so keeping the
 /// literal in the same order makes diffs readable.
 const ALLOWED: &[(&str, &str, &str)] = &[
-    // ── Standalone binaries: their own process, no ambient CoreContext ──
-    (
-        "src/bin/library_profile/scenarios/cold_phases.rs",
-        "MemoryClient::from_workspace_dir(",
-        "profiling harness; boots its own client outside the guard's process model",
-    ),
     // ── Metadata-only reads: driver identity, never memory content ──
     (
         "src/core/cli_capability.rs",

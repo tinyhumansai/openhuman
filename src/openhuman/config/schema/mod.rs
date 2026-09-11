@@ -46,6 +46,12 @@ pub(crate) use load::invalidate_active_workspace;
 // Crate-internal: the workspace→config-dir resolver, reused by the cloud
 // embedder's keyless credential-scope resolution (mirrors `config::load`).
 pub(crate) use load::resolve_config_dir_for_workspace;
+// Test-only: the `.openhuman` (or `.openhuman-staging`) root dir name the modern
+// layout keys on. The `desktop::app_state` resolver tests build tempdir
+// workspaces named after it so the modern-layout arm fires regardless of the
+// ambient `OPENHUMAN_APP_ENV`, instead of hardcoding `.openhuman`.
+#[cfg(test)]
+pub(crate) use load::default_root_dir_name;
 // Contract shared with `core::observability::expected_error_kind`: the loader
 // appends this marker to a config-read failure when the file's owner differs
 // from the reading process, and the classifier keys on it to keep that case
@@ -123,7 +129,7 @@ pub use tools::{
     MultimodalFileConfig, SearchConfig, SearchEngine, SearchEngineCredentials, SearxngConfig,
     SecretsConfig, SeltzConfig, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
     SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 mod voice_server;

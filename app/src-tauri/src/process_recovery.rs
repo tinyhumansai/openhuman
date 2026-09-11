@@ -725,6 +725,43 @@ mod windows_imp {
     /// instance apart from a `core`/`mcp` CLI session or a CEF `--type=` helper.
     /// Includes the current process so its ancestor chain can be walked.
     fn enumerate_all_processes() -> Result<Vec<ProcessInfo>, String> {
+        select_enumeration(enumerate_via_wmic, enumerate_via_cim)
+    }
+
+    /// Choose between the two enumerators.
+    ///
+    /// wmic is absent from Windows 11 24H2 and later, where the spawn fails and
+    /// recovery loses every process. Try it first for older builds, then fall
+    /// back to CIM, which returns the same fields.
+    ///
+    /// Takes both as arguments so the choice can be tested without spawning
+    /// anything: the branch that matters is the one that only happens on a
+    /// machine where wmic is missing.
+    fn select_enumeration<W, C>(wmic: W, cim: C) -> Result<Vec<ProcessInfo>, String>
+    where
+        W: FnOnce() -> Result<Vec<ProcessInfo>, String>,
+        C: FnOnce() -> Result<Vec<ProcessInfo>, String>,
+    {
+        match wmic() {
+            Ok(processes) if !processes.is_empty() => {
+                log::debug!(
+                    "[startup-recovery] wmic enumerated {} processes",
+                    processes.len()
+                );
+                Ok(processes)
+            }
+            Ok(_) => {
+                log::debug!("[startup-recovery] wmic returned no processes, trying CIM");
+                cim()
+            }
+            Err(err) => {
+                log::debug!("[startup-recovery] wmic unavailable ({err}), trying CIM");
+                cim()
+            }
+        }
+    }
+
+    fn enumerate_via_wmic() -> Result<Vec<ProcessInfo>, String> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -747,6 +784,49 @@ mod windows_imp {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(parse_wmic_list_output(&stdout))
+    }
+
+    /// Emits the same `Key=Value` blocks wmic produced, so the existing parser
+    /// handles both sources unchanged.
+    ///
+    /// OutputEncoding is pinned because PowerShell otherwise writes stdout in the
+    /// console's OEM code page. On a non-English install a path outside that page
+    /// is replaced before it ever reaches us, so no decode on this side can
+    /// recover it.
+    const CIM_SCRIPT: &str = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+         Get-CimInstance Win32_Process | ForEach-Object { \
+         \"Caption=$($_.Caption)\"; \
+         \"CommandLine=$($_.CommandLine)\"; \
+         \"ExecutablePath=$($_.ExecutablePath)\"; \
+         \"ParentProcessId=$($_.ParentProcessId)\"; \
+         \"ProcessId=$($_.ProcessId)\"; \
+         \"\" }";
+
+    fn enumerate_via_cim() -> Result<Vec<ProcessInfo>, String> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", CIM_SCRIPT])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("spawn powershell: {e}"))?;
+
+        if !output.status.success() {
+            log::warn!(
+                "[startup-recovery] CIM enumeration failed: powershell exited with {}",
+                output.status
+            );
+            return Err(format!("powershell exited with {}", output.status));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let processes = parse_wmic_list_output(&stdout);
+        log::debug!(
+            "[startup-recovery] CIM enumerated {} processes",
+            processes.len()
+        );
+        Ok(processes)
     }
 
     /// Parse `wmic ... /format:list` output: records are blocks of `Key=Value`
@@ -1046,6 +1126,106 @@ ProcessId=9000\r\r\n";
             assert!(is_openhuman_process("OpenHuman.exe"));
             assert!(!is_openhuman_process("C:\\Chrome\\chrome.exe"));
             assert!(!is_openhuman_process("python.exe"));
+        }
+
+        // The fallback only fires on a machine where wmic is missing, so the
+        // branch that matters is the one CI never reaches. select_enumeration
+        // takes both enumerators as arguments so it can be driven directly.
+
+        #[test]
+        fn wmic_results_are_used_and_cim_is_not_consulted() {
+            let mut cim_called = false;
+            let out = select_enumeration(
+                || Ok(vec![proc(1, 0, "a", "a")]),
+                || {
+                    cim_called = true;
+                    Ok(vec![])
+                },
+            )
+            .expect("wmic path");
+            assert_eq!(out.len(), 1);
+            assert!(!cim_called, "CIM ran even though wmic returned processes");
+        }
+
+        #[test]
+        fn cim_runs_when_wmic_is_unavailable() {
+            let out = select_enumeration(
+                || Err("spawn wmic: not found".to_string()),
+                || Ok(vec![proc(7, 0, "b", "b")]),
+            )
+            .expect("cim path");
+            assert_eq!(out[0].pid, 7);
+        }
+
+        #[test]
+        fn cim_runs_when_wmic_returns_nothing() {
+            // 24H2 can leave a wmic shim that exits cleanly with no output,
+            // which is not an error and still means no processes.
+            let out = select_enumeration(|| Ok(vec![]), || Ok(vec![proc(9, 0, "c", "c")]))
+                .expect("cim path");
+            assert_eq!(out[0].pid, 9);
+        }
+
+        #[test]
+        fn cim_failure_propagates_rather_than_returning_empty() {
+            // An empty list would read as "no OpenHuman processes running" and
+            // recovery would silently skip every stale one.
+            let err = select_enumeration(
+                || Err("wmic gone".to_string()),
+                || Err("powershell exited with 1".to_string()),
+            )
+            .expect_err("both failed");
+            assert!(err.contains("powershell"), "lost the CIM error: {err}");
+        }
+
+        #[test]
+        fn cim_script_pins_utf8_and_requests_every_parsed_field() {
+            assert!(
+                CIM_SCRIPT.contains("[Console]::OutputEncoding"),
+                "without the pin PowerShell writes the OEM code page and non-ASCII paths are lost"
+            );
+            for field in [
+                "Caption",
+                "CommandLine",
+                "ExecutablePath",
+                "ParentProcessId",
+                "ProcessId",
+            ] {
+                assert!(
+                    CIM_SCRIPT.contains(field),
+                    "CIM script stopped emitting {field}"
+                );
+            }
+        }
+
+        #[test]
+        fn parse_reads_cim_blocks_with_non_ascii_and_empty_fields() {
+            // What the CIM script emits: LF separated, blank line between
+            // records, empty values for a process with no command line.
+            // Müller is representable in cp1252, 用户 is not. Both are here so a
+            // regression that drops the encoding pin fails on one or the other,
+            // whichever code page the runner happens to use.
+            let cim = "Caption=System Idle Process\n\
+CommandLine=\n\
+ExecutablePath=\n\
+ParentProcessId=0\n\
+ProcessId=0\n\
+\n\
+Caption=OpenHuman.exe\n\
+CommandLine=\"C:\\Users\\Müller\\用户\\OpenHuman.exe\" --flag=a,b\n\
+ExecutablePath=C:\\Users\\Müller\\用户\\OpenHuman.exe\n\
+ParentProcessId=4\n\
+ProcessId=42\n";
+            let results = parse_wmic_list_output(cim);
+            assert_eq!(results.len(), 2);
+            // No executable path, so argv0 falls back to the caption.
+            assert_eq!(results[0].argv0, "System Idle Process");
+            assert_eq!(results[1].pid, 42);
+            assert_eq!(
+                results[1].argv0, "C:\\Users\\Müller\\用户\\OpenHuman.exe",
+                "non-ASCII path was mangled"
+            );
+            assert!(results[1].command.ends_with("--flag=a,b"));
         }
     }
 }

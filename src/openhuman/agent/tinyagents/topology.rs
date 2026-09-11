@@ -66,7 +66,7 @@ pub(crate) fn all_graph_topologies() -> Vec<GraphTopologyReport> {
         crate::openhuman::agent::orchestration::spawn_parallel_graph::spawn_parallel_graph_topology(
         )
     {
-        out.push(describe("spawn_parallel_agents", &t));
+        out.push(describe("spawn_parallel_graph", &t));
     }
 
     // Not exported: generic item-count-driven `map_reduce` fan-outs whose node

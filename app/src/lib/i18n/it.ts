@@ -551,6 +551,8 @@ const messages: TranslationMap = {
   'settings.clearAppData': 'Cancella dati app',
   'settings.clearAppDataDesc':
     "Disconnetti e cancella permanentemente tutti i dati locali dell'app",
+  'settings.clearAppDataIrreversible': 'Questa azione è irreversibile.',
+  'settings.clearAppDataAction': 'Cancella i dati',
   'settings.logOut': 'Disconnetti',
   'settings.logOutDesc': 'Disconnetti dal tuo account',
   'settings.exitLocalSession': 'Esci dalla sessione locale',
@@ -1410,7 +1412,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Imposta come predefinito la ricerca gestita da OpenHuman oppure collega il tuo provider con una chiave API.',
   'settings.search.description':
-    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit ed Exa vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
+    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit, Exa e Tavily vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
   'settings.search.engineAria': 'Motore di ricerca',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1419,7 +1421,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Predefinito. Instradato tramite il backend di OpenHuman, attualmente basato su Exa: nessuna chiave API necessaria.',
   'settings.search.localManagedUnavailable':
-    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit o Exa per abilitare la ricerca web.',
+    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit, Exa o Tavily per abilitare la ricerca web.',
   'settings.search.engineParallelLabel': 'parallelo',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: ricerca, estrai, chatta, ricerca, arricchisci, strumenti per set di dati.',
@@ -1432,6 +1434,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Ricerca neurale basata su Exa. Richiede la tua chiave API Exa. Aggiunge strumenti di ricerca, pagine simili e contenuti delle pagine.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Ricerca sul web, di notizie e finanziaria con Tavily. Richiede la tua chiave API Tavily. Aggiunge strumenti di ricerca ed estrazione di pagine.',
   'settings.search.statusConfigured': 'Configurato',
   'settings.search.statusNeedsKey': 'Richiede la chiave API',
   'settings.search.fallbackToManaged':
@@ -1453,6 +1458,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Chiave Querit API',
   'settings.search.placeholderExa': 'Incolla la tua chiave API Exa…',
+  'settings.search.tavilyKeyLabel': 'Chiave API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Siti web consentiti',
   'settings.search.allowedSitesHint':
     "Inserisci, uno per riga, gli host che l'assistente può aprire e leggere tramite il recupero web e lo strumento browser, ad es. reuters.com. Un host include anche i suoi sottodomini. La ricerca web stessa non è limitata da questo elenco.",
@@ -4427,7 +4434,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Accedi con Claude',
   'settings.ai.claudeCode.reconnect': 'Riconnetti',
   'settings.ai.claudeCode.loginHint':
-    'Apre un terminale che esegue claude login. Al termine, fai clic su Ricontrolla.',
+    'Apre un terminale che esegue claude auth login --claudeai. Al termine, fai clic su Ricontrolla.',
   'settings.ai.claudeCode.loginError': 'Impossibile aprire il terminale di accesso. Riprova.',
   'settings.ai.claudeCode.fullAccess': 'Accesso completo',
   'settings.ai.claudeCode.fullAccessOn':
@@ -5031,6 +5038,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Vivere',
   'settings.developerMenu.eventLog.disconnected': 'Disconnesso',
   'settings.developerMenu.eventLog.waiting': 'In attesa degli eventi...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Gli eventi compaiono qui mentre agenti, strumenti e sistema lavorano. Per ora non è successo nulla.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Riconnettiti al core per riprendere lo streaming.',
   'settings.developerMenu.eventLog.notConnected': 'Non connesso al nucleo',
   'settings.developerMenu.eventLog.jumpToLatest': "Vai all'ultimo",
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6185,6 +6196,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Suggerimenti di instradamento',
   'settings.agents.editor.modelTiers': 'Livelli di modello',
   'settings.agents.editor.modelCustom': 'ID modello personalizzato…',
+  'settings.agents.editor.modelManaged': 'Modelli gestiti',
   'settings.agents.editor.modelCustomPlaceholder': 'es. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Aggiungi strumenti',
   'settings.agents.editor.toolsAllSelected': 'Tutti gli strumenti',
@@ -6333,6 +6345,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Modalità archiviazione segreti',
   'keyring.settings.mode.osKeychain': 'Portachiavi del SO',
   'keyring.settings.mode.encryptedFile': 'Locale crittografato',
+  'keyring.settings.mode.localEncryptedFile': 'File crittografato',
+  'keyring.settings.mode.localPlaintextFile': 'File non crittografato',
   'keyring.settings.mode.consentPending': 'Non configurato',
   'keyring.settings.mode.declined': 'Rifiutato',
   'keyring.settings.availability': 'Disponibilità portachiavi',
@@ -6726,6 +6740,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Elimina',
   'flows.delete.deleting': 'Eliminazione…',
   'flows.canvas.renameLabel': 'Rinomina flusso di lavoro',
+  'settings.ai.openaiOauthTitle': 'Accedi con ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Accedi con il tuo account ChatGPT per usare i modelli OpenAI senza una chiave API.',
+  'settings.ai.openaiOauthConnect': 'Accedi con ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Connesso a ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Apertura del browser…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Dopo l’accesso, incolla l’URL di reindirizzamento completo dal browser (inizia con http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Completa l’accesso a ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Disconnetti ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'L’accesso a ChatGPT è disponibile solo nell’app desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Impossibile avviare l’accesso a ChatGPT. Riprova o usa una chiave API.',
+  'settings.ai.openaiOauthCompleteError':
+    'L’accesso a ChatGPT non è stato completato. Controlla l’URL di reindirizzamento e riprova.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Dopo l’accesso, incolla l’URL di reindirizzamento dal browser.',
+  'settings.ai.openaiOauthDisconnectError': 'Impossibile disconnettere ChatGPT. Riprova.',
   'memorySources.codingSessions.title': 'Sessioni degli agenti di programmazione',
   'memorySources.codingSessions.description':
     'Trasforma decisioni e correzioni di Codex e Claude Code in memoria privata della persona.',

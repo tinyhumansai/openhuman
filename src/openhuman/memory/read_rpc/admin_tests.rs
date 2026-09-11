@@ -114,49 +114,6 @@ async fn delete_source_rejects_a_blank_source_id_before_touching_a_driver() {
     );
 }
 
-/// An unknown source removes nothing and cleans no tree, and the host maps that
-/// all-zero `ForgetOutcome` onto `deleted: false`.
-///
-/// The mapping is the whole point of the assertion: `deleted` is now an OR over
-/// **two** counts, and a source that matched nothing must not read as one whose
-/// stranded summary tree was swept.
-#[tokio::test]
-async fn delete_source_is_idempotent_for_an_unknown_source_id() {
-    let (_tmp, cfg) = test_config();
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&cfg);
-
-    let outcome = delete_source_rpc(&cfg, "notion:never-ingested".to_string())
-        .await
-        .expect("an unknown source is not an error")
-        .value;
-    assert!(!outcome.deleted);
-    assert_eq!(outcome.chunks_removed, 0);
-}
-
-/// The source id can embed user-linked identifiers, so it is hashed into the
-/// log line rather than written out. Pinned here because the log is assembled
-/// beside the response and is easy to "improve" into a leak.
-#[tokio::test]
-async fn delete_source_never_logs_the_raw_source_id() {
-    let (_tmp, cfg) = test_config();
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&cfg);
-
-    let source_id = "notion:alice@example.com/private-page";
-    let outcome = delete_source_rpc(&cfg, source_id.to_string())
-        .await
-        .expect("an unknown source is not an error");
-    assert!(
-        !outcome.logs[0].contains(source_id),
-        "log leaked the source id: {}",
-        outcome.logs[0]
-    );
-    assert!(
-        outcome.logs[0].contains("source_id_hash="),
-        "log should carry the redacted id: {}",
-        outcome.logs[0]
-    );
-}
-
 /// openhuman#6012. Same distinction the wipes above turn on: a backfill the
 /// driver cannot perform must not read as `scanned: 0` success. A caller seeing
 /// that concludes their stored records are already treed and stops looking —

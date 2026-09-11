@@ -34,6 +34,12 @@ pub use schema::{
 pub use workspace_handle::workspace_handle;
 // Crate-internal: workspace→config-dir resolver reused by the cloud embedder.
 pub(crate) use schema::resolve_config_dir_for_workspace;
+// Test-only: the `.openhuman` (or `.openhuman-staging`) root dir name the modern
+// layout keys on. The `desktop::app_state` resolver tests build tempdir
+// workspaces named after it so the modern-layout arm fires regardless of the
+// ambient `OPENHUMAN_APP_ENV`.
+#[cfg(test)]
+pub(crate) use schema::default_root_dir_name;
 pub(crate) use schema::set_cli_inference_overrides;
 #[allow(unused_imports)]
 pub use schema::{
@@ -60,7 +66,7 @@ pub use schema::{
     MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
     MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1, SEARCH_ENGINE_BRAVE,
     SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
-    SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
 };
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.

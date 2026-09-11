@@ -281,15 +281,28 @@ impl Agent {
     /// instructions and learned context.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
         let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
+        // `visible_tool_specs` holds shared `Arc<ToolSpec>` leaves (they are the
+        // same schema objects the durable and full views point at), while the
+        // `ToolDispatcher` trait — which embedders implement — takes an owned
+        // `&[ToolSpec]`. Materialise a borrow-slice for the call: this is one
+        // transient copy per system-prompt build, not a per-agent resident one,
+        // and keeping it here is what lets the trait stay source-compatible.
+        let visible_specs_owned: Vec<crate::openhuman::tools::ToolSpec> = self
+            .visible_tool_specs
+            .iter()
+            .map(|spec| spec.as_ref().clone())
+            .collect();
         let instructions = self
             .tool_dispatcher
-            .prompt_instructions_for_specs(self.visible_tool_specs.as_slice())
+            .prompt_instructions_for_specs(&visible_specs_owned)
             .unwrap_or_else(|| self.tool_dispatcher.prompt_instructions(tools_slice));
-        // Adapt the owned Box<dyn Tool> slice into the shared PromptTool
+        // Adapt the agent's whole callable surface into the shared PromptTool
         // shape that every prompt-building call-site uses. Temporary vec
-        // borrows from `tools_slice` and lives for the duration of the
-        // prompt build.
-        let prompt_tools = PromptTool::from_tools(tools_slice);
+        // borrows from the two tool `Arc`s and lives for the duration of the
+        // prompt build. The synthesised delegates belong here: the catalogue
+        // this renders is what tells the model a `delegate_*` tool exists.
+        let all_tools = self.all_tool_refs();
+        let prompt_tools = PromptTool::from_tool_refs(all_tools.iter().copied());
         let prompt_visible_tool_names = self.tool_policy_session.visible_tool_names_for_prompt();
         // Load AGENTS.md instruction layers once per system-prompt build (never
         // re-read per turn — the caller builds the prompt once at session start

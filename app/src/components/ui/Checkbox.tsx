@@ -62,6 +62,11 @@ const Checkbox = ({
       onChange={e => onCheckedChange(e.target.checked)}
       className={cn(
         'h-4 w-4 cursor-pointer rounded-sm border border-line-strong bg-surface accent-primary-500',
+        // The forms plugin draws a white check/dash; bg-surface otherwise
+        // overrides its selected background and hides the mark in light mode.
+        // Keep the dark surface: some dark themes have light primary accents
+        // that do not contrast with the plugin's white mark.
+        'checked:bg-primary-500 indeterminate:bg-primary-500 dark:checked:bg-surface dark:indeterminate:bg-surface',
         'transition-colors duration-150',
         'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1',
         // Offsets against the themed surface. The original used

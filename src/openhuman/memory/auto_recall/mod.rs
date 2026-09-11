@@ -20,19 +20,35 @@
 //!   message that asks about the user — first-person ownership plus a question
 //!   or request shape. Small talk, code, weather and pastes never reach the
 //!   store.
-//! - **It walks the tree, not the pile.** [`GuardSource`] calls the bound
-//!   driver's `fast_retrieve` through the guard: summary-first, and on an
-//!   entity-less query the engine's dense path, with a limit of
-//!   [`AUTO_RECALL_LIMIT`]. The work is bounded by the answer, not by
-//!   everything the user ever said.
-//! - **It is floored, capped and budgeted.** Hits below
+//! - **It walks the tree, not the pile — and reads the notes.** [`GuardSource`]
+//!   calls the bound driver's `fast_retrieve` through the guard: summary-first,
+//!   and on an entity-less query the engine's dense path, with a limit of
+//!   [`AUTO_RECALL_LIMIT`]. Beside it runs one scored recall over the
+//!   assistant's own namespace, [`AUTO_RECALL_NOTES_NAMESPACE`] (#6063): the
+//!   store `memory_store` writes to and the tree never sees, so a fact the user
+//!   asked to keep seconds ago is found where it was filed. Each leg is bounded
+//!   by the answer, not by everything the user ever said — the notes leg is one
+//!   query embed against a namespace of explicit notes, not the two full scans
+//!   the removed lane paid, and it runs only on the gated turns.
+//! - **It is floored, capped and budgeted.** Tree hits below
 //!   [`AUTO_RECALL_RELATIVE_FLOOR`] of the best score are dropped (retrieval
 //!   scores are declared non-comparable across drivers, so the floor is
-//!   relative, not absolute); at most [`AUTO_RECALL_LIMIT`] survive, each
-//!   clipped to [`AUTO_RECALL_PER_HIT_CHARS`]; hits that would push the block past
-//!   the guard's `recall_max_chars` are left out whole, so no marker is ever cut; and the lookup is abandoned after
-//!   [`AUTO_RECALL_BUDGET`], so a memory module still downloading on a cold
-//!   launch cannot stall the turn.
+//!   relative, not absolute); notes below [`AUTO_RECALL_NOTE_MIN_SIMILARITY`]
+//!   are dropped (the namespace recall reports the cosine component on its own,
+//!   so that floor is absolute, and measured); at most [`AUTO_RECALL_LIMIT`]
+//!   survive per leg, each clipped to [`AUTO_RECALL_PER_HIT_CHARS`]; lines that
+//!   would push the block past the guard's `recall_max_chars` are left out
+//!   whole, so no marker is ever cut; and each leg is abandoned after
+//!   [`AUTO_RECALL_BUDGET`] on its own, so a memory module still downloading on
+//!   a cold launch cannot stall the turn, and a slow tree cannot cost the notes
+//!   their answer.
+//!
+//! # The hint
+//!
+//! The block opens with [`AUTO_RECALL_HINT`]: it is a pre-fetch, not a search.
+//! Without that line the model read the block as the retrieval the memory-access
+//! instruction demands and, handed three unrelated lines, declared a fact "not
+//! on record" while the store held it (#6063).
 //!
 //! # Provenance
 //!
@@ -40,7 +56,11 @@
 //! third-party content that an author can fill with instructions, so it is
 //! rendered inside the `<untrusted-source>` marker the older recall path used,
 //! with the scope prefix as the hint. Chat-tree hits, which the user or the
-//! assistant wrote, are rendered bare.
+//! assistant wrote, are rendered bare. A note is the user's or the assistant's
+//! own words filed by `memory_store`, rendered bare too — unless it carries the
+//! `ExternalSync` taint or a connector-prefixed key, the rule
+//! `memory_context_safety` already applies to the older recall path, in which
+//! case it is wrapped like a source hit.
 //!
 //! # Switch
 //!
@@ -63,8 +83,12 @@ pub mod warm;
 pub use gate::{gate_decision, GateDecision};
 pub use source::{AutoRecallSource, GuardSource};
 
-use crate::openhuman::agent::harness::memory_context_safety::wrap_untrusted_for_agent;
+use crate::openhuman::agent::harness::memory_context_safety::{
+    is_potentially_untrusted, wrap_untrusted_for_agent,
+};
+use crate::openhuman::agent::tinyagents::host::agent_memory::DEFAULT_AGENT_MEMORY_NAMESPACE;
 use crate::openhuman::memory::api::provider::retrieval::{FastRetrieveQuery, RetrievalHit};
+use crate::openhuman::memory::api::types::{MemoryTaint, NamespaceMemoryHit};
 use crate::openhuman::memory::guard::MemoryGuard;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -99,6 +123,26 @@ pub const AUTO_RECALL_RELATIVE_FLOOR: f32 = 0.5;
 /// The banner that heads the injected block. Tests and the prompt snapshot
 /// look for it; the model reads it as the section title.
 pub const AUTO_RECALL_BANNER: &str = "## Relevant memory for this message";
+
+/// The line under the banner. It says what the block is — a bounded
+/// pre-fetch — so the model does not mistake it for the retrieval the
+/// memory-access instruction asks for before claiming absence (#6063).
+pub const AUTO_RECALL_HINT: &str = "Pre-fetched from memory, not a search: if the answer is \
+not here, search memory (`memory_recall`) before saying something is not stored.";
+
+/// The namespace the notes leg reads: the assistant's own memory, where
+/// `memory_store` files a fact the user asked it to keep (#6063).
+pub const AUTO_RECALL_NOTES_NAMESPACE: &str = DEFAULT_AGENT_MEMORY_NAMESPACE;
+
+/// A note is kept only when its vector similarity to the message clears this.
+///
+/// Absolute, unlike the tree floor: the namespace recall reports the cosine
+/// component on its own, and the managed embedder's noise floor is measured —
+/// unrelated message↔note pairs score 0.28–0.33, a coffee preference against
+/// a café question 0.575 (Lane B's `[pref_recall]` data). Same value as Lane
+/// B's `SITUATIONAL_MIN_SIMILARITY`, declared apart so each lane tunes alone.
+/// The `[auto_recall]` line logs the best candidate before the floor.
+pub const AUTO_RECALL_NOTE_MIN_SIMILARITY: f64 = 0.35;
 
 /// The lane itself: a retrieval source, the switch, and the budgets.
 pub struct AutoRecall {
@@ -153,8 +197,14 @@ impl AutoRecall {
     }
 
     /// The block to prepend to `user_message`, or `None` when the lane is off,
-    /// the gate is closed, nothing relevant came back, or the lookup failed or
-    /// timed out. Never an error: a turn without a block is an ordinary turn.
+    /// the gate is closed, or nothing relevant came back from either leg.
+    /// Never an error: a turn without a block is an ordinary turn.
+    ///
+    /// Two legs run side by side (#6063): the tree walk, and the scored recall
+    /// over the assistant's own namespace, where `memory_store` files what the
+    /// user asked to keep. Each is bounded by the budget on its own, so a slow
+    /// tree cannot cost the notes their answer or the other way round; the turn
+    /// pays the slower leg, never the sum.
     pub async fn block_for(&self, user_message: &str) -> Option<String> {
         if !self.enabled {
             log::debug!("[auto_recall] disabled by hooks.auto_recall; skipping");
@@ -171,50 +221,150 @@ impl AutoRecall {
         };
 
         let started = Instant::now();
-        let query = FastRetrieveQuery {
-            limit: AUTO_RECALL_LIMIT,
-            ..FastRetrieveQuery::default()
-        };
-        let response =
-            match tokio::time::timeout(self.budget, self.source.fast_retrieve(user_message, query))
-                .await
-            {
-                Ok(Ok(response)) => response,
-                Ok(Err(err)) => {
-                    log::warn!(
-                        "[auto_recall] gate=open reason={reason} retrieval failed after {}ms; \
-                     continuing without a memory block: {err}",
-                        started.elapsed().as_millis()
-                    );
-                    return None;
-                }
-                Err(_elapsed) => {
-                    log::warn!(
-                        "[auto_recall] gate=open reason={reason} retrieval exceeded {:?}; \
-                     continuing without a memory block",
-                        self.budget
-                    );
-                    return None;
-                }
-            };
-
-        let total = response.total;
-        let hits = select_hits(response.hits);
-        if hits.is_empty() {
+        let (tree, notes) = tokio::join!(
+            self.tree_leg(user_message, reason),
+            self.notes_leg(user_message, reason)
+        );
+        let notes_top = similarity_label(notes.top);
+        if tree.hits.is_empty() && notes.hits.is_empty() {
             log::info!(
-                "[auto_recall] gate=open reason={reason} hits=0 total={total} elapsed_ms={}",
+                "[auto_recall] gate=open reason={reason} hits=0 total={} notes=0 \
+                 notes_top={notes_top} tree_ms={} notes_ms={} elapsed_ms={}",
+                tree.total,
+                tree.elapsed_ms,
+                notes.elapsed_ms,
                 started.elapsed().as_millis()
             );
             return None;
         }
-        let block = render_block(&hits, self.recall_max_chars);
+        let block = render_block(&notes.hits, &tree.hits, self.recall_max_chars);
         log::info!(
-            "[auto_recall] gate=open reason={reason} hits={} total={total} elapsed_ms={} chars={}",
-            hits.len(),
+            "[auto_recall] gate=open reason={reason} hits={} total={} notes={} \
+             notes_top={notes_top} tree_ms={} notes_ms={} elapsed_ms={} chars={}",
+            tree.hits.len(),
+            tree.total,
+            notes.hits.len(),
+            tree.elapsed_ms,
+            notes.elapsed_ms,
             started.elapsed().as_millis(),
             block.chars().count()
         );
         Some(block)
+    }
+
+    /// The tree leg: `fast_retrieve` over the memory tree, ranked and floored
+    /// by [`select_hits`]. An error or the budget yields no hits and one warn
+    /// line; the other leg is not affected.
+    async fn tree_leg(&self, user_message: &str, reason: &str) -> TreeLeg {
+        let started = Instant::now();
+        let query = FastRetrieveQuery {
+            limit: AUTO_RECALL_LIMIT,
+            ..FastRetrieveQuery::default()
+        };
+        let mut leg = TreeLeg::default();
+        match tokio::time::timeout(self.budget, self.source.fast_retrieve(user_message, query))
+            .await
+        {
+            Ok(Ok(response)) => {
+                leg.total = response.total;
+                leg.hits = select_hits(response.hits);
+            }
+            Ok(Err(err)) => log::warn!(
+                "[auto_recall] gate=open reason={reason} tree retrieval failed after {}ms; \
+                 continuing without tree hits: {err}",
+                started.elapsed().as_millis()
+            ),
+            Err(_elapsed) => log::warn!(
+                "[auto_recall] gate=open reason={reason} tree retrieval exceeded {:?}; \
+                 continuing without tree hits",
+                self.budget
+            ),
+        }
+        leg.elapsed_ms = started.elapsed().as_millis();
+        leg
+    }
+
+    /// The notes leg: the scored recall over [`AUTO_RECALL_NOTES_NAMESPACE`],
+    /// floored by [`select_notes`]. Same footing as the tree leg on an error or
+    /// the budget.
+    async fn notes_leg(&self, user_message: &str, reason: &str) -> NotesLeg {
+        let started = Instant::now();
+        let mut leg = NotesLeg::default();
+        match tokio::time::timeout(
+            self.budget,
+            self.source.recall_namespace_scored(
+                AUTO_RECALL_NOTES_NAMESPACE,
+                user_message,
+                AUTO_RECALL_LIMIT,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(candidates)) => {
+                leg.top = top_similarity(&candidates);
+                leg.hits = select_notes(candidates);
+            }
+            Ok(Err(err)) => log::warn!(
+                "[auto_recall] gate=open reason={reason} notes recall failed after {}ms; \
+                 continuing without notes: {err}",
+                started.elapsed().as_millis()
+            ),
+            Err(_elapsed) => log::warn!(
+                "[auto_recall] gate=open reason={reason} notes recall exceeded {:?}; \
+                 continuing without notes",
+                self.budget
+            ),
+        }
+        leg.elapsed_ms = started.elapsed().as_millis();
+        leg
+    }
+}
+
+/// What the tree leg answered: the hits that survived [`select_hits`], the
+/// engine's pre-truncation total, and how long the lookup took.
+#[derive(Default)]
+struct TreeLeg {
+    hits: Vec<RetrievalHit>,
+    total: usize,
+    elapsed_ms: u128,
+}
+
+/// What the notes leg answered. `top` is the best vector similarity among the
+/// candidates *before* the floor — the number the floor is tuned from — or
+/// `NEG_INFINITY` when the store offered none.
+struct NotesLeg {
+    hits: Vec<NamespaceMemoryHit>,
+    top: f64,
+    elapsed_ms: u128,
+}
+
+impl Default for NotesLeg {
+    fn default() -> Self {
+        Self {
+            hits: Vec::new(),
+            top: f64::NEG_INFINITY,
+            elapsed_ms: 0,
+        }
+    }
+}
+
+/// The best vector similarity among `notes`, or `NEG_INFINITY` when there is
+/// none finite to report.
+pub(crate) fn top_similarity(notes: &[NamespaceMemoryHit]) -> f64 {
+    notes
+        .iter()
+        .map(|note| note.score_breakdown.vector_similarity)
+        .filter(|similarity| similarity.is_finite())
+        .fold(f64::NEG_INFINITY, f64::max)
+}
+
+/// `top` for the log line: three decimals, or `none` when the store offered
+/// no candidate at all — the two cases the floor is tuned apart on.
+pub(crate) fn similarity_label(top: f64) -> String {
+    if top.is_finite() {
+        format!("{top:.3}")
+    } else {
+        "none".to_string()
     }
 }
 
@@ -239,41 +389,160 @@ pub(crate) fn select_hits(mut hits: Vec<RetrievalHit>) -> Vec<RetrievalHit> {
     hits
 }
 
-/// The block the turn prepends: the banner, one line per hit, kept within
-/// `recall_max_chars` when the guard sets one.
+/// Ranks `notes` by vector similarity, best first, drops the ones below
+/// [`AUTO_RECALL_NOTE_MIN_SIMILARITY`], empty bodies and non-finite scores, and
+/// keeps at most [`AUTO_RECALL_LIMIT`].
 ///
-/// The budget is spent on whole hit lines, never on characters: a hit that
-/// does not fit is left out, so an `<untrusted-source>` marker is never cut
-/// in half and every opening marker keeps its closing one. A cap that fits no
-/// hit at all yields an empty block — a banner over nothing would be noise.
-pub(crate) fn render_block(hits: &[RetrievalHit], recall_max_chars: Option<usize>) -> String {
+/// The floor reads the vector component rather than the engine's combined
+/// score for the reason Lane B's `recall_by_vector_over` gives: the combined
+/// score folds in keyword, graph and freshness signals, so a lexically similar
+/// but semantically unrelated note would otherwise clear the bar.
+pub(crate) fn select_notes(mut notes: Vec<NamespaceMemoryHit>) -> Vec<NamespaceMemoryHit> {
+    notes.retain(|note| {
+        let similarity = note.score_breakdown.vector_similarity;
+        similarity.is_finite()
+            && similarity >= AUTO_RECALL_NOTE_MIN_SIMILARITY
+            && !note.content.trim().is_empty()
+    });
+    notes.sort_by(|a, b| {
+        b.score_breakdown
+            .vector_similarity
+            .total_cmp(&a.score_breakdown.vector_similarity)
+    });
+    notes.truncate(AUTO_RECALL_LIMIT);
+    notes
+}
+
+/// The block the turn prepends: the banner, the hint, one line per note, one
+/// line per tree hit, kept within `recall_max_chars` when the guard sets one.
+///
+/// The budget is spent on whole lines, never on characters: a line that does
+/// not fit is left out, so an `<untrusted-source>` marker is never cut in half
+/// and every opening marker keeps its closing one. Notes come first — they are
+/// what the user asked to keep — so under a tight cap they win over tree hits.
+/// The hint is a caption, not the content: it is reserved first, but a cap
+/// that then fits no line at all is rendered again without it, so the hint
+/// can never be what suppresses the only recalled line. A cap that fits no
+/// line even then yields an empty block, since a banner over nothing would be
+/// noise.
+pub(crate) fn render_block(
+    notes: &[NamespaceMemoryHit],
+    hits: &[RetrievalHit],
+    recall_max_chars: Option<usize>,
+) -> String {
     let banner = format!("{AUTO_RECALL_BANNER}\n\n");
-    let mut lines: Vec<String> = Vec::with_capacity(hits.len());
-    // Banner, lines, and the closing blank line all count against the cap.
-    let mut used = banner.chars().count() + 1;
-    for hit in hits {
-        let line = render_hit_line(hit);
-        let cost = line.chars().count();
-        if let Some(max_chars) = recall_max_chars {
-            if used + cost > max_chars {
-                log::debug!(
-                    "[auto_recall] hit omitted: {cost} chars would exceed recall_max_chars={max_chars}"
-                );
-                continue;
-            }
-        }
-        used += cost;
-        lines.push(line);
+    let hint = format!("{AUTO_RECALL_HINT}\n\n");
+    let candidates: Vec<String> = notes
+        .iter()
+        .map(render_note_line)
+        .chain(hits.iter().map(render_hit_line))
+        .collect();
+    // Banner, hint, lines, and the closing blank line all count against the cap.
+    let base = banner.chars().count() + 1;
+    let hint_cost = hint.chars().count();
+    let mut with_hint = fits_within(base, hint_cost, recall_max_chars);
+    let mut lines = fit_lines(
+        &candidates,
+        if with_hint { base + hint_cost } else { base },
+        recall_max_chars,
+    );
+    if with_hint && lines.is_empty() {
+        // The hint fit on its own but left no room for a line: a block is its
+        // lines, so give the space back and try once more without the caption.
+        with_hint = false;
+        lines = fit_lines(&candidates, base, recall_max_chars);
     }
     if lines.is_empty() {
         return String::new();
     }
     let mut block = banner;
+    if with_hint {
+        block.push_str(&hint);
+    }
     for line in &lines {
         block.push_str(line);
     }
     block.push('\n');
     block
+}
+
+/// Whether `cost` more characters still fit under `recall_max_chars` once
+/// `used` are spent. No cap fits everything.
+fn fits_within(used: usize, cost: usize, recall_max_chars: Option<usize>) -> bool {
+    match recall_max_chars {
+        Some(max_chars) => used + cost <= max_chars,
+        None => true,
+    }
+}
+
+/// The `candidates` that fit, in order, once `used` characters are spent:
+/// whole lines only, each omitted when it would cross the cap.
+fn fit_lines(
+    candidates: &[String],
+    mut used: usize,
+    recall_max_chars: Option<usize>,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::with_capacity(candidates.len());
+    for line in candidates {
+        let cost = line.chars().count();
+        if !fits_within(used, cost, recall_max_chars) {
+            log::debug!(
+                "[auto_recall] line omitted: {cost} chars would exceed recall_max_chars={recall_max_chars:?}"
+            );
+            continue;
+        }
+        used += cost;
+        lines.push(line.clone());
+    }
+    lines
+}
+
+/// One note as a bullet line: the content (one line, capped) and the key it
+/// was filed under, so the model can tell a kept note from a passing chunk.
+///
+/// A note that did not come from the conversation is wrapped whole — content
+/// **and** key inside one `<untrusted-source>` marker. The key is model- or
+/// provider-supplied text on exactly the same footing as the body (a synced
+/// row's key can be an email subject), so a key rendered after the closing
+/// marker would be the payload's way back into the trusted region.
+fn render_note_line(note: &NamespaceMemoryHit) -> String {
+    let mut line = String::from("- ");
+    let content = one_line(&note.content, AUTO_RECALL_PER_HIT_CHARS);
+    let key = one_line(&note.key, AUTO_RECALL_SCOPE_CHARS);
+    let labelled = if key.is_empty() {
+        content
+    } else {
+        format!("{content} (note: {key})")
+    };
+    match untrusted_note_hint(note) {
+        Some(hint) => line.push_str(&wrap_untrusted_for_agent(&labelled, &hint)),
+        None => line.push_str(&labelled),
+    }
+    line.push('\n');
+    line
+}
+
+/// The source hint to wrap `note` with, or `None` for a note the user or the
+/// assistant filed in chat.
+///
+/// Two signals say a note did not come from the conversation: the
+/// `ExternalSync` taint a sync path stamps at write time, and the
+/// namespace/key shapes `memory_context_safety` already treats as
+/// connector-derived (a `gmail:` key, a namespace off the local-authored
+/// allowlist). Either wraps. The hint is the key's prefix when it has one, so
+/// the marker names the surface the way source-tree hits do.
+fn untrusted_note_hint(note: &NamespaceMemoryHit) -> Option<String> {
+    let external = note.taint == MemoryTaint::ExternalSync
+        || is_potentially_untrusted(Some(&note.namespace), &note.key);
+    if !external {
+        return None;
+    }
+    let key_prefix = note
+        .key
+        .split_once(':')
+        .map(|(prefix, _)| prefix.trim())
+        .filter(|prefix| !prefix.is_empty());
+    Some(key_prefix.unwrap_or("note").to_string())
 }
 
 /// One hit as a bullet line: the content (one line, capped, wrapped when it

@@ -370,17 +370,20 @@ fn module_provider(
     )
 }
 
+/// The configuration every test-build memory binding loads its module through.
+///
+/// Unit tests do not run the full boot sequence that publishes the module
+/// policy. A native module is loaded once per process and therefore captures
+/// the first workspace it receives. Pin every test binding to the same
+/// workspace as the process-global test client so concurrent tests cannot
+/// win module initialization with an unrelated tempdir and split guarded
+/// writes from legacy read-back calls.
+///
+/// Named rather than inlined into [`module_provider`] so a test can await this
+/// module's resolution through the same configuration the binding will use —
+/// see [`crate::openhuman::memory::test_support::settle_memory_module`].
 #[cfg(all(feature = "modules", test))]
-fn module_provider(
-    _workspace_dir: &Path,
-    memory_subdir: &str,
-) -> (Arc<dyn MemoryProvider>, DriverClass) {
-    // Unit tests do not run the full boot sequence that publishes the module
-    // policy. A native module is loaded once per process and therefore captures
-    // the first workspace it receives. Pin every test binding to the same
-    // workspace as the process-global test client so concurrent tests cannot
-    // win module initialization with an unrelated tempdir and split guarded
-    // writes from legacy read-back calls.
+pub(crate) fn test_module_config() -> crate::openhuman::config::Config {
     let workspace_dir = crate::openhuman::memory::ops::shared_memory_test_workspace();
     let mut config = crate::openhuman::config::Config::default();
     config.workspace_dir = workspace_dir.clone();
@@ -394,10 +397,20 @@ fn module_provider(
                 path: path.to_string_lossy().into_owned(),
             });
     }
+    config
+}
+
+#[cfg(all(feature = "modules", test))]
+fn module_provider(
+    _workspace_dir: &Path,
+    memory_subdir: &str,
+) -> (Arc<dyn MemoryProvider>, DriverClass) {
     (
         Arc::new(
-            crate::openhuman::modules::memory::ModuleMemoryProvider::new(Arc::new(config))
-                .in_subdir(memory_subdir),
+            crate::openhuman::modules::memory::ModuleMemoryProvider::new(Arc::new(
+                test_module_config(),
+            ))
+            .in_subdir(memory_subdir),
         ),
         DriverClass::Module,
     )

@@ -113,7 +113,7 @@ fn make_discord_ctx(
         default_provider: Arc::new("test-provider".to_string()),
         memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,

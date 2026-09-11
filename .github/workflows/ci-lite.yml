@@ -221,6 +221,11 @@ jobs:
               - 'scripts/mock-api/**'
               - 'scripts/*.mjs'
               - 'scripts/__tests__/**'
+              # The release-notes generator has node --test coverage in
+              # scripts/__tests__/ but lives one directory down, so the
+              # 'scripts/*.mjs' glob above never armed this lane for it — its
+              # tests could not have caught the v0.63.21 git ENOBUFS regression.
+              - 'scripts/release/*.mjs'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'
               # Shared logic behind the gate CLIs, and the module-pin gate's own
@@ -502,17 +507,35 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features
 
       - name: Check the gates that are in NEITHER the contributor nor the product set
-        # `tui` is the one gate that is default-OFF *and* deliberately not
-        # forwarded to the desktop shell (it is a terminal front-end; the app
-        # ships its own UI). That combination means nothing else in CI compiles
-        # it: the product lanes do not select it, the contributor lanes no
-        # longer default it on, and the gates-off check above turns it off.
+        # Two gates are default-OFF *and* absent from the product set, so
+        # nothing else in CI compiles them: the product lanes do not select
+        # them, the contributor lanes no longer default them on, and the
+        # gates-off check above turns them off.
         #
-        # Without this step the ratatui front-end would rot silently — which is
-        # the same shape of failure as #4901, just pointed at a gate instead of
-        # at the shipped app. If a future gate lands in this same
-        # neither-set position, add it here.
-        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+        #   tui               — a terminal front-end; the app ships its own UI.
+        #   e2e-test-support  — the `test`/`test_support` RPC family, turned on
+        #                       only by app/scripts/e2e-build.sh for the packaged
+        #                       desktop E2E binary. It includes
+        #                       `openhuman.test_reset`, a destructive in-place
+        #                       wipe, which is exactly why it must stay out of
+        #                       every product lane — so a compile-only smoke
+        #                       check here is the right shape, not enabling it
+        #                       somewhere that ships.
+        #
+        # Without this step those families rot silently — the same shape of
+        # failure as #4901, pointed at a gate instead of at the shipped app.
+        # `e2e-test-support` sat in this position from the day it was added
+        # until #6086 and was never `cargo check`ed by CI in either state.
+        #
+        # Checked in SEPARATE invocations on purpose: `--features tui,e2e-test-support`
+        # would let one gate compile only because the other pulled a dependency
+        # in, which is the false pass this lane exists to prevent.
+        #
+        # If a future gate lands in this same neither-set position, add it here
+        # AND to the list in CLAUDE.md's "gate in neither set" note.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features e2e-test-support
 
       - name: Run the gate-contract tests with the default domain gates disabled
         # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
@@ -540,6 +563,29 @@ jobs:
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features mcp --lib -- \
             mcp::server::resources::
+          # `test_support` is behind `e2e-test-support`, a gate in neither the
+          # contributor nor the product set, so no other lane RUNS these — the
+          # smoke check above only compiles them. That distinction is the whole
+          # point of this step: `resolve_workspace_relative`'s traversal guard
+          # (#6085) failed open for every path that did not exist, from the day
+          # it landed in #1892, and no `cargo check` anywhere could have caught
+          # it because the code compiled perfectly. These are the tests that
+          # would have.
+          #
+          # SCOPED TO `introspect::` ON PURPOSE, and this is a hole, not a
+          # tidy-up: the first run of the unscoped `test_support::` filter found
+          # `test_support::rpc::wipe_memory_tree_removes_content_dirs_and_reports_summary`
+          # already failing here —
+          #   "test_reset: memory_tree wipe failed: wipe_all: driver
+          #    'tinymemory' does not serve Maintenance"
+          # `memory-engine-seams` (= dep:tinymemory-core) is in `default` but not
+          # in product-features.txt, so it is off in this profile. Widening the
+          # feature list to go green would hide exactly what this lane exists to
+          # expose, so the filter is narrowed and the gap is named instead.
+          # Re-widen to `test_support::` once that is resolved.
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features e2e-test-support --lib -- \
+            test_support::introspect::
 
       - name: Guard — the kernel dependency floor may not grow
         # The `--no-default-features --features flows` profile is the surface a
@@ -629,8 +675,6 @@ jobs:
           openhuman/flows/mod.rs
           openhuman/mcp/server/resources.rs
           openhuman/mcp/server/tools/mod.rs
-          openhuman/memory/people/mod.rs
-          openhuman/memory/people/mod_contacts_gate_tests_tests.rs
           openhuman/platform/socket/event_handlers.rs
           openhuman/platform/socket/ops.rs
           openhuman/skills/mod.rs
@@ -787,8 +831,8 @@ jobs:
           # and leave a stale digest that only fails after the download. Both values
           # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
           # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.15.2"
-          memory_sha256="32eb22f09c2ede0981a8462e3e4438db40455a6369ae5acc577f8d4493f1e84a"
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"

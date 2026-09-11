@@ -158,7 +158,28 @@ impl PostTurnHook for ArchivistHook {
         // moves the tree write to segment granularity inside on_segment_closed.
         if let Some(ref segment) = closed_segment {
             let now = Self::now_timestamp();
-            self.on_segment_closed(segment, session_id, now).await;
+            let recap_succeeded = self.on_segment_closed(segment, session_id, now).await;
+            // Recover segments an earlier failed recap left unsummarised
+            // (#6186). Driven from here rather than from a timer because a
+            // recap that just succeeded is first-hand evidence that the
+            // summariser is answering *now* — a scheduler would have to guess.
+            //
+            // The gate is load-bearing, not a nicety. `resummarise_pending`
+            // spends a per-segment attempt budget, and running it while the
+            // provider is still down would burn that budget on calls that
+            // cannot succeed: two segment closes during one outage would
+            // exhaust every pending segment's retries and skip them for the
+            // rest of the process — including after the provider came back.
+            // The outage would consume the recovery it is supposed to trigger.
+            //
+            // Deliberately not called from `flush_open_segment`, the other
+            // caller of `on_segment_closed`: that one is awaited unbounded at
+            // session wind-down, and opportunistic recovery must never be
+            // charged to how long the app takes to close. This path is a
+            // detached post-turn hook, so the time is invisible.
+            if recap_succeeded {
+                self.resummarise_pending(now).await;
+            }
         }
 
         tracing::debug!("[archivist] turn indexed successfully: session={session_id}");

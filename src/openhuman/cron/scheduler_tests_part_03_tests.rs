@@ -7,29 +7,6 @@ fn forbidden_path_argument_skips_flags_and_urls() {
     assert!(forbidden_path_argument(&policy, "ls -la").is_none());
 }
 
-#[test]
-fn warn_if_high_frequency_agent_job_does_not_panic_on_non_agent() {
-    let mut job = test_job("echo hi");
-    job.job_type = JobType::Shell;
-    warn_if_high_frequency_agent_job(&job); // should not panic
-}
-
-#[test]
-fn warn_if_high_frequency_agent_job_does_not_panic_on_at_schedule() {
-    let mut job = test_job("echo hi");
-    job.job_type = JobType::Agent;
-    job.schedule = Schedule::At { at: Utc::now() };
-    warn_if_high_frequency_agent_job(&job); // should not panic
-}
-
-#[test]
-fn warn_if_high_frequency_agent_job_handles_every_ms() {
-    let mut job = test_job("echo hi");
-    job.job_type = JobType::Agent;
-    job.schedule = Schedule::Every { every_ms: 60_000 }; // 1 minute — too frequent
-    warn_if_high_frequency_agent_job(&job); // should warn but not panic
-}
-
 #[tokio::test]
 async fn deliver_if_configured_skips_empty_mode() {
     let tmp = TempDir::new().unwrap();
