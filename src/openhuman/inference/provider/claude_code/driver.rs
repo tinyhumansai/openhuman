@@ -79,25 +79,6 @@ use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
 
-/// True if the `claude` CLI still has an on-disk conversation for `session_id`.
-fn cc_session_exists(session_id: &str) -> bool {
-    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
-    base.map(|b| cc_session_exists_in(&b, session_id))
-        .unwrap_or(false)
-}
-
-/// Scan `<config_dir>/projects/*` for a session JSONL file. This is one cheap
-/// directory scan per turn, performed before the CLI process spawn.
-fn cc_session_exists_in(config_dir: &std::path::Path, session_id: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
-        return false;
-    };
-    let file = format!("{session_id}.jsonl");
-    entries.flatten().any(|e| e.path().join(&file).is_file())
-}
-
 /// Tools withheld in the DEFAULT (`acceptEdits`) posture: Claude Code can
 /// read/edit files in the project, but not run shell, hit the network, or
 /// fan out CC subagents. The user opts into the full toolset separately by
@@ -301,19 +282,9 @@ fn append_system_prompt_args(
 /// aggregated `ChatResponse` when done.
 pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     let stored = ctx.session_store.get(&ctx.thread_id);
-    let stored_valid = stored.as_deref().map(is_uuid_v4).unwrap_or(false);
-    // A persisted id is resumable only when the CLI still has its session.
-    // Failed or cancelled creation can otherwise leave a valid-looking id
-    // that makes every later turn fail with "No conversation found".
-    let resumable = stored_valid && stored.as_deref().map(cc_session_exists).unwrap_or(false);
-    let is_new = !resumable;
+    let is_new = !stored.as_deref().map(is_uuid_v4).unwrap_or(false);
     let cc_session_id = if is_new {
-        // Reuse a valid mapping when recreating the CLI session so the
-        // OpenHuman thread id remains stable.
-        let id = match stored {
-            Some(s) if stored_valid => s,
-            _ => generate_uuid_v4(),
-        };
+        let id = generate_uuid_v4();
         if let Err(e) = ctx.session_store.set(&ctx.thread_id, &id) {
             log::warn!(
                 "[claude-code][driver] failed to persist session uuid for thread {}: {}",
@@ -323,7 +294,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         }
         id
     } else {
-        stored.expect("resumable implies Some")
+        stored.expect("checked Some above")
     };
 
     // Set up a per-turn scratch dir for --mcp-config and any other transient

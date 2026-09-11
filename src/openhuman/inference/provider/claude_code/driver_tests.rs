@@ -57,22 +57,6 @@ fn system_prompt_write_error_is_propagated() {
     assert!(!error.to_string().is_empty());
 }
 
-#[test]
-fn cc_session_exists_in_detects_present_and_absent() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let id = "11111111-2222-4333-8444-555555555555";
-    assert!(!cc_session_exists_in(dir.path(), id));
-
-    let project = dir.path().join("projects").join("-Users-someone-project");
-    std::fs::create_dir_all(&project).expect("mkdir projects");
-    std::fs::write(project.join(format!("{id}.jsonl")), b"{}").expect("write session");
-    assert!(cc_session_exists_in(dir.path(), id));
-    assert!(!cc_session_exists_in(
-        dir.path(),
-        "99999999-2222-4333-8444-555555555555"
-    ));
-}
-
 #[cfg(target_os = "macos")]
 #[test]
 fn seatbelt_profile_denies_whole_openhuman_root_not_just_subdir() {
