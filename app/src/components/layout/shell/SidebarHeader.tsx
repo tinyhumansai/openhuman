@@ -64,7 +64,19 @@ export default function SidebarHeader() {
     // `data-tauri-drag-region` lives directly on the primitive (rather than a
     // wrapping div in `AppSidebar`) so the header band is draggable window
     // chrome without an extra hand-rolled layout element.
-    <SidebarHeaderShell data-tauri-drag-region className="flex-row items-center justify-end gap-1">
+    //
+    // Its value is `"deep"`, not the bare attribute. Tauri's injected `drag.js`
+    // reads a bare region (React renders the JSX shorthand as `="true"`) as
+    // direct-hit-only — `return el === composedPath[0]` — so with the icon row
+    // nested below, only this element's own uncovered box dragged and the
+    // wrapper's box did not. `"deep"` makes the subtree draggable, which also
+    // keeps any non-button content added to that row later draggable. The icons
+    // are unaffected: `isDragRegion` bails out on a clickable element before it
+    // reaches the `deep` branch, so every button here still clicks. Bare is only
+    // correct on a band with no children — see `WindowDragBar`.
+    <SidebarHeaderShell
+      data-tauri-drag-region="deep"
+      className="flex-row items-center justify-end gap-1">
       <div className="flex items-center gap-0.5">
         {/* Keyboard shortcuts — one-click open of the help directory (also ? / ⌘/). */}
         <Tooltip label={t('shortcuts.title')}>

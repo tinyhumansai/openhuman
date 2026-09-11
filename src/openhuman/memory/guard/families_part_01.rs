@@ -36,9 +36,9 @@ use crate::openhuman::memory::api::provider::sync::{
     SyncRunOutcome,
 };
 use crate::openhuman::memory::api::provider::types::{
-    ChunkEntityOccurrence, DiffReport, EntityHit, EntityOccurrence, ForgetOutcome, ForgetSelector,
-    IngestItem, IngestOutcome, MaintenanceReport, PurgeOutcome, SnapshotRef, SourceItem,
-    SourceScope,
+    BackfillTreesOutcome, BackfillTreesRequest, ChunkEntityOccurrence, DiffReport, EntityHit,
+    EntityOccurrence, ForgetOutcome, ForgetSelector, IngestItem, IngestOutcome,
+    MaintenanceReport, PurgeOutcome, SnapshotRef, SourceItem, SourceScope,
 };
 use crate::openhuman::memory::api::provider::{
     EpisodicEvent, MemoryCodingSessions, MemoryDiff, MemoryDocuments, MemoryEntities, MemoryGoals,

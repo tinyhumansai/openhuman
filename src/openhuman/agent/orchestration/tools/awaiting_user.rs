@@ -27,6 +27,7 @@ pub(crate) fn awaiting_user_envelope(
     agent_id: &str,
     worker_thread_id: Option<&str>,
     question: &str,
+    checkpointed: bool,
 ) -> String {
     let wt_display = worker_thread_id.unwrap_or("(none)");
     // `question` is sub-agent-authored free text. Embedding it raw would let a
@@ -36,6 +37,18 @@ pub(crate) fn awaiting_user_envelope(
     // the value is clearly bounded — only the real terminator line survives.
     let question_json =
         serde_json::to_string(question).unwrap_or_else(|_| "\"<unserializable question>\"".into());
+    // The pause could not be written to disk, so `continue_subagent` will not
+    // find a checkpoint for this `task_id`. It may still succeed via the
+    // durable-session store, so this warns rather than forbids — but the
+    // orchestrator must not be told the history is safely parked when it is
+    // not (#5928).
+    let resume_caveat = if checkpointed {
+        ""
+    } else {
+        " NOTE: this pause could NOT be saved to disk, so resuming may fail. \
+         If continue_subagent reports no checkpoint and no durable session, \
+         tell the user the sub-agent's progress was lost instead of retrying."
+    };
     format!(
         "[SUBAGENT_AWAITING_USER]\n\
          task_id: {task_id}\n\
@@ -48,7 +61,7 @@ pub(crate) fn awaiting_user_envelope(
          call continue_subagent with the task_id, agent_id, and the \
          user's answer as the message parameter. Do NOT re-spawn or \
          re-delegate the sub-agent — that restarts it from scratch and \
-         loses its progress."
+         loses its progress.{resume_caveat}"
     )
 }
 

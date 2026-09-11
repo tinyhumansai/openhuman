@@ -132,6 +132,34 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     required: true,
                 },
                 FieldSchema {
+                    name: "gate_paused",
+                    ty: TypeSchema::Bool,
+                    comment: "True while the scheduler gate's live policy is `paused`, \
+                              whichever mode is configured (on battery with \
+                              `require_ac_power`, CPU pressure, signed out): every \
+                              LLM-bound worker, the embed backfill included, is \
+                              blocked right now. `is_paused` stays the configured \
+                              `off` mode (openhuman#6025).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "gate_pause_reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Why the gate is paused: `user_disabled` | `on_battery` | \
+                              `cpu_pressure` | `signed_out` | `unknown`. Absent while \
+                              running.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "queue_stalled",
+                    ty: TypeSchema::Bool,
+                    comment: "True when eligible queue work has waited at least six \
+                              hours without any job settling (#5324). `status` reads \
+                              `degraded` for it; the flag lets a client tell that stall \
+                              from the other degradations (openhuman#6025).",
+                    required: true,
+                },
+                FieldSchema {
                     name: "degraded",
                     ty: TypeSchema::Json,
                     comment: "#002 (FR-002/FR-004): object `{ semantic_recall: bool, \

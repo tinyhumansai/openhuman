@@ -311,7 +311,7 @@ fn integrations_definition() -> AgentDefinition {
 
 fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(LargePayloadTool)];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -326,6 +326,10 @@ fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionC
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round25-parent-model".to_string(),

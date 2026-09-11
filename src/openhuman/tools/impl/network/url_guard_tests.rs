@@ -182,6 +182,36 @@ async fn dns_check_with_empty_allowlist_blocks_private_resolved_ip() {
     assert!(err.contains("DNS rebinding blocked"));
 }
 
+#[tokio::test]
+async fn dns_check_resolver_failure_is_a_refusal_not_a_pass_through() {
+    // A resolver error (NXDOMAIN, network down, timeout) must refuse the
+    // fetch, not fall back to treating the host as unresolved-and-therefore-
+    // allowed.
+    let err = validate_url_with_dns_check_with_resolver(
+        "https://this-host-does-not-exist.invalid",
+        &[],
+        |host, _port| async move { anyhow::bail!("DNS resolution failed for '{host}': NXDOMAIN") },
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("DNS resolution failed"));
+}
+
+#[tokio::test]
+async fn dns_check_resolver_returning_no_addresses_is_a_refusal() {
+    // A resolver that answers with zero addresses (some stub resolvers do
+    // this instead of erroring) must not be treated as "no IPs to check,
+    // therefore allowed".
+    let err = validate_url_with_dns_check_with_resolver("https://example.com", &[], |_, _| async {
+        Ok(Vec::new())
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("DNS resolution returned no addresses"));
+}
+
 #[test]
 fn validate_rejects_ftp_scheme() {
     let allow = vec!["example.com".to_string()];

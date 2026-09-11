@@ -15,12 +15,17 @@ import {
  * tab after a click, and — the half that actually reaches users — whether a
  * bookmarked deep link lands on the tab it names.
  *
- * The `/skills` → `/connections` redirect (`AppRoutes.tsx:169-170`) carries a
- * comment saying it "preserves ?tab= deep links". It does not: `<Navigate
+ * The `/skills` → `/connections` redirect did once drop the query — `<Navigate
  * to="/connections" replace />` is a fixed string with no search, and React
- * Router does not carry the current query across it. See the `?tab=` tests
- * below, which pin the CURRENT behaviour and are annotated with what it should
- * be, rather than asserting the fix ahead of it.
+ * Router does not carry the current query across it. #5924 replaced it with
+ * `ForwardSearch`, which copies `search` and `hash` onto the destination; the
+ * `?tab=` tests below assert that forwarding rather than the old defect.
+ *
+ * `/webhooks` forwards the same way but in TWO hops — via
+ * `/settings/integrations`, which is itself a redirect (#5939). Both hops used
+ * a bare `<Navigate>`, so a fix to only the first would have handed the query
+ * to the second and had it dropped there; the `/webhooks` tests below assert
+ * the FINAL destination for that reason.
  *
  * NOTE ON SCOPE: nothing here opens the Composio tab. Doing so downloads the
  * `tinyconnectors` module from a GitHub release, and a failed download is
@@ -173,24 +178,87 @@ test.describe('Connections — the /skills back-compat redirect', () => {
     await expect(page.getByTestId('two-pane-nav-composio')).toBeVisible();
   });
 
-  test('BUG: /skills?tab=channels drops the tab and lands on the overview', async ({ page }) => {
-    // This pins CURRENT behaviour, which is wrong. `AppRoutes.tsx:169` says the
-    // redirect "preserves ?tab= deep links"; `<Navigate to="/connections" />`
-    // carries no search, so the query is dropped and `activeTab` falls through
-    // to its `welcome` default.
+  test('/skills?tab=channels carries the tab through the redirect', async ({ page }) => {
+    // Fixed by #5924. This test previously pinned the BUG — it asserted the
+    // query was dropped and the overview rendered — and was left un-flipped
+    // when the fix landed, so it asserted the opposite of shipped behaviour.
+    // `AppRoutes.tsx` now redirects through `ForwardSearch`, which copies the
+    // current `search` and `hash` onto the destination.
     //
-    // Expected once fixed: the hash contains `tab=channels` and the messaging
-    // connectors are visible. Flip the two assertions below when that lands.
-    await openRoute(page, 'pw-skills-tab-drop', '/skills?tab=channels', '/connections');
+    // Assert the SELECTED tab, not merely that a Channels nav row is visible:
+    // that row renders on every tab and would prove nothing.
+    await openRoute(page, 'pw-skills-tab-forward', '/skills?tab=channels', '/connections');
+    await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('/connections');
+
+    await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('tab=channels');
+    await expectSelectedTab(page, 'channels');
+  });
+
+  test('/skills?tab=mcp forwards any tab, not just one hard-coded value', async ({ page }) => {
+    // A second tab so the forward cannot be satisfied by a literal. `mcp` is a
+    // canonical id (Skills.tsx), reached here only via the redirect.
+    await openRoute(page, 'pw-skills-tab-forward-mcp', '/skills?tab=mcp', '/connections');
+    await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('tab=mcp');
+    await expectSelectedTab(page, 'mcp');
+  });
+
+  test('/skills?tab=mcp#fragment forwards the fragment as well as the query', async ({ page }) => {
+    // `ForwardSearch` appends `hash` as well as `search`, and nothing here
+    // exercised that half. `AppRoutes.skills.test.tsx` does assert
+    // `loc.hash === '#section-mcp'`, but under `MemoryRouter`, which never
+    // parses `window.location.hash` at all — so it cannot show that a real
+    // HashRouter round-trips a fragment nested inside the routing hash
+    // (`#/connections?tab=mcp#section-mcp`). That is the part only a browser
+    // can answer, and it is the mechanism `/webhooks` relies on for
+    // `#delivery-3`-style deep links.
+    await openRoute(page, 'pw-skills-hash-forward', '/skills?tab=mcp#section-mcp', '/connections');
+    await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('tab=mcp');
+    expect(await currentHash(page)).toContain('#section-mcp');
+    await expectSelectedTab(page, 'mcp');
+  });
+
+  test('/skills with no query still lands on the overview', async ({ page }) => {
+    // The forward must not invent a query where the user supplied none.
+    await openRoute(page, 'pw-skills-no-query', '/skills', '/connections');
+    const hash = await currentHash(page);
+    expect(hash).not.toContain('tab=');
+    await expectSelectedTab(page, 'welcome');
+  });
+
+  test('/webhooks?tab= survives BOTH hops of its redirect', async ({ page }) => {
+    // #5939 (closes #5908). `/webhooks` is a TWO-hop redirect:
+    //
+    //   /webhooks              -> /settings/integrations   (AppRoutes.tsx:239)
+    //   /settings/integrations -> /connections             (settingsRouteElements.tsx:130)
+    //
+    // Both hops used a bare `<Navigate>`, so fixing only the first would have
+    // handed the query to hop two and had it dropped there instead. That is why
+    // this asserts the FINAL destination rather than the intermediate one — a
+    // half-fix passes an assertion on `/settings/integrations` and still loses
+    // the deep link the user actually followed.
+    await openRoute(page, 'pw-webhooks-tab-keep', '/webhooks?tab=channels', '/connections');
+    await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('/connections');
+
+    expect(await currentHash(page)).toContain('tab=channels');
+    await expectSelectedTab(page, 'channels');
+  });
+
+  test('/webhooks carries the fragment through as well as the query', async ({ page }) => {
+    // `ForwardSearch` copies `hash` alongside `search`. Under HashRouter the
+    // fragment is the part after a SECOND `#`, so this also pins that the two
+    // are not conflated — a redirect that forwarded only `search` would land on
+    // the right tab and still drop the anchor.
+    await openRoute(
+      page,
+      'pw-webhooks-fragment-keep',
+      '/webhooks?tab=channels#delivery-3',
+      '/connections'
+    );
     await expect.poll(() => currentHash(page), { timeout: 15_000 }).toContain('/connections');
 
     const hash = await currentHash(page);
-    expect(hash).not.toContain('tab=channels');
-    // The user asked for messaging and got the overview instead. Assert the
-    // SELECTED tab: the previous form asserted that the Channels nav row was
-    // visible, which is true on every tab and therefore proved nothing about
-    // the harm this test exists to document.
-    await expectSelectedTab(page, 'welcome');
+    expect(hash).toContain('tab=channels');
+    expect(hash).toContain('#delivery-3');
   });
 
   test('/channels keeps working, because its redirect names the tab explicitly', async ({

@@ -121,9 +121,9 @@ The `[autonomy]` block (`src/openhuman/config/schema/autonomy.rs`) drives `Secur
 
 Four things to know before touching that domain:
 
-- **It mounts on the existing seams, not new call sites.** `hooks::bridge` registers itself as an embedder `ToolHook` + `PostTurnHook`. Only the moments with no seam at all (`beforeSubmitPrompt`, `subagentStart`/`Stop`) get their own call site, in `hooks::ops`.
+- **It mounts on the existing seams, not new call sites.** `hooks::bridge` registers itself as an embedder `ToolHook` + `PostTurnHook`. Only the moments with no seam at all (`beforeSubmitPrompt`, `subagentStart`/`Stop`) get their own entry point, in `hooks::ops` — and of those, `subagent_stopped` is still waiting for a caller (see `is_wired()` below).
 - **Shell/file/MCP events are derived from tool calls.** OpenHuman has no separate shell-execution call site — `beforeShellExecution` is the `shell` tool going through the tool seam, reshaped into a Cursor-shaped payload. Both the generic and the specialised event fire, generic first. `SHELL_TOOLS`/`READ_TOOLS`/`WRITE_TOOLS` in `bridge.rs` are the mapping; extend those rather than adding a call site.
-- **`HookEvent::is_wired()` is load-bearing honesty.** Four events (`sessionStart`, `sessionEnd`, `preCompact`, `afterAgentThought`) are fully defined but have no call site yet. The loader warns when one is configured and `hooks.list` reports `wired: false`. Flip the flag when the call site lands — never optimistically.
+- **`HookEvent::is_wired()` is load-bearing honesty.** Five events (`sessionStart`, `sessionEnd`, `preCompact`, `afterAgentThought`, `subagentStop`) are fully defined but have no call site yet — `hooks::ops::subagent_stopped` is written and complete, but `subagent_runner` fires only the start side, so nothing reaches the stop one. The loader warns when one is configured and `hooks.list` reports `wired: false`. Flip the flag when the call site lands — never optimistically.
 - **Strictest verdict wins, and layers concatenate.** Four `hooks.json` layers merge by appending, and `HookOutput::merge` folds deny over ask over allow, so a project file can never loosen an operator's rule. Do not "fix" the layering into an override model.
 
 Gating events run sequentially in the turn's path; observational ones are spawned and never block it (`HookEvent::is_gating` is the single place that split lives). With nothing configured the bridge is not installed, so an unconfigured host pays nothing per tool call.
@@ -703,7 +703,7 @@ What it *did* change: **a lane that relies on default features no longer covers 
 > **Adding a gate to either set? You must forward it to the desktop shell.**
 > `app/src-tauri/Cargo.toml` declares `openhuman_core` with `default-features = false` (set in #1061, before gates existed), so the shipped app does **not** inherit the core's `default` list. A gate in the product set but not in the shell's `features` list is **compiled out of the shipped desktop app** — with no build error and no failing test. This is not hypothetical: `voice` shipped missing from v0.58.19 to v0.61.x (56 users, ~93k Sentry events, #4901), and `tokenjuice-treesitter` was never forwarded once since #4123 and failed *soft*, silently degrading AST compression (#4918).
 > `scripts/ci/check-feature-forwarding.mjs` (the **Feature Forwarding Gate** lane) asserts three things: the shell forwards **exactly** `product-features.txt` (set equality, both directions), every name in that file is a real core gate, and every `default` gate is forwarded or allow-listed. The equality check is the load-bearing one — the old subset-of-`default` check would have passed **vacuously** once `default` stopped being the product set, silently re-arming #4901. If a gate genuinely must not ship, add it to `INTENTIONALLY_NOT_FORWARDED` **with a reason** — an explicit exclusion is the only way "deliberate" stays distinguishable from "forgotten".
-> A gate in **neither** set (today only `tui`) gets no compile coverage from the normal lanes at all, so the feature-gate-smoke lane checks it explicitly. Put new ones there too.
+> A gate in **neither** set (today `tui` and `e2e-test-support`) gets no compile coverage from the normal lanes at all, so the feature-gate-smoke lane checks it explicitly. Put new ones there too. `e2e-test-support` was in this position for its whole life without being listed here or checked anywhere (#6086) — it is the reason this sentence now names its members instead of claiming there is one.
 
 **Slim-profile convention** (no `full` meta-feature): build slim variants with `cargo build --no-default-features --features "<explicit list of gates you want>"`. This mirrors the existing standalone-feature style (`sandbox-landlock`, `browser-native`, …). Example — everything except voice:
 
@@ -970,6 +970,43 @@ always-on kernel surface, so `features = ["modules"]` there puts a loader plus
 one — 305 → 308 packages, which the kernel-floor ratchet caught. It is forwarded
 from this crate's own `modules` feature instead.
 
+#### Release cache, boot preload, and the loading state
+
+**Every module load goes through a persistent, verified cache.** `ops::resolve`
+loads the pinned release with tinybus's `load_github_release_cached`, which
+keeps the archive, its extraction and the manifest digest under
+`install_dir(config)/<id>/<version>/<host_key>/` (`~/Library/Caches/openhuman/modules`
+on macOS, `~/.cache/openhuman/modules` on Linux). A warm launch re-hashes the
+archive against the registry pin and maps the library without the network; a
+cold launch downloads into a staging sibling and commits with one rename, and
+the versions no longer pinned are pruned afterwards. Before this existed every
+launch downloaded every module — five on the desktop — serialised behind one
+lock, and tinybus's default HTTP client had no connect timeout, so a single
+black-holed CDN address cost the OS SYN timeout (75 s on macOS, ~2 min on
+Linux) per module while every memory call and the chat turn waited behind it.
+
+Three host-side rules ride on it:
+
+- **`LoadPolicy::Eager` runs at boot now.** `start_bootstrap_jobs` spawns
+  `modules::boot::load_declared_modules` behind `ServiceSet::memory_queue`; it
+  installs the memory host callbacks first (a module admitted without them
+  resolves no embedder) and then resolves TinyMemory off the request path. The
+  function had no product caller from the day it landed.
+- **Resolution is per module, and the wait is bounded.** `modules::resolution`
+  gives each module a slot: the first caller runs the load as a
+  process-lifetime task on the module runtime and everyone else waits on a
+  watch channel, so a caller that gives up cancels nothing and two modules
+  never queue behind each other. `ensure_loaded_within` bounds the wait.
+  `ModuleMemoryProvider::proxy` uses an 8 s grace for reads and answers
+  `MemoryError::Unavailable` ("memory is still starting") instead of hanging
+  into the UI's 30 s RPC deadline; writes (`store`, the syncs, `shutdown`, …)
+  wait it out because a dropped write is lost work. `modules.list` reports
+  `Loading`, and `health()` answers `Degraded` — never `Down`, which is the
+  signal that rebinds the fallback driver — while a load is in flight.
+- **The chat turn's one inline memory await is bounded** — 3 s around
+  `recall_situational_preferences_on` in `core_turn.rs`; citations and autosave
+  were already spawned off the path.
+
 #### The memory seam — one contract, two live paths (#5560)
 
 Memory is the second module consumer, and it is **half migrated**. Read this
@@ -1046,12 +1083,22 @@ Two survivals are deliberate and neither puts the engine back in the product:
   allow-listed in `INTENTIONALLY_NOT_FORWARDED`; neither feature is in
   `scripts/ci/product-features.txt`.
 
-The `[patch]` entries for `tinycortex` / `tinycortex-api` stay in both manifests
-and must not be removed with the dependencies. Dropping a direct dependency and
-dropping its patch are different things: the crates are unpublished and the
-engine crates still reached as dev-dependencies name them by version
-requirement, so removing a patch fails **resolution** ("no matching package
-named `tinycortex-api` found") before anything compiles.
+The `[patch]` entries for `tinycortex` / `tinycortex-api` stay in the **root**
+manifest and must not be removed with the dependencies. Dropping a direct
+dependency and dropping its patch are different things: `tinycortex-api` is
+unpublished (and the crates.io `tinycortex` is a stale 0.1.1 without the engine
+features), the engine crates still reached as dev-dependencies name both by
+version requirement, so removing a patch fails **resolution** ("no matching
+package named `tinycortex-api` found") before anything compiles. Both point into
+tinymemory's own vendored engine, `vendor/tinymemory/vendor/tinycortex` — there
+is no top-level `vendor/tinycortex` submodule any more — so the engine the tests
+link is the one the prebuilt module was built from, and a tinymemory re-pin
+moves it. The shell manifest (`app/src-tauri/Cargo.toml`) carries **no** such
+entries: dev-dependencies of a path dependency are never resolved there and
+nothing forwards `memory-engine-seams` / `rss-bench`, so its copies sat under
+`[[patch.unused]]` in `app/src-tauri/Cargo.lock` from #5560 until they were
+removed (`cargo tree --locked --all-features -e normal,dev,build --manifest-path
+app/src-tauri/Cargo.toml -i tinycortex` → not in the graph).
 
 `memory/direct_engine_refs_tests.rs` is still the ratchet over direct
 `tinymemory_core::` references, but **its non-empty list no longer implies a
@@ -1180,7 +1227,7 @@ Domains: `agent`, `memory`, `channel`, `cron`, `skill`, `tool`, `webhook`, `syst
 
 Each domain owns `bus.rs` with handlers. Convention: `<Purpose>Subscriber`, `name()` → `"<domain>::<purpose>"`.
 
-**Adding events:** add to `DomainEvent`, extend `domain()` match, create `<domain>/bus.rs`, register at startup, publish via `publish_global`.
+**Adding events:** add to `DomainEvent`, extend `domain()` match, create `<domain>/bus.rs`, register at startup, publish via `publish_global`, and bump `EVENTS_VERSION` in [`src/core/bus.rs`](src/core/bus.rs) — minor for an added variant or field, major (plus a new interface name) for anything an older subscriber cannot parse. Peers exchange that version through the manifest, so skipping the bump turns a version skew into a decode failure later instead of a startup warning.
 
 **Adding native handlers:** define req/resp types (`Send + 'static`, not `Serialize`), register at startup keyed by `"<domain>.<verb>"`, dispatch via `request_native_global`.
 

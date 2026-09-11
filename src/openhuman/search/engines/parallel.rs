@@ -14,6 +14,7 @@ pub(crate) fn build(root_config: &Config, params: SearchToolParams) -> Vec<Box<d
         );
         return vec![Box::new(crate::openhuman::search::WebSearchTool::new(
             None,
+            Some(Arc::new(root_config.clone())),
             params.max_results,
             params.timeout_secs,
         ))];
@@ -40,6 +41,7 @@ pub(crate) fn build(root_config: &Config, params: SearchToolParams) -> Vec<Box<d
         )),
         Box::new(crate::openhuman::search::WebSearchTool::new(
             Some(Arc::clone(&client)),
+            Some(Arc::new(root_config.clone())),
             params.max_results,
             params.timeout_secs,
         )),

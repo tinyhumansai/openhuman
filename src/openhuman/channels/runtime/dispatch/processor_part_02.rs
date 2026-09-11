@@ -154,7 +154,11 @@ pub(crate) async fn process_channel_runtime_message(
         .cloned()
         .unwrap_or_default();
 
-    let mut history = vec![ChatMessage::system(ctx.system_prompt.as_str())];
+    // Re-rendered by `ChannelSystemPrompt` only when the active profile or an
+    // identity file changed since the last message (#6028); otherwise the
+    // same bytes as the previous turn.
+    let system_prompt = ctx.system_prompt.current();
+    let mut history = vec![ChatMessage::system(system_prompt.as_str())];
     history.append(&mut prior_turns);
     history.push(ChatMessage::user(&enriched_message));
 

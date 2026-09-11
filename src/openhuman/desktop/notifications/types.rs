@@ -43,6 +43,41 @@ pub struct CoreNotificationEvent {
     /// Backward-compatible: old events without this field deserialize to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<CoreNotificationAction>>,
+    /// Opaque handle for the workspace this notification belongs to, when it
+    /// belongs to one (#5966).
+    ///
+    /// The publish-time gate in `bus::should_announce` already refuses to
+    /// broadcast a notification from a workspace the user has switched away
+    /// from, but that decision and the broadcast are not one atomic step:
+    /// resolving the active workspace and sending are separate, so a switch
+    /// in between can still let one through. Carrying the identity turns a
+    /// boolean taken at an instant into something the receiver can re-check
+    /// whenever it renders, which is what actually closes the window.
+    ///
+    /// A *handle*, never `workspace_dir` itself — the path is under the
+    /// user's home directory and this payload reaches every connected client.
+    /// See [`workspace_handle`](crate::openhuman::config::workspace_handle).
+    ///
+    /// `None` means the notification is not workspace-bound (cron, webhook,
+    /// sub-agent, rejected API key) and applies wherever it lands. Also
+    /// `None` for rows persisted before this field existed, which is why it
+    /// is `default` — a receiver must treat absence as "not bound", not as a
+    /// mismatch, or upgrading would silently hide every stored notification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Workspace revision at the moment the announcement gate passed, set
+    /// only when [`Self::workspace`] is (#5966).
+    ///
+    /// Without it a receiver cannot tell the two ways a handle mismatch
+    /// happens apart. `workspace_changed` and `core_notification` are
+    /// broadcast by separate tasks, so a notification for the workspace the
+    /// user just switched *to* can arrive before the switch that announces
+    /// it — and a strict handle check would drop a valid alert the core had
+    /// already verified. Comparing revisions separates that case ("this
+    /// receiver is behind, catch up and accept") from the one the check
+    /// exists for ("this is from a workspace already switched away from").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_revision: Option<u64>,
 }
 
 /// A single action button attached to a notification.

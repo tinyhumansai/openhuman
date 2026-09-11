@@ -15,11 +15,17 @@
 //! | `prompt.rs`         | Role-contract suffix, `append_subagent_role_contract`, `dedup_tool_specs_by_name` |
 //! | `runner.rs`         | `run_subagent`, `run_typed_mode`                               |
 //! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
-//! | `checkpoint.rs`     | `SubagentCheckpoint`                                           |
+//! | `checkpoint.rs`     | `SubagentCheckpoint` — cap-hit summary                         |
+//! | `pause_checkpoint.rs` | `write` — the on-disk pause snapshot for `continue_subagent`  |
 
 mod checkpoint;
 mod graph;
+mod pause_checkpoint;
+// The checkpoint filename validator, shared with `continue_subagent`: the
+// model-authored `task_id` must be rejected at the tool boundary as well as at
+// the write, so the read path cannot traverse either.
 pub(crate) use graph::run_agent_turn_request_via_default_graph;
+pub(crate) use pause_checkpoint::is_safe_task_id;
 mod prompt;
 mod provider;
 mod runner;

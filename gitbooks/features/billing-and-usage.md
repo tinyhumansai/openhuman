@@ -50,11 +50,11 @@ Coupon codes are redeemed against the backend (`POST /coupons/redeem`), and you 
 
 ### Where billing lives in the app
 
-The desktop **Settings → Billing** panel intentionally has no embedded payment UI. It links out to the hosted web **billing dashboard**, which is the single place to manage plans, cards and invoices. The agent can also read billing state through default-ON tools (plan, balance, transactions, cards, coupons, the Stripe portal link); every money-moving or payment-method mutator ships **default-OFF** behind a `billing_writes` toggle, and card deletion is flagged dangerous.
+The desktop **Settings → Billing** panel is read-only. It shows the current plan, promotional and top-up balances, total remaining funds, current-cycle spend, and usage breakdowns. Buttons link to the hosted web **billing dashboard**, which is the single place to manage plans, top-ups, coupons, cards, and invoices. Other clients can reach the same hosted billing operations through the authenticated RPC controllers described below; they are not exposed as agent tools.
 
 ### RPC surface
 
-Namespace `billing`, exposed as `openhuman.billing_*` (15 methods), e.g. `billing_get_current_plan`, `billing_get_balance`, `billing_get_transactions`, `billing_purchase_plan`, `billing_top_up`, `billing_create_coinbase_charge`, `billing_get_cards`, `billing_create_setup_intent`, `billing_update_auto_recharge`, `billing_redeem_coupon`.
+Namespace `billing`, exposed as `openhuman.billing_*` (16 methods), e.g. `billing_get_summary`, `billing_get_current_plan`, `billing_get_balance`, `billing_get_transactions`, `billing_purchase_plan`, `billing_top_up`, `billing_create_coinbase_charge`, `billing_get_cards`, `billing_create_setup_intent`, `billing_update_auto_recharge`, `billing_redeem_coupon`.
 
 ---
 

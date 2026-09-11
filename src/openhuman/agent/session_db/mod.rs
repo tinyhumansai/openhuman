@@ -1,21 +1,25 @@
-//! JSON-RPC surface for the durable agent session database.
+//! JSON-RPC surface for the durable agent run ledger.
 //!
-//! The store itself — sessions, messages, tool calls, cost metadata,
-//! parent/child lineage, and the run ledger — lives in
-//! [`tinyagents::session`]. Only the controller schemas and
+//! The store itself — run ledger rows, child lineage, events, and telemetry —
+//! lives in [`tinyagents::session::run_ledger`]. Only the controller schemas and
 //! their handlers stay here, because the RPC envelope, config resolution, and
 //! `RpcOutcome` shape are host concerns the runtime crate has no business
 //! knowing about.
 //!
-//! Call the store directly (`tinyagents_session::…`) rather
+//! Call the store directly (`tinyagents_session::run_ledger::…`) rather
 //! than through this module; it deliberately re-exports no storage API.
 //!
 //! Every store entry point takes the workspace root, so handlers pass
 //! `config.workspace_dir`. The database path is
-//! `{workspace}/session_db/sessions.db` — unchanged by the move, so existing
-//! installs keep their history.
+//! `{workspace}/session_db/sessions.db` — unchanged, so existing installs keep
+//! their run-ledger history.
 //!
-//! The `session_db` and `run_ledger` RPC namespaces are unchanged.
+//! The `run_ledger` RPC namespace is unchanged. The six read-only `session_db`
+//! controllers were removed in #6082: they queried a session index that nothing
+//! in `src/` ever writes (permanently empty in production, no frontend
+//! consumer). The run ledger below is written from
+//! [`crate::openhuman::web_chat::progress_bridge`] and
+//! [`crate::openhuman::agent::progress_tracing`], so it stays fully functional.
 
 mod schemas;
 

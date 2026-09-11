@@ -6,10 +6,13 @@ use serde_json::json;
 use std::sync::Arc;
 use tinytools::ToolRunContext;
 
+const MAX_CONTENT_BYTES: usize = 5 * 1024 * 1024;
+
 /// Write file contents with path sandboxing
 pub struct FileWriteTool {
     security: Arc<SecurityPolicy>,
     approval_workspace_root: Option<std::path::PathBuf>,
+    sink: Arc<dyn super::write_sink::FileSink>,
 }
 
 impl FileWriteTool {
@@ -17,7 +20,15 @@ impl FileWriteTool {
         Self {
             security,
             approval_workspace_root: None,
+            sink: super::write_sink::os_sink(),
         }
+    }
+
+    /// Sends this tool's writes somewhere other than the OS.
+    #[cfg(test)]
+    pub fn with_sink(mut self, sink: Arc<dyn super::write_sink::FileSink>) -> Self {
+        self.sink = sink;
+        self
     }
 
     /// Use the same effective workspace root for approval routing that tool
@@ -29,6 +40,7 @@ impl FileWriteTool {
         Self {
             security,
             approval_workspace_root: Some(approval_workspace_root),
+            sink: super::write_sink::os_sink(),
         }
     }
 }
@@ -136,6 +148,13 @@ impl FileWriteTool {
             ));
         }
 
+        if content.len() > MAX_CONTENT_BYTES {
+            return Ok(ToolResult::error(format!(
+                "Content too large: {} bytes (limit: {MAX_CONTENT_BYTES} bytes)",
+                content.len()
+            )));
+        }
+
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",
@@ -192,7 +211,7 @@ impl FileWriteTool {
             }
         }
 
-        match tokio::fs::write(&resolved_target, content).await {
+        match self.sink.write(&resolved_target, content.as_bytes()).await {
             Ok(()) => {
                 if let Some(agent_id) = file_state::current_file_state_agent_id() {
                     file_state::record_write(&agent_id, resolved_target);

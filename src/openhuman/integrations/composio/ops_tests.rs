@@ -33,7 +33,6 @@ use chrono::{TimeZone, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tinymemory_api::chunks::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
-use tinymemory_core::store::chunks::store as memory_tree_store;
 
 struct WorkspaceEnvGuard {
     previous: Option<std::ffi::OsString>,
@@ -318,7 +317,7 @@ fn direct_mode_no_key_config(tmp: &tempfile::TempDir) -> Config {
 // `enrich_connections_with_identity` reads through the bound memory driver
 // now (`identity_store::load_connected_identities`) rather than a
 // process-global engine client, so its tests bind a driver per test with
-// `memory::test_support::install_tinycortex_for_test` instead of the
+// `memory::test_support::install_memory_driver_for_test` instead of the
 // `tinymemory_core::global::init` helper this file used to carry.
 
 fn make_connections_response(

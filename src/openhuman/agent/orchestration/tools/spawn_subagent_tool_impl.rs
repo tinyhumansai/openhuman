@@ -497,6 +497,7 @@ impl Tool for SpawnSubagentTool {
                     SubagentRunStatus::AwaitingUser {
                         question,
                         options: _,
+                        checkpoint,
                     } => {
                         // Sub-agent paused for user input — publish
                         // awaiting event and return structured envelope so
@@ -515,6 +516,9 @@ impl Tool for SpawnSubagentTool {
                                     task_id: outcome.task_id.clone(),
                                     question: question.clone(),
                                     worker_thread_id: worker_thread_id.clone(),
+                                    checkpoint_path: checkpoint
+                                        .as_ref()
+                                        .map(|p| p.to_string_lossy().to_string()),
                                 })
                                 .await;
                         }
@@ -523,6 +527,7 @@ impl Tool for SpawnSubagentTool {
                             &outcome.agent_id,
                             worker_thread_id.as_deref(),
                             question,
+                            checkpoint.is_some(),
                         );
                         Ok(ToolResult::success(envelope))
                     }

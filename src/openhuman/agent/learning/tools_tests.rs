@@ -46,3 +46,43 @@ async fn update_facet_requires_value() {
         .expect_err("missing value");
     assert!(err.to_string().contains("value"));
 }
+
+// ── strict class validation (#6077) ───────────────────────────────────────────
+//
+// `validate_class` runs before `get_cache`, so an unknown class is rejected
+// without a bound memory guard — which is what lets these run as unit tests.
+
+#[test]
+fn validate_class_accepts_taxonomy_and_rejects_unknown() {
+    assert!(validate_class("style").is_ok());
+    assert!(validate_class("channel").is_ok());
+    let err = validate_class("nonsense").expect_err("unknown class must be rejected");
+    assert!(err.to_string().contains("invalid class `nonsense`"));
+}
+
+#[tokio::test]
+async fn list_facets_tool_rejects_unknown_class() {
+    let err = LearningListFacetsTool
+        .execute(json!({ "class": "nonsense" }))
+        .await
+        .expect_err("unknown class must be an error, not an empty list");
+    assert!(err.to_string().contains("invalid class `nonsense`"));
+}
+
+#[tokio::test]
+async fn get_facet_tool_rejects_unknown_class() {
+    let err = LearningGetFacetTool
+        .execute(json!({ "class": "nonsense", "key": "verbosity" }))
+        .await
+        .expect_err("unknown class must be rejected before store access");
+    assert!(err.to_string().contains("invalid class `nonsense`"));
+}
+
+#[tokio::test]
+async fn forget_facet_tool_rejects_unknown_class() {
+    let err = LearningForgetFacetTool
+        .execute(json!({ "class": "nonsense", "key": "verbosity" }))
+        .await
+        .expect_err("unknown class must be rejected before store access");
+    assert!(err.to_string().contains("invalid class `nonsense`"));
+}

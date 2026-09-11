@@ -409,3 +409,7 @@ pub async fn delete_chunk_rpc(
         ),
     ))
 }
+
+#[cfg(test)]
+#[path = "entities_tests.rs"]
+mod tests;

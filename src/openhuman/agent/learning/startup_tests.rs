@@ -17,7 +17,6 @@ use tempfile::TempDir;
 /// an unwired embedding host fails loudly by design. `install_for_tests` is
 /// `Once`-guarded, so calling it here is free when another test already has.
 fn test_workspace() -> TempDir {
-    crate::openhuman::memory::host_impls::install_for_tests();
     TempDir::new().expect("tempdir")
 }
 

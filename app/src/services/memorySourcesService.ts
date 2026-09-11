@@ -148,6 +148,14 @@ export interface SourceStatus {
   chunks_pending: number;
   last_chunk_at_ms: number | null;
   freshness: FreshnessLabel;
+  /**
+   * The stage of a sync the core has in flight for this source, `null` when
+   * none (openhuman#6019). Absent altogether from a core that predates the
+   * field — callers treat absent as "unknown", not as idle.
+   */
+  sync_stage?: string | null;
+  /** The detail that came with `sync_stage`, if any. */
+  sync_detail?: string | null;
 }
 
 export async function memorySourcesStatusList(): Promise<SourceStatus[]> {

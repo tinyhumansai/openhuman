@@ -1,7 +1,7 @@
 use super::*;
 
 fn ensure_memory_client() {
-    crate::openhuman::memory::ops::ensure_shared_memory_client();
+    crate::openhuman::memory::ops::shared_memory_test_workspace();
 }
 
 fn unique_namespace(prefix: &str) -> String {
@@ -98,9 +98,31 @@ async fn graph_handlers_roundtrip_relation_rows() {
 
     assert_eq!(queried.logs, vec!["memory graph queried".to_string()]);
     assert_eq!(queried.value.len(), 1);
-    assert_eq!(queried.value[0]["subject"], subject.to_uppercase());
     assert_eq!(queried.value[0]["predicate"], "OWNS");
-    assert_eq!(queried.value[0]["object"], "ATLAS");
+    // Case-insensitively, because entity-name casing is the *driver's* policy
+    // and not the contract's. `MemoryGraph::put_relation` keys a relation on
+    // `(namespace, subject, predicate, object)` and says nothing about
+    // normalising any of them; TinyCortex upper-cases entity names, and this
+    // assertion used to spell `subject.to_uppercase()` / `"ATLAS"` — pinning
+    // one engine's normalisation from the host, where a second driver that
+    // preserved case would fail a test about handler wiring.
+    //
+    // What is worth pinning here is that the handler round-trips the edge it
+    // was given into the right fields, and that is what this now checks.
+    assert_eq!(
+        queried.value[0]["subject"]
+            .as_str()
+            .expect("subject is a string")
+            .to_ascii_lowercase(),
+        subject.to_ascii_lowercase()
+    );
+    assert_eq!(
+        queried.value[0]["object"]
+            .as_str()
+            .expect("object is a string")
+            .to_ascii_lowercase(),
+        "atlas"
+    );
 }
 
 /// The guarded `kv_set` must land in the **same** module-backed provider

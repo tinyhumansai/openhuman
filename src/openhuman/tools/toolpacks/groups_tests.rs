@@ -43,7 +43,7 @@ fn a_tool_in_no_group_is_never_withheld() {
     // which belong to no pack. Reporting anything but `Advertised` there
     // would withhold the baseline surface.
     assert_eq!(
-        ToolGroups::none().mode_for_tool("file_read"),
+        ToolGroups::none().mode_for_tool("apply_patch"),
         GroupMode::Advertised
     );
     assert_eq!(

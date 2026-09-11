@@ -165,9 +165,11 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
     config.save().await.expect("save temp config");
 
     assert_eq!(provider_for_role("chat", &config), "custom:demo-chat@0.4");
+    // #6109: an unset route no longer borrows a sibling's BYOK provider; with no
+    // `primary_cloud` configured it falls through to the managed backend.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "custom:demo-chat@0.4"
+        "openhuman"
     );
 
     let (_provider, model) =

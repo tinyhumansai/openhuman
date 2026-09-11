@@ -441,7 +441,6 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("agent registry init");
     let mut agent =
@@ -540,7 +539,6 @@ async fn flows_build_copilot_toolset_unhides_the_live_run_tools() {
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("agent registry init");
     let mut agent =
@@ -602,7 +600,6 @@ async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("agent registry init");
     let def = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()

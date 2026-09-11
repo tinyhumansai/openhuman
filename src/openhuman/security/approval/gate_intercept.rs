@@ -343,9 +343,15 @@ impl ApprovalGate {
                 // TTL-denies, the conservative fail-closed default for a
                 // user-forced HITL gate.
             }
-            AgentTurnOrigin::Cli => {
+            // Same trust decision for both: a local operator invoking the core
+            // directly. They differ only in whether the turn's text was written
+            // by a person (`turn_origin::is_user_authored`), which this gate
+            // does not ask. Kept as one arm so the two can never drift apart on
+            // the trust axis, which is the axis this gate owns.
+            AgentTurnOrigin::Cli | AgentTurnOrigin::DirectChat => {
                 tracing::debug!(
                     tool = tool_name,
+                    origin = %origin.class(),
                     "[approval::gate] CLI / sub-agent caller — allowing without prompt"
                 );
                 return (GateOutcome::Allow, None);
@@ -501,7 +507,32 @@ impl ApprovalGate {
                 tool_name: tool_name.to_string(),
                 summary: action_summary.to_string(),
             });
-            publish_flow_gate_notification(&request_id, flow_id, run_id, tool_name, action_summary);
+            // The workspace the flow parked in, so the approval banner is
+            // dropped by a client that has since switched away rather than
+            // approving this workspace's call from another one. Fails open on
+            // a resolve failure: an unbound notification still reaches the
+            // user, whereas not publishing recreates the silent deadlock this
+            // bridge exists to fix.
+            let workspace = match crate::openhuman::config::active_workspace_snapshot().await {
+                Ok((dir, revision)) => {
+                    Some((crate::openhuman::config::workspace_handle(&dir), revision))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        request_id = %request_id,
+                        "[approval::gate] could not resolve the active workspace for the flow approval notification ({error}); publishing it unbound"
+                    );
+                    None
+                }
+            };
+            publish_flow_gate_notification(
+                &request_id,
+                flow_id,
+                run_id,
+                tool_name,
+                action_summary,
+                workspace,
+            );
         }
 
         tracing::info!(

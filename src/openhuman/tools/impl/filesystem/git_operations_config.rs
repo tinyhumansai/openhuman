@@ -125,9 +125,59 @@ pub(super) const NEUTRALISED_CONFIG: &[&str] = &[
     "core.sshCommand=",
     "core.pager=cat",
     "core.editor=false",
-    "diff.external=",
+    // NOT `diff.external=`. An empty value does not disable an external diff —
+    // git tries to *execute* the empty string and the whole command dies with
+    // `error: cannot run : No such file or directory` / `fatal: external diff
+    // died`, so every `diff` operation failed rather than being hardened.
+    // Suppression belongs on the command instead: `git diff --no-ext-diff`,
+    // which ignores `diff.external` however the repository set it. Verified
+    // both ways against a repo with `diff.external=/bin/false`: plain `diff`
+    // dies, `--no-ext-diff` prints the patch.
     "sequence.editor=false",
     "uploadpack.packObjectsHook=",
+];
+
+/// The entries of [`NEUTRALISED_CONFIG`] that are also safe to force on an
+/// *arbitrary* `git` invocation, plus `commit.gpgSign`.
+///
+/// The `shell` tool runs git too, and since the `files` tool pack withheld
+/// `git_operations` it runs most of it. Nothing there controls argv, so the
+/// `-c` layer [`hardened_git`] builds is unavailable; the same overrides ride
+/// `GIT_CONFIG_PARAMETERS` instead, which git documents as the mechanism `-c`
+/// itself uses to reach child processes, at the same precedence.
+///
+/// **This is the denylist half of the policy, not the fail-closed half.**
+/// [`ALLOWED_REPO_CONFIG`] cannot come with it: inspecting the repository
+/// config before every shell command would cost a `git` round trip on commands
+/// that have nothing to do with git, and would refuse to run in an ordinary
+/// LFS checkout. So this narrows the surface; it does not close it the way
+/// `git_operations` does.
+///
+/// Three entries of [`NEUTRALISED_CONFIG`] are deliberately **not** here:
+///
+/// - `core.sshCommand=`. It is the same trap the `diff.external` note above
+///   records: an empty value is not "use the default", it is a command git
+///   tries to execute. `git_operations` gets away with listing it because none
+///   of its operations reach a remote; a shell `git fetch` / `git push` does,
+///   and would die on every one. Excluded rather than risked.
+/// - `diff.external`. Unsuppressable by value for the same reason, and the fix
+///   `git_operations` uses — `--no-ext-diff` — is an argv change this path
+///   cannot make. A repository that sets it keeps it, and that is a known gap.
+/// - `core.hooksPath`. Not a gap here but a different owner: the shell already
+///   points it at OpenHuman's attribution hook directory, whose shims
+///   deliberately delegate onward to whatever the repository configured. Hooks
+///   therefore still run under `shell`, by design — see the module docs on
+///   `agent::git_attribution`.
+pub(crate) const SHELL_NEUTRALISED_CONFIG: &[&str] = &[
+    "core.fsmonitor=",
+    "core.pager=cat",
+    "core.editor=false",
+    "sequence.editor=false",
+    "uploadpack.packObjectsHook=",
+    // Not in `NEUTRALISED_CONFIG` — `hardened_git` adds it separately, for the
+    // reason written there: a repository must not get to spend the host's
+    // signing key on a commit nobody asked to sign.
+    "commit.gpgSign=false",
 ];
 
 /// A path git will read as an empty config file.

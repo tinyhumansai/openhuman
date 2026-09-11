@@ -99,6 +99,123 @@ fn wire_notice_is_latched_once_per_process() {
     notice_corrupt_store_once("test detector");
 }
 
+/// The classifier matches the three real Ollama error shapes and nothing else.
+///
+/// A false positive tells the user to start Ollama for a storage or bus fault
+/// that has nothing to do with the local runtime; a false negative is how
+/// openhuman#5867 stayed unfixed for the model-not-pulled case. **Every
+/// positive literal here is copied from the upstream source**, not composed
+/// from the shape of the message — the string this replaced
+/// (`"Ollama embedding model … is not installed at …"`) reads plausibly and
+/// exists nowhere in `tinyinference`, so the test passed while the product
+/// never emitted it.
+#[test]
+fn local_embedding_error_classifier_matches_ollama_patterns_only() {
+    // Transport bail: daemon is not listening.
+    assert!(is_local_embedding_error(
+        "unreachable: ollama embed request failed \
+         (is Ollama running at http://localhost:11434?): connection refused"
+    ));
+    // Plain string variant the bus may emit.
+    assert!(is_local_embedding_error(
+        "is Ollama running at http://127.0.0.1:11434"
+    ));
+    // Embedding model never pulled. `embeddings/ollama.rs` renders Ollama's
+    // 404 through `ollama_http_error`, so this — not a prose "not installed"
+    // sentence — is what the embedder actually produces for #5867's `bge-m3`.
+    assert!(is_local_embedding_error(
+        "ollama embed failed with status 404 Not Found: \
+         {\"error\":\"model 'bge-m3' not found\"}"
+    ));
+    // Chat/summarisation model never pulled (#5867 also names `gemma3:4b`).
+    // Quoted from `providers/openai/local.rs:376` — "Ollama model", not
+    // "Ollama embedding model".
+    assert!(is_local_embedding_error(
+        "Ollama model `gemma3:4b` is not installed at http://localhost:11434. \
+         Run `ollama pull gemma3:4b`, or call `list_models()` to see what is installed"
+    ));
+    // Case-insensitive match.
+    assert!(is_local_embedding_error("IS OLLAMA RUNNING AT localhost"));
+
+    // Non-Ollama failures must not match.
+    assert!(!is_local_embedding_error("database or disk is full"));
+    assert!(!is_local_embedding_error("timed out: rpc timeout exceeded"));
+    assert!(!is_local_embedding_error(
+        "unreachable: connection refused to memory bus"
+    ));
+    assert!(!is_local_embedding_error("backend failed: 500 internal"));
+    assert!(!is_local_embedding_error(""));
+
+    // The embeddings path emits six other `ollama embed …` shapes that are
+    // data faults, not an absent runtime. Telling the user to install Ollama
+    // for a NaN or a dimension mismatch would be wrong, so the status-404
+    // anchor must not widen to the whole prefix.
+    assert!(!is_local_embedding_error(
+        "ollama embed count mismatch: sent 1 text, got 0 embeddings"
+    ));
+    assert!(!is_local_embedding_error(
+        "ollama embed dimension mismatch at index 0: expected 1024, got 768"
+    ));
+    assert!(!is_local_embedding_error(
+        "Ollama could not encode input without NaN values"
+    ));
+    assert!(!is_local_embedding_error(
+        "ollama embed failed with status 500 Internal Server Error"
+    ));
+}
+
+/// Once-latch for the archivist embedding failure path (openhuman#5867):
+/// one failed embedding per segment must not become one banner per segment.
+///
+/// This subscribes to the web-channel bus and counts what actually arrives.
+/// The previous version called the function twice and asserted nothing, so it
+/// passed whether the notice fired twice, once, or never — which is every
+/// outcome, including the banner storm the latch exists to prevent.
+///
+/// The receiver is taken *before* the first call because `broadcast` only
+/// delivers what is sent after subscribing. This is the only test in the
+/// binary that calls `notice_local_model_unavailable_once`, so the
+/// function-local `Once` is untripped when it runs.
+#[test]
+fn local_model_unavailable_notice_is_latched_once_per_process() {
+    let mut events = crate::openhuman::web_chat::subscribe_web_channel_events();
+
+    notice_local_model_unavailable_once("test archivist");
+    notice_local_model_unavailable_once("test archivist duplicate");
+
+    let first = events
+        .try_recv()
+        .expect("the first call must publish exactly one user_error");
+    assert_eq!(
+        first.error_type.as_deref(),
+        Some(LOCAL_MODEL_UNAVAILABLE_KIND),
+        "the published event must be the local-model notice"
+    );
+    assert!(
+        events.try_recv().is_err(),
+        "the second call must publish nothing — one failed embedding per \
+         segment would otherwise be one banner per segment"
+    );
+}
+
+/// The local-model-unavailable payload carries the same no-leak contract as
+/// its siblings: stable kind + source, never raw provider text or model ids.
+#[test]
+fn local_model_unavailable_payload_is_metadata_only() {
+    let event = local_model_unavailable_user_error();
+    assert_eq!(event.event, "user_error");
+    assert_eq!(event.client_id, "system");
+    assert_eq!(
+        event.error_type.as_deref(),
+        Some(LOCAL_MODEL_UNAVAILABLE_KIND)
+    );
+    assert_eq!(
+        event.error_source.as_deref(),
+        Some(MEMORY_USER_ERROR_SOURCE)
+    );
+    assert!(event.message.is_none(), "must not carry raw error prose");
+}
+
 // ── memory module unavailable ────────────────────────────────────────────────
 
 /// Same no-leak contract as the corrupt-store payload: stable kind + source,

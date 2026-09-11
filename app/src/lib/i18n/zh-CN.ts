@@ -497,6 +497,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': '开发版本中始终启用',
   'settings.clearAppData': '清除应用数据',
   'settings.clearAppDataDesc': '退出登录并永久清除所有本地应用数据',
+  'settings.clearAppDataIrreversible': '此操作无法撤销。',
+  'settings.clearAppDataAction': '清除数据',
   'settings.logOut': '退出登录',
   'settings.logOutDesc': '退出当前账户',
   'settings.exitLocalSession': '退出本地会话',
@@ -1296,7 +1298,7 @@ const messages: TranslationMap = {
   'settings.search.title': '搜索引擎',
   'settings.search.menuDesc': '默认使用 OpenHuman 托管搜索，或用 API 密钥接入你自己的提供商。',
   'settings.search.description':
-    '选择智能体使用的搜索引擎。托管模式使用 OpenHuman 后端（无需设置）。Parallel、Brave、Querit 和 Exa 会用你的 API 密钥从本机直接调用。',
+    '选择智能体使用的搜索引擎。托管模式使用 OpenHuman 后端（无需设置）。Parallel、Brave、Querit、Exa 和 Tavily 会用你的 API 密钥从本机直接调用。',
   'settings.search.engineAria': '搜索引擎',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc': '从智能体上下文和可用工具列表中移除搜索工具。',
@@ -1304,7 +1306,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     '默认选项。通过 OpenHuman 后端路由，当前由 Exa 提供支持，无需 API 密钥。',
   'settings.search.localManagedUnavailable':
-    '本地用户无法使用 OpenHuman 托管搜索。请添加你自己的 Parallel、Brave、Querit 或 Exa API 密钥以启用网页搜索。',
+    '本地用户无法使用 OpenHuman 托管搜索。请添加你自己的 Parallel、Brave、Querit、Exa 或 Tavily API 密钥以启用网页搜索。',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     '直接调用 Parallel API：搜索、提取、聊天、研究、增强和数据集工具。',
@@ -1316,6 +1318,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     '由 Exa 提供的神经搜索。需要你自己的 Exa API 密钥。新增搜索、查找相似页面和获取页面内容工具。',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    '由 Tavily 提供支持的网页、新闻和财经搜索。需要你自己的 Tavily API 密钥。新增搜索和网页提取工具。',
   'settings.search.statusConfigured': '已配置',
   'settings.search.statusNeedsKey': '需要 API 密钥',
   'settings.search.fallbackToManaged': '未配置密钥，保存密钥前搜索会回退到托管模式。',
@@ -1336,6 +1341,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API 密钥',
   'settings.search.placeholderExa': '粘贴你的 Exa API 密钥…',
+  'settings.search.tavilyKeyLabel': 'Tavily API 密钥',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': '允许的网站',
   'settings.search.allowedSitesHint':
     '助手在研究时可以打开并阅读的网站（每行一个主机，例如 reuters.com）。主机也包含其子域名。留空将阻止所有网页访问。',
@@ -2465,6 +2472,7 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': '即将推出',
   'memorySources.composioListFailed': '加载 Composio 连接失败。',
   'memorySources.browse': '浏览…',
+  'memorySources.folderPathUnavailable': '无法确定该文件夹的位置。请改为输入其完整路径。',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2487,6 +2495,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': '项已同步',
   'memorySources.sync.upToDate': '已是最新',
   'memorySources.sync.failedLabel': '失败',
+  'memorySources.sync.morePending': '还有更多待同步。请再次点击“同步”',
+  'memorySources.sync.budgetSpent': '今日请求额度已用完。请明天再试',
   'time.justNow': '刚刚',
   'time.secondsAgoSuffix': '秒前',
   'time.minutesAgoSuffix': '分钟前',
@@ -2528,6 +2538,17 @@ const messages: TranslationMap = {
   'memorySources.allIn.failed': '无法应用全部启用。请重试。',
   'memorySources.allIn.allFailed': '没有任何同步能够开始。请检查每个来源以了解原因。',
   'memorySources.allIn.partial': '已开始同步：{triggered}。无法开始：{failed}。',
+  'memorySources.repair.button': '修复较早的记忆',
+  'memorySources.repair.title': '要修复较早的记忆吗？',
+  'memorySources.repair.message':
+    '最多 {scanned} 个已同步的文档在记忆树摄取修复之前保存，因此不会显示在记忆图谱中。摄取它们会消耗嵌入额度。已在记忆树中的文档会被跳过。',
+  'memorySources.repair.confirm': '修复',
+  'memorySources.repair.cancel': '暂不',
+  'memorySources.repair.nothing': '无需修复。没有等待摄取的已同步文档。',
+  'memorySources.repair.success':
+    '已摄取 {ingested} 个到记忆树（{already} 个已存在，{skipped} 个已跳过）。',
+  'memorySources.repair.morePending': '还有剩余。请再次点击“修复较早的记忆”。',
+  'memorySources.repair.failed': '无法修复较早的记忆。',
   'memorySources.settings.button': '设置',
   'memorySources.settings.title': '同步设置',
   'memorySources.settings.maxPrs': '最大拉取请求数',
@@ -2541,7 +2562,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': '无限制',
   'memorySources.settings.unlimitedTooltip':
     '您已选择为 {toolkit} 同步最大数量。您可以在此处更改上限。',
-  'memorySources.settings.maxed': '已满',
   'memorySources.settings.save': '保存',
   'memorySources.settings.saving': '保存中…',
   'memorySources.settings.saved': '设置已保存',
@@ -3164,6 +3184,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': '失败',
   'conversations.subagent.statusAwaitingUser': '等待用户',
   'conversations.subagent.statusCancelled': '已取消',
+  'conversations.subagent.awaitingTitle': '等待你的回答',
+  'conversations.subagent.answerPlaceholder': '输入你的回答',
+  'conversations.subagent.answerSend': '发送回答',
+  'conversations.subagent.answerSent': '回答已发送',
   'conversations.agentTaskInsights.title': '智能体任务洞察',
   'conversations.agentTaskInsights.response': '回复',
   'conversations.agentTaskInsights.processSourceTitle': '智能体处理来源',
@@ -4097,7 +4121,8 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.openingTerminal': '正在打开终端…',
   'settings.ai.claudeCode.signIn': '使用 Claude 登录',
   'settings.ai.claudeCode.reconnect': '重新连接',
-  'settings.ai.claudeCode.loginHint': '打开运行 claude login 的终端。完成后，点击“重新检查”。',
+  'settings.ai.claudeCode.loginHint':
+    '打开运行 claude auth login --claudeai 的终端。完成后，点击“重新检查”。',
   'settings.ai.claudeCode.loginError': '无法打开登录终端。请重试。',
   'settings.ai.claudeCode.fullAccess': '完全访问权限',
   'settings.ai.claudeCode.fullAccessOn': 'Claude Code 可以运行命令、使用网络并生成子智能体。',
@@ -4652,6 +4677,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.webhooks.desc': '检查运行时 Webhook 注册和捕获的请求日志',
   'settings.developerMenu.eventLog.title': '事件日志',
   'settings.developerMenu.eventLog.desc': '实时显示所有智能体、工具和系统事件的彩色编码流',
+  'settings.developerMenu.eventLog.workspaceScope': '工作区范围',
+  'settings.developerMenu.eventLog.workspaceScopeActive': '当前工作区',
+  'settings.developerMenu.eventLog.workspaceScopeAll': '所有工作区',
   'settings.developerMenu.eventLog.allTypes': '所有类型',
   'settings.developerMenu.eventLog.filterAgent': '筛选...',
   'settings.developerMenu.eventLog.download': '下载',
@@ -4659,6 +4687,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': '实时',
   'settings.developerMenu.eventLog.disconnected': '已断开连接',
   'settings.developerMenu.eventLog.waiting': '正在等待事件...',
+  'settings.developerMenu.eventLog.waitingHint':
+    '当智能体、工具和系统开始工作时，事件会显示在这里。目前还没有任何事件。',
+  'settings.developerMenu.eventLog.notConnectedHint': '重新连接到核心以恢复事件流。',
   'settings.developerMenu.eventLog.notConnected': '未连接到核心',
   'settings.developerMenu.eventLog.jumpToLatest': '跳到最新',
   'settings.developerMenu.eventLog.badge.tool': '工具',
@@ -5718,6 +5749,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': '路由提示',
   'settings.agents.editor.modelTiers': '模型层级',
   'settings.agents.editor.modelCustom': '自定义模型 ID…',
+  'settings.agents.editor.modelManaged': '托管模型',
   'settings.agents.editor.modelCustomPlaceholder': '例如 anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': '添加工具',
   'settings.agents.editor.toolsAllSelected': '所有工具',
@@ -5859,6 +5891,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': '密钥存储模式',
   'keyring.settings.mode.osKeychain': '操作系统密钥链',
   'keyring.settings.mode.encryptedFile': '本地加密',
+  'keyring.settings.mode.localEncryptedFile': '加密文件',
+  'keyring.settings.mode.localPlaintextFile': '未加密文件',
   'keyring.settings.mode.consentPending': '未配置',
   'keyring.settings.mode.declined': '已拒绝',
   'keyring.settings.availability': '密钥链可用性',
@@ -6171,6 +6205,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': '本地模型不可用',
   'userErrors.localModelUnavailable.body':
     '无法在配置的端点连接 Ollama，或所需模型未安装在该端点。请启动 Ollama 并在该端点拉取模型，或将此工作切换到云端提供商。',
+  'userErrors.replyDeliveryFailed.title': '无法显示回复',
+  'userErrors.replyDeliveryFailed.body':
+    '智能体已完成这一轮，但它的回复既没能保存也没能重新读取。再问一次即可让它重复回复。',
   'userErrors.memoryStoreCorrupt.title': '记忆索引已损坏',
   'userErrors.memoryStoreCorrupt.body':
     '记忆树使用的数据库已损坏。受损文件已保留在记忆数据旁边，并已重建一个空索引。请重新同步记忆来源以重新填充。',
@@ -6213,6 +6250,23 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '删除',
   'flows.delete.deleting': '正在删除…',
   'flows.canvas.renameLabel': '重命名工作流',
+  'settings.ai.openaiOauthTitle': '使用 ChatGPT 登录',
+  'settings.ai.openaiOauthDescription':
+    '使用 ChatGPT 账户登录，无需 API 密钥即可使用 OpenAI 模型。',
+  'settings.ai.openaiOauthConnect': '使用 ChatGPT 登录',
+  'settings.ai.openaiOauthConnected': '已连接 ChatGPT',
+  'settings.ai.openaiOauthOpening': '正在打开登录页面…',
+  'settings.ai.openaiOauthCallbackHint':
+    '登录后，请粘贴浏览器中的完整重定向 URL（以 http://127.0.0.1:1455/ 开头）。',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': '完成 ChatGPT 登录',
+  'settings.ai.openaiOauthDisconnect': '断开 ChatGPT 连接',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 登录仅在桌面应用中可用。',
+  'settings.ai.openaiOauthStartError': '无法开始 ChatGPT 登录。请重试或使用 API 密钥。',
+  'settings.ai.openaiOauthCompleteError': 'ChatGPT 登录未完成。请检查重定向 URL 后重试。',
+  'settings.ai.openaiOauthCallbackRequired': '登录后，请粘贴浏览器中的重定向 URL。',
+  'settings.ai.openaiOauthDisconnectError': '无法断开 ChatGPT 连接，请重试。',
   'memorySources.codingSessions.title': '编程智能体会话',
   'memorySources.codingSessions.description':
     '将 Codex 和 Claude Code 中的决策与纠正转化为私有人格记忆。',
@@ -6249,6 +6303,7 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': '仅已导入',
   'sync.pipeline.storedWithoutVectors': '已存储但无向量。语义搜索不可用。',
+  'sync.pipeline.vectorsPending': '等待向量的片段：{count} 个。语义搜索很快会覆盖它们。',
   'sync.pipeline.signInToEnable': '登录以启用',
   'sync.pipeline.extractionFailed': '记忆结构提取失败。维基可能不完整。',
   'sync.pipeline.treeDegraded': '记忆树已降级。检索可能返回过时的结果。',

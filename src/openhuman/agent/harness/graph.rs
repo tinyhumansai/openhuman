@@ -17,7 +17,9 @@
 //! **Available tools.** Reuses the bus handler's `Arc`-shared tool sets
 //! (`tools_registry: Arc<Vec<Box<dyn Tool>>>` + per-turn `extra_tools`),
 //! advertised via `SharedToolAdapter`
-//! and filtered by `visible_tool_names`. No early-exit tools on this path.
+//! and filtered by `visible_tool_names`. `ask_user_clarification` is the
+//! early-exit tool: it pauses the turn and returns its question as the turn's
+//! text, which the channel relays as the reply.
 //!
 //! **Summarization.** [`run_channel_turn_via_graph`] resolves the model's
 //! effective context window before dispatch so the shared seam runs the
@@ -130,8 +132,11 @@ pub(crate) async fn run_channel_turn_via_graph(
         context_window,
         // No mid-flight steering on the channel path.
         None,
-        // No early-exit pause on the channel path.
-        &[],
+        // Same pause as the chat path: a channel turn's continuation is the
+        // user's next message, so ending the turn on the question is the whole
+        // mechanism. Without this the model answers its own question (see
+        // `session/turn/graph.rs`).
+        &["ask_user_clarification"],
         // Channels surface the cap as an error (legacy `ErrorCheckpoint`), so no
         // graceful cap pause/summary here.
         false,
@@ -173,6 +178,13 @@ pub(crate) async fn run_channel_turn_via_graph(
             .to_provider_messages(&outcome.conversation)
     };
     history.extend(suffix);
+    if outcome.early_exit_tool.is_some() {
+        // Paused on `ask_user_clarification`: the suffix ends on the tool result
+        // and there is no final assistant turn, so `outcome.text` (the question)
+        // stands in for one. Without this the next turn's history would not show
+        // that the agent had asked anything.
+        history.push(ChatMessage::assistant(outcome.text.clone()));
+    }
     Ok(outcome.text)
 }
 

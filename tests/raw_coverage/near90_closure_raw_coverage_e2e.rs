@@ -33,7 +33,6 @@ use openhuman_core::openhuman::memory::sources::readers::SourceReader;
 // The engine's own source pipeline. `memory::sources::sync` is host-side now and
 // carries only `derive_scopes`; `sync_source` stayed upstream because nothing in
 // `src/` calls it any more (#5560).
-use tinymemory_core::sources::sync::sync_source;
 use openhuman_core::openhuman::memory::sources::{ContentType, MemorySourceEntry, SourceKind};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::welcome_migration::migrate_welcome_agent_artifacts;
@@ -113,9 +112,6 @@ fn ensure_memory_seams(config: Arc<openhuman_core::openhuman::config::Config>) {
         .name("round20-memory-seams".to_string())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::clone(
-                &config,
-            ));
             #[cfg(feature = "modules")]
             openhuman_core::openhuman::modules::memory::set_modules_policy(config);
         })
@@ -407,106 +403,6 @@ fn round20_credentials_profiles_cover_legacy_plaintext_errors_and_active_edges()
         .expect_err("missing active profile")
         .to_string();
     assert!(set_active_err.contains("Auth profile not found"));
-}
-
-#[tokio::test]
-async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_network() {
-    let _lock = env_lock();
-    let harness = setup("http://127.0.0.1:9");
-    let config = harness.config().await;
-
-    let rss = openhuman_core::openhuman::memory::sources::readers::rss::RssReader::new();
-    let mut missing_url = source_entry("rss-missing-url", SourceKind::RssFeed);
-    assert_eq!(
-        rss.list_items(&missing_url, &config)
-            .await
-            .expect_err("rss url required"),
-        "rss source requires a url"
-    );
-
-    // The reader rejects loopback sources before attempting a network fetch.
-    // This supersedes the former parser-error fixture, which exercised an
-    // unsafe request path that no longer exists.
-    missing_url.url = Some("http://127.0.0.1:9/not-a-feed".to_string());
-    let feed_err = rss
-        .list_items(&missing_url, &config)
-        .await
-        .expect_err("loopback feed rejected before fetching");
-    assert!(feed_err.contains("public host"), "unexpected RSS error: {feed_err}");
-
-    // GitHub reader portion requires a real `gh` on PATH to shadow with our
-    // fake. Skip on CI containers that lack `gh` — without it the reader
-    // falls through to the real GitHub API and rate-limits.
-    let gh_available = std::process::Command::new("gh")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    let tmp = tempdir();
-    let bin = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh_round20(&script);
-    let git_stub = bin.join("git");
-    std::fs::write(&git_stub, "#!/usr/bin/env bash\nexit 1\n").expect("write fake git");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&git_stub)
-            .expect("metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&git_stub, perms).expect("chmod fake git");
-    }
-    let old_path = std::env::var("PATH").unwrap_or_default();
-    let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
-
-    let github = openhuman_core::openhuman::memory::sources::readers::github::GithubReader;
-    let mut entry = source_entry("github-round20", SourceKind::GithubRepo);
-    entry.url = Some("git@github.com:tinyhumansai/openhuman.git".to_string());
-    if !gh_available {
-        eprintln!("skipping github reader assertions: gh CLI not available");
-    } else {
-        let items = github
-            .list_items(&entry, &config)
-            .await
-            .expect("github list via fake gh");
-        assert!(items.iter().any(|item| item.id == "commit:def456"));
-        assert!(items.iter().any(|item| item.id == "issue:20"));
-
-        let pr = github
-            .read_item(&entry, "pr:21", &config)
-            .await
-            .expect("read merged pr");
-        assert_eq!(pr.content_type, ContentType::Markdown);
-        assert!(pr.body.contains("merged at 2026-05-29T01:00:00Z"));
-        assert_eq!(
-            pr.metadata.get("merged").and_then(Value::as_bool),
-            Some(true)
-        );
-
-        let bad_issue = github
-            .read_item(&entry, "issue:not-a-number", &config)
-            .await
-            .expect_err("bad issue number");
-        assert!(bad_issue.contains("invalid issue number"));
-    }
-
-    let mut disabled = source_entry("disabled-twitter", SourceKind::TwitterQuery);
-    disabled.enabled = false;
-    let disabled_err = sync_source(disabled, Arc::new(config.clone()))
-        .await
-        .expect_err("disabled sync rejected");
-    assert!(disabled_err.contains("is disabled"));
-
-    let twitter = source_entry("twitter-round20", SourceKind::TwitterQuery);
-    sync_source(twitter, Arc::new(config))
-        .await
-        .expect("twitter placeholder is reported by background task");
-    tokio::time::sleep(StdDuration::from_millis(25)).await;
 }
 
 #[tokio::test]

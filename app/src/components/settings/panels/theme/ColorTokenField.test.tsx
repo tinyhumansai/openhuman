@@ -16,7 +16,11 @@ describe('ColorTokenField', () => {
     );
 
     expect(screen.getByText('Canvas')).toBeInTheDocument();
-    expect(screen.getByText('--surface-canvas · #2f6ef4')).toBeInTheDocument();
+    // The token id and the hex used to be one interpolated description string
+    // on the far side of the row from the swatch. They are separate spans beside
+    // the swatch now, so they are asserted separately.
+    expect(screen.getByText('--surface-canvas')).toBeInTheDocument();
+    expect(screen.getByText('#2f6ef4')).toBeInTheDocument();
   });
 
   it('exposes the native colour swatch with the converted hex value and an accessible name', () => {

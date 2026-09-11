@@ -32,7 +32,8 @@ use crate::openhuman::agent::harness::subagent_runner::handoff::ResultHandoffCac
 use crate::openhuman::agent::harness::subagent_runner::subagent_iter_cap_with_autonomous_lift;
 use crate::openhuman::agent::harness::subagent_runner::tool_prep::{
     build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
-    load_prompt_source, top_k_for_toolkit,
+    load_prompt_source, select_actions_with_essentials, strip_spawn_tools_from_dynamic,
+    top_k_for_toolkit,
 };
 use crate::openhuman::agent::harness::subagent_runner::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
@@ -1072,15 +1073,26 @@ async fn run_typed_mode(
                 let selected: Vec<
                     &crate::openhuman::agent::context::prompt::ConnectedIntegrationTool,
                 > = if filter_hits.len() >= super::super::super::tool_filter::MIN_CONFIDENT_HITS {
+                    // The ranker's verb gate can drop every content-returning
+                    // action for a find/search prompt, so the toolkit's
+                    // essentials are reserved inside the same budget (#6033).
+                    let kept_idx =
+                        select_actions_with_essentials(tk, &integration.tools, &filter_hits, top_k);
+                    let kept: Vec<_> = kept_idx.iter().map(|&i| &integration.tools[i]).collect();
                     tracing::info!(
                         agent_id = %definition.id,
                         toolkit = %tk,
                         total = integration.tools.len(),
-                        kept = filter_hits.len(),
+                        kept = kept.len(),
                         top_k = top_k,
+                        kept_actions = %kept
+                            .iter()
+                            .map(|a| a.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
                         "[subagent_runner:typed] fuzzy tool filter narrowed toolkit"
                     );
-                    filter_hits.iter().map(|&i| &integration.tools[i]).collect()
+                    kept
                 } else {
                     tracing::info!(
                         agent_id = %definition.id,
@@ -1224,13 +1236,18 @@ async fn run_typed_mode(
         None
     };
 
+    // Dynamic tools never pass through `allowed_indices`, so the strip above has
+    // not seen them — the one route by which a spawn/delegate name can reach a
+    // child admitted (issue #6157). Strip before their five consumers below.
+    strip_spawn_tools_from_dynamic(&mut dynamic_tools, &definition.id);
+
     // Build provider-visible tool schemas in EXECUTION-PRECEDENCE order:
     // `dynamic_tools` (extra_tools at runtime) before parent specs.
     let mut filtered_specs: Vec<ToolSpec> = dynamic_tools.iter().map(|t| t.spec()).collect();
     filtered_specs.extend(
         allowed_indices
             .iter()
-            .map(|&i| parent.all_tool_specs[i].clone()),
+            .map(|&i| parent.all_tool_specs[i].as_ref().clone()),
     );
     let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
@@ -1644,58 +1661,25 @@ async fn run_typed_mode(
             .checkpoint_dir
             .clone()
             .unwrap_or_else(|| parent.workspace_dir.join(".openhuman/subagent_checkpoints"));
-        if let Err(e) = std::fs::create_dir_all(&checkpoint_dir) {
-            tracing::warn!(
-                task_id = %task_id,
-                error = %e,
-                "[subagent_runner] failed to create checkpoint directory"
-            );
-        } else {
-            let checkpoint_data =
-                crate::openhuman::agent::harness::subagent_runner::types::SubagentCheckpointData {
-                    task_id: task_id.to_string(),
-                    agent_id: definition.id.clone(),
-                    worker_thread_id: options.worker_thread_id.clone(),
-                    history: history.clone(),
-                    question: question.clone(),
-                    options: options_vec.clone(),
-                    toolkit_override: options.toolkit_override.clone(),
-                    skill_filter_override: options.skill_filter_override.clone(),
-                    model_override: options.model_override.clone(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                };
-            let checkpoint_path = checkpoint_dir.join(format!("{task_id}.json"));
-            match serde_json::to_string_pretty(&checkpoint_data) {
-                Ok(json) => {
-                    if let Err(e) = std::fs::write(&checkpoint_path, json) {
-                        tracing::warn!(
-                            task_id = %task_id,
-                            path = %checkpoint_path.display(),
-                            error = %e,
-                            "[subagent_runner] failed to write checkpoint"
-                        );
-                    } else {
-                        tracing::info!(
-                            task_id = %task_id,
-                            path = %checkpoint_path.display(),
-                            history_len = history.len(),
-                            "[subagent_runner] checkpoint written for awaiting_user"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        task_id = %task_id,
-                        error = %e,
-                        "[subagent_runner] failed to serialize checkpoint"
-                    );
-                }
-            }
-        }
+        let checkpoint_data =
+            crate::openhuman::agent::harness::subagent_runner::types::SubagentCheckpointData {
+                task_id: task_id.to_string(),
+                agent_id: definition.id.clone(),
+                worker_thread_id: options.worker_thread_id.clone(),
+                history: history.clone(),
+                question: question.clone(),
+                options: options_vec.clone(),
+                toolkit_override: options.toolkit_override.clone(),
+                skill_filter_override: options.skill_filter_override.clone(),
+                model_override: options.model_override.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+        let checkpoint = super::pause_checkpoint::write(&checkpoint_dir, task_id, &checkpoint_data);
 
         crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus::AwaitingUser {
             question,
             options: options_vec,
+            checkpoint,
         }
     } else if let Some(reason) = breaker_halt {
         // The repeated-failure / repeat-progress circuit breaker halted the run
@@ -1760,6 +1744,7 @@ async fn run_typed_mode(
         artifact_paths: Vec::new(),
     })
 }
+
 #[cfg(test)]
 #[path = "runner_fast_path_tests_tests.rs"]
 mod fast_path_tests;

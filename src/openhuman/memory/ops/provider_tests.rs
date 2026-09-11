@@ -20,6 +20,10 @@ async fn status_without_a_context_reports_an_unresolved_slot() {
 
 #[tokio::test]
 async fn bound_driver_status_reports_id_class_contract_and_capabilities() {
+    // `health` below is `degraded` for as long as the module is loading, and
+    // the load is process-wide: without this the assertion races whichever
+    // sibling test asked for the module first (openhuman#6172).
+    crate::openhuman::memory::test_support::settle_memory_module().await;
     let workspace = tempfile::tempdir().expect("tempdir");
     let cfg = crate::openhuman::config::schema::MemorySubsystemConfig::default();
     let binding = crate::openhuman::memory::binding::for_workspace(workspace.path(), &cfg)

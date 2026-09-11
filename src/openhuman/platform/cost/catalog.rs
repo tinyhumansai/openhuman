@@ -42,7 +42,7 @@
 use crate::openhuman::config::schema::ModelRegistryEntry;
 
 /// Month the published values below were last verified. Bump when refreshing.
-pub const PRICING_AS_OF: &str = "2026-06";
+pub const PRICING_AS_OF: &str = "2026-07";
 
 const TINYAGENTS_CATALOG_SOURCE: &str = "openhuman-cost-catalog";
 
@@ -332,6 +332,30 @@ const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
         output_per_mtok_usd: 0.10,
         context_window: 128_000,
     },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m3",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.12,
+        output_per_mtok_usd: 2.40,
+        context_window: 1_000_000,
+    },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m2.7",
+        input_per_mtok_usd: 0.30,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 1.20,
+        context_window: 204_800,
+    },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m2.7-highspeed",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 2.40,
+        context_window: 204_800,
+    },
 ];
 
 /// Normalise a model string for matching: lower-case, trim, drop a trailing
@@ -425,6 +449,11 @@ pub fn estimate_cost_usd(
     };
     let cached = cached_input_tokens.min(input_tokens);
     let standard_input = input_tokens.saturating_sub(cached);
+    if p.model_id == "minimax-m3" && input_tokens <= 512_000 {
+        return (standard_input as f64) * 0.30 / 1_000_000.0
+            + (cached as f64) * 0.06 / 1_000_000.0
+            + (output_tokens as f64) * 1.20 / 1_000_000.0;
+    }
     let per_tok = |mtok_rate: f64| mtok_rate / 1_000_000.0;
     (standard_input as f64) * per_tok(p.input_per_mtok_usd)
         + (cached as f64) * per_tok(p.cached_input_per_mtok_usd)
@@ -444,13 +473,21 @@ pub fn default_registry_entries() -> Vec<ModelRegistryEntry> {
             cost_per_1m_cached_input: p.cached_input_per_mtok_usd,
             cost_per_1m_output: p.output_per_mtok_usd,
             context_window: p.context_window,
-            vision: false,
+            vision: model_accepts_image_input(p.model_id),
         })
         .collect()
 }
 
 fn per_token(rate_per_mtok: f64) -> Option<f64> {
     (rate_per_mtok > 0.0).then_some(rate_per_mtok / 1_000_000.0)
+}
+
+const VISION_INPUT_MODELS: &[&str] = &["minimax-m3"];
+
+pub fn model_accepts_image_input(model_id: &str) -> bool {
+    let normalized = normalize(model_id);
+    let bare = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    VISION_INPUT_MODELS.contains(&normalized.as_str()) || VISION_INPUT_MODELS.contains(&bare)
 }
 
 /// Project one OpenHuman catalog row into a TinyAgents model-catalog entry.
@@ -478,6 +515,7 @@ pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents_registry::Mode
         },
         capabilities: tinyagents_registry::ModelCapabilities {
             prompt_caching: price.cached_input_per_mtok_usd > 0.0,
+            vision: model_accepts_image_input(price.model_id),
             ..tinyagents_registry::ModelCapabilities::default()
         },
         source: TINYAGENTS_CATALOG_SOURCE.to_string(),
@@ -663,7 +701,8 @@ pub fn tinyagents_catalog_snapshot() -> tinyagents_registry::ModelCatalogSnapsho
 
 /// Pre-fill any **missing** (zero) price or context-window field on a registry
 /// entry from the catalog, matching on its `id`. Leaves user-supplied non-zero
-/// values and the `vision` flag untouched. Returns `true` when a field was
+/// values. Catalogued image-capable models also receive `vision: true` when
+/// the entry has the default false value. Returns `true` when a field was
 /// filled in.
 pub fn enrich_entry(entry: &mut ModelRegistryEntry) -> bool {
     let Some(price) = lookup(&entry.id) else {
@@ -684,6 +723,10 @@ pub fn enrich_entry(entry: &mut ModelRegistryEntry) -> bool {
     }
     if entry.context_window == 0 {
         entry.context_window = price.context_window;
+        changed = true;
+    }
+    if !entry.vision && model_accepts_image_input(price.model_id) {
+        entry.vision = true;
         changed = true;
     }
     changed

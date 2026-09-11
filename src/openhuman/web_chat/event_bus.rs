@@ -299,6 +299,33 @@ pub fn fresh_approval_surface_subscription() -> Option<SubscriptionHandle> {
     crate::core::bus::BUS.subscribe(Arc::new(ApprovalSurfaceSubscriber))
 }
 
+/// Build the `approval_request` web-channel event for a parked approval.
+///
+/// Shared by the live surface below (on `ApprovalRequested`) and by the replay
+/// path in `core::socketio` (a socket joining a thread room that already has an
+/// approval parked on it). One constructor so a client that missed the live
+/// emit is handed a byte-identical payload rather than a second shape kept in
+/// step by hand.
+pub fn approval_request_event(
+    request_id: &str,
+    tool_name: &str,
+    action_summary: &str,
+    args_redacted: &serde_json::Value,
+    thread_id: &str,
+    client_id: &str,
+) -> WebChannelEvent {
+    WebChannelEvent {
+        event: "approval_request".to_string(),
+        client_id: client_id.to_string(),
+        thread_id: thread_id.to_string(),
+        request_id: request_id.to_string(),
+        tool_name: Some(tool_name.to_string()),
+        message: Some(format!("Run `{tool_name}` — {action_summary}")),
+        args: Some(args_redacted.clone()),
+        ..Default::default()
+    }
+}
+
 struct ApprovalSurfaceSubscriber;
 
 #[async_trait]
@@ -324,20 +351,17 @@ impl EventHandler<DomainEvent> for ApprovalSurfaceSubscriber {
         {
             match (thread_id, client_id) {
                 (Some(thread_id), Some(client_id)) => {
-                    let question = format!("Run `{tool_name}` — {action_summary}");
                     log::info!(
                         "[web-channel] approval-surface emitting approval_request request_id={request_id} thread_id={thread_id} client_id={client_id} tool={tool_name}"
                     );
-                    publish_web_channel_event(WebChannelEvent {
-                        event: "approval_request".to_string(),
-                        client_id: client_id.clone(),
-                        thread_id: thread_id.clone(),
-                        request_id: request_id.clone(),
-                        tool_name: Some(tool_name.clone()),
-                        message: Some(question),
-                        args: Some(args_redacted.clone()),
-                        ..Default::default()
-                    });
+                    publish_web_channel_event(approval_request_event(
+                        request_id,
+                        tool_name,
+                        action_summary,
+                        args_redacted,
+                        thread_id,
+                        client_id,
+                    ));
                 }
                 _ => {
                     log::warn!(

@@ -15,12 +15,14 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
 use crate::openhuman::channels::traits::{ChannelMessage, SendMessage};
 use crate::openhuman::channels::Channel;
+use crate::openhuman::channels::ChannelSystemPrompt;
 use crate::openhuman::config::{MultimodalConfig, MultimodalFileConfig, ReliabilityConfig};
 use crate::openhuman::inference::provider::ProviderRuntimeOptions;
 use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -41,6 +43,61 @@ pub struct DispatchHarnessOptions {
     pub timeout_secs: u64,
     pub seed_history_len: usize,
     pub memory_entries: Vec<TestMemoryEntry>,
+    /// Workspace the runtime context reports; `None` falls back to the OS temp dir.
+    ///
+    /// `pub`, like every other field here, and it has to be: integration tests
+    /// under `tests/` are a separate crate, and a struct-update expression
+    /// (`..DispatchHarnessOptions::default()`) requires **every** field to be
+    /// visible — including the ones the caller never names. Added as
+    /// `pub(crate)` in `a45b1c1af`, which broke three of them with E0451.
+    pub workspace_dir: Option<PathBuf>,
+    /// The prompt every dispatch is seeded with; the default pins a fixed literal.
+    /// Pass one `ChannelSystemPrompt::refreshing` clone to several dispatches
+    /// to observe a re-render across them.
+    ///
+    /// Wrapped in [`HarnessSystemPrompt`] rather than exposing
+    /// `Option<ChannelSystemPrompt>` — see that type for why.
+    pub system_prompt: HarnessSystemPrompt,
+}
+
+/// Opaque carrier for the harness's system prompt.
+///
+/// [`DispatchHarnessOptions`] is `pub` and integration tests build it with
+/// `..DispatchHarnessOptions::default()`, so every field must be visible from
+/// another crate. The prompt itself must **not** become visible with it:
+/// `ChannelSystemPrompt` is `pub(crate)`, its `Refreshing` variant wraps a
+/// `Mutex`-backed render cache (`RefreshingInner`), and widening it would
+/// cascade to `RefreshingInner` and `ChannelPromptInputs` — production types
+/// with real invariants — purely to satisfy a test harness. A `pub` field of a
+/// `pub(crate)` type is also exactly what the `private_interfaces` lint exists
+/// to catch, and `-D warnings` makes that a hard error.
+///
+/// A `pub` newtype with a **private** field settles both: the field is visible,
+/// the type inside it is not. An out-of-crate caller can therefore only ever
+/// get the default (no prompt), which is all those tests want; in-crate tests
+/// set one with [`HarnessSystemPrompt::new`].
+#[derive(Clone, Default)]
+pub struct HarnessSystemPrompt(Option<ChannelSystemPrompt>);
+
+impl HarnessSystemPrompt {
+    /// Seed the harness with `prompt`. Crate-internal, because the prompt is.
+    pub(crate) fn new(prompt: ChannelSystemPrompt) -> Self {
+        Self(Some(prompt))
+    }
+
+    /// The prompt, if one was set.
+    pub(crate) fn into_inner(self) -> Option<ChannelSystemPrompt> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for HarnessSystemPrompt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(prompt) => f.debug_tuple("HarnessSystemPrompt").field(prompt).finish(),
+            None => f.write_str("HarnessSystemPrompt(default)"),
+        }
+    }
 }
 
 impl Default for DispatchHarnessOptions {
@@ -58,6 +115,8 @@ impl Default for DispatchHarnessOptions {
             timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             seed_history_len: 0,
             memory_entries: Vec::new(),
+            workspace_dir: None,
+            system_prompt: HarnessSystemPrompt::default(),
         }
     }
 }
@@ -486,6 +545,15 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         );
     }
 
+    let harness_system_prompt = options
+        .system_prompt
+        .clone()
+        .into_inner()
+        .unwrap_or_else(|| ChannelSystemPrompt::fixed("system prompt"));
+    let harness_workspace_dir = options
+        .workspace_dir
+        .clone()
+        .unwrap_or_else(std::env::temp_dir);
     let ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
         turn_model_source: Some(
@@ -500,7 +568,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
                 .collect(),
         })),
         tools_registry: Arc::new(vec![Box::new(HarnessTool) as Box<dyn Tool>]),
-        system_prompt: Arc::new("system prompt".to_string()),
+        system_prompt: harness_system_prompt,
         model: Arc::new("harness-model".to_string()),
         temperature: 0.0,
         auto_save_memory: true,
@@ -513,7 +581,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         inference_url: None,
         reliability: Arc::new(ReliabilityConfig::default()),
         provider_runtime_options: ProviderRuntimeOptions::default(),
-        workspace_dir: Arc::new(std::env::temp_dir()),
+        workspace_dir: Arc::new(harness_workspace_dir),
         message_timeout_secs: options.timeout_secs,
         multimodal: MultimodalConfig::default(),
         multimodal_files: MultimodalFileConfig::default(),

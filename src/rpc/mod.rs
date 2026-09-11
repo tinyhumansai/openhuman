@@ -44,9 +44,9 @@ impl<T: Serialize> RpcOutcome<T> {
 
     /// Converts the outcome into a CLI-compatible JSON value.
     ///
-    /// The resulting JSON shape matches the core CLI expectations:
-    /// - If no logs are present, the value is returned directly.
-    /// - If logs are present, an object with `result` and `logs` keys is returned.
+    /// The shape is decided by [`apply_log_envelope`], which is the single
+    /// definition of the rule — see its docs for the rule itself and for why
+    /// having one definition matters (#6080).
     ///
     /// # Errors
     ///
@@ -54,11 +54,46 @@ impl<T: Serialize> RpcOutcome<T> {
     pub fn into_cli_compatible_json(self) -> Result<serde_json::Value, String> {
         let RpcOutcome { value, logs } = self;
         let value = serde_json::to_value(value).map_err(|e| e.to_string())?;
-        if logs.is_empty() {
-            Ok(value)
-        } else {
-            Ok(json!({ "result": value, "logs": logs }))
-        }
+        Ok(apply_log_envelope(value, logs))
+    }
+}
+
+/// Apply the log envelope to an already-serialized handler value.
+///
+/// **This is the one definition of the rule.** Both controller return paths go
+/// through it:
+///
+///  * the registry path — every `RpcOutcome::into_cli_compatible_json` call
+///    (152 call sites across the domains), and
+///  * the dynamic-dispatch path — `core::types::invocation_to_rpc_json`, used
+///    by `core::dispatch` for internal / legacy methods.
+///
+/// # The rule, and the defect it currently encodes (#6080)
+///
+/// ```text
+/// logs.is_empty()  ->  value                            (bare)
+/// otherwise        ->  { "result": value, "logs": … }   (wrapped)
+/// ```
+///
+/// So a controller's **wire shape is decided by its log vector, not by its
+/// schema**. Two methods in one namespace can answer differently, and a handler
+/// that later gains a log line silently changes its own response shape with no
+/// schema change — which is #6080. That defect is deliberately **preserved
+/// byte-for-byte here**: normalising it is a wire change across every
+/// controller and needs a maintainer's ruling, not a quiet fix inside a
+/// refactor.
+///
+/// What this function buys today is that the rule exists **once**. Before it,
+/// the same six lines were written independently in `rpc::RpcOutcome` and in
+/// `core::types::invocation_to_rpc_json`; a fix applied to one would have left
+/// the other on the old behaviour, and nothing linked them. When the ruling
+/// lands, this is the only body that has to change.
+#[must_use]
+pub fn apply_log_envelope(value: serde_json::Value, logs: Vec<String>) -> serde_json::Value {
+    if logs.is_empty() {
+        value
+    } else {
+        json!({ "result": value, "logs": logs })
     }
 }
 

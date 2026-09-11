@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { useT } from '../lib/i18n/I18nContext';
 import { isAnalyticsEnabled } from '../services/analytics';
-import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL } from '../utils/config';
+import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL, SUPPORT_URL_ACCEPTS_REF } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
 import { safeInvoke as invoke } from '../utils/tauriCommands/common';
 
@@ -71,6 +71,15 @@ export default function ErrorFallbackScreen({
 
   const openSupport = () => {
     if (!hasEventId) return;
+    // Only a configured support endpoint can consume the ref. The default
+    // destination is a Discord invite, which renders a join page and drops the
+    // query — appending one there would look like it carried the crash id
+    // while doing nothing (tinysweeper on #5953). The Error ID stays copyable
+    // above, which is how it reaches a Discord thread.
+    if (!SUPPORT_URL_ACCEPTS_REF) {
+      openUrl(SUPPORT_URL);
+      return;
+    }
     // `&` when SUPPORT_URL already carries a query (env override) so the ref
     // never produces a malformed double-`?` link.
     const sep = SUPPORT_URL.includes('?') ? '&' : '?';

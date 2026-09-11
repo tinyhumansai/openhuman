@@ -207,6 +207,8 @@ fn publish_and_subscribe_deliver_event() {
         deep_link: None,
         timestamp_ms: 0,
         actions: None,
+        workspace: None,
+        workspace_revision: None,
     };
 
     let sent = publish_core_notification(evt.clone());
@@ -243,6 +245,8 @@ fn publish_with_no_subscribers_does_not_panic() {
         deep_link: None,
         timestamp_ms: 42,
         actions: None,
+        workspace: None,
+        workspace_revision: None,
     });
     // count is 0 when no subscribers, but the call itself must not panic.
     let _ = count;
@@ -319,4 +323,86 @@ async fn subscriber_without_config_does_not_persist_but_still_translates() {
         .await;
     // Nothing to assert beyond "did not panic / persist" — the translation is
     // covered by event_to_notification tests above.
+}
+
+// ── event_to_notification: workspace identity (#5966) ──────────────────────
+
+/// A workspace-bound notification carries its workspace's handle, so the
+/// receiver can re-check routing when it renders instead of trusting the
+/// publish-time gate — which resolves the active workspace and then sends,
+/// two steps a switch can slip between.
+#[test]
+fn a_workspace_bound_notification_carries_its_workspace_handle() {
+    let workspace = std::path::PathBuf::from("/tmp/openhuman-ws-a");
+    let n = event_to_notification(&DomainEvent::McpServerParked {
+        server_id: "srv-1".into(),
+        qualified_name: "ac.inference.sh/mcp".into(),
+        error: "launcher runtime missing".into(),
+        workspace_dir: workspace.clone(),
+    })
+    .expect("a parked server notifies");
+
+    assert_eq!(
+        n.workspace,
+        Some(crate::openhuman::config::workspace_handle(&workspace))
+    );
+}
+
+/// The handle is what goes on the wire *instead of* the path. This payload
+/// reaches every connected client, so a regression that forwarded
+/// `workspace_dir` would put the user's home directory in front of all of
+/// them.
+#[test]
+fn the_notification_handle_is_not_the_path() {
+    let workspace =
+        std::path::PathBuf::from("/Users/rumpelstiltskin/.openhuman/users/abc/workspace");
+    let n = event_to_notification(&DomainEvent::McpServerParked {
+        server_id: "srv-1".into(),
+        qualified_name: "ac.inference.sh/mcp".into(),
+        error: "launcher runtime missing".into(),
+        workspace_dir: workspace,
+    })
+    .expect("a parked server notifies");
+
+    let handle = n.workspace.expect("bound events carry a handle");
+    assert!(
+        !handle.contains("rumpelstiltskin"),
+        "handle leaked the path: {handle}"
+    );
+    assert!(
+        !handle.contains('/'),
+        "handle leaked a path separator: {handle}"
+    );
+}
+
+/// Two different workspaces must be distinguishable, or the receiver's check
+/// passes for everything and the routing is decorative.
+#[test]
+fn different_workspaces_produce_different_notification_handles() {
+    let parked = |dir: &str| {
+        event_to_notification(&DomainEvent::McpServerParked {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            error: "launcher runtime missing".into(),
+            workspace_dir: std::path::PathBuf::from(dir),
+        })
+        .expect("a parked server notifies")
+        .workspace
+    };
+    assert_ne!(parked("/tmp/openhuman-ws-a"), parked("/tmp/openhuman-ws-b"));
+}
+
+/// Cron, webhook, sub-agent and rejected-API-key notifications are not bound
+/// to a workspace and apply wherever they land. Stamping them with one would
+/// make the receiver drop them the moment the user switched.
+#[test]
+fn a_process_wide_notification_names_no_workspace() {
+    let n = event_to_notification(&DomainEvent::CronJobCompleted {
+        job_id: "daily-digest".into(),
+        success: true,
+        output: String::new(),
+    })
+    .expect("a completed cron job notifies");
+
+    assert_eq!(n.workspace, None);
 }

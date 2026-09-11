@@ -123,3 +123,43 @@ fn only_managed_counts_toward_budget() {
     assert!(CostRoute::Managed.counts_toward_budget());
     assert!(!CostRoute::Byok.counts_toward_budget());
 }
+
+/// The managed backend's OpenRouter passthrough bills managed credits, so its
+/// `openrouter/<author>/<slug>` ids must count toward the local managed cap.
+/// They are not tier slugs, so before this they fell to the `Byok` default and
+/// managed spend silently stopped being counted.
+#[test]
+fn managed_openrouter_passthrough_ids_are_managed() {
+    for model in [
+        "openrouter/deepseek/deepseek-v4-flash",
+        "openrouter/anthropic/claude-sonnet-4.5",
+        // decorations must normalize away first, in either order
+        "hint:openrouter/deepseek/deepseek-v4-flash",
+        "openhuman/openrouter/deepseek/deepseek-v4-flash",
+        "  OpenRouter/DeepSeek/DeepSeek-V4-Flash  ",
+    ] {
+        assert_eq!(route_for_model(model), CostRoute::Managed, "{model}");
+    }
+}
+
+/// A BYOK OpenRouter provider addresses models by their bare upstream slug, so
+/// those must stay BYOK. Only the `openrouter/` qualifier means managed
+/// passthrough, and only with exactly `<author>/<slug>` after it.
+#[test]
+fn byok_openrouter_slugs_and_malformed_passthrough_ids_stay_byok() {
+    for model in [
+        // bare upstream slug — what a BYOK openrouter provider sends
+        "deepseek/deepseek-v4-flash",
+        // wrong segment count after the qualifier
+        "openrouter/deepseek",
+        "openrouter/",
+        "openrouter/a/b/c",
+        // empty segments are not the passthrough shape either
+        "openrouter/a//b",
+        "openrouter/a/b/",
+        "openrouter//b",
+        "openrouter///",
+    ] {
+        assert_eq!(route_for_model(model), CostRoute::Byok, "{model}");
+    }
+}

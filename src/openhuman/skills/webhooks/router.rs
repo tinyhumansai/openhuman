@@ -220,27 +220,38 @@ impl WebhookRouter {
     }
 
     /// Unregister a tunnel. Only the owning skill can unregister it.
-    pub fn unregister(&self, tunnel_uuid: &str, skill_id: &str) -> Result<(), String> {
+    /// Returns `Ok(true)` when a registration was actually removed and
+    /// `Ok(false)` when `tunnel_uuid` had none — the caller's only way to tell
+    /// a real removal from a no-op, since both are successful outcomes.
+    ///
+    /// The `registration_changed` push, the re-persist and the
+    /// `WebhookUnregistered` bus event are all gated on a real removal (#6091).
+    /// They used to run unconditionally, so unregistering a tunnel that was
+    /// never registered announced a state change that never happened. This is
+    /// the same gate [`Self::unregister_skill`] already applies with its
+    /// `if !removed_tunnels.is_empty()`.
+    pub fn unregister(&self, tunnel_uuid: &str, skill_id: &str) -> Result<bool, String> {
         let mut routes = self.routes.write().map_err(|e| e.to_string())?;
 
-        if let Some(existing) = routes.get(tunnel_uuid) {
-            if existing.skill_id != skill_id {
-                return Err(format!(
-                    "Tunnel {} is owned by skill '{}'; skill '{}' cannot unregister it",
-                    tunnel_uuid, existing.skill_id, skill_id
-                ));
-            }
-            debug!(
-                "[webhooks] Unregistering tunnel {} (skill '{}')",
-                tunnel_uuid, skill_id
-            );
-            routes.remove(tunnel_uuid);
-        } else {
+        let Some(existing) = routes.get(tunnel_uuid) else {
             debug!(
                 "[webhooks] Tunnel {} not found for unregister (skill '{}')",
                 tunnel_uuid, skill_id
             );
+            return Ok(false);
+        };
+
+        if existing.skill_id != skill_id {
+            return Err(format!(
+                "Tunnel {} is owned by skill '{}'; skill '{}' cannot unregister it",
+                tunnel_uuid, existing.skill_id, skill_id
+            ));
         }
+        debug!(
+            "[webhooks] Unregistering tunnel {} (skill '{}')",
+            tunnel_uuid, skill_id
+        );
+        routes.remove(tunnel_uuid);
 
         drop(routes);
         self.publish_event("registration_changed", None, Some(tunnel_uuid.to_string()));
@@ -251,7 +262,7 @@ impl WebhookRouter {
             skill_id: skill_id.to_string(),
         });
 
-        Ok(())
+        Ok(true)
     }
 
     /// Remove all tunnel registrations for a skill (called on skill stop/crash).
@@ -455,8 +466,12 @@ impl WebhookRouter {
     }
 
     /// List recent webhook logs, newest first.
+    /// `limit` is a **maximum**, so an explicit `Some(0)` returns nothing. The
+    /// absent case is covered by `unwrap_or(100)`; there is deliberately no
+    /// `.max(1)` clamp, which could only ever have rewritten a caller's `0`
+    /// into a `1` (#6090). `Iterator::take(0)` is well-defined.
     pub fn list_logs(&self, limit: Option<usize>) -> Vec<WebhookDebugLogEntry> {
-        let limit = limit.unwrap_or(100).max(1);
+        let limit = limit.unwrap_or(100);
         self.debug_logs
             .read()
             .map(|logs| logs.iter().take(limit).cloned().collect())

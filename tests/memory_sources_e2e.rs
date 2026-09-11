@@ -48,9 +48,6 @@ fn ensure_memory_seams() {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let config = Arc::new(openhuman_core::openhuman::config::Config::default());
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    config.clone(),
-                );
                 #[cfg(feature = "modules")]
                 openhuman_core::openhuman::modules::memory::set_modules_policy(config);
             })
@@ -857,6 +854,408 @@ async fn memory_sources_composio_registry_flow() {
         )
         .await;
         ok(&r, &format!("remove {sid}"));
+    }
+
+    rpc_join.abort();
+}
+
+// ─── Relative folder-source paths (openhuman#5830, vendored via PR #5838) ────
+//
+// `FolderReader` was the only reader in `tinymemory-sources` that ignored the
+// workspace it is handed: `PathBuf::from(base_path)` used the configured string
+// verbatim, so a RELATIVE path resolved against the host process's current
+// working directory. For the desktop app that is the Tauri build directory, so
+// a source configured as `docs` looked in `…/app/src-tauri/docs`, found
+// nothing, and failed on every sync cycle forever.
+//
+// `resolve_base` now anchors a relative path on the workspace (absolute paths
+// are still taken verbatim, so every source configured before the fix resolves
+// exactly where it did). The reader is linked into the host as
+// `tinymemory_sources::readers::folder`, so this is reachable over the real
+// `memory_sources_*` RPC surface.
+//
+// The pre-existing `memory_sources_crud_and_folder_read_flow` above passes an
+// ABSOLUTE path, which is the branch the fix deliberately left alone — it
+// cannot catch this.
+
+/// A folder source configured with a RELATIVE path resolves against the
+/// workspace, not the process CWD.
+#[tokio::test]
+async fn memory_sources_folder_relative_path_resolves_against_the_workspace() {
+    let _guard = env_lock();
+    let home = test_home();
+    let openhuman_home = home.join(".openhuman");
+
+    // An explicit workspace makes "the workspace, not the CWD" a decidable
+    // claim: the files exist only under this directory, and the test process's
+    // CWD (the crate root) has no `relative-notes` at all.
+    let workspace = home.join("relative-workspace");
+    std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+
+    let _home = EnvVarGuard::set_to_path("HOME", home);
+    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
+    let _backend = EnvVarGuard::unset("BACKEND_URL");
+    let _vite = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_config(&openhuman_home);
+
+    let notes_dir = workspace.join("relative-notes");
+    std::fs::create_dir_all(&notes_dir).expect("mkdir relative notes");
+    std::fs::write(
+        notes_dir.join("brief.md"),
+        "# Relative Brief\n\nAnchored on the workspace, not the process CWD.",
+    )
+    .expect("write brief.md");
+
+    let (rpc_base, rpc_join) = serve().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Note the path: relative, exactly as openhuman#5830 was configured.
+    let add = rpc(
+        &rpc_base,
+        900,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "folder",
+            "label": "Relative Notes",
+            "path": "relative-notes",
+            "glob": "**/*.md",
+        }),
+    )
+    .await;
+    let add_result = ok(&add, "add relative folder source");
+    let source_id = add_result
+        .get("source")
+        .and_then(|s| s.get("id"))
+        .and_then(Value::as_str)
+        .expect("source id")
+        .to_string();
+
+    // THE assertion. Before the fix the reader looked under the CWD, found no
+    // `relative-notes`, and this call returned a "folder does not exist" error
+    // rather than an items array.
+    let items_resp = rpc(
+        &rpc_base,
+        901,
+        "openhuman.memory_sources_list_items",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+    let items_result = ok(&items_resp, "list_items for a relative folder source");
+    let items = items_result
+        .get("items")
+        .and_then(Value::as_array)
+        .expect("items array");
+    let item_ids: Vec<&str> = items
+        .iter()
+        .filter_map(|i| i.get("id").and_then(Value::as_str))
+        .collect();
+    assert!(
+        item_ids.contains(&"brief.md"),
+        "a relative folder path must resolve against the workspace; got {item_ids:?}"
+    );
+
+    // And the content actually reads back through the same resolution.
+    let read = rpc(
+        &rpc_base,
+        902,
+        "openhuman.memory_sources_read_item",
+        json!({ "source_id": source_id, "item_id": "brief.md" }),
+    )
+    .await;
+    let read_result = ok(&read, "read_item for a relative folder source");
+    let body = read_result
+        .get("content")
+        .and_then(|c| c.get("body"))
+        .and_then(Value::as_str)
+        .expect("body");
+    assert!(
+        body.contains("Anchored on the workspace"),
+        "the resolved file must be the workspace one; got {body:?}"
+    );
+
+    rpc_join.abort();
+}
+
+/// A missing relative folder names **where the reader looked**, not just what
+/// it was configured with — the second half of the fix. Reporting `docs` alone
+/// is what made openhuman#5830 cost an `lsof` of the running process to
+/// diagnose.
+#[tokio::test]
+async fn memory_sources_missing_relative_folder_reports_the_resolved_path() {
+    let _guard = env_lock();
+    let home = test_home();
+    let openhuman_home = home.join(".openhuman");
+
+    let workspace = home.join("missing-folder-workspace");
+    std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+
+    let _home = EnvVarGuard::set_to_path("HOME", home);
+    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
+    let _backend = EnvVarGuard::unset("BACKEND_URL");
+    let _vite = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_config(&openhuman_home);
+
+    let (rpc_base, rpc_join) = serve().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let add = rpc(
+        &rpc_base,
+        910,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "folder",
+            "label": "Absent",
+            "path": "no-such-folder",
+            "glob": "**/*.md",
+        }),
+    )
+    .await;
+    let source_id = ok(&add, "add absent folder source")
+        .get("source")
+        .and_then(|s| s.get("id"))
+        .and_then(Value::as_str)
+        .expect("source id")
+        .to_string();
+
+    let items_resp = rpc(
+        &rpc_base,
+        911,
+        "openhuman.memory_sources_list_items",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+
+    // The whole response is searched rather than a specific error field: the
+    // point is that the resolved root reaches the caller at all.
+    let serialized = items_resp.to_string();
+    assert!(
+        serialized.contains("no-such-folder"),
+        "the error must still name the configured path; got {items_resp}"
+    );
+    // The concrete resolved root, not just the phrase "resolved to". A reader
+    // that still joined on the process CWD, or that emitted something generic
+    // like "resolved to an unavailable location", would satisfy a phrase-only
+    // check while keeping the exact diagnostic gap this test exists to close.
+    let expected_resolved = workspace.join("no-such-folder");
+    let expected_resolved = expected_resolved.to_string_lossy();
+    assert!(
+        serialized.contains("resolved to"),
+        "a relative path's error must name where the reader looked; got {items_resp}"
+    );
+    assert!(
+        serialized.contains(expected_resolved.as_ref()),
+        "the resolved root must be the workspace one ({expected_resolved}); got {items_resp}"
+    );
+
+    rpc_join.abort();
+}
+
+/// Regression for #5801, fixed by #5808: `MemorySourceSync::run_source_sync` is
+/// a **defaulted** contract member whose default body answers
+/// `Unsupported(SourceSync)`. `ModuleMemoryProvider` inherited that default
+/// instead of bridging the call, so the user's "Sync now" button reported
+/// `unsupported capability: source_sync` on a build whose module could sync
+/// perfectly well — while the module's own scheduler, which never crosses this
+/// bridge, kept syncing fine.
+///
+/// A defaulted member that was never bridged is indistinguishable from a
+/// bridged one at compile time, which is exactly why the bug shipped. So this
+/// asserts on the **runtime** answer.
+///
+/// The discriminator: `binding::build` binds `module_provider` — i.e.
+/// `ModuleMemoryProvider` — whenever the `modules` feature is on, which it is by
+/// default, so this RPC really does reach the bridged member. No module artifact
+/// is installed in a test run, so a **bridged** member fails while trying to
+/// reach the module (a transport/availability failure), whereas an **unbridged**
+/// one refuses the capability outright before any transport is attempted. Those
+/// two failures are distinguishable in the message, and only the second is the
+/// regression.
+///
+/// Deliberately not asserted: that the sync *succeeds*. That would need a live
+/// module artifact and a network fetch, which this lane must not depend on.
+/// The bug was never "sync returns the wrong data" — it was "the call is
+/// refused before it is attempted", and that is what this pins.
+#[tokio::test]
+async fn sources_sync_dispatches_to_the_module_rather_than_refusing_the_capability() {
+    let _guard = env_lock();
+    let home = test_home();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home = EnvVarGuard::set_to_path("HOME", home);
+    let _ws = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend = EnvVarGuard::unset("BACKEND_URL");
+    let _vite = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_config(&openhuman_home);
+
+    let notes_dir = home.join("sync-dispatch-notes");
+    std::fs::create_dir_all(&notes_dir).expect("mkdir sync-dispatch-notes");
+    std::fs::write(notes_dir.join("note.md"), "# Note\n\nBody.\n").expect("write note.md");
+
+    let (rpc_base, rpc_join) = serve().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let add = rpc(
+        &rpc_base,
+        901,
+        "openhuman.memory_sources_add",
+        json!({
+            "kind": "folder",
+            "label": "Sync Dispatch Fixture",
+            "path": notes_dir.to_string_lossy(),
+            "glob": "**/*.md",
+        }),
+    )
+    .await;
+    let source = ok(&add, "add sync-dispatch source");
+    let source = source.get("source").expect("source in add response");
+    let source_id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("source id")
+        .to_string();
+    // The enabled gate in `sync_rpc` returns before the driver is ever asked, so
+    // a disabled source would make this test vacuous.
+    assert_eq!(
+        source.get("enabled"),
+        Some(&json!(true)),
+        "fixture must be enabled or sync_rpc short-circuits before reaching the driver"
+    );
+
+    let sync = rpc(
+        &rpc_base,
+        902,
+        "openhuman.memory_sources_sync",
+        json!({ "source_id": source_id }),
+    )
+    .await;
+
+    let message = sync
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    assert!(
+        !message.contains("unsupported capability"),
+        "memory_sources_sync refused the capability instead of dispatching to the module \
+         — `run_source_sync` is inheriting its defaulted `Unsupported` body again (#5801). \
+         Got: {message}"
+    );
+    // Pin the specific family too, so a future unrelated `Unsupported` cannot
+    // satisfy the assertion above by accident.
+    assert!(
+        !message.contains("source_sync"),
+        "memory_sources_sync named the source_sync capability as unsupported (#5801). \
+         Got: {message}"
+    );
+    // The OTHER way the call can be refused before dispatch, and the one the two
+    // assertions above cannot see. `sync_rpc` resolves
+    // `binding.provider().as_source_sync()` and bails with
+    //
+    //     the bound memory driver '<id>' does not serve source sync
+    //
+    // (`memory/sources/rpc_part_01.rs:560-564`) when the capability is absent.
+    // That string carries "source sync" with a SPACE — so it contains neither
+    // "unsupported capability" nor the underscored "source_sync", and both
+    // assertions above pass while `run_source_sync` was never reached. Codex
+    // caught this on #5973; without it the test is green for the exact
+    // regression it exists to catch, one layer up from the defaulted body.
+    assert!(
+        !message.contains("does not serve source sync"),
+        "memory_sources_sync was refused host-side: the bound provider does not expose \
+         SourceSync at all, so the bridged member was never reached. This is the same \
+         class of failure as #5801, one layer up. Got: {message}"
+    );
+
+    let _ = rpc(
+        &rpc_base,
+        903,
+        "openhuman.memory_sources_remove",
+        json!({ "id": source_id }),
+    )
+    .await;
+
+    rpc_join.abort();
+}
+
+/// #5725 routed `reset_tree` and `flush_now` through the `MemoryProvider`
+/// contract (`Maintenance::reset_derived_index` / `flush_pending`) instead of
+/// reaching into the engine. Nothing exercised either afterwards: in the
+/// raw-coverage lane `"flush_now"` and `"reset_tree"` appear only as string
+/// literals fed to `memory::schema::schemas(...)` — a schema lookup — and in
+/// `worker_c_modules_e2e.rs` they sit in a 68-method loop whose helper
+/// (`assert_rpc_completed`) passes on an error response. So both paths could
+/// stop reaching a driver entirely and every lane would stay green.
+///
+/// This drives both RPCs for real and pins the routing: the bound driver must
+/// SERVE Maintenance and the call must reach it.
+///
+/// What is asserted is the host-side refusal, not success. `reset_tree_rpc` and
+/// `flush_now_rpc` each resolve `binding.provider().as_maintenance()` and bail
+/// with `"driver '<id>' does not serve Maintenance"` when the capability is
+/// absent — that message is produced *before* any driver call, so it is the one
+/// failure that proves the contract hop did not happen. A driver-side failure
+/// (no module artifact in this lane) is a different message and is fine here:
+/// it means the call was dispatched, which is the thing under test.
+///
+/// Deliberately NOT asserted: that rows were deleted or a flush was enqueued.
+/// Those need a live module artifact and a network fetch (see FINDING 1 in
+/// W3-test-findings.md), and a lane that must not depend on the network cannot
+/// honestly pin them.
+#[tokio::test]
+async fn tree_reset_and_flush_route_through_the_maintenance_contract() {
+    let _guard = env_lock();
+    let home = test_home();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home = EnvVarGuard::set_to_path("HOME", home);
+    let _ws = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend = EnvVarGuard::unset("BACKEND_URL");
+    let _vite = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_config(&openhuman_home);
+
+    let (rpc_base, rpc_join) = serve().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    for (id, method) in [
+        (921_i64, "openhuman.memory_tree_flush_now"),
+        (922, "openhuman.memory_tree_reset_tree"),
+    ] {
+        let resp = rpc(&rpc_base, id, method, json!({})).await;
+        let message = resp
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        assert!(
+            !message.contains("does not serve Maintenance"),
+            "{method} never reached a driver: the bound provider does not serve the \
+             Maintenance capability, so the contract hop #5725 introduced is not happening. \
+             Got: {message}"
+        );
+        // A renamed or removed RPC must not read as success. The assertion above
+        // only excludes one string, so an unknown method — whose message is
+        // `unknown method: <name>` and contains no "does not serve Maintenance" —
+        // would satisfy it while nothing was dispatched at all (Codex, #5973).
+        assert!(
+            !message.contains("unknown method"),
+            "{method} is not a registered RPC any more, so this test was asserting \
+             against a method that no longer exists. Got: {message}"
+        );
+        // And the response has to be one of the two shapes a dispatched call can
+        // produce: a result, or a driver-side error. Anything else means the
+        // request did not complete.
+        assert!(
+            resp.get("result").is_some() || resp.get("error").is_some(),
+            "{method} returned neither a result nor an error, so nothing was dispatched: {resp}"
+        );
     }
 
     rpc_join.abort();

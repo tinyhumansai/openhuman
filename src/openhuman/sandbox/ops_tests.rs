@@ -103,7 +103,30 @@ async fn create_sandbox_backend_local() {
     );
     let handle = create_sandbox_backend(&policy).await;
     assert_eq!(handle.kind, SandboxBackendKind::Local);
-    assert_eq!(handle.status, SandboxStatus::Ready);
+
+    // Assert the BACKEND -> STATUS pairing, not a fixed value. This test
+    // previously asserted `Ready` unconditionally, which is precisely the
+    // defect being fixed: on a host with no OS jail, `pick_backend` falls back
+    // to `NoopBackend` and the handle claimed the sandbox was ready while
+    // commands ran unconfined. Which branch runs here depends on the CI host,
+    // so pin the relationship instead of the outcome.
+    let backend_id = handle
+        .backend_id
+        .as_deref()
+        .expect("the local backend must name itself so a caller can tell which jail is in force");
+    if backend_id == cwd_jail::NOOP_BACKEND_NAME {
+        assert_eq!(
+            handle.status,
+            SandboxStatus::Inactive,
+            "the noop passthrough enforces nothing, so it must not report `Ready`"
+        );
+    } else {
+        assert_eq!(
+            handle.status,
+            SandboxStatus::Ready,
+            "a real OS jail ({backend_id}) is in force, so `Ready` is honest"
+        );
+    }
 }
 
 // The `/tmp` path and Unix builtins (`false`) are Unix-only, so these
@@ -256,4 +279,32 @@ fn env_passthrough_includes_safe_vars() {
     assert!(!SANDBOX_ENV_PASSTHROUGH
         .iter()
         .any(|v| v.contains("KEY") || v.contains("SECRET")));
+}
+
+// ── the security-relevant decision, tested independently of the host ─────────
+//
+// `create_sandbox_backend_local` above can only exercise whichever branch this
+// machine happens to take. On a host with Seatbelt or Landlock it never reaches
+// the noop path, so a regression to "always Ready" would pass there unnoticed —
+// which is how the original defect survived. These pin the decision directly.
+
+#[test]
+fn local_status_is_inactive_when_no_os_jail_is_in_force() {
+    assert_eq!(
+        local_status_for_backend(cwd_jail::NOOP_BACKEND_NAME),
+        SandboxStatus::Inactive,
+        "the noop backend enforces nothing; reporting `Ready` tells a caller its \
+         commands are jailed when they run unconfined"
+    );
+}
+
+#[test]
+fn local_status_is_ready_for_a_real_jail() {
+    for backend in ["seatbelt", "landlock", "appcontainer"] {
+        assert_eq!(
+            local_status_for_backend(backend),
+            SandboxStatus::Ready,
+            "a real OS jail ({backend}) is in force, so `Ready` is honest"
+        );
+    }
 }

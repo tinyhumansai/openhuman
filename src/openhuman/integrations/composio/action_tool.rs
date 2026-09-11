@@ -148,6 +148,10 @@ impl Tool for ComposioActionTool {
         PermissionLevel::Write
     }
 
+    fn external_effect(&self) -> bool {
+        super::tools::action_mutates_external_state(&self.action_name)
+    }
+
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }

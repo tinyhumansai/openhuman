@@ -18,7 +18,7 @@
 
 use openhuman_core::core::runtime::{AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_THREADS};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::{Access, Harness, Provider, Session, Workspace};
+use openhuman_core::{Access, Harness, Provider, Workspace};
 use serde_json::json;
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -74,118 +74,174 @@ fn runtime() -> tokio::runtime::Runtime {
 fn a_harness_runs_a_turn_against_the_provider_it_was_given() {
     let _ = env_logger::builder().is_test(true).try_init();
 
-    runtime().block_on(async {
-        // A stub backend. Not optional scenery: a harness that is not signed in
-        // to the real backend still makes non-inference calls (the session
-        // check, integrations), and a 401 from those publishes `SessionExpired`
-        // — which fails the *next* turn's custom-provider gate for reasons
-        // unrelated to the turn. Pointing the backend at a stub is what
-        // `backend_url` exists for.
-        let backend = MockServer::start().await;
-        Mock::given(any())
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "success": true,
-                "data": { "id": "harness-embed-test", "email": "local@openhuman.local" }
-            })))
-            .mount(&backend)
-            .await;
+    let runtime = runtime();
+    runtime.block_on(async {
+        // `Runtime::block_on` polls its root future on this test thread, whose
+        // default stack is much smaller than the tuned worker stacks. Put the
+        // agent host itself on a worker so the documented stack setting
+        // actually applies to the large turn futures.
+        tokio::spawn(async move {
+            // A stub backend keeps incidental non-inference calls local. The
+            // caller-supplied provider itself requires no app login in library
+            // mode.
+            let backend = MockServer::start().await;
+            Mock::given(any())
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "success": true,
+                    "data": { "id": "harness-embed-test", "email": "local@openhuman.local" }
+                })))
+                .mount(&backend)
+                .await;
 
-        let provider_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(chat_completion(REPLY)))
-            .mount(&provider_server)
-            .await;
+            let provider_server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(std::time::Duration::from_millis(250))
+                        .set_body_json(chat_completion(REPLY)),
+                )
+                .mount(&provider_server)
+                .await;
 
-        let harness = Harness::builder()
-            .config(offline_config())
-            .workspace(Workspace::Ephemeral)
-            .backend_url(backend.uri())
-            .provider(
-                Provider::openai_compatible(format!("{}/v1", provider_server.uri()), "sk-test")
-                    .model("harness-embed-model"),
-            )
-            // Read-only: the turn has no business acting, and this keeps the
-            // test from depending on the approval gate's timing.
-            .access(Access::readonly())
-            // Routing at a custom provider is gated on an active app session,
-            // even though this harness was handed its own endpoint and key. A
-            // local session satisfies that gate without asserting anything at
-            // the backend — see `Session::local`.
-            .session(Session::local("harness-embed-test"))
-            .build()
-            .await
-            .expect("harness builds");
+            let harness = std::sync::Arc::new(
+                Harness::builder()
+                    .config(offline_config())
+                    .workspace(Workspace::Ephemeral)
+                    .backend_url(backend.uri())
+                    .provider(
+                        Provider::openai_compatible(
+                            format!("{}/v1", provider_server.uri()),
+                            "sk-test",
+                        )
+                        .model("harness-embed-model"),
+                    )
+                    // Read-only: the turn has no business acting, and this keeps the
+                    // test from depending on the approval gate's timing.
+                    .access(Access::readonly())
+                    .build()
+                    .await
+                    .expect("harness builds"),
+            );
 
-        // The workspace is the harness's own, not the operator's.
-        let workspace_dir = harness.workspace_dir().to_path_buf();
-        assert!(workspace_dir.is_dir(), "workspace was not created");
-        assert!(
-            !harness.action_dir().starts_with(&workspace_dir),
-            "action_dir must not sit inside the workspace, or every agent write \
+            // The workspace is the harness's own, not the operator's.
+            let workspace_dir = harness.workspace_dir().to_path_buf();
+            assert!(workspace_dir.is_dir(), "workspace was not created");
+            assert!(
+                !harness.action_dir().starts_with(&workspace_dir),
+                "action_dir must not sit inside the workspace, or every agent write \
              is blocked by is_workspace_internal_path"
-        );
+            );
 
-        // No listener was bound: `ServiceSet` selects nothing that binds, and
-        // `serve()` was never called.
-        assert!(
-            std::env::var("OPENHUMAN_CORE_RPC_URL").is_err(),
-            "a library harness must not bind an RPC listener"
-        );
+            // No listener was bound: `ServiceSet` selects nothing that binds, and
+            // `serve()` was never called.
+            assert!(
+                std::env::var("OPENHUMAN_CORE_RPC_URL").is_err(),
+                "a library harness must not bind an RPC listener"
+            );
 
-        let first = harness.run("Say the magic word.").await.expect("turn runs");
-        assert!(
-            first.reply.contains(REPLY),
-            "reply {:?} does not carry the provider's response",
-            first.reply
-        );
-        assert!(
-            !first.session_id.is_empty(),
-            "the harness must mint a session id — the core returns none, so \
+            let first = harness.run("Say the magic word.").await.expect("turn runs");
+            assert!(
+                first.reply.contains(REPLY),
+                "reply {:?} does not carry the provider's response",
+                first.reply
+            );
+            assert!(
+                !first.session_id.is_empty(),
+                "the harness must mint a session id — the core returns none, so \
              without this a caller cannot continue a conversation at all"
-        );
+            );
 
-        // The turn went to the endpoint we named, not to the account's route.
-        let requests = provider_server
-            .received_requests()
+            // The turn went to the endpoint we named, not to the account's route.
+            let requests = provider_server
+                .received_requests()
+                .await
+                .expect("mock recorded requests");
+            assert!(
+                !requests.is_empty(),
+                "the provider endpoint received nothing — the per-call route was ignored"
+            );
+
+            // Continuing a conversation reuses the caller's session id verbatim.
+            let second = harness
+                .turn("And again.")
+                .session(&first.session_id)
+                .send()
+                .await
+                .expect("second turn runs");
+            assert_eq!(second.session_id, first.session_id);
+
+            // One core must support many live agents. The delayed provider makes
+            // serialization observable: sequential execution would take at least
+            // 25 seconds before agent construction and persistence overhead. All
+            // futures are created together and each receives a distinct session,
+            // matching a host such as OpenCompany running independent agents.
+            let started = std::time::Instant::now();
+            let mut turns = tokio::task::JoinSet::new();
+            for index in 0..100 {
+                let harness = std::sync::Arc::clone(&harness);
+                turns.spawn(async move {
+                    harness
+                        .turn(format!("Concurrent agent {index}"))
+                        .session(format!("concurrent-agent-{index}"))
+                        .send()
+                        .await
+                });
+            }
+            let outcomes = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                let mut outcomes = Vec::with_capacity(100);
+                while let Some(outcome) = turns.join_next().await {
+                    outcomes.push(outcome.expect("concurrent turn task did not panic"));
+                }
+                outcomes
+            })
             .await
-            .expect("mock recorded requests");
-        assert!(
-            !requests.is_empty(),
-            "the provider endpoint received nothing — the per-call route was ignored"
-        );
+            .expect("100 concurrent turns did not settle within 20 seconds");
+            let elapsed = started.elapsed();
+            eprintln!("100 concurrent library turns completed in {elapsed:?}");
+            assert!(
+                elapsed < std::time::Duration::from_secs(20),
+                "100 turns serialized instead of overlapping: {elapsed:?}"
+            );
+            let mut session_ids = std::collections::HashSet::new();
+            for outcome in outcomes {
+                let outcome = outcome.expect("concurrent turn runs");
+                assert!(outcome.reply.contains(REPLY));
+                assert!(session_ids.insert(outcome.session_id));
+            }
+            assert_eq!(session_ids.len(), 100);
 
-        // Continuing a conversation reuses the caller's session id verbatim.
-        let second = harness
-            .turn("And again.")
-            .session(&first.session_id)
-            .send()
-            .await
-            .expect("second turn runs");
-        assert_eq!(second.session_id, first.session_id);
+            let requests = provider_server
+                .received_requests()
+                .await
+                .expect("mock recorded concurrent requests");
+            assert_eq!(requests.len(), 102, "two serial + 100 concurrent turns");
 
-        // The session database landed in the harness's workspace.
-        assert!(
-            workspace_dir.join("session_db/sessions.db").exists(),
-            "sessions were not persisted under the harness workspace"
-        );
+            // The session database landed in the harness's workspace.
+            assert!(
+                workspace_dir.join("session_db/sessions.db").exists(),
+                "sessions were not persisted under the harness workspace"
+            );
 
-        // A second harness in this process must be refused rather than silently
-        // sharing process-global core state with the first.
-        let err = Harness::builder()
-            .workspace(Workspace::Ephemeral)
-            .build()
-            .await
-            .expect_err("a second harness must be refused");
-        assert!(
-            matches!(err, openhuman_core::HarnessError::AlreadyRunning),
-            "got {err:?}"
-        );
+            // A second harness in this process must be refused rather than silently
+            // sharing process-global core state with the first.
+            let err = Harness::builder()
+                .workspace(Workspace::Ephemeral)
+                .build()
+                .await
+                .expect_err("a second harness must be refused");
+            assert!(
+                matches!(err, openhuman_core::HarnessError::AlreadyRunning),
+                "got {err:?}"
+            );
 
-        drop(harness);
-        assert!(
-            !workspace_dir.exists(),
-            "an ephemeral workspace must be removed with its harness"
-        );
+            drop(harness);
+            assert!(
+                !workspace_dir.exists(),
+                "an ephemeral workspace must be removed with its harness"
+            );
+        })
+        .await
+        .expect("library host task did not panic");
     });
 }

@@ -41,7 +41,12 @@ mod tool_progress;
 pub(crate) mod transcript;
 pub(crate) mod transcript_history;
 mod turn;
-mod turn_checkpoint;
+// `pub(crate)` since issue #6014: the tool-call-cap instruction is now appended
+// inside the loop by `tinyagents::middleware::FinalCallWrapUpMiddleware`, so the
+// harness-assembly site has to name it. It stays the one definition — the whole
+// point is that the in-loop conclusion and the out-of-band fallback ask for the
+// same thing.
+pub(crate) mod turn_checkpoint;
 mod types;
 
 pub use migration::{migrate_session_layout_if_needed, MigrationOutcome};

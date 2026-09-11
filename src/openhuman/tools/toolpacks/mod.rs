@@ -7,10 +7,11 @@
 //! idle in most conversations.
 //!
 //! A pack keeps its tools constructed and executable but unadvertised. The
-//! agent sees two small tools instead: [`tools::LoadSkillTool`] renders a
-//! pack's schemas into the conversation on demand, and [`tools::UseSkillTool`]
-//! executes one of them, forwarding permission level and execution context to
-//! the real tool so nothing is laundered through the proxy.
+//! agent sees one small tool instead: [`tools::UseSkillTool`] renders a pack's
+//! schemas into the conversation when called with a `skill` alone, and executes
+//! one of them when also given a `tool`, forwarding permission level and
+//! execution context to the real tool so nothing is laundered through the
+//! proxy.
 //!
 //! **Why a proxy and not dynamic registration.** Registering the real schemas
 //! mid-turn would be better — the model would get native tool calling with
@@ -28,9 +29,18 @@ pub mod tools;
 pub mod types;
 
 pub use groups::{GroupMode, ToolGroups, GROUP_COUNT};
-pub use ops::{append_pack_tools, bind_pack_registry, strip_packed_from_visible};
-pub use registry::{all_packed_tool_names, pack, pack_for_tool, PACKS};
-pub use tools::{PackRegistryHandle, LOAD_SKILL, USE_SKILL};
+pub use ops::{
+    append_pack_tools, bind_pack_registry, bind_synthesized_pack_registry,
+    strip_packed_from_visible,
+};
+pub use registry::{
+    all_packed_tool_names, callable_pack_ids, pack, pack_for_tool, pack_index_markdown_filtered,
+    PACKS,
+};
+pub use tools::{
+    named_tool, render_pack_filtered, route_sentence, scope_use_skill_spec, PackRegistryHandle,
+    USE_SKILL,
+};
 pub use types::ToolPack;
 
 #[cfg(test)]

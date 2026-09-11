@@ -15,12 +15,27 @@
 //! (`duration_ms`/`output_bytes`/`error`) on `ToolCompleted` (tinyagents#18).
 //!
 //! Known parity gaps (see `docs/.../C4-journal-progress-parity-plan.md` §2a):
-//! - `ModelCallCompleted.cost_usd` and `cache_creation_tokens` are not on the
-//!   crate event; filled as `0` here and to be sourced from the persisted
-//!   per-run cost store at export time.
+//! - **Cost is an estimate, not the charge.** The provider's charged USD
+//!   reaches the live path through the `usage_carry` side-channel, which is not
+//!   an `AgentEvent` and is not journalled, so both the per-call
+//!   `ModelCallCompleted.cost_usd` (`0` here — the generation span's cost is
+//!   sourced from the persisted per-run cost store at export time) and the
+//!   turn roll-up folded from `UsageRecorded` are journal-only figures. Token
+//!   counts are exact; treat a projected `gen_ai.usage.cost_usd` as an
+//!   estimate. `AgentEvent::CostRecorded` would close this if the crate ever
+//!   emits it.
 //! - Sub-agent prompt/output content is not on the crate lifecycle events, so
 //!   subagent spans carry lifecycle/timing and child tool/model structure but
 //!   empty delegated prompt/final output until a richer journal event exists.
+//! - `AgentProgress::SubagentAwaitingUser` has no journal source at all (the
+//!   crate emits no matching lifecycle event), so a subagent span parked on a
+//!   user prompt loses that attribute on replay.
+//!
+//! Everything else is projected. In particular the match in
+//! [`observation_to_progress`] is **exhaustive over `AgentEvent`** — a crate
+//! that adds a span-bearing event breaks the build here rather than silently
+//! diverging, which is exactly how the missing `UsageRecorded` roll-up went
+//! unnoticed (openhuman#6148).
 
 use tinyagents_harness::events::AgentEvent;
 use tinyagents_harness::observability::AgentObservation;
@@ -41,12 +56,29 @@ struct ReplayState {
     /// `ModelCompleted` can name its generation span (the crate `ModelCompleted`
     /// event carries no model name).
     models: std::collections::HashMap<String, String>,
+    /// Model of the most recent top-level `ModelStarted`. `UsageRecorded`
+    /// carries no `call_id`, so this stands in for the live bridge's
+    /// per-run `self.model` when naming the turn's cost roll-up.
+    model: String,
     /// Stack of currently-open sub-agent runs. The crate lifecycle event only
     /// carries name/depth; ordered replay brackets child model/tool events.
     subagents: Vec<ReplaySubagent>,
     /// Monotonic suffix to make repeated invocations of the same child name
     /// distinct in the span tree.
     next_subagent_seq: u64,
+    /// Top-level iterations whose `UsageRecorded` has already been folded in.
+    /// Mirrors the live bridge's `recorded_iterations` dedupe guard — see the
+    /// `UsageRecorded` arm.
+    recorded_iterations: std::collections::HashSet<u32>,
+    /// Cumulative top-level usage, folded exactly as the live bridge folds it
+    /// so the roll-up carried by `TurnCostUpdated` is a running total.
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_input_tokens: u64,
+    /// Cumulative estimated cost. The provider's *charged* amount rides the
+    /// un-journalled `usage_carry` side-channel, so this is an estimate — see
+    /// the module header.
+    cost_usd: f64,
 }
 
 #[derive(Clone)]
@@ -90,6 +122,12 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
                 }
                 None => {
                     state.iteration += 1;
+                    // `UsageRecorded` carries no `call_id`; the live bridge names
+                    // the roll-up with its per-run model, and the last top-level
+                    // `ModelStarted` is the journal's equivalent. Only top-level
+                    // calls are recorded — a child's model must not name the
+                    // parent's turn.
+                    state.model = model.clone();
                     state.iteration
                 }
             };
@@ -183,6 +221,77 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
             }
         }
 
+        AgentEvent::UnknownToolCall {
+            call_id,
+            requested_name,
+            arguments,
+            recovery: _,
+        } => {
+            // #4118: the crate recovers an unavailable tool call without ever
+            // emitting `ToolStarted`/`ToolCompleted` for it, so the live bridge
+            // synthesises the pair itself. Without this arm the projection was
+            // short a whole tool span — a span *count* divergence, not just a
+            // missing attribute — on every turn the model named a tool it did
+            // not have. Mirrors `observability_part_02.rs`'s `UnknownToolCall`
+            // arm exactly, including the `Unknown` (recoverable) class.
+            let failure = Some(crate::openhuman::tools::status::describe(
+                crate::openhuman::tools::status::ToolFailureClass::Unknown,
+            ));
+            let label = format!(
+                "{} (unavailable)",
+                crate::openhuman::tools::traits::humanize_tool_name(requested_name)
+            );
+            let detail = Some("tool not available".to_string());
+            match state.active_subagent() {
+                Some(scope) => vec![
+                    AgentProgress::SubagentToolCallStarted {
+                        agent_id: scope.agent_id.clone(),
+                        task_id: scope.task_id.clone(),
+                        call_id: call_id.as_str().to_string(),
+                        tool_name: requested_name.clone(),
+                        arguments: arguments.clone(),
+                        iteration: scope.iteration,
+                        display_label: Some(label),
+                        display_detail: detail,
+                    },
+                    AgentProgress::SubagentToolCallCompleted {
+                        agent_id: scope.agent_id.clone(),
+                        task_id: scope.task_id.clone(),
+                        call_id: call_id.as_str().to_string(),
+                        tool_name: requested_name.clone(),
+                        success: false,
+                        output_chars: 0,
+                        output: String::new(),
+                        arguments: Some(arguments.clone()),
+                        elapsed_ms: 0,
+                        iteration: scope.iteration,
+                        failure,
+                    },
+                ],
+                None => vec![
+                    AgentProgress::ToolCallStarted {
+                        call_id: call_id.as_str().to_string(),
+                        tool_name: requested_name.clone(),
+                        arguments: arguments.clone(),
+                        iteration: state.iteration,
+                        display_label: Some(label),
+                        display_detail: detail,
+                    },
+                    AgentProgress::ToolCallCompleted {
+                        call_id: call_id.as_str().to_string(),
+                        tool_name: requested_name.clone(),
+                        success: false,
+                        output_chars: 0,
+                        output: String::new(),
+                        arguments: Some(arguments.clone()),
+                        elapsed_ms: 0,
+                        iteration: state.iteration,
+                        failure,
+                    },
+                ],
+            }
+        }
+
         AgentEvent::ModelCompleted {
             call_id,
             usage,
@@ -213,7 +322,13 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 cached_input_tokens: usage.cache_read_tokens,
-                cache_creation_tokens: 0,
+                // The crate `Usage` DOES carry cache-creation tokens; this used
+                // to be hardcoded `0`, which dropped the
+                // `gen_ai.usage.cache_creation_tokens` attribute from every
+                // projected generation span (`record_model_call` inserts it only
+                // when `> 0`) and so diverged from live whenever a provider
+                // reported a cache write.
+                cache_creation_tokens: usage.cache_creation_tokens,
                 reasoning_tokens: usage.reasoning_tokens,
                 cost_usd: 0.0,
             }];
@@ -228,6 +343,58 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
                 }
             }
             progress
+        }
+
+        AgentEvent::UsageRecorded { usage } => {
+            // The cost footer is a top-level surface: the live bridge suppresses
+            // the per-child roll-up (`observability_part_01.rs`, `self.scope`
+            // guard), and a child run's usage is accounted separately. Skipping
+            // entirely — rather than accumulating silently — is what keeps the
+            // projected parent total equal to the live one, because live the
+            // parent and the child are *different* bridge instances with
+            // different accumulators, while the journal interleaves both runs
+            // into one observation stream.
+            if state.active_subagent().is_some() {
+                return Vec::new();
+            }
+            // Dedupe guard, mirroring the live bridge's (W2-budget-dedupe): the
+            // observe-only crate `BudgetMiddleware` makes each model call emit —
+            // and therefore journal — TWO `UsageRecorded` events with identical
+            // usage and *distinct* event ids, so an event-id key would not
+            // collapse them. Key on the run-scoped model-call identity instead:
+            // the iteration cursor, bumped once per `ModelStarted`. Without this
+            // every projected total would be double the live one.
+            if !state.recorded_iterations.insert(state.iteration) {
+                return Vec::new();
+            }
+            // The provider's *charged* amount reaches the live path through the
+            // `usage_carry` side-channel, which is not an `AgentEvent` and is not
+            // journalled (§2a of the C4 parity plan), so the projection prices
+            // the call with the same estimator the live path uses as its floor.
+            // The token counts are exact; `cost_usd` is an estimate.
+            state.cost_usd += crate::openhuman::agent::cost::estimate_call_cost_usd(
+                &state.model,
+                &crate::openhuman::inference::provider::UsageInfo {
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    context_window: 0,
+                    cached_input_tokens: usage.cache_read_tokens,
+                    cache_creation_tokens: usage.cache_creation_tokens,
+                    reasoning_tokens: usage.reasoning_tokens,
+                    charged_amount_usd: 0.0,
+                },
+            );
+            state.input_tokens += usage.input_tokens;
+            state.output_tokens += usage.output_tokens;
+            state.cached_input_tokens += usage.cache_read_tokens;
+            vec![AgentProgress::TurnCostUpdated {
+                model: state.model.clone(),
+                iteration: state.iteration,
+                input_tokens: state.input_tokens,
+                output_tokens: state.output_tokens,
+                cached_input_tokens: state.cached_input_tokens,
+                total_usd: state.cost_usd,
+            }]
         }
 
         AgentEvent::SubAgentStarted { name, depth } => {
@@ -294,7 +461,62 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
             }]
         }
 
-        _ => Vec::new(),
+        // Everything below carries no span data. This is written out rather than
+        // left as a `_ =>` catch-all on purpose: a wildcard is what let the
+        // missing `UsageRecorded` arm above sit here silently, diverging from
+        // live on every turn with nothing to catch it. With the match
+        // exhaustive, the next `AgentEvent` the crate adds is a compile error
+        // here — a decision to make, not a gap to discover in a log.
+        //
+        // Streaming/incremental progress. `SpanCollector` folds deltas into no
+        // span (`progress_tracing.rs`), so replaying them would change nothing.
+        AgentEvent::ModelDelta { .. }
+        | AgentEvent::ToolProgress { .. }
+        // Failure detail already carried by a span-bearing sibling: a tool's
+        // outcome rides `ToolCompleted.error`, a model's and a run's ride
+        // `RunFailed`, and `InvalidToolArgs` precedes the `ToolCompleted` that
+        // reports it.
+        | AgentEvent::ToolFailed { .. }
+        | AgentEvent::ModelFailed { .. }
+        | AgentEvent::SubAgentFailed { .. }
+        | AgentEvent::InvalidToolArgs { .. }
+        | AgentEvent::MiddlewareFailed { .. }
+        // Run-shaping diagnostics: they change what the model is asked, never
+        // what the trace records. The live bridge logs them and emits no
+        // `AgentProgress` for any of them either.
+        | AgentEvent::ToolsFiltered { .. }
+        | AgentEvent::WorkspacePrepared { .. }
+        | AgentEvent::WorkspaceViolation { .. }
+        | AgentEvent::WorkspaceCleanup { .. }
+        | AgentEvent::ControlApplied { .. }
+        | AgentEvent::StateUpdate
+        | AgentEvent::MiddlewareStarted { .. }
+        | AgentEvent::MiddlewareCompleted { .. }
+        | AgentEvent::CacheHit { .. }
+        | AgentEvent::CacheMiss { .. }
+        | AgentEvent::RetryScheduled { .. }
+        | AgentEvent::RateLimitWaited { .. }
+        | AgentEvent::FallbackSelected { .. }
+        | AgentEvent::ModelOverrideSkipped { .. }
+        | AgentEvent::FallbackSkipped { .. }
+        | AgentEvent::SubAgentReused { .. }
+        | AgentEvent::Steered { .. }
+        | AgentEvent::Compressed { .. }
+        | AgentEvent::RouteSelected { .. }
+        | AgentEvent::MemoryLoaded
+        | AgentEvent::MemorySaved
+        | AgentEvent::StreamClosed
+        // Budget accounting. The span roll-up is folded from `UsageRecorded`
+        // above; these report headroom, not usage. `CostRecorded` is declared
+        // upstream for future emit and is never emitted today — if the crate
+        // starts emitting it, it becomes the authoritative source for
+        // `TurnCostUpdated.total_usd` and should replace the estimate there.
+        | AgentEvent::CostRecorded { .. }
+        | AgentEvent::BudgetWarning { .. }
+        | AgentEvent::BudgetReserved { .. }
+        | AgentEvent::BudgetReconciled { .. }
+        | AgentEvent::BudgetExceeded { .. }
+        | AgentEvent::LimitReached { .. } => Vec::new(),
     }
 }
 

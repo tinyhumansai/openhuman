@@ -25,6 +25,9 @@ pub use mcp_setup::{
     McpSetupGetTool, McpSetupInstallAndConnectTool, McpSetupRequestSecretTool, McpSetupSearchTool,
     McpSetupTestConnectionTool,
 };
+/// The SSRF guard the network tools apply, so a host outside this crate can
+/// hold user-supplied URLs to the same rule rather than writing a second one.
+pub use url_guard::validate_url_with_dns_check;
 pub use web_fetch::WebFetchTool;
 
 /// Shared test helper for the network tools' local-only enforcement tests

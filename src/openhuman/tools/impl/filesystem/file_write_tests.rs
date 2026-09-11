@@ -335,3 +335,52 @@ async fn file_write_blocks_null_byte_in_path() {
 
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }
+
+/// `file_write` enforces the same 5MB content-size cap as `edit_file` and
+/// `grep`'s file caps (`file_read` allows up to 10MB for reads).
+#[tokio::test]
+async fn file_write_reports_a_refused_write_rather_than_a_silent_success() {
+    let dir = std::env::temp_dir().join("openhuman_test_file_write_refused");
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+
+    let tool = FileWriteTool::new(test_security(dir.clone())).with_sink(Arc::new(
+        super::super::write_sink::RefusingSink(std::io::ErrorKind::PermissionDenied),
+    ));
+    let result = tool
+        .execute(json!({"path": "f.txt", "content": "abc"}))
+        .await
+        .unwrap();
+
+    assert!(
+        result.is_error,
+        "a refused write must surface as an error, not a fabricated success"
+    );
+    assert!(
+        !dir.join("f.txt").exists(),
+        "and nothing may be left behind claiming the write happened"
+    );
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn file_write_refuses_an_oversized_content_write() {
+    let dir = std::env::temp_dir().join("openhuman_test_file_write_oversized");
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+
+    let tool = FileWriteTool::new(test_security(dir.clone()));
+    let content = "x".repeat(64 * 1024 * 1024);
+    let result = tool
+        .execute(json!({"path": "huge.txt", "content": content}))
+        .await
+        .unwrap();
+    assert!(
+        result.is_error,
+        "a 64MB write must be refused by a stated ceiling, not written: {}",
+        result.output()
+    );
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}

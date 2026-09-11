@@ -4,7 +4,7 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 fn sample_tool() -> ArchetypeDelegationTool {
     ArchetypeDelegationTool {
         tool_name: "delegate_researcher".to_string(),
-        agent_id: "researcher".to_string(),
+        agent_id: DelegationTarget("researcher".to_string()),
         tool_description: "Use for web and docs research.".to_string(),
     }
 }

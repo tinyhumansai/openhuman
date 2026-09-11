@@ -114,10 +114,12 @@ fn freshness_serialises_snake_case() {
     );
 }
 
-/// The five fields, their names, and the fact that `last_chunk_at_ms` is
-/// carried as `null` rather than omitted — the engine's `SourceStatus` had no
-/// `skip_serializing_if`, and a field that disappears is a field a client
-/// reading `row.last_chunk_at_ms` sees as `undefined`.
+/// The engine's five fields, their names, and the fact that the optional
+/// ones are carried as `null` rather than omitted — the engine's `SourceStatus`
+/// had no `skip_serializing_if`, and a field that disappears is a field a
+/// client reading `row.last_chunk_at_ms` sees as `undefined`. The host's two
+/// in-flight fields (openhuman#6019) follow the same rule, so a client can
+/// tell "nothing running" from "a core that does not report it".
 #[test]
 fn source_status_serde_shape_is_unchanged() {
     let json = serde_json::to_value(SourceStatus::idle("src_a".into())).unwrap();
@@ -129,6 +131,26 @@ fn source_status_serde_shape_is_unchanged() {
             "chunks_pending": 0,
             "last_chunk_at_ms": null,
             "freshness": "idle",
+            "sync_stage": null,
+            "sync_detail": null,
         })
     );
+}
+
+/// A run the stage stream remembers rides on the row; none leaves both
+/// fields `null` rather than stale.
+#[test]
+fn the_run_in_flight_rides_on_the_status_row() {
+    use crate::openhuman::memory::sync_activity::LiveSync;
+    let live = SourceStatus::idle("src_a".into()).with_live_sync(Some(LiveSync {
+        stage: "running".into(),
+        detail: Some("pass 1".into()),
+        updated_at_ms: 1,
+    }));
+    assert_eq!(live.sync_stage.as_deref(), Some("running"));
+    assert_eq!(live.sync_detail.as_deref(), Some("pass 1"));
+
+    let idle = live.with_live_sync(None);
+    assert_eq!(idle.sync_stage, None);
+    assert_eq!(idle.sync_detail, None);
 }

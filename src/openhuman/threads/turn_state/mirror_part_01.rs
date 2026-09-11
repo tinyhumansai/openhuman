@@ -30,6 +30,13 @@ const MAX_PERSISTED_TRANSCRIPT_ITEM: usize = 16 * 1024;
 /// Marker appended once when a transcript prose item is truncated at its cap.
 const TRANSCRIPT_TRUNCATION_MARKER: &str = "\n…[truncated]";
 
+/// Upper bound on the child tool arguments persisted per sub-agent call.
+/// Sized like [`MAX_PERSISTED_TRANSCRIPT_ITEM`] rather than the looser
+/// [`MAX_PERSISTED_TOOL_OUTPUT`]: a sub-agent turn accumulates many child
+/// calls and the snapshot file is rewritten in full at every tool boundary,
+/// so one `write_file`-shaped payload must not dominate every rewrite.
+const MAX_PERSISTED_TOOL_ARGS: usize = 16 * 1024;
+
 /// Append `delta` to a coalescing transcript prose buffer, enforcing
 /// [`MAX_PERSISTED_TRANSCRIPT_ITEM`] on a char boundary and stamping a one-time
 /// truncation marker the first time the cap is hit. Once at the cap, further
@@ -80,6 +87,39 @@ fn cap_persisted_output(output: &str) -> Option<String> {
         "{}\n…[truncated {omitted} bytes of tool output]",
         &output[..end]
     ))
+}
+
+/// Cap `arguments` for snapshot persistence. Returns `None` for a null
+/// payload, which would otherwise persist as a meaningless "Input: null" row.
+///
+/// A null is not the same as "this call had no input": on the tinyagents path
+/// the *started* event always carries `Value::Null` and the captured arguments
+/// only arrive with `SubagentToolCallCompleted`, so the completion arm
+/// backfills what this returns `None` for at start.
+///
+/// A payload that serialises within [`MAX_PERSISTED_TOOL_ARGS`] is kept
+/// verbatim, so the rehydrated row renders the same structured input the live
+/// row did. An oversized one degrades to a truncated *string* carrying the
+/// same marker shape [`cap_persisted_output`] uses: the prefix is what the
+/// reader actually wants ("what did it search for?"), and a string is honest
+/// about no longer being parseable JSON.
+fn cap_persisted_args(arguments: &serde_json::Value) -> Option<serde_json::Value> {
+    if arguments.is_null() {
+        return None;
+    }
+    let rendered = arguments.to_string();
+    if rendered.len() <= MAX_PERSISTED_TOOL_ARGS {
+        return Some(arguments.clone());
+    }
+    let mut end = MAX_PERSISTED_TOOL_ARGS.saturating_sub(TRUNCATION_MARKER_BUDGET);
+    while end > 0 && !rendered.is_char_boundary(end) {
+        end -= 1;
+    }
+    let omitted = rendered.len() - end;
+    Some(serde_json::Value::String(format!(
+        "{}\n…[truncated {omitted} bytes of tool arguments]",
+        &rendered[..end]
+    )))
 }
 
 /// In-process cursor that keeps the authoritative [`TurnState`] in sync

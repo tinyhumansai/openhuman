@@ -453,10 +453,28 @@ pub fn read_transcript_display(path: &Path) -> Result<DisplaySessionTranscript> 
 /// transcript without accidentally folding delegated worker transcripts
 /// into the main chat timeline.
 pub fn find_root_transcript_for_thread(workspace_dir: &Path, thread_id: &str) -> Option<PathBuf> {
-    raw_session_dirs(workspace_dir)
-        .into_iter()
-        .filter_map(|raw_dir| find_root_transcript_for_thread_in_dir(&raw_dir, thread_id))
-        .max_by(|left, right| left.file_name().cmp(&right.file_name()))
+    find_root_transcripts_for_thread(workspace_dir, thread_id).pop()
+}
+
+pub fn find_root_transcripts_for_thread(
+    workspace_dir: &Path,
+    thread_id: &str,
+) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    for raw_dir in raw_session_dirs(workspace_dir) {
+        matches.extend(root_transcripts_for_thread_in_dir(&raw_dir, thread_id));
+    }
+    // Already chronological within each directory (see
+    // `root_transcripts_for_thread_in_dir`); re-key across directories on the
+    // same `created` stamp rather than the file name.
+    matches.sort_by_cached_key(|path| {
+        let created = read_transcript(path)
+            .ok()
+            .map(|transcript| transcript.meta.created)
+            .unwrap_or_default();
+        (created, path.clone())
+    });
+    matches
 }
 
 fn raw_session_dirs(workspace_dir: &Path) -> Vec<PathBuf> {
@@ -478,13 +496,26 @@ fn raw_session_dirs(workspace_dir: &Path) -> Vec<PathBuf> {
 }
 
 pub fn find_root_transcript_for_thread_in_dir(raw_dir: &Path, thread_id: &str) -> Option<PathBuf> {
+    root_transcripts_for_thread_in_dir(raw_dir, thread_id).pop()
+}
+
+fn root_transcripts_for_thread_in_dir(raw_dir: &Path, thread_id: &str) -> Vec<PathBuf> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
-        return None;
+        return Vec::new();
     }
 
-    let entries = fs::read_dir(raw_dir).ok()?;
-    let mut matches: Vec<PathBuf> = entries
+    let Ok(entries) = fs::read_dir(raw_dir) else {
+        return Vec::new();
+    };
+    // Keyed by `meta.created` so the order is chronological rather than
+    // lexicographic. Modern stems are `{unix_ts}_{agent_id}` and sort the same
+    // either way, but a legacy `{agent}_{index}` root encodes no time at all —
+    // and because digits sort before letters, every legacy root sorted *after*
+    // every modern one regardless of when it was written. `project_from_files`
+    // concatenates these in order, so that reordered the rendered view and
+    // could attach a sub-agent trail to the wrong turn.
+    let mut matches: Vec<(String, PathBuf)> = entries
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| {
@@ -494,20 +525,25 @@ pub fn find_root_transcript_for_thread_in_dir(raw_dir: &Path, thread_id: &str) -
                     .and_then(|s| s.to_str())
                     .is_some_and(|stem| !stem.contains("__"))
         })
-        .filter(|path| match read_transcript(path) {
-            Ok(transcript) => transcript.meta.thread_id.as_deref() == Some(thread_id),
+        .filter_map(|path| match read_transcript(&path) {
+            Ok(transcript) if transcript.meta.thread_id.as_deref() == Some(thread_id) => {
+                Some((transcript.meta.created.clone(), path))
+            }
+            Ok(_) => None,
             Err(err) => {
                 log::warn!(
                     "[transcript] skipping unreadable root transcript candidate {}: {err}",
                     path.display()
                 );
-                false
+                None
             }
         })
         .collect();
 
-    matches.sort();
-    matches.pop()
+    // Path is the tiebreak so the order stays total and deterministic when two
+    // transcripts share a `created` stamp.
+    matches.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    matches.into_iter().map(|(_, path)| path).collect()
 }
 
 /// Aggregated token/cost usage for a chat thread, summed across **all** of the

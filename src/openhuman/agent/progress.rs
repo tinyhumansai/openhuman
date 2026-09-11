@@ -152,6 +152,15 @@ pub enum AgentProgress {
         task_id: String,
         question: String,
         worker_thread_id: Option<String>,
+        /// Where the paused conversation was persisted, or `None` when the
+        /// write failed.
+        ///
+        /// Carried rather than re-derived by the consumer: the run ledger used
+        /// to rebuild this path from the workspace dir and record it
+        /// unconditionally, so it claimed a checkpoint existed even when none
+        /// had been written, and would have pointed at the wrong directory for
+        /// any run whose `checkpoint_dir` was overridden (#5928).
+        checkpoint_path: Option<String>,
     },
 
     /// A sub-agent's inner LLM iteration is starting. Emitted **only

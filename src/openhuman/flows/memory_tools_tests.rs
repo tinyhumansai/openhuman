@@ -1,8 +1,6 @@
 use super::*;
-use crate::openhuman::inference::embeddings::NoopEmbedding;
 use crate::openhuman::security::AutonomyLevel;
 use tempfile::TempDir;
-use tinymemory_core::store::UnifiedMemory;
 
 // Seeding still goes through the engine handle (`UnifiedMemory` above),
 // but the value types are the CONTRACT's: `tinymemory_core` re-exports
@@ -28,7 +26,7 @@ use crate::openhuman::memory::api::types::{
 //    supertrait is `MemoryCore`, which is a *different* trait with taint as
 //    an argument rather than a second method (see `provider/mandatory.rs`,
 //    which says so at the definition). Rebinding the fixture onto
-//    `memory::test_support::install_tinycortex_for_test` therefore rewrites
+//    `memory::test_support::install_memory_driver_for_test` therefore rewrites
 //    every `mem.store_with_taint(..)` / `mem.get(..)` in this module, not
 //    just its two lines.
 // 2. **The backend choice is load-bearing.** `FLOW_MEMORY_NAMESPACE_PREFIX`'s
@@ -52,7 +50,7 @@ fn test_security() -> Arc<SecurityPolicy> {
 
 fn test_mem() -> (TempDir, Arc<dyn crate::openhuman::memory::Memory>) {
     let tmp = TempDir::new().unwrap();
-    let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+    let mem = crate::openhuman::memory::tool_memory::test_helpers::MockMemory::default();
     (tmp, Arc::new(mem))
 }
 
