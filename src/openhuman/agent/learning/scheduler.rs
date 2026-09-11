@@ -146,14 +146,20 @@ pub fn register_event_trigger(
     detector: Arc<StabilityDetector>,
     workspace_dir: std::path::PathBuf,
 ) -> Option<SubscriptionHandle> {
-    BUS.subscribe(Arc::new(RebuildTriggerHandler { detector, workspace_dir }))
+    BUS.subscribe(Arc::new(RebuildTriggerHandler {
+        detector,
+        workspace_dir,
+    }))
 }
 
 async fn learning_enabled(workspace_dir: &std::path::Path) -> bool {
-    match crate::openhuman::config::ops::load_config_for_workspace_with_timeout(workspace_dir).await {
+    match crate::openhuman::config::ops::load_config_for_workspace_with_timeout(workspace_dir).await
+    {
         Ok(config) => config.learning.enabled,
         Err(error) => {
-            tracing::warn!("[learning::scheduler] unable to read learning setting; skipping rebuild: {error}");
+            tracing::warn!(
+                "[learning::scheduler] unable to read learning setting; skipping rebuild: {error}"
+            );
             false
         }
     }
