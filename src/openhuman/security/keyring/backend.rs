@@ -15,9 +15,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use parking_lot::Mutex;
-
 use crate::openhuman::security::keyring::error::KeyringError;
+use crate::openhuman::security::keyring::file_store;
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
 
@@ -105,15 +104,18 @@ impl KeyringBackend for OsBackend {
 /// keep unit tests and explicit recovery/debug overrides independent from the
 /// host OS keychain. Never use it in a production deployment.
 ///
-/// # Thread safety
+/// # Concurrency
 ///
-/// The `mutex` field serializes in-process read-modify-write operations on
-/// `set` and `delete`.  Cross-process safety relies on the atomic rename in
-/// `write_map`.
+/// Every secret lives in this one file, so a `set` or `delete` is a read →
+/// modify → write cycle over *all* of them. That cycle is guarded by the
+/// cross-process advisory lock in [`file_store::lock_for_write`] — an in-process
+/// mutex is not enough, because a desktop core, a `medulla` TUI embedding the
+/// same core, and a `cargo test` run that inherited `OPENHUMAN_WORKSPACE` all
+/// address the same path. Unguarded, the later writer's map (read before the
+/// earlier writer landed) silently discards the earlier one's secret; when that
+/// secret is the app session, the symptom is being signed out for no reason.
 pub struct FileBackend {
     path: PathBuf,
-    /// In-process lock covering the read→modify→write cycle in mutating ops.
-    mutex: Mutex<()>,
 }
 
 impl FileBackend {
@@ -121,7 +123,6 @@ impl FileBackend {
     pub fn new(workspace_dir: &Path) -> Self {
         Self {
             path: workspace_dir.join("dev-keychain.json"),
-            mutex: Mutex::new(()),
         }
     }
 
@@ -130,7 +131,18 @@ impl FileBackend {
         &self.path
     }
 
-    fn read_map(&self) -> Result<HashMap<String, String>, KeyringError> {
+    /// Read the whole map.
+    ///
+    /// `for_write` decides what an unparseable file means, and the two answers
+    /// are not interchangeable:
+    ///
+    /// - Reading (`false`): degrade to empty. The caller sees "no such secret",
+    ///   which for a session token means signing in again — recoverable, and
+    ///   better than failing every unrelated lookup.
+    /// - Writing (`true`): quarantine the bytes and fail. Returning empty here
+    ///   is what turned a corrupt file into a *wipe*, because the write that
+    ///   followed persisted a map holding nothing but the key being set.
+    fn read_map(&self, for_write: bool) -> Result<HashMap<String, String>, KeyringError> {
         if !self.path.exists() {
             return Ok(HashMap::new());
         }
@@ -141,82 +153,56 @@ impl FileBackend {
         if bytes.is_empty() {
             return Ok(HashMap::new());
         }
-        serde_json::from_slice::<HashMap<String, String>>(&bytes)
-            .map_err(|e| {
-                // Treat a corrupt file as empty so we degrade gracefully.
+        match serde_json::from_slice::<HashMap<String, String>>(&bytes) {
+            Ok(map) => Ok(map),
+            Err(e) if for_write => {
+                file_store::quarantine_corrupt(&self.path, "json");
+                Err(KeyringError::Backend(format!(
+                    "dev-keychain.json at {} could not be parsed ({e}); it was moved aside \
+                     rather than overwritten",
+                    self.path.display()
+                )))
+            }
+            Err(e) => {
                 log::warn!(
                     "[keyring] dev-keychain.json at {} is corrupt ({e}); treating as empty",
                     self.path.display()
                 );
-                // Return empty map by converting to a no-source variant.
-                drop(e);
-                KeyringError::VerifyFailed {
-                    key: "<parse>".to_string(),
-                }
-            })
-            .or_else(|_| Ok(HashMap::new()))
+                Ok(HashMap::new())
+            }
+        }
     }
 
     fn write_map(&self, map: &HashMap<String, String>) -> Result<(), KeyringError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| KeyringError::MigrationReadFailed {
-                path: parent.display().to_string(),
-                source: e,
-            })?;
-        }
-
-        // Serialize the map to pretty JSON.  Propagate serialization failure so
-        // callers are not silently fed empty data on a write error.
+        // Propagate serialization failure so callers are not silently fed empty
+        // data on a write error.
         let json = serde_json::to_vec_pretty(map).map_err(|e| {
             KeyringError::Backend(format!("failed to serialize dev keychain map: {e}"))
         })?;
-
-        // Atomic write: temp file + rename.
-        let tmp_path = self.path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| KeyringError::MigrationDeleteFailed {
-            path: tmp_path.display().to_string(),
-            source: e,
-        })?;
-
-        // Set mode 0600 on Unix before moving into place.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            if let Err(e) = std::fs::set_permissions(&tmp_path, perms) {
-                log::warn!("[keyring] could not set 0600 on dev-keychain.json tmp file: {e}");
-            }
-        }
-
-        std::fs::rename(&tmp_path, &self.path).map_err(|e| {
-            KeyringError::MigrationDeleteFailed {
-                path: self.path.display().to_string(),
-                source: e,
-            }
-        })?;
-
-        Ok(())
+        file_store::write_atomic(&self.path, &json)
     }
 }
 
 impl KeyringBackend for FileBackend {
     fn get(&self, namespaced_key: &str) -> Result<Option<String>, KeyringError> {
-        let map = self.read_map()?;
+        // No lock: `write_atomic` publishes by rename, so a reader sees either
+        // the whole previous file or the whole next one, never a mix.
+        let map = self.read_map(false)?;
         Ok(map.get(namespaced_key).cloned())
     }
 
     fn set(&self, namespaced_key: &str, value: &str) -> Result<(), KeyringError> {
-        // Hold the in-process lock for the full read→modify→write cycle.
-        let _guard = self.mutex.lock();
-        let mut map = self.read_map()?;
+        // Held across the read as well as the write: taking it around the write
+        // alone would still let a stale map overwrite a concurrent one.
+        let _guard = file_store::lock_for_write(&self.path)?;
+        let mut map = self.read_map(true)?;
         map.insert(namespaced_key.to_string(), value.to_string());
         self.write_map(&map)
     }
 
     fn delete(&self, namespaced_key: &str) -> Result<(), KeyringError> {
-        // Hold the in-process lock for the full read→modify→write cycle.
-        let _guard = self.mutex.lock();
-        let mut map = self.read_map()?;
+        let _guard = file_store::lock_for_write(&self.path)?;
+        let mut map = self.read_map(true)?;
         if map.remove(namespaced_key).is_some() {
             self.write_map(&map)?;
         }

@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getCoreStateSnapshot } from '../../../lib/coreState/store';
 import { bootCheckTransport } from '../../../services/bootCheckService';
 import { testCoreRpcConnection } from '../../../services/coreRpcClient';
-import { isTauri } from '../../../services/webviewAccountService';
 import {
   getStoredCoreMode,
   getStoredCoreToken,
   storeCoreMode,
 } from '../../../utils/configPersistence';
+import { isTauri } from '../../../utils/tauriCommands/common';
 import {
   oauthAuthReadinessUserMessage,
   prepareOAuthLoginLaunch,
@@ -32,9 +32,7 @@ vi.mock('../../../utils/configPersistence', () => ({
   storeCoreMode: vi.fn(),
 }));
 
-vi.mock('../../../services/webviewAccountService', () => ({
-  isTauri: vi.fn().mockReturnValue(true),
-}));
+vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: vi.fn().mockReturnValue(true) }));
 
 describe('oauthAuthReadiness', () => {
   beforeEach(() => {
@@ -50,7 +48,6 @@ describe('oauthAuthReadiness', () => {
         onboardingCompleted: false,
         chatOnboardingCompleted: false,
         analyticsEnabled: false,
-        meetAutoOrchestratorHandoff: false,
         localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
         keyringStatus: {
           available: true,
@@ -117,7 +114,6 @@ describe('oauthAuthReadiness', () => {
         onboardingCompleted: false,
         chatOnboardingCompleted: false,
         analyticsEnabled: false,
-        meetAutoOrchestratorHandoff: false,
         localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
         keyringStatus: {
           available: true,

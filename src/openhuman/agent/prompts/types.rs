@@ -257,8 +257,20 @@ impl<'a> PromptTool<'a> {
 
     /// Adapt a `Box<dyn Tool>` slice into a `Vec<PromptTool<'_>>`.
     pub fn from_tools(tools: &'a [Box<dyn Tool>]) -> Vec<PromptTool<'a>> {
+        Self::from_tool_refs(tools.iter().map(|t| t.as_ref()))
+    }
+
+    /// Adapt any iterator of borrowed tools into a `Vec<PromptTool<'_>>`.
+    ///
+    /// An agent's callable surface is not one contiguous slice: the durable
+    /// registry and the freshly-synthesised delegation set live in separate
+    /// `Arc`s (see `Agent::synthesized_tools`), and the prompt catalogue must
+    /// render both. Taking an iterator lets the caller chain them without
+    /// materialising a combined `Vec<Box<dyn Tool>>` — which is impossible
+    /// anyway, since `Box<dyn Tool>` is not cloneable.
+    pub fn from_tool_refs(tools: impl IntoIterator<Item = &'a dyn Tool>) -> Vec<PromptTool<'a>> {
         tools
-            .iter()
+            .into_iter()
             .map(|t| PromptTool {
                 name: t.name(),
                 description: t.description(),
@@ -415,7 +427,6 @@ pub trait PromptSection: Send + Sync {
 pub struct SubagentRenderOptions {
     pub include_safety_preamble: bool,
     pub include_identity: bool,
-    pub include_skills_catalog: bool,
     pub include_profile: bool,
     pub include_memory_md: bool,
 }
@@ -431,14 +442,12 @@ impl SubagentRenderOptions {
     pub fn from_definition_flags(
         omit_identity: bool,
         omit_safety_preamble: bool,
-        omit_skills_catalog: bool,
         omit_profile: bool,
         omit_memory_md: bool,
     ) -> Self {
         Self {
             include_identity: !omit_identity,
             include_safety_preamble: !omit_safety_preamble,
-            include_skills_catalog: !omit_skills_catalog,
             include_profile: !omit_profile,
             include_memory_md: !omit_memory_md,
         }

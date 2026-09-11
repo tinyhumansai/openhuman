@@ -108,13 +108,13 @@ export const ProviderSetupErrorNotice = ({ error }: { error: string }) => {
     <div
       role="alert"
       className="max-w-full min-w-0 overflow-hidden rounded-md border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-      <p className="break-words font-medium leading-relaxed [overflow-wrap:anywhere]">{summary}</p>
+      <p className="wrap-break-word font-medium leading-relaxed wrap-anywhere">{summary}</p>
       {hasDetails ? (
         <details className="mt-2 max-w-full min-w-0">
           <summary className="cursor-pointer text-[11px] font-medium text-red-700 dark:text-red-200">
             {t('providerSetup.error.technicalDetails')}
           </summary>
-          <pre className="mt-1 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words rounded border border-red-200/70 dark:border-red-500/30 bg-surface/70 p-2 font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200 [overflow-wrap:anywhere]">
+          <pre className="mt-1 max-h-32 max-w-full overflow-auto whitespace-pre-wrap wrap-break-word rounded border border-red-200/70 dark:border-red-500/30 bg-surface/70 p-2 font-mono text-[11px] leading-relaxed text-red-800 dark:text-red-200 wrap-anywhere">
             {details}
           </pre>
         </details>

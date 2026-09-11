@@ -1,9 +1,11 @@
 import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
+import { cn } from '../../../lib/cn';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import { CORE_RPC_METHODS } from '../../../services/rpcMethods';
+import { RadioGroupItem, RadioGroupRoot } from '../../ui/RadioGroup';
 import { SettingsSection, SettingsStatusLine } from '../controls';
 
 const log = debug('privacy-mode');
@@ -92,31 +94,39 @@ const PrivacyModeSection = () => {
         <p className="text-xs text-content-muted leading-relaxed">
           {t('privacy.mode.description')}
         </p>
-        <div className="flex flex-col gap-2" data-testid="privacy-mode-options">
+        <RadioGroupRoot
+          value={mode ?? undefined}
+          onValueChange={next => void handleSelect(next as PrivacyMode)}
+          aria-label={t('privacy.mode.title')}
+          className="flex flex-col gap-2"
+          data-testid="privacy-mode-options">
           {MODES.map(({ value, labelKey, descKey }) => {
             const isSelected = mode === value;
+            const inputId = `privacy-mode-option-${value}-input`;
             return (
-              <button
+              <label
                 key={value}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                disabled={status === 'saving' || status === 'loading'}
-                onClick={() => {
-                  void handleSelect(value);
-                }}
-                data-testid={`privacy-mode-option-${value}`}
-                className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
+                htmlFor={inputId}
+                className={cn(
+                  'w-full text-left px-4 py-3 rounded-lg border transition-colors block',
                   isSelected
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-line bg-surface hover:border-line-strong dark:hover:border-line-strong'
-                } ${status === 'saving' ? 'opacity-50' : ''}`}>
+                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                    : 'border-line bg-surface hover:border-line-strong',
+                  status === 'saving' && 'opacity-50'
+                )}>
+                <RadioGroupItem
+                  id={inputId}
+                  value={value}
+                  data-testid={`privacy-mode-option-${value}`}
+                  disabled={status === 'saving' || status === 'loading'}
+                  className="sr-only"
+                />
                 <span className="text-sm font-semibold text-content">{t(labelKey)}</span>
                 <p className="text-xs text-content-muted mt-0.5">{t(descKey)}</p>
-              </button>
+              </label>
             );
           })}
-        </div>
+        </RadioGroupRoot>
         <SettingsStatusLine
           saving={status === 'saving'}
           savedNote={status === 'saved' ? t('privacy.mode.saved') : null}

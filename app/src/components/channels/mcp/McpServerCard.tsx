@@ -2,6 +2,7 @@
  * Card component for a single MCP registry server.
  * Shows icon, title, description, and author derived from qualified name.
  */
+import Button from '../../ui/Button';
 import type { SmitheryServer } from './types';
 
 interface McpServerCardProps {
@@ -19,28 +20,28 @@ export function deriveAuthor(qualifiedName: string): string | null {
 
 const McpServerCard = ({ server, onSelect }: McpServerCardProps) => {
   return (
-    <button
-      type="button"
+    <Button
+      variant="tertiary"
       onClick={() => onSelect(server.qualified_name)}
-      className="w-full text-left rounded-lg border border-line bg-surface-muted p-3 flex items-start gap-3 hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-surface-subtle/50 dark:hover:bg-surface-muted transition-colors cursor-pointer">
+      className="h-auto w-full items-start justify-start gap-3 rounded-lg border border-line bg-surface-muted p-3 text-left font-normal hover:border-primary-300 hover:bg-surface-subtle/50 dark:hover:border-primary-500/40 dark:hover:bg-surface-muted">
       {server.icon_url ? (
         <img
           src={server.icon_url}
           alt=""
-          className="w-8 h-8 rounded shrink-0 object-contain bg-surface"
+          className="h-8 w-8 shrink-0 rounded bg-surface object-contain"
         />
       ) : (
-        <div className="w-8 h-8 rounded shrink-0 bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center text-sm">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary-100 text-sm dark:bg-primary-500/20">
           🔌
         </div>
       )}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-content truncate">{server.display_name}</p>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-content">{server.display_name}</p>
         {server.description && (
-          <p className="text-xs text-content-muted line-clamp-4 mt-0.5">{server.description}</p>
+          <p className="mt-0.5 line-clamp-4 text-xs text-content-muted">{server.description}</p>
         )}
       </div>
-    </button>
+    </Button>
   );
 };
 

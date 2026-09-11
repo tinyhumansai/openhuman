@@ -3,9 +3,8 @@
 // every registered route resolves without a parallel switch-statement.
 import debug from 'debug';
 import { useCallback } from 'react';
-import { type To, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
-import { settingsNavState } from '../modal/settingsOverlay';
 import { entryRoute, findEntryByRoute, SETTINGS_ROUTE_REGISTRY } from '../settingsRouteRegistry';
 
 const log = debug('settings:nav');
@@ -19,21 +18,15 @@ type SettingsRoute =
   | 'agents'
   | 'agent-access'
   | 'account'
-  | 'cron-jobs'
   | 'privacy'
   | 'billing'
-  | 'team'
-  | 'team-members'
-  | 'team-invites'
   | 'developer-options'
   | 'llm'
   | 'voice'
   | 'tools'
   | 'recovery-phrase'
   | 'wallet-balances'
-  | 'local-model-debug'
   | 'notifications'
-  | 'notification-routing'
   | 'personality'
   | 'appearance'
   | 'approval-history'
@@ -47,7 +40,6 @@ type SettingsRoute =
   | 'usage'
   | 'security'
   | 'migration'
-  | 'companion'
   | 'meetings'
   | 'embeddings'
   | 'search'
@@ -64,7 +56,6 @@ interface BreadcrumbItem {
 interface SettingsNavigationHook {
   currentRoute: SettingsRoute;
   navigateToSettings: (route?: SettingsRoute | string) => void;
-  navigateToTeamManagement: (teamId: string) => void;
   navigateBack: () => void;
   closeSettings: () => void;
   breadcrumbs: BreadcrumbItem[];
@@ -83,7 +74,6 @@ interface SettingsNavigationHook {
 const extractSettingsSlug = (pathname: string): string => {
   // Strip the leading /settings/ and take the first path segment.
   // e.g. /settings/agents/edit/123 → 'agents'
-  // e.g. /settings/team/manage/456/members → 'team/manage/456/members'
   const match = /^\/settings\/(.+)$/.exec(pathname);
   if (!match) return '';
   return match[1];
@@ -93,13 +83,6 @@ const getCurrentRoute = (pathname: string): SettingsRoute => {
   const slug = extractSettingsSlug(pathname);
   if (!slug) return 'home';
 
-  // --- special-cased team sub-routes (dynamic segments) ---
-  if (/^team\/manage\/.+\/members/.test(slug)) return 'team-members';
-  if (/^team\/manage\/.+\/invites/.test(slug)) return 'team-invites';
-  if (/^team\/manage\//.test(slug)) return 'team';
-  if (/^team\/members/.test(slug)) return 'team-members';
-  if (/^team\/invites/.test(slug)) return 'team-invites';
-  if (/^team(\/|$)/.test(slug)) return 'team';
   // --- agent editor sub-routes ---
   if (/^agents\/(new|edit)/.test(slug)) return 'agents';
 
@@ -122,7 +105,6 @@ const getCurrentRoute = (pathname: string): SettingsRoute => {
   }
 
   // Legacy redirect targets that don't have a registry entry.
-  if (firstSegment === 'notification-routing') return 'notification-routing';
 
   log('getCurrentRoute: unknown slug "%s", defaulting to home', firstSegment);
   return 'home';
@@ -148,18 +130,10 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
   const navigateToSettings = useCallback(
     (route: SettingsRoute | string = 'home') => {
-      // Preserve the modal's backdrop (desktop) across panel-to-panel nav.
       const target = route === 'home' ? '/settings' : `/settings/${route}`;
-      navigate(target, settingsNavState(location));
+      navigate(target);
     },
-    [navigate, location]
-  );
-
-  const navigateToTeamManagement = useCallback(
-    (teamId: string) => {
-      navigate(`/settings/team/manage/${teamId}`, settingsNavState(location));
-    },
-    [navigate, location]
+    [navigate]
   );
 
   const navigateBack = useCallback(() => {
@@ -171,12 +145,17 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   }, [currentRoute, goBackWithFallback]);
 
   const closeSettings = useCallback(() => {
-    // On desktop the modal was opened over a page (backgroundLocation); return
-    // there. Otherwise fall back to /home.
-    const background = (location.state as { backgroundLocation?: To } | null)?.backgroundLocation;
-    // replace so pressing Back after closing doesn't reopen the Settings modal.
-    navigate(background ?? '/home', { replace: true });
-  }, [navigate, location.state]);
+    // Settings is a routed page, so "close" means leaving it: step back to
+    // whatever the user was on, or land on /home for a deep link with no
+    // history behind it. `replace` in the fallback so Back doesn't bounce
+    // straight back into Settings.
+    const historyState = window.history.state as { idx?: number } | null;
+    if (typeof historyState?.idx === 'number' && historyState.idx > 0) {
+      navigate(-1);
+      return;
+    }
+    navigate('/home', { replace: true });
+  }, [navigate]);
 
   // -------------------------------------------------------------------------
   // Breadcrumbs — derived from the registry.
@@ -188,12 +167,5 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
   const breadcrumbs: BreadcrumbItem[] = [];
 
-  return {
-    currentRoute,
-    navigateToSettings,
-    navigateToTeamManagement,
-    navigateBack,
-    closeSettings,
-    breadcrumbs,
-  };
+  return { currentRoute, navigateToSettings, navigateBack, closeSettings, breadcrumbs };
 };

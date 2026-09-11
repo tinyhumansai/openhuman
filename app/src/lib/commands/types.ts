@@ -28,6 +28,13 @@ export interface Action {
   repeat?: boolean;
   preventDefault?: boolean;
   keywords?: string[];
+  /** Expose this registered action in assistant-ui's composer `/` menu. */
+  slashCommand?: {
+    /** Composer command text without the leading slash. */
+    id: string;
+    /** Optional i18n description key; falls back to `labelKey` / `label`. */
+    descriptionKey?: string;
+  };
 }
 
 export interface RegisteredAction extends Action {

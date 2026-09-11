@@ -8,7 +8,8 @@ use axum::{
     routing::post,
     Router,
 };
-use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
+use openhuman_core::core::events::DomainEvent;
+use tinybus::EventHandler;
 use openhuman_core::openhuman::web_chat::{
     cancel_chat, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };

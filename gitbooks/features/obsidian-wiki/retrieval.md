@@ -10,27 +10,27 @@ icon: search
 
 The [Memory Tree](memory-tree.md) is the write path: it folds the stream of your day into chunks, scores, and hierarchical summary trees on disk. **Retrieval** is the read path - how the agent finds the right node, hydrates the right raw chunk, and resolves "Alice" to a stable id before answering you.
 
-There is deliberately **no classifier, gate, or composer** in the retrieval layer. The primitives are deterministic and scope-specific; deciding *which* primitive to call and *how* to combine results is left to the calling agent (or, for the deterministic `walk`, to a pure routing algorithm). Source: `src/openhuman/memory/tree/retrieval/mod.rs`.
+There is deliberately **no classifier, gate, or composer** in the retrieval layer. The primitives are deterministic and scope-specific; deciding _which_ primitive to call and _how_ to combine results is left to the calling agent (or, for the deterministic `walk`, to a pure routing algorithm). Source: `src/openhuman/memory/tree/retrieval/mod.rs`.
 
-***
+---
 
 ## The `memory_tree` tool: one mode dispatcher
 
 The agent-facing surface is a single multi-mode tool named `memory_tree` (`src/openhuman/memory/query/mod.rs`). Its `mode` field routes to one underlying implementation. Every retrieval mode returns the same `RetrievalHit` shape so the model sees a uniform schema regardless of which mode ran.
 
-| Mode | What it's for | Typical use |
-| --- | --- | --- |
-| `search_entities` | Fuzzy `LIKE` lookup over the canonical entity index; resolves a surface name to a canonical id. | Call **first** when the user mentions someone by name ("what did Alice say?"). |
-| `query_source` | Per-source summary retrieval filtered by source kind + time window, with optional semantic rerank. | "Summarise my Slack #eng from last week." |
-| `drill_down` | BFS walk of a summary node's `child_ids`, one or more levels down, with optional rerank. | Expand a coarse summary into its finer-grained children. |
-| `cover_window` | Minimum set of nodes covering a `[since_ms, until_ms]` time window. | "Last 24h" recaps and other time-bounded catch-ups. |
-| `fetch_leaves` | Batch hydration of raw leaf chunks by id (cap 20). | Pull exact source text for citation after a summary hit. |
-| `ingest_document` | Write a document into the tree for future retrieval (the one **write** mode). | Persist a fetched web page / GitHub file; re-ingesting the same `source_id` replaces old chunks. |
-| `walk` / `smart_walk` | Deterministic E2GraphRAG retrieval - extracts query entities, routes between the entity graph and dense summaries with **no LLM**, returns ranked evidence. | Answer a natural-language question in one shot without an agent loop. |
+| Mode                  | What it's for                                                                                                                                               | Typical use                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `search_entities`     | Fuzzy `LIKE` lookup over the canonical entity index; resolves a surface name to a canonical id.                                                             | Call **first** when the user mentions someone by name ("what did Alice say?").                   |
+| `query_source`        | Per-source summary retrieval filtered by source kind + time window, with optional semantic rerank.                                                          | "Summarise my Slack #eng from last week."                                                        |
+| `drill_down`          | BFS walk of a summary node's `child_ids`, one or more levels down, with optional rerank.                                                                    | Expand a coarse summary into its finer-grained children.                                         |
+| `cover_window`        | Minimum set of nodes covering a `[since_ms, until_ms]` time window.                                                                                         | "Last 24h" recaps and other time-bounded catch-ups.                                              |
+| `fetch_leaves`        | Batch hydration of raw leaf chunks by id (cap 20).                                                                                                          | Pull exact source text for citation after a summary hit.                                         |
+| `ingest_document`     | Write a document into the tree for future retrieval (the one **write** mode).                                                                               | Persist a fetched web page / GitHub file; re-ingesting the same `source_id` replaces old chunks. |
+| `walk` / `smart_walk` | Deterministic E2GraphRAG retrieval - extracts query entities, routes between the entity graph and dense summaries with **no LLM**, returns ranked evidence. | Answer a natural-language question in one shot without an agent loop.                            |
 
 The historical `query_global` and `query_topic` modes were **removed**: source trees hold all the content, and walking the source hierarchy plus the entity index reconstructs both the time and topic projections (`mod.rs` dispatcher tests assert their absence).
 
-***
+---
 
 ## The `RetrievalHit` shape
 
@@ -47,7 +47,7 @@ Every primitive emits `RetrievalHit` (`src/openhuman/memory/tree/retrieval/types
 
 Query-style modes wrap hits in a `QueryResponse { hits, total, truncated }` where `total` is the pre-truncation match count, so the agent can tell whether a higher-limit follow-up would surface more.
 
-***
+---
 
 ## Entity resolution and canonical ids
 
@@ -57,18 +57,18 @@ Names are messy; ids are not. Before answering a question about a person, the ag
 - The canonical registry lives in `src/openhuman/memory_entities/` - one Markdown file per entity at `<content_root>/entities/<kind>/<canonical_id>.md`, with YAML frontmatter (`id`, `kind`, `display_name`, `aliases`, `emails`, `handles`) plus a free-form notes body the user can edit in Obsidian. `lookup_alias` matches by alias / email / handle / display name, case-insensitively.
 - `kind` matches `memory_tree::score::extract::EntityKind`, so the ids the scorer emits round-trip through the registry unchanged. The vault is the source of truth - Obsidian, grep, and vector search all see the same data without a separate store.
 
-***
+---
 
 ## The entity graph (read-only, derived)
 
-`src/openhuman/memory_graph/` exposes entity relationships **without** a parallel triple-store table. The premise: *the graph is the tree mapped out*. Two entities that co-occur on the same tree node form an edge; the weight is the count of distinct shared nodes.
+`src/openhuman/memory_graph/` exposes entity relationships **without** a parallel triple-store table. The premise: _the graph is the tree mapped out_. Two entities that co-occur on the same tree node form an edge; the weight is the count of distinct shared nodes.
 
 - `co_occurring_entities(config, subject, limit)` - `GraphEdge { subject, object, weight }` sorted by weight.
 - `neighbors(config, subject, limit)` - neighbour ids only.
 
 It is a pure read-only SELF-JOIN over `mem_tree_entity_index` - no new tables, no new schema. This graph is exactly what powers the deterministic `walk` routing below.
 
-***
+---
 
 ## Deterministic walk (`walk` / `smart_walk`, no LLM)
 
@@ -82,19 +82,19 @@ It is a pure read-only SELF-JOIN over `mem_tree_entity_index` - no new tables, n
 
 Tunables (`FastRetrieveOptions`): `limit` (`k`, default 10, cap 100), `max_hops` (`h`, default 2, cap 4), and an optional `time_window_days` look-back on the dense branch. Output is a structured `QueryResponse` of hits - no synthesised prose - for a higher-level context agent to consume.
 
-***
+---
 
 ## Time-windowed recall
 
 For "what happened in the last 24h" style questions, `cover_window` computes the **minimum set of nodes** that covers `[since_ms, until_ms]` (epoch-millis). Because summary nodes carry `time_range_start` / `time_range_end`, a single high-level summary can cover a whole window without fanning out to every leaf - the agent only drills down or fetches leaves when it needs detail or a citation.
 
-***
+---
 
 ## `memory_recall` - legacy key-value search
 
 Distinct from the tree, `memory_recall` (`src/openhuman/memory/tools/recall.rs`) searches the older namespaced key-value memory: `memory_recall { namespace, query, limit }` over namespaces like `global`, `background`, `autocomplete`, or `skill-{id}`. It returns scored results and is best for exact preference / fact lookups ("does the user prefer dark mode?") that predate the tree.
 
-***
+---
 
 ## The memory agent (specialist sub-agent)
 
@@ -102,7 +102,7 @@ Distinct from the tree, `memory_recall` (`src/openhuman/memory/tools/recall.rs`)
 
 Its tool allowlist (`src/openhuman/memory/agent/agent/agent.toml`) is the full retrieval surface: `memory_tree` (with all the modes above, including deterministic `walk` / `smart_walk`), `memory_recall`, and `query_memory`. The prompt and iteration cap live alongside in `agent/prompt.md` + `agent/prompt.rs`; performance is tracked by the benchmark harness in `ops.rs` (`scripts/bench-memory-walk.sh`).
 
-***
+---
 
 ## See also
 

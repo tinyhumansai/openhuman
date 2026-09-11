@@ -141,7 +141,6 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
     assert_eq!(assets.chat.state, "missing");
     assert_eq!(assets.vision.state, "missing");
     assert_eq!(assets.embedding.state, "ready");
-    assert_eq!(assets.stt.state, "missing");
     assert_eq!(assets.tts.state, "ondemand");
 
     let unknown = service
@@ -149,12 +148,6 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
         .await
         .expect_err("unknown asset");
     assert!(unknown.contains("Unknown capability"));
-
-    let stt_missing_url = service
-        .download_asset(&config, "stt")
-        .await
-        .expect_err("stt without url");
-    assert!(stt_missing_url.contains("no local_ai.stt_download_url"));
 
     let after_tts = service
         .download_asset(&config, "tts")

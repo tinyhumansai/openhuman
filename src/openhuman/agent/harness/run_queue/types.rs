@@ -51,12 +51,3 @@ pub struct QueuedMessage {
     pub profile_id: Option<String>,
     pub locale: Option<String>,
 }
-
-/// Snapshot of the queue state for introspection.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct QueueStatus {
-    pub steers: usize,
-    pub followups: usize,
-    pub collects: usize,
-    pub total: usize,
-}

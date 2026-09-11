@@ -61,7 +61,7 @@ const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
     <div
       role="alertdialog"
       aria-label={t('chat.approval.title')}
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-700 dark:bg-amber-950">
+      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-xs dark:border-amber-700 dark:bg-amber-950">
       <div className="flex items-start gap-2">
         <span aria-hidden className="text-base leading-none text-amber-700 dark:text-amber-200">
           🔒
@@ -70,11 +70,11 @@ const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
           <p className="font-semibold text-amber-900 dark:text-amber-100">
             {t('chat.approval.title')}
           </p>
-          <p className="mt-1 break-words text-amber-800/90 dark:text-amber-200/90">
+          <p className="mt-1 wrap-break-word text-amber-800/90 dark:text-amber-200/90">
             {approval.message || t('chat.approval.fallback')}
           </p>
           {approval.command && (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-200/80 bg-surface px-2 py-1.5 font-mono text-xs text-ink shadow-inner dark:border-amber-700 dark:bg-surface-canvas dark:text-content">
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-200/80 bg-surface px-2 py-1.5 font-mono text-xs text-content shadow-inner dark:border-amber-700 dark:bg-surface-canvas">
               {approval.command}
             </pre>
           )}
@@ -85,7 +85,9 @@ const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
             </span>
           </p>
 
-          {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+          {errorMsg && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button

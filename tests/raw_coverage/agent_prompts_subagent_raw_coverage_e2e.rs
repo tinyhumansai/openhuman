@@ -25,10 +25,10 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tinyagents::harness::message::{AssistantMessage, ContentBlock};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::message::{AssistantMessage, ContentBlock};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 
 struct ScriptedModel {
     responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
@@ -93,7 +93,7 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.requests.lock().push(
             request
                 .messages
@@ -106,13 +106,13 @@ impl ChatModel<()> for ScriptedModel {
             tokio::time::sleep(delay).await;
         }
         if let Some(message) = &self.always_fail {
-            return Err(tinyagents::TinyAgentsError::Model(message.clone()));
+            return Err(tinyinference::Error::Model(message.clone()));
         }
         self.responses
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 
@@ -229,6 +229,7 @@ fn tool_response(name: &str, arguments: serde_json::Value) -> ModelResponse {
         raw: None,
         resolved_model: None,
         continue_turn: None,
+            served_from_cache: false,
     }
 }
 
@@ -245,7 +246,6 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: false,
-        omit_skills_catalog: true,
         omit_profile: false,
         omit_memory_md: false,
         model: ModelSpec::Inherit,
@@ -273,7 +273,7 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
 
 fn parent(workspace: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools = vec![tool("echo"), tool("delegate_nested"), tool("other__skip")];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -288,6 +288,10 @@ fn parent(workspace: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionConte
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round18-model".to_string(),
@@ -390,7 +394,7 @@ fn prompt_sections_render_files_identity_memory_tools_and_ambient_blocks() -> Re
     assert!(rendered.contains("curated user body"));
     assert!(rendered.contains("### work (last updated 2026-05-29)"));
     assert!(rendered.contains("Call as: `echo[a|b]`"));
-    assert!(rendered.contains("## Output style"));
+    assert!(rendered.contains("# Writing style"));
 
     let user_files = render_user_files(&ctx)?;
     assert!(user_files.contains("curated memory body"));
@@ -418,7 +422,7 @@ fn subagent_prompt_renderer_covers_format_branches_and_missing_indices() {
     std::fs::write(workspace.path().join("MEMORY.md"), "memory file").unwrap();
     let parent_tools = vec![tool("alpha")];
     let extra_tools = vec![tool("extra")];
-    let options = SubagentRenderOptions::from_definition_flags(false, false, true, false, false);
+    let options = SubagentRenderOptions::from_definition_flags(false, false, false, false);
 
     let pformat = render_subagent_system_prompt(
         workspace.path(),

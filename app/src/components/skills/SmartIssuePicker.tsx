@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { execute as composioExecute, listConnections } from '../../lib/composio/composioApi';
 import { useT } from '../../lib/i18n/I18nContext';
+import { Alert, NativeSelect } from '../ui';
 
 const log = createDebug('app:skills:SmartIssuePicker');
 
@@ -242,20 +243,20 @@ const SmartIssuePicker = ({ values, onPatchInputs }: SmartIssuePickerProps) => {
       <div>
         <label
           htmlFor="smart-issue-picker-repo"
-          className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
+          className="block text-sm font-medium text-content-secondary mb-1">
           {t('settings.devWorkflow.githubRepository')}
         </label>
         {reposError && (
-          <div className="mb-2 px-3 py-2 rounded-md bg-coral-50 dark:bg-coral-500/10 border border-coral-200 dark:border-coral-500/30 text-xs text-coral-700 dark:text-coral-300">
+          <Alert variant="destructive" className="mb-2 text-xs">
             {reposError}
-          </div>
+          </Alert>
         )}
-        <select
+        <NativeSelect
           id="smart-issue-picker-repo"
           value={values.repo ?? ''}
           onChange={e => void onRepoSelect(e.target.value)}
           disabled={reposLoading}
-          className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100">
+          className="w-full">
           <option value="">
             {reposLoading
               ? t('settings.devWorkflow.loadingRepositories')
@@ -266,47 +267,43 @@ const SmartIssuePicker = ({ values, onPatchInputs }: SmartIssuePickerProps) => {
               {r.fullName} {r.private ? t('settings.devWorkflow.privateTag') : ''}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {forkLoading && (
-        <div className="text-xs text-content-muted dark:text-stone-400">
+        <div className="text-xs text-content-muted">
           {t('settings.devWorkflow.detectingForkInfo')}
         </div>
       )}
       {forkInfo && (
-        <div
-          data-testid="smart-issue-picker-fork-banner"
-          className="px-3 py-2 rounded-md bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30">
-          <div className="text-xs font-medium text-primary-800 dark:text-primary-300">
-            {t('settings.devWorkflow.forkDetected')}
-          </div>
-          <div className="text-xs text-primary-700 dark:text-primary-200 mt-0.5">
+        <Alert variant="info" data-testid="smart-issue-picker-fork-banner" className="flex-col items-start">
+          <div className="text-xs font-medium">{t('settings.devWorkflow.forkDetected')}</div>
+          <div className="text-xs mt-0.5">
             {t('settings.devWorkflow.upstream')}{' '}
             <span className="font-mono">{forkInfo.upstreamFullName}</span>
           </div>
-        </div>
+        </Alert>
       )}
 
       {branches.length > 0 && (
         <div>
           <label
             htmlFor="smart-issue-picker-branch"
-            className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
+            className="block text-sm font-medium text-content-secondary mb-1">
             {t('settings.devWorkflow.targetBranch')}
           </label>
-          <select
+          <NativeSelect
             id="smart-issue-picker-branch"
             value={values.target_branch ?? ''}
             onChange={e => onPatchInputs({ target_branch: e.target.value })}
             disabled={branchesLoading}
-            className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100">
+            className="w-full">
             {branches.map(b => (
               <option key={b.name} value={b.name}>
                 {b.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       )}
     </div>

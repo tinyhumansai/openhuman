@@ -7,67 +7,52 @@ use log::debug;
 use super::helpers::{
     create_stt_provider_by_slug, create_tts_provider_by_slug, split_slug_model, LOG_PREFIX,
 };
-use super::stt_providers::{CloudSttProvider, WhisperSttProvider};
+use super::stt_providers::CloudSttProvider;
 use super::traits::{SttProvider, TtsProvider};
 use super::tts_providers::{CloudTtsProvider, PiperTtsProvider};
 use crate::openhuman::config::Config;
 
-/// Default Whisper model. `whisper-large-v3-turbo` is the recommended ship
-/// default — best accuracy-to-latency tradeoff in the Whisper family (5×
-/// faster than `large-v3` with comparable WER on English). Users on lower-
-/// spec hardware can drop down to `medium` / `small` / `base` / `tiny` via
-/// the install presets.
-pub const DEFAULT_WHISPER_MODEL: &str = "whisper-large-v3-turbo";
+/// Default STT model id for the OpenHuman backend proxy.
+/// Third-party providers use the `default_stt_model` configured in their
+/// registry entry when callers leave the model empty.
+pub const DEFAULT_STT_MODEL: &str = "whisper-v1";
 
 /// Default Piper voice — `en_US-lessac-medium`, matches
 /// [`super::super::local_ai::model_ids::effective_tts_voice_id`].
 pub const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
 
-/// Whisper install presets (size tiers exposed to the installer UI).
-/// Mirrors the Ollama model installer surface: each entry is `(id, label)`.
-pub const WHISPER_MODEL_PRESETS: &[(&str, &str)] = &[
-    ("tiny", "Tiny (39 MB, fastest)"),
-    ("base", "Base (74 MB)"),
-    ("small", "Small (244 MB)"),
-    ("medium", "Medium (769 MB, recommended)"),
-    ("large-v3-turbo", "Large v3 Turbo (1.5 GB, best accuracy)"),
-];
-
-/// Creates a speech-to-text provider based on the specified name and model.
+/// Creates a speech-to-text provider from a routing string.
 ///
 /// Supported provider names:
-/// - `"cloud"` → backend Whisper proxy — default, preferred for laptops
-///   without local models
-/// - `"whisper"` → local whisper.cpp via `WHISPER_BIN` (or in-process
-///   `whisper-rs` when configured)
+/// - `"cloud"` / `"openhuman"` / `"backend"` → the OpenHuman backend
+///   transcription proxy. The default, and the only one that needs no user key.
+/// - `"<slug>"` / `"<slug>:<model>"` → a third-party STT API resolved against
+///   `config.voice_providers` (e.g. `"elevenlabs"`, `"openai:whisper-1"`,
+///   `"deepgram:nova-2"`).
 ///
-/// Returns an error for unrecognised provider names so configuration
-/// mistakes surface immediately rather than silently degrading.
+/// **There is no local branch.** `"whisper"` and `"local"` used to select the
+/// bundled whisper.cpp engine; that engine is gone, and both strings now fall
+/// through to the slug lookup and error by name. `config::migrations` rewrites
+/// persisted configs so a user never reaches that error, but the factory does
+/// not silently remap them — an unmigrated string is a real misconfiguration
+/// and a silent fallback would hide it.
 ///
-/// The factory does not eagerly resolve the binary — `WhisperSttProvider`
-/// looks up `WHISPER_BIN` lazily inside `transcribe()` so a misconfigured
-/// install fails at use-time with a clear error message instead of at
-/// startup.
+/// Returns an error for unrecognised provider names so configuration mistakes
+/// surface immediately rather than degrading quietly to a different provider.
 pub fn create_stt_provider(
     provider: &str,
     model: &str,
     config: &Config,
 ) -> anyhow::Result<Box<dyn SttProvider>> {
     debug!("{LOG_PREFIX} create_stt_provider provider={provider} model={model}");
-    let model = if model.trim().is_empty() {
-        DEFAULT_WHISPER_MODEL
-    } else {
-        model
-    };
     match provider.trim() {
-        "cloud" | "openhuman" => Ok(Box::new(CloudSttProvider::new(
+        "cloud" | "openhuman" | "backend" => Ok(Box::new(CloudSttProvider::new(
             super::super::cloud_transcribe_default_model(),
         ))),
-        "whisper" => Ok(Box::new(WhisperSttProvider::new(model))),
         other => {
             let (slug, slug_model) = split_slug_model(other);
             let effective_model = if slug_model.is_empty() {
-                model
+                model.trim()
             } else {
                 slug_model
             };

@@ -20,7 +20,7 @@ The agent tool layer. Defines the core [`Tool`] trait every agent-callable capab
 
 | File | Role |
 | --- | --- |
-| `src/openhuman/tools/mod.rs` | Export hub. Declares submodules, re-exports built-in impls and the domain-owned tool sets (`agent`, `voice::audio_toolkit`, `codegraph`, `composio`, `cron`, `integrations`, `memory`, `wallet`, `whatsapp_data`), and the `all_tools_*` controller pair. |
+| `src/openhuman/tools/mod.rs` | Export hub. Declares submodules, re-exports built-in impls and the domain-owned tool sets (`agent`, `voice::audio_toolkit`, `codegraph`, `composio`, `cron`, `integrations`, `memory`, `wallet`), and the `all_tools_*` controller pair. |
 | `src/openhuman/tools/traits.rs` | The `Tool` trait + `ToolResult`/`ToolContent` re-export, `ToolSpec`, `PermissionLevel`, `ToolScope`, `ToolCategory`, `ToolCallOptions`. Defines per-tool hooks: permission level (incl. args-aware), scope, category, concurrency safety, `external_effect[_with_args]` (drives approval gating), `max_result_size_chars`, markdown preference, generated-runtime context. |
 | `src/openhuman/tools/ops.rs` | Registry assembly: `default_tools`, `default_tools_with_runtime`, `all_tools`, `all_tools_with_runtime`, `browser_allowed_domains`. All config-gating logic lives here. |
 | `src/openhuman/tools/schemas.rs` | JSON-RPC `tools` namespace controllers + `handle_*` fns. `all_controller_schemas` / `all_registered_controllers` (re-exported as `all_tools_*`). |
@@ -33,7 +33,7 @@ The agent tool layer. Defines the core [`Tool`] trait every agent-callable capab
 | `src/openhuman/tools/impl/filesystem/` | `file_read`, `file_write`, `edit_file`, `apply_patch`, `grep`, `glob_search`, `list_files`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `update_memory_md`. |
 | `src/openhuman/tools/impl/browser/` | `browser` (DOM-snapshot automation, pluggable backend), `browser_open`, `image_info`, action parser, native backend, security. |
 | `src/openhuman/tools/impl/computer/` | `mouse`, `keyboard` (native control, default-off), human-path resolution. |
-| `src/openhuman/tools/impl/network/` | `http_request`, `web_fetch`, `curl`, `gitbooks` (search/get-page), `mcp` (list servers/tools, call), `mcp_setup` (5 setup-agent tools), `polymarket` (+ orders, CLOB auth), `gmail_unsubscribe`, `url_guard`. |
+| `src/openhuman/tools/impl/network/` | `http_request`, `web_fetch`, `curl`, `gitbooks` (search/get-page), `mcp` (list servers/tools, call), `mcp_setup` (5 setup-agent tools), `gmail_unsubscribe`, `url_guard`. |
 | `src/openhuman/search/` | Search engine registry and search-owned agent tools such as `web_search`. |
 | `src/openhuman/tools/impl/system/` | `shell`, `node_exec`, `npm_exec`, `install_tool`, `detect_tools`, `current_time`, `schedule`, `proxy_config`, `pushover`, `lsp`, `tool_stats`, `update_check`, `update_apply`, `insert_sql_record`, `workspace_state`. |
 | `*_tests.rs` / `#[cfg(test)] mod tests` | Co-located/sibling unit tests across the module. |
@@ -60,7 +60,6 @@ Namespace `tools` (wired into `src/core/all.rs` via `all_tools_registered_contro
 | `openhuman.tools_querit_search` | Querit web search (gated on a configured Querit key). |
 | `openhuman.tools_searxng_search` | Self-hosted SearXNG search (gated on `searxng.enabled`). |
 | `openhuman.tools_apify_linkedin_scrape` | Apify LinkedIn profile scrape → raw JSON + rendered markdown. |
-| `openhuman.tools_polymarket_execute` | Polymarket action dispatch (Gamma + CLOB; reads and trading writes), gated on `integrations.polymarket.enabled`. |
 
 Handlers load config via `config::rpc::load_config_with_timeout`, build the backend integration client where needed, and return `RpcOutcome`.
 
@@ -74,7 +73,7 @@ This module **owns** the cross-cutting built-in tools (the only ones that belong
 - **Generic network**: `http_request`, `web_fetch`, `curl`, `gitbooks_search`/`gitbooks_get_page`, MCP bridge (`mcp` list/call), `mcp_setup` tools, `gmail_unsubscribe`.
 - **Search**: `web_search` and provider-specific search families are registered by `openhuman::search::registry`; `search.engine = "disabled"` suppresses this surface entirely.
 
-Domain-owned tools (memory, cron, wallet, composio, codegraph, integrations, whatsapp_data, voice::audio_toolkit, agent sub-dispatch like `spawn_subagent`/`spawn_async_subagent`/`delegate`/`todo`/`plan_exit`/`run_skill`) are **registered** in `all_tools` but implemented in their respective domains and only re-exported through this module.
+Domain-owned tools (memory, cron, wallet, composio, codegraph, integrations, voice::audio_toolkit, agent sub-dispatch like `spawn_subagent`/`spawn_async_subagent`/`delegate`/`todo`/`plan_exit`/`run_skill`) are **registered** in `all_tools` but implemented in their respective domains and only re-exported through this module.
 
 ## Events
 
@@ -97,7 +96,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 - `openhuman::mcp::config_servers` / `openhuman::mcp::registry` — generic remote MCP server registry + bridge tools.
 - `openhuman::skills` — `skills::types::{ToolResult, ToolContent}` (the unified result type) + skill-run spawning.
 - `openhuman::agent::learning` — LinkedIn enrichment scrape/render for the Apify RPC handler.
-- `openhuman::web3::wallet`, `openhuman::cron`, `openhuman::codegraph`, `openhuman::voice::audio_toolkit`, `openhuman::channels::whatsapp_data` — domain-owned tools re-exported and registered.
+- `openhuman::web3::wallet`, `openhuman::cron`, `openhuman::codegraph`, `openhuman::voice::audio_toolkit` — domain-owned tools re-exported and registered.
 - `openhuman::security::approval`, `openhuman::agent::context`, `openhuman::security::credentials`, `openhuman::platform::update`, `openhuman::util` — supporting types used by individual tools.
 - `core::all` — `ControllerSchema`, `FieldSchema`, `TypeSchema`, `RegisteredController`, `ControllerFuture` for the RPC controller surface.
 
@@ -108,7 +107,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 - `openhuman::channels`, `openhuman::routing`, `openhuman::inference::provider` — build tool sets / clean schemas per provider.
 - `openhuman::tools::agent_policy`, `openhuman::security::approval` — read tool metadata (category, external-effect) for policy/approval decisions.
 - `openhuman::tools::registry`, `openhuman::runtime::node`, `openhuman::mcp::server` — registry/exposure consumers.
-- Many domains re-export their own tools through this module (cron, memory, wallet, composio, integrations, codegraph, whatsapp_data, voice::audio_toolkit).
+- Many domains re-export their own tools through this module (cron, memory, wallet, composio, integrations, codegraph, voice::audio_toolkit).
 
 ## Notes / gotchas
 

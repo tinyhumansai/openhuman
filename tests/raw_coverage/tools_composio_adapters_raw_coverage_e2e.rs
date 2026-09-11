@@ -3,7 +3,7 @@
 //!
 //! This stays on loopback mocks and temp config/workspaces. The goal is to
 //! exercise the same public surfaces the desktop shell and agent registry use
-//! without reaching real Composio or Polymarket endpoints.
+//! without reaching real Composio endpoints.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -20,7 +20,7 @@ use axum::{Json, Router};
 use serde_json::{json, Map, Value};
 use tempfile::{Builder, TempDir};
 
-use openhuman_core::openhuman::config::{Config, PolymarketClobCredentials};
+use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
@@ -29,7 +29,7 @@ use openhuman_core::openhuman::memory::{
 };
 use openhuman_core::openhuman::security::{AuditLogger, SecurityPolicy};
 use openhuman_core::openhuman::tools::{
-    all_tools, all_tools_registered_controllers, ComposioExecuteTool, PolymarketTool, Tool,
+    all_tools, all_tools_registered_controllers, ComposioExecuteTool, Tool,
 };
 
 static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
@@ -40,7 +40,6 @@ struct RecordedRequest {
     path: String,
     query: String,
     body: Value,
-    poly_api_key: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -207,17 +206,15 @@ fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn round19_all_tools_registers_composio_and_polymarket_only_when_adapters_are_available() {
+async fn round19_all_tools_registers_composio_only_when_adapters_are_available() {
     let _lock = env_lock();
     let harness = setup_config().await;
     let security = Arc::new(SecurityPolicy::default());
-    let memory: Arc<dyn Memory> = Arc::new(StubMemory);
 
     let unsigned = all_tools(
         Arc::new(harness.config.clone()),
         &security,
         AuditLogger::disabled(),
-        memory.clone(),
         &harness.config.browser,
         &harness.config.http_request,
         &harness.config.workspace_dir,
@@ -226,21 +223,14 @@ async fn round19_all_tools_registers_composio_and_polymarket_only_when_adapters_
     );
     let unsigned_names = tool_names(&unsigned);
     assert!(!unsigned_names.contains(&"composio_execute".to_string()));
-    assert!(!unsigned_names.contains(&"polymarket".to_string()));
 
     store_session_token(&harness.config);
-    let mut enabled = harness.config.clone();
-    enabled.integrations.polymarket.enabled = true;
-    enabled.integrations.polymarket.gamma_base_url = "http://127.0.0.1:1".into();
-    enabled.integrations.polymarket.clob_base_url = "http://127.0.0.1:1".into();
-    enabled.integrations.polymarket.polygon_rpc_url = "http://127.0.0.1:1".into();
-    enabled.integrations.polymarket.derived_clob_credentials = Some(fixture_clob_credentials());
+    let enabled = harness.config.clone();
 
     let signed = all_tools(
         Arc::new(enabled.clone()),
         &security,
         AuditLogger::disabled(),
-        memory,
         &enabled.browser,
         &enabled.http_request,
         &enabled.workspace_dir,
@@ -251,7 +241,9 @@ async fn round19_all_tools_registers_composio_and_polymarket_only_when_adapters_
     assert!(names.contains(&"composio_execute".to_string()));
     assert!(names.contains(&"composio_list_tools".to_string()));
     assert!(names.contains(&"composio_authorize".to_string()));
-    assert!(names.contains(&"polymarket".to_string()));
+    // The Polymarket tool was deleted with the `prediction-markets` feature.
+    // Assert its absence so a revert cannot quietly re-register it.
+    assert!(!names.contains(&"polymarket".to_string()));
 }
 
 #[tokio::test]
@@ -305,109 +297,6 @@ async fn round19_composio_agent_execute_tool_uses_backend_adapter_and_preserves_
     }));
 }
 
-#[tokio::test]
-async fn round19_polymarket_controller_and_tool_cover_retry_signed_reads_and_validation() {
-    let _lock = env_lock();
-    let state = MockState::default();
-    *state.market_failures_left.lock().expect("failures") = 2;
-    let base = start_loopback(
-        Router::new()
-            .fallback(any(polymarket_handler))
-            .with_state(state.clone()),
-    )
-    .await;
-    let mut harness = setup_config().await;
-    configure_polymarket(&mut harness.config, &base);
-    harness.config.save().await.expect("save polymarket config");
-
-    let tool = PolymarketTool::new(
-        &harness.config.integrations.polymarket,
-        Arc::new(SecurityPolicy::default()),
-    );
-    let retried = tool
-        .execute(json!({ "action": "list_markets", "limit": 3, "active": true }))
-        .await
-        .expect("retried list markets");
-    assert!(!retried.is_error);
-    assert!(retried.output().contains("round19-market"));
-
-    let signed = tool
-        .execute(json!({
-            "action": "get_balance",
-            "user": "0x1111111111111111111111111111111111111111"
-        }))
-        .await
-        .expect("signed balance");
-    assert!(!signed.is_error);
-    assert!(signed.output().contains("42.00"));
-
-    let invalid = tool
-        .execute(json!({ "action": "get_orderbook", "token_id": " " }))
-        .await
-        .expect("invalid token id");
-    assert!(invalid.is_error);
-    assert!(invalid.output().contains("token_id"));
-
-    let controller = all_tools_registered_controllers()
-        .into_iter()
-        .find(|controller| controller.schema.function == "polymarket_execute")
-        .expect("polymarket controller");
-    let controller_result = (controller.handler)(Map::from_iter([
-        ("action".to_string(), json!("get_price")),
-        (
-            "arguments".to_string(),
-            json!({ "token_id": "token-round19", "side": "sell" }),
-        ),
-    ]))
-    .await
-    .expect("controller get_price");
-    assert!(controller_result
-        .pointer("/result/data")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .contains("get_price"));
-
-    let bad_shape = (controller.handler)(Map::from_iter([
-        ("action".to_string(), json!("get_price")),
-        ("arguments".to_string(), json!("not-an-object")),
-    ]))
-    .await
-    .expect_err("controller rejects non-object arguments");
-    assert!(bad_shape.contains("arguments"));
-
-    harness.config.integrations.polymarket.enabled = false;
-    harness
-        .config
-        .save()
-        .await
-        .expect("save disabled polymarket");
-    let disabled = (controller.handler)(Map::from_iter([(
-        "action".to_string(),
-        json!("list_markets"),
-    )]))
-    .await
-    .expect_err("controller disabled");
-    assert!(disabled.contains("disabled"));
-
-    let requests = state.requests.lock().expect("requests").clone();
-    let market_gets = requests
-        .iter()
-        .filter(|request| request.method == Method::GET && request.path == "/markets")
-        .count();
-    assert_eq!(
-        market_gets, 3,
-        "expected two retries then success: {requests:?}"
-    );
-    assert!(requests.iter().any(|request| {
-        request.path == "/data/balance" && request.poly_api_key.as_deref() == Some("round19-key")
-    }));
-    assert!(requests.iter().any(|request| {
-        request.path == "/price"
-            && request.query.contains("token_id=token-round19")
-            && request.query.to_ascii_uppercase().contains("SIDE=SELL")
-    }));
-}
-
 async fn start_loopback(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -441,7 +330,6 @@ async fn composio_handler(State(state): State<MockState>, request: Request) -> R
             path: path.clone(),
             query,
             body: body.clone(),
-            poly_api_key: None,
         });
 
     match (method, path.as_str()) {
@@ -468,75 +356,6 @@ async fn composio_handler(State(state): State<MockState>, request: Request) -> R
             }
         }
         _ => fail(StatusCode::NOT_FOUND, &format!("unhandled composio {path}")),
-    }
-}
-
-async fn polymarket_handler(
-    State(state): State<MockState>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let path = uri.path().to_string();
-    let query = uri.query().unwrap_or_default().to_string();
-    let body_text = String::from_utf8_lossy(&body);
-    let body_json = serde_json::from_str::<Value>(&body_text).unwrap_or_else(|_| json!(body_text));
-    let poly_api_key = headers
-        .get("poly_api_key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    state
-        .requests
-        .lock()
-        .expect("requests")
-        .push(RecordedRequest {
-            method: method.clone(),
-            path: path.clone(),
-            query,
-            body: body_json,
-            poly_api_key,
-        });
-
-    match (method, path.as_str()) {
-        (Method::GET, "/markets") => {
-            let mut failures = state.market_failures_left.lock().expect("failures");
-            if *failures > 0 {
-                *failures -= 1;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "retry me round19" })),
-                )
-                    .into_response();
-            }
-            Json(json!([{ "id": "m-round19", "slug": "round19-market" }])).into_response()
-        }
-        (Method::GET, "/price") => Json(json!({ "price": "0.37" })).into_response(),
-        (Method::GET, "/data/balance") => Json(json!({ "balance": "42.00" })).into_response(),
-        _ => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("unhandled polymarket {path}") })),
-        )
-            .into_response(),
-    }
-}
-
-fn configure_polymarket(config: &mut Config, base: &str) {
-    config.integrations.polymarket.enabled = true;
-    config.integrations.polymarket.gamma_base_url = base.to_string();
-    config.integrations.polymarket.clob_base_url = base.to_string();
-    config.integrations.polymarket.polygon_rpc_url = base.to_string();
-    config.integrations.polymarket.timeout_secs = 2;
-    config.integrations.polymarket.eoa_address =
-        Some("0x1111111111111111111111111111111111111111".to_string());
-    config.integrations.polymarket.derived_clob_credentials = Some(fixture_clob_credentials());
-}
-
-fn fixture_clob_credentials() -> PolymarketClobCredentials {
-    PolymarketClobCredentials {
-        api_key: "round19-key".to_string(),
-        secret: "cm91bmQxOS1zZWNyZXQ=".to_string(),
-        passphrase: "round19-pass".to_string(),
     }
 }
 

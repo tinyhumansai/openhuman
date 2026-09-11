@@ -21,12 +21,8 @@ pub use bus::TelegramRemoteSubscriber;
 pub use remote_control::TelegramRemoteCommand;
 
 #[cfg(any(test, debug_assertions))]
-pub mod test_support {
-    //! Debug-build seams for raw integration coverage of Telegram send helpers.
-    //! Delegates to the tinychannels transport crate where the logic now lives.
-
-    pub use tinychannels::providers::telegram::test_support::parse_reaction_marker_for_test;
-}
+#[path = "mod_test_support_tests.rs"]
+pub mod test_support;
 
 #[cfg(test)]
 #[path = "bus_tests.rs"]

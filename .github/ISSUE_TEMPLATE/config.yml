@@ -1,0 +1,26 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/q-a
+    about: "How do I…? Answers get marked, so the thread becomes the documentation."
+  - name: Install and platform trouble
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/install-and-platforms
+    about: macOS permissions, Linux, Windows, Docker, mobile builds, updates.
+  - name: Brain & memory
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/brain-and-memory
+    about: Recall, the workspace, the durable journal, memory at scale.
+  - name: Harness & plugins
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/harness-and-plugins
+    about: The plugin surface, MCP servers, tools. Build alongside OpenHuman rather than inside it.
+  - name: Models & providers
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/models-and-providers
+    about: Which models behave, hosted and self-hosted providers, local runners.
+  - name: Show & tell
+    url: https://github.com/tinyhumansai/openhuman/discussions/categories/show-and-tell
+    about: Publish a plugin, a workflow, or a setup. The plugin index is built from here.
+  - name: Discord
+    url: https://discord.tinyhumans.ai/
+    about: Live chat. Anything that should outlive the scrollback belongs in Discussions.
+  - name: Report a security issue
+    url: https://github.com/tinyhumansai/openhuman/security/policy
+    about: Never in a public issue or discussion.

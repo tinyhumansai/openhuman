@@ -31,8 +31,8 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use tinyagents::graph::export::GraphTopology;
-use tinyagents::graph::{
+use tinyagents_graph::export::GraphTopology;
+use tinyagents_graph::{
     ClosureStateReducer, Command, CompiledGraph, GraphBuilder, NodeContext, NodeResult,
 };
 
@@ -40,8 +40,8 @@ use crate::openhuman::agent::tinyagents::observability::GraphTracingSink;
 
 /// Lift an injected effect's `anyhow` error into the graph's error type so it
 /// fails the run (and propagates back out via [`run_member_execution_graph`]).
-fn graph_err(e: anyhow::Error) -> tinyagents::TinyAgentsError {
-    tinyagents::TinyAgentsError::Graph(e.to_string())
+fn graph_err(e: anyhow::Error) -> tinyagents_harness::TinyAgentsError {
+    tinyagents_harness::TinyAgentsError::Graph(e.to_string())
 }
 
 /// Terminal classification of a teammate worker run, produced by the `execute`
@@ -203,92 +203,5 @@ pub(crate) fn member_graph_topology() -> anyhow::Result<GraphTopology> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    #[tokio::test]
-    async fn completed_outcome_routes_to_complete() {
-        let completed = Arc::new(AtomicBool::new(false));
-        let failed = Arc::new(AtomicBool::new(false));
-        let c = completed.clone();
-        let f = failed.clone();
-        run_member_execution_graph(
-            "test:complete",
-            || async {
-                Ok(MemberOutcome::Completed {
-                    output: "ok".into(),
-                })
-            },
-            move |out| {
-                let c = c.clone();
-                async move {
-                    assert_eq!(out, "ok");
-                    c.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-            move |_reason| {
-                let f = f.clone();
-                async move {
-                    f.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-        )
-        .await
-        .expect("graph runs");
-        assert!(completed.load(Ordering::SeqCst), "complete path ran");
-        assert!(!failed.load(Ordering::SeqCst), "fail path did not run");
-    }
-
-    #[tokio::test]
-    async fn failed_outcome_routes_to_fail() {
-        let completed = Arc::new(AtomicBool::new(false));
-        let failed = Arc::new(AtomicBool::new(false));
-        let c = completed.clone();
-        let f = failed.clone();
-        run_member_execution_graph(
-            "test:fail",
-            || async {
-                Ok(MemberOutcome::Failed {
-                    reason: "boom".into(),
-                })
-            },
-            move |_out| {
-                let c = c.clone();
-                async move {
-                    c.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-            move |reason| {
-                let f = f.clone();
-                async move {
-                    assert_eq!(reason, "boom");
-                    f.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            },
-        )
-        .await
-        .expect("graph runs");
-        assert!(failed.load(Ordering::SeqCst), "fail path ran");
-        assert!(
-            !completed.load(Ordering::SeqCst),
-            "complete path did not run"
-        );
-    }
-
-    #[tokio::test]
-    async fn engine_error_from_worker_propagates() {
-        let result = run_member_execution_graph(
-            "test:err",
-            || async { Err(anyhow::anyhow!("spawn failed")) },
-            |_out| async { Ok(()) },
-            |_reason| async { Ok(()) },
-        )
-        .await;
-        assert!(result.is_err(), "worker engine error propagates out");
-    }
-}
+#[path = "graph_tests.rs"]
+mod tests;

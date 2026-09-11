@@ -175,24 +175,14 @@ describe('Rewards role-unlock flows', () => {
     // Server-authoritative count: 1 of 3.
     expect(await textExists('1 of 3 achievements unlocked')).toBe(true);
 
-    // Cross-check via Redux store debug handle. There is no rewardsSlice in
-    // the store (snapshot lives in component state), but we can still
-    // observe the network outcome by asserting the membership label was
-    // rendered and the unlock count line is present (already asserted
-    // above). To make the integration-vs-activity distinction air-tight,
-    // also assert the streak/activity achievement remains in its
-    // un-unlocked state (no "7-Day Streak" + "Unlocked" pair on the same
-    // row) — the snapshot proves the unlock came from the integration leg,
-    // not the streak leg.
-    const streakStillLocked = await browser.execute(() => {
-      const cards = Array.from(document.querySelectorAll('h3'));
-      const streak = cards.find(h => h.textContent?.trim() === '7-Day Streak');
-      if (!streak) return null;
-      const card = streak.closest('div.rounded-\\[1\\.25rem\\]') as HTMLElement | null;
-      if (!card) return null;
-      return /Locked/.test(card.textContent ?? '') && !/Unlocked/.test(card.textContent ?? '');
-    });
-    expect(streakStillLocked).toBe(true);
+    // The activity achievement remains locked in this integration-only
+    // scenario. Its progress element is a stable product test id; asserting
+    // it avoids coupling this behaviour test to cosmetic card classes.
+    const streakProgress = await browser.execute(
+      () =>
+        document.querySelector('[data-testid="rewards-achievement-progress-STREAK_7"]')?.textContent
+    );
+    expect(streakProgress?.trim()).toBe('0 / 7 days');
   });
 
   it('12.1.3 — plan-based unlock surfaces the PRO achievement once plan + active sub are set', async () => {

@@ -11,11 +11,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::cache;
-use super::compress::route;
-use super::detect::detect_content_kind;
-use super::tool_integration::current_options;
-use super::types::{CompressInput, ContentHint};
+use super::types::{ContentHint, ContentKind};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -116,6 +112,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "tool_name",
                     ty: TypeSchema::String,
                     comment: "Optional producing tool name (prior hint).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mime",
+                    ty: TypeSchema::String,
+                    comment: "Optional MIME type hint (`text/html`, `application/json`, …).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "extension",
+                    ty: TypeSchema::String,
+                    comment: "Optional file extension hint (no dot).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Optional search/query string; the search compressor ranks \
+                              matches by query-term density.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "explicit",
+                    // Declared as an enum, not a bare string: `/schema` is what
+                    // generators and model-facing tool definitions read, and an
+                    // unrestricted string there invites callers to propose values
+                    // that only fail once the handler runs. `check_type`
+                    // (`core/all.rs`) enforces the variant list at the dispatch
+                    // boundary, so the published contract and the rejection agree.
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec![
+                            "json",
+                            "code",
+                            "log",
+                            "search",
+                            "diff",
+                            "html",
+                            "plain_text",
+                        ],
+                    })),
+                    comment: "Optional hard override of the detected kind, skipping detection \
+                              entirely.",
                     required: false,
                 },
             ],
@@ -237,29 +275,45 @@ fn handle_detect(params: Map<String, Value>) -> ControllerFuture {
             extension: str_param(&params, "extension"),
             ..Default::default()
         };
-        let kind = detect_content_kind(&content, &hint);
-        Ok(serde_json::json!({ "kind": kind.as_str() }))
+        let kind = super::detect(content, hint).await?;
+        Ok(serde_json::json!({ "kind": kind }))
+    })
+}
+
+/// Build a [`ContentHint`] from `compress`'s params.
+///
+/// All five hint fields are caller-supplied. Before #6088 only `source_tool` was
+/// read, so the debug controller could not reproduce what the content router
+/// actually does — in particular it could not force a kind via `explicit`, which
+/// is the one field that skips detection entirely.
+///
+/// An unrecognised `explicit` is refused rather than ignored: silently detecting
+/// instead of overriding is exactly the confusion this controller exists to
+/// resolve.
+fn compress_hint_from_params(params: &Map<String, Value>) -> Result<ContentHint, String> {
+    let explicit = match str_param(params, "explicit") {
+        Some(raw) => Some(raw.parse::<ContentKind>().map_err(|()| {
+            format!(
+                "invalid 'explicit': {raw:?} — expected one of: \
+                 json, code, log, search, diff, html, plain_text"
+            )
+        })?),
+        None => None,
+    };
+    Ok(ContentHint {
+        source_tool: str_param(params, "tool_name"),
+        mime: str_param(params, "mime"),
+        extension: str_param(params, "extension"),
+        query: str_param(params, "query"),
+        explicit,
     })
 }
 
 fn handle_compress(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let content = str_param(&params, "content").ok_or("missing 'content'")?;
-        let hint = ContentHint {
-            source_tool: str_param(&params, "tool_name"),
-            ..Default::default()
-        };
-        let opts = current_options();
-        let input = CompressInput {
-            content: &content,
-            kind: super::types::ContentKind::PlainText,
-            hint: &hint,
-            exit_code: None,
-            command: None,
-            argv: None,
-            original_bytes: content.len(),
-        };
-        let res = route(input, &opts).await;
+        let hint = compress_hint_from_params(&params)?;
+        let res = super::compress(content, hint).await?;
         Ok(serde_json::json!({
             "applied": res.applied,
             "kind": res.content_kind.as_str(),
@@ -275,15 +329,15 @@ fn handle_compress(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_cache_stats(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let (entries, bytes) = cache::stats();
-        Ok(serde_json::json!({ "entries": entries, "bytes": bytes }))
+        let stats = super::cache_stats().await?;
+        Ok(serde_json::json!({ "entries": stats.entries, "bytes": stats.bytes }))
     })
 }
 
 fn handle_retrieve(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let token = str_param(&params, "token").ok_or("missing 'token'")?;
-        match cache::retrieve(&token) {
+        match super::retrieve(token, None).await? {
             Some(content) => Ok(serde_json::json!({ "found": true, "content": content })),
             None => Ok(serde_json::json!({ "found": false, "content": Value::Null })),
         }
@@ -321,7 +375,7 @@ fn handle_settings_update(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| format!("save config: {e}"))?;
 
         // Re-install so router flags / CCR limits / threshold take effect live.
-        crate::openhuman::inference::tokenjuice::install_from_config(&config);
+        crate::openhuman::inference::tokenjuice::install_from_config(&config).await?;
 
         let settings = serde_json::to_value(&config.tokenjuice)
             .map_err(|e| format!("serialize tokenjuice settings: {e}"))?;
@@ -331,14 +385,14 @@ fn handle_settings_update(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_savings_stats(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        let cache = super::cache_stats().await?;
         let agg = super::savings::stats();
-        let (entries, bytes) = cache::stats();
         Ok(serde_json::json!({
             "attributionModel": super::savings::attribution_model(),
             "total": agg.total,
             "byModel": agg.by_model,
             "byCompressor": agg.by_compressor,
-            "cache": { "entries": entries, "bytes": bytes },
+            "cache": { "entries": cache.entries, "bytes": cache.bytes },
         }))
     })
 }
@@ -351,31 +405,5 @@ fn handle_savings_reset(_params: Map<String, Value>) -> ControllerFuture {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn detect_handler_classifies_json() {
-        let mut p = Map::new();
-        p.insert(
-            "content".into(),
-            Value::String(r#"[{"a":1,"b":2},{"a":3,"b":4}]"#.into()),
-        );
-        let out = handle_detect(p).await.unwrap();
-        assert_eq!(out["kind"], "json");
-    }
-
-    #[tokio::test]
-    async fn cache_stats_handler_returns_counts() {
-        cache::offload("tokenjuice controller stats unique payload here");
-        let out = handle_cache_stats(Map::new()).await.unwrap();
-        assert!(out["entries"].as_u64().unwrap() >= 1);
-    }
-
-    #[test]
-    fn all_schemas_have_namespace() {
-        for s in all_controller_schemas() {
-            assert_eq!(s.namespace, "tokenjuice");
-        }
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { cn } from '../../../lib/cn';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   isTauri,
@@ -8,6 +9,8 @@ import {
   openhumanGetConfig,
   openhumanUpdateMemorySettings,
 } from '../../../utils/tauriCommands';
+import Card from '../../ui/Card';
+import { RadioGroupItem, RadioGroupRoot } from '../../ui/RadioGroup';
 
 interface PresetMeta {
   label: string;
@@ -117,51 +120,54 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
   const meta = localizedMeta[activeForUi];
 
   return (
-    <div
-      className="border border-border rounded-lg p-4 space-y-3 bg-background"
+    <Card
+      title={t('settings.memoryWindow.title')}
+      description={t('settings.memoryWindow.description')}
       data-testid="memory-window-control">
-      <div className="flex items-baseline justify-between">
-        <div>
-          <h3 className="text-base font-semibold text-content">
-            {t('settings.memoryWindow.title')}
-          </h3>
-          <p className="text-sm text-muted-foreground">{t('settings.memoryWindow.description')}</p>
-        </div>
-      </div>
-      <div
-        role="radiogroup"
-        aria-label={t('settings.memoryWindow.title')}
-        className="grid grid-cols-2 gap-2">
-        {MEMORY_CONTEXT_WINDOWS.map(option => {
-          const optionMeta = localizedMeta[option];
-          const isActive = activeForUi === option;
-          const isSaving = saving === option;
-          return (
-            <button
-              key={option}
-              type="button"
-              role="radio"
-              aria-checked={isActive}
-              data-testid={`memory-window-option-${option}`}
-              disabled={!loaded || (saving !== null && !isSaving)}
-              onClick={() => void select(option)}
-              className={`text-left rounded-md border px-3 py-2 transition-colors ${
-                isActive ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent/40'
-              } disabled:opacity-60 disabled:cursor-not-allowed`}>
-              <div className="flex items-center justify-between gap-1 min-w-0">
-                <span className="font-medium truncate">{optionMeta.label}</span>
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0 whitespace-nowrap">
+      <div className="space-y-3 p-4">
+        <RadioGroupRoot
+          value={activeForUi}
+          onValueChange={next => void select(next as MemoryContextWindow)}
+          aria-label={t('settings.memoryWindow.title')}
+          className="grid grid-cols-2 gap-2">
+          {MEMORY_CONTEXT_WINDOWS.map(option => {
+            const optionMeta = localizedMeta[option];
+            const isActive = activeForUi === option;
+            const isSaving = saving === option;
+            const inputId = `memory-window-option-${option}-input`;
+            return (
+              <label
+                key={option}
+                htmlFor={inputId}
+                className={cn(
+                  'flex min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 transition-colors',
+                  isActive
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-line-strong hover:bg-surface-hover',
+                  (!loaded || (saving !== null && !isSaving)) && 'opacity-60 pointer-events-none'
+                )}>
+                <RadioGroupItem
+                  id={inputId}
+                  value={option}
+                  data-testid={`memory-window-option-${option}`}
+                  disabled={!loaded || (saving !== null && !isSaving)}
+                  className="sr-only"
+                />
+                <span className="min-w-0 flex-1 truncate font-medium text-content">
+                  {optionMeta.label}
+                </span>
+                <span className="shrink-0 whitespace-nowrap text-[10px] uppercase tracking-wide text-content-muted">
                   {optionMeta.badge}
                 </span>
-              </div>
-            </button>
-          );
-        })}
+              </label>
+            );
+          })}
+        </RadioGroupRoot>
+        <p className="text-xs text-content-muted" data-testid="memory-window-hint">
+          {meta.hint}
+        </p>
       </div>
-      <p className="text-xs text-muted-foreground" data-testid="memory-window-hint">
-        {meta.hint}
-      </p>
-    </div>
+    </Card>
   );
 };
 

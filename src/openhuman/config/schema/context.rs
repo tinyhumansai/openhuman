@@ -116,24 +116,6 @@ pub struct ContextConfig {
     /// See `compaction-plan.md`.
     #[serde(default = "default_true")]
     pub compaction_enabled: bool,
-
-    /// "Super context" mode. When `true`, the agent harness runs a
-    /// mandatory read-only context-collection pass (the `context_scout`
-    /// sub-agent, the same one behind the `agent_prepare_context` tool)
-    /// on the **first turn** of a new thread, *before* the orchestrator
-    /// LLM runs, and folds the resulting `[context_bundle]` into the user
-    /// message. This pass is driven by the harness regardless of the
-    /// model's decision, so the orchestrator does not expose the
-    /// `agent_prepare_context` tool for the same first-turn work.
-    ///
-    /// Read once at session/thread construction, so toggling it only
-    /// affects threads started afterwards (the value is baked into the
-    /// frozen turn-1 context). Default: `false` — it's an expensive pass, so
-    /// it's opt-in. Env override: `OPENHUMAN_SUPER_CONTEXT` (set to `1` to opt
-    /// in). Surfaced in the UI as the "super context" toggle next to the chat
-    /// composer's Quick/Reasoning mode switch, shown only on a fresh thread.
-    #[serde(default = "default_false")]
-    pub super_context_enabled: bool,
 }
 
 fn default_enabled() -> bool {
@@ -142,10 +124,6 @@ fn default_enabled() -> bool {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_false() -> bool {
-    false
 }
 
 fn default_microcompact_keep_recent() -> usize {
@@ -158,7 +136,7 @@ fn default_tool_result_budget_bytes() -> usize {
 
 fn default_summarizer_payload_threshold_tokens() -> usize {
     // Re-enabled at 4000 tokens after the recursive-dispatch root cause
-    // was fixed by the `omit_skills_catalog = true` guard on the
+    // was fixed by the narrow sub-agent prompt built for the
     // summarizer archetype (which prevents it from seeing `spawn_subagent`
     // and thus cannot recurse). 0 would leave this entirely disabled.
     4000
@@ -182,7 +160,6 @@ impl Default for ContextConfig {
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
             compaction_enabled: default_true(),
-            super_context_enabled: default_false(),
         }
     }
 }

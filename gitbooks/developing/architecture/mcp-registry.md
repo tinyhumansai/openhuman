@@ -61,18 +61,18 @@ An `InstalledServer` carries a `transport: Transport` discriminator (`types.rs`)
 
 ## Layout
 
-| Path                        | Role                                                                                                                                                   |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `types.rs`                  | Data structures: `InstalledServer`, `McpTool`, `ConnStatus`, Smithery DTOs, etc.                                                                       |
-| `store.rs`                  | SQLite persistence: `mcp_clients.db`, CRUD over `InstalledServer` rows.                                                                               |
-| `registry.rs`               | Smithery HTTP client with a 10-minute SQLite cache so re-browsing doesn't hammer the upstream registry.                                                |
+| Path                        | Role                                                                                                                                                                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.rs`                  | Data structures: `InstalledServer`, `McpTool`, `ConnStatus`, Smithery DTOs, etc.                                                                                                                                                                           |
+| `store.rs`                  | SQLite persistence: `mcp_clients.db`, CRUD over `InstalledServer` rows.                                                                                                                                                                                    |
+| `registry.rs`               | Smithery HTTP client with a 10-minute SQLite cache so re-browsing doesn't hammer the upstream registry.                                                                                                                                                    |
 | `registries/`               | Adapters for the upstream registries this code can browse: Smithery (`smithery.rs`) + the official modelcontextprotocol registry (`mcp_official.rs`). Each reads optional auth config-first with an env-var fallback (`mcp_client.registry_auth` in TOML). |
-| `connections.rs`            | Global in-process connection registry. Wraps `crate::openhuman::mcp::config_servers::McpStdioClient` (there is no separate stdio client implementation here).   |
-| `boot.rs`                   | Boot-time spawn (`spawn_installed_servers`) called from `bootstrap_core_runtime`.                                                                      |
-| `setup.rs` / `setup_ops.rs` | "Setup agent" support: the small agent that walks a user through configuring a freshly installed server (env vars, secrets, first connect).           |
-| `ops.rs`                    | RPC handler implementations (install, uninstall, list, browse, enable / disable, etc.).                                                                |
-| `schemas.rs`                | Controller schemas + handler dispatch. Re-exported from `mod.rs` as `all_mcp_registry_controller_schemas` / `all_mcp_registry_registered_controllers`. |
-| `bus.rs`                    | `DomainEvent` subscriber for lifecycle logging.                                                                                                        |
+| `connections.rs`            | Global in-process connection registry. Wraps `crate::openhuman::mcp::config_servers::McpStdioClient` (there is no separate stdio client implementation here).                                                                                              |
+| `boot.rs`                   | Boot-time spawn (`spawn_installed_servers`) called from `bootstrap_core_runtime`.                                                                                                                                                                          |
+| `setup.rs` / `setup_ops.rs` | "Setup agent" support: the small agent that walks a user through configuring a freshly installed server (env vars, secrets, first connect).                                                                                                                |
+| `ops.rs`                    | RPC handler implementations (install, uninstall, list, browse, enable / disable, etc.).                                                                                                                                                                    |
+| `schemas.rs`                | Controller schemas + handler dispatch. Re-exported from `mod.rs` as `all_mcp_registry_controller_schemas` / `all_mcp_registry_registered_controllers`.                                                                                                     |
+| `bus.rs`                    | `DomainEvent` subscriber for lifecycle logging.                                                                                                                                                                                                            |
 
 ## Public surface
 
@@ -100,7 +100,7 @@ Everything else (`boot`, `bus`, `connections`, `store`, `setup`, `setup_ops`) is
 ## Called by
 
 - `bootstrap_core_runtime` (via `boot::spawn_installed_servers`).
-- Frontend Skills UI: the **MCP** tab at `/skills?tab=mcp` (`McpServersTab`) dispatches through `ops.rs` over the `openhuman.mcp_clients_*` RPC namespace: browse, install (auto-connects), connect/disconnect, status, tool_call, `update_env` (reconfigure + reconnect), and `registry_settings_get` / `registry_settings_set` (Smithery / official-registry credentials; secret values are write-only). The agent-native flow uses `openhuman.mcp_setup_*` via the `mcp_setup` sub-agent (orchestrator delegate `setup_mcp_server`).
+- Frontend Skills UI: the **MCP** tab at `/skills?tab=mcp` (`McpServersTab`) dispatches through `ops.rs` over the `openhuman.mcp_clients_*` RPC namespace: browse, install (auto-connects), connect/disconnect, status, tool*call, `update_env` (reconfigure + reconnect), and `registry_settings_get` / `registry_settings_set` (Smithery / official-registry credentials; secret values are write-only). The agent-native flow uses `openhuman.mcp_setup*\*`via the`mcp_setup`sub-agent (orchestrator delegate`setup_mcp_server`).
 - The setup agent in `setup_ops.rs`, for first-connect onboarding.
 
 ## Tests

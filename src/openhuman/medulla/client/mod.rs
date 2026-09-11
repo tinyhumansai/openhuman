@@ -99,11 +99,19 @@ impl MedullaClient {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Attach the credential and product-identity headers every request needs.
+    ///
+    /// Note this covers the HTTP surface only — the SSE stream authenticates
+    /// with a `?token=` query parameter and never reaches this helper, so it
+    /// attaches [`crate::api::product`]'s header itself in
+    /// [`sse::event_stream`]'s connect path.
     fn authed(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let (product_header, product_value) = crate::api::product::product_identity_header();
         req.header(
             reqwest::header::AUTHORIZATION,
             format!("Bearer {}", self.jwt),
         )
+        .header(product_header, product_value)
     }
 
     /// Send a request and unwrap the `{success, data}` envelope into `T`.

@@ -15,10 +15,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuX } from 'react-icons/lu';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
+import { errorMessage } from '../../../lib/errorMessage';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { selectAgentProfiles, upsertAgentProfile } from '../../../store/agentProfileSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import type { AgentProfile } from '../../../types/agentProfile';
+import Alert from '../../ui/Alert';
 import Button from '../../ui/Button';
 import {
   SettingsRow,
@@ -28,7 +30,6 @@ import {
   SettingsTextField,
 } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
-import { settingsNavState } from '../modal/settingsOverlay';
 
 const MODEL_HINTS = ['hint:reasoning', 'hint:chat', 'hint:agentic', 'hint:coding'];
 
@@ -52,10 +53,7 @@ const ProfileEditorPage = () => {
   const dispatch = useAppDispatch();
   const { id: routeId } = useParams<{ id: string }>();
   const profiles = useAppSelector(selectAgentProfiles);
-  const backToList = useCallback(
-    () => navigate('/settings/profiles', settingsNavState(location)),
-    [navigate, location]
-  );
+  const backToList = useCallback(() => navigate('/settings/profiles'), [navigate, location]);
   const isCreate = !routeId;
 
   const existing = useMemo(
@@ -132,18 +130,25 @@ const ProfileEditorPage = () => {
   };
 
   // Resolved profile id: explicit id on create (falling back to a slug of the
-  // name), or the existing id on edit. Must be non-empty to submit — a
-  // punctuation-only name slugs to '' and must not reach the RPC layer.
+  // name), or the existing id on edit.
   const resolvedId = (isCreate ? profileId.trim() || slugify(name) : profileId).trim();
 
-  const canSubmit = !submitting && (isCreate ? resolvedId.length > 0 : true);
+  // `slugify` keeps ASCII only, so a name written in Japanese, Chinese, Greek,
+  // Cyrillic or Arabic resolves to no id at all. The core derives one from the
+  // name in that case, so a nameable profile must still be submittable —
+  // otherwise there is no name in those scripts a user can save. A
+  // punctuation-only name still has nothing to name a profile with, and stays
+  // blocked as before.
+  const nameCanCarryAnId = /[\p{L}\p{N}]/u.test(name);
+
+  const canSubmit = !submitting && (isCreate ? resolvedId.length > 0 || nameCanCarryAnId : true);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
     const id = resolvedId;
-    if (!id) {
+    if (!id && !nameCanCarryAnId) {
       setError(t('settings.profiles.editor.idRequired'));
       setSubmitting(false);
       return;
@@ -171,7 +176,12 @@ const ProfileEditorPage = () => {
       await dispatch(upsertAgentProfile(profile)).unwrap();
       if (mountedRef.current) backToList();
     } catch (err) {
-      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+      // `.unwrap()` rejects with Redux Toolkit's SerializedError — a plain
+      // object, not an `Error` — so an `instanceof` guard here rendered
+      // "[object Object]" and hid the backend's reason (#5900).
+      if (mountedRef.current) {
+        setError(errorMessage(err, 'Failed to save profile'));
+      }
     } finally {
       if (mountedRef.current) setSubmitting(false);
     }
@@ -186,11 +196,7 @@ const ProfileEditorPage = () => {
       }
       description={t('settings.profiles.menuDesc')}>
       {notFound ? (
-        <div className="space-y-3">
-          <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-            {t('settings.profiles.editor.notFound')}
-          </div>
-        </div>
+        <Alert variant="destructive">{t('settings.profiles.editor.notFound')}</Alert>
       ) : (
         <div className="space-y-5">
           {/* Identity */}
@@ -437,9 +443,9 @@ const ProfileEditorPage = () => {
           </SettingsSection>
 
           {error && (
-            <p className="rounded-md border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+            <Alert variant="destructive" className="text-xs">
               {error}
-            </p>
+            </Alert>
           )}
 
           <div className="flex justify-end gap-2 pt-1">
@@ -529,13 +535,15 @@ function AllowlistField({
                     key={item}
                     className="inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2.5 py-1 font-mono text-xs text-content-secondary">
                     {item}
-                    <button
-                      type="button"
+                    <Button
+                      variant="tertiary"
+                      size="xs"
+                      iconOnly
                       aria-label={t('settings.profiles.editor.removeAria').replace('{item}', item)}
                       onClick={() => onChange(items.filter(x => x !== item))}
-                      className="rounded-full text-content-faint hover:text-coral-600 dark:hover:text-coral-300">
+                      className="h-4 w-4 rounded-full p-0 text-content-faint hover:bg-transparent hover:text-coral-600 dark:hover:text-coral-300">
                       <LuX className="h-3 w-3" />
-                    </button>
+                    </Button>
                   </span>
                 ))}
               </div>

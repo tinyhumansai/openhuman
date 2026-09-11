@@ -9,7 +9,7 @@ import {
 import { useT } from '../../lib/i18n/I18nContext';
 import { SettingsStatusLine } from '../settings/controls';
 import SettingsPanel from '../settings/layout/SettingsPanel';
-import Button from '../ui/Button';
+import { Alert, AlertDescription, Button, Card } from '../ui';
 import BudgetSummary from './BudgetSummary';
 import CostBarChart from './CostBarChart';
 import DashboardSkeleton from './DashboardSkeleton';
@@ -61,7 +61,7 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
               className="inline-flex items-center gap-1.5 text-[11px] text-content-muted">
               <span
                 aria-hidden
-                className={`inline-block h-1.5 w-1.5 rounded-full ${isFetching || usageLogFetching ? 'bg-ocean-500 animate-pulse' : 'bg-sage-500'}`}
+                className={`inline-block h-1.5 w-1.5 rounded-full ${isFetching || usageLogFetching ? 'bg-primary-500 animate-pulse' : 'bg-sage-500'}`}
               />
               {`${t('settings.costDashboard.updated')} ${relativeTime(Math.max(lastUpdated ?? 0, usageLogUpdated ?? 0), t)}`}
             </span>
@@ -95,11 +95,15 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
         </div>
       )}
       {data && !data.enabled && (
-        <div
-          className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+        // A resolved config state, not a response to a user action — opt out
+        // of the assertive default so it doesn't talk over the page it's on.
+        <Alert
+          variant="warning"
+          density="compact"
+          role={undefined}
           data-testid="cost-dashboard-disabled">
-          {t('settings.costDashboard.disabledHint')}
-        </div>
+          <AlertDescription>{t('settings.costDashboard.disabledHint')}</AlertDescription>
+        </Alert>
       )}
 
       {!data && isLoading && <DashboardSkeleton />}
@@ -115,17 +119,17 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
             utilization={data.budget_utilization}
             status={data.budget_status}
           />
-          <section
+          <Card
             data-testid="cost-dashboard-cost-chart"
-            className="rounded-2xl border border-line p-4 bg-surface/40">
-            <header className="mb-2 flex items-baseline justify-between">
-              <h2 className="text-sm font-semibold text-content">
-                {t('settings.costDashboard.sevenDayCost')}
-              </h2>
+            padded
+            divided={false}
+            className="bg-surface/40"
+            title={t('settings.costDashboard.sevenDayCost')}
+            headerRight={
               <span className="text-[11px] text-content-muted">
                 {t('settings.costDashboard.utcNote')}
               </span>
-            </header>
+            }>
             <CostBarChart
               days={data.days}
               currency={data.currency}
@@ -133,44 +137,36 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
               warnThreshold={data.warn_threshold}
               alertThreshold={data.alert_threshold}
             />
-          </section>
-          <section
+          </Card>
+          <Card
             data-testid="cost-dashboard-token-chart"
-            className="rounded-2xl border border-line p-4 bg-surface/40">
-            <header className="mb-2 flex items-baseline justify-between">
-              <h2 className="text-sm font-semibold text-content">
-                {t('settings.costDashboard.sevenDayTokens')}
-              </h2>
+            padded
+            divided={false}
+            className="bg-surface/40"
+            title={t('settings.costDashboard.sevenDayTokens')}
+            headerRight={
               <span className="text-[11px] text-content-muted">
                 {t('settings.costDashboard.stackedNote')}
               </span>
-            </header>
+            }>
             <TokenUsageChart days={data.days} />
-          </section>
-          <section
+          </Card>
+          <Card
             data-testid="cost-dashboard-model-table"
-            className="rounded-2xl border border-line p-4 bg-surface/40">
-            <header className="mb-2">
-              <h2 className="text-sm font-semibold text-content">
-                {t('settings.costDashboard.modelBreakdown')}
-              </h2>
-              <p className="text-[11px] text-content-muted">
-                {t('settings.costDashboard.modelBreakdownHint')}
-              </p>
-            </header>
+            padded
+            divided={false}
+            className="bg-surface/40"
+            title={t('settings.costDashboard.modelBreakdown')}
+            description={t('settings.costDashboard.modelBreakdownHint')}>
             <ModelCostTable models={data.by_model} currency={data.currency} />
-          </section>
-          <section
+          </Card>
+          <Card
             data-testid="cost-dashboard-category-distribution"
-            className="rounded-2xl border border-line p-4 bg-surface/40">
-            <header className="mb-3">
-              <h2 className="text-sm font-semibold text-content">
-                {t('settings.costDashboard.categoryDistribution')}
-              </h2>
-              <p className="text-[11px] text-content-muted">
-                {t('settings.costDashboard.categoryDistributionHint')}
-              </p>
-            </header>
+            padded
+            divided={false}
+            className="bg-surface/40"
+            title={t('settings.costDashboard.categoryDistribution')}
+            description={t('settings.costDashboard.categoryDistributionHint')}>
             {usageLog ? (
               <CategoryDistribution
                 categories={usageLog.by_category}
@@ -181,33 +177,31 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
                 {t('settings.costDashboard.loading')}
               </div>
             ) : null}
-          </section>
-          <section
+          </Card>
+          <Card
             data-testid="cost-dashboard-usage-log"
-            className="rounded-2xl border border-line p-4 bg-surface/40">
-            <header className="mb-3 flex items-baseline justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-content">
-                  {t('settings.costDashboard.usageLog')}
-                </h2>
-                <p className="text-[11px] text-content-muted">
-                  {usageLog
-                    ? t('settings.costDashboard.usageLogHint')
-                        .replace('{days}', String(usageLog.days))
-                        .replace('{limit}', String(usageLog.limit))
-                    : t('settings.costDashboard.usageLogHint')
-                        .replace('{days}', '30')
-                        .replace('{limit}', '250')}
-                </p>
-              </div>
-              {usageLog && (
+            padded
+            divided={false}
+            className="bg-surface/40"
+            title={t('settings.costDashboard.usageLog')}
+            description={
+              usageLog
+                ? t('settings.costDashboard.usageLogHint')
+                    .replace('{days}', String(usageLog.days))
+                    .replace('{limit}', String(usageLog.limit))
+                : t('settings.costDashboard.usageLogHint')
+                    .replace('{days}', '30')
+                    .replace('{limit}', '250')
+            }
+            headerRight={
+              usageLog && (
                 <span className="shrink-0 text-[11px] text-content-muted">
                   {t('settings.costDashboard.logTotal')
                     .replace('{requests}', String(usageLog.request_count))
                     .replace('{cost}', formatCurrency(usageLog.total_cost_usd, usageLog.currency))}
                 </span>
-              )}
-            </header>
+              )
+            }>
             {usageLog ? (
               <UsageLogTable records={usageLog.records} currency={usageLog.currency} />
             ) : usageLogLoading ? (
@@ -215,7 +209,7 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
                 {t('settings.costDashboard.loading')}
               </div>
             ) : null}
-          </section>
+          </Card>
           {!hasAnyCost && (
             <div
               data-testid="cost-dashboard-empty"
@@ -246,11 +240,11 @@ const CostDashboardPanel = ({ embedded = false }: CostDashboardPanelProps) => {
 };
 
 const CATEGORY_COLORS = [
-  'bg-ocean-500',
+  'bg-primary-500',
   'bg-sage-500',
   'bg-amber-500',
   'bg-coral-500',
-  'bg-neutral-500 dark:bg-neutral-400',
+  'bg-content-faint',
 ];
 
 const CategoryDistribution = ({
@@ -347,7 +341,7 @@ const UsageLogTable = ({ records, currency }: { records: CostUsageRecord[]; curr
                 </div>
               </Td>
               <Td>
-                <span className="inline-flex rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-content-secondary ring-1 ring-inset ring-neutral-200 dark:ring-neutral-700">
+                <span className="inline-flex rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-content-secondary ring-1 ring-inset ring-line-strong">
                   {record.category}
                 </span>
               </Td>

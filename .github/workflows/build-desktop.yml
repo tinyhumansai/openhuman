@@ -98,7 +98,11 @@ jobs:
   build:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
     runs-on: ${{ matrix.settings.platform }}
-    timeout-minutes: 90
+    # 120, not 90: the macOS legs were clipped at exactly 90m in every failing
+    # run (#5595), so their true duration was never observed. The codegen-units
+    # fix should bring these back to ~45-50 min; the extra headroom means a slow
+    # runner reports a real result instead of another censored timeout.
+    timeout-minutes: 120
     environment: Production
     strategy:
       fail-fast: false
@@ -157,17 +161,19 @@ jobs:
         with:
           node-version: 24.x
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - name: Ensure macOS cross target on the toolchain-file toolchain
         if: matrix.settings.platform == 'macos-latest'
         run: |
-          # rust-toolchain.toml pins 1.96.1, which overrides the dtolnay-installed
-          # 1.93.0. The action's `targets:` input added the darwin targets to
-          # 1.93.0, not the override toolchain the vendored tauri-cli's CEF
-          # universal-helper build actually uses, so add them to the active
-          # (override) toolchain here to avoid E0463 "can't find crate for `core`".
+          # The action pin and rust-toolchain.toml agree today
+          # (scripts/ci/check-toolchain-image.mjs enforces that), so the action's
+          # `targets:` input lands on the toolchain the vendored tauri-cli's CEF
+          # universal-helper build actually uses. Re-adding the targets against
+          # the *active* (override) toolchain keeps this step correct if the two
+          # ever diverge again, which used to fail with E0463
+          # "can't find crate for `core`".
           cargo --version
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Install Tauri dependencies (ubuntu only)
@@ -175,18 +181,49 @@ jobs:
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          # A stalled apt mirror has twice eaten this job's entire 90-minute
+          # budget: 88m54s in run 32278391834 and 84m14s in staging run
+          # 32260876335, both in this step. Bound every attempt and retry so a
+          # mirror stall costs minutes instead of the whole build.
+          apt_retry() {
+            local budget="$1"; shift
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo timeout "$budget" apt-get "$@"; then
+                return 0
+              fi
+              echo "::warning::apt-get $1 failed or exceeded ${budget}s (attempt ${attempt}/3); retrying"
+              # `timeout` can TERM apt-get mid-transaction, leaving dpkg
+              # interrupted; every later attempt then fails with "dpkg was
+              # interrupted" and the retry loop burns all three for nothing.
+              # Bounded too: an unbounded recovery would reintroduce exactly the
+              # unbounded stall this step exists to prevent. Non-fatal, so a
+              # failed recovery still lets the next apt-get attempt run.
+              if ! sudo timeout 120 dpkg --configure -a; then
+                echo "::warning::dpkg recovery failed or exceeded 120s"
+              fi
+              sleep 10
+            done
+            echo "::error::apt-get $1 failed after 3 attempts"
+            return 1
+          }
+          apt_retry 300 update
+          # xdg-utils provides /usr/bin/xdg-mime, which the linuxdeploy AppImage
+          # bundler shells out to. The sharun bundler used before the CEF->Wry
+          # migration did not, which is why this was never needed until now.
+          apt_retry 900 install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
-            libevdev-dev libssl-dev libclang-dev desktop-file-utils \
+            libevdev-dev libssl-dev libclang-dev desktop-file-utils xdg-utils \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev \
             xvfb dbus dbus-x11
+          command -v xdg-mime >/dev/null 2>&1 \
+            || { echo "::error::xdg-mime is still missing after installing xdg-utils"; exit 1; }
           if [ "$MATRIX_TARGET" = "x86_64-unknown-linux-gnu" ] \
             && ! command -v apparmor_parser >/dev/null 2>&1; then
-            sudo apt-get install -y apparmor
+            apt_retry 300 install -y apparmor
           fi
       # NOTE: The post-build dump lives further down (after `cargo tauri build`)
       # so the binary actually exists when ldd runs. Running it here pre-build
@@ -209,59 +246,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
-      # CEF is the runtime; cef-dll-sys + the vendored tauri-cli auto-download
-      # the ~400MB Chromium distribution on first build. Cache per-OS across
-      # runs. Default path is `dirs::cache_dir()/tauri-cef`.
-      - name: Cache CEF binary distribution (unix)
-        if: matrix.settings.platform != 'windows-latest'
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/Library/Caches/tauri-cef
-            ~/.cache/tauri-cef
-          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
-          restore-keys: |
-            cef-${{ matrix.settings.target }}-
-      - name: Cache CEF binary distribution (windows)
-        if: matrix.settings.platform == 'windows-latest'
-        uses: actions/cache@v6
-        with:
-          path: ~/AppData/Local/tauri-cef
-          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
-          restore-keys: |
-            cef-${{ matrix.settings.target }}-
-
-      # Upstream @tauri-apps/cli doesn't bundle CEF framework files into the
-      # produced installer. Only the fork at vendor/tauri-cef does. Build and
-      # install that CLI so `cargo tauri build` invokes the cef-aware bundler.
-      #
-      # The cache key must include runner.arch, not just runner.os: cargo-tauri
-      # is a host-arch binary, and the Linux matrix runs on both x86_64
-      # (ubuntu-24.04) and aarch64 (ubuntu-24.04-arm) runners that share
-      # runner.os == 'Linux'. Keying on runner.os alone lets one arch restore
-      # the other arch's binary, which then fails to exec ("ELF ...: not found"
-      # / "Syntax error: word unexpected") when `cargo tauri build` runs it.
-      - name: Cache vendored tauri-cli binary (unix)
-        if: matrix.settings.platform != 'windows-latest'
-        id: tauri-cli-cache-unix
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
-      - name: Cache vendored tauri-cli binary (windows)
-        if: matrix.settings.platform == 'windows-latest'
-        id: tauri-cli-cache-windows
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/bin/cargo-tauri.exe
-          key: vendored-tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
-      - name: Install vendored tauri-cli (cef-aware bundler)
-        if:
-          (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit
-          != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit
-          != 'true')
-        shell: bash
-        run: bash scripts/ci-cancel-aware.sh cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
@@ -392,7 +376,7 @@ jobs:
       # bundle to bake them in. macOS signing is intentionally skipped here
       # and handled by the dedicated re-sign + notarize step further down
       # (hardened runtime + entitlements are required for notarization).
-      - name: Build and package Tauri app (CEF, vendored CLI)
+      - name: Build and package Tauri app
         id: tauri-build
         shell: bash
         working-directory: app
@@ -433,7 +417,9 @@ jobs:
           # DIFs go to the Tauri / core projects in the dedicated steps
           # below.
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
+          # Keep in sync with bundle.macOS.minimumSystemVersion in
+          # app/src-tauri/tauri.conf.json — the Wry system-WebView floor (#5571).
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '12.3' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
           WITH_UPDATER: ${{ inputs.with_updater && 'true' || 'false' }}
@@ -447,65 +433,7 @@ jobs:
           # beforeBuildCommand. Step-level env was observed not to propagate
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
           #
-          # Linux AppImage bundler note: the vendored tauri-cef bundler
-          # invokes `quick-sharun.sh`, which runs `lib4bin` → `ldd` on the
-          # staged OpenHuman binary. CEF (libcef.so) is downloaded into
-          # `~/.cache/tauri-cef/<version>/<os-arch>/` at cargo-build time and
-          # copied into the AppDir at usr/lib/libcef.so, but the binary's
-          # RUNPATH does not include either location, so plain `ldd` reports
-          # `libcef.so => not found` and lib4bin aborts with the generic
-          # "is missing libraries! Aborting..." banner. libcef.so is downloaded
-          # by the cef-dll-sys build script into the CEF cache dir, which the
-          # "Cache CEF binary distribution" step restores across runs.
-          #
-          # Build-once (#3877): this used to compile the whole app twice — a
-          # throwaway `cargo tauri build --no-bundle` purely to fetch CEF, then
-          # the real bundling build — which also re-ran the Vite/bundler
-          # orchestration twice. We now resolve libcef.so cheaply and bundle in
-          # a SINGLE `cargo tauri build`:
-          #   1. Warm CEF cache (the common case): libcef.so is already restored,
-          #      so we skip straight to the single bundling build.
-          #   2. Cold cache: prewarm with a TARGETED `cargo build -p cef-dll-sys`
-          #      (compiles only the CEF downloader crate + its deps, not the
-          #      whole app) to populate the cache.
-          #   3. If that still didn't yield libcef.so, fall back to the
-          #      historical full `--no-bundle` prebuild — so correctness can
-          #      never regress relative to the old double build.
-          # macOS / Windows take the single-call path unchanged.
-          find_cef_lib_dir() {
-            # `-quit` stops find after the first match so the `| head -1` can't
-            # close the pipe early and SIGPIPE find. Under this step's
-            # `set -o pipefail` + `-e`, that SIGPIPE (exit 141) aborted the whole
-            # build before `cargo tauri build` ran whenever the warm cache held
-            # more than one libcef.so (multiple version/arch dirs). Trailing
-            # `|| true` also absorbs find's exit 1 when the cache dir is absent.
-            find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' -quit 2>/dev/null | head -1 || true
-          }
-          if [ "${RUNNER_OS}" = "Linux" ]; then
-            CEF_LIB_DIR="$(find_cef_lib_dir)"
-            if [ -z "$CEF_LIB_DIR" ]; then
-              echo "[appimage-fix] CEF not cached — targeted prewarm via cef-dll-sys build script"
-              # `cargo tauri build --debug` maps to cargo's default (dev)
-              # profile; release maps to `--release`. Match the profile so the
-              # prewarm's artifacts are reused by the bundling build below.
-              CARGO_BUILD_PROFILE="--release"
-              [ "$PROFILE_FLAG" = "--debug" ] && CARGO_BUILD_PROFILE=""
-              NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo build -p cef-dll-sys $CARGO_BUILD_PROFILE || true
-              CEF_LIB_DIR="$(find_cef_lib_dir)"
-            fi
-            if [ -z "$CEF_LIB_DIR" ]; then
-              echo "[appimage-fix] targeted prewarm did not yield libcef.so — falling back to full --no-bundle prebuild"
-              NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build --no-bundle $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
-              CEF_LIB_DIR="$(find_cef_lib_dir)"
-            fi
-            if [ -z "$CEF_LIB_DIR" ]; then
-              echo "::error::libcef.so not found under ~/.cache/tauri-cef after prewarm; cannot satisfy lib4bin ldd resolution." >&2
-              exit 1
-            fi
-            echo "[appimage-fix] prepending CEF lib dir to LD_LIBRARY_PATH: $CEF_LIB_DIR"
-            export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          fi
-          NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+          NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh pnpm tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
       # Diagnostic for the recurring quick-sharun "is missing libraries!
       # Aborting..." error on the AppImage bundler — the upstream script

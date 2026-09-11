@@ -99,7 +99,7 @@ export function ShortcutsList({ variant = 'modal' }: ShortcutsListProps) {
               <div key={action.id} className={rowClass}>
                 <span className="min-w-0 flex items-center gap-3 truncate text-sm text-stone-700 dark:text-neutral-200">
                   {action.icon ? (
-                    <action.icon className="w-4 h-4 flex-shrink-0 text-stone-400 dark:text-neutral-500" />
+                    <action.icon className="w-4 h-4 shrink-0 text-stone-400 dark:text-neutral-500" />
                   ) : null}
                   <span className="truncate">
                     {action.labelKey ? t(action.labelKey) : action.label}

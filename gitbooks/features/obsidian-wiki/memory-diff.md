@@ -11,7 +11,7 @@ The [Memory Tree](memory-tree.md) tells the agent what it knows. **Memory Diff**
 
 The chunk store (`mem_tree_chunks`) stays authoritative. The diff ledger is a read-only view built _from_ already-ingested data - so snapshots cost zero API calls. Source: `src/openhuman/memory/diff/`.
 
-***
+---
 
 ## It's a git repository
 
@@ -28,7 +28,7 @@ The whole thing is a real [libgit2](https://libgit2.org/) repository living at `
 
 Snapshot metadata that has no natural git home - source kind, label, trigger (`auto` / `manual`), item count, millisecond timestamp - rides along in the **commit message as trailers** (`Source-Id:`, `Trigger:`, `Item-Count:`, `Taken-At-Ms:`, …) and is parsed back out on read.
 
-***
+---
 
 ## The snapshot model
 
@@ -60,20 +60,20 @@ A diff for source A is then just `git diff <from-tree>..<to-tree>` with the path
 
 All writes serialise through a process-global lock, because git's HEAD/parent bookkeeping is read-modify-write and concurrent commits could otherwise fork history.
 
-***
+---
 
 ## What the agent uses it for
 
 The headline use case is **"what changed since I last looked?"** During a conversation the agent calls the `memory_diff` tool (`tools.rs`). Its parameters:
 
-| Param                | Effect                                                                                          |
-| -------------------- | ----------------------------------------------------------------------------------------------- |
-| _(none)_             | Lists enabled sources with their snapshot counts.                                               |
-| `source_id`          | Diffs one source.                                                                               |
-| `checkpoint_id`      | Cross-source diff: everything that changed since that named checkpoint.                          |
-| `since_read`         | When diffing a source, show changes since the **read marker** rather than since the last sync. Default `true`. |
-| `commit`             | When using `since_read`, advance the read marker to head after reading. Default `true`; set `false` to preview without acknowledging. |
-| `include_text_diff`  | Include line-level unified diffs for modified items (truncated to ~2000 chars). Default `false`. |
+| Param               | Effect                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_            | Lists enabled sources with their snapshot counts.                                                                                     |
+| `source_id`         | Diffs one source.                                                                                                                     |
+| `checkpoint_id`     | Cross-source diff: everything that changed since that named checkpoint.                                                               |
+| `since_read`        | When diffing a source, show changes since the **read marker** rather than since the last sync. Default `true`.                        |
+| `commit`            | When using `since_read`, advance the read marker to head after reading. Default `true`; set `false` to preview without acknowledging. |
+| `include_text_diff` | Include line-level unified diffs for modified items (truncated to ~2000 chars). Default `false`.                                      |
 
 The read-marker mechanic is the turn-to-turn primitive (`diff_since_read` in `ops.rs`): the first call returns the full delta and moves `refs/openhuman/read/<source_id>` up to the current head; the next call returns _only_ what arrived since. So an agent that polls a source repeatedly never re-reads the same news twice. The tool is `ReadOnly` with respect to your data - the only write it performs is advancing that internal marker, never anything in `action_dir`.
 
@@ -92,7 +92,7 @@ Output is concise markdown, e.g.:
 - Standup notes
 ```
 
-***
+---
 
 ## Checkpoints and cross-source diffs
 
@@ -100,22 +100,22 @@ A **checkpoint** is a named baseline across _all_ enabled sources - an annotated
 
 Checkpoints are cheap to prune: `cleanup` deletes tags older than N days, but **snapshot commits are never deleted** - git history _is_ the ledger, and git's delta compression keeps it compact.
 
-***
+---
 
 ## Why this matters to you
 
 Because the ledger is real git history, Memory Diff gives the agent's knowledge an **audit trail**:
 
-* **Traceability.** Every change to what the agent knows is a commit with a timestamp, a trigger (`auto` vs `manual`), and an item count.
-* **No surprises.** The agent acts on _deltas_, not the whole world each turn - so a single new email gets noticed without re-reading your entire inbox.
-* **Recoverable history.** Snapshots are kept indefinitely; you can always reconstruct what a source looked like at any past point.
-* **Cheap.** It's built from data already ingested by the Memory Tree, so tracking change costs no extra model or API calls.
+- **Traceability.** Every change to what the agent knows is a commit with a timestamp, a trigger (`auto` vs `manual`), and an item count.
+- **No surprises.** The agent acts on _deltas_, not the whole world each turn - so a single new email gets noticed without re-reading your entire inbox.
+- **Recoverable history.** Snapshots are kept indefinitely; you can always reconstruct what a source looked like at any past point.
+- **Cheap.** It's built from data already ingested by the Memory Tree, so tracking change costs no extra model or API calls.
 
-***
+---
 
 ## See also
 
-* [Memory Tree](memory-tree.md) - the authoritative knowledge base that snapshots are derived from.
-* [Auto-fetch from Integrations](auto-fetch.md) - what triggers the syncs that produce new snapshots.
-* [Obsidian Wiki](README.md) - the Markdown vault these sources ingest into.
-* [Subconscious Loop](../subconscious.md) - the background loop that reviews new memory changes for actionable items.
+- [Memory Tree](memory-tree.md) - the authoritative knowledge base that snapshots are derived from.
+- [Auto-fetch from Integrations](auto-fetch.md) - what triggers the syncs that produce new snapshots.
+- [Obsidian Wiki](README.md) - the Markdown vault these sources ingest into.
+- [Subconscious Loop](../subconscious.md) - the background loop that reviews new memory changes for actionable items.

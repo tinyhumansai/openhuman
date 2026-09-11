@@ -16,14 +16,14 @@ This page is about that pipeline: how triggers arrive, how they get classified, 
 
 A trigger is an external event published by an integration you've connected. Common shapes:
 
-| Integration | Example trigger |
-| --- | --- |
-| **Gmail** | `GMAIL_NEW_GMAIL_MESSAGE`, new mail in inbox |
-| **Slack** | `SLACK_NEW_MESSAGE`, channel/DM message you were mentioned in |
-| **Notion** | `NOTION_PAGE_UPDATED`, a tracked page changed |
-| **GitHub** | `GITHUB_ISSUE_OPENED`, `GITHUB_PULL_REQUEST_OPENED` on your repos |
-| **Stripe** | `STRIPE_CHARGE_SUCCEEDED`, a successful charge on your account |
-| **Calendar** | `GOOGLE_CALENDAR_EVENT_CREATED`, a new event on your calendar |
+| Integration  | Example trigger                                                   |
+| ------------ | ----------------------------------------------------------------- |
+| **Gmail**    | `GMAIL_NEW_GMAIL_MESSAGE`, new mail in inbox                      |
+| **Slack**    | `SLACK_NEW_MESSAGE`, channel/DM message you were mentioned in     |
+| **Notion**   | `NOTION_PAGE_UPDATED`, a tracked page changed                     |
+| **GitHub**   | `GITHUB_ISSUE_OPENED`, `GITHUB_PULL_REQUEST_OPENED` on your repos |
+| **Stripe**   | `STRIPE_CHARGE_SUCCEEDED`, a successful charge on your account    |
+| **Calendar** | `GOOGLE_CALENDAR_EVENT_CREATED`, a new event on your calendar     |
 
 The full set comes from the [Composio](https://composio.dev) connector layer that powers [third-party integrations](README.md). When a connection is active, the relevant trigger subscriptions are wired up automatically.
 
@@ -74,12 +74,12 @@ Before any action runs, every trigger goes through the [`trigger_triage`](https:
 
 It picks exactly one of four actions:
 
-| Action | What happens | When to use |
-| --- | --- | --- |
-| **`drop`** | Nothing. Trigger is silently logged and discarded. | Spam, duplicates, irrelevant noise. The default for things you don't care about. |
-| **`acknowledge`** | A short memory note is persisted, no agent runs. | Passive notifications worth remembering ("a new page was created in archive"). |
-| **`react`** | The [`trigger_reactor`](https://github.com/tinyhumansai/openhuman/tree/main/src/openhuman/agent/agents/trigger_reactor) agent runs with one or two tool calls. | A small, single-step side effect: store a memory entry, post a quick acknowledgement, mark a thread read. |
-| **`escalate`** | The full **orchestrator** agent takes over with planning capability. | Anything that needs reasoning, multiple steps, or multiple skills: drafting a reply, updating several Notion pages, deciding how to triage an inbound issue. |
+| Action            | What happens                                                                                                                                                   | When to use                                                                                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`drop`**        | Nothing. Trigger is silently logged and discarded.                                                                                                             | Spam, duplicates, irrelevant noise. The default for things you don't care about.                                                                             |
+| **`acknowledge`** | A short memory note is persisted, no agent runs.                                                                                                               | Passive notifications worth remembering ("a new page was created in archive").                                                                               |
+| **`react`**       | The [`trigger_reactor`](https://github.com/tinyhumansai/openhuman/tree/main/src/openhuman/agent/agents/trigger_reactor) agent runs with one or two tool calls. | A small, single-step side effect: store a memory entry, post a quick acknowledgement, mark a thread read.                                                    |
+| **`escalate`**    | The full **orchestrator** agent takes over with planning capability.                                                                                           | Anything that needs reasoning, multiple steps, or multiple skills: drafting a reply, updating several Notion pages, deciding how to triage an inbound issue. |
 
 The triage agent has the same memory and workspace context the rest of the agent has. It can tell whether a trigger is relevant to something you're currently working on, who the people involved are, and whether it's the kind of thing you've asked OpenHuman to act on before.
 
@@ -93,7 +93,6 @@ This is the part that distinguishes "OpenHuman has a Gmail integration" from "Op
   - Draft a reply to an important email and queue it for your approval.
   - Pull up the relevant Notion / Linear / Drive context for an inbound issue and write a structured comment.
   - Update three connected systems based on a single inbound event ("this customer's plan changed in Stripe, update HubSpot, post in #revenue, and add a note to their Notion file").
-  - Decide the trigger means a meeting just got scheduled and pre-load the [Meeting Agent](../mascot/meeting-agents.md) for that call.
 
 In both cases the action runs on your machine, against your local Memory Tree, with the same model-routing and tool surface the rest of the agent uses.
 
@@ -133,7 +132,6 @@ Triggers follow the same boundary as the rest of the product (see [Privacy & Sec
 
 ## See also
 
-* [Third-party Integrations](README.md), the catalog of services triggers come from.
-* [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md), the polling counterpart, periodic ingest of source data into the Memory Tree.
-* [Subconscious Loop](../subconscious.md), the background loop that uses trigger context and memory to plan ahead.
-* [Meeting Agents](../mascot/meeting-agents.md), one place an escalated trigger can land (a calendar event with a Meet link).
+- [Third-party Integrations](README.md), the catalog of services triggers come from.
+- [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md), the polling counterpart, periodic ingest of source data into the Memory Tree.
+- [Subconscious Loop](../subconscious.md), the background loop that uses trigger context and memory to plan ahead.

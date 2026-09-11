@@ -1,7 +1,0 @@
-{
-  "id": "slack",
-  "name": "Slack",
-  "version": "0.1.0",
-  "serviceURL": "https://app.slack.com/client/",
-  "icon": "icon.svg"
-}

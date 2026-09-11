@@ -2,7 +2,11 @@
 //! cursor, and end-to-end streaming (including decode/empty/connect edges)
 //! driven through the shared TCP stub.
 
-use super::{http_json, spawn_stub};
+use super::{http_json, spawn_stub, spawn_stub_capture};
+use crate::api::product::{
+    product_identity_test_lock, reset_product_identity_for_test, set_product_identity,
+    ProductIdentity, DEFAULT_PRODUCT_IDENTITY, PRODUCT_IDENTITY_HEADER,
+};
 use crate::openhuman::medulla::client::sse::{SeqDedup, SseFrame, SseParser};
 use crate::openhuman::medulla::client::*;
 use futures::StreamExt;
@@ -135,6 +139,57 @@ async fn integration_sse_stream_yields_frames() {
     assert_eq!(second.seq, Some(2));
     assert_eq!(second.kind(), EventKind::Assistant { body: "two".into() });
     // Stop by dropping the stream.
+}
+
+/// The SSE handshake authenticates with a `?token=` query parameter, so it
+/// never passes through `MedullaClient::authed`. Its product-identity header is
+/// attached in the connect path instead — assert it on the wire, because the
+/// two transports have no shared code path that a single test could cover.
+async fn sse_request_line(identity: Option<&str>) -> String {
+    let mut response =
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".to_vec();
+    response.extend_from_slice(
+        b"id: 1\ndata: {\"seq\":1,\"at\":1,\"sessionId\":\"s1\",\"event\":{\"kind\":\"assistant\",\"body\":\"one\"}}\n\n",
+    );
+    let (base, req) = spawn_stub_capture(response).await;
+
+    reset_product_identity_for_test();
+    if let Some(identity) = identity {
+        set_product_identity(ProductIdentity::new(identity).unwrap());
+    }
+
+    let client = MedullaClient::new(base, "jwt-abc");
+    {
+        let stream = client.stream_events("s1", None);
+        futures::pin_mut!(stream);
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.seq, Some(1));
+    }
+
+    reset_product_identity_for_test();
+    req.await.unwrap()
+}
+
+#[tokio::test]
+async fn sse_stream_carries_the_default_product_identity() {
+    let _guard = product_identity_test_lock();
+    let sent = sse_request_line(None).await;
+    assert!(
+        sent.contains(&format!(
+            "{PRODUCT_IDENTITY_HEADER}: {DEFAULT_PRODUCT_IDENTITY}"
+        )),
+        "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn sse_stream_carries_an_overridden_product_identity() {
+    let _guard = product_identity_test_lock();
+    let sent = sse_request_line(Some("medulla")).await;
+    assert!(
+        sent.contains(&format!("{PRODUCT_IDENTITY_HEADER}: medulla")),
+        "{sent}"
+    );
 }
 
 // ---------------------------------------------------------------------------

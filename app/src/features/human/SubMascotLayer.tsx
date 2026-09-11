@@ -154,7 +154,7 @@ export const SubMascotLayer: FC<SubMascotLayerProps> = ({ entries }) => {
             aria-label={`${model.label} subagent ${model.status}`}
             data-testid="sub-mascot"
             data-status={model.status}
-            className="flex flex-col items-center w-[72px] flex-shrink-0">
+            className="flex flex-col items-center w-[72px] shrink-0">
             <div
               className={[
                 'relative w-[56px] h-[56px] transition-opacity duration-500',
@@ -165,7 +165,7 @@ export const SubMascotLayer: FC<SubMascotLayerProps> = ({ entries }) => {
               </div>
             </div>
             <div
-              className="mt-1 max-w-[88px] rounded-md border border-white/70 bg-surface/85 px-1.5 py-0.5 text-center text-[9px] leading-tight text-content-secondary shadow-soft backdrop-blur dark:border-line-strong dark:bg-surface/85 dark:text-neutral-200"
+              className="mt-1 max-w-[88px] rounded-md border border-content-inverted/70 bg-surface/85 px-1.5 py-0.5 text-center text-[9px] leading-tight text-content-secondary shadow-soft backdrop-blur dark:border-line-strong dark:bg-surface/85"
               data-testid="sub-mascot-bubble"
               title={`${model.label} — ${model.activity}`}>
               <div className="truncate font-medium">{model.label}</div>

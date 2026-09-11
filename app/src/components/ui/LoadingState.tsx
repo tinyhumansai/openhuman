@@ -2,6 +2,17 @@ import type { ReactNode } from 'react';
 
 import { Spinner } from './icons';
 
+/**
+ * The app's spinner, re-exported here so loading UI has one import.
+ *
+ * There is deliberately no `ui/Spinner.tsx`: the SVG already lives in
+ * `ui/icons.tsx` (`animate-spin`, `currentColor`, sized by `className`), and a
+ * second spinner component would be a second thing to keep in sync for no new
+ * behaviour. Size it the way every other icon in this repo is sized —
+ * `<Spinner className="h-5 w-5 text-content-muted" />`.
+ */
+export { Spinner };
+
 export interface ErrorBannerProps {
   children?: ReactNode;
   message?: ReactNode;

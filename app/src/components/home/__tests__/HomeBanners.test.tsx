@@ -3,49 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DISCORD_INVITE_URL, PRICING_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
-import {
-  DiscordBanner,
-  EarlyBirdyBanner,
-  PromotionalCreditsBanner,
-  UsageLimitBanner,
-} from '../HomeBanners';
+import { DiscordBanner, EarlyBirdyBanner, PromotionalCreditsBanner } from '../HomeBanners';
 
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 describe('HomeBanners', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('opens the billing dashboard through openUrl from the usage limit banner', () => {
-    render(
-      <UsageLimitBanner
-        tone="warning"
-        icon="⏳"
-        title="Limit"
-        message="Usage is capped."
-        ctaLabel="Buy top-up credits"
-      />
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Buy top-up credits' }));
-
-    expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/pricing');
-  });
-
-  it('renders danger tone styles for UsageLimitBanner', () => {
-    render(
-      <UsageLimitBanner
-        tone="danger"
-        icon="⚠️"
-        title="Out of Usage"
-        message="You are out of budget."
-        ctaLabel="Get a subscription"
-      />
-    );
-    expect(screen.getByText('Out of Usage')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Get a subscription' }));
-    expect(openUrl).toHaveBeenCalledWith(PRICING_URL);
   });
 
   it('opens the billing dashboard through openUrl from the promotional credits banner', () => {

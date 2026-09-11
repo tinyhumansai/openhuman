@@ -69,16 +69,14 @@ describe('Discord (Composio) connector flow', () => {
 
   it('clicking the Discord card does NOT log user out (#2285 regression)', async function () {
     this.timeout(60_000);
-    await navigateToSkills();
-    await waitForText(CONNECTOR_NAME, 10_000);
+    await assertConnectorCardVisible(CONNECTOR_NAME);
 
-    // Click the card — regardless of what happens (modal opens, error, etc.)
-    // the session must survive
-    const cardEl = await waitForText(CONNECTOR_NAME, 10_000);
+    // Use the connector helper's fresh-DOM click rather than retaining the
+    // text element across the route transition. Wry may replace that element
+    // while connection data hydrates, which otherwise turns this regression
+    // check into a stale-element race before the click is exercised.
     try {
-      await cardEl.click();
-      // @ts-expect-error -- browser global is injected by WDIO at runtime, not typed in this env
-      await browser.pause(2_000);
+      await openConnectorModal(CONNECTOR_NAME, 10_000);
     } catch (err) {
       console.log(`${LOG} card click threw: ${err} — still asserting session`);
     }

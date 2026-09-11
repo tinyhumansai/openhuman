@@ -42,33 +42,30 @@ The script prints the resolved artifact directory at the end.
 
 ## Pieces
 
-| Piece | Path | Role |
-|-------|------|------|
-| Helper | `app/test/e2e/helpers/artifacts.ts` | Run dir, `captureCheckpoint`, `captureFailureArtifacts`, `saveMockRequestLog` |
-| WDIO hook | `app/test/wdio.conf.ts` (`afterTest`) | Always dumps screenshot + source on any failing test |
-| Canonical spec | `app/test/e2e/specs/agent-review.spec.ts` | Welcome → onboarding → privacy panel with named checkpoints |
-| Wrapper script | `app/scripts/e2e-agent-review.sh` | Build + run + print artifact dir |
-| Stable selectors | `data-testid` on `OnboardingNextButton`, `Onboarding` overlay + skip button, `WelcomeStep`, `PrivacyPanel` | Agent-reliable navigation anchors |
+| Piece            | Path                                                                                                       | Role                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Helper           | `app/test/e2e/helpers/artifacts.ts`                                                                        | Run dir, `captureCheckpoint`, `captureFailureArtifacts`, `saveMockRequestLog` |
+| WDIO hook        | `app/test/wdio.conf.ts` (`afterTest`)                                                                      | Always dumps screenshot + source on any failing test                          |
+| Canonical spec   | `app/test/e2e/specs/agent-review.spec.ts`                                                                  | Welcome → onboarding → privacy panel with named checkpoints                   |
+| Wrapper script   | `app/scripts/e2e-agent-review.sh`                                                                          | Build + run + print artifact dir                                              |
+| Stable selectors | `data-testid` on `OnboardingNextButton`, `Onboarding` overlay + skip button, `WelcomeStep`, `PrivacyPanel` | Agent-reliable navigation anchors                                             |
 
 ## Environment overrides
 
-| Variable | Effect |
-|----------|--------|
-| `E2E_ARTIFACT_DIR` | Force a specific run dir (skips auto-timestamped name) |
-| `E2E_ARTIFACT_ROOT` | Parent dir for auto-generated run dirs (default: `app/test/e2e/artifacts`) |
+| Variable             | Effect                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| `E2E_ARTIFACT_DIR`   | Force a specific run dir (skips auto-timestamped name)                                      |
+| `E2E_ARTIFACT_ROOT`  | Parent dir for auto-generated run dirs (default: `app/test/e2e/artifacts`)                  |
 | `E2E_ARTIFACT_LABEL` | Label used in the auto-generated run dir name (default: `run`; wrapper sets `agent-review`) |
 
 ## Using the helper from new specs
 
 ```ts
-import {
-  captureCheckpoint,
-  saveMockRequestLog,
-} from '../helpers/artifacts';
-import { getRequestLog } from '../mock-server';
+import { captureCheckpoint, saveMockRequestLog } from "../helpers/artifacts";
+import { getRequestLog } from "../mock-server";
 
-await captureCheckpoint('after-connect-click');
-saveMockRequestLog('after-connect-click', getRequestLog());
+await captureCheckpoint("after-connect-click");
+saveMockRequestLog("after-connect-click", getRequestLog());
 ```
 
 `captureCheckpoint` numbers captures so the run dir reads chronologically.

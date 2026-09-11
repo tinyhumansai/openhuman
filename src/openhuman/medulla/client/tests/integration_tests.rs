@@ -2,10 +2,13 @@
 //! stub, asserting on request lines/bodies and the decoded responses as well
 //! as transport/decode error paths.
 
-use super::{http_json, spawn_stub};
+use super::{http_json, spawn_stub, spawn_stub_capture};
+use crate::api::product::{
+    product_identity_test_lock, reset_product_identity_for_test, set_product_identity,
+    ProductIdentity, DEFAULT_PRODUCT_IDENTITY, PRODUCT_IDENTITY_HEADER,
+};
 use crate::openhuman::medulla::client::*;
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 // ---------------------------------------------------------------------------
@@ -33,24 +36,6 @@ async fn integration_error_envelope_maps() {
 // ---------------------------------------------------------------------------
 // Integration: full endpoint surface against the TCP stub
 // ---------------------------------------------------------------------------
-
-/// Like [`spawn_stub`], but also hands back the raw request bytes the client
-/// sent so tests can assert on the method line, query string, and body.
-async fn spawn_stub_capture(response: Vec<u8>) -> (String, tokio::sync::oneshot::Receiver<String>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let (mut sock, _) = listener.accept().await.unwrap();
-        let mut buf = [0u8; 8192];
-        let n = sock.read(&mut buf).await.unwrap_or(0);
-        sock.write_all(&response).await.unwrap();
-        sock.flush().await.unwrap();
-        let _ = sock.shutdown().await;
-        let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
-    });
-    (format!("http://{addr}"), rx)
-}
 
 /// A loopback address with nothing listening (bound then immediately released),
 /// so a connect attempt is refused.
@@ -225,6 +210,52 @@ async fn authed_get_carries_bearer_and_unwraps() {
     assert_eq!(usage["spend"], json!(1));
     let sent = req.await.unwrap();
     assert!(sent.contains("authorization: Bearer jwt-abc"), "{sent}");
+}
+
+#[tokio::test]
+async fn authed_requests_carry_the_default_product_identity() {
+    let _guard = product_identity_test_lock();
+    reset_product_identity_for_test();
+
+    let (base, req) =
+        spawn_stub_capture(ok_envelope("HTTP/1.1 200 OK", json!({ "spend": 1 }))).await;
+    let client = MedullaClient::new(base, "jwt-abc");
+    client.team_usage().await.unwrap();
+
+    let sent = req.await.unwrap();
+    assert!(
+        sent.contains(&format!(
+            "{PRODUCT_IDENTITY_HEADER}: {DEFAULT_PRODUCT_IDENTITY}"
+        )),
+        "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn authed_requests_carry_an_overridden_product_identity() {
+    let _guard = product_identity_test_lock();
+    reset_product_identity_for_test();
+    set_product_identity(ProductIdentity::new("medulla").unwrap());
+
+    let (base, req) =
+        spawn_stub_capture(ok_envelope("HTTP/1.1 200 OK", json!({ "spend": 1 }))).await;
+    let client = MedullaClient::new(base, "jwt-abc");
+    let result = client.team_usage().await;
+
+    reset_product_identity_for_test();
+    result.unwrap();
+
+    let sent = req.await.unwrap();
+    assert!(
+        sent.contains(&format!("{PRODUCT_IDENTITY_HEADER}: medulla")),
+        "{sent}"
+    );
+    assert!(
+        !sent.contains(&format!(
+            "{PRODUCT_IDENTITY_HEADER}: {DEFAULT_PRODUCT_IDENTITY}"
+        )),
+        "the override must replace the default, not sit alongside it: {sent}"
+    );
 }
 
 #[tokio::test]

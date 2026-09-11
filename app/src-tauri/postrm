@@ -1,0 +1,23 @@
+#!/bin/sh
+# Debian postrm maintainer script for OpenHuman (openhuman#5497).
+#
+# Remove the /usr/local/bin/openHuman compatibility symlink created by postinst,
+# but only while it still points at our binary — never delete a file a user
+# later put in its place. Not touched on upgrade: dpkg calls this with "upgrade"
+# for the outgoing version and the new postinst recreates the link.
+set -e
+
+# Overridable for the maintainer-script test only; dpkg sets neither variable,
+# so production uses the defaults. See scripts/test-deb-maintainer-scripts.sh.
+LINK="${OPENHUMAN_DEB_SYMLINK:-/usr/local/bin/openHuman}"
+TARGET="${OPENHUMAN_DEB_BINARY:-/usr/bin/OpenHuman}"
+
+case "$1" in
+  remove|purge)
+    if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$TARGET" ]; then
+      rm -f "$LINK"
+    fi
+    ;;
+esac
+
+exit 0

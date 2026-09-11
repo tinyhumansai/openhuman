@@ -85,6 +85,27 @@ pub enum CoreError {
         #[source]
         source: serde_json::Error,
     },
+
+    /// The route would transmit a bearer credential over a non-TLS channel.
+    ///
+    /// A [`super::agent::Route`] that names an `http://` (or other non-HTTPS)
+    /// endpoint while carrying an `api_key` is refused before any request is
+    /// sent, so the credential can never ride cleartext on the wire.
+    #[error("{method}: refusing to send a bearer credential over a non-HTTPS route ({endpoint})")]
+    InsecureRoute {
+        /// RPC method the route was attached to.
+        method: &'static str,
+        /// The sanitized endpoint (credentials stripped) that was refused.
+        endpoint: String,
+    },
+
+    /// A per-turn route was supplied but would be discarded by the inference
+    /// controller because one of its required halves is blank.
+    #[error("{method}: routed inference requires a non-blank endpoint and api key")]
+    InvalidRoute {
+        /// RPC method the invalid route was attached to.
+        method: &'static str,
+    },
 }
 
 impl CoreError {
@@ -133,7 +154,9 @@ impl CoreError {
             | CoreError::Unavailable { method }
             | CoreError::Rpc { method, .. }
             | CoreError::Encode { method, .. }
-            | CoreError::Decode { method, .. } => method,
+            | CoreError::Decode { method, .. }
+            | CoreError::InsecureRoute { method, .. }
+            | CoreError::InvalidRoute { method } => method,
         }
     }
 

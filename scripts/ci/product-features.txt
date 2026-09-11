@@ -1,0 +1,114 @@
+# DESKTOP_PRODUCT_FEATURES — the core Cargo gates the shipped desktop app has.
+#
+# This file is the single source of truth for "what OpenHuman the product is",
+# as distinct from `[features] default` in Cargo.toml, which is now only the
+# CONTRIBUTOR set (what a bare `cargo check` / rust-analyzer compiles).
+#
+# Read by:
+#   * scripts/ci/check-feature-forwarding.mjs — asserts app/src-tauri/Cargo.toml
+#     forwards exactly this set, and that every name here is a real core gate.
+#   * the CI product lanes (clippy, unit tests, coverage), via
+#     scripts/ci/product-features.sh, so they keep compiling and testing the
+#     code the product actually ships even though `default` no longer does.
+#
+# Why the split (#4901, #4919): the shell declares `openhuman_core` with
+# `default-features = false`, so it never inherited `default` anyway. Before
+# this file, the guard worked by diffing the shell's list against `default` —
+# which meant SHRINKING `default` made the guard pass vacuously and silently
+# re-armed the exact failure that shipped `voice` missing to 56 users. An
+# explicit product list cannot pass vacuously: it is asserted equal, in both
+# directions, to the list the shell forwards.
+#
+# Adding a gate here means the product ships it. Removing one means the product
+# loses it — a user-visible change, not a build tweak.
+#
+# Format: one gate per line. `#` comments and blank lines are ignored.
+
+# Messaging providers (Telegram/Discord/Slack/WhatsApp/iMessage/...), the
+# channel runtime, and the webview account bridges.
+channels
+
+# The media_generate_* agent tools.
+media
+
+# Local audio-device access (cpal): voice recording plus the accessibility
+# microphone-permission probe. `voice` requires it.
+inference
+
+# STT/TTS, dictation server, reply speech. Shipped MISSING from v0.58.19 to
+# v0.61.x (#4901) — the reason this whole guard exists.
+voice
+
+# Wallet / web3 / x402 domains and their agent tools.
+web3
+
+# Document ingestion and conversion. The synthesis itself is NOT in the binary:
+# `.docx` / `.pptx` generation and PDF extraction run in the loaded `tinydocs`
+# module, so this gate ships the tools and the host policy around them. Implies
+# `modules`.
+documents
+
+# The dynamic module host: the loader that admits a compiled cdylib through
+# tinybus's ABI, manifest and SHA-256 gates, the compiled-in registry of modules
+# this build trusts, and the `modules` RPC namespace. Required by `documents` —
+# without it the document tools have nothing to call.
+modules
+
+# Saved automation graphs: create/run/schedule + the workflow_builder and
+# flow_discovery agents.
+flows
+
+
+# SKILL.md discovery/parse/install, workflow execution, remote catalogs.
+skills
+
+# The MCP stdio/HTTP server, dynamic Smithery installs, and the write-audit log.
+mcp
+
+# Sentry. Without it a crash in the packaged app is invisible to us.
+crash-reporting
+
+# The /rpc JSON-RPC endpoint and the Socket.IO bridge. The shell reaches the
+# in-process core ONLY over http://127.0.0.1:<port>/rpc, so this is mandatory —
+# enforced independently by the HTTP_SERVER_COMPILED_IN assert in the shell.
+http-server
+
+# Battery/AC probe. Without it a user who sets `require_ac_power` gets no
+# enforcement and battery_floor throttling never fires — silently, because the
+# off-state is a valid "on AC" reading.
+scheduler-gate
+
+# The packaged app's only durable log. Without it a support request comes back
+# with nothing to attach, and the absence is silent.
+file-logging
+
+# macOS CNContactStore address-book seeding for the people domain.
+contacts
+
+# The managed Node.js toolchain (download/verify/extract/install a pinned
+# release) and the JavaScript language surface on top of it. Carries `xz2` and
+# its static liblzma C build.
+runtime-node
+
+# NOTE: `memory-git` no longer exists. The gate, the `memory::diff` RPC surface
+# and schemas, the `memory_diff` agent tool and the `memory_artifacts_e2e`
+# target were all deleted — not merely un-shipped — so there is nothing here to
+# re-enable. It carried `git2`, which brought `libgit2-sys` and `libz-sys`: 2 of
+# the 4 native C builds in this profile, now down to `libsqlite3-sys` and `ring`,
+# both load-bearing. `git2` is absent from the resolved graph entirely
+# (`cargo tree -i git2` finds no package), so the shed holds by construction
+# rather than by a flag someone can flip.
+#
+# tinycortex still owns the only libgit2 code in the stack and keeps its
+# `git-diff` / `wiki-git` features; nothing in this repository enables them.
+# `Capability::Diff` remains in the TinyMemory bus contract and a driver may
+# still advertise it — there is simply no RPC surface here behind it.
+
+# The `hosting_*` agent tools: put a workspace on a real hosting provider and
+# manage its sites, databases, environment, domains and deployments over the
+# tinyhosts unified model. Its gate in the root Cargo.toml declares
+# "Default-OFF, product-ON" but it reached neither this file nor the shell's
+# forwarding list, so the family compiled in no configuration. Tool
+# registration stays credential-gated (`tools/ops.rs`), so enabling this adds
+# nothing for a host without a hosting credential.
+hosting

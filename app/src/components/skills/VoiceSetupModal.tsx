@@ -5,7 +5,7 @@
  * settings. Otherwise, starts the voice server and shows success.
  */
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import type { VoiceSkillStatus } from '../../features/voice/useVoiceSkillStatus';
 import { useT } from '../../lib/i18n/I18nContext';
@@ -13,7 +13,6 @@ import {
   openhumanUpdateVoiceServerSettings,
   openhumanVoiceServerStart,
 } from '../../utils/tauriCommands/voice';
-import { settingsNavState } from '../settings/modal/settingsOverlay';
 import { CheckIcon, WarningIcon } from '../ui';
 import Button from '../ui/Button';
 import {
@@ -32,7 +31,6 @@ interface Props {
 
 export default function VoiceSetupModal({ onClose, skillStatus }: Props) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { t } = useT();
   const { sttModelMissing, serverStatus } = skillStatus;
 
@@ -60,12 +58,12 @@ export default function VoiceSetupModal({ onClose, skillStatus }: Props) {
     onClose();
     // STT model install lives on the Voice settings panel (PR 2). The
     // legacy `/settings/local-model` route handled Ollama assets only.
-    navigate('/settings/voice', settingsNavState(location));
+    navigate('/settings/voice');
   };
 
   const handleGoToSettings = () => {
     onClose();
-    navigate('/settings/voice', settingsNavState(location));
+    navigate('/settings/voice');
   };
 
   return (

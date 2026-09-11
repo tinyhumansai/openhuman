@@ -1,66 +1,79 @@
 use anyhow::{Context, Result};
-use rusqlite::params;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::store::chunks::store::{
-    delete_chunks_by_source, delete_orphaned_source_tree, with_connection,
-};
-use crate::openhuman::memory::store::chunks::types::SourceKind;
+use crate::openhuman::memory::api::provider::ForgetSelector;
 use crate::rpc::RpcOutcome;
+// The KV namespace the Composio sync pipelines keep their per-connection
+// cursor state under, named at the **contract** (#5560).
+//
+// It used to be `tinycortex::memory::sync::state::STATE_NAMESPACE`. The
+// contract publishes the same string under `composio::KV_NAMESPACE`, and its
+// own docs mark it a compatibility surface for exactly the reason this handler
+// cares about: the value is on disk, so a wipe that spelled it differently
+// would leave every cursor behind while reporting a clean sweep. Taking the
+// constant rather than copying the literal is what keeps that impossible —
+// and it is the same constant the driver writing those rows reads.
+use tinymemory_api::chunks::SourceKind;
+use tinymemory_api::composio::KV_NAMESPACE;
+use tinymemory_api::provider::types::BackfillTreesRequest;
 
 use super::types::{
-    DeleteSourceResponse, FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse,
-    WipeAllResponse,
+    BackfillConnectorTreesResponse, DeleteSourceResponse, FlushNowResponse,
+    FlushSourceTreeResponse, ResetTreeResponse, WipeAllResponse,
 };
 
 // ── wipe_all ─────────────────────────────────────────────────────────────
 
+/// Erase the whole memory store, then remove the content directories this host
+/// wrote beside it.
+///
+/// Two halves that read like one operation and deliberately are not.
+///
+/// The **store** wipe is the driver's: it owns which tables exist and what a
+/// row is. It comes back as `PurgeOutcome::rows_deleted`, a sum across every
+/// table the driver emptied — which is exactly what this response's
+/// `rows_deleted` has always reported (the handler used to sum it here, over
+/// nine hand-written `DELETE`s). So the number maps straight across and is
+/// deliberately neither re-derived nor re-scaled.
+///
+/// The **content directories** are this host's: it created them, its config
+/// decides where they live, and `purge_all`'s own contract says a driver must
+/// not reach into a host-owned path. `dirs_removed` therefore stays here,
+/// unchanged, and stays outside the driver call.
 pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>, String> {
-    let cfg = config.clone();
-    let (rows_deleted, sync_state_cleared) =
-        tokio::task::spawn_blocking(move || -> Result<(u64, u64)> {
-            const TABLES: &[&str] = &[
-                "mem_tree_score",
-                "mem_tree_entity_index",
-                "mem_tree_entity_hotness",
-                "mem_tree_jobs",
-                "mem_tree_buffers",
-                "mem_tree_summaries",
-                "mem_tree_trees",
-                "mem_tree_chunks",
-                "mem_tree_ingested_sources",
-            ];
-            let rows_deleted: u64 = with_connection(&cfg, |conn| {
-                let tx = conn.unchecked_transaction()?;
-                let mut total: u64 = 0;
-                for table in TABLES {
-                    let n = tx
-                        .execute(&format!("DELETE FROM {table}"), [])
-                        .with_context(|| format!("delete from {table}"))?;
-                    total += n as u64;
-                }
-                tx.commit()?;
-                Ok(total)
-            })?;
-
-            let sync_state_cleared: u64 = {
-                let unified_db = cfg.workspace_dir.join("memory").join("memory.db");
-                if !unified_db.exists() {
-                    log::debug!(
-                        "[memory_tree::read::wipe] unified memory DB not present — skipping sync-state clear"
-                    );
-                    0
-                } else {
-                    clear_composio_sync_state(&unified_db)
-                        .context("clear composio-sync-state during wipe_all")?
-                }
-            };
-
-            Ok((rows_deleted, sync_state_cleared))
-        })
+    // No `spawn_blocking` around either driver call — the driver owns whether
+    // its own reads block, and the module's do not run on this thread at all
+    // (the same reasoning `flush_now_rpc` below already carries). The directory
+    // removal further down was always async `tokio::fs` and never sat inside
+    // the wrapper the table deletes did, so the wrapper leaves with them.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        // Refused, not reported as a wipe that deleted nothing. The caller's
+        // next act is telling a user their memory is gone; that is the same
+        // reason the contract defaults `purge_all` to `Unsupported` rather than
+        // to a zero outcome.
+        return Err(format!(
+            "wipe_all: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+    log::debug!(
+        "[memory_tree::read::wipe] purge_all driver={}",
+        binding.driver_id()
+    );
+    let rows_deleted = maintenance
+        .purge_all()
         .await
-        .map_err(|e| format!("wipe_all join error: {e}"))?
-        .map_err(|e| format!("wipe_all: {e:#}"))?;
+        .map_err(|e| format!("wipe_all: {e}"))?
+        .rows_deleted;
+    log::debug!("[memory_tree::read::wipe] purge_all rows_deleted={rows_deleted}");
+
+    // Ordered after the purge exactly as it was when both halves ran inside one
+    // `spawn_blocking`: sync cursors are only safe to drop once the content they
+    // point at has gone.
+    let sync_state_cleared = clear_composio_sync_state(config)
+        .await
+        .map_err(|e| format!("wipe_all: {e}"))?;
 
     const DIRS: &[&str] = &["raw", "wiki", "chat", "document", "email", "summaries"];
     let content_root = config.memory_tree_content_root();
@@ -110,86 +123,118 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
     Ok(RpcOutcome::single_log(resp, log))
 }
 
-pub(crate) fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
-    use crate::openhuman::memory::tinycortex::HOST_SYNC_STATE_NAMESPACE;
-    let conn = rusqlite::Connection::open(db_path)
-        .with_context(|| format!("open unified memory db {}", db_path.display()))?;
-    let n = conn
-        .execute(
-            "DELETE FROM kv_namespace WHERE namespace = ?1",
-            params![HOST_SYNC_STATE_NAMESPACE],
-        )
-        .context("delete composio-sync-state rows")?;
-    Ok(n as u64)
+/// Clear the composio sync-state namespace from the bound driver's key/value
+/// tier, reporting how many records went.
+///
+/// # What this replaced
+///
+/// A `rusqlite::Connection` opened directly on a path rebuilt from
+/// `workspace_dir` — a second, unpoliced door into the store alongside
+/// `with_connection`, and one that hard-coded both the file layout and the
+/// `kv_namespace` table name. Both are the driver's business; the namespace is
+/// read with `MemoryGraph::kv_list` and each record removed with
+/// `MemoryGraph::kv_delete`.
+///
+/// # What replaced the "database file is missing" skip
+///
+/// The old code checked `path.exists()` first and returned `0` when it did not,
+/// because opening a `Connection` on a missing file would have *created* an
+/// empty database as a side effect of asking. Over the contract there is no
+/// file to ask about — the driver owns its storage and when it comes into
+/// being — so the equivalent question is asked of the driver instead, and it
+/// has two answers that both land on the same `0`:
+///
+/// - a driver serving no `Graph` family has no key/value tier to clear, which
+///   is reported here rather than refused (nothing was stored through this
+///   host's kv path either, so "nothing removed" is true of it); and
+/// - a driver whose namespace is empty lists nothing and deletes nothing.
+///
+/// # Not atomic, unlike the single `DELETE` it replaces
+///
+/// The contract addresses key/value records one at a time, so this is a list
+/// followed by N deletes rather than one statement, and a record written into
+/// the namespace between the two survives. That is acceptable here and only
+/// here: the sole caller is a whole-store wipe, which has already stopped
+/// meaning anything if a sync is still writing into the store it is erasing.
+pub(crate) async fn clear_composio_sync_state(config: &Config) -> Result<u64, String> {
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(graph) = binding.provider().as_graph() else {
+        log::debug!(
+            "[memory_tree::read::wipe] clear_composio_sync_state: driver '{}' \
+             does not serve Graph; nothing to clear",
+            binding.driver_id()
+        );
+        return Ok(0);
+    };
+
+    // `usize::MAX` because the whole namespace is the target — the same
+    // unbounded listing `memory::ops::kv_graph::kv_list_namespace` already
+    // does. There is no prefix: the namespace *is* the filter, matching the
+    // `WHERE namespace = ?1` the single `DELETE` used.
+    let records = graph
+        .kv_list(Some(KV_NAMESPACE), None, usize::MAX)
+        .await
+        .map_err(|e| format!("clear_composio_sync_state: kv_list: {e}"))?;
+    log::debug!(
+        "[memory_tree::read::wipe] clear_composio_sync_state namespace={} listed={}",
+        KV_NAMESPACE,
+        records.len()
+    );
+
+    let mut removed: u64 = 0;
+    for record in &records {
+        // Counted from the driver's answer rather than from the listing, so the
+        // number stays "records actually removed" — exactly what the single
+        // `DELETE`'s changed-row count fed into `sync_state_cleared`.
+        if graph
+            .kv_delete(Some(KV_NAMESPACE), &record.key)
+            .await
+            .map_err(|e| format!("clear_composio_sync_state: kv_delete: {e}"))?
+        {
+            removed += 1;
+        }
+    }
+    log::debug!(
+        "[memory_tree::read::wipe] clear_composio_sync_state namespace={} removed={}",
+        KV_NAMESPACE,
+        removed
+    );
+    Ok(removed)
 }
 
 // ── reset_tree ───────────────────────────────────────────────────────────
 
+/// Drop everything derived from stored content and schedule its re-derivation
+/// via the bound driver — deletion and rebuild must be one operation, so it
+/// belongs to the driver that owns the derived tables.
 pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeResponse>, String> {
-    use crate::openhuman::memory::queue::store as jobs_store;
-    use crate::openhuman::memory::queue::types::{ExtractChunkPayload, NewJob};
-
-    let cfg = config.clone();
-    let (tree_rows_deleted, chunks_requeued, jobs_enqueued) =
-        tokio::task::spawn_blocking(move || -> Result<(u64, u64, u64)> {
-            const TREE_TABLES: &[&str] = &[
-                "mem_tree_summaries",
-                "mem_tree_buffers",
-                "mem_tree_jobs",
-                "mem_tree_entity_index",
-                "mem_tree_trees",
-            ];
-            let tree_rows_deleted: u64 = with_connection(&cfg, |conn| {
-                let tx = conn.unchecked_transaction()?;
-                let mut total: u64 = 0;
-                for table in TREE_TABLES {
-                    let n = tx
-                        .execute(&format!("DELETE FROM {table}"), [])
-                        .with_context(|| format!("delete from {table}"))?;
-                    total += n as u64;
-                }
-                tx.commit()?;
-                Ok(total)
-            })?;
-
-            let (chunks_requeued, jobs_enqueued) =
-                with_connection(&cfg, |conn| -> anyhow::Result<(u64, u64)> {
-                    let tx = conn.unchecked_transaction()?;
-                    let chunks_requeued = tx.execute(
-                        "UPDATE mem_tree_chunks SET lifecycle_status = 'pending_extraction'",
-                        [],
-                    )? as u64;
-                    let chunk_ids: Vec<String> = {
-                        let mut stmt = tx.prepare("SELECT id FROM mem_tree_chunks")?;
-                        let rows = stmt
-                            .query_map([], |r| r.get::<_, String>(0))?
-                            .collect::<rusqlite::Result<Vec<_>>>()
-                            .context("collect chunk ids")?;
-                        rows
-                    };
-                    let mut jobs_enqueued: u64 = 0;
-                    for id in &chunk_ids {
-                        let payload = ExtractChunkPayload {
-                            chunk_id: id.clone(),
-                        };
-                        let job = NewJob::extract_chunk(&payload)
-                            .context("build extract_chunk NewJob")?;
-                        if jobs_store::enqueue_tx(&tx, &job)
-                            .context("enqueue extract_chunk")?
-                            .is_some()
-                        {
-                            jobs_enqueued += 1;
-                        }
-                    }
-                    tx.commit()?;
-                    Ok((chunks_requeued, jobs_enqueued))
-                })?;
-
-            Ok((tree_rows_deleted, chunks_requeued, jobs_enqueued))
-        })
+    // The derived-index reset — the table deletes, the chunk requeue and the
+    // re-extraction enqueue — is the driver's now (`Maintenance::
+    // reset_derived_index`), where the tables live. What stays here is what is
+    // genuinely the host's: the rendered wiki summaries below are files this
+    // host wrote under its own content root, and the driver has no business
+    // knowing they exist.
+    //
+    // No host-side worker wake follows the call: the member's contract makes
+    // the wake part of the operation itself — a reset that requeued without
+    // waking would look identical to one that did nothing until the next
+    // scheduled window, and the caller has no way to ask for the wake alone.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        return Err(format!(
+            "reset_tree: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+    let outcome = maintenance
+        .reset_derived_index()
         .await
-        .map_err(|e| format!("reset_tree join error: {e}"))?
-        .map_err(|e| format!("reset_tree: {e:#}"))?;
+        .map_err(|e| format!("reset_tree: {e}"))?;
+    let (tree_rows_deleted, chunks_requeued, jobs_enqueued) = (
+        outcome.rows_deleted,
+        outcome.chunks_requeued,
+        outcome.jobs_enqueued,
+    );
 
     let summaries_dir = config
         .memory_tree_content_root()
@@ -223,8 +268,6 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
         }
     }
 
-    crate::openhuman::memory::queue::wake_workers();
-
     let resp = ResetTreeResponse {
         tree_rows_deleted,
         chunks_requeued,
@@ -240,22 +283,63 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
 
 // ── flush_source_tree ────────────────────────────────────────────────────
 
+/// Force a flush of one source's summary tree.
+///
+/// # Served by the driver, and `TreeFactory` is not a seam gap (#5560)
+///
+/// Served by the bound driver's `MemoryTree::flush_source_tree`. The wire
+/// member is `tinymemory_bus::names::FLUSH_SOURCE_TREE`, which the pinned
+/// 131-method contract carries, so this is a contract call and not a method
+/// that answers `Unsupported` at run time.
+///
+/// This used to hold a live `Tree` object from the engine's
+/// `tree_source::get_or_create_source_tree`, because both things it did next
+/// wanted the object rather than a namespace: `TreeFactory::from_tree(&tree)
+/// .label_strategy(&cfg)` picked the labelling policy from the tree's own
+/// kind and scope, and `force_flush_tree` took `&tree.id`. **Neither is an
+/// upstream ask** — they are not narrower doors waiting to be opened, they are
+/// the two halves of a handle-passing shape the contract deliberately does not
+/// have, and the member below replaces both.
+///
+/// tinymemory v1.7.0 replaced that with a member answering the seal count and
+/// making the labelling decision driver-side — which is where it came from
+/// anyway — so no tree handle crosses the seam. Sealing and cascading are one
+/// call there rather than two here, which also closes the window the old
+/// two-step left open: a tree sealed but not yet cascaded reads as an empty
+/// tree to every structural query.
+///
+/// Two behaviours survive the rewrite deliberately. The `ACTIVE` re-entrancy
+/// latch is still host-side, because it guards *this* handler against a second
+/// concurrent call rather than guarding the store. And a scope with nothing
+/// buffered is still a zero-count success rather than an error — now by the
+/// contract's own rule rather than by this function's convention.
 pub async fn flush_source_tree_rpc(
     config: &Config,
     source_scope: &str,
 ) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
-    use crate::openhuman::memory::tree_source::get_or_create_source_tree;
-
-    use crate::openhuman::memory::tree::tree::flush::force_flush_tree;
-    use crate::openhuman::memory::tree::tree::TreeFactory;
     use std::collections::HashSet;
     use std::sync::Mutex;
 
     static ACTIVE: std::sync::LazyLock<Mutex<HashSet<String>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
-    let scope = source_scope.to_string();
+    /// Releases the re-entrancy latch on every exit, including the error ones.
+    ///
+    /// The hand-rolled version this replaces removed the scope only after a
+    /// successful flush, so a driver error latched that scope out for the rest
+    /// of the process — the retry a caller would naturally make came back
+    /// "already running" forever. Dropping it in a guard is the fix.
+    struct Latch(String);
+    impl Drop for Latch {
+        fn drop(&mut self) {
+            ACTIVE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&self.0);
+        }
+    }
 
+    let scope = source_scope.to_string();
     {
         let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
         if !active.insert(scope.clone()) {
@@ -268,43 +352,32 @@ pub async fn flush_source_tree_rpc(
             ));
         }
     }
+    let _latch = Latch(scope.clone());
 
-    let cfg = config.clone();
-    let scope_for_task = scope.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<FlushSourceTreeResponse> {
-        let tree = get_or_create_source_tree(&cfg, &scope_for_task)
-            .context("get_or_create_source_tree")?;
-        let _strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg);
-        Ok(FlushSourceTreeResponse {
-            tree_scope: scope_for_task,
-            seals_fired: 0,
-        })
-    })
-    .await
-    .map_err(|e| format!("flush_source_tree join error: {e}"))?;
+    // Asked of the driver (`Tree::flush_source_tree`). The seal and the cascade
+    // are one call there rather than two here, which closes the window the old
+    // two-step left: a tree sealed but not cascaded reads as empty to every
+    // structural query. No `spawn_blocking` either — the driver owns whether
+    // its own reads block.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(tree) = binding.provider().as_tree() else {
+        return Err(format!(
+            "flush_source_tree: driver '{}' does not serve Tree",
+            binding.driver_id()
+        ));
+    };
 
-    let _tree_info = result.map_err(|e| format!("flush_source_tree: {e:#}"))?;
+    // A scope with nothing buffered is `Ok(0)` by the contract, not an error,
+    // which is the behaviour this handler already had for an unknown scope.
+    let seals_fired = tree
+        .flush_source_tree(&scope)
+        .await
+        .map_err(|e| format!("flush_source_tree: {e}"))?;
 
-    let cfg2 = config.clone();
-    let scope2 = scope.clone();
-    let resp = tokio::spawn(async move {
-        let tree = get_or_create_source_tree(&cfg2, &scope2)?;
-        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg2);
-        let sealed = force_flush_tree(&cfg2, &tree.id, Some(chrono::Utc::now()), &strategy).await?;
-        Ok::<_, anyhow::Error>(FlushSourceTreeResponse {
-            tree_scope: scope2,
-            seals_fired: sealed.len() as u32,
-        })
-    })
-    .await
-    .map_err(|e| format!("flush_source_tree join error: {e}"))?
-    .map_err(|e| format!("flush_source_tree: {e:#}"))?;
-
-    {
-        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-        active.remove(&scope);
-    }
-
+    let resp = FlushSourceTreeResponse {
+        tree_scope: scope,
+        seals_fired: u32::try_from(seals_fired).unwrap_or(u32::MAX),
+    };
     let log = format!(
         "memory_tree::read: flush_source_tree scope={} seals={}",
         resp.tree_scope, resp.seals_fired
@@ -314,36 +387,30 @@ pub async fn flush_source_tree_rpc(
 
 // ── flush_now ─────────────────────────────────────────────────────────────
 
+/// Flush buffered work old enough to be written out, via the bound driver —
+/// flush deduplication is keyed engine-side, so only the driver can promise
+/// one enqueue per window.
 pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowResponse>, String> {
-    use crate::openhuman::memory::queue::store as jobs_store;
-    use crate::openhuman::memory::queue::types::{FlushStalePayload, NewJob};
-    use crate::openhuman::memory::tree::tree::store as tree_store;
-
-    let cfg = config.clone();
-    let resp = tokio::task::spawn_blocking(move || -> Result<FlushNowResponse> {
-        let stale = tree_store::list_stale_buffers(&cfg, chrono::Utc::now())
-            .context("list stale buffers")?;
-        let stale_buffers = stale.len() as u32;
-
-        let payload = FlushStalePayload {
-            max_age_secs: Some(0),
-        };
-        let now = chrono::Utc::now();
-        let date_iso = now.format("%Y-%m-%d").to_string();
-        let hour_block = chrono::Timelike::hour(&now) / 3;
-        let job = NewJob::flush_stale(&payload, &date_iso, hour_block)
-            .context("build flush_stale NewJob")?;
-        let enqueued = jobs_store::enqueue(&cfg, &job)
-            .context("enqueue flush_stale job")?
-            .is_some();
-        Ok(FlushNowResponse {
-            enqueued,
-            stale_buffers,
-        })
-    })
-    .await
-    .map_err(|e| format!("flush_now join error: {e}"))?
-    .map_err(|e| format!("flush_now: {e:#}"))?;
+    // Asked of the driver (`Maintenance::flush_pending`): the buffer walk, the
+    // window-keyed dedupe and the enqueue were engine mechanics the host was
+    // re-implementing. No `spawn_blocking` — the driver owns whether its own
+    // reads block. The wire shape is unchanged: `enqueued: false` still means
+    // "already scheduled this window" when `stale_buffers` is non-zero.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        return Err(format!(
+            "flush_now: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+    let outcome = maintenance
+        .flush_pending()
+        .await
+        .map_err(|e| format!("flush_now: {e}"))?;
+    let resp = FlushNowResponse {
+        enqueued: outcome.enqueued,
+        stale_buffers: u32::try_from(outcome.stale_buffers).unwrap_or(u32::MAX),
+    };
 
     let log = format!(
         "memory_tree::read: flush_now enqueued={} stale_buffers={}",
@@ -352,37 +419,100 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
     Ok(RpcOutcome::single_log(resp, log))
 }
 
+// ── backfill_connector_trees ───────────────────────────────────────────────
+
+/// Re-file connector documents stored before the routing fix into the memory
+/// tree (#6012).
+///
+/// #6007 fixed the routing for items synced from then on. It could not fix the
+/// records already stored: the per-item sync gate treats an ingested document as
+/// done, so re-syncing fetches nothing and creates no tree rows. Those memories
+/// sit fully embedded in the document store and invisible to every tree-backed
+/// surface until something re-files them.
+///
+/// Asked of the driver rather than walked here. The namespaces, the
+/// `{toolkit}:{connection_id}` identity and the ingest funnel all live in the
+/// engine beside the sync path that writes the same rows — a host-side walk
+/// would be a second implementation of an identity that must not drift, which
+/// is the mistake that caused #6007 in the first place.
+///
+/// Expensive by nature: a pass is one read and one set of chunk embeddings per
+/// document. Nothing calls this on its own initiative, and `dry_run` defaults to
+/// true at the RPC boundary so a caller has to ask for the write.
+pub async fn backfill_connector_trees_rpc(
+    config: &Config,
+    limit: Option<u64>,
+    dry_run: bool,
+) -> Result<RpcOutcome<BackfillConnectorTreesResponse>, String> {
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        return Err(format!(
+            "backfill_connector_trees: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+
+    let outcome = maintenance
+        .backfill_connector_trees(BackfillTreesRequest { limit, dry_run })
+        .await
+        .map_err(|error| format!("backfill_connector_trees: {error}"))?;
+
+    let resp = BackfillConnectorTreesResponse {
+        executed: !dry_run,
+        scanned: outcome.scanned,
+        ingested: outcome.ingested,
+        already_present: outcome.already_present,
+        skipped: outcome.skipped,
+        more_pending: outcome.more_pending,
+        notes: outcome.notes,
+    };
+
+    let log = format!(
+        "memory_tree::read: backfill_connector_trees executed={} scanned={} ingested={} \
+         already_present={} skipped={} more_pending={}",
+        resp.executed,
+        resp.scanned,
+        resp.ingested,
+        resp.already_present,
+        resp.skipped,
+        resp.more_pending
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
 // ── delete_source ──────────────────────────────────────────────────────────
 
 /// Fully delete one document source by its **exact** `source_id`.
 ///
-/// Unlike [`super::entities::delete_chunk_rpc`] (which removes a single chunk and
-/// leaves the source tree intact), this wraps
-/// [`delete_chunks_by_source`] so the whole logical source is purged: every
-/// chunk plus its score / entity-index / embedding / reembed-skip side rows and
-/// chunk content files, the ingest dedup gate, and — when the source becomes
-/// fully orphaned — its source summary tree via `delete_tree_cascade_tx`
-/// (summaries, summary embeddings + reembed-skip, tree-keyed entity-index,
-/// buffers, the tree row, and summary content files). This prevents stale
-/// summaries of a deleted note/event/meeting from resurfacing in semantic
-/// recall.
+/// Unlike [`super::entities::delete_chunk_rpc`] (which removes a single chunk
+/// and leaves the source tree intact), this asks the bound driver to forget
+/// everything filed under one `(source_kind, source_id)` pair, so the whole
+/// logical source is purged: every chunk plus its score / entity-index /
+/// embedding / reembed-skip side rows and chunk content files, the ingest
+/// dedup gate, and — when the source becomes fully orphaned — its source
+/// summary tree (summaries, summary embeddings + reembed-skip, tree-keyed
+/// entity-index, buffers, the tree row, and summary content files). This
+/// prevents stale summaries of a deleted note/event/meeting from resurfacing
+/// in semantic recall.
 ///
-/// Matching is **exact** (never a prefix), so sibling sources sharing a prefix
-/// are untouched. Idempotent: an unknown `source_id` removes nothing and returns
-/// `deleted = false`.
+/// Matching is **exact** (never a prefix) — that is what distinguishes
+/// [`ForgetSelector::Source`] from [`ForgetSelector::SourcePrefix`] — so
+/// sibling sources sharing a prefix are untouched. Idempotent: an unknown
+/// `source_id` removes nothing and returns `deleted = false`.
 ///
-/// Legacy cleanup: a source whose chunks were already removed earlier by the
-/// per-chunk path keeps a now-stale summary tree (which `delete_chunks_by_source`
-/// won't touch, since it only cascades trees for chunks it deletes in the same
-/// call). After the chunk delete we therefore also run
-/// [`delete_orphaned_source_tree`], which cascades the source-scoped tree and
-/// clears the bare + versioned (`{source_id}@{version_ms}`) ingest gates iff zero
-/// chunks remain — so calling delete_source over such a source finishes the job.
+/// Legacy cleanup is part of the same selector rather than a second host call.
+/// A source whose chunks were already removed earlier by the per-chunk path
+/// keeps a now-stale summary tree, which a chunk delete will not touch because
+/// it only cascades trees for chunks it deletes in the same call. The driver's
+/// exact-source arm sweeps that orphaned tree afterwards and reports it
+/// separately as `ForgetOutcome::trees_cleaned`, which is why the two counts
+/// are kept apart: a call that removes no chunk can still have done real work.
 ///
-/// Scope: this deletes the exact document source and its **source-scoped** orphan
-/// tree. It intentionally does NOT tear down shared collection / `path_scope`
-/// trees (e.g. Notion `notion:{connection}`), which may summarise many documents;
-/// per-document pruning inside a shared collection summary is out of scope here.
+/// Scope: this deletes the exact document source and its **source-scoped**
+/// orphan tree. It intentionally does NOT tear down shared collection /
+/// `path_scope` trees (e.g. Notion `notion:{connection}`), which may summarise
+/// many documents; per-document pruning inside a shared collection summary is
+/// out of scope here.
 pub async fn delete_source_rpc(
     config: &Config,
     source_id: String,
@@ -391,37 +521,50 @@ pub async fn delete_source_rpc(
     if source_id.is_empty() {
         return Err("delete_source: source_id must be a non-empty string".to_string());
     }
-    let cfg = config.clone();
-    let id = source_id.clone();
-    let (chunks_removed, tree_cleaned) =
-        tokio::task::spawn_blocking(move || -> Result<(usize, bool)> {
-            // Exact-match document delete; cascade logic lives in the store.
-            let removed = delete_chunks_by_source(&cfg, SourceKind::Document, &id)
-                .context("delete_chunks_by_source during delete_source")?;
-            // Finish off any legacy partial delete: cascade a now-orphaned tree
-            // (no-op when chunks were just deleted — the tree is already gone —
-            // or when there is no stale tree).
-            let tree_cleaned = delete_orphaned_source_tree(&cfg, SourceKind::Document, &id)
-                .context("delete_orphaned_source_tree during delete_source")?;
-            Ok((removed, tree_cleaned))
+
+    // No `spawn_blocking`: the driver owns whether its own deletes block, and
+    // the module's do not run on this thread at all.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(sources) = binding.provider().as_sources() else {
+        // Refused rather than answered `deleted: false`. On a delete, a caller
+        // that reads "nothing matched" concludes the content was already gone;
+        // that is the same reason the contract refuses an unrecognised
+        // `source_kind` instead of returning an outcome of zero.
+        return Err(format!(
+            "delete_source: driver '{}' does not serve Sources",
+            binding.driver_id()
+        ));
+    };
+    let outcome = sources
+        .forget_matching(&ForgetSelector::Source {
+            // A wire string, not the enum: the set of source kinds belongs to
+            // this host's sync machinery and grows without a contract change.
+            source_kind: SourceKind::Document.as_str().to_string(),
+            source_id: source_id.clone(),
         })
         .await
-        .map_err(|e| format!("delete_source join error: {e}"))?
-        .map_err(|e| format!("delete_source: {e:#}"))?;
+        .map_err(|e| format!("delete_source: {e}"))?;
 
     let resp = DeleteSourceResponse {
-        // `deleted` is true if we removed chunks OR cleaned a stale orphaned tree
-        // (the legacy-cleanup case has chunks_removed == 0 but still did work).
-        deleted: chunks_removed > 0 || tree_cleaned,
-        chunks_removed: chunks_removed as u64,
+        // `deleted` is true if we removed chunks OR cleaned a stale orphaned
+        // tree (the legacy-cleanup case has chunks_removed == 0 but still did
+        // work). `trees_cleaned` is a count where this used to read a `bool`,
+        // because a prefix or owner selector can strand several trees; for the
+        // exact-source arm here it is still only ever 0 or 1.
+        deleted: outcome.chunks_removed > 0 || outcome.trees_cleaned > 0,
+        chunks_removed: outcome.chunks_removed,
     };
     let log = format!(
         // Redact the source id: it can embed user-linked identifiers.
-        "memory_tree::read: delete_source source_id_hash={} deleted={} chunks_removed={} tree_cleaned={}",
-        crate::openhuman::memory::util::redact::redact(&source_id),
+        "memory_tree::read: delete_source source_id_hash={} deleted={} chunks_removed={} trees_cleaned={}",
+        crate::openhuman::util::redact::redact(&source_id),
         resp.deleted,
         resp.chunks_removed,
-        tree_cleaned
+        outcome.trees_cleaned
     );
     Ok(RpcOutcome::single_log(resp, log))
 }
+
+#[cfg(test)]
+#[path = "admin_tests.rs"]
+mod tests;

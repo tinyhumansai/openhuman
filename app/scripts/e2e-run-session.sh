@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 #
-# Unified WDIO E2E runner — one Appium session, one CEF app launch, all specs.
+# WDIO E2E runner — one tauri-driver session, all specs.
 #
 # Architecture:
 #   1. Build artefacts must exist (run `pnpm test:e2e:build` first).
 #   2. Clean cached app data + write a fresh E2E config.toml pointing at the
 #      shared mock backend.
-#   3. Launch the built CEF binary directly (cross-platform).
-#   4. Wait for the CEF process to expose CDP on 127.0.0.1:19222.
-#   5. Start Appium with the `chromium` driver.
-#   6. Run wdio against `test/wdio.conf.ts`, which attaches to the running
-#      CEF via Appium's Chromium driver. All specs share one session.
-#   7. Tear everything down (Appium → CEF → workspace).
+#   3. Start tauri-driver and wait for its /status endpoint.
+#   4. Run wdio against `test/wdio.conf.ts`, which drives the app's native
+#      Wry/WebKit webview. All specs share one session.
+#   5. Tear everything down (driver -> app -> workspace).
+#
+# The Appium Chromium-driver backend was removed in #5478: it attached over
+# CEF's remote-debugging port, and CDP does not exist under the Wry runtime.
 #
 # Usage:
 #   ./app/scripts/e2e-run-session.sh                          # whole suite
@@ -46,9 +47,7 @@ fi
 SPEC_ARG="${SPEC_ARGS[0]:-}"
 
 E2E_MOCK_PORT="${E2E_MOCK_PORT:-18473}"
-CEF_CDP_PORT="${CEF_CDP_PORT:-19222}"
 APPIUM_PORT="${APPIUM_PORT:-4723}"
-E2E_CDP_READY_TIMEOUT_SECONDS="${E2E_CDP_READY_TIMEOUT_SECONDS:-180}"
 OS="$(uname)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,12 +106,25 @@ cleanup() {
   local status=$?
   set +e
   if [ -n "$APPIUM_PID" ]; then
-    echo "[runner] Stopping Appium (pid $APPIUM_PID)..."
+    echo "[runner] Stopping driver (pid $APPIUM_PID)..."
+    # tauri-driver launches WebKitWebDriver as a child. Killing only the
+    # tauri-driver parent leaves that native child holding the WebDriver port;
+    # the next per-spec runner then observes its stale /status response and
+    # hangs when it tries to create a session. Snapshot descendants before the
+    # parent is reaped, just as we do for the app process below.
+    DRIVER_CHILD_PIDS="$(pgrep -P "$APPIUM_PID" 2>/dev/null || true)"
+    pkill -TERM -P "$APPIUM_PID" 2>/dev/null || true
     kill "$APPIUM_PID" 2>/dev/null || true
     wait "$APPIUM_PID" 2>/dev/null || true
+    sleep 1
+    if [ -n "$DRIVER_CHILD_PIDS" ]; then
+      for pid in $DRIVER_CHILD_PIDS; do
+        kill -KILL "$pid" 2>/dev/null || true
+      done
+    fi
   fi
   if [ -n "$APP_PID" ]; then
-    echo "[runner] Stopping CEF app (pid $APP_PID)..."
+    echo "[runner] Stopping app (pid $APP_PID)..."
     # CEF spawns helper child processes (zygote, GPU, renderers) that
     # the parent does not reap on SIGTERM. If we only `kill $APP_PID`
     # the parent exits but children keep writing into the temp
@@ -168,7 +180,6 @@ export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_E2E_MODE="1"
 export APPIUM_PORT
-export CEF_CDP_PORT
 # Redirect Telegram Bot API calls to the mock server during E2E runs.
 # The mock server (WS-A) serves /bot<token>/* routes on the same port as the
 # rest of the mock backend.  The core reads this at TelegramChannel::new() time,
@@ -295,356 +306,47 @@ resolve_app_binary() {
 }
 
 APP_BIN="$(resolve_app_binary)"
+
+# Linux builds use Tauri's Wry/WebKit runtime, not CEF. Drive that native
+# webview through tauri-driver instead of waiting for a Chromium CDP endpoint.
+if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
+  TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
+  TAURI_DRIVER_LOG="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tauri-driver-${LOG_SUFFIX}.log"
+  echo "[runner] Starting tauri-driver on port $TAURI_DRIVER_PORT"
+  tauri-driver --port "$TAURI_DRIVER_PORT" --native-driver "${WEBKIT_WEBDRIVER:-/usr/bin/WebKitWebDriver}" \
+    > "$TAURI_DRIVER_LOG" 2>&1 &
+  APP_PID=$!
+  export TAURI_DRIVER_PORT
+  for i in $(seq 1 30); do
+    if curl -sf "http://127.0.0.1:$TAURI_DRIVER_PORT/status" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$APP_PID" 2>/dev/null; then
+      cat "$TAURI_DRIVER_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+  if [ "${#SPEC_ARGS[@]}" -gt 0 ]; then
+    WDIO_SPEC_ARGS=()
+    for s in "${SPEC_ARGS[@]}"; do WDIO_SPEC_ARGS+=(--spec "$s"); done
+    pnpm exec wdio run test/wdio.conf.ts --maxInstances 1 "${WDIO_SPEC_ARGS[@]}"
+  else
+    pnpm exec wdio run test/wdio.conf.ts --maxInstances 1
+  fi
+  exit $?
+fi
 if [ -z "${APP_BIN:-}" ] || [ ! -x "$APP_BIN" ]; then
   echo "ERROR: built OpenHuman binary not found. Run 'pnpm test:e2e:build' first." >&2
   exit 1
 fi
 
-# ------------------------------------------------------------------------------
-# Ensure a dbus session bus exists on Linux.
-#
-# The Tauri `single-instance` plugin (used inside OpenHuman) talks to dbus
-# via zbus on Linux. If DBUS_SESSION_BUS_ADDRESS is missing or set to
-# `disabled:` (which is the openhuman_ci container default), the plugin
-# panics during plugin setup:
-#   panicked at plugins/single-instance/src/platform_impl/linux.rs:57
-#   Result::unwrap() on Err(Address("unsupported transport 'disabled'"))
-# So start a real session bus with `dbus-launch` and inherit its
-# DBUS_SESSION_BUS_ADDRESS for the rest of the runner.
-# ------------------------------------------------------------------------------
-if [ "$OS" = "Linux" ]; then
-  if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || \
-     printf '%s' "${DBUS_SESSION_BUS_ADDRESS:-}" | grep -q '^disabled'; then
-    if command -v dbus-launch >/dev/null 2>&1; then
-      DBUS_LAUNCH_OUT="$(dbus-launch --sh-syntax)"
-      eval "$DBUS_LAUNCH_OUT"
-      echo "[runner] Started dbus session bus: $DBUS_SESSION_BUS_ADDRESS"
-    else
-      echo "[runner] Warning: dbus-launch not available — single-instance plugin may panic."
-    fi
-  fi
-fi
-
-# ------------------------------------------------------------------------------
-# Make CEF runtime libraries discoverable.
-#
-# macOS bundles the framework into `OpenHuman.app/Contents/Frameworks/` so the
-# OS resolves it automatically. On Linux + Windows we build with --no-bundle
-# (faster, no .deb / .msi staging needed for tests), which means the bare
-# binary has no co-located libcef.so / libcef.dll. CEF lives in the
-# vendored-tauri-cli cache that `ensure-tauri-cli.sh` pinned via CEF_PATH:
-#   $CEF_PATH/<cef-version>/cef_<os>_<arch>/{libcef.so,libcef.dll,Resources,…}
-#
-# We find the only versioned directory under CEF_PATH and prepend its CEF
-# dist dir to LD_LIBRARY_PATH (Linux) / PATH (Windows). On macOS this is a
-# no-op — the .app bundle already self-resolves.
-# ------------------------------------------------------------------------------
-CEF_PATH="${CEF_PATH:-$HOME/Library/Caches/tauri-cef}"
-
-# Pick exactly one CEF distribution per platform. If two cached versions
-# coexist (e.g. after a CEF upgrade) `head -1` silently picks an arbitrary
-# one and the binary can load the wrong libcef — Linux/Windows then fail
-# only on warmed runners. Error out so the failure is loud.
-pick_one_cef_dist() {
-  local pattern="$1"
-  local matches
-  mapfile -t matches < <(find "$CEF_PATH" -mindepth 2 -maxdepth 2 -type d -name "$pattern" 2>/dev/null | sort)
-  if [ "${#matches[@]}" -gt 1 ]; then
-    echo "ERROR: multiple CEF distributions found under $CEF_PATH matching $pattern:" >&2
-    printf '  %s\n' "${matches[@]}" >&2
-    echo "Set CEF_PATH to a directory containing exactly one cef_* version." >&2
-    return 1
-  fi
-  printf '%s' "${matches[0]:-}"
-}
-
-case "$OS" in
-  Linux)
-    CEF_DIST_DIR="$(pick_one_cef_dist 'cef_linux_*')" || exit 1
-    if [ -n "$CEF_DIST_DIR" ] && [ -d "$CEF_DIST_DIR" ]; then
-      export LD_LIBRARY_PATH="$CEF_DIST_DIR:${LD_LIBRARY_PATH:-}"
-      echo "[runner] LD_LIBRARY_PATH includes: $CEF_DIST_DIR"
-    else
-      echo "[runner] Warning: no CEF Linux distribution found under $CEF_PATH — libcef.so may fail to load."
-    fi
-    ;;
-  MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    CEF_DIST_DIR="$(pick_one_cef_dist 'cef_windows_*')" || exit 1
-    if [ -n "$CEF_DIST_DIR" ] && [ -d "$CEF_DIST_DIR" ]; then
-      # Windows uses PATH for DLL resolution. Use the native Windows path form
-      # so the CEF binary itself can find libcef.dll even though we're running
-      # under git-bash.
-      if command -v cygpath >/dev/null 2>&1; then
-        WIN_CEF_DIST="$(cygpath -w "$CEF_DIST_DIR")"
-      else
-        WIN_CEF_DIST="$CEF_DIST_DIR"
-      fi
-      export PATH="$CEF_DIST_DIR:$PATH"
-      echo "[runner] PATH includes: $CEF_DIST_DIR (win: $WIN_CEF_DIST)"
-    else
-      echo "[runner] Warning: no CEF Windows distribution found under $CEF_PATH — libcef.dll may fail to load."
-    fi
-    ;;
-esac
-
-# ------------------------------------------------------------------------------
-# Launch CEF app — CDP on 19222 is already enabled in lib.rs (see CLAUDE.md).
-# ------------------------------------------------------------------------------
-LOG_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-APP_LOG="$LOG_DIR/openhuman-e2e-app-${LOG_SUFFIX}.log"
-APP_ARGS=()
-# CEF/Chromium needs extra coaxing in headless / containerized Linux runs:
-#
-#   --no-sandbox            crbug.com/638180 — needed only when the runner is
-#                           uid 0 or the cached CEF chrome-sandbox helper is
-#                           missing/misconfigured. Non-root Linux runs with a
-#                           valid helper keep Chromium sandboxing.
-#   --disable-dev-shm-usage docker /dev/shm is often 64 MB; Chromium
-#                           assumes ≥2 GB and crashes mid-startup
-#                           ("Failed global descriptor lookup: 7" in the
-#                           zygote helper).
-#   --disable-gpu           no GPU in the CI container.
-#   --no-zygote             skips the zygote launcher that wants dbus; Chromium
-#                           only permits this when sandboxing is also disabled.
-#
-# Apply only on Linux. macOS/Windows runners are unprivileged users with a
-# real display / GPU; leaving the sandbox on there is correct.
-case "$OS" in
-  Linux)
-    APP_ARGS+=(
-      "--disable-dev-shm-usage"
-      "--disable-gpu"
-    )
-    NO_SANDBOX_REASON=""
-    if [ "$(id -u)" -eq 0 ]; then
-      NO_SANDBOX_REASON="runner is uid 0"
-    elif [ -n "${CEF_DIST_DIR:-}" ]; then
-      SANDBOX_HELPER="$CEF_DIST_DIR/chrome-sandbox"
-      SANDBOX_HELPER_MODE="$(stat -c '%u:%a' "$SANDBOX_HELPER" 2>/dev/null || true)"
-      if [ "$SANDBOX_HELPER_MODE" != "0:4755" ]; then
-        NO_SANDBOX_REASON="chrome-sandbox helper is not root-owned mode 4755"
-      fi
-    fi
-    if [ -n "$NO_SANDBOX_REASON" ]; then
-      APP_ARGS+=("--no-sandbox" "--no-zygote")
-      echo "[runner] Linux CEF sandbox disabled: $NO_SANDBOX_REASON"
-    fi
-    echo "[runner] Linux CEF args: ${APP_ARGS[*]}"
-    ;;
-esac
-echo "[runner] Launching CEF app: $APP_BIN ${APP_ARGS[*]:-}"
-echo "[runner]   App logs: $APP_LOG"
-# `${APP_ARGS[@]+"${APP_ARGS[@]}"}` is the idiom for expanding a possibly-
-# empty array under `set -u`. On macOS APP_ARGS is empty; on Linux it has
-# --no-sandbox etc. Without this guard bash errors with "APP_ARGS[@]:
-# unbound variable" and the app never launches.
-"$APP_BIN" ${APP_ARGS[@]+"${APP_ARGS[@]}"} > "$APP_LOG" 2>&1 &
-APP_PID=$!
-
-echo "[runner] Waiting for CDP at http://127.0.0.1:${CEF_CDP_PORT}/json/version ..."
-CDP_VERSION_JSON=""
-for i in $(seq 1 "$E2E_CDP_READY_TIMEOUT_SECONDS"); do
-  CDP_VERSION_JSON="$(curl -sf "http://127.0.0.1:${CEF_CDP_PORT}/json/version" 2>/dev/null || true)"
-  if [ -n "$CDP_VERSION_JSON" ]; then
-    echo "[runner] CDP is ready."
-    break
-  fi
-  if ! kill -0 "$APP_PID" 2>/dev/null; then
-    echo "ERROR: CEF app exited before CDP came up. App log follows:" >&2
-    echo "----- $APP_LOG -----" >&2
-    cat "$APP_LOG" >&2 || true
-    echo "----- end log -----" >&2
-    exit 1
-  fi
-  if [ "$i" -eq "$E2E_CDP_READY_TIMEOUT_SECONDS" ]; then
-    echo "ERROR: CDP did not come up within ${E2E_CDP_READY_TIMEOUT_SECONDS}s. App log follows:" >&2
-    echo "----- $APP_LOG -----" >&2
-    cat "$APP_LOG" >&2 || true
-    echo "----- end log -----" >&2
-    exit 1
-  fi
-  sleep 1
-done
-
-# Wait for the main app target (tauri.localhost) to be visible, then close the
-# CEF prewarm child-webview slot (about:blank) so chromedriver attaches to the
-# real app. Without this, debuggerAddress picks the first page target — which
-# is the prewarm — and chromedriver's session is bound to a target CEF may
-# garbage-collect mid-test, killing the session with "session terminated".
-echo "[runner] Waiting for main app CDP target (tauri.localhost) ..."
-MAIN_TARGET_ID=""
-for i in $(seq 1 60); do
-  TARGETS_JSON="$(curl -sf "http://127.0.0.1:${CEF_CDP_PORT}/json/list" 2>/dev/null || true)"
-  MAIN_TARGET_ID="$(printf '%s' "$TARGETS_JSON" | python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-for t in data:
-    if t.get("type") == "page" and "tauri.localhost" in (t.get("url") or ""):
-        print(t.get("id", ""))
-        break
-' 2>/dev/null || true)"
-  if [ -n "$MAIN_TARGET_ID" ]; then
-    echo "[runner] Main app target: $MAIN_TARGET_ID"
-    break
-  fi
-  if [ "$i" -eq 60 ]; then
-    echo "[runner] Warning: main app target never appeared — chromedriver may attach to the wrong target."
-    break
-  fi
-  sleep 1
-done
-
-if [ -n "$MAIN_TARGET_ID" ]; then
-  printf '%s' "$TARGETS_JSON" | python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-for t in data:
-    if t.get("type") == "page" and (t.get("url") or "").startswith("about:"):
-        print(t.get("id", ""))
-' 2>/dev/null | while read -r STALE_ID; do
-    if [ -n "$STALE_ID" ]; then
-      echo "[runner] Closing prewarm/about:blank target: $STALE_ID"
-      curl -sf "http://127.0.0.1:${CEF_CDP_PORT}/json/close/$STALE_ID" > /dev/null 2>&1 || true
-    fi
-  done
-fi
-
-# ------------------------------------------------------------------------------
-# Resolve a chromedriver whose major matches CEF's bundled Chromium.
-#
-# chromedriver is strict about same-major-version matching (e.g. cd148 cannot
-# talk to Chrome 146). The Appium chromium driver ships its own bundled
-# chromedriver but that often drifts ahead of CEF's pinned Chromium.
-# Solution: parse Chromium's version from /json/version, then download the
-# matching chromedriver from Chrome for Testing into a workspace-local cache.
-# We pass the resulting binary to Appium via the `appium:chromedriverExecutable`
-# capability (wired in wdio.conf.ts via E2E_CHROMEDRIVER_PATH).
-# ------------------------------------------------------------------------------
-CHROMIUM_FULL_VERSION="$(echo "$CDP_VERSION_JSON" | sed -n 's/.*"Browser": *"[^/]*\/\([^"]*\)".*/\1/p' | head -1)"
-if [ -z "$CHROMIUM_FULL_VERSION" ]; then
-  CHROMIUM_FULL_VERSION="$(echo "$CDP_VERSION_JSON" | sed -n 's/.*"Browser": *"\([^"]*\)".*/\1/p' | sed 's/^[^/]*\///' | head -1)"
-fi
-echo "[runner] CEF Chromium version: ${CHROMIUM_FULL_VERSION:-<unknown>}"
-
-case "$OS" in
-  Darwin)
-    ARCH="$(uname -m)"
-    case "$ARCH" in
-      arm64) CFT_PLATFORM="mac-arm64" ;;
-      x86_64) CFT_PLATFORM="mac-x64" ;;
-      *) CFT_PLATFORM="mac-arm64" ;;
-    esac
-    CD_EXE_NAME="chromedriver"
-    ;;
-  Linux)
-    CFT_PLATFORM="linux64"
-    CD_EXE_NAME="chromedriver"
-    ;;
-  MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    CFT_PLATFORM="win64"
-    CD_EXE_NAME="chromedriver.exe"
-    ;;
-esac
-
-CD_CACHE_DIR="$APP_DIR/test/e2e/.cache/chromedriver/${CHROMIUM_FULL_VERSION:-unknown}-${CFT_PLATFORM}"
-CD_BINARY="$CD_CACHE_DIR/chromedriver-${CFT_PLATFORM}/${CD_EXE_NAME}"
-
-if [ -n "$CHROMIUM_FULL_VERSION" ] && [ ! -x "$CD_BINARY" ]; then
-  CD_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROMIUM_FULL_VERSION}/${CFT_PLATFORM}/chromedriver-${CFT_PLATFORM}.zip"
-  echo "[runner] Downloading matching chromedriver: $CD_URL"
-  mkdir -p "$CD_CACHE_DIR"
-  CD_ZIP="$CD_CACHE_DIR/chromedriver.zip"
-  if curl -fSL "$CD_URL" -o "$CD_ZIP"; then
-    if command -v unzip >/dev/null 2>&1; then
-      (cd "$CD_CACHE_DIR" && unzip -o -q chromedriver.zip)
-    else
-      # The openhuman_ci docker image doesn't ship `unzip`; use Python's
-      # stdlib zipfile so we don't have to add a system package install.
-      python3 -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
-        "$CD_ZIP" "$CD_CACHE_DIR"
-    fi
-    chmod +x "$CD_BINARY" 2>/dev/null || true
-  else
-    echo "[runner] Warning: chromedriver $CHROMIUM_FULL_VERSION not on Chrome for Testing; falling back to Appium-bundled chromedriver."
-  fi
-fi
-
-if [ -x "$CD_BINARY" ]; then
-  export E2E_CHROMEDRIVER_PATH="$CD_BINARY"
-  echo "[runner] Using chromedriver: $E2E_CHROMEDRIVER_PATH"
-fi
-
-# ------------------------------------------------------------------------------
-# Start Appium (chromium driver)
-# ------------------------------------------------------------------------------
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/e2e-resolve-node-appium.sh"
-
-# Make sure the chromium driver is installed. `appium driver list --installed`
-# exits non-zero on parse errors in some Appium versions, so just attempt the
-# install and ignore "already installed" output.
-echo "[runner] Ensuring Appium chromium driver is installed..."
-APPIUM_HOME_DIR="${APPIUM_HOME:-$HOME/.appium}"
-if [ ! -d "$APPIUM_HOME_DIR/node_modules/appium" ]; then
-  echo "[runner] Installing Appium into $APPIUM_HOME_DIR for chromium driver peer resolution..."
-  npm install --prefix "$APPIUM_HOME_DIR" appium@3 >/dev/null
-fi
-"$APPIUM_BIN" driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
-
-APPIUM_LOG="$LOG_DIR/appium-e2e-${LOG_SUFFIX}.log"
-
-# Fail fast if something else is already serving on the Appium port. Otherwise
-# `curl /status` succeeds against the stale server while our just-launched
-# Appium dies with EADDRINUSE — we'd silently drive the wrong instance.
-if curl -sf "http://127.0.0.1:$APPIUM_PORT/status" >/dev/null 2>&1; then
-  echo "ERROR: Appium is already listening on port $APPIUM_PORT. Stop the stale server or set APPIUM_PORT." >&2
-  exit 1
-fi
-
-echo "[runner] Starting Appium on port $APPIUM_PORT"
-echo "[runner]   Appium logs: $APPIUM_LOG"
-"$APPIUM_BIN" --port "$APPIUM_PORT" --relaxed-security > "$APPIUM_LOG" 2>&1 &
-APPIUM_PID=$!
-
-for i in $(seq 1 30); do
-  # If Appium crashed between forks (e.g. unhandled driver-load error), bail
-  # out instead of polling /status for 30s.
-  if ! kill -0 "$APPIUM_PID" 2>/dev/null; then
-    echo "ERROR: Appium exited before becoming ready. Appium log follows:" >&2
-    echo "----- $APPIUM_LOG -----" >&2
-    cat "$APPIUM_LOG" >&2 || true
-    echo "----- end log -----" >&2
-    exit 1
-  fi
-  if curl -sf "http://127.0.0.1:$APPIUM_PORT/status" >/dev/null 2>&1; then
-    echo "[runner] Appium is ready."
-    break
-  fi
-  if [ "$i" -eq 30 ]; then
-    echo "ERROR: Appium did not start within 30 seconds." >&2
-    exit 1
-  fi
-  sleep 1
-done
-
-# ------------------------------------------------------------------------------
-# Run WDIO
-# ------------------------------------------------------------------------------
-if [ "${#SPEC_ARGS[@]}" -gt 0 ]; then
-  echo "[runner] Running ${#SPEC_ARGS[@]} spec(s) in a single shared session:"
-  printf '         %s\n' "${SPEC_ARGS[@]}"
-  WDIO_SPEC_ARGS=()
-  for s in "${SPEC_ARGS[@]}"; do
-    WDIO_SPEC_ARGS+=(--spec "$s")
-  done
-  pnpm exec wdio run test/wdio.conf.ts "${WDIO_SPEC_ARGS[@]}"
-else
-  echo "[runner] Running full E2E suite (single shared session)..."
-  pnpm exec wdio run test/wdio.conf.ts
-fi
+# The only supported automation backend is tauri-driver, above. The Appium
+# Chromium-driver path that used to live here attached to the app over CEF's
+# remote-debugging port; CDP does not exist under the Wry runtime, so it was
+# removed in #5478. Reaching this point means the caller is on a platform
+# without a driver rather than a misconfiguration, so say so plainly.
+echo "ERROR: desktop E2E requires tauri-driver (Linux)." >&2
+echo "       Set E2E_USE_TAURI_DRIVER=1 on Linux. macOS/Windows have no" >&2
+echo "       supported driver since the CDP harness was removed (#5478)." >&2
+exit 1

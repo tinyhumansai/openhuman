@@ -14,16 +14,16 @@ This page covers how to set up the two self-owned options and, importantly, **wh
 
 ## The three routes at a glance
 
-| | **Managed (default)** | **BYOK cloud** | **Local (Ollama / LM Studio)** |
-| --- | --- | --- | --- |
-| **Chat & reasoning** | Included | Your key, your billing | Yes, quality scales with model size |
-| **Vision** | Included | Your key, if the model supports images | Yes, but only with a vision-capable model |
-| **Embeddings** | Included | Your key, if the provider serves embeddings | Yes, `bge-m3` recommended |
-| **Speech to text** | Included | Not routed through BYOK | Local Whisper available |
-| **Text to speech** | Included | Not routed through BYOK | Local Piper available |
-| **Web search** | Included, no key needed | Bring your own Exa key | Not applicable |
-| **Inference data leaves your machine** | Yes, to the OpenHuman backend | Yes, to your chosen provider | No |
-| **API keys to manage** | None | One per provider | None |
+|                                        | **Managed (default)**         | **BYOK cloud**                              | **Local (Ollama / LM Studio)**            |
+| -------------------------------------- | ----------------------------- | ------------------------------------------- | ----------------------------------------- |
+| **Chat & reasoning**                   | Included                      | Your key, your billing                      | Yes, quality scales with model size       |
+| **Vision**                             | Included                      | Your key, if the model supports images      | Yes, but only with a vision-capable model |
+| **Embeddings**                         | Included                      | Your key, if the provider serves embeddings | Yes, `bge-m3` recommended                 |
+| **Speech to text**                     | Included                      | Not routed through BYOK                     | Local Whisper available                   |
+| **Text to speech**                     | Included                      | Not routed through BYOK                     | Local Piper available                     |
+| **Web search**                         | Included, no key needed       | Bring your own Exa key                      | Not applicable                            |
+| **Inference data leaves your machine** | Yes, to the OpenHuman backend | Yes, to your chosen provider                | No                                        |
+| **API keys to manage**                 | None                          | One per provider                            | None                                      |
 
 That last row is deliberately about **inference data only**. Sign-in, managed integration OAuth, billing, and hosted features such as meeting agents still use the OpenHuman backend even when inference is entirely yours, so running local models is not by itself a guarantee that nothing leaves the machine. If you want a hard guarantee that no inference leaves the machine, use [Privacy Mode](../privacy-mode.md), which enforces the local-only path in the Rust core rather than relying on configuration alone.
 
@@ -43,17 +43,17 @@ ollama pull moondream:1.8b-v2-q4_K_S   # vision, small
 
 This is the part that bites people. A model that only does text will still **accept** an image request on Ollama: it silently drops the image and answers from the prompt text alone, which reads as a confident but entirely invented description. OpenHuman guards against this by refusing to route a vision request at a chat-only model, but it is worth knowing which is which.
 
-| Model | Download | Chat | Vision | Embeddings |
-| --- | --- | --- | --- | --- |
-| `gemma3:270m-it-qat` | 0.2 GB | Yes | No | No |
-| `gemma3:1b-it-qat` | 1.0 GB | Yes | No | No |
-| `gemma3:4b-it-qat` | 4.0 GB | Yes | **Yes** | No |
-| `gemma3n:e4b-it-q8_0` | 9.5 GB | Yes | No | No |
-| `gemma4:e4b-it-q8_0` | 11.6 GB | Yes | **Yes** | No |
-| `moondream:1.8b-v2-q4_K_S` | 1.7 GB | Minimal | **Yes** | No |
-| `llava:7b` | 4.7 GB | Minimal | **Yes** | No |
-| `bge-m3` | 1.2 GB | No | No | **Yes**, 1024 dim |
-| `all-minilm:latest` | 0.05 GB | No | No | 384 dim, too small for Memory Tree |
+| Model                      | Download | Chat    | Vision  | Embeddings                         |
+| -------------------------- | -------- | ------- | ------- | ---------------------------------- |
+| `gemma3:270m-it-qat`       | 0.2 GB   | Yes     | No      | No                                 |
+| `gemma3:1b-it-qat`         | 1.0 GB   | Yes     | No      | No                                 |
+| `gemma3:4b-it-qat`         | 4.0 GB   | Yes     | **Yes** | No                                 |
+| `gemma3n:e4b-it-q8_0`      | 9.5 GB   | Yes     | No      | No                                 |
+| `gemma4:e4b-it-q8_0`       | 11.6 GB  | Yes     | **Yes** | No                                 |
+| `moondream:1.8b-v2-q4_K_S` | 1.7 GB   | Minimal | **Yes** | No                                 |
+| `llava:7b`                 | 4.7 GB   | Minimal | **Yes** | No                                 |
+| `bge-m3`                   | 1.2 GB   | No      | No      | **Yes**, 1024 dim                  |
+| `all-minilm:latest`        | 0.05 GB  | No      | No      | 384 dim, too small for Memory Tree |
 
 Two traps worth calling out:
 
@@ -66,13 +66,13 @@ For embeddings, prefer **`bge-m3`**. The Memory Tree stores vectors in a fixed 1
 
 The quickest path is the desktop app: **Settings → AI & Skills → Local AI** exposes RAM tier presets that set every model ID for you and pull the weights. The tiers are:
 
-| Tier | Chat | Vision | Embeddings | Download |
-| --- | --- | --- | --- | --- |
-| 1 GB | `gemma3:270m-it-qat` | Disabled | `all-minilm:latest` (see note) | ~0.3 GB |
-| 2-4 GB | `gemma3:1b-it-qat` | Disabled | `bge-m3` | ~2.3 GB |
-| 4-8 GB | `gemma3:1b-it-qat` | `moondream:1.8b-v2-q4_K_S` | `all-minilm:latest` (see note) | ~2.8 GB |
-| 8-16 GB | `gemma3:4b-it-qat` | `gemma3:4b-it-qat` | `bge-m3` | ~5.2 GB |
-| 16 GB+ | `gemma4:e4b-it-q8_0` | `gemma4:e4b-it-q8_0` | `bge-m3` | ~12.8 GB |
+| Tier    | Chat                 | Vision                     | Embeddings                     | Download |
+| ------- | -------------------- | -------------------------- | ------------------------------ | -------- |
+| 1 GB    | `gemma3:270m-it-qat` | Disabled                   | `all-minilm:latest` (see note) | ~0.3 GB  |
+| 2-4 GB  | `gemma3:1b-it-qat`   | Disabled                   | `bge-m3`                       | ~2.3 GB  |
+| 4-8 GB  | `gemma3:1b-it-qat`   | `moondream:1.8b-v2-q4_K_S` | `all-minilm:latest` (see note) | ~2.8 GB  |
+| 8-16 GB | `gemma3:4b-it-qat`   | `gemma3:4b-it-qat`         | `bge-m3`                       | ~5.2 GB  |
+| 16 GB+  | `gemma4:e4b-it-q8_0` | `gemma4:e4b-it-q8_0`       | `bge-m3`                       | ~12.8 GB |
 
 The two highest tiers use one multimodal model for both chat and vision, so you download a single set of weights rather than a chat model plus a separate vision sidecar.
 

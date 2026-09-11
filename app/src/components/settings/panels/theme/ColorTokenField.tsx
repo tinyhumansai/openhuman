@@ -16,22 +16,23 @@ interface ColorTokenFieldProps {
 }
 
 /**
- * A single editable colour token row: a native colour swatch + read-only hex
- * label. Converts between the stored channel format and the hex the native
- * `<input type="color">` speaks.
+ * A single editable colour token row: the swatch, then what it is.
+ *
+ * It used to be a `Field`, whose row is `justify-between` — so the name sat on
+ * the far left and a 48px swatch on the far right, with the whole panel width
+ * between them. The swatch is the content of this row and it was both the
+ * smallest thing in it and the furthest from its own label. Leading the row
+ * with it puts the colour next to the name it belongs to, and the row no longer
+ * cares how wide the panel is.
  */
 const ColorTokenField = ({ tokenKey, label, value, disabled, onChange }: ColorTokenFieldProps) => {
   const id = useId();
   const hex = channelsToHex(value);
 
   return (
-    <div className="flex items-center justify-between gap-3 py-1.5">
-      <label htmlFor={id} className="flex flex-col min-w-0">
-        <span className="text-sm text-content truncate">{label}</span>
-        <span className="text-[11px] font-mono text-content-faint">
-          --{tokenKey} · {hex}
-        </span>
-      </label>
+    <label
+      htmlFor={id}
+      className={`flex items-center gap-3 py-2 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
       <input
         id={id}
         type="color"
@@ -39,9 +40,16 @@ const ColorTokenField = ({ tokenKey, label, value, disabled, onChange }: ColorTo
         disabled={disabled}
         onChange={e => onChange(hexToChannels(e.target.value))}
         aria-label={label}
-        className="h-8 w-12 shrink-0 cursor-pointer rounded-md border border-line bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+        className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-line bg-surface p-0 disabled:cursor-not-allowed disabled:opacity-50"
       />
-    </div>
+      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="truncate text-sm text-content">{label}</span>
+        {/* The hex is the value you are about to change, so it stays on the
+            same line as the name rather than dropping to a sub-label. */}
+        <span className="shrink-0 font-mono text-xs tabular-nums text-content-muted">{hex}</span>
+        <span className="truncate font-mono text-[11px] text-content-faint">--{tokenKey}</span>
+      </span>
+    </label>
   );
 };
 

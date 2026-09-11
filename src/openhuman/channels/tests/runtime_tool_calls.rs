@@ -5,14 +5,14 @@ use super::super::context::{
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
 use super::common::{
-    IterativeToolModel, MockPriceTool, ModelCaptureModel, NoopMemory, RecordingChannel,
+    IterativeToolModel, MockPriceTool, ModelCaptureModel, RecordingChannel,
     TelegramRecordingChannel, ToolCallingModel,
 };
 use crate::openhuman::inference::provider;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tinyagents::harness::model::ChatModel;
+use tinyinference::model::ChatModel;
 
 #[tokio::test]
 async fn process_channel_message_executes_native_tool_calls() {
@@ -31,9 +31,9 @@ async fn process_channel_message_executes_native_tool_calls() {
             )),
         ),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
+        memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,
@@ -108,9 +108,9 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
             )),
         ),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
+        memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("default-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,
@@ -213,9 +213,9 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
             )),
         ),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
+        memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("default-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,
@@ -268,9 +268,9 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
             )),
         ),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
+        memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,
@@ -330,9 +330,9 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
             )),
         ),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: Arc::new(NoopMemory),
+        memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,

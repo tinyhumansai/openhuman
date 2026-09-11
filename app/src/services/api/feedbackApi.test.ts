@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPatch = vi.fn();
+const mockLog = vi.fn();
+
+vi.mock('debug', () => ({
+  default:
+    () =>
+    (...args: unknown[]) =>
+      mockLog(...args),
+}));
 
 vi.mock('../apiClient', () => ({
   apiClient: {
@@ -17,6 +25,7 @@ describe('feedbackApi', () => {
     mockGet.mockReset();
     mockPost.mockReset();
     mockPatch.mockReset();
+    mockLog.mockReset();
   });
 
   it('listFeedback builds a query string from params and unwraps data', async () => {
@@ -113,5 +122,48 @@ describe('feedbackApi', () => {
     await feedbackApi.updateStatus('f1', 'planned');
 
     expect(mockPatch).toHaveBeenCalledWith('/feedback/f1/status', { status: 'planned' });
+  });
+
+  // The composer calls this on every keystroke burst, so it must stay a plain
+  // POST with no query building or retry wrapper around it.
+  it('validateFeedback posts the draft and unwraps the tier', async () => {
+    mockPost.mockResolvedValueOnce({
+      success: true,
+      data: { tier: 'warn', reason: 'Add steps to reproduce.' },
+    });
+
+    const { feedbackApi } = await import('./feedbackApi');
+    const result = await feedbackApi.validateFeedback({
+      type: 'bug',
+      title: 'Crash',
+      body: 'It crashes.',
+    });
+
+    expect(mockPost).toHaveBeenCalledWith('/feedback/validate', {
+      type: 'bug',
+      title: 'Crash',
+      body: 'It crashes.',
+    });
+    expect(result).toEqual({ tier: 'warn', reason: 'Add steps to reproduce.' });
+  });
+
+  // The composer swallows this failure, so the log is the only account of why
+  // a draft stopped being judged. `apiClient` rejects with a plain
+  // `{ success, error }` object and never an `Error`, so that is the only
+  // shape the failure log can read the cause off.
+  it('validateFeedback logs the apiClient rejection cause and rethrows', async () => {
+    const failure = { success: false, error: 'HTTP 404: Not Found' };
+    mockPost.mockRejectedValueOnce(failure);
+
+    const { feedbackApi } = await import('./feedbackApi');
+    await expect(
+      feedbackApi.validateFeedback({ type: 'bug', title: 'Crash', body: 'It crashes.' })
+    ).rejects.toBe(failure);
+
+    expect(mockLog).toHaveBeenCalledWith(
+      'validateFeedback failed type=%s error=%s',
+      'bug',
+      'HTTP 404: Not Found'
+    );
   });
 });

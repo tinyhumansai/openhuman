@@ -6,3 +6,9 @@ Dockerfile text eol=lf
 .dockerignore text eol=lf
 docker-compose*.yml text eol=lf
 *.ps1 text eol=crlf
+
+# Golden memory-workspace fixture: committed SQLite databases.
+# The `* text=auto eol=lf` rule above would rewrite CRLF-looking byte
+# sequences inside these blobs and corrupt them. `binary` implies
+# `-text -diff`, so git stores and checks them out byte-for-byte.
+tests/fixtures/memory_golden/**/*.db binary

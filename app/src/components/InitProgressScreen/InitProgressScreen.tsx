@@ -81,7 +81,7 @@ export default function InitProgressScreen({
   const failedStep = snapshot.steps.find(s => s.state === 'failed');
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-stone-950/90 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-9999 flex items-center justify-center bg-stone-950/90 p-4 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
@@ -115,7 +115,7 @@ export default function InitProgressScreen({
             <div className="rounded-xl border border-coral-500/20 bg-coral-500/10 p-3">
               <p className="text-xs text-coral-300">{t('harnessInit.failedMessage')}</p>
               {failedStep?.message && (
-                <p className="mt-1 break-words text-[11px] text-coral-400/80">
+                <p className="mt-1 wrap-break-word text-[11px] text-coral-400/80">
                   {failedStep.message}
                 </p>
               )}

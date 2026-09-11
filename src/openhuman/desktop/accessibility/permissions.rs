@@ -168,10 +168,10 @@ pub fn detect_microphone_permission() -> PermissionState {
     }
 }
 
-/// With the `inference` feature off, the `cpal` audio-device probe is compiled
-/// out along with the whisper engine, so the microphone cannot be inspected.
-/// Report `Unknown` on otherwise-supported desktop platforms rather than a
-/// misleading `Granted`/`Denied`.
+/// With the `inference` feature off, `cpal` is not compiled in, so there is no
+/// audio-device API to probe and the microphone cannot be inspected. Report
+/// `Unknown` on otherwise-supported desktop platforms rather than a misleading
+/// `Granted`/`Denied`.
 #[cfg(all(
     not(feature = "inference"),
     any(target_os = "macos", target_os = "windows", target_os = "linux")

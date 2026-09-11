@@ -11,6 +11,7 @@ import { BubbleMarkdown } from '../../../features/conversations/components/Agent
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
+import TextArea from '../../ui/TextArea';
 
 const log = debug('mcp-clients:config-assist');
 
@@ -157,7 +158,7 @@ const ConfigAssistantPanel = ({
                 <p className="whitespace-pre-wrap">{msg.content}</p>
               )}
               {msg.suggested_env && Object.keys(msg.suggested_env).length > 0 && (
-                <div className="mt-2 pt-2 border-t border-white/20 space-y-1">
+                <div className="mt-2 pt-2 border-t border-content-inverted/20 space-y-1">
                   <p className="text-[11px] font-medium opacity-80">
                     {t('mcp.configAssistant.suggestedValues')}
                   </p>
@@ -170,12 +171,13 @@ const ConfigAssistantPanel = ({
                     ))}
                   </ul>
                   {onApplySuggestedEnv && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="tertiary"
+                      size="xs"
                       onClick={() => onApplySuggestedEnv(msg.suggested_env!)}
-                      className="mt-1 rounded px-2 py-1 text-[11px] font-medium bg-surface/20 hover:bg-white/30 transition-colors">
+                      className="mt-1 h-auto bg-content-inverted/10 px-2 py-1 text-[11px] font-medium hover:bg-content-inverted/20">
                       {t('mcp.configAssistant.applySuggested')}
-                    </button>
+                    </Button>
                   )}
                   {!onApplySuggestedEnv && (
                     <p className="text-[11px] opacity-70">
@@ -206,14 +208,14 @@ const ConfigAssistantPanel = ({
 
       {/* Input row */}
       <div className="flex gap-2">
-        <textarea
+        <TextArea
           rows={2}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={sending}
           placeholder={t('mcp.configAssistant.inputPlaceholder')}
-          className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50 resize-none"
+          className="flex-1 resize-none focus:ring-primary-500/40"
         />
         <Button
           variant="primary"

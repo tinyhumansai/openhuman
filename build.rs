@@ -12,13 +12,43 @@
 //! We glob the directory at build time (rather than hand-maintaining a `mod`
 //! list) so that any newly added `tests/raw_coverage/*.rs` file is picked up
 //! automatically and cannot be silently skipped.
+//!
+//! # Second job: make an unmet `required-features` skip audible
+//!
+//! Four `tests/*.rs` targets carry `required-features` (see `[[test]]` in
+//! `Cargo.toml`), and every one of those features is default-OFF for
+//! contributors. Cargo treats the two ways of selecting a target differently,
+//! and only one of them is safe:
+//!
+//! - **Naming it** — `cargo test --test json_rpc_e2e` — is a hard error when
+//!   the features are unmet (`target ... requires the features: voice`,
+//!   exit 101). CI names its targets one at a time, so CI cannot lose one this
+//!   way.
+//! - **Globbing** — a bare `cargo test`, or `cargo test --tests` — filters the
+//!   target out **silently and exits 0**. That is what a contributor runs, and
+//!   it reports a green suite having compiled and run none of them.
+//!
+//! `json_rpc_e2e` alone is >12k lines of RPC contract coverage, and
+//! `raw_coverage_all` aggregates ~76 suites. A green run that skipped both
+//! reads exactly like a green run that did not, which is how untested code
+//! comes to look covered.
+//!
+//! So [`warn_about_silently_skipped_test_targets`] emits a `cargo::warning=`
+//! naming what this feature configuration will skip. A build-script warning is
+//! used rather than a failing test on purpose: cargo captures the output of a
+//! *passing* test, so a warning printed there would itself be invisible, while
+//! build-script warnings are shown unconditionally. It warns rather than fails
+//! because a contributor build legitimately omits these gates — the goal is
+//! that the omission is never a surprise, not that it is forbidden.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::Path;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    warn_about_silently_skipped_test_targets(Path::new(&manifest_dir));
     let tests_dir = Path::new(&manifest_dir).join("tests");
     let raw_dir = tests_dir.join("raw_coverage");
 
@@ -66,4 +96,140 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set");
     let out_path = Path::new(&out_dir).join("raw_coverage_mods.rs");
     fs::write(&out_path, generated).expect("failed to write raw_coverage_mods.rs");
+}
+
+/// The env var cargo sets for an enabled feature: upper-cased, `-` to `_`.
+fn feature_env_var(feature: &str) -> String {
+    format!(
+        "CARGO_FEATURE_{}",
+        feature.to_uppercase().replace(['-', '.'], "_")
+    )
+}
+
+/// Emit one `cargo::warning=` naming every `[[test]]` target this feature
+/// configuration will silently drop from a globbed `cargo test`.
+///
+/// The manifest is parsed rather than hard-coded so a target added later is
+/// covered without anyone remembering to update this list — the same reason
+/// the module list above is globbed instead of hand-maintained.
+fn warn_about_silently_skipped_test_targets(manifest_dir: &Path) {
+    let manifest_path = manifest_dir.join("Cargo.toml");
+    println!("cargo:rerun-if-changed={}", manifest_path.display());
+    let Ok(manifest) = fs::read_to_string(&manifest_path) else {
+        // A source-only build tree may not ship the manifest we expect; the
+        // module list above already tolerates that shape.
+        return;
+    };
+
+    // Per target: what is missing NOW (the diagnostic) and what the target
+    // requires IN FULL (the remediation). They differ whenever a caller has
+    // some of the gates already, and conflating them is what made the
+    // suggested command wrong — see the `all` union below.
+    let mut skipped: BTreeMap<String, (Vec<String>, Vec<String>)> = BTreeMap::new();
+    for (target, required) in gated_test_targets(&manifest) {
+        let missing: Vec<String> = required
+            .iter()
+            .filter(|feature| {
+                let var = feature_env_var(feature);
+                // Re-run when the feature set changes, so switching profiles
+                // re-emits (or clears) the warning instead of leaving a stale
+                // cached result.
+                println!("cargo:rerun-if-env-changed={var}");
+                env::var_os(&var).is_none()
+            })
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            skipped.insert(target, (missing, required));
+        }
+    }
+    if skipped.is_empty() {
+        return;
+    }
+
+    let detail = skipped
+        .iter()
+        .map(|(target, (missing, _))| format!("{target} (needs {})", missing.join(" + ")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The union of every skipped target's FULL `required-features`, not just
+    // the subset currently missing. `--features` is the complete set to
+    // activate, not a delta applied to the current one, so a command built from
+    // the missing subset drops the gates the caller already had: with `voice`
+    // on, `raw_coverage_all` is missing only `inference`, and
+    // `--features inference` would silently skip both voice targets again — the
+    // warning would be handing out a command that reproduces the exact failure
+    // it exists to prevent.
+    let all: Vec<&str> = {
+        let mut features: Vec<&str> = skipped
+            .values()
+            .flat_map(|(_, required)| required.iter().map(String::as_str))
+            .collect();
+        features.sort_unstable();
+        features.dedup();
+        features
+    };
+    let features_flag = all.join(",");
+    // One warning rather than one per target: this fires on every build in a
+    // configuration that omits the gates, and four lines of it would train
+    // people to scroll past.
+    println!(
+        "cargo:warning=A globbed `cargo test` SILENTLY SKIPS these targets in this feature \
+         configuration and still exits 0: {detail}. Run them with `--features {features_flag}`, \
+         or use the product set: cargo test --features \"$(bash \
+         scripts/ci/product-features.sh)\". Naming a target explicitly (cargo test --test \
+         json_rpc_e2e) errors instead of skipping — only the globbed form is silent."
+    );
+}
+
+/// Every `[[test]]` target in `manifest` that declares `required-features`.
+///
+/// Deliberately a small hand parse: `build.rs` has no dependencies, and adding
+/// a TOML crate to the build graph to read four lines would cost every build.
+/// The shape it accepts is the shape the manifest uses — `[[test]]`, then
+/// `name = "..."` and `required-features = [...]` before the next table.
+fn gated_test_targets(manifest: &str) -> Vec<(String, Vec<String>)> {
+    let mut found = Vec::new();
+    let mut in_test_table = false;
+    let mut name: Option<String> = None;
+    let mut required: Option<Vec<String>> = None;
+
+    let flush = |name: &mut Option<String>,
+                 required: &mut Option<Vec<String>>,
+                 found: &mut Vec<(String, Vec<String>)>| {
+        if let (Some(name), Some(required)) = (name.take(), required.take()) {
+            found.push((name, required));
+        }
+    };
+
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            // Any new table ends the current `[[test]]` block.
+            flush(&mut name, &mut required, &mut found);
+            in_test_table = line == "[[test]]";
+            continue;
+        }
+        if !in_test_table {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("name") {
+            if let Some(value) = value.trim_start().strip_prefix('=') {
+                name = Some(value.trim().trim_matches('"').to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("required-features") {
+            if let Some(value) = value.trim_start().strip_prefix('=') {
+                let inner = value.trim().trim_start_matches('[').trim_end_matches(']');
+                required = Some(
+                    inner
+                        .split(',')
+                        .map(|feature| feature.trim().trim_matches('"').to_string())
+                        .filter(|feature| !feature.is_empty())
+                        .collect(),
+                );
+            }
+        }
+    }
+    flush(&mut name, &mut required, &mut found);
+    found
 }

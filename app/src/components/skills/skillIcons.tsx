@@ -5,9 +5,7 @@ import { IoChatbubble } from 'react-icons/io5';
 import {
   LuBlocks,
   LuBot,
-  LuKeyboard,
   LuMessageSquareMore,
-  LuMic,
   LuPlugZap,
   LuShare2,
   LuSparkles,
@@ -15,11 +13,8 @@ import {
 } from 'react-icons/lu';
 
 import YuanbaoIcon from '../channels/YuanbaoIcon';
+import { cn } from '../../lib/cn';
 import type { SkillCategory } from './skillCategories';
-
-function iconClasses(...parts: Array<string | undefined>): string {
-  return parts.filter(Boolean).join(' ');
-}
 
 function SkillIconBadge({
   icon: Icon,
@@ -38,12 +33,12 @@ function SkillIconBadge({
     <span
       role="img"
       aria-label={label}
-      className={iconClasses(
-        'flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5',
+      className={cn(
+        'flex h-8 w-8 items-center justify-center rounded-xl shadow-xs ring-1 ring-surface-overlay/5',
         bgClassName,
         className
       )}>
-      <Icon className={iconClasses('h-[18px] w-[18px]', iconClassName)} aria-hidden="true" />
+      <Icon className={cn('h-[18px] w-[18px]', iconClassName)} aria-hidden="true" />
     </span>
   );
 }
@@ -88,12 +83,27 @@ export function getChannelIcons(
       <span
         role="img"
         aria-label={t('skills.channelIcon.yuanbao')}
-        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-surface">
+        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-xs ring-1 ring-surface-overlay/5 bg-surface">
         <YuanbaoIcon className="h-[18px] w-[18px]" />
       </span>
     ),
   };
 }
+
+/**
+ * Category tone table. The app has four themeable ramps (primary / sage /
+ * amber / coral) and nine categories, so only the four categories whose
+ * identity a reader acts on keep a hue — the shipped tier (`Built-in`), the
+ * two behavioural families (`Productivity`, `Social`) and the one that already
+ * carries a caution tone (`Tools & Automation`). The surplus rows fall back to
+ * the neutral pair defined by `All` / `Other` rather than reaching for a fifth,
+ * unthemeable ramp. See `gitbooks/developing/theming.md` ("Colour as identity").
+ */
+const NEUTRAL_CATEGORY_TONE = {
+  chipClassName: 'bg-surface-subtle text-content-secondary',
+  iconClassName: 'text-content-muted',
+  headingClassName: 'text-content-muted',
+} as const;
 
 const CATEGORY_META: Record<
   SkillCategory,
@@ -101,9 +111,7 @@ const CATEGORY_META: Record<
 > = {
   All: {
     icon: LuBlocks,
-    chipClassName: 'bg-surface-subtle text-content-secondary',
-    iconClassName: 'text-content-muted',
-    headingClassName: 'text-content-muted',
+    ...NEUTRAL_CATEGORY_TONE,
   },
   'Built-in': {
     icon: LuSparkles,
@@ -113,21 +121,17 @@ const CATEGORY_META: Record<
   },
   Channels: {
     icon: LuMessageSquareMore,
-    chipClassName: 'bg-sky-50 text-sky-700',
-    iconClassName: 'text-sky-600',
-    headingClassName: 'text-sky-600',
+    ...NEUTRAL_CATEGORY_TONE,
   },
   Productivity: {
     icon: LuBot,
-    chipClassName: 'bg-emerald-50 text-emerald-700',
-    iconClassName: 'text-emerald-600',
-    headingClassName: 'text-emerald-600',
+    chipClassName: 'bg-sage-50 text-sage-700',
+    iconClassName: 'text-sage-600',
+    headingClassName: 'text-sage-600',
   },
   Chat: {
     icon: LuShare2,
-    chipClassName: 'bg-violet-50 text-violet-700',
-    iconClassName: 'text-violet-600',
-    headingClassName: 'text-violet-600',
+    ...NEUTRAL_CATEGORY_TONE,
   },
   'Tools & Automation': {
     icon: LuWrench,
@@ -137,21 +141,17 @@ const CATEGORY_META: Record<
   },
   Social: {
     icon: LuPlugZap,
-    chipClassName: 'bg-rose-50 text-rose-700',
-    iconClassName: 'text-rose-600',
-    headingClassName: 'text-rose-600',
+    chipClassName: 'bg-coral-50 text-coral-700',
+    iconClassName: 'text-coral-600',
+    headingClassName: 'text-coral-600',
   },
   Platform: {
     icon: LuShare2,
-    chipClassName: 'bg-cyan-50 text-cyan-700',
-    iconClassName: 'text-cyan-600',
-    headingClassName: 'text-cyan-600',
+    ...NEUTRAL_CATEGORY_TONE,
   },
   Other: {
     icon: LuBlocks,
-    chipClassName: 'bg-surface-subtle text-content-secondary',
-    iconClassName: 'text-content-muted',
-    headingClassName: 'text-content-muted',
+    ...NEUTRAL_CATEGORY_TONE,
   },
 };
 
@@ -163,7 +163,7 @@ export function SkillCategoryIcon({
   className?: string;
 }) {
   const Icon = CATEGORY_META[category].icon;
-  return <Icon className={iconClasses('h-3.5 w-3.5', className)} aria-hidden="true" />;
+  return <Icon className={cn('h-3.5 w-3.5', className)} aria-hidden="true" />;
 }
 
 export function skillCategoryChipClassName(category: SkillCategory): string {
@@ -177,8 +177,3 @@ export function skillCategoryIconClassName(category: SkillCategory): string {
 export function skillCategoryHeadingClassName(category: SkillCategory): string {
   return CATEGORY_META[category].headingClassName;
 }
-
-export const BUILT_IN_SKILL_ICONS = {
-  textAutocomplete: <LuKeyboard className="h-5 w-5" aria-hidden="true" />,
-  voiceStt: <LuMic className="h-5 w-5" aria-hidden="true" />,
-};

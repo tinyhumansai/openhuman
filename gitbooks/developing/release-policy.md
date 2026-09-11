@@ -44,7 +44,7 @@ Implementation: `app/src/utils/oauthAppVersionGate.ts`, `app/src/utils/desktopDe
 Two long-lived branches, two CI lanes:
 
 - **`main`** — where all feature/fix PRs land. Every PR (and push to main) runs **CI Lite** ([`ci-lite.yml`](../../.github/workflows/ci-lite.yml)): quality checks per changed area plus unit tests scoped to the changed files, gated at ≥ 80% diff coverage by the `PR CI Gate` check.
-- **`release`** — a maintainer-promoted snapshot of `main` that releases are cut from. PRs targeting `release` and every push to `release` run **CI Full** ([`ci-full.yml`](../../.github/workflows/ci-full.yml)): complete unit suites, Rust mock-backend E2E, Playwright web E2E, and the full desktop E2E matrix on Linux/macOS/Windows. The `CI Full Gate` check aggregates every lane **except the Playwright spec run**, which is non-blocking signal for now (`continue-on-error`, flaky under CI contention — #3615): a green gate does not prove Playwright specs passed, so check that lane's result in the run before cutting. Only the Playwright artifact *build* is gated.
+- **`release`** — a maintainer-promoted snapshot of `main` that releases are cut from. PRs targeting `release` and every push to `release` run **CI Full** ([`ci-full.yml`](../../.github/workflows/ci-full.yml)): complete unit suites, Rust mock-backend E2E, Playwright web E2E, and the full desktop E2E matrix on Linux/macOS/Windows. The `CI Full Gate` check aggregates every lane **except the Playwright spec run**, which is non-blocking signal for now (`continue-on-error`, flaky under CI contention — #3615): a green gate does not prove Playwright specs passed, so check that lane's result in the run before cutting. Only the Playwright artifact _build_ is gated.
 
 The cycle:
 
@@ -59,10 +59,10 @@ Required GitHub settings for this model (repo **Settings → Rules**): `main` re
 
 Two first-class GitHub Actions workflows, one per environment. Pick by intent rather than toggling a flag. Staging follows the selected `main` or `release` dispatch ref; production always checks out `release`, regardless of the dispatch ref shown by GitHub's workflow UI.
 
-| Workflow                                                | Branch    | Bumps   | Tags pushed                | Concurrency group       | Use when                                                              |
-| ------------------------------------------------------- | --------- | ------- | -------------------------- | ----------------------- | --------------------------------------------------------------------- |
-| [`release-staging.yml`](../../.github/workflows/release-staging.yml) | `main` or `release` | `patch` only | `v<version>-staging`        | `release-staging`       | Cutting a staging build for QA from the selected branch. |
-| [`release-production.yml`](../../.github/workflows/release-production.yml) | `release` | `patch` / `minor` / `major` (`release_type` input) | `v<version>`                | `release-production`    | Shipping a production release from validated `release` HEAD (or a pinned `commit_sha`). |
+| Workflow                                                                   | Branch              | Bumps                                              | Tags pushed          | Concurrency group    | Use when                                                                                |
+| -------------------------------------------------------------------------- | ------------------- | -------------------------------------------------- | -------------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| [`release-staging.yml`](../../.github/workflows/release-staging.yml)       | `main` or `release` | `patch` only                                       | `v<version>-staging` | `release-staging`    | Cutting a staging build for QA from the selected branch.                                |
+| [`release-production.yml`](../../.github/workflows/release-production.yml) | `release`           | `patch` / `minor` / `major` (`release_type` input) | `v<version>`         | `release-production` | Shipping a production release from validated `release` HEAD (or a pinned `commit_sha`). |
 
 The matrix build / sign / Sentry-DIF / artifact-upload pipeline used by both flows lives in [`.github/workflows/build-desktop.yml`](../../.github/workflows/build-desktop.yml) as a `workflow_call` reusable workflow. The two top-level workflows above own ref resolution, version bumping, tagging, and publish/cleanup; the build itself is shared.
 
@@ -79,20 +79,20 @@ pnpm --dir app release:android:play -- --ref main --track production --status dr
 
 Required GitHub Actions secrets:
 
-| Secret                                | Purpose                                                                                         |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `ANDROID_UPLOAD_KEYSTORE_BASE64`      | Base64-encoded Play upload keystore (`.jks`). Use the upload key, not the Google app signing key. |
-| `ANDROID_UPLOAD_KEY_ALIAS`            | Keystore alias for the upload key.                                                              |
-| `ANDROID_UPLOAD_KEYSTORE_PASSWORD`    | Keystore password.                                                                              |
-| `ANDROID_UPLOAD_KEY_PASSWORD`         | Key password.                                                                                   |
-| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`    | Raw JSON for the Play Console service account with release permissions for `com.openhuman.app`. |
+| Secret                             | Purpose                                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ANDROID_UPLOAD_KEYSTORE_BASE64`   | Base64-encoded Play upload keystore (`.jks`). Use the upload key, not the Google app signing key. |
+| `ANDROID_UPLOAD_KEY_ALIAS`         | Keystore alias for the upload key.                                                                |
+| `ANDROID_UPLOAD_KEYSTORE_PASSWORD` | Keystore password.                                                                                |
+| `ANDROID_UPLOAD_KEY_PASSWORD`      | Key password.                                                                                     |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Raw JSON for the Play Console service account with release permissions for `com.openhuman.app`.   |
 
 Optional GitHub Actions variables:
 
-| Variable              | Default     | Purpose                                                               |
-| --------------------- | ----------- | --------------------------------------------------------------------- |
+| Variable              | Default     | Purpose                                                                 |
+| --------------------- | ----------- | ----------------------------------------------------------------------- |
 | `ANDROID_PLAY_TRACK`  | `internal`  | Play track to upload to (`internal`, `alpha`, `beta`, or `production`). |
-| `ANDROID_PLAY_STATUS` | `completed` | Play release status (`completed`, `draft`, `inProgress`, `halted`).   |
+| `ANDROID_PLAY_STATUS` | `completed` | Play release status (`completed`, `draft`, `inProgress`, `halted`).     |
 
 Google Play requires each upload to use a monotonically increasing Android `versionCode`. The release bump scripts update `app/src-tauri-mobile/tauri.conf.json`, `app/src-tauri-mobile/Cargo.toml`, and `app/src-tauri-mobile/Cargo.lock` alongside desktop files so the generated Android `tauri.properties` moves with each release.
 
@@ -114,7 +114,7 @@ There is no separate `staging` branch — staging cuts and production releases b
 
 ### Tag policy and rollback
 
-- **Naming.** Staging tags use the SemVer pre-release suffix `-staging` (`v1.2.4-staging`) so they sort *before* the matching production tag.
+- **Naming.** Staging tags use the SemVer pre-release suffix `-staging` (`v1.2.4-staging`) so they sort _before_ the matching production tag.
 - **Collisions.** Both workflows fail fast if the target tag already exists locally or on `origin`. Resolve by deleting the stale tag (org maintainers only) or bumping past it.
 - **Rollback (production).** A failed build matrix triggers `cleanup-failed-release`, which deletes both the draft GitHub Release and the `v<version>` tag.
 - **Rollback (staging).** A failed staging build deletes the `v<version>-staging` tag. The bump commit on the selected source branch is left in place; the next staging cut continues from the new patch number rather than re-using it (we accept a small “gap” in patch numbers over racing with concurrent merges).

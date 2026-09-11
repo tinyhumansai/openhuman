@@ -77,8 +77,8 @@ describe('ConversationTimeline', () => {
     });
     const { container } = renderInStore(<ConversationTimeline items={items} />);
     // The two consecutive tool items coalesce into one ToolTimelineBlock (one
-    // `<details>` group), not two separate blocks.
-    expect(container.querySelectorAll('details')).toHaveLength(1);
+    // "Agentic task insights" disclosure group), not two separate blocks.
+    expect(container.querySelectorAll('[data-testid="agent-task-insights"]')).toHaveLength(1);
   });
 
   it('invokes onOpenSubagent when a subagent row requests the drawer', () => {

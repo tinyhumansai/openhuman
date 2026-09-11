@@ -73,7 +73,7 @@ SQLite DB at `{workspace_dir}/approval/approval.db`, table `pending_approvals` (
 - `crate::rpc::RpcOutcome` — RPC return contract.
 - `crate::openhuman::config::Config` — workspace dir (DB path) + the boot-time `autonomy.auto_approve` snapshot; `config::ops::add_auto_approve_tool` to persist "Always allow".
 - `crate::openhuman::security` — `live_policy::current()` for the live "Always allow" list and `POLICY_DENIED_MARKER` for deny reasons.
-- `crate::openhuman::memory::store::safety::sanitize_text` — scrub secrets out of stored execution-error strings.
+- `tinymemory_core::store::safety::sanitize_text` — scrub secrets out of stored execution-error strings.
 
 ## Used by
 

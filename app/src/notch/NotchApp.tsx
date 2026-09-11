@@ -17,7 +17,6 @@
  * Events handled:
  *   dictation:toggle          voice recording started / stopped
  *   dictation:transcription   final transcript text
- *   companion:state_changed   agent lifecycle (thinking, speaking, …)
  *   overlay:attention         core broadcast message
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -42,10 +41,6 @@ interface DictationTogglePayload {
 }
 interface DictationTranscriptionPayload {
   text?: string;
-}
-interface CompanionStatePayload {
-  state?: string;
-  message?: string;
 }
 interface AttentionPayload {
   message?: string;
@@ -199,33 +194,6 @@ export default function NotchApp() {
               text: text.length > 60 ? `${text.slice(0, 57)}…` : text,
             });
             scheduleDismiss(LINGER_MS);
-          });
-
-          socket.on('companion:state_changed', (payload: CompanionStatePayload) => {
-            const agentState = payload?.state ?? 'idle';
-            console.debug(`[notch] companion:state_changed state=${agentState}`);
-
-            if (agentState === 'idle') {
-              scheduleDismiss(0);
-              return;
-            }
-            clearDismiss();
-
-            const modeMap: Partial<Record<string, NotchMode>> = {
-              listening: 'listening',
-              thinking: 'thinking',
-              speaking: 'speaking',
-            };
-            const textMap: Partial<Record<string, string>> = {
-              listening: t('notch.listening', 'Listening…'),
-              thinking: t('notch.processing', 'Processing…'),
-              speaking: t('notch.speaking', 'Speaking…'),
-            };
-
-            setState({
-              mode: modeMap[agentState] ?? 'thinking',
-              text: textMap[agentState] ?? agentState,
-            });
           });
 
           socket.on('overlay:attention', (payload: AttentionPayload) => {

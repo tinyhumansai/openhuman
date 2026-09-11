@@ -7,7 +7,8 @@
 //! defaults like `source: envelope.source.slug().into()`) without
 //! fanning out a churning diff.
 
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 
 use super::envelope::TriggerEnvelope;
 
@@ -75,7 +76,7 @@ pub fn publish_evaluated(
         latency_ms,
     };
     record_test_event(&event);
-    publish_global(event);
+    BUS.publish(event);
 }
 
 /// Publish [`DomainEvent::TriggerEscalated`] — fired only on
@@ -88,7 +89,7 @@ pub fn publish_escalated(envelope: &TriggerEnvelope, target_agent: &str) {
         target_agent: target_agent.to_string(),
     };
     record_test_event(&event);
-    publish_global(event);
+    BUS.publish(event);
 }
 
 /// Publish [`DomainEvent::TriggerEscalationFailed`] — fired when the
@@ -101,77 +102,9 @@ pub fn publish_failed(envelope: &TriggerEnvelope, reason: &str) {
         reason: reason.to_string(),
     };
     record_test_event(&event);
-    publish_global(event);
+    BUS.publish(event);
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::event_bus::{global, init_global, DomainEvent};
-    use crate::openhuman::agent::triage::TriggerEnvelope;
-    use serde_json::json;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use tokio::time::{sleep, Duration};
-
-    #[tokio::test]
-    async fn publish_helpers_emit_expected_trigger_events() {
-        let _ = init_global(32);
-        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
-        let seen_handler = Arc::clone(&seen);
-        let _handle = global().unwrap().on("triage-events-test", move |event| {
-            let seen = Arc::clone(&seen_handler);
-            let cloned = event.clone();
-            Box::pin(async move {
-                seen.lock().await.push(cloned);
-            })
-        });
-
-        let envelope = TriggerEnvelope::from_composio(
-            "gmail",
-            "GMAIL_NEW_GMAIL_MESSAGE",
-            "trig-events",
-            "evt-123",
-            json!({ "subject": "Coverage" }),
-        );
-
-        publish_evaluated(&envelope, "acknowledge", true, 42);
-        publish_escalated(&envelope, "trigger_reactor");
-        publish_failed(&envelope, "boom");
-
-        sleep(Duration::from_millis(20)).await;
-
-        let captured = seen.lock().await;
-        assert!(captured.iter().any(|event| matches!(
-            event,
-            DomainEvent::TriggerEvaluated {
-                source,
-                external_id,
-                decision,
-                used_local,
-                latency_ms,
-                ..
-            } if source == "composio"
-                && external_id == "evt-123"
-                && decision == "acknowledge"
-                && *used_local
-                && *latency_ms == 42
-        )));
-        assert!(captured.iter().any(|event| matches!(
-            event,
-            DomainEvent::TriggerEscalated {
-                external_id,
-                target_agent,
-                ..
-            } if external_id == "evt-123" && target_agent == "trigger_reactor"
-        )));
-        assert!(captured.iter().any(|event| matches!(
-            event,
-            DomainEvent::TriggerEscalationFailed {
-                external_id,
-                reason,
-                ..
-            } if external_id == "evt-123" && reason == "boom"
-        )));
-    }
-}
+#[path = "events_tests.rs"]
+mod tests;

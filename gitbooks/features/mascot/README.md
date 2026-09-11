@@ -22,10 +22,6 @@ See [Native Voice](../native-tools/voice.md) for the speech-to-text, text-to-spe
 
 ### It joins your meetings, as a real participant
 
-The mascot is OpenHuman's flagship voice integration. It can join a Google Meet call as a real participant: it hears everyone, takes notes into your [Memory Tree](../obsidian-wiki/memory-tree.md), speaks back into the call when it has something to say, and pipes its own animated face into the meeting as the camera feed.
-
-This is the headline use case and has its own page, see [Meeting Agents](meeting-agents.md).
-
 ### It moves and reacts to its surroundings
 
 The mascot has mood states (idle, thinking, listening, talking, surprised, dreaming) and it transitions between them based on what the agent is doing. When you start typing it shifts into a listening pose. When the model is reasoning, it shows that. When a tool call returns something noteworthy, it reacts. When you stop interacting for a while, it drifts into idle.
@@ -44,10 +40,10 @@ That memory is what makes the personality consistent over weeks and months. The 
 
 Even when you've stopped typing, the mascot keeps thinking. The [Subconscious Loop](../subconscious.md) is a background tick that:
 
-* Loads your standing tasks and ambient goals.
-* Reads the current state of your workspace and recent memory.
-* Decides what to do about each one (execute autonomously, hold, or escalate to you for approval).
-* Writes the outcome back to an activity log you can audit.
+- Loads your standing tasks and ambient goals.
+- Reads the current state of your workspace and recent memory.
+- Decides what to do about each one (execute autonomously, hold, or escalate to you for approval).
+- Writes the outcome back to an activity log you can audit.
 
 So when you come back to the desk, the mascot may have already drafted the email, refreshed the dashboard, or queued the question it needs to ask you. The face on the screen is the one that did the work.
 
@@ -63,14 +59,13 @@ Most assistants are a blinking text input. That's fine for a tool. It's not fine
 
 The mascot exists because:
 
-* **Presence beats panels.** A face you can glance at tells you, in one frame, whether the agent is busy, idle, dreaming, or trying to get your attention.
-* **It makes voice calls feel like a conversation.** A camera feed of an animated character lip-syncing to its own speech is a different experience than a robotic voice with a black tile.
-* **Personality is a UX surface.** A consistent character on screen is easier to trust, talk to, and forgive when it makes a mistake than a faceless API.
+- **Presence beats panels.** A face you can glance at tells you, in one frame, whether the agent is busy, idle, dreaming, or trying to get your attention.
+- **It makes voice calls feel like a conversation.** A camera feed of an animated character lip-syncing to its own speech is a different experience than a robotic voice with a black tile.
+- **Personality is a UX surface.** A consistent character on screen is easier to trust, talk to, and forgive when it makes a mistake than a faceless API.
 
 ## See also
 
-* [Meeting Agents](meeting-agents.md), the mascot in Google Meet: listening, speaking, animating, using tools.
-* [Native Voice](../native-tools/voice.md), the STT / TTS plumbing the mascot rides on.
-* [Memory Tree](../obsidian-wiki/memory-tree.md), what the mascot remembers, and how.
-* [Subconscious Loop](../subconscious.md), what it thinks about while you're away.
-* [Chromium Embedded Framework](../../developing/cef.md), the camera-into-Meet pipeline (developer reference).
+- [Native Voice](../native-tools/voice.md), the STT / TTS plumbing the mascot rides on.
+- [Memory Tree](../obsidian-wiki/memory-tree.md), what the mascot remembers, and how.
+- [Subconscious Loop](../subconscious.md), what it thinks about while you're away.
+- [Chromium Embedded Framework](../../developing/cef.md), the camera-into-Meet pipeline (developer reference).

@@ -1,0 +1,33 @@
+# Source files the coverage lane legitimately cannot produce records for, one
+# repo-relative path per line. `#` comments and blank lines ignored.
+#
+# This is NOT a way to silence the gate. Every entry is a statement that the
+# file is deliberately absent from the product build, and the reason must say
+# which gate excludes it and why that is intended. Structural categories
+# (test sources, stub.rs, per-OS modules, src/tui/, test_support/) are handled
+# by the script itself and must NOT be listed here.
+#
+# The list is a ratchet: entries come off, they do not go on. Adding one needs a
+# written justification in the PR body and a reviewer who reads it.
+#
+# It has already come off once. This file briefly carried
+# `src/openhuman/hosting/{mod,tools}.rs`, because the gate was written before
+# #5619 classified the `hosting` Cargo gate into `scripts/ci/product-features.txt`.
+# #5619 merged first, the lane now compiles the family, and the two lines were
+# deleted rather than left to rot into "excluded on purpose".
+#
+# src/openhuman/runtime/client/disabled.rs is the `modules`-OFF stand-in for
+# the runtime client facade (`#[cfg(not(feature = "modules"))] mod disabled;` in
+# runtime/client/mod.rs). `modules` is in BOTH `[features] default` and
+# product-features.txt, so the coverage lane (default + product-features.txt)
+# always builds with the gate ON and the OFF-branch stub is never compiled — the
+# same shape as the `stub.rs` structural category, but this file is named
+# `disabled.rs` because it answers as a runtime that is "disabled", not as a
+# generic facade stub.
+src/openhuman/runtime/client/disabled.rs
+
+# `helper.rs` includes this fragment only to build the macOS Swift accessibility
+# helper. The production feature set is compiled for Linux in this coverage lane,
+# so the fragment's `#[cfg(target_os = "macos")]` definition is intentionally
+# absent. It is exercised by the macOS desktop E2E matrix instead.
+src/openhuman/desktop/accessibility/helper_part_02.rs

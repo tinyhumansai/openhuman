@@ -113,28 +113,6 @@ async function resetEverything(label: string): Promise<void> {
   clearRequestLog();
 }
 
-async function invokeTauri<T = unknown>(
-  command: string,
-  payload: Record<string, unknown> = {}
-): Promise<{ __ok?: T; __error?: string }> {
-  return (await browser.executeAsync(
-    (cmd, args, done) => {
-      const invoke = (window as any).__TAURI_INTERNALS__?.invoke;
-      if (typeof invoke !== 'function') {
-        done({ __error: 'window.__TAURI_INTERNALS__.invoke not available' });
-        return;
-      }
-      invoke(cmd, args)
-        .then((result: unknown) => done({ __ok: result }))
-        .catch((err: unknown) =>
-          done({ __error: err instanceof Error ? err.message : String(err) })
-        );
-    },
-    command,
-    payload
-  )) as { __ok?: T; __error?: string };
-}
-
 describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   before(async function beforeSuite() {
     this.timeout(90_000);
@@ -431,32 +409,6 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Scenario 7 — WhatsApp native read flow.
-  // Storage and frontend reads now live in the Tauri shell, so verify the
-  // renderer-to-native command and its list-shaped response.
-  // -------------------------------------------------------------------------
-  it('WhatsApp read-only: native list_chats returns expected shape', async () => {
-    await resetEverything('after Scenario 6');
-
-    await triggerDeepLink('openhuman://auth?token=mega-whatsapp-token');
-    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
-    clearRequestLog();
-
-    // WhatsApp storage moved from core controllers to shell-native handlers.
-    // Exercise the renderer's production IPC boundary and assert the native
-    // list shape; an empty store is valid before a scanner has ingested data.
-    const list = await invokeTauri<unknown[]>('whatsapp_data_list_chats', { req: {} });
-    expect(list.__error).toBeUndefined();
-    const chats = list.__ok ?? [];
-    expect(Array.isArray(chats)).toBe(true);
-    console.log(`${LOG} whatsapp list_chats returned ${chats.length} chat(s)`);
-
-    // Session must still be healthy.
-    const ping = await callOpenhumanRpc('core.ping', {});
-    expect(ping.ok).toBe(true);
-  });
-
-  // -------------------------------------------------------------------------
   // Scenario 8 — Spawn-depth limit.
   // SKIPPED: `openhuman.agent_run` does not exist; the closest RPC methods
   // (`openhuman.agent_chat`, `openhuman.agent_chat_simple`) drive a single
@@ -481,7 +433,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
   // and that `threads_list` returns a valid (non-error) array.
   // -------------------------------------------------------------------------
   it('account switch: user A threads invisible to user B and still present after restore', async () => {
-    await resetEverything('after Scenario 7');
+    await resetEverything('after Scenario 6');
 
     // ── User A login ──────────────────────────────────────────────────────
     await triggerDeepLink('openhuman://auth?token=mega-acct-switch-user-a');

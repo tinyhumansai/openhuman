@@ -1,7 +1,10 @@
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::tools::ToolSpec;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
+/// Token usage returned by a provider. Defined in the contract crate because
+/// the extracted memory subsystem threads it out of summarisation runs; every
+/// existing `inference::provider::UsageInfo` path keeps naming this one type.
+pub use tinymemory_api::host::UsageInfo;
 
 /// A tool call requested by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,33 +20,6 @@ pub struct ToolCall {
     /// history stays byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_content: Option<serde_json::Value>,
-}
-
-/// Token usage information returned by the provider after an inference call.
-#[derive(Debug, Clone, Default)]
-pub struct UsageInfo {
-    /// Number of tokens in the input/prompt.
-    pub input_tokens: u64,
-    /// Number of tokens in the output/completion.
-    pub output_tokens: u64,
-    /// Total context window size for the model (0 if unknown).
-    pub context_window: u64,
-    /// Number of input tokens that were served from the KV cache
-    /// (returned by backends that support prompt caching, e.g. via
-    /// `openhuman.usage.cached_input_tokens` or
-    /// `prompt_tokens_details.cached_tokens`).
-    pub cached_input_tokens: u64,
-    /// Number of input tokens written into a provider prompt/KV cache on this
-    /// request (cache-creation / cache-write tokens). Distinct from
-    /// `cached_input_tokens` (cache reads). Zero when the provider does not
-    /// report a cache-write breakdown.
-    pub cache_creation_tokens: u64,
-    /// Number of reasoning/thinking output tokens when the provider exposes
-    /// them separately from `output_tokens`. Zero when unavailable.
-    pub reasoning_tokens: u64,
-    /// Amount billed for this request in USD (from
-    /// `openhuman.billing.charged_amount_usd`). Zero when unavailable.
-    pub charged_amount_usd: f64,
 }
 
 /// An LLM response that may contain text, tool calls, or both.
@@ -168,37 +144,4 @@ pub enum StreamError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-}
-
-/// Build tool instructions text for prompt-guided tool calling.
-///
-/// Generates a formatted text block describing available tools and how to
-/// invoke them using XML-style tags. This is used as a fallback when the
-/// provider doesn't support native tool calling.
-pub fn build_tool_instructions_text(tools: &[ToolSpec]) -> String {
-    let mut instructions = String::new();
-
-    instructions.push_str("## Tool Use Protocol\n\n");
-    instructions.push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-    instructions.push_str("<tool_call>\n");
-    instructions.push_str(r#"{"name": "tool_name", "arguments": {"param": "value"}}"#);
-    instructions.push_str("\n</tool_call>\n\n");
-    instructions.push_str("You may use multiple tool calls in a single response. ");
-    instructions.push_str("After tool execution, results appear in <tool_result> tags. ");
-    instructions
-        .push_str("Continue reasoning with the results until you can give a final answer.\n\n");
-    instructions.push_str("### Available Tools\n\n");
-
-    for tool in tools {
-        writeln!(&mut instructions, "**{}**: {}", tool.name, tool.description)
-            .expect("writing to String cannot fail");
-
-        let parameters =
-            serde_json::to_string(&tool.parameters).unwrap_or_else(|_| "{}".to_string());
-        writeln!(&mut instructions, "Parameters: `{parameters}`")
-            .expect("writing to String cannot fail");
-        instructions.push('\n');
-    }
-
-    instructions
 }

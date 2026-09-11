@@ -9,10 +9,10 @@ single provider runtime.
 The contract lives in the top-level `src/openhuman/media/image/` module and
 currently covers two model-facing tools:
 
-| Tool | Purpose | Permission | Output |
-| --- | --- | --- | --- |
-| `image_generation` | Generate or edit raster images from a prompt. | Write | Local generated-media artifact paths. |
-| `view_image` | Load a local image file into model-visible image context. | Read-only | Image content visible to the model. |
+| Tool               | Purpose                                                   | Permission | Output                                |
+| ------------------ | --------------------------------------------------------- | ---------- | ------------------------------------- |
+| `image_generation` | Generate or edit raster images from a prompt.             | Write      | Local generated-media artifact paths. |
+| `view_image`       | Load a local image file into model-visible image context. | Read-only  | Image content visible to the model.   |
 
 This layer is intentionally high level. Existing lower-level tools still own
 their concrete behavior:
@@ -86,11 +86,11 @@ Separate from the high-level `image_generation` contract above, the
 generate images and video through the OpenHuman backend's `media_generation`
 provider (GMI Cloud: Seedream, SeedEdit, Seedance, Veo).
 
-| Tool | Purpose | Permission | Output |
-| --- | --- | --- | --- |
-| `media_generate_image` | Text-to-image / image-to-image via GMI. | Execute | Local file path under `generated-media/`. |
-| `media_generate_video` | Text-to-video / image-to-video via GMI. | Execute | Local file path under `generated-media/`. |
-| `media_list_models` | List the curated model catalog (and optionally GMI's live list). | Read-only | Model ids + pricing. |
+| Tool                   | Purpose                                                          | Permission | Output                                    |
+| ---------------------- | ---------------------------------------------------------------- | ---------- | ----------------------------------------- |
+| `media_generate_image` | Text-to-image / image-to-image via GMI.                          | Execute    | Local file path under `generated-media/`. |
+| `media_generate_video` | Text-to-video / image-to-video via GMI.                          | Execute    | Local file path under `generated-media/`. |
+| `media_list_models`    | List the curated model catalog (and optionally GMI's live list). | Read-only  | Model ids + pricing.                      |
 
 How it works:
 

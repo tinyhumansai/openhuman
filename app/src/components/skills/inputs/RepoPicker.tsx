@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { execute as composioExecute, listConnections } from '../../../lib/composio/composioApi';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { NativeSelect } from '../../ui';
 
 const log = createDebug('app:skills:RepoPicker');
 
@@ -108,19 +109,14 @@ const RepoPicker = ({ value, onChange, id, placeholder, disabled }: RepoPickerPr
     void loadRepos();
   }, [loadRepos]);
 
-  // Common <select> classes — match the plain inputs in WorkflowRunnerBody
-  // so the picker visually blends with the surrounding form.
-  const selectClass =
-    'w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100';
-
   return (
     <div>
-      <select
+      <NativeSelect
         id={id}
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled || loading || error !== null}
-        className={selectClass}>
+        className="w-full">
         <option value="">
           {loading
             ? t('settings.skillsRunner.repoPicker.loading')
@@ -132,8 +128,8 @@ const RepoPicker = ({ value, onChange, id, placeholder, disabled }: RepoPickerPr
             {r.private ? ` ${t('settings.skillsRunner.repoPicker.privateTag')}` : ''}
           </option>
         ))}
-      </select>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{error}</p>}
+      </NativeSelect>
+      {error && <p className="text-xs text-coral-500 mt-1">{error}</p>}
     </div>
   );
 };

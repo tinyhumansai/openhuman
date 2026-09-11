@@ -1,6 +1,6 @@
 use super::*;
 use crate::api::rest::BackendApiError;
-use crate::core::event_bus::DomainEvent;
+use crate::core::events::DomainEvent;
 
 #[test]
 fn subscriber_metadata_is_stable() {

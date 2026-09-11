@@ -67,20 +67,25 @@ impl Tool for McpListServersTool {
             for server in self.registry.list() {
                 let source = match server.source {
                     McpRegistrySource::Config => "config",
-                    McpRegistrySource::LegacyGitbooks => "legacy_gitbooks",
+                    McpRegistrySource::Host => "host",
+                    _ => "unknown",
                 };
                 md.push_str(&format!(
                     "\n- **{}** ({source})\n  - endpoint: `{}`\n  - auth: `{}`",
                     server.name,
                     server.endpoint,
                     match &server.auth {
-                        crate::openhuman::config::McpAuthConfig::None => "none",
-                        crate::openhuman::config::McpAuthConfig::BearerToken { .. } =>
-                            "bearer_token",
-                        crate::openhuman::config::McpAuthConfig::Basic { .. } => "basic",
-                        crate::openhuman::config::McpAuthConfig::Header { .. } => "header",
-                        crate::openhuman::config::McpAuthConfig::Headers { .. } => "headers",
-                        crate::openhuman::config::McpAuthConfig::QueryParam { .. } => "query_param",
+                        tinymcp_bus::McpAuthConfig::None => "none",
+                        tinymcp_bus::McpAuthConfig::BearerToken { .. } => "bearer_token",
+                        tinymcp_bus::McpAuthConfig::Basic { .. } => "basic",
+                        tinymcp_bus::McpAuthConfig::Header { .. } => "header",
+                        tinymcp_bus::McpAuthConfig::Headers { .. } => "headers",
+                        tinymcp_bus::McpAuthConfig::QueryParam { .. } => "query_param",
+                        // The contract's auth enum is `#[non_exhaustive]`, so a
+                        // kind a newer one adds is reported rather than failing
+                        // the build. This is a label in a listing; an unknown
+                        // one is honest.
+                        _ => "unknown",
                     }
                 ));
                 if let Some(description) = server.description.as_deref() {
@@ -272,7 +277,9 @@ impl Tool for McpCallTool {
         if options.prefer_markdown && result.markdown_formatted.is_none() {
             result.markdown_formatted = Some(result.output());
         }
-        Ok(result)
+        Ok(crate::openhuman::skills::types::tool_result_from_mcp(
+            result,
+        ))
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
@@ -292,42 +299,5 @@ fn required_string_arg(args: &Value, key: &str) -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::config::{Config, McpServerConfig};
-
-    fn test_registry() -> Arc<McpServerRegistry> {
-        let mut config = Config::default();
-        config.gitbooks.enabled = false;
-        config.mcp_client.servers.push(McpServerConfig {
-            name: "docs".into(),
-            endpoint: "https://example.com/mcp".into(),
-            command: String::new(),
-            args: Vec::new(),
-            env: std::collections::HashMap::new(),
-            cwd: None,
-            description: Some("Docs MCP".into()),
-            enabled: true,
-            allowed_tools: Vec::new(),
-            disallowed_tools: Vec::new(),
-            timeout_secs: 30,
-            auth: crate::openhuman::config::McpAuthConfig::None,
-        });
-        Arc::new(McpServerRegistry::from_config(&config))
-    }
-
-    #[tokio::test]
-    async fn list_servers_renders_registry_entries() {
-        let tool = McpListServersTool::new(test_registry());
-        let result = tool.execute(json!({})).await.expect("execute");
-        assert!(result.output().contains("docs"));
-        assert!(result.markdown_formatted.is_some());
-    }
-
-    #[tokio::test]
-    async fn list_tools_requires_server() {
-        let tool = McpListToolsTool::new(test_registry());
-        let result = tool.execute(json!({})).await;
-        assert!(result.is_err());
-    }
-}
+#[path = "mcp_tests.rs"]
+mod tests;

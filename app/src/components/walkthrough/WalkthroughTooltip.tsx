@@ -38,7 +38,7 @@ const WalkthroughTooltip = ({
         <div className="h-1 bg-surface-subtle">
           <div
             data-testid="walkthrough-progress-bar"
-            className="h-full bg-gradient-to-r from-[#2F6EF4] to-[#5B9BF3] transition-all duration-500 ease-out rounded-r-full"
+            className="h-full bg-linear-to-r from-[#2F6EF4] to-[#5B9BF3] transition-all duration-500 ease-out rounded-r-full"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -85,7 +85,7 @@ const WalkthroughTooltip = ({
             {index > 0 && (
               <button
                 {...backProps}
-                className="text-[12px] text-content-muted hover:text-content border border-line hover:border-line-strong dark:hover:border-line-strong transition-all px-4 py-2 rounded-xl hover:shadow-sm">
+                className="text-[12px] text-content-muted hover:text-content border border-line hover:border-line-strong dark:hover:border-line-strong transition-all px-4 py-2 rounded-xl hover:shadow-xs">
                 {t('common.back')}
               </button>
             )}
@@ -94,7 +94,7 @@ const WalkthroughTooltip = ({
             {continuous && (
               <button
                 {...primaryProps}
-                className="text-[12px] text-white bg-[#2F6EF4] hover:bg-[#2563d4] active:scale-[0.97] transition-all px-4 py-2 rounded-xl font-medium shadow-sm hover:shadow-md">
+                className="text-[12px] text-white bg-[#2F6EF4] hover:bg-[#2563d4] active:scale-[0.97] transition-all px-4 py-2 rounded-xl font-medium shadow-xs hover:shadow-md">
                 {isLastStep ? t('walkthrough.tooltip.letsGo') : t('walkthrough.tooltip.next')}
               </button>
             )}

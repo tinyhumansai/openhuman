@@ -292,7 +292,10 @@ jobs:
           TAG: ${{ needs.prepare-build.outputs.tag }}
         run: |
           set -euo pipefail
-          echo "::warning::AI release notes failed or timed out — using deterministic notes."
+          # `continue-on-error` hides the AI step's real failure, so this warning
+          # must not assert a cause: on v0.63.21 both steps died on the same git
+          # ENOBUFS and the "timed out" wording sent the investigation the wrong way.
+          echo "::warning::AI release notes step did not succeed (outcome=${{ steps.ai-notes.outcome }}) — using deterministic notes. See the 'Generate AI release notes' step log for the reason."
           node scripts/release/generate-release-notes.mjs \
             --from latest-release \
             --to "$TAG" \
@@ -397,11 +400,26 @@ jobs:
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
-      # Targeted init (not `submodules: true`) so we skip the large tauri-cef
-      # fork the core image doesn't need. The Dockerfile COPYs vendor/ because
-      # [patch.crates-io] resolves Rust SDK crates from vendor/.
+      # Every submodule, not an enumerated subset. The Dockerfile COPYs vendor/
+      # because [patch.crates-io] resolves Rust SDK crates from vendor/, and an
+      # uninitialised submodule is copied in as an EMPTY directory — cargo then
+      # fails on the missing manifest before it compiles anything.
+      #
+      # This used to name eight paths, to skip "the large tauri-cef fork the
+      # core image doesn't need". That fork stopped being a submodule in
+      # `1843706c3 refactor(tauri): replace CEF runtime with upstream Wry`, so
+      # there is nothing left for the list to exclude: all ten entries in
+      # `.gitmodules` are `path` dependencies of the root crate, and cargo reads
+      # every one of their manifests to resolve, `optional` or not. A subset is
+      # therefore always a bug, which is what the list kept producing — it went
+      # stale three times (tinymemory in `54f8710f`, then tinywallet and
+      # tinyhosts together, issue #5594), and each time the breakage surfaced at
+      # RELEASE time rather than in PR CI.
+      #
+      # Enumerating buys nothing once nothing can legitimately be excluded, so
+      # the enumeration is gone rather than corrected a third time.
       - name: Init vendored Rust submodules
-        run: git submodule update --init --recursive vendor/tinyagents vendor/tinyflows vendor/tinycortex vendor/tinyjuice vendor/tinychannels vendor/tinyplace vendor/tinyhumans-sdk
+        run: git submodule update --init --recursive
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
@@ -484,7 +502,7 @@ jobs:
           fetch-depth: 1
           submodules: recursive
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:

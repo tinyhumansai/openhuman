@@ -59,7 +59,7 @@ const PANELS: PanelCheck[] = [
     // N2.4 — intelligence dashboard moved into Brain (the legacy /intelligence
     // and /settings/intelligence routes redirect here).
     hash: '/brain?tab=intelligence',
-    markers: ['Intelligence', 'Memory', 'Subconscious', 'Graph', 'Settings'],
+    markers: ['Intelligence', 'Memory', 'Graph', 'Settings'],
   },
   {
     // N2.5 — developer options

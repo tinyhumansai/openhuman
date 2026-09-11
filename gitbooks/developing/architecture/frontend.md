@@ -44,7 +44,6 @@ app/src/
 ├── pages/                  # Route-level screens (incl. onboarding/, ios/, dev/)
 ├── features/               # Feature verticals (human/, conversations/, meet/, voice/)
 ├── components/             # Shared UI (incl. settings/, layout/shell/, accounts/)
-├── agentworld/             # tiny.place Agent World surface (/agent-world/*)
 ├── hooks/                  # App hooks
 ├── utils/                  # Config, Tauri command wrappers, routing utilities
 └── assets/                 # Icons and static assets
@@ -334,10 +333,42 @@ Example: `SocketProvider` owns the socket instance; Redux stores connection stat
 
 ## Human Mascot Surface
 
-The Human page (`app/src/features/human/HumanPage.tsx`) renders the main
-`YellowMascot` beside the conversation sidebar. The mascot face still comes
-from `useHumanMascot`, which subscribes to chat lifecycle events for thinking,
-speaking, acknowledgement, and error states.
+The mascot appears on **two** surfaces, deliberately. `/human`
+(`app/src/features/human/HumanPage.tsx`) is the dedicated full-bleed stage with a
+right-rail chat. `/chat` carries the same mascot docked on its composer, where it
+expands into a voice stage in place. Both read one set of mascot preferences from
+`mascotSlice` — colour, voice, speak-replies, dismissal — so the two can never
+disagree about the same setting.
+
+`app/src/features/human/chatMascot/` owns the chat-side surface:
+
+| Module                  | Role                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `ChatMascotContext.tsx` | Shared dock/stage refs and the send binding. Every value is stable — see the re-render note below.        |
+| `ChatMascotDock.tsx`    | The small mascot standing on the composer's input box. An anchor + hit area; it draws nothing.            |
+| `ChatMascotStage.tsx`   | The scaled-up voice surface: `MicComposer`, input-device selector, speak-replies switch, collapse button. |
+| `ChatMascotOverlay.tsx` | The single Rive instance, moved between dock and stage with a `transform`.                                |
+| `geometry.ts`           | Pure dock ⇄ stage transform maths (`inscribedSquare`, `lerpBox`, `boxTransform`).                         |
+
+Clicking the dock expands the mascot into a right-hand stage column while the
+transcript and the text composer stay live in the left column, so voice and text
+are the same conversation. `pages/Accounts.tsx` animates the column width;
+`ChatMascotOverlay` re-measures both anchors per frame so the mascot stays glued
+to a destination that is still moving. Expanded/collapsed and the speak-replies
+preference are persisted in `mascotSlice`.
+
+**Two invariants worth keeping.** The mascot re-renders at ~60fps during TTS
+lipsync, so (a) it is rendered as a leaf with nothing beneath it, and (b) the
+mascot context value is deliberately non-reactive — reactive state lives in
+Redux or in the send-binding external store instead. A reactive context value
+would reconcile the whole chat tree every frame, which is the stall #5357 had to
+fix. And the overlay only mounts while the agent account is selected: HTML paints
+_behind_ the native CEF provider webviews, so a fixed overlay left alive under
+WhatsApp/Slack would be an invisible canvas still burning frames.
+
+The mascot face comes from `useHumanMascot`, which subscribes to chat lifecycle
+events for thinking, speaking, acknowledgement, and error states, plus a
+`listening` pose driven by `MicComposer`'s `onRecordingChange`.
 
 Sub-agent delegation is visualized by `SubMascotLayer`. It does not introduce a
 new socket protocol. Instead, it reads the selected or active thread's
@@ -373,10 +404,9 @@ Current desktop routes (read `AppRoutes.tsx` for the authoritative table — the
 /auth                  → WebCallbackPage (auth callback)
 /callback/:kind[/:status] → WebCallbackPage (generic OAuth/provider callbacks)
 /onboarding/*          → Onboarding stepper (ProtectedRoute)
-/human                 → HumanPage (mascot surface)
+/human                 → HumanPage (dedicated mascot stage)
 /brain                 → Brain (memory knowledge-graph)
 /flows                 → FlowsPage · /flows/draft → draft canvas · /flows/:id → FlowCanvasPage
-/orchestration         → OrchestrationPage (TinyPlace multi-agent coordination)
 /workflows/run         → WorkflowsRun (single-purpose Skill runner)
 /connections           → Skills page (connections hub)
 /chat/:threadId?       → Accounts (unified chat: agent + connected web apps)
@@ -386,7 +416,6 @@ Current desktop routes (read `AppRoutes.tsx` for the authoritative table — the
 /rewards               → Rewards
 /ptt-overlay           → PttOverlayPage (push-to-talk overlay window)
 /dev/agent-insights    → dev-only preview
-/agent-world/*         → AgentWorld (tiny.place A2A social network)
 *                      → DefaultRedirect
 ```
 
@@ -397,10 +426,9 @@ Back-compat redirects (all `Navigate replace`, query params preserved):
 /activity    → /settings/notifications   /channels    → /connections?tab=messaging
 /intelligence→ /settings/notifications   /routines    → /settings/automations
 /workflows   → /settings/automations     /webhooks    → /settings/integrations#webhooks
-/brain/tinyplace-orchestration → /orchestration
 ```
 
-There is **no** `/login` route — authentication flows through the Welcome page, the `/auth` callback, and deep links. Desktop **Settings is not an inline route**: when the URL is `/settings/*`, `AppShellDesktop` keeps rendering the _background_ location and mounts `SettingsModal` on top (see [Settings](frontend.md#settings)). Note that `/agents` does not exist; the agent-social surface is `/agent-world/*`.
+There is **no** `/login` route — authentication flows through the Welcome page, the `/auth` callback, and deep links. Desktop **Settings is not an inline route**: when the URL is `/settings/*`, `AppShellDesktop` keeps rendering the _background_ location and mounts `SettingsModal` on top (see [Settings](frontend.md#settings)). Note that `/agents` does not exist.
 
 ### Route guards
 

@@ -23,12 +23,9 @@ test.describe('Agent review - canonical onboarding + privacy flow', () => {
   test('launches, reaches the shell, and opens the privacy panel', async ({ page }) => {
     await bootReviewedFlow(page, 'pw-agent-review');
 
-    // Home folded into the unified chat surface: post-login landing is /chat,
-    // whose sidebar/new-window state renders these structural markers.
-    const shellText = await page.locator('#root').innerText();
-    expect(
-      ['New Conversation', 'Threads', 'Settings'].some(marker => shellText.includes(marker))
-    ).toBe(true);
+    // The composer is the durable readiness marker for the unified chat shell;
+    // sidebar copy and empty-state headings change independently of readiness.
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
 
     await page.goto('/#/settings/privacy');
     await waitForAppReady(page);

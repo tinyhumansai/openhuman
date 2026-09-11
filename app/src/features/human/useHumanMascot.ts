@@ -498,6 +498,21 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     setFace('idle');
   }, [listening]);
 
+  // Turning speech off mid-reply must silence the *current* utterance, not just
+  // suppress the next one. `speakRef` is only consulted when a new reply
+  // arrives, so without this the chat mascot keeps talking over the text
+  // conversation after the user collapses its voice stage (which is what sets
+  // `speakReplies` false). Same drain as barge-in above.
+  useEffect(() => {
+    if (speakReplies) return;
+    if (playbackRef.current == null && !streamActiveRef.current) return;
+    mascotLog('speakReplies disabled mid-reply — cancelling in-flight TTS');
+    cancelTtsPlayback();
+    targetRef.current = VISEMES.REST;
+    lastDeltaAtRef.current = 0;
+    setFace('idle');
+  }, [speakReplies]);
+
   function isTurnCurrent(seq: number): boolean {
     return playbackSeqRef.current === seq;
   }

@@ -12,17 +12,28 @@ use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, To
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 pub struct EditFileTool {
     security: Arc<SecurityPolicy>,
+    sink: Arc<dyn super::write_sink::FileSink>,
 }
 
 impl EditFileTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        Self {
+            security,
+            sink: super::write_sink::os_sink(),
+        }
+    }
+
+    /// Sends this tool's writes somewhere other than the OS.
+    #[cfg(test)]
+    pub fn with_sink(mut self, sink: Arc<dyn super::write_sink::FileSink>) -> Self {
+        self.sink = sink;
+        self
     }
 }
 
@@ -73,7 +84,7 @@ impl Tool for EditFileTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         self.execute_in_context(args, context).await
     }
@@ -83,7 +94,7 @@ impl EditFileTool {
     async fn execute_in_context(
         &self,
         args: serde_json::Value,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
@@ -204,7 +215,7 @@ impl EditFileTool {
             contents.replacen(old_string, new_string, 1)
         };
 
-        match tokio::fs::write(&resolved, &updated).await {
+        match self.sink.write(&resolved, updated.as_bytes()).await {
             Ok(()) => {
                 if let Some(agent_id) = file_state::current_file_state_agent_id() {
                     file_state::record_write(&agent_id, resolved);
@@ -219,162 +230,5 @@ impl EditFileTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
-
-    fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
-        Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace.clone(),
-            action_dir: workspace,
-            ..SecurityPolicy::default()
-        })
-    }
-
-    fn test_security_readonly(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
-        Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::ReadOnly,
-            workspace_dir: workspace.clone(),
-            action_dir: workspace,
-            ..SecurityPolicy::default()
-        })
-    }
-
-    #[test]
-    fn edit_name() {
-        let tool = EditFileTool::new(test_security(std::env::temp_dir()));
-        assert_eq!(tool.name(), "edit");
-    }
-
-    #[tokio::test]
-    async fn edit_replaces_unique_match() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_unique");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "alpha bravo")
-            .await
-            .unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "bravo", "new_string": "charlie"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error, "{}", result.output());
-        let updated = tokio::fs::read_to_string(dir.join("f.txt")).await.unwrap();
-        assert_eq!(updated, "alpha charlie");
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_rejects_ambiguous_match() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_ambig");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "x x x").await.unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "x", "new_string": "y"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("matches 3 times"));
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_replace_all() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_all");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "x x x").await.unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(
-                json!({"path": "f.txt", "old_string": "x", "new_string": "y", "replace_all": true}),
-            )
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        let updated = tokio::fs::read_to_string(dir.join("f.txt")).await.unwrap();
-        assert_eq!(updated, "y y y");
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_no_match() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_nomatch");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "alpha").await.unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "zulu", "new_string": "x"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("not found"));
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_blocks_readonly_mode() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_ro");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "abc").await.unwrap();
-
-        let tool = EditFileTool::new(test_security_readonly(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "abc", "new_string": "xyz"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("read-only"));
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_rejects_empty_old_string() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_empty_old");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "abc").await.unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "", "new_string": "x"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn edit_rejects_identical_strings() {
-        let dir = std::env::temp_dir().join("openhuman_test_edit_same");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(dir.join("f.txt"), "abc").await.unwrap();
-
-        let tool = EditFileTool::new(test_security(dir.clone()));
-        let result = tool
-            .execute(json!({"path": "f.txt", "old_string": "abc", "new_string": "abc"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("identical"));
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-}
+#[path = "edit_file_tests.rs"]
+mod tests;

@@ -30,14 +30,6 @@ use tempfile::{tempdir, TempDir};
 struct MockState {
     requests: Arc<Mutex<Vec<(String, Value)>>>,
     ollama_models: Arc<Mutex<Vec<String>>>,
-    whisper_mode: Arc<Mutex<WhisperMode>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum WhisperMode {
-    #[default]
-    Valid,
-    TooSmall,
 }
 
 struct EnvVarGuard {
@@ -86,16 +78,11 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[tokio::test]
-async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install() {
+async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_points() {
     let _lock = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");
-    write_stub_script(
-        scripts.path(),
-        "whisper-cli",
-        "#!/bin/sh\nprintf 'mock whisper transcript\\n'\n",
-    );
     write_stub_script(
         scripts.path(),
         "piper",
@@ -117,11 +104,7 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
     config.local_ai.vision_model_id = String::new();
     config.local_ai.preload_embedding_model = false;
     config.local_ai.preload_vision_model = false;
-    config.local_ai.preload_stt_model = false;
     config.local_ai.preload_tts_voice = false;
-    config.local_ai.stt_model_id = "round21-stt.bin".to_string();
-    config.local_ai.stt_download_url = Some(format!("{base}/asset/stt"));
-    config.local_ai.whisper_in_process = false;
     config.local_ai.tts_voice_id = "round21-voice".to_string();
     config.local_ai.tts_download_url = Some(format!("{base}/asset/tts"));
     config.local_ai.tts_config_download_url = Some(format!("{base}/asset/tts-json"));
@@ -130,10 +113,8 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
     let _path = EnvVarGuard::set("PATH", scripts.path());
     let _workspace = EnvVarGuard::set("OPENHUMAN_WORKSPACE", config.config_path.parent().unwrap());
     let _ollama_base = EnvVarGuard::set("OPENHUMAN_OLLAMA_BASE_URL", &base);
-    let _whisper_models = EnvVarGuard::set("OPENHUMAN_WHISPER_MODELS_BASE_URL", &base);
     let _ollama_bin = EnvVarGuard::unset("OLLAMA_BIN");
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
-    let _whisper_bin = EnvVarGuard::unset("WHISPER_BIN");
 
     let service = LocalAiService::new(&config);
 
@@ -142,7 +123,6 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
     assert_eq!(initial_assets.chat.state, "ready");
     assert_eq!(initial_assets.vision.state, "disabled");
     assert_eq!(initial_assets.embedding.state, "ready");
-    assert_eq!(initial_assets.stt.state, "ondemand");
     assert_eq!(initial_assets.tts.state, "ondemand");
 
     assert_eq!(
@@ -174,28 +154,16 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
         "adds tests"
     );
 
-    let after_stt = service
-        .download_asset(&config, "stt")
-        .await
-        .expect("download stt");
-    assert_eq!(after_stt.stt.state, "ready");
-    let progress = service.downloads_progress(&config).await.expect("progress");
-    assert_eq!(progress.stt.state, "ready");
-    assert_eq!(progress.warning, Some("Downloading stt asset".to_string()));
+    let _progress = service.downloads_progress(&config).await.expect("progress");
     let after_tts = service
         .download_asset(&config, "tts")
         .await
         .expect("download tts");
     assert_eq!(after_tts.tts.state, "ready");
 
-    let audio = tmp.path().join("audio.webm");
-    std::fs::write(&audio, b"not real audio").expect("audio");
-    let transcribed = service
-        .transcribe(&config, audio.to_string_lossy().as_ref())
-        .await
-        .expect("transcribe via mocked whisper-cli");
-    assert_eq!(transcribed.text, "mock whisper transcript");
-    assert_eq!(transcribed.model_id, "round21-stt.bin");
+    // Transcription is no longer exercised here: the bundled whisper.cpp
+    // engine was deleted, so `transcribe` is a hosted call to the backend
+    // proxy with no local binary this offline test can stub.
 
     let tts_output = tmp.path().join("out").join("speech.wav");
     let tts = service
@@ -252,31 +220,6 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
     assert_eq!(reaction.emoji.as_deref(), Some("⭐"));
 
     assert_eq!(
-        local_ai_transcribe(&config, audio.to_string_lossy().as_ref())
-            .await
-            .expect("ops transcribe")
-            .value
-            .text,
-        "mock whisper transcript"
-    );
-    assert_eq!(
-        local_ai_transcribe_bytes(&config, b"audio bytes", Some(".WEBM".to_string()))
-            .await
-            .expect("ops transcribe bytes")
-            .value
-            .text,
-        "mock whisper transcript"
-    );
-    assert_eq!(
-        local_ai_assets_status(&config)
-            .await
-            .expect("ops assets")
-            .value
-            .stt
-            .state,
-        "ready"
-    );
-    assert_eq!(
         local_ai_downloads_progress(&config)
             .await
             .expect("ops progress")
@@ -295,50 +238,14 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
         "ready"
     );
 
-    let controllers = all_local_inference_registered_controllers();
-    let install = controller(&controllers, "install_whisper");
-    let status = controller(&controllers, "whisper_install_status");
-
-    set_whisper_mode(&state, WhisperMode::Valid);
-    let queued = call(install, json!({"model_size": "tiny", "force": true}))
-        .await
-        .expect("queue whisper install");
-    assert_eq!(queued["state"], "installing");
-    let installed = wait_for_whisper(status, |value| value["state"] == "installed").await;
-    assert_eq!(installed["progress"], 100);
-    assert_eq!(installed["stage"], "install complete");
-
-    let skipped = call(install, json!({"model_size": "tiny", "force": false}))
-        .await
-        .expect("queue whisper skip");
-    assert!(matches!(
-        skipped["state"].as_str(),
-        Some("installed") | Some("installing")
-    ));
-    let skipped = wait_for_whisper(status, |value| {
-        value["state"] == "installed" && value["stage"] == "already installed"
-    })
-    .await;
-    assert_eq!(skipped["progress"], 100);
-
-    set_whisper_mode(&state, WhisperMode::TooSmall);
-    call(install, json!({"model_size": "smallfail", "force": true}))
-        .await
-        .expect("queue whisper failure");
-    let failed = wait_for_whisper(status, |value| value["state"] == "error").await;
-    assert!(failed["error_detail"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("downloaded payload too small"));
-
+    // `install_whisper` / `whisper_install_status` were deleted with the
+    // bundled whisper.cpp engine, so there is no installer controller left to
+    // drive here. The remaining assertion proves the mocked Ollama endpoint was
+    // actually reached by the calls above.
     let seen = state.requests.lock().expect("requests").clone();
     assert!(seen
         .iter()
         .any(|(path, _)| path == "/v1/chat/completions"));
-    assert!(seen.iter().any(|(path, _)| path.ends_with("ggml-tiny.bin")));
-    assert!(seen
-        .iter()
-        .any(|(path, _)| path.ends_with("ggml-smallfail.bin")));
 }
 
 async fn serve_mock() -> (String, MockState) {
@@ -356,7 +263,6 @@ async fn serve_mock() -> (String, MockState) {
         .route("/asset/stt", get(asset_stt))
         .route("/asset/tts", get(asset_tts))
         .route("/asset/tts-json", get(asset_tts_json))
-        .route("/{*path}", get(download_whisper))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -468,18 +374,6 @@ async fn asset_tts_json() -> impl IntoResponse {
     bytes_response(br#"{"audio":{"sample_rate":22050}}"#.to_vec())
 }
 
-async fn download_whisper(
-    State(state): State<MockState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    remember_path(&state, &format!("/{path}"));
-    let mode = *state.whisper_mode.lock().expect("whisper mode");
-    match mode {
-        WhisperMode::Valid => bytes_response(vec![b'w'; 31 * 1024 * 1024]),
-        WhisperMode::TooSmall => bytes_response(vec![b'x'; 1024]),
-    }
-}
-
 fn bytes_response(bytes: Vec<u8>) -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
@@ -501,23 +395,6 @@ fn remember_path(state: &MockState, path: &str) {
         .lock()
         .expect("requests")
         .push((path.to_string(), Value::Null));
-}
-
-fn set_whisper_mode(state: &MockState, mode: WhisperMode) {
-    *state.whisper_mode.lock().expect("whisper mode") = mode;
-}
-
-async fn wait_for_whisper(status: &RegisteredController, done: impl Fn(&Value) -> bool) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let mut last = Value::Null;
-    while Instant::now() < deadline {
-        last = call(status, json!({})).await.expect("status");
-        if done(&last) {
-            return last;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("timed out waiting for whisper status, last={last}");
 }
 
 fn controller<'a>(

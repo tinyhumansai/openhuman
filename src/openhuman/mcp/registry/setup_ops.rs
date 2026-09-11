@@ -1,37 +1,51 @@
-//! RPC handlers for the MCP setup agent. See `docs/MCP_SETUP_AGENT.md`.
+//! RPC handlers for the guided setup flow (`mcp_setup`).
 //!
-//! These handlers form the agent-facing tool surface:
+//! Every function keeps the signature and the JSON shape it had before the
+//! client moved to `tinymcp`, and delegates to the service [`super::super::host`]
+//! holds.
 //!
-//! - `mcp_setup_search` / `mcp_setup_get` — thin wrappers over
-//!   [`super::registry`] so the agent browses upstream registries.
-//! - `mcp_setup_request_secret` — block on a fresh ref until the UI
-//!   submits a value.
-//! - `mcp_setup_submit_secret` — UI-side fulfillment.
-//! - `mcp_setup_test_connection` — spawn a candidate subprocess in a
-//!   scratch workspace, list its tools, tear it down. No persistence.
-//! - `mcp_setup_install_and_connect` — commit: persist install + env,
-//!   call [`super::connections::connect`].
+//! # The secret handles have not changed shape
 //!
-//! Raw secret values flow only through `submit_secret` and the
-//! just-in-time resolve inside `test_connection` / `install_and_connect`.
-//! They are never echoed in responses or logged.
+//! The flow is still: mint an opaque `secret://…` handle, prompt the user out
+//! of band, and resolve the handle inside the operation that needs the value.
+//! The raw value never crosses the model-facing surface. `tinymcp` owns the
+//! vault; this layer keeps the part that is this application's — publishing the
+//! event that makes the prompt appear, and waiting for the answer.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use serde_json::{json, Value};
-use uuid::Uuid;
 
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 use crate::openhuman::config::Config;
-use crate::openhuman::mcp::config_servers::McpStdioClient;
-use crate::openhuman::mcp::http_client::McpHttpClient;
 use crate::rpc::RpcOutcome;
 
-use super::ops::resolve_command;
-use super::setup::{self, SecretRef};
-use super::types::{CommandKind, InstalledServer, SmitheryConnection, Transport};
-use super::{connections, registry, store};
+use tinymcp::SecretRef;
+
+use super::helpers::{encode, inject_required_env_keys, require, resolve};
+use super::types::{ConnStatus, ServerStatus};
+
+/// Reads a map of credential names to handles.
+fn parse_handles(raw: HashMap<String, String>) -> Result<HashMap<String, SecretRef>, String> {
+    raw.into_iter()
+        .map(|(name, handle)| {
+            SecretRef::parse(&handle)
+                .map(|parsed| (name, parsed))
+                .ok_or_else(|| format!("invalid ref_id `{handle}`"))
+        })
+        .collect()
+}
+
+/// Renders a detail record with the credential names an install would need.
+fn detail_payload(
+    detail: &tinymcp_bus::RegistryServerDetail,
+    required_env_keys: &[String],
+) -> Result<Value, String> {
+    let mut value = encode(detail)?;
+    inject_required_env_keys(&mut value, required_env_keys);
+    Ok(value)
+}
 
 // ── search ───────────────────────────────────────────────────────────────────
 
@@ -43,13 +57,21 @@ pub async fn mcp_setup_search(
 ) -> Result<RpcOutcome<Value>, String> {
     let page = page.unwrap_or(1);
     let page_size = page_size.unwrap_or(20);
-    let (servers, total_pages) =
-        registry::registry_search(config, query.as_deref(), None, page, page_size)
-            .await
-            .map_err(|e| e.to_string())?;
+
+    let found = resolve(config)?
+        .dynamic()
+        .registry_search(query.as_deref(), page, page_size)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let count = found.servers.len();
     Ok(RpcOutcome::new(
-        json!({ "servers": servers, "page": page, "total_pages": total_pages }),
-        vec![format!("setup_search returned {} servers", servers.len())],
+        json!({
+            "servers": found.servers,
+            "page": found.page,
+            "total_pages": found.total_pages,
+        }),
+        vec![format!("setup_search returned {count} servers")],
     ))
 }
 
@@ -59,631 +81,288 @@ pub async fn mcp_setup_get(
     config: &Config,
     qualified_name: String,
 ) -> Result<RpcOutcome<Value>, String> {
-    let q = qualified_name.trim();
-    if q.is_empty() {
-        return Err("qualified_name must not be empty".to_string());
-    }
-    let detail = registry::registry_get(config, q)
+    let qualified_name = require(&qualified_name, "qualified_name")?;
+
+    let (detail, required_env_keys) = resolve(config)?
+        .dynamic()
+        .registry_get(&qualified_name)
         .await
-        .map_err(|e| e.to_string())?;
-    let required_env_keys = collect_required_env_keys(&detail);
-    let mut value = serde_json::to_value(&detail).map_err(|e| format!("ser: {e}"))?;
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("required_env_keys".into(), json!(required_env_keys));
-    }
+        .map_err(|error| error.to_string())?;
+
     Ok(RpcOutcome::new(
-        json!({ "server": value }),
-        vec![format!("setup_get ok qualified_name={q}")],
+        json!({ "server": detail_payload(&detail, &required_env_keys)? }),
+        vec![format!("setup_get ok qualified_name={qualified_name}")],
     ))
 }
 
 // ── request_secret ───────────────────────────────────────────────────────────
 
+/// Mints a handle, asks the user for the value, and waits for it.
+///
+/// The wait is here rather than in `tinymcp` because the prompt is: this layer
+/// publishes the event a user interface renders, so it is the layer that knows
+/// when an answer can arrive.
 pub async fn mcp_setup_request_secret(
+    config: &Config,
     key_name: String,
     prompt: String,
 ) -> Result<RpcOutcome<Value>, String> {
-    let key_name = key_name.trim().to_string();
-    let prompt = prompt.trim().to_string();
-    if key_name.is_empty() {
-        return Err("key_name must not be empty".to_string());
-    }
-    if prompt.is_empty() {
-        return Err("prompt must not be empty".to_string());
-    }
+    let key_name = require(&key_name, "key_name")?;
+    let prompt = require(&prompt, "prompt")?;
 
-    let (r, rx) = setup::mint_request(&key_name).await;
+    let service = resolve(config)?;
+    let vault = service.dynamic().vault();
+    let (handle, receiver) = vault.request(&key_name).await;
 
-    publish_global(DomainEvent::McpSetupSecretRequested {
-        ref_id: r.as_str().to_string(),
+    BUS.publish(DomainEvent::McpSetupSecretRequested {
+        ref_id: handle.as_str().to_string(),
         key_name: key_name.clone(),
-        prompt: prompt.clone(),
+        prompt,
     });
     tracing::info!(
-        "[mcp-setup] request_secret ref={} key_name={} (awaiting UI submit)",
-        r.as_str(),
-        key_name
+        handle = handle.as_str(),
+        key_name,
+        "[mcp-setup] awaiting a secret from the user"
     );
 
-    setup::await_fulfillment(&r, rx)
+    vault
+        .await_fulfillment(&handle, receiver)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    tracing::info!("[mcp-setup] request_secret fulfilled ref={}", r.as_str());
+    tracing::info!(handle = handle.as_str(), "[mcp-setup] the secret arrived");
+
     Ok(RpcOutcome::new(
-        json!({ "ref": r.as_str(), "key_name": key_name }),
+        json!({ "ref": handle.as_str(), "key_name": key_name }),
         vec![format!("collected secret for key={key_name}")],
     ))
 }
 
-// ── submit_secret (UI side) ──────────────────────────────────────────────────
+// ── submit_secret ────────────────────────────────────────────────────────────
 
 pub async fn mcp_setup_submit_secret(
+    config: &Config,
     ref_id: String,
     value: String,
 ) -> Result<RpcOutcome<Value>, String> {
-    let r = SecretRef::parse(&ref_id).ok_or_else(|| format!("invalid ref_id `{ref_id}`"))?;
-    let ok = setup::fulfill(&r, value).await;
-    if !ok {
-        return Err(format!("ref {} unknown or already submitted", r.as_str()));
+    let handle = SecretRef::parse(&ref_id).ok_or_else(|| format!("invalid ref_id `{ref_id}`"))?;
+
+    let accepted = resolve(config)?
+        .dynamic()
+        .vault()
+        .submit(&handle, value)
+        .await;
+
+    if !accepted {
+        return Err(format!(
+            "ref {} unknown or already submitted",
+            handle.as_str()
+        ));
     }
+
     Ok(RpcOutcome::new(
-        json!({ "ref": r.as_str(), "fulfilled": true }),
-        vec![format!("submitted secret for ref={}", r.as_str())],
+        json!({ "ref": handle.as_str(), "fulfilled": true }),
+        vec![format!("submitted secret for ref={}", handle.as_str())],
     ))
 }
 
 // ── test_connection ──────────────────────────────────────────────────────────
 
+/// Dials a server with the collected credentials without installing it.
+///
+/// A dial that fails is reported as `ok: false` with the reason rather than as
+/// an error: the operation asked for — finding out whether it works — succeeded,
+/// and the agent needs the reason to tell the user what to fix.
 pub async fn mcp_setup_test_connection(
     config: &Config,
     qualified_name: String,
     env_refs: HashMap<String, String>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let q = qualified_name.trim();
-    if q.is_empty() {
-        return Err("qualified_name must not be empty".to_string());
-    }
+    let qualified_name = require(&qualified_name, "qualified_name")?;
+    let handles = parse_handles(env_refs)?;
 
-    let parsed_refs = parse_ref_map(env_refs)?;
-    let env = setup::resolve_refs(&parsed_refs)
+    match resolve(config)?
+        .dynamic()
+        .setup_test_connection(&qualified_name, &handles)
         .await
-        .map_err(|e| e.to_string())?;
-
-    let detail = registry::registry_get(config, q)
-        .await
-        .map_err(|e| e.to_string())?;
-    let picked = pick_connection(&detail.connections).ok_or_else(|| {
-        format!("server `{q}` exposes neither stdio nor http_remote connections; nothing to test")
-    })?;
-
-    let identity = config.mcp_client.client_identity.clone();
-
-    // Scratch session — initialise + list_tools, then close. Nothing
-    // persisted. Errors bubble up so the agent can show them to the user.
-    let (init_ok, tools) = match picked.transport_kind() {
-        "stdio" => {
-            let (_kind, command, args) = resolve_command(q, Some(picked));
-            let cwd: Option<PathBuf> = None;
-            let client = McpStdioClient::new(command, args, env, cwd, identity);
-            if let Err(err) = client.initialize().await {
-                return Ok(RpcOutcome::new(
-                    json!({ "ok": false, "error": err.to_string() }),
-                    vec![format!("test_connection failed for {q}: {err}")],
-                ));
-            }
-            match client.list_tools().await {
-                Ok(t) => {
-                    let _ = client.close_session().await;
-                    (true, t)
-                }
-                Err(err) => {
-                    let _ = client.close_session().await;
-                    return Ok(RpcOutcome::new(
-                        json!({ "ok": false, "error": err.to_string() }),
-                        vec![format!("test_connection list_tools failed for {q}: {err}")],
-                    ));
-                }
-            }
-        }
-        // HTTP-remote path: dial the published deployment_url over
-        // Streamable HTTP. No subprocess, no env injection needed at
-        // dial time (env vars for HTTP-remote installs are typically
-        // OAuth tokens that the McpHttpClient picks up from its own
-        // auth config — out of scope for this scratch test).
-        "http_remote" => {
-            let endpoint = picked.deployment_url.clone().unwrap_or_default();
-            if endpoint.is_empty() {
-                return Ok(RpcOutcome::new(
-                    json!({ "ok": false, "error": "deployment_url is empty for http_remote connection" }),
-                    vec![format!(
-                        "test_connection failed for {q}: empty deployment_url"
-                    )],
-                ));
-            }
-            let client = McpHttpClient::new(endpoint.clone(), 30);
-            if let Err(err) = client.initialize().await {
-                return Ok(RpcOutcome::new(
-                    json!({ "ok": false, "error": err.to_string() }),
-                    vec![format!("test_connection (http) failed for {q}: {err}")],
-                ));
-            }
-            match client.list_tools().await {
-                Ok(t) => {
-                    let _ = client.close_session().await;
-                    (true, t)
-                }
-                Err(err) => {
-                    let _ = client.close_session().await;
-                    return Ok(RpcOutcome::new(
-                        json!({ "ok": false, "error": err.to_string() }),
-                        vec![format!(
-                            "test_connection (http) list_tools failed for {q}: {err}"
-                        )],
-                    ));
-                }
-            }
-        }
-        other => {
-            return Ok(RpcOutcome::new(
-                json!({ "ok": false, "error": format!("unsupported transport `{other}`") }),
+    {
+        Ok(tools) => {
+            let tools = super::tools_safe_for_agent(&qualified_name, tools);
+            let count = tools.len();
+            Ok(RpcOutcome::new(
+                json!({ "ok": true, "tools": tools }),
                 vec![format!(
-                    "test_connection failed for {q}: unsupported transport `{other}`"
+                    "test_connection ok for {qualified_name}: {count} tools"
                 )],
-            ));
+            ))
         }
-    };
-
-    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-    Ok(RpcOutcome::new(
-        json!({ "ok": init_ok, "tools": tools, "transport": picked.transport_kind() }),
-        vec![format!(
-            "test_connection ok for {q} via {}: {} tools ({:?})",
-            picked.transport_kind(),
-            tools.len(),
-            names
-        )],
-    ))
+        Err(error) => Ok(RpcOutcome::new(
+            json!({ "ok": false, "error": error.to_string() }),
+            vec![format!(
+                "test_connection failed for {qualified_name}: {error}"
+            )],
+        )),
+    }
 }
 
 // ── install_and_connect ──────────────────────────────────────────────────────
+
+/// The schema's `status` discriminator, and the `error` that accompanies a
+/// non-connected result.
+///
+/// Split out as a pure function so both arms are testable without standing up a
+/// registry and a reachable MCP server.
+///
+/// **Why the verdict comes from `ConnStatus` and not from the call's own
+/// return.** `McpRegistry::setup_install_and_connect` turns a failed connect
+/// into `Ok(ConnectOutcome { server_id, tools: vec![] })` — it logs the reason
+/// and drops it. `ConnectOutcome` carries only `server_id` and `tools`, so a
+/// failed connect is byte-identical to a server that connected and advertises
+/// no tools, which is a legitimate state (a server exposing only resources or
+/// prompts). Counting tools therefore cannot answer the question. The registry's
+/// own `ConnStatus` can: it carries the live [`ServerStatus`] plus `last_error`.
+///
+/// A status we cannot read back is reported as `installed_disconnected` rather
+/// than assumed connected: the install is confirmed either way, and claiming a
+/// connection we did not observe is the failure mode this change exists to
+/// remove (#6110).
+///
+/// The three inputs are deliberately distinct, because they are three different
+/// facts and a caller acts on them differently:
+///
+/// - `Ok(Some(entry))` — the registry answered and knows this server.
+/// - `Ok(None)` — the registry answered but has no row for it.
+/// - `Err(reason)` — the status query itself failed. The reason is carried into
+///   the message rather than being left in a log line the user never sees:
+///   "the registry could not be asked" is not the same fact as "the server is
+///   not connected", and a transient store error must not read as the latter.
+fn classify_install_connect(
+    status: Result<Option<&ConnStatus>, &str>,
+) -> (&'static str, Option<String>) {
+    match status {
+        Ok(Some(entry)) if matches!(entry.status, ServerStatus::Connected) => ("connected", None),
+        // `last_error` is the connect failure the registry recorded, not a
+        // description of some later state: `connections::connect` builds a
+        // `ConnectFailure` from the original error and stores it, and
+        // `classify` surfaces it here. The synthetic arm below is reached only
+        // when a non-connected server has no recorded failure at all (a
+        // `Disabled` install, say), where naming the state is the whole answer.
+        Ok(Some(entry)) => (
+            "installed_disconnected",
+            Some(entry.last_error.clone().unwrap_or_else(|| {
+                format!(
+                    "installed, but the server is `{}` rather than connected",
+                    entry.status.as_str()
+                )
+            })),
+        ),
+        Ok(None) => (
+            "installed_disconnected",
+            Some("installed, but the registry reported no status row for this server".to_string()),
+        ),
+        Err(reason) => (
+            "installed_disconnected",
+            Some(format!(
+                "installed, but the server's connection state could not be read back: {reason}"
+            )),
+        ),
+    }
+}
+
+/// Builds the reply for `install_and_connect`, honouring the two conditional
+/// fields the controller schema declares: `tools` iff `status == connected`,
+/// `error` iff it is not. Pure, so the shape is testable without a registry.
+fn install_and_connect_payload(
+    server_id: &str,
+    qualified_name: &str,
+    status: &str,
+    error: Option<String>,
+    tools: Vec<tinymcp_bus::McpTool>,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("server_id".to_string(), json!(server_id));
+    payload.insert("qualified_name".to_string(), json!(qualified_name));
+    payload.insert("status".to_string(), json!(status));
+    if status == "connected" {
+        payload.insert("tools".to_string(), json!(tools));
+    }
+    if let Some(error) = error {
+        payload.insert("error".to_string(), json!(error));
+    }
+    Value::Object(payload)
+}
 
 pub async fn mcp_setup_install_and_connect(
     config: &Config,
     qualified_name: String,
     env_refs: HashMap<String, String>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let q = qualified_name.trim();
-    if q.is_empty() {
-        return Err("qualified_name must not be empty".to_string());
-    }
+    let qualified_name = require(&qualified_name, "qualified_name")?;
+    let handles = parse_handles(env_refs)?;
 
-    let parsed_refs = parse_ref_map(env_refs)?;
-
-    let detail = registry::registry_get(config, q)
+    let host = resolve(config)?;
+    // Still `?`: this arm is reached only when the *install* failed, and there
+    // is no server to report a status for. A failed *connect* does not come
+    // through here — see `classify_install_connect`.
+    let outcome = host
+        .dynamic()
+        .setup_install_and_connect(&qualified_name, &handles, None)
         .await
-        .map_err(|e| e.to_string())?;
-    let picked = pick_connection(&detail.connections).ok_or_else(|| {
-        format!(
-            "server `{q}` exposes neither stdio nor http_remote connections; nothing to install"
-        )
-    })?;
+        .map_err(|error| error.to_string())?;
 
-    // Branch on the picked transport. Stdio installs still populate
-    // command/args (current behavior). HTTP-remote installs leave them
-    // empty and stash the deployment URL in `transport`.
-    let (transport, command_kind, command, args) = build_install_transport(q, picked)?;
-
-    // Consume refs only after `registry_get` succeeds — that way a
-    // misconfigured server name doesn't burn the user's collected
-    // secrets.
-    let env_pairs = setup::consume_refs(&parsed_refs)
-        .await
-        .map_err(|e| e.to_string())?;
-    let env_map: HashMap<String, String> = env_pairs.into_iter().collect();
-
-    let server_id = Uuid::new_v4().to_string();
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    let env_keys: Vec<String> = env_map.keys().cloned().collect();
-
-    let server = InstalledServer {
-        server_id: server_id.clone(),
-        qualified_name: q.to_string(),
-        display_name: detail.display_name.clone(),
-        description: detail.description.clone(),
-        icon_url: detail.icon_url.clone(),
-        command_kind,
-        command,
-        args,
-        env_keys,
-        config: None,
-        installed_at: now_ms,
-        last_connected_at: None,
-        transport,
-        enabled: true,
+    let server_id = outcome.server_id.clone();
+    let connection = match host.dynamic().status().await {
+        Ok(all) => Ok(all.into_iter().find(|entry| entry.server_id == server_id)),
+        Err(error) => {
+            log::warn!(
+                "[mcp_setup] install_and_connect could not read back status for \
+                 server_id={server_id}: {error}"
+            );
+            Err(error.to_string())
+        }
     };
+    let (status, error) = classify_install_connect(
+        connection
+            .as_ref()
+            .map(Option::as_ref)
+            .map_err(String::as_str),
+    );
+    let connected = status == "connected";
 
-    store::insert_server(config, &server).map_err(|e| e.to_string())?;
-    store::set_env_values(config, &server_id, &env_map).map_err(|e| e.to_string())?;
+    let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
+    let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
-    publish_global(DomainEvent::McpServerInstalled {
+    BUS.publish(DomainEvent::McpServerInstalled {
         server_id: server_id.clone(),
-        qualified_name: server.qualified_name.clone(),
+        qualified_name: qualified_name.clone(),
     });
-
-    // Connect immediately so the agent gets the tool list in the same
-    // response. A connect failure does not roll back the install — the
-    // user can retry via `mcp_clients_connect` later.
-    match connections::connect(config, &server).await {
-        Ok(tools) => Ok(RpcOutcome::new(
-            json!({
-                "server_id": server_id,
-                "status": "connected",
-                "tools": tools,
-            }),
-            vec![format!(
-                "install_and_connect ok server_id={server_id} tools={}",
-                tools.len()
-            )],
-        )),
-        Err(err) => Ok(RpcOutcome::new(
-            json!({
-                "server_id": server_id,
-                "status": "installed_disconnected",
-                "error": err.to_string(),
-            }),
-            vec![format!(
-                "install_and_connect installed server_id={server_id} \
-                 but connect failed: {err}"
-            )],
-        )),
+    // Only when the server is actually connected. This used to fire
+    // unconditionally, so an install whose connect failed announced
+    // `McpServerConnected { tool_count: 0 }` to every subscriber — the same
+    // false claim the `status` field now avoids making to the caller (#6110).
+    // A connected server with zero tools still publishes: `connected` is read
+    // from `ServerStatus`, never from the tool count.
+    if connected {
+        BUS.publish(DomainEvent::McpServerConnected {
+            server_id: server_id.clone(),
+            tool_count,
+        });
     }
-}
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn parse_ref_map(raw: HashMap<String, String>) -> Result<HashMap<String, SecretRef>, String> {
-    let mut out = HashMap::with_capacity(raw.len());
-    for (k, v) in raw {
-        let r = SecretRef::parse(&v)
-            .ok_or_else(|| format!("env_refs[{k}] is not a valid secret ref"))?;
-        out.insert(k, r);
-    }
-    Ok(out)
-}
-
-/// Best-effort scan of a Smithery `config_schema` for required env keys.
-/// Mirrors the legacy helper in `ops.rs` so the setup agent does not
-/// depend on its private wiring.
-pub(crate) fn collect_required_env_keys(
-    detail: &super::types::SmitheryServerDetail,
-) -> Vec<String> {
-    // Derive required inputs from the connection the install will actually use,
-    // not from every connection. Hosted HTTP-remote is now preferred over a
-    // local stdio package (see `pick_connection`), so a server that offers both
-    // must not demand the stdio package's env vars for an install that connects
-    // over HTTP and never consumes them. `config_schema.properties` carries the
-    // stdio env vars or the HTTP remote's headers depending on the picked
-    // transport, so reading the picked connection covers both.
-    let Some(conn) = pick_connection(&detail.connections) else {
-        return Vec::new();
+    let log = if connected {
+        format!("installed and connected server_id={server_id} tools={tool_count}")
+    } else {
+        format!(
+            "installed server_id={server_id}, but connecting did not succeed: {}",
+            error.as_deref().unwrap_or("no reason reported")
+        )
     };
-    let mut keys = Vec::new();
-    if let Some(props) = conn
-        .config_schema
-        .as_ref()
-        .and_then(|schema| schema.get("properties"))
-        .and_then(Value::as_object)
-    {
-        for k in props.keys() {
-            if !keys.contains(k) {
-                keys.push(k.clone());
-            }
-        }
-    }
-    keys
-}
-
-// Compile-time anchor so a missing CommandKind import surfaces here, not
-// at the call site.
-#[allow(dead_code)]
-const _: Option<CommandKind> = None;
-
-/// Choose the best [`SmitheryConnection`] from a registry detail response.
-///
-/// Preference order — **hosted remote first**:
-/// 1. **Published `http_remote`** — the hosted endpoint. Connecting here avoids
-///    spawning a local subprocess (no node/uvx runtime, no package resolution,
-///    no broken-package failures) and routes auth to the server's OAuth/token
-///    challenge, which is far more likely to succeed than a local spawn.
-/// 2. **Any `http_remote`** (even unpublished).
-/// 3. **Published `stdio`** — local subprocess fallback for servers with no
-///    hosted endpoint.
-/// 4. **Any `stdio`**.
-/// 5. `None` — nothing dialable.
-///
-/// Rationale: most registry servers expose both a stdio package and a hosted
-/// remote. Preferring stdio meant the local subprocess had to spawn and find
-/// its runtime + credentials, which fails for the majority of community
-/// servers. Preferring the hosted remote eliminates that failure class. The
-/// trade-off is that data flows to the hosted endpoint and a network is
-/// required — a deliberate choice favouring "it connects" over local-first.
-pub(super) fn pick_connection(connections: &[SmitheryConnection]) -> Option<&SmitheryConnection> {
-    // Treat the canonical wire names ("stdio", "http") AND the persisted
-    // dispatch kinds ("http_remote") as equivalent — registry payloads
-    // historically use "http" while our `Transport` discriminator uses
-    // "http_remote". `transport_kind` normalises that mapping.
-    let http_pub = connections
-        .iter()
-        .find(|c| c.transport_kind() == "http_remote" && c.published);
-    if http_pub.is_some() {
-        return http_pub;
-    }
-    let http_any = connections
-        .iter()
-        .find(|c| c.transport_kind() == "http_remote");
-    if http_any.is_some() {
-        return http_any;
-    }
-    let stdio_pub = connections
-        .iter()
-        .find(|c| c.transport_kind() == "stdio" && c.published);
-    if stdio_pub.is_some() {
-        return stdio_pub;
-    }
-    connections.iter().find(|c| c.transport_kind() == "stdio")
-}
-
-/// Resolve the persisted [`Transport`] + launch command for an install from the
-/// connection the picker selected. Stdio installs populate `command`/`args`;
-/// HTTP-remote installs leave them empty and stash the deployment URL in the
-/// `Transport`. Shared by the setup-agent path
-/// ([`mcp_setup_install_and_connect`]) and the manual install dialog path
-/// ([`super::ops::mcp_clients_install`]) so both transports behave identically
-/// (issue #3039 gap A2).
-pub(super) fn build_install_transport(
-    qualified_name: &str,
-    picked: &SmitheryConnection,
-) -> Result<(Transport, CommandKind, String, Vec<String>), String> {
-    match picked.transport_kind() {
-        "http_remote" => {
-            let url = picked.deployment_url.clone().unwrap_or_default();
-            if url.is_empty() {
-                return Err(format!(
-                    "server `{qualified_name}` http_remote connection has empty deployment_url"
-                ));
-            }
-            Ok((
-                Transport::HttpRemote { url },
-                CommandKind::Node, // unused for HTTP, but a sensible default
-                String::new(),
-                Vec::new(),
-            ))
-        }
-        _ => {
-            let (kind, command, args) = resolve_command(qualified_name, Some(picked));
-            Ok((Transport::Stdio, kind, command, args))
-        }
-    }
-}
-
-/// Normalise a [`SmitheryConnection::r#type`] string into the same vocabulary
-/// the persisted [`Transport`] enum uses. The registry side uses `"http"`
-/// in its DTOs; we route those into the `"http_remote"` install path.
-pub(super) trait ConnectionKind {
-    fn transport_kind(&self) -> &str;
-}
-
-impl ConnectionKind for SmitheryConnection {
-    fn transport_kind(&self) -> &str {
-        match self.r#type.as_str() {
-            "stdio" => "stdio",
-            "http" | "http_remote" | "sse" => "http_remote",
-            other => other,
-        }
-    }
+    Ok(RpcOutcome::new(
+        install_and_connect_payload(&server_id, &qualified_name, status, error, tools),
+        vec![log],
+    ))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn conn(kind: &str, published: bool, url: Option<&str>) -> SmitheryConnection {
-        SmitheryConnection {
-            r#type: kind.to_string(),
-            deployment_url: url.map(String::from),
-            config_schema: None,
-            example_config: None,
-            published,
-            extra: std::collections::HashMap::new(),
-        }
-    }
-
-    /// Hosted remote wins when both transports are offered — connecting to the
-    /// endpoint avoids the local-spawn failure class that broke most servers.
-    #[test]
-    fn pick_connection_prefers_http_over_stdio() {
-        let conns = vec![
-            conn("stdio", true, None),
-            conn("http", true, Some("https://x.io/mcp")),
-        ];
-        let picked = pick_connection(&conns).expect("http_remote should be picked");
-        assert_eq!(picked.transport_kind(), "http_remote");
-    }
-
-    /// Even an *unpublished* hosted remote beats a published stdio package —
-    /// the hosted endpoint is still preferred over spawning locally.
-    #[test]
-    fn pick_connection_prefers_unpublished_http_over_published_stdio() {
-        let conns = vec![
-            conn("stdio", true, None),
-            conn("http", false, Some("https://x.io/mcp")),
-        ];
-        let picked = pick_connection(&conns).expect("http_remote should be picked");
-        assert_eq!(picked.transport_kind(), "http_remote");
-    }
-
-    /// Published http beats unpublished http.
-    #[test]
-    fn pick_connection_prefers_published_http_first() {
-        let conns = vec![
-            conn("http", false, Some("https://any.io/mcp")),
-            conn("http", true, Some("https://pub.io/mcp")),
-        ];
-        let picked = pick_connection(&conns).expect("published http should win");
-        assert!(picked.published);
-        assert_eq!(picked.deployment_url.as_deref(), Some("https://pub.io/mcp"));
-    }
-
-    /// With no hosted remote, stdio is the fallback — published stdio first.
-    #[test]
-    fn pick_connection_falls_back_to_stdio_when_no_http() {
-        let conns = vec![conn("stdio", false, None), conn("stdio", true, None)];
-        let picked = pick_connection(&conns).expect("published stdio should win");
-        assert_eq!(picked.transport_kind(), "stdio");
-        assert!(picked.published);
-    }
-
-    /// When the server is HTTP-remote-only (the Smithery-typical case),
-    /// the picker returns the HTTP-remote connection instead of `None` —
-    /// this is the core gap the PR closes.
-    #[test]
-    fn pick_connection_falls_back_to_http_remote_when_no_stdio() {
-        let conns = vec![conn("http", true, Some("https://x.io/mcp"))];
-        let picked = pick_connection(&conns).expect("http_remote fallback");
-        assert_eq!(picked.transport_kind(), "http_remote");
-        assert_eq!(picked.deployment_url.as_deref(), Some("https://x.io/mcp"));
-    }
-
-    /// Smithery DTOs use `"http"`, our `Transport` discriminator uses
-    /// `"http_remote"`. Normalisation pins both as the same install path.
-    #[test]
-    fn connection_kind_normalises_http_variants() {
-        assert_eq!(conn("http", true, None).transport_kind(), "http_remote");
-        assert_eq!(
-            conn("http_remote", true, None).transport_kind(),
-            "http_remote"
-        );
-        assert_eq!(conn("sse", true, None).transport_kind(), "http_remote");
-        assert_eq!(conn("stdio", true, None).transport_kind(), "stdio");
-        // Unknown kinds fall through untouched so the picker can ignore them.
-        assert_eq!(conn("ws", true, None).transport_kind(), "ws");
-    }
-
-    /// No dialable connection → picker returns None so callers can return
-    /// a clean error instead of dialing garbage.
-    #[test]
-    fn pick_connection_returns_none_for_only_unknown_kinds() {
-        let conns = vec![conn("websocket-future", true, None)];
-        assert!(pick_connection(&conns).is_none());
-    }
-
-    /// `build_install_transport` turns a picked stdio connection into a
-    /// `Transport::Stdio` with a resolved launch command (npx default when the
-    /// example_config has no command). Shared by both install paths (gap A2).
-    #[test]
-    fn build_install_transport_stdio_resolves_command() {
-        let picked = conn("stdio", true, None);
-        let (transport, _kind, command, args) =
-            build_install_transport("@scope/echo", &picked).expect("stdio install resolves");
-        assert_eq!(transport, Transport::Stdio);
-        assert_eq!(command, "npx");
-        assert_eq!(args, vec!["-y".to_string(), "@scope/echo".to_string()]);
-    }
-
-    /// A picked http_remote connection becomes `Transport::HttpRemote { url }`
-    /// with empty command/args — the manual install dialog can now install
-    /// Smithery's HTTP-only listings (gap A2).
-    #[test]
-    fn build_install_transport_http_remote_uses_deployment_url() {
-        let picked = conn("http", true, Some("https://x.io/mcp"));
-        let (transport, _kind, command, args) =
-            build_install_transport("io.x/remote", &picked).expect("http install resolves");
-        assert_eq!(
-            transport,
-            Transport::HttpRemote {
-                url: "https://x.io/mcp".to_string()
-            }
-        );
-        assert!(command.is_empty());
-        assert!(args.is_empty());
-    }
-
-    /// An http_remote connection with no deployment URL is a hard error rather
-    /// than installing an undialable server.
-    #[test]
-    fn build_install_transport_http_remote_requires_url() {
-        let picked = conn("http", true, None);
-        let err = build_install_transport("io.x/remote", &picked)
-            .expect_err("missing deployment_url must error");
-        assert!(err.contains("deployment_url"), "got: {err}");
-    }
-
-    fn conn_schema(kind: &str, url: Option<&str>, props: &[&str]) -> SmitheryConnection {
-        let properties: serde_json::Map<String, Value> = props
-            .iter()
-            .map(|k| (k.to_string(), serde_json::json!({ "type": "string" })))
-            .collect();
-        SmitheryConnection {
-            r#type: kind.to_string(),
-            deployment_url: url.map(String::from),
-            config_schema: Some(serde_json::json!({ "properties": properties })),
-            example_config: None,
-            published: true,
-            extra: std::collections::HashMap::new(),
-        }
-    }
-
-    fn detail_with(conns: Vec<SmitheryConnection>) -> super::super::types::SmitheryServerDetail {
-        super::super::types::SmitheryServerDetail {
-            qualified_name: "@t/s".to_string(),
-            display_name: "T".to_string(),
-            description: None,
-            icon_url: None,
-            connections: conns,
-            source: "smithery".to_string(),
-            extra: Default::default(),
-        }
-    }
-
-    /// Mixed-transport server: install prefers the hosted http connection, so the
-    /// required keys must be the http connection's headers — NOT the stdio
-    /// package's env vars the install will never consume.
-    #[test]
-    fn required_env_keys_uses_picked_http_connection_headers() {
-        let detail = detail_with(vec![
-            conn_schema("stdio", None, &["STDIO_KEY"]),
-            conn_schema("http", Some("https://x.io/mcp"), &["Authorization"]),
-        ]);
-        let keys = collect_required_env_keys(&detail);
-        assert_eq!(keys, vec!["Authorization".to_string()]);
-        assert!(!keys.contains(&"STDIO_KEY".to_string()));
-    }
-
-    /// Stdio-only server still surfaces its declared env vars.
-    #[test]
-    fn required_env_keys_stdio_only_returns_its_keys() {
-        let detail = detail_with(vec![conn_schema("stdio", None, &["API_KEY", "ENDPOINT"])]);
-        let keys = collect_required_env_keys(&detail);
-        assert!(keys.contains(&"API_KEY".to_string()));
-        assert!(keys.contains(&"ENDPOINT".to_string()));
-    }
-
-    /// A picked http connection with no declared schema needs no user input.
-    #[test]
-    fn required_env_keys_http_without_schema_is_empty() {
-        let detail = detail_with(vec![conn("http", true, Some("https://x.io/mcp"))]);
-        assert!(collect_required_env_keys(&detail).is_empty());
-    }
-
-    /// No dialable connection (only an unknown transport) → no keys, mirroring
-    /// the install path which would reject the server entirely.
-    #[test]
-    fn required_env_keys_empty_when_no_dialable_connection() {
-        let detail = detail_with(vec![conn("ws", true, Some("wss://x.io"))]);
-        assert!(collect_required_env_keys(&detail).is_empty());
-    }
-}
+#[path = "setup_ops_tests.rs"]
+mod tests;

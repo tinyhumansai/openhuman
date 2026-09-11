@@ -44,6 +44,8 @@ export interface EmbeddingsSettings {
   model: string;
   dimensions: number;
   rate_limit_per_min: number;
+  /** Last verified Custom profile, retained even while another provider is active. */
+  custom_settings?: { endpoint: string; model: string; dimensions: number } | null;
   providers: EmbeddingProviderEntry[];
   vector_search_enabled: boolean;
 }

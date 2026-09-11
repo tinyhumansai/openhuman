@@ -255,7 +255,7 @@ fn cache_probe_result_redacts_the_raw_sample_before_caching() {
 
 #[test]
 fn resolve_composio_action_scope_uses_the_curated_catalog_when_available() {
-    use crate::openhuman::memory::sync::composio::providers::ToolScope;
+    use crate::openhuman::integrations::composio::providers::ToolScope;
     // GITHUB_LIST_REPOSITORY_ISSUES is curated as Read (github/tools.rs).
     assert_eq!(
         resolve_composio_action_scope("GITHUB_LIST_REPOSITORY_ISSUES"),
@@ -285,7 +285,7 @@ fn resolve_composio_action_scope_rejects_an_uncurated_slug_on_a_cataloged_toolki
 
 #[test]
 fn resolve_composio_action_scope_falls_back_to_the_verb_heuristic_only_without_a_static_catalog() {
-    use crate::openhuman::memory::sync::composio::providers::ToolScope;
+    use crate::openhuman::integrations::composio::providers::ToolScope;
     assert_eq!(
         resolve_composio_action_scope("MADEUPTOOLKIT_LIST_THINGS"),
         Some(ToolScope::Read)

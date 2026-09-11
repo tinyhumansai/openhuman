@@ -28,24 +28,40 @@ pub(super) fn split_slug_model(s: &str) -> (&str, &str) {
 // Effective provider resolution
 // ---------------------------------------------------------------------------
 
+/// Routing strings that name "the hosted default" rather than a specific
+/// provider. Any of them defers to `voice_server.stt_engine`, so a user who
+/// picks an engine in Settings is not shadowed by the `"cloud"` value that
+/// `local_ai.stt_provider` has defaulted to since long before engines existed.
+fn defers_to_engine(provider: &str) -> bool {
+    matches!(
+        provider.trim().to_ascii_lowercase().as_str(),
+        "" | "cloud" | "openhuman" | "backend"
+    )
+}
+
 /// Resolve the effective STT provider string from config.
 ///
-/// Precedence: `config.stt_provider` → `config.local_ai.stt_provider` → `"cloud"`.
+/// Precedence: an explicit `config.stt_provider` → the legacy
+/// `config.local_ai.stt_provider` → `config.voice_server.stt_engine`. The first
+/// two only win when they name a *specific* provider (see [`defers_to_engine`]).
 pub fn effective_stt_provider(config: &Config) -> String {
-    config
-        .stt_provider
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            let legacy = config.local_ai.stt_provider.as_str();
-            if legacy.trim().is_empty() {
-                None
-            } else {
-                Some(legacy)
-            }
-        })
-        .unwrap_or("cloud")
-        .to_string()
+    let engine_default = config.voice_server.stt_engine.provider_string();
+
+    for candidate in [
+        config.stt_provider.as_deref().unwrap_or_default(),
+        config.local_ai.stt_provider.as_str(),
+    ] {
+        if !defers_to_engine(candidate) {
+            debug!("{LOG_PREFIX} effective_stt_provider using explicit routing string {candidate}");
+            return candidate.trim().to_string();
+        }
+    }
+
+    debug!(
+        "{LOG_PREFIX} effective_stt_provider resolved from stt_engine={:?} -> {engine_default}",
+        config.voice_server.stt_engine
+    );
+    engine_default.to_string()
 }
 
 /// Resolve the effective TTS provider string from config.

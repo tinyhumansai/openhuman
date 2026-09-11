@@ -105,7 +105,8 @@ Published from `ops.rs`: `DomainEvent::ComposioConnectionCreated` (authorize), `
 
 - `crate::openhuman::integrations` — shared `IntegrationClient` (Bearer JWT, timeouts, envelope parsing, proxy) backing backend-mode calls.
 - `crate::openhuman::config` — `Config` / `ComposioConfig` (`mode`, `entity_id`), `config::rpc` config loading.
-- `crate::openhuman::memory`, `memory_store`, `memory_tree` — memory client + chunk store/tree for ingestion and connection-scoped memory cleanup.
+- `crate::openhuman::memory` — the memory client used for ingestion and for reading a provider's sync state during cleanup-target discovery.
+- `crate::openhuman::memory::binding` — the workspace's bound memory driver. Connection-scoped cleanup deletes through `MemorySourceSink::forget_matching` (the `Source` / `SourcePrefix` / `Owner` selectors), not through the engine's chunk store (#5560). A driver that does not serve `Sources` is refused per target, and the refusal is reported beside `memory_chunks_deleted` rather than read as a delete of nothing.
 - `crate::openhuman::memory::sync::composio` — the actual home of providers, periodic sync, and bus subscribers (this module re-exports them via shims).
 - `crate::openhuman::agent::harness` — sandbox mode (`current_sandbox_mode` / `SandboxMode`) for tool gating.
 - `crate::openhuman::tools::traits` — `Tool`, `ToolResult`, `ToolCategory`, `PermissionLevel`, `ToolCallOptions`.
@@ -126,7 +127,7 @@ Published from `ops.rs`: `DomainEvent::ComposioConnectionCreated` (authorize), `
 - `src/openhuman/heartbeat/planner/collectors.rs`, `subconscious/situation_report` — read connected integrations / calendar.
 - `src/openhuman/agent/learning/{linkedin_enrichment,profile_md_renderer}.rs`, `memory/read_rpc.rs`, `memory_tree/score/store.rs` — profile/identity + memory consumers.
 - `src/openhuman/skills/preflight.rs` — identity gate via `connection_identity`.
-- `src/openhuman/security/credentials/ops.rs`, `channels/runtime/dispatch.rs`, `src/bin/slack_backfill.rs`.
+- `src/openhuman/security/credentials/ops.rs`, `channels/runtime/dispatch.rs`.
 
 ## Notes / gotchas
 

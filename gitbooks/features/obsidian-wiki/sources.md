@@ -12,45 +12,45 @@ A **memory source** is a configured connector that feeds the [Memory Tree](memor
 
 The domain only _defines connectors and reads from them_. The ingestion engine and sync scheduling live in `memory` / `memory_sync`; sources dispatch work to the right backend.
 
-***
+---
 
 ## Source kinds
 
 Every source is a single flat `MemorySourceEntry` (`src/openhuman/memory/sources/types.rs`) whose `kind` discriminator (the `SourceKind` enum) decides which fields are required. Validation is enforced at add/update time by `validate()`, not the type system. The kinds:
 
-| Kind             | `SourceKind`   | What it ingests                                                                              |
-| ---------------- | -------------- | -------------------------------------------------------------------------------------------- |
-| **Composio**     | `Composio`     | An OAuth-connected SaaS integration (Gmail, Slack, Notion, …); sync is provider-driven.     |
-| **Conversation** | `Conversation` | The agent's own conversation transcripts.                                                    |
-| **Folder**       | `Folder`       | A local directory, globbed (default `**/*.md`, 10 MB/file cap) with a path-traversal guard.  |
-| **GitHub repo**  | `GithubRepo`   | Project activity (commits, issues, PRs) via the `gh` CLI or a public REST fallback.          |
-| **RSS feed**     | `RssFeed`      | RSS/Atom feed items.                                                                         |
-| **Web page**     | `WebPage`      | A fetched web page, optionally narrowed by a CSS `selector`.                                 |
-| **Twitter query**| `TwitterQuery` | A saved Twitter query. The reader is scaffolded; sync is intentionally unimplemented pending creds. |
+| Kind              | `SourceKind`   | What it ingests                                                                                     |
+| ----------------- | -------------- | --------------------------------------------------------------------------------------------------- |
+| **Composio**      | `Composio`     | An OAuth-connected SaaS integration (Gmail, Slack, Notion, …); sync is provider-driven.             |
+| **Conversation**  | `Conversation` | The agent's own conversation transcripts.                                                           |
+| **Folder**        | `Folder`       | A local directory, globbed (default `**/*.md`, 10 MB/file cap) with a path-traversal guard.         |
+| **GitHub repo**   | `GithubRepo`   | Project activity (commits, issues, PRs) via the `gh` CLI or a public REST fallback.                 |
+| **RSS feed**      | `RssFeed`      | RSS/Atom feed items.                                                                                |
+| **Web page**      | `WebPage`      | A fetched web page, optionally narrowed by a CSS `selector`.                                        |
+| **Twitter query** | `TwitterQuery` | A saved Twitter query. The reader is scaffolded; sync is intentionally unimplemented pending creds. |
 
 Each entry also carries optional per-sync budgets (`max_tokens_per_sync`, `max_cost_per_sync_usd`, `sync_depth_days`) so a chatty source can't blow up your token spend on one run.
 
-***
+---
 
 ## Adding and configuring sources
 
 Sources are CRUD-ed through the `memory_sources` controllers (`src/openhuman/memory/sources/schemas.rs` → `rpc.rs`), namespace `openhuman.memory_sources_*`:
 
-| RPC           | Purpose                                                             |
-| ------------- | ------------------------------------------------------------------ |
-| `list`        | List configured sources (lazily reconciles Composio first).        |
-| `get`         | Fetch one source by `id`.                                          |
-| `add`         | Add a source; kind-specific fields are flat on the request.        |
-| `update`      | Partial update via `MemorySourcePatch`.                           |
-| `remove`      | Delete a source by `id`.                                          |
-| `list_items`  | List readable items from a source via its reader.                  |
-| `read_item`   | Read one item's content.                                          |
-| `sync`        | Queue a manual sync (returns immediately; progress via events).    |
-| `status_list` | Per-source sync status.                                            |
+| RPC           | Purpose                                                         |
+| ------------- | --------------------------------------------------------------- |
+| `list`        | List configured sources (lazily reconciles Composio first).     |
+| `get`         | Fetch one source by `id`.                                       |
+| `add`         | Add a source; kind-specific fields are flat on the request.     |
+| `update`      | Partial update via `MemorySourcePatch`.                         |
+| `remove`      | Delete a source by `id`.                                        |
+| `list_items`  | List readable items from a source via its reader.               |
+| `read_item`   | Read one item's content.                                        |
+| `sync`        | Queue a manual sync (returns immediately; progress via events). |
+| `status_list` | Per-source sync status.                                         |
 
 All mutations reload the live `Config`, apply the change, and `config.save()` atomically (`registry.rs`). In the desktop app these surface in the Intelligence / Memory tab alongside the [Auto-fetch](auto-fetch.md) cadence.
 
-***
+---
 
 ## The reader abstraction
 
@@ -67,7 +67,7 @@ pub trait SourceReader: Send + Sync {
 
 A `reader_for(kind)` dispatcher hands back the right implementation (`FolderReader`, `GithubReader`, `RssReader`, `WebPageReader`, etc.). On a manual `sync`, reader-backed kinds walk `list_items` and ingest each item through `memory::ingest_pipeline::ingest_document` (`sync.rs`); Composio sources delegate wholesale to `memory_sync::composio::run_connection_sync` rather than reading item-by-item, so `ComposioReader::read_item` is an explanatory placeholder.
 
-***
+---
 
 ## Sync status & freshness
 
@@ -81,7 +81,7 @@ Sync progress streams as `MemorySyncStageChanged` events (Requested → Fetching
 
 **Composio auto-upsert.** When an OAuth connection is created, `memory_sync::composio::bus` calls `upsert_composio_source`, so freshly-connected integrations appear as sources with no restart. `list_rpc` also performs a lazy reconciliation (`reconcile::ensure_composio_sources`) on every list, catching connections made before this hook existed.
 
-***
+---
 
 ## Source scoping for agent profiles
 
@@ -99,7 +99,7 @@ The gate is **tag-discriminated and fail-open** for everything that is not a mem
 
 So tightening a profile's scope hides its connected sources without ever starving it of its own conversation context.
 
-***
+---
 
 ## See also
 

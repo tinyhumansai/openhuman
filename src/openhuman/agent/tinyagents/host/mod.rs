@@ -1,7 +1,7 @@
 //! OpenHuman's implementations of the TinyAgents host capability traits.
 //!
 //! Each module here adapts one crate trait
-//! ([`tinyagents::harness::host`]) onto the OpenHuman domains that actually
+//! ([`tinyagents_harness::host`]) onto the OpenHuman domains that actually
 //! provide the behaviour. This is `docs/specs/plan-agents.md` **Phase 4**: the
 //! agent runtime stops reaching into 45 domains directly and instead asks ten
 //! capabilities, each of which is implemented here.

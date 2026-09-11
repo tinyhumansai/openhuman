@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
@@ -83,8 +84,10 @@ describe('ObsidianVaultSection', () => {
   });
 
   // #4266: as a floating popover the panel overlays the graph, so its background
-  // must be opaque — the old translucent `dark:bg-violet-500/10` let content
-  // bleed through and made the text unreadable.
+  // must be opaque — the old translucent `dark:bg-*-500/10` let content bleed
+  // through and made the text unreadable. (The panel moved from the stock
+  // violet ramp to the themeable `primary` one; the opacity contract is
+  // unchanged.)
   it('guidance panel has an opaque background (does not bleed through)', async () => {
     memoryTreeObsidianVaultStatus.mockResolvedValue(status());
     renderWithProviders(<ObsidianVaultSection contentRootAbs={ROOT} />);
@@ -92,9 +95,9 @@ describe('ObsidianVaultSection', () => {
     fireEvent.click(screen.getByTestId('memory-open-in-obsidian'));
 
     const panel = await screen.findByTestId('obsidian-vault-guidance');
-    expect(panel).toHaveClass('bg-violet-50');
-    expect(panel).toHaveClass('dark:bg-violet-950');
-    expect(panel).not.toHaveClass('dark:bg-violet-500/10');
+    expect(panel).toHaveClass('bg-primary-50');
+    expect(panel).toHaveClass('dark:bg-primary-950');
+    expect(panel).not.toHaveClass('dark:bg-primary-500/10');
   });
 
   // #4266: the floating panel needs explicit dismissal — close button, Escape,
@@ -126,7 +129,14 @@ describe('ObsidianVaultSection', () => {
 
     fireEvent.click(screen.getByTestId('memory-open-in-obsidian'));
     await screen.findByTestId('obsidian-vault-guidance');
-    fireEvent.mouseDown(document.body);
+    // Radix's dismissable layer listens for `pointerdown`, not `mousedown` —
+    // `userEvent.click` drives the full native pointerdown/pointerup/click
+    // sequence (and, unlike a bare `fireEvent.pointerDown`, waits out Radix's
+    // internal `setTimeout(0)` that defers attaching the outside-pointerdown
+    // listener — otherwise a synchronous dispatch fires before Radix is
+    // listening at all).
+    const user = userEvent.setup();
+    await user.click(document.body);
 
     await waitFor(() => expect(screen.queryByTestId('obsidian-vault-guidance')).toBeNull());
   });

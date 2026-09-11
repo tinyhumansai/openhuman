@@ -56,7 +56,7 @@ jobs:
           node-version: 24.x
       - name: Install Rust (rust-toolchain.toml)
         if: steps.gate.outputs.present == 'true'
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
       - name: Install system dependencies (CEF + Xvfb)
         if: steps.gate.outputs.present == 'true'
         run: |

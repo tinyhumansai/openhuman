@@ -1,28 +1,27 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, useLocation } from 'react-router-dom';
+import { Navigate, Route } from 'react-router-dom';
 
+import ForwardSearch from '../routing/ForwardSearch';
 import SettingsIndexRedirect from './layout/SettingsIndexRedirect';
 import AboutPanel from './panels/AboutPanel';
 import AccountPanel from './panels/AccountPanel';
 import AgentAccessPanel from './panels/AgentAccessPanel';
 import AgentActivityPanel from './panels/AgentActivityPanel';
-import AgentBoxPanel from './panels/AgentBoxPanel';
 import AgentEditorPage from './panels/AgentEditorPage';
 import AgentsPanel from './panels/AgentsPanel';
 import AppearancePanel from './panels/AppearancePanel';
 import ApprovalHistoryPanel from './panels/ApprovalHistoryPanel';
 import BillingPanel from './panels/BillingPanel';
 import CoreConnectionPanel from './panels/CoreConnectionPanel';
-import CronJobsPanel from './panels/CronJobsPanel';
 import DeveloperOptionsPanel from './panels/DeveloperOptionsPanel';
 import DevicesPanel from './panels/DevicesPanel';
 import EventLogPanel from './panels/EventLogPanel';
-import KeyboardShortcutsPanel from './panels/KeyboardShortcutsPanel';
+import FeedbackPanel from './panels/FeedbackPanel';
 import McpServerPanel from './panels/McpServerPanel';
 import MemoryDataPanel from './panels/MemoryDataPanel';
 import MemoryDebugPanel from './panels/MemoryDebugPanel';
 import MigrationPanel from './panels/MigrationPanel';
-import NotificationsTabbedPanel from './panels/NotificationsTabbedPanel';
+import NotificationsPanel from './panels/NotificationsPanel';
 import PermissionsPanel from './panels/PermissionsPanel';
 import PersonalityPanel from './panels/PersonalityPanel';
 import PrivacyPanel from './panels/PrivacyPanel';
@@ -31,20 +30,14 @@ import ProfilesPanel from './panels/ProfilesPanel';
 import RecoveryPhrasePanel from './panels/RecoveryPhrasePanel';
 import SandboxSettingsPanel from './panels/SandboxSettingsPanel';
 import SecurityPanel from './panels/SecurityPanel';
-import TeamInvitesPanel from './panels/TeamInvitesPanel';
-import TeamManagementPanel from './panels/TeamManagementPanel';
-import TeamMembersPanel from './panels/TeamMembersPanel';
-import TeamPanel from './panels/TeamPanel';
-import ThemeStudioPanel from './panels/ThemeStudioPanel';
 import ToolPolicyDiagnosticsPanel from './panels/ToolPolicyDiagnosticsPanel';
 import ToolsPanel from './panels/ToolsPanel';
 import WorkflowRunnerPanel from './panels/WorkflowRunnerPanel';
 
 /**
  * Single vertical-scroll wrapper for a settings panel. The surrounding card
- * (bg / border / rounding) is provided by the host — `SettingsLayout`'s content
- * pane on iOS, or `SettingsModalLayout`'s right column on desktop — so panels
- * sit directly on it. PanelScaffold-based panels are `h-full` and own their own
+ * (bg / border / rounding) is provided by `SettingsLayout`'s content pane — so
+ * panels sit directly on it. PanelScaffold-based panels are `h-full` and own their own
  * internal scroll; legacy panels that overflow scroll here. Either way there's
  * exactly one scrollbar.
  */
@@ -57,25 +50,21 @@ const wrapSettingsPage = (element: ReactNode) => (
 );
 
 /**
- * Redirect that stays *within* `/settings/*` while preserving nav state — most
- * importantly the desktop modal's `backgroundLocation`, so a legacy-slug hop
- * inside the modal keeps its backdrop instead of falling back to the default
- * page. Use this for in-settings redirects only; external redirects (`/brain`,
- * `/connections`) intentionally exit the modal and keep a plain `<Navigate>`.
+ * Redirect that stays *within* `/settings/*`. A thin alias for `<Navigate>`,
+ * kept because it names the intent at ~10 call sites: these hops land on
+ * another settings panel, while the external ones (`/brain`, `/connections`)
+ * deliberately leave the settings tree.
  */
-const SettingsRedirect = ({ to }: { to: string }) => {
-  const location = useLocation();
-  return <Navigate to={to} replace state={location.state} />;
-};
+const SettingsRedirect = ({ to }: { to: string }) => <Navigate to={to} replace />;
 
 /**
  * The full settings route table — index, every panel, and every legacy-slug
  * redirect. Returned as a fragment of `<Route>` elements (via a function call,
- * not a nested component) so it can be embedded directly inside a `<Routes>` in
- * both hosts:
+ * not a nested component) so it can be embedded directly inside a `<Routes>`:
  *
- *   - Desktop modal: `<Routes>{settingsRouteElements()}</Routes>`
- *   - iOS full page:  `<Routes><Route element={<SettingsLayout/>}>{settingsRouteElements()}</Route></Routes>`
+ *   `<Routes><Route element={<SettingsLayout/>}>{settingsRouteElements()}</Route></Routes>`
+ *
+ * Desktop and iOS both mount it that way through `pages/Settings.tsx`.
  *
  * Retired slugs are kept as redirects so deep links keep working.
  */
@@ -86,21 +75,26 @@ export function settingsRouteElements(): ReactNode {
 
       {/* ── General ─────────────────────────────────────────────── */}
       <Route path="account" element={wrapSettingsPage(<AccountPanel />)} />
-      <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
-      <Route path="team/manage/:teamId" element={wrapSettingsPage(<TeamManagementPanel />)} />
-      <Route path="team/manage/:teamId/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
-      <Route path="team/manage/:teamId/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
-      <Route path="team/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
-      <Route path="team/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
+      {/* Teams were removed from the product. The slugs stay as redirects so
+          existing deep links land on Account rather than reaching the settings
+          index via the catch-all. */}
+      <Route path="team" element={<SettingsRedirect to="/settings/account" />} />
+      <Route path="team/*" element={<SettingsRedirect to="/settings/account" />} />
       <Route path="billing" element={wrapSettingsPage(<BillingPanel />)} />
       <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
       <Route path="security" element={wrapSettingsPage(<SecurityPanel />)} />
       <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
       <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
-      <Route path="theme" element={wrapSettingsPage(<ThemeStudioPanel />)} />
-      <Route path="notifications" element={wrapSettingsPage(<NotificationsTabbedPanel />)} />
+      {/* Theme studio merged into Appearance — one page for one subject. */}
+      <Route path="theme" element={<SettingsRedirect to="/settings/appearance" />} />
+      <Route path="notifications" element={wrapSettingsPage(<NotificationsPanel />)} />
       {/* Real device-pairing panel (replaces the old "Coming Soon" stub). */}
       <Route path="devices" element={wrapSettingsPage(<DevicesPanel />)} />
+      {/* Feedback was its own top-level route reached from a sidebar-header
+          icon. That icon is the command-palette trigger now, which left the
+          page with no way in, so the board lives here as a General panel. The
+          old `/feedback` path redirects (see `AppRoutes`). */}
+      <Route path="feedback" element={wrapSettingsPage(<FeedbackPanel />)} />
 
       {/* ── Assistant ───────────────────────────────────────────── */}
       {/* LLM / Voice / Embeddings moved to the Connections page. */}
@@ -133,17 +127,18 @@ export function settingsRouteElements(): ReactNode {
       {/* ── Connections ─────────────────────────────────────────── */}
       {/* The Integrations settings section was retired; the composio/OAuth grid
           lives on the Connections page. */}
-      <Route path="integrations" element={<Navigate to="/connections" replace />} />
+      <Route path="integrations" element={<ForwardSearch to="/connections" />} />
       <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
-      <Route path="companion" element={<Navigate to="/connections?tab=companion" replace />} />
-      {/* Meeting settings moved to the Connections page (meetings tab). */}
-      <Route path="meetings" element={<Navigate to="/connections?tab=meetings" replace />} />
 
       {/* ── System ──────────────────────────────────────────────── */}
       {/* Core connection — promotes cloud-mode remote-core config into a
           first-class setting with a live status indicator (GH-4396). */}
       <Route path="core" element={wrapSettingsPage(<CoreConnectionPanel />)} />
-      <Route path="keyboard-shortcuts" element={wrapSettingsPage(<KeyboardShortcutsPanel />)} />
+      {/* Keyboard shortcuts is no longer a settings page — the in-app overlay
+          (mod+/ or the sidebar's keyboard icon, `meta.keyboard-shortcuts`) is
+          the one surface. The slug redirects so old links do not fall through
+          to the settings index. */}
+      <Route path="keyboard-shortcuts" element={<SettingsRedirect to="/settings/account" />} />
       <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
       {/* Token savings merged into the Usage & limits surface on Connections. */}
       <Route path="token-usage" element={<Navigate to="/connections?tab=usage#tokens" replace />} />
@@ -154,19 +149,17 @@ export function settingsRouteElements(): ReactNode {
         path="tool-policy-diagnostics"
         element={wrapSettingsPage(<ToolPolicyDiagnosticsPanel />)}
       />
-      <Route path="agentbox" element={wrapSettingsPage(<AgentBoxPanel />)} />
       <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
       {/* Search engine settings moved to the Connections page. */}
       <Route path="search" element={<Navigate to="/connections?tab=search" replace />} />
-      {/* Agent Chat debug tester moved to the Connections page. */}
-      {/* Agent Chat is a chip on the Connections → LLM page. */}
-      <Route
-        path="agent-chat"
-        element={<Navigate to="/connections?tab=llm#agent-chat" replace />}
-      />
-      <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
-      {/* Tasks now live on Brain's Orchestration Kanban board. */}
-      <Route path="tasks" element={<Navigate to="/brain?tab=orchestration&ov=tasks" replace />} />
+      {/* Agent Chat debug tester retired — the panel is deleted. The slug is
+          kept as a redirect so an old deep link lands on the LLM page rather
+          than the settings index via the catch-all. */}
+      <Route path="agent-chat" element={<Navigate to="/connections?tab=llm" replace />} />
+      {/* Schedules live on the Workflows page now (`/flows?view=schedules`). */}
+      <Route path="cron-jobs" element={<Navigate to="/flows?view=schedules" replace />} />
+      {/* Tasks are represented by goals on the Brain page. */}
+      <Route path="tasks" element={<Navigate to="/brain?tab=goals" replace />} />
       {/* Workflows is a first-level module now — /settings/automations bounces
           to /flows (the Workflows page). */}
       <Route path="automations" element={<Navigate to="/flows" replace />} />
@@ -175,11 +168,9 @@ export function settingsRouteElements(): ReactNode {
       <Route path="skills-runner" element={wrapSettingsPage(<WorkflowRunnerPanel />)} />
       {/* Voice Debug page retired. */}
       <Route path="voice-debug" element={<SettingsRedirect to="/settings/developer-options" />} />
-      {/* Local Model Debug is a chip on the Connections → LLM page. */}
-      <Route
-        path="local-model-debug"
-        element={<Navigate to="/connections?tab=llm#local-model" replace />}
-      />
+      {/* Local Model Debug retired — the panel is deleted. Redirect kept for
+          the same reason as agent-chat above. */}
+      <Route path="local-model-debug" element={<Navigate to="/connections?tab=llm" replace />} />
       {/* Webhooks were retired from the UI — bounce old debug/trigger deep
           links to the Connections page. */}
       <Route path="webhooks-debug" element={<Navigate to="/connections" replace />} />
@@ -230,9 +221,10 @@ export function settingsRouteElements(): ReactNode {
       />
       <Route path="webhooks-triggers" element={<Navigate to="/connections" replace />} />
       {/* Notification routing tab */}
+      {/* The routing tab was removed; land on the notifications page itself. */}
       <Route
         path="notification-routing"
-        element={<SettingsRedirect to="/settings/notifications#routing" />}
+        element={<SettingsRedirect to="/settings/notifications" />}
       />
       {/* Fallback */}
       <Route path="*" element={<SettingsRedirect to="/settings" />} />

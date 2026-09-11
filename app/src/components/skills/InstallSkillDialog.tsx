@@ -30,7 +30,6 @@
  */
 import debug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { trackEvent } from '../../services/analytics';
@@ -39,9 +38,12 @@ import {
   skillsApi,
   type WorkflowSummary,
 } from '../../services/api/skillsApi';
+import { ModalShell, Spinner, TextField } from '../ui';
 import Button from '../ui/Button';
 
 const log = debug('skills:install-dialog');
+
+const INSTALL_FORM_ID = 'install-skill-form';
 
 interface Props {
   onClose: () => void;
@@ -155,7 +157,6 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
   const [result, setResult] = useState<InstallWorkflowFromUrlResult | null>(null);
 
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const urlValid = useMemo(() => isLikelyValidUrl(url), [url]);
   const timeoutValid = useMemo(() => {
@@ -166,28 +167,15 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
   const formValid = urlValid && timeoutValid && !submitting && !result;
 
   useEffect(() => {
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
     const raf = window.requestAnimationFrame(() => {
       firstFieldRef.current?.focus();
     });
     log('mount');
     return () => {
       window.cancelAnimationFrame(raf);
-      previousFocusRef.current?.focus?.();
       log('unmount');
     };
   }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !submitting) {
-        log('escape-key close');
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose, submitting]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -225,73 +213,39 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
     [formValid, onInstalled, timeoutSecs, url]
   );
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={e => {
-        if (e.target === e.currentTarget && !submitting) {
-          log('backdrop-click close');
-          onClose();
-        }
-      }}>
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 animate-fade-in bg-black/50 backdrop-blur-sm"
-        onClick={() => {
-          if (!submitting) {
-            log('backdrop-direct close');
-            onClose();
-          }
-        }}
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="install-skill-title"
-        className="relative w-full max-w-[560px] animate-fade-in rounded-2xl bg-surface shadow-2xl">
-        <form onSubmit={handleSubmit}>
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3 border-b border-line-subtle px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <h2
-                id="install-skill-title"
-                className="font-sans text-base font-semibold text-content">
-                {t('skills.install.title')}
-              </h2>
-              <p className="mt-0.5 text-xs text-content-muted">
-                {t('skills.install.subtitlePrefix')} <code className="font-mono">SKILL.md</code>{' '}
-                {t('skills.install.subtitleMiddle')}{' '}
-                <code className="font-mono">.openhuman/skills/</code>.{' '}
-                {t('skills.install.subtitleSuffix')}
-              </p>
-            </div>
-            <Button
-              iconOnly
-              variant="tertiary"
-              size="md"
-              onClick={() => {
-                if (!submitting) {
-                  log('close-button');
-                  onClose();
-                }
-              }}
-              disabled={submitting}
-              aria-label={t('common.close')}
-              className="h-8 w-8 flex-shrink-0 text-content-faint">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+  return (
+    <ModalShell
+      onClose={() => {
+        if (submitting) return;
+        log('close-request');
+        onClose();
+      }}
+      title={t('skills.install.title')}
+      titleId="install-skill-title"
+      subtitle={
+        <>
+          {t('skills.install.subtitlePrefix')} <code className="font-mono">SKILL.md</code>{' '}
+          {t('skills.install.subtitleMiddle')}{' '}
+          <code className="font-mono">.openhuman/skills/</code>.{' '}
+          {t('skills.install.subtitleSuffix')}
+        </>
+      }
+      maxWidthClassName="max-w-[560px]"
+      contentClassName="max-h-[70vh] overflow-y-auto px-5 py-4"
+      closePolicy={submitting ? { escape: false, backdrop: false, button: false } : undefined}
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="tertiary" onClick={onClose} disabled={submitting}>
+            {result ? t('common.finish') : t('common.cancel')}
+          </Button>
+          {result ? null : (
+            <Button type="submit" form={INSTALL_FORM_ID} variant="primary" disabled={!formValid}>
+              {submitting ? t('skills.install.installing') : t('skills.install.installBtn')}
             </Button>
-          </div>
-
-          {/* Body */}
-          <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+          )}
+        </div>
+      }>
+      <form id={INSTALL_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
             {/* URL */}
             <div>
               <label
@@ -300,10 +254,11 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 {t('skills.install.urlLabel')}
                 <span className="text-coral-500"> *</span>
               </label>
-              <input
+              <TextField
                 id="install-skill-url"
                 ref={firstFieldRef}
                 type="url"
+                mono
                 inputMode="url"
                 autoComplete="off"
                 value={url}
@@ -311,7 +266,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 disabled={submitting || result !== null}
                 required
                 maxLength={2048}
-                className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm text-content shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-surface-muted dark:disabled:bg-surface-muted/60 disabled:text-content-muted dark:text-content-muted"
+                className="mt-1 shadow-xs disabled:text-content-muted"
                 placeholder={t('skills.install.urlPlaceholder')}
               />
               {url.trim() && !urlValid ? (
@@ -340,7 +295,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                   {t('skills.install.timeoutHint')}
                 </span>
               </label>
-              <input
+              <TextField
                 id="install-skill-timeout"
                 type="number"
                 inputMode="numeric"
@@ -349,7 +304,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 value={timeoutSecs}
                 onChange={e => setTimeoutSecs(e.target.value)}
                 disabled={submitting || result !== null}
-                className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-surface-muted dark:disabled:bg-surface-muted/60 disabled:text-content-muted dark:text-content-muted"
+                className="mt-1 shadow-xs disabled:text-content-muted"
                 placeholder={t('skills.install.timeoutPlaceholder')}
               />
               {!timeoutValid ? (
@@ -369,10 +324,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 role="status"
                 aria-live="polite"
                 className="flex items-center gap-3 rounded-xl border border-primary-200 bg-primary-50 p-3 text-xs text-primary-900">
-                <span
-                  aria-hidden="true"
-                  className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary-300 border-t-primary-600"
-                />
+                <Spinner aria-hidden="true" className="h-3 w-3 shrink-0" />
                 <span>
                   {t('skills.install.fetchingPrefix')} <code className="font-mono">SKILL.md</code>…{' '}
                   {t('skills.install.fetchingSuffix')}
@@ -451,22 +403,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 })()}
               </div>
             ) : null}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-line-subtle px-5 py-3">
-            <Button variant="tertiary" onClick={onClose} disabled={submitting}>
-              {result ? t('common.finish') : t('common.cancel')}
-            </Button>
-            {result ? null : (
-              <Button type="submit" variant="primary" disabled={!formValid}>
-                {submitting ? t('skills.install.installing') : t('skills.install.installBtn')}
-              </Button>
-            )}
-          </div>
-        </form>
-      </div>
-    </div>,
-    document.body
+      </form>
+    </ModalShell>
   );
 }

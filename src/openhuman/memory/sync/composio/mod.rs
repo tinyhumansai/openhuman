@@ -1,40 +1,53 @@
-//! Composio-backed sync pipelines.
+//! Host layer over the Composio memory-sync domain.
 //!
-//! This module owns the "pull upstream provider data into memory" side of
-//! Composio integrations:
+//! This file used to be `pub use tinymemory_core::sync::composio::*;` — a
+//! glob over the engine's entire in-process Composio pipeline. tinymemory
+//! v1.13.4 deleted that pipeline outright (72 files, ~18.3k lines, commits
+//! `6007de4`/`cb9221b`/`71f4197`): reaching a connected account now needs a
+//! credential the engine must not hold, and every toolkit-keyed entry point
+//! on `MemorySourceSync` unconditionally refuses. What replaced it is
+//! host-initiated: the host reads through the `tinyconnectors` module and
+//! hands the resulting records to the bound driver's
+//! `MemorySourceSink::accept_source_items`. See
+//! `crate::openhuman::integrations::composio::ops::providers_ops::run_sync_pass`
+//! for the shared implementation every sync entry point in this domain now
+//! calls through.
 //!
-//! - provider sync implementations (`providers/*/provider.rs`, `sync.rs`)
-//! - periodic scheduler (`periodic.rs`)
-//! - trigger / connection-created event subscribers (`bus.rs`)
-//! - sync-state persistence and profile-to-memory shaping
+//! # What survives here, and why
 //!
-//! The sibling [`crate::openhuman::integrations::composio`] domain still owns auth,
-//! connection management, action execution, and general Composio RPC/tool
-//! surfaces. This submodule is specifically the memory-sync half of that
-//! integration boundary.
+//! [`SyncTarget`] / [`list_sync_targets`] — this host's own replacement for
+//! the engine's target discovery, ported onto `memory::sources` (the
+//! user-curated registry) with a live-connection-scan fallback, using
+//! [`crate::openhuman::integrations::composio::providers::has_native_provider`]
+//! in place of the deleted provider registry's `get_provider(toolkit).is_some()`.
+//! `memory::ops::sync`'s manual trigger path is still the one caller.
+//!
+//! `SyncOutcome` / `SyncReason` / `ProviderUserProfile` are **not**
+//! re-exported from here any more — they never depended on the engine to
+//! begin with (`tinymemory-bus` defines them) and every consumer already
+//! reaches them through `integrations::composio::providers`, which is the one
+//! true path now that this module's glob cannot supply them as a side
+//! effect.
+//!
+//! `ComposioProvider`, `ProviderContext`, `ProviderArc` and the provider
+//! registry (`all_providers`/`get_provider`/`register_provider`) are gone
+//! with no replacement — see
+//! `crate::openhuman::integrations::composio::providers` for where each of
+//! their former callers now gets its answer.
 
-pub mod bus;
-pub mod periodic;
 pub mod providers;
 
-use crate::openhuman::config::Config;
-use crate::openhuman::integrations::composio::client::{
-    create_composio_client, direct_list_connections, ComposioClientKind,
-};
-use crate::openhuman::integrations::composio::types::ComposioConnection;
+pub mod bus;
 
 pub use bus::{
     register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
     ComposioTriggerSubscriber,
 };
-pub use periodic::{record_sync_success, start_periodic_sync};
-pub use providers::{
-    all_providers as all_composio_sync_providers, get_provider as get_composio_sync_provider,
-    init_default_providers as init_default_composio_sync_providers, ComposioProvider,
-    ComposioUsage, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
-};
 
-/// One provider-backed connection that the memory sync layer can execute.
+use crate::openhuman::config::Config;
+use crate::openhuman::integrations::composio::providers::has_native_provider;
+
+/// One provider-backed connection the memory sync layer can execute.
 #[derive(Debug, Clone)]
 pub struct SyncTarget {
     pub toolkit: String,
@@ -43,15 +56,19 @@ pub struct SyncTarget {
 
 /// List active Composio connections that have a native memory-sync provider.
 ///
-/// When memory_sources entries exist with `kind=composio` and `enabled=true`,
-/// those are used as the authoritative source list (user curated). When no
-/// memory_sources composio entries exist, falls back to scanning all active
-/// Composio connections (legacy behavior).
+/// When `memory_sources` entries exist with `kind=composio` and
+/// `enabled=true`, those are used as the authoritative source list (user
+/// curated). When no `memory_sources` composio entries exist, falls back to
+/// scanning all active Composio connections.
+///
+/// Ported from the deleted engine's `sync::composio::list_sync_targets`
+/// verbatim in behaviour, substituting `has_native_provider` for the deleted
+/// provider registry's `get_provider(toolkit).is_some()` — the two answered
+/// the same six toolkits (gmail, notion, slack, clickup, github, linear) by
+/// construction, since the catalog's `NATIVE_PROVIDERS` table was always kept
+/// in step with the registry it described.
 pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
-    init_default_composio_sync_providers();
-
-    // Try memory_sources registry first (user-curated list).
-    let registry_sources = crate::openhuman::memory::sources::list_enabled_by_kind(
+    let registry_sources = crate::openhuman::memory::sources::registry::list_enabled_by_kind(
         crate::openhuman::memory::sources::SourceKind::Composio,
     )
     .await
@@ -63,7 +80,7 @@ pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, Strin
             .filter_map(|s| {
                 let toolkit = s.toolkit?;
                 let connection_id = s.connection_id?;
-                get_composio_sync_provider(&toolkit).map(|_| SyncTarget {
+                has_native_provider(&toolkit).then_some(SyncTarget {
                     toolkit,
                     connection_id,
                 })
@@ -76,10 +93,6 @@ pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, Strin
             );
             return Ok(from_registry);
         }
-        // Registry has entries but none yielded a valid target (missing
-        // fields or unregistered toolkit). Fall through to a fresh scan
-        // rather than reporting an empty target list — otherwise newly
-        // connected integrations stay invisible until reconcile runs.
         tracing::debug!(
             "[composio:sync] registry yielded zero valid targets; falling back to connection scan"
         );
@@ -94,136 +107,22 @@ pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, Strin
 
 /// Scan all active Composio connections that have a native memory-sync
 /// provider. Always hits Composio directly — does not consult the
-/// memory_sources registry. Used by reconciliation to seed the registry.
+/// `memory_sources` registry. Used by reconciliation to seed the registry.
 pub async fn scan_active_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
-    init_default_composio_sync_providers();
-
-    let kind =
-        create_composio_client(config).map_err(|e| format!("create_composio_client: {e:#}"))?;
-    let response = match kind {
-        ComposioClientKind::Backend(client) => client
-            .list_connections()
+    let connections =
+        crate::openhuman::integrations::composio::ops::composio_list_connections(config)
             .await
-            .map_err(|e| format!("list_connections (backend): {e:#}"))?,
-        ComposioClientKind::Direct(client) => direct_list_connections(&client)
-            .await
-            .map_err(|e| format!("list_connections (direct): {e:#}"))?,
-    };
+            .map_err(|error| format!("list_connections: {error}"))?
+            .value
+            .connections;
 
-    Ok(response
-        .connections
+    Ok(connections
         .into_iter()
-        .filter_map(connection_to_sync_target)
+        .filter(|connection| connection.is_active())
+        .filter(|connection| has_native_provider(&connection.normalized_toolkit()))
+        .map(|connection| SyncTarget {
+            toolkit: connection.normalized_toolkit(),
+            connection_id: connection.id,
+        })
         .collect())
-}
-
-/// Run one provider-backed sync end-to-end in-process.
-///
-/// Returns the provider's [`SyncOutcome`] together with the
-/// [`ComposioUsage`] tally (billable action count + actual USD cost)
-/// accumulated at the `execute` chokepoint during this run, so the
-/// sync-audit caller can record Composio API-call cost alongside the LLM
-/// summarisation cost (#3111).
-pub async fn run_connection_sync(
-    config: Config,
-    connection_id: &str,
-    reason: SyncReason,
-) -> Result<(SyncOutcome, ComposioUsage), (String, ComposioUsage)> {
-    init_default_composio_sync_providers();
-
-    let no_usage = |e: String| (e, ComposioUsage::default());
-
-    let target = list_sync_targets(&config)
-        .await
-        .map_err(no_usage)?
-        .into_iter()
-        .find(|target| target.connection_id == connection_id)
-        .ok_or_else(|| {
-            no_usage(format!(
-                "no provider-backed active sync target for connection_id={connection_id}",
-            ))
-        })?;
-
-    let provider = get_composio_sync_provider(&target.toolkit).ok_or_else(|| {
-        no_usage(format!(
-            "no native memory sync provider registered for toolkit '{}'",
-            target.toolkit,
-        ))
-    })?;
-
-    // Look up the source entry to obtain any user-configured caps.
-    // Non-fatal: if the registry read fails we proceed uncapped.
-    let (src_max_items, src_sync_depth_days) = {
-        let registry_sources = crate::openhuman::memory::sources::list_enabled_by_kind(
-            crate::openhuman::memory::sources::SourceKind::Composio,
-        )
-        .await
-        .unwrap_or_default();
-        registry_sources
-            .iter()
-            .find(|s| s.connection_id.as_deref() == Some(&target.connection_id))
-            .map(|s| (s.max_items, s.sync_depth_days))
-            .unwrap_or((None, None))
-    };
-
-    tracing::debug!(
-        connection_id = %target.connection_id,
-        max_items = ?src_max_items,
-        sync_depth_days = ?src_sync_depth_days,
-        "[composio:sync] run_connection_sync: caps from registry"
-    );
-
-    let _ = (provider, src_max_items, src_sync_depth_days);
-    let started_at_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    match crate::openhuman::memory::tinycortex::run_composio_connection(
-        &target.toolkit,
-        &target.connection_id,
-        &config,
-    )
-    .await
-    {
-        Ok(outcome) => {
-            let usage = ComposioUsage {
-                actions_called: outcome.actions_called,
-                cost_usd: outcome.provider_cost_usd,
-            };
-            Ok((
-                SyncOutcome {
-                    toolkit: target.toolkit,
-                    connection_id: Some(target.connection_id),
-                    reason: reason.as_str().to_string(),
-                    items_ingested: outcome.records_ingested as usize,
-                    started_at_ms,
-                    finished_at_ms: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64,
-                    summary: outcome.note.unwrap_or_else(|| "sync completed".to_string()),
-                    details: serde_json::json!({ "more_pending": outcome.more_pending }),
-                },
-                usage,
-            ))
-        }
-        Err(error) => Err((
-            error.to_string(),
-            ComposioUsage {
-                actions_called: error.actions_called,
-                cost_usd: error.provider_cost_usd,
-            },
-        )),
-    }
-}
-
-fn connection_to_sync_target(connection: ComposioConnection) -> Option<SyncTarget> {
-    if !connection.is_active() {
-        return None;
-    }
-    let toolkit = connection.normalized_toolkit();
-    get_composio_sync_provider(&toolkit).map(|_| SyncTarget {
-        toolkit,
-        connection_id: connection.id,
-    })
 }

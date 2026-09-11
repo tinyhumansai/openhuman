@@ -10,7 +10,6 @@ import {
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
-import WebviewHost from './components/accounts/WebviewHost';
 import { AnalyticsPageTracker } from './components/analytics';
 import AnnouncementGate from './components/Announcement/AnnouncementGate';
 import AppBackground from './components/AppBackground';
@@ -27,17 +26,12 @@ import RootShellLayout from './components/layout/shell/RootShellLayout';
 import { SidebarSlotProvider } from './components/layout/shell/SidebarSlot';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
+import NoticeCenter from './components/notices/NoticeCenter';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
 import SecurityBanner from './components/SecurityBanner';
-import SettingsModal from './components/settings/modal/SettingsModal';
-import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
-import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
-import MemoryEmbeddingBudgetBanner from './components/upsell/MemoryEmbeddingBudgetBanner';
-import UserErrorCenter from './components/userErrors/UserErrorCenter';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
-import { MascotFrameProducer } from './features/meet/MascotFrameProducer';
 import { useNotchBootSync } from './hooks/useNotchBootSync';
 import { I18nProvider } from './lib/i18n/I18nContext';
 import {
@@ -45,10 +39,6 @@ import {
   stopNativeNotificationsService,
 } from './lib/nativeNotifications';
 import { getIsMobile } from './lib/platform';
-import {
-  startWebviewNotificationsService,
-  stopWebviewNotificationsService,
-} from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
@@ -58,25 +48,10 @@ import {
   startInternetStatusListener,
   stopInternetStatusListener,
 } from './services/internetStatusListener';
-import {
-  hideWebviewAccount,
-  startWebviewAccountService,
-  stopWebviewAccountService,
-} from './services/webviewAccountService';
 import { persistor, store } from './store';
-import { setActiveAccount } from './store/accountsSlice';
-import { useAppDispatch, useAppSelector } from './store/hooks';
-import { AGENT_ACCOUNT_ID } from './utils/accountsFullscreen';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
+import { installExternalLinkGuard } from './utils/externalLinkGuard';
 
-// Attach the `webview:event` listener at app boot so background recipe
-// events (Google Meet captions → transcript flush, WhatsApp ingest, …)
-// are handled even when the user hasn't navigated to /accounts yet.
-// Idempotent — the service uses a `started` singleton guard.
-// On iOS these services are no-ops (isTauri() webview guard inside each),
-// but we call them unconditionally to keep the boot path consistent.
-startWebviewAccountService();
-startWebviewNotificationsService();
 startNativeNotificationsService();
 // Connectivity status (#1527): wire navigator.onLine + start core sidecar
 // health poll. Both idempotent via internal `started` guards.
@@ -84,8 +59,6 @@ startInternetStatusListener();
 startCoreHealthMonitor();
 
 export function stopBootServicesForHmr(): void {
-  stopWebviewAccountService();
-  stopWebviewNotificationsService();
   stopNativeNotificationsService();
   stopInternetStatusListener();
   stopCoreHealthMonitor();
@@ -97,6 +70,13 @@ if (import.meta.hot) {
 
 function App() {
   const onMobile = getIsMobile();
+
+  // The desktop shell is one webview with no back button, so a link that
+  // navigates it away strands the user on that page with no route back to the
+  // chat. Chat bubbles route their own links through `openUrl`; this guard
+  // covers every other anchor the app renders. Installed here, above the
+  // router, so it is live for the whole session.
+  useEffect(() => installExternalLinkGuard(), []);
 
   // On mobile (iOS or Android) the SocketProvider would try to connect to the
   // local core HTTP socket, which does not exist on device (the core runs on
@@ -202,7 +182,6 @@ function AppShell() {
 export function AppShellDesktop() {
   const location = useLocation();
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
   const { snapshot, isBootstrapping } = useCoreState();
   const onOnboardingRoute = location.pathname.startsWith('/onboarding');
   const onboardingPending =
@@ -233,26 +212,6 @@ export function AppShellDesktop() {
     navigate,
   ]);
 
-  // Hide the active connected-app webview when we navigate away from the chat
-  // surface. Provider CEF selection is intentionally route-independent; any
-  // real route change clears that high-level selection so the native view
-  // cannot linger over the newly-routed page.
-  const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
-  const accountsById = useAppSelector(state => state.accounts.accounts);
-  const accountsOverlayOpen = useAppSelector(state => state.accounts.overlayOpen);
-  const previousPathRef = useRef(location.pathname);
-  useEffect(() => {
-    if (
-      location.pathname !== previousPathRef.current &&
-      activeAccountId &&
-      activeAccountId !== AGENT_ACCOUNT_ID
-    ) {
-      void hideWebviewAccount(activeAccountId);
-      dispatch(setActiveAccount(AGENT_ACCOUNT_ID));
-    }
-    previousPathRef.current = location.pathname;
-  }, [dispatch, location.pathname, activeAccountId]);
-
   // Sync the notch indicator to the persisted always-on listening state once
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
@@ -273,49 +232,22 @@ export function AppShellDesktop() {
   const onHiddenChromePath = ['/', '/login'].some(
     path => location.pathname === path || location.pathname.startsWith(`${path}/`)
   );
-  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) owns the full
-  // viewport for a focused builder — no app sidebar. The `/flows` list (and its
-  // in-page Runs / Discoveries sub-views on `?view=`) keep their chrome.
-  const onWorkflowCanvas = location.pathname.startsWith('/flows/');
-  const chromeless = !token || onOnboardingRoute || onHiddenChromePath || onWorkflowCanvas;
-
-  // Desktop Settings is a modal overlay (the backgroundLocation pattern): when
-  // the URL is a settings path we keep rendering the page *behind* it
-  // (`baseLocation`) and mount <SettingsModal/> on top (z-50 portal), which sits
-  // above the provider WebviewHost overlay (z-30) below.
-  const { settingsOpen, baseLocation } = resolveSettingsOverlay(location);
-
-  const activeProviderAccount =
-    activeAccountId && activeAccountId !== AGENT_ACCOUNT_ID
-      ? (accountsById[activeAccountId] ?? null)
-      : null;
+  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) used to be listed
+  // here too, as "a focused builder — no app sidebar". It is back in the shell:
+  // going chromeless cost it the app nav AND the sidebar slot, so the builder
+  // had to hand-roll its own 240px run-history rail inside the page (`hidden
+  // lg:flex w-60 border-r`) — a second sidebar sitting where the real one would
+  // have been. It now projects that rail through `SidebarContent` like every
+  // other page, and a user who wants the focused view collapses the sidebar,
+  // which is what `collapsible="icon"` is for.
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
-      <GlobalUpsellBanner />
-      {/* #5324: memory-specific budget warning. Distinct from the banner
-          above — that one sells a plan upgrade, this one steers to the
-          embedding fixes (local Ollama / BYO key) that keep memory growing.
-          Only renders for users whose embeddings actually bill against the
-          managed budget. */}
-      <MemoryEmbeddingBudgetBanner />
-      <AppRoutes location={baseLocation} />
-      {activeProviderAccount && !accountsOverlayOpen && (
-        <div className="absolute inset-0 z-30">
-          {/* key on the account id so switching provider accounts fully
-              unmounts the previous host (running its cleanup → hideWebviewAccount)
-              and mounts a fresh one, instead of React reusing one instance with
-              new props. Guarantees deterministic hide-old-before-show-new
-              ordering and stops a deselected provider's CEF view from bleeding
-              into the newly-selected account's slot on rapid rail switches
-              (#4421). */}
-          <WebviewHost
-            key={activeProviderAccount.id}
-            accountId={activeProviderAccount.id}
-            provider={activeProviderAccount.provider}
-          />
-        </div>
-      )}
+      {/* The plan-usage upsell and the #5324 memory-embedding warning used to
+          be full-width banners here, pushing every route down. Both are
+          notices in `NoticeCenter` now — see its docs for why. */}
+      <AppRoutes />
     </div>
   );
 
@@ -327,23 +259,22 @@ export function AppShellDesktop() {
           {chromeless ? (
             content
           ) : (
+            // Nothing sets `unframed` today. It existed for live CEF provider
+            // webviews — WebviewHost handed the Rust side a plain rectangle and
+            // CEF composited that child view above the whole HTML layer, so a
+            // rounded card under it showed four square corners punching through
+            // the radius. That surface was removed upstream along with
+            // WebviewHost, so no route needs the escape hatch right now; the
+            // prop stays on the primitive for the next full-bleed surface.
             <RootShellLayout sidebar={<AppSidebar />}>{content}</RootShellLayout>
           )}
         </div>
-        {/* Desktop Settings modal — mounted over whatever page is rendered
-            beneath when the URL is a settings path. */}
-        {settingsOpen && !chromeless && <SettingsModal />}
         <OpenhumanLinkModal />
-        {/* User-actionable runtime errors (#3931): a first-class panel for
-            expected user states (insufficient BYO credits, managed-budget
-            exhaustion). Mounted outside the routes so entries survive route
+        {/* Every notice the app raises, in one bottom-left FAB: classified
+            runtime errors (#3931), the memory-embedding budget (#5324), plan
+            usage limits. Mounted outside the routes so entries survive route
             changes and background-job completion. */}
-        <UserErrorCenter />
-        {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
-            640×480 JPEG frame stream to the Rust frame bus while a meet
-            call is active; idle no-op otherwise. See
-            features/meet/MascotFrameProducer.tsx. */}
-        <MascotFrameProducer />
+        <NoticeCenter />
         {/* Post-onboarding Joyride walkthrough — mounted here (outside routes) so
             it persists across tab navigations. Joyride targets span Home + the
             sidebar nav so it must stay mounted while the user moves between routes. */}

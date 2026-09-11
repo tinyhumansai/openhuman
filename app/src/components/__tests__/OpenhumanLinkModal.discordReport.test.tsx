@@ -5,10 +5,7 @@ import * as openUrlModule from '../../utils/openUrl';
 import OpenhumanLinkModal, { OPENHUMAN_LINK_EVENT } from '../OpenhumanLinkModal';
 
 // Mock modules that require Tauri runtime or browser APIs not in jsdom
-vi.mock('../../services/webviewAccountService', () => ({
-  isTauri: vi.fn(() => false),
-  purgeWebviewAccount: vi.fn(),
-}));
+vi.mock('../../utils/tauriCommands/common', () => ({ isTauri: vi.fn(() => false) }));
 
 vi.mock('../../lib/nativeNotifications/tauriBridge', () => ({
   ensureNotificationPermission: vi.fn(),

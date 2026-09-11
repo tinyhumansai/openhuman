@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyagents::harness::embeddings::{
+use tinyinference::embeddings::{
     BearerResolver, CloudEmbeddingModel, DEFAULT_CLOUD_DIMENSIONS, DEFAULT_CLOUD_MODEL,
 };
 
@@ -32,10 +32,10 @@ impl OpenHumanCloudEmbedding {
         let bearer: BearerResolver = Arc::new(move || {
             let auth = AuthService::new(&state_dir, secrets_encrypt);
             auth.get_provider_bearer_token(APP_SESSION_PROVIDER, None)
-                .map_err(|error| tinyagents::TinyAgentsError::Embedding(error.to_string()))?
+                .map_err(|error| tinyinference::Error::Embedding(error.to_string()))?
                 .filter(|token| !token.trim().is_empty())
                 .ok_or_else(|| {
-                    tinyagents::TinyAgentsError::Validation(
+                    tinyinference::Error::Validation(
                         "No backend session for cloud embeddings: log in to OpenHuman".into(),
                     )
                 })
@@ -52,16 +52,85 @@ impl OpenHumanCloudEmbedding {
     }
 }
 
+/// Credential scope used when the caller passes `openhuman_dir = None`.
+///
+/// `None` means "wherever this process keeps its credentials", and on a shipped
+/// desktop that is **not** the root `~/.openhuman`. Sign-in stores the
+/// `app-session` token through `AuthService::from_config`, whose state dir is
+/// `config.config_path.parent()` — the user-scoped
+/// `~/.openhuman/users/<user_id>/`. This function previously returned the root,
+/// so every keyless managed embedder resolved a directory with no
+/// `auth-profiles.json` in it and a signed-in user's embeds failed with
+/// "No backend session for cloud embeddings" on every call.
+///
+/// Resolution mirrors `config::load`'s own directory choice:
+/// 1. `OPENHUMAN_WORKSPACE` when set — resolved through the **same**
+///    workspace→config-dir mapping `config::load` uses
+///    (`resolve_config_dir_for_workspace`), not the raw env value. A legacy
+///    `.../workspace` override maps back to its sibling `.openhuman` root, which
+///    is where `auth-profiles.json` actually lives; returning the workspace dir
+///    itself would reintroduce the "No backend session" failure for that
+///    deployment.
+/// 2. otherwise `{root}/users/{active_user_id}`, falling back to the pre-login
+///    user (`users/local`) when no user has signed in yet — the same directory
+///    the pre-login config was written to, so a pre-login process still reads
+///    its own store instead of an empty root.
+///
+/// Callers holding a `&Config` should still pass the scope explicitly
+/// (`create_embedding_provider_with_config`); this is the best available
+/// resolution for the call sites that have no `Config` in scope.
 fn default_state_dir() -> PathBuf {
+    log::debug!("[embeddings::cloud] default credential scope: resolving");
     if let Some(workspace) = std::env::var_os("OPENHUMAN_WORKSPACE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     {
-        return workspace;
+        // Never log the resolved path: it identifies the user's home layout.
+        log::debug!(
+            "[embeddings::cloud] default credential scope = OPENHUMAN_WORKSPACE-derived config dir (env-scoped deployment)"
+        );
+        return env_workspace_state_dir(&workspace);
     }
-    directories::UserDirs::new()
-        .map(|dirs| dirs.home_dir().join(".openhuman"))
-        .unwrap_or_else(|| PathBuf::from(".openhuman"))
+
+    let root = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|error| {
+        log::warn!(
+            "[embeddings::cloud] could not resolve the openhuman root dir ({error}); \
+             falling back to a relative .openhuman path"
+        );
+        PathBuf::from(".openhuman")
+    });
+
+    // Never log the resolved path or the user id: both identify the user.
+    let user_id = crate::openhuman::config::read_active_user_id(&root);
+    log::debug!(
+        "[embeddings::cloud] default credential scope resolved = user-scoped dir (active_user_present={})",
+        user_id.is_some()
+    );
+    user_scoped_state_dir(&root, user_id.as_deref())
+}
+
+/// Pure core of [`default_state_dir`]'s `OPENHUMAN_WORKSPACE` branch, split out
+/// so the workspace→config-dir invariant is unit-testable without touching the
+/// process environment.
+///
+/// Mirrors `config::load`: the credential scope for a workspace override is the
+/// config dir [`resolve_config_dir_for_workspace`] derives from it — for a
+/// legacy `.../workspace` path that is the sibling `.openhuman` root (which
+/// holds `auth-profiles.json`), **not** the workspace dir (which holds none).
+fn env_workspace_state_dir(workspace: &std::path::Path) -> PathBuf {
+    let (config_dir, _workspace_dir) =
+        crate::openhuman::config::resolve_config_dir_for_workspace(workspace);
+    config_dir
+}
+
+/// Pure core of [`default_state_dir`]'s non-env branch, split out so the
+/// user-scoping invariant is unit-testable without a home directory or a real
+/// `active_user.toml`.
+fn user_scoped_state_dir(root: &std::path::Path, active_user_id: Option<&str>) -> PathBuf {
+    crate::openhuman::config::user_openhuman_dir(
+        root,
+        active_user_id.unwrap_or(crate::openhuman::config::PRE_LOGIN_USER_ID),
+    )
 }
 
 #[async_trait]
@@ -98,31 +167,5 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Privacy epic S7 (#4441): under LocalOnly, `embed` refuses before touching
-    /// the inner cloud transport (so no network / no auth is needed to observe
-    /// the block). Uses the thread-scoped privacy override so it never mutates
-    /// the process-global policy that sibling tests read.
-    #[tokio::test]
-    async fn embed_blocked_under_local_only() {
-        let _mode = crate::openhuman::security::live_policy::test_privacy_scope(
-            crate::openhuman::config::PrivacyMode::LocalOnly,
-        );
-        let provider = OpenHumanCloudEmbedding::new(
-            Some("http://127.0.0.1:0".into()),
-            Some(std::env::temp_dir().join("openhuman_embeddings_localonly_state")),
-            false,
-            DEFAULT_CLOUD_EMBEDDING_MODEL,
-            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
-        );
-
-        let err = provider.embed(&["hello"]).await.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Local-only privacy mode is active"),
-            "unexpected error: {err}"
-        );
-    }
-}
+#[path = "cloud_adapter_tests.rs"]
+mod tests;

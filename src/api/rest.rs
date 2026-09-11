@@ -269,6 +269,12 @@ fn build_backend_reqwest_client() -> Result<Client> {
             );
         }
     }
+    // Which product this core is embedded in. Set at the transport level rather
+    // than only on the SDK because `raw_client()` hands this same client to
+    // callers that bypass the SDK entirely (multipart STT upload), and that
+    // traffic needs attributing too.
+    let (name, value) = crate::api::product::product_identity_header();
+    default_headers.insert(name, value);
 
     // Platform-appropriate TLS backend: Windows → schannel (honors the OS
     // cert store, required for corporate TLS-inspection proxies); macOS /
@@ -414,7 +420,13 @@ impl BackendOAuthClient {
         base.set_query(None);
         base.set_fragment(None);
         let client = build_backend_reqwest_client()?;
-        let sdk = TinyHumansClient::new(base.as_str()).with_http_client(client.clone());
+        // The product identity also rides on the SDK's own default headers, not
+        // just the transport's, so it survives if the SDK is ever given a
+        // client this crate did not build. The SDK applies its own headers
+        // after these, so it cannot be clobbered by `x-sdk-client`.
+        let sdk = TinyHumansClient::new(base.as_str())
+            .with_http_client(client.clone())
+            .with_default_headers(crate::api::product::product_identity_headers());
         Ok(Self { client, base, sdk })
     }
 
@@ -560,18 +572,6 @@ impl BackendOAuthClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
-        // OpenHuman does not consume backend webhook APIs. Keep that boundary
-        // local even though the shared SDK intentionally exposes the
-        // user-owned `/webhooks/core` tunnel CRUD surface for other clients.
-        // Platform-admin operations are independently rejected by the SDK's
-        // generated route gate below.
-        anyhow::ensure!(
-            !path
-                .split(['/', '?'])
-                .any(|segment| segment.eq_ignore_ascii_case("webhooks")),
-            "backend webhook routes are not exposed through OpenHuman"
-        );
-        let url = self.url_for(path)?;
         let sdk = self
             .sdk
             .clone()
@@ -580,6 +580,27 @@ impl BackendOAuthClient {
             .raw()
             .send(method.clone(), path, &[], body.as_ref(), true)
             .await;
+        self.finish_authed_json(method, path, response)
+    }
+
+    /// Fetch the deployed billing summary through the SDK's typed payments API.
+    pub async fn fetch_billing_summary(&self, bearer_jwt: &str) -> Result<Value> {
+        const PATH: &str = "/payments/summary";
+        let sdk = self
+            .sdk
+            .clone()
+            .with_token(Some(bearer_jwt.trim().to_string()));
+        let response = sdk.payments().get_summary().await.map(|value| value.0);
+        self.finish_authed_json(Method::GET, PATH, response)
+    }
+
+    fn finish_authed_json(
+        &self,
+        method: Method,
+        path: &str,
+        response: Result<Value, SdkError>,
+    ) -> Result<Value> {
+        let url = self.url_for(path)?;
         let value = match response {
             Ok(value) => return parse_api_response_value(value),
             Err(SdkError::Http(e)) => {

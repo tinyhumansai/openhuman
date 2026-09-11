@@ -12,9 +12,8 @@ import {
   memoryRecallNamespace,
 } from '../../../utils/tauriCommands';
 import { MemoryTextWithEntities } from '../../intelligence/MemoryTextWithEntities';
-import PanelPage from '../../layout/PanelPage';
+import { Spinner } from '../../ui';
 import Button from '../../ui/Button';
-import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsEmptyState,
   SettingsSection,
@@ -23,12 +22,11 @@ import {
   SettingsTextArea,
   SettingsTextField,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack } = useSettingsNavigation();
   const [documents, setDocuments] = useState<MemoryDebugDocument[]>([]);
   const [documentsRaw, setDocumentsRaw] = useState<unknown>(null);
   const [documentsNamespaceFilter, setDocumentsNamespaceFilter] = useState('');
@@ -197,13 +195,8 @@ const MemoryDebugPanel = () => {
   }, [clearNamespaceInput, refreshAll, t]);
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      testId="memory-debug-panel"
-      description={t('devOptions.debugPanelsDesc')}
-      leading={<SettingsBackButton onBack={navigateBack} />}>
-      <div className="p-4 space-y-5">
+    <SettingsPanel testId="memory-debug-panel" description={t('devOptions.debugPanelsDesc')}>
+      <div className="space-y-5">
         {/* Documents */}
         <SettingsSection title={t('memory.documents')}>
           <div className="px-4 py-3 space-y-3">
@@ -221,8 +214,9 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void loadDocuments()}
-                disabled={documentsLoading}>
-                {documentsLoading ? '...' : t('memory.refresh')}
+                disabled={documentsLoading}
+                leadingIcon={documentsLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.refresh')}
               </Button>
             </div>
             <SettingsStatusLine saving={false} error={documentsError} savingLabel="" />
@@ -250,8 +244,13 @@ const MemoryDebugPanel = () => {
                       variant="tertiary"
                       size="xs"
                       disabled={Boolean(deleteLoadingId)}
-                      onClick={() => void handleDelete(doc)}>
-                      {deleteLoadingId === doc.documentId ? '...' : t('memory.delete')}
+                      onClick={() => void handleDelete(doc)}
+                      leadingIcon={
+                        deleteLoadingId === doc.documentId ? (
+                          <Spinner className="h-3 w-3" />
+                        ) : undefined
+                      }>
+                      {t('memory.delete')}
                     </Button>
                   </div>
                 ))}
@@ -261,7 +260,13 @@ const MemoryDebugPanel = () => {
               <summary className="cursor-pointer text-content-muted">
                 {t('memory.rawResponse')}
               </summary>
-              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-line bg-neutral-950 dark:bg-neutral-50 p-2 text-[11px] text-neutral-100 whitespace-pre-wrap break-words">
+              {/* Intentionally non-themeable: a fixed dark terminal surface
+                  for raw JSON, inverted between light/dark mode so the dump
+                  always reads as a code/terminal pane rather than following
+                  the user's theme. Arbitrary hex values (not the `neutral`
+                  palette scale) so this isn't a themeable-surface regression
+                  masquerading as a fixed one. */}
+              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-line bg-[#0a0a0a] dark:bg-[#fafafa] p-2 text-[11px] text-[#f5f5f5] dark:text-[#171717] whitespace-pre-wrap wrap-break-word">
                 {JSON.stringify(documentsRaw, null, 2)}
               </pre>
             </details>
@@ -277,8 +282,9 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void loadNamespaces()}
-                disabled={namespacesLoading}>
-                {namespacesLoading ? '...' : t('memory.refresh')}
+                disabled={namespacesLoading}
+                leadingIcon={namespacesLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.refresh')}
               </Button>
             </div>
             <SettingsStatusLine saving={false} error={namespacesError} savingLabel="" />
@@ -331,16 +337,18 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void handleQuery()}
-                disabled={queryLoading || !namespaceInput.trim() || !queryInput.trim()}>
-                {queryLoading ? '...' : t('memory.query')}
+                disabled={queryLoading || !namespaceInput.trim() || !queryInput.trim()}
+                leadingIcon={queryLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.query')}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 size="xs"
                 onClick={() => void handleRecall()}
-                disabled={recallLoading || !namespaceInput.trim()}>
-                {recallLoading ? '...' : t('memory.recall')}
+                disabled={recallLoading || !namespaceInput.trim()}
+                leadingIcon={recallLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.recall')}
               </Button>
             </div>
             <SettingsStatusLine
@@ -421,8 +429,9 @@ const MemoryDebugPanel = () => {
                 tone="danger"
                 size="xs"
                 onClick={() => void handleClearNamespace()}
-                disabled={clearLoading || !clearNamespaceInput.trim()}>
-                {clearLoading ? '...' : t('memory.clear')}
+                disabled={clearLoading || !clearNamespaceInput.trim()}
+                leadingIcon={clearLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.clear')}
               </Button>
             </div>
             <SettingsStatusLine
@@ -434,7 +443,7 @@ const MemoryDebugPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </PanelPage>
+    </SettingsPanel>
   );
 };
 

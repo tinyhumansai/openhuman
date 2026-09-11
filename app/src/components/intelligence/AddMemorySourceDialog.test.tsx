@@ -460,3 +460,30 @@ describe('AddMemorySourceDialog — Composio picker', () => {
     expect(listbox).toHaveAttribute('aria-activedescendant', 'composio-opt-conn-slack');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Component tests: the surface is a real modal (Radix Dialog), not a
+// hand-rolled `fixed inset-0` div — focus trap, aria-modal, Escape-to-close.
+// ---------------------------------------------------------------------------
+
+describe('AddMemorySourceDialog — dialog surface', () => {
+  beforeEach(() => {
+    mockListConnections.mockReset();
+    mockGetSupportedToolkits.mockReset();
+    mockGetSupportedToolkits.mockResolvedValue(DEFAULT_SUPPORTED);
+  });
+
+  it('renders as a real dialog and traps focus inside it on mount', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog');
+    // Radix's FocusScope moves focus into the content on mount — it must not
+    // be left on the document body, which is what the old plain div left.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes (via onClose) when Escape is pressed', async () => {
+    const { onClose } = renderDialog();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+});

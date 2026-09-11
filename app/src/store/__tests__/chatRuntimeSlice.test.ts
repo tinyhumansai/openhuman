@@ -940,6 +940,46 @@ describe('toolCallReceived (Phase 3 reducer-side merge)', () => {
     ]);
   });
 
+  /**
+   * A provider that sends `tool_call_id: ""` means "no id". `??` only falls
+   * back on null/undefined, so the empty string used to survive as the row id
+   * and every id-less call in a turn shared it. That is fatal downstream, not
+   * cosmetic: assistant-ui keys message parts as `toolCallId-${id}` and throws
+   * "Duplicate key toolCallId- in useResources" on a repeat, taking the whole
+   * thread render down.
+   */
+  it('treats an empty toolCallId as absent so id-less calls do not collide', () => {
+    let state = reducer(
+      undefined,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'shell', toolCallId: '' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: '' })
+    );
+
+    const ids = state.toolTimelineByThread['t1'].map(row => row.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).not.toContain('');
+  });
+
+  it('gives an id-less args-delta row a generated id rather than an empty one', () => {
+    let state = reducer(
+      undefined,
+      toolArgsDeltaReceived({ threadId: 't1', round: 0, delta: '{"a":', toolName: 'shell' })
+    );
+    state = reducer(
+      state,
+      toolArgsDeltaReceived({ threadId: 't1', round: 0, delta: '{"b":', toolName: 'search' })
+    );
+
+    const ids = state.toolTimelineByThread['t1'].map(row => row.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).not.toContain('');
+  });
+
   it('upserts an existing row by toolCallId instead of duplicating', () => {
     let state = reducer(
       undefined,

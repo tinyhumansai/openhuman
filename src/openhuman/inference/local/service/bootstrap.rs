@@ -15,7 +15,6 @@ impl LocalAiService {
         let vision_mode = vision_mode_str(config);
         let provider = provider_from_config(config);
         Self {
-            whisper: super::whisper_engine::new_handle(),
             status: parking_lot::Mutex::new(LocalAiStatus {
                 state: "idle".to_string(),
                 model_id: model_id.clone(),
@@ -47,7 +46,6 @@ impl LocalAiService {
                 gen_toks_per_sec: None,
             }),
             bootstrap_lock: tokio::sync::Mutex::new(()),
-            whisper_load_lock: tokio::sync::Mutex::new(()),
             last_memory_summary_at: parking_lot::Mutex::new(None),
             owned_ollama: parking_lot::Mutex::new(None),
             http: reqwest::Client::builder()
@@ -179,9 +177,8 @@ impl LocalAiService {
 
         if provider_from_config(&effective_config) == LocalAiProvider::LmStudio {
             log::debug!(
-                "[local_ai] LM Studio bootstrap branch entry preload_embedding={} preload_stt={} preload_tts={}",
+                "[local_ai] LM Studio bootstrap branch entry preload_embedding={} preload_tts={}",
                 effective_config.local_ai.preload_embedding_model,
-                effective_config.local_ai.preload_stt_model,
                 effective_config.local_ai.preload_tts_voice
             );
             log::trace!("[local_ai] LM Studio bootstrap availability check start");
@@ -243,19 +240,6 @@ impl LocalAiService {
             }
 
             log::trace!(
-                "[local_ai] LM Studio bootstrap STT preload decision: {}",
-                effective_config.local_ai.preload_stt_model
-            );
-            if effective_config.local_ai.preload_stt_model {
-                log::debug!("[local_ai] LM Studio bootstrap STT preload start");
-                if let Err(err) = self.ensure_stt_asset_available(&effective_config).await {
-                    log::warn!("[local_ai] LM Studio bootstrap STT preload failed: {err}");
-                    self.status.lock().stt_state = "missing".to_string();
-                } else {
-                    log::debug!("[local_ai] LM Studio bootstrap STT preload succeeded");
-                }
-            }
-            log::trace!(
                 "[local_ai] LM Studio bootstrap TTS preload decision: {}",
                 effective_config.local_ai.preload_tts_voice
             );
@@ -277,9 +261,6 @@ impl LocalAiService {
             } else if status.embedding_state != "ready" {
                 status.embedding_state = "missing".to_string();
             }
-            if !effective_config.local_ai.preload_stt_model {
-                status.stt_state = "idle".to_string();
-            }
             if !effective_config.local_ai.preload_tts_voice {
                 status.tts_state = "idle".to_string();
             }
@@ -293,9 +274,8 @@ impl LocalAiService {
             status.eta_seconds = None;
             status.model_path = Some(model_path_for_config(&effective_config));
             log::debug!(
-                "[local_ai] LM Studio bootstrap ready embedding_state={} stt_state={} tts_state={}",
+                "[local_ai] LM Studio bootstrap ready embedding_state={} tts_state={}",
                 status.embedding_state,
-                status.stt_state,
                 status.tts_state
             );
             return;
@@ -320,38 +300,6 @@ impl LocalAiService {
             return;
         }
 
-        // Attempt to load whisper model in-process if configured (blocking I/O).
-        // Pass GPU info from the device profile so whisper can use hardware acceleration.
-        if effective_config.local_ai.whisper_in_process {
-            if let Ok(model_path) =
-                crate::openhuman::inference::paths::resolve_stt_model_path(&effective_config)
-            {
-                let model = std::path::PathBuf::from(&model_path);
-                let handle = self.whisper.clone();
-                let gpu = device.has_gpu;
-                let gpu_desc = device.gpu_description.clone();
-                let load_result = tokio::task::spawn_blocking(move || {
-                    super::whisper_engine::load_engine(&handle, &model, gpu, gpu_desc.as_deref())
-                })
-                .await;
-                match load_result {
-                    Ok(Ok(())) => {
-                        log::info!("[local_ai] whisper engine loaded in-process: {model_path}");
-                    }
-                    Ok(Err(e)) => {
-                        log::warn!(
-                            "[local_ai] whisper in-process load failed, will fall back to CLI: {e}"
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!("[local_ai] whisper load task panicked: {e}");
-                    }
-                }
-            } else {
-                log::debug!("[local_ai] STT model not found, whisper in-process not loaded");
-            }
-        }
-
         let mut status = self.status.lock();
         status.state = "ready".to_string();
         status.vision_state = match presets::vision_mode_for_config(&effective_config.local_ai) {
@@ -364,9 +312,6 @@ impl LocalAiService {
         } else {
             "idle".to_string()
         };
-        if !effective_config.local_ai.preload_stt_model {
-            status.stt_state = "idle".to_string();
-        }
         if !effective_config.local_ai.preload_tts_voice {
             status.tts_state = "idle".to_string();
         }
@@ -473,122 +418,5 @@ fn model_path_for_config(config: &Config) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn autosummary_debounce_blocks_repeated_calls_inside_window() {
-        let mut config = Config::default();
-        config.local_ai.autosummary_debounce_ms = 60_000;
-        let service = LocalAiService::new(&config);
-
-        assert!(service.should_run_memory_autosummary(&config));
-        assert!(!service.should_run_memory_autosummary(&config));
-    }
-
-    fn test_device(ram_gb: u64) -> DeviceProfile {
-        DeviceProfile {
-            total_ram_bytes: ram_gb * 1024 * 1024 * 1024,
-            cpu_count: 4,
-            cpu_brand: String::new(),
-            os_name: String::new(),
-            os_version: String::new(),
-            has_gpu: false,
-            gpu_description: None,
-        }
-    }
-
-    #[test]
-    fn bootstrap_defaults_to_disabled_on_low_ram_device() {
-        let config = Config::default();
-        let device = test_device(4);
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert!(
-            !effective.local_ai.runtime_enabled,
-            "local_ai.runtime_enabled must default to false on <8 GB device"
-        );
-    }
-
-    #[test]
-    fn bootstrap_defaults_to_disabled_on_sufficient_ram_device() {
-        // Local AI is opt-in. Even with >= 8 GB RAM, an unselected tier must
-        // leave local AI disabled — the user has to explicitly turn it on.
-        let config = Config::default();
-        let device = test_device(16);
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert!(
-            !effective.local_ai.runtime_enabled,
-            "local_ai.runtime_enabled must default to false when no tier selected, regardless of RAM"
-        );
-    }
-
-    #[test]
-    fn bootstrap_honors_opt_in_on_low_ram_device() {
-        let mut config = Config::default();
-        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
-        config.local_ai.opt_in_confirmed = true;
-        crate::openhuman::inference::presets::apply_preset_to_config(
-            &mut config.local_ai,
-            crate::openhuman::inference::presets::ModelTier::Ram2To4Gb,
-        );
-        let device = test_device(4);
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert!(
-            effective.local_ai.runtime_enabled,
-            "explicit opt-in must be honored even on low-RAM device"
-        );
-    }
-
-    #[test]
-    fn bootstrap_honors_opt_in_on_sufficient_ram_device() {
-        let mut config = Config::default();
-        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
-        config.local_ai.opt_in_confirmed = true;
-        crate::openhuman::inference::presets::apply_preset_to_config(
-            &mut config.local_ai,
-            crate::openhuman::inference::presets::ModelTier::Ram2To4Gb,
-        );
-        let device = test_device(16);
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert!(
-            effective.local_ai.runtime_enabled,
-            "explicit opt-in on sufficient-RAM device must stay enabled"
-        );
-        assert_eq!(
-            effective.local_ai.chat_model_id, config.local_ai.chat_model_id,
-            "opt-in config must not be mutated"
-        );
-    }
-
-    #[test]
-    fn bootstrap_overrides_stale_selected_tier_without_opt_in() {
-        // Existing install (pre-MVP) had `selected_tier = "ram_2_4gb"` auto-populated
-        // by old RAM-based bootstrap logic, but never went through an explicit MVP
-        // opt-in. `opt_in_confirmed = false` must hard-override to disabled.
-        let mut config = Config::default();
-        config.local_ai.runtime_enabled = true;
-        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
-        config.local_ai.opt_in_confirmed = false;
-        let device = test_device(16);
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert!(
-            !effective.local_ai.runtime_enabled,
-            "stale selected_tier without opt_in_confirmed must be hard-overridden to disabled"
-        );
-        assert_eq!(
-            effective.local_ai.selected_tier.as_deref(),
-            Some("ram_2_4gb"),
-            "bootstrap must leave the persisted selected_tier untouched — only the effective `enabled` flips"
-        );
-    }
-}
+#[path = "bootstrap_tests.rs"]
+mod tests;

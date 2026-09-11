@@ -12,73 +12,12 @@ use super::render_helpers::{
 use super::types::*;
 use anyhow::Result;
 use std::fmt::Write;
+use tinyagents_harness::tool_calling::dialect::render_pformat_catalogue;
+use tinyinference::tool::ToolSchema;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Special sections (archetype, dynamic, reflection)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// "Memory context" section for chat threads spawned from a subconscious
-/// reflection (#623). Renders the resolved [`SourceChunk`]s that the
-/// subconscious LLM cited when it produced the reflection — gives the
-/// orchestrator the same memory context the reflection-LLM had, so the
-/// user can drill into the observation without the orchestrator
-/// hallucinating details it never saw.
-///
-/// Chunks are passed in at construction (snapshot at session-start) so
-/// the rendered bytes stay stable for the whole session, matching the
-/// "frozen prompt for prefix cache" contract documented on
-/// [`super::builder::SystemPromptBuilder::build`].
-pub struct ReflectionMemoryContextSection {
-    chunks: Vec<crate::openhuman::subconscious::SourceChunk>,
-}
-
-impl ReflectionMemoryContextSection {
-    pub fn new(chunks: Vec<crate::openhuman::subconscious::SourceChunk>) -> Self {
-        Self { chunks }
-    }
-}
-
-impl PromptSection for ReflectionMemoryContextSection {
-    fn name(&self) -> &str {
-        "reflection_memory_context"
-    }
-
-    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
-        // Skip chunks the resolver couldn't populate — `not_found`,
-        // `db_error`, or stub kinds without a wired resolver yet. Earlier
-        // versions emitted "(content not yet resolved)" as a placeholder,
-        // but the orchestrator picks up that literal string as part of
-        // its memory context and ends up echoing it back to the user
-        // mid-reply. Better to give the LLM no chunk than a placeholder
-        // it'll quote.
-        let usable: Vec<&crate::openhuman::subconscious::SourceChunk> = self
-            .chunks
-            .iter()
-            .filter(|c| !c.content.trim().is_empty())
-            .collect();
-        if usable.is_empty() {
-            return Ok(String::new());
-        }
-        let mut out = String::from("## Memory context\n\n");
-        out.push_str(
-            "This thread was spawned from a subconscious reflection. The chunks below \
-             are what OpenHuman was looking at when it surfaced the observation — \
-             use them to ground follow-up answers in the same evidence the reflection \
-             was based on.\n\n",
-        );
-        for chunk in usable {
-            let body = chunk.content.replace('\n', " ").trim().to_string();
-            let _ = writeln!(
-                out,
-                "- **{kind}** `{ref_id}`: {body}",
-                kind = chunk.kind,
-                ref_id = chunk.ref_id,
-                body = body,
-            );
-        }
-        Ok(out)
-    }
-}
 
 /// Sub-agent role prompt — pre-loaded text from an
 /// [`crate::openhuman::agent::harness::definition::AgentDefinition`]'s
@@ -280,19 +219,22 @@ impl PromptSection for IdentitySection {
         prompt.push_str(
             "The following workspace files define your identity, behavior, and context.\n\n",
         );
-        // When the visible-tool filter is active the main agent is a pure
-        // orchestrator: it routes via spawn_subagent, synthesises results,
-        // and talks to the user. It does NOT need the periodic-task config
-        // (HEARTBEAT.md) — subagents handle their own concerns.
+        // ROLE.md is the user-facing agent's own role brief (#5701) — the
+        // `# Master Agent` / `## Core Responsibilities` preamble that used to
+        // be compiled into `orchestrator/prompt.md`. It is synced for every
+        // agent so the file exists on disk to edit, but injected only for the
+        // orchestrator: a specialist sub-agent has its own role prompt and
+        // must not be told it is the Master Agent.
+        //
+        // HEARTBEAT.md used to ride along here. It was the periodic-task list
+        // the subconscious engine read, and that domain was deleted — nothing
+        // consumed the file any more, so every agent but the orchestrator was
+        // paying for an empty template. Its `WORKSPACE_INTERNAL_FILES` entry
+        // deliberately stays, so a file a user still has on disk keeps its
+        // not-agent-writable protection.
         let is_orchestrator = !ctx.visible_tool_names.is_empty();
-        let all_files: &[&str] = &["SOUL.md", "IDENTITY.md", "HEARTBEAT.md"];
-        // Orchestrator skips these from the prompt but we still sync them
-        // to disk so they stay current.
-        let skip_in_prompt: &[&str] = if is_orchestrator {
-            &["HEARTBEAT.md"]
-        } else {
-            &[]
-        };
+        let all_files: &[&str] = &["SOUL.md", "IDENTITY.md", "ROLE.md"];
+        let skip_in_prompt: &[&str] = if is_orchestrator { &[] } else { &["ROLE.md"] };
         for file in all_files {
             // Always sync to disk so builtin updates ship.
             sync_workspace_file(ctx.workspace_dir, file);
@@ -311,13 +253,6 @@ impl PromptSection for IdentitySection {
             }
             inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
         }
-
-        // Seed MEMORY_GOALS.md to disk (header-only default) so the
-        // long-term goals list is discoverable in the workspace from first
-        // boot. Sync-only: the goals file is deliberately NOT injected into
-        // the system prompt — it is stored state managed by the memory_goals
-        // domain (RPC / tools / enrichment agent).
-        sync_workspace_file(ctx.workspace_dir, "MEMORY_GOALS.md");
 
         // PROFILE.md / MEMORY.md injection lives in the dedicated
         // `UserFilesSection` (below) so agents that strip the identity
@@ -425,32 +360,38 @@ impl PromptSection for ToolsSection {
             }
             return Ok(ctx.dispatcher_instructions.to_string());
         }
-        let mut out = String::from("## Tools\n\n");
+        // One rendering shape for every dispatcher: a compact P-Format
+        // signature (`name[a|b|c]`), rendered by the crate from the same
+        // schemas its parser reconstructs arguments with — so the order the
+        // model reads is by construction the order the parser expects. For
+        // `Native` dispatchers the provider already has the full JSON schema in
+        // the API request (handled above); for `Json` / `PFormat` text
+        // dispatchers the dispatcher's own `prompt_instructions` block
+        // (appended below) carries whatever schema detail the wire format needs.
         let has_filter = !ctx.visible_tool_names.is_empty();
-        for tool in ctx.tools {
-            // Skip tools not in the visible set when a filter is active.
-            if has_filter && !ctx.visible_tool_names.contains(tool.name) {
-                continue;
-            }
-
-            // One rendering shape for every dispatcher: a compact
-            // P-Format signature (`name[a|b|c]`). The signature comes
-            // straight from the parameter schema (alphabetical by
-            // property name — see `pformat` module docs for why) so
-            // model and parser agree on argument ordering. For
-            // `Native` dispatchers the provider already has the full
-            // JSON schema in the API request, so repeating it in the
-            // prompt is pure token bloat; for `Json` / `PFormat` text
-            // dispatchers the dispatcher's own `prompt_instructions`
-            // block (appended below) carries whatever schema detail
-            // the wire format needs.
-            let signature = render_pformat_signature_for_prompt(tool);
-            let _ = writeln!(
-                out,
-                "- **{}**: {}\n  Call as: `{}`",
-                tool.name, tool.description, signature
-            );
-        }
+        let visible: Vec<ToolSchema> = ctx
+            .tools
+            .iter()
+            .filter(|tool| !has_filter || ctx.visible_tool_names.contains(tool.name))
+            .map(|tool| {
+                let parameters = match tool.parameters_schema.as_deref() {
+                    Some(schema) => match serde_json::from_str(schema) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            log::warn!(
+                                "[prompts][tools] tool '{}' has an unparsable parameters_schema \
+                                 ({err}); rendering it with no arguments",
+                                tool.name
+                            );
+                            serde_json::Value::Null
+                        }
+                    },
+                    None => serde_json::Value::Null,
+                };
+                ToolSchema::new(tool.name, tool.description, parameters)
+            })
+            .collect();
+        let mut out = render_pformat_catalogue(&visible);
         if !ctx.dispatcher_instructions.is_empty() {
             out.push('\n');
             out.push_str(ctx.dispatcher_instructions);
@@ -490,6 +431,11 @@ impl PromptSection for SafetySection {
 ///
 /// Byte-stable (no time / RNG / host) so it lives in the KV-cache-friendly
 /// prefix. Must contain no em-dashes per [`super::builder::GLOBAL_STYLE_SUFFIX`].
+/// Heading the grounding contract renders under, in both the global
+/// [`GROUNDING_BODY`] and any agent prompt that carries its own copy. The
+/// builder matches on this to avoid emitting the contract twice.
+pub const GROUNDING_HEADING: &str = "Grounding and tool use";
+
 pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
     - Your tools are exactly the ones listed in this prompt. You can only act through them. If a capability is not one of your tools, say so plainly rather than pretending it exists.\n\
     - Never invent tool names, arguments, ids, slugs, file paths, URLs, chain ids, addresses, quotes, metrics, or any other value. If you do not have it from a tool result or the user, ask for it or look it up with a tool.\n\
@@ -526,7 +472,7 @@ impl PromptSection for WorkspaceSection {
         let mut out = String::from(
             "## Workspace\n\n\
              Run `pwd` to confirm your working directory — that is where `shell` runs and \
-             where `file_read`/`file_write` resolve relative paths. Create files in that \
+             where every file tool resolves a relative path. Create files in that \
              directory and read them back from the same place (use the relative path, or \
              confirm the absolute path with `pwd`). Writes and reads outside your granted \
              locations (your working directory plus the scratch directory below) are blocked \
@@ -765,27 +711,4 @@ fn sanitize_identity_field(s: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Build a P-Format signature line (`name[a|b|c]`) from a [`PromptTool`].
-/// Local to this module so [`ToolsSection`] doesn't have to depend on
-/// the agent crate's `pformat` helper. The two implementations stay in
-/// lockstep — both use BTreeMap iteration order on the schema's
-/// `properties` field.
-fn render_pformat_signature_for_prompt(tool: &PromptTool<'_>) -> String {
-    let names: Vec<String> = tool
-        .parameters_schema
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-        .and_then(|v| {
-            v.get("properties")
-                .and_then(|p| p.as_object())
-                .map(|m| m.keys().cloned().collect())
-        })
-        .unwrap_or_default();
-    if names.is_empty() {
-        format!("{}[]", tool.name)
-    } else {
-        format!("{}[{}]", tool.name, names.join("|"))
-    }
 }

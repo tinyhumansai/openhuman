@@ -7,17 +7,11 @@
 //!
 //! - [`announcements`] — product announcements feed
 //! - [`billing`]       — credits, plans, Stripe/Coinbase-backed balance reads
-//! - [`orchestration`] — device-side client of the hosted orchestration brain
 //! - [`referral`]      — referral codes and rewards
 //! - [`team`]          — team membership/roles/invites (authorization is
 //!   enforced server-side; this is a proxy, not a local implementation)
-//!
-//! **`orchestration` here is the hosted client, not the local control plane.**
-//! The local one is `agent_orchestration` (moving to `agent/orchestration`).
-//! The names rhyme; the two are unrelated and must not be merged.
 
 pub mod announcements;
 pub mod billing;
-pub mod orchestration;
 pub mod referral;
 pub mod team;

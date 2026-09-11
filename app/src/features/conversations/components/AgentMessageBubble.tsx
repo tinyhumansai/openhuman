@@ -76,7 +76,7 @@ function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNod
           // Ignore launcher errors from OS URL handler failures.
         });
       }}
-      className="cursor-pointer underline break-words [overflow-wrap:anywhere]">
+      className="cursor-pointer underline wrap-break-word wrap-anywhere">
       {children}
     </a>
   );
@@ -91,8 +91,8 @@ export function BubbleMarkdown({
 }) {
   const proseTone =
     tone === 'user'
-      ? 'prose-invert prose-p:text-white prose-li:text-white prose-a:text-white prose-code:text-white prose-strong:text-white prose-headings:text-white [&_li::marker]:text-white/85'
-      : 'dark:prose-invert prose-a:text-primary-500 prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-headings:text-sm [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300';
+      ? 'prose-invert prose-p:text-content-inverted prose-li:text-content-inverted prose-a:text-content-inverted prose-code:text-content-inverted prose-strong:text-content-inverted prose-headings:text-content-inverted [&_li::marker]:text-content-inverted/85'
+      : 'dark:prose-invert prose-a:text-primary-500 prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-headings:text-sm [&_li::marker]:text-content-secondary';
 
   const hasMath = hasLatexContent(content);
   const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
@@ -130,7 +130,7 @@ export function TableCellMarkdown({ content }: { content: string }) {
   // intentionally skip the CodeBlock chrome (no header bar / copy button) to
   // avoid layout disruption inside narrow table cells.
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content-secondary prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
+    <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content-secondary prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-content prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-content-secondary [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
         urlTransform={transformMarkdownUrl}
         components={{ a: MarkdownAnchor }}
@@ -168,7 +168,7 @@ function AgentMarkdownTable({
             {table.rows.map((row, rowIndex) => (
               <tr
                 key={`${rowIndex}:${row.join('|')}`}
-                className="odd:bg-white dark:odd:bg-neutral-900 even:bg-stone-50 dark:even:bg-neutral-800/60">
+                className="odd:bg-surface even:bg-surface-subtle">
                 {row.map((cell, cellIndex) => (
                   <td
                     key={`${rowIndex}:${cellIndex}:${cell}`}
@@ -209,7 +209,7 @@ export function AgentMessageBubble({
     return (
       <AgentMarkdownTable
         table={table}
-        className={`w-full max-w-full overflow-hidden border border-line bg-surface/90 shadow-sm ${bubbleChrome}`}
+        className={`w-full max-w-full overflow-hidden border border-line bg-surface/90 shadow-xs ${bubbleChrome}`}
       />
     );
   }

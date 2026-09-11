@@ -17,6 +17,14 @@
  * persists the choice and restarts the app so the normal BootCheckGate flow
  * re-runs against the new mode. This panel only *surfaces* connection state;
  * it does not change what happens when a configured core is unreachable.
+ *
+ * `GatewaySection` below adds the cores this app *provisions* — in a Docker
+ * container, on a machine over SSH, or a container on a machine over SSH. Those
+ * are a different question from the remote URL above (which points at a core
+ * somebody else is already running), which is why they are a separate section
+ * rather than more options on the same toggle. Switching to one takes effect
+ * immediately instead of restarting: the shell re-points `core_rpc_url` and
+ * `core_rpc_token`, and there is no persisted mode for the boot gate to re-read.
  */
 import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
@@ -28,6 +36,7 @@ import {
   clearCoreRpcUrlCache,
   testCoreRpcConnection,
 } from '../../../services/coreRpcClient';
+import { gatewaysAvailable } from '../../../services/gatewayService';
 import { type CoreMode, setCoreMode } from '../../../store/coreModeSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { CORE_RPC_URL } from '../../../utils/config';
@@ -42,8 +51,10 @@ import {
 } from '../../../utils/configPersistence';
 import { restartApp } from '../../../utils/tauriCommands/core';
 import Button from '../../ui/Button';
+import Label from '../../ui/Label';
 import { SettingsRow, SettingsSection, SettingsSwitch, SettingsTextField } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
+import GatewaySection from './core/GatewaySection';
 
 const log = debug('settings:core');
 
@@ -339,7 +350,7 @@ const CoreConnectionPanel = () => {
           control={
             <div className="flex items-center gap-2">
               <span
-                className={`inline-block h-2.5 w-2.5 rounded-full flex-shrink-0 ${statusDotClass}`}
+                className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${statusDotClass}`}
                 aria-hidden="true"
                 data-testid="core-status-dot"
               />
@@ -388,11 +399,11 @@ const CoreConnectionPanel = () => {
         {useRemote && (
           <div className="flex flex-col gap-3 px-4 py-4">
             <div className="flex flex-col gap-1">
-              <label
+              <Label
                 htmlFor="core-remote-url"
                 className="text-xs font-medium text-content-secondary">
                 {t('bootCheck.coreRpcUrl')}
-              </label>
+              </Label>
               <SettingsTextField
                 id="core-remote-url"
                 type="url"
@@ -411,19 +422,21 @@ const CoreConnectionPanel = () => {
 
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
-                <label
+                <Label
                   htmlFor="core-remote-token"
                   className="text-xs font-medium text-content-secondary">
                   {t('bootCheck.authToken')} (
                   <code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
-                </label>
-                <button
+                </Label>
+                <Button
                   type="button"
-                  className="text-[11px] text-content-muted hover:text-content-secondary"
+                  variant="tertiary"
+                  size="xs"
+                  className="h-auto p-0 text-[11px] text-content-muted hover:bg-transparent hover:text-content-secondary"
                   onClick={() => setShowToken(s => !s)}
                   data-testid="core-token-reveal">
                   {showToken ? t('settings.search.hide') : t('settings.search.show')}
-                </button>
+                </Button>
               </div>
               <SettingsTextField
                 id="core-remote-token"
@@ -487,6 +500,8 @@ const CoreConnectionPanel = () => {
           </Button>
         </div>
       </SettingsSection>
+
+      <GatewaySection available={gatewaysAvailable()} />
     </SettingsPanel>
   );
 };

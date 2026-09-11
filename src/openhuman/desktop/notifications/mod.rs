@@ -3,7 +3,7 @@
 //! Two complementary sub-systems live here:
 //!
 //! **Core-bridge** (`bus`): Subscribes to selected
-//! [`DomainEvent`](crate::core::event_bus::DomainEvent) variants (cron
+//! [`DomainEvent`](crate::core::events::DomainEvent) variants (cron
 //! completions, webhook processed, sub-agent completions) and republishes them
 //! as `CoreNotificationEvent` payloads on a broadcast channel consumed by the
 //! Socket.IO bridge. The frontend listens on `core_notification` and funnels

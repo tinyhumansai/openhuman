@@ -1,0 +1,43 @@
+title: ""
+labels: ["memory"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Recall, the workspace, the durable journal, and what "remembers
+        everything" does and does not mean.
+
+        Recall problems are almost always about scale and about where the
+        workspace lives, so say both.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect it to remember?
+      description: The specific thing, and roughly when it was learned.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Roughly how much is stored?
+      description: Number of memories, or the size of the workspace directory.
+    validations:
+      required: true
+  - type: input
+    id: workspace
+    attributes:
+      label: Where is the workspace?
+      description: The OPENHUMAN_WORKSPACE path, and whether it is a local disk, an external drive, or a network mount.
+    validations:
+      required: true
+  - type: input
+    id: embed
+    attributes:
+      label: Embedding model
+      description: Which one, and whether it changed since the memories were written.

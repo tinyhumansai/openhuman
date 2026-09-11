@@ -8,7 +8,7 @@ import { BubbleMarkdown } from '../../components/AgentMessageBubble';
 export function UserMessageItem({ content }: { content: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[80%] rounded-2xl bg-primary-500 px-4 py-2 text-sm text-white">
+      <div className="max-w-[80%] rounded-2xl bg-primary-500 px-4 py-2 text-sm text-content-inverted">
         <BubbleMarkdown content={content} />
       </div>
     </div>

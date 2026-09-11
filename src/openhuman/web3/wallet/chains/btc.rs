@@ -7,17 +7,6 @@
 //! seeded with a standard recovery phrase + this path produces a `bc1q…`
 //! native segwit address.
 
-use bitcoin::absolute::LockTime;
-use bitcoin::bip32::{DerivationPath, Xpriv};
-use bitcoin::hashes::Hash;
-use bitcoin::key::{CompressedPublicKey, PrivateKey};
-use bitcoin::secp256k1::{Message, Secp256k1};
-use bitcoin::sighash::{EcdsaSighashType, SighashCache};
-use bitcoin::transaction::Version;
-use bitcoin::{
-    consensus::encode::serialize_hex, Address, Amount, Network, OutPoint, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness,
-};
 use log::debug;
 use serde::Deserialize;
 
@@ -66,34 +55,43 @@ pub fn estimated_btc_fee_sats() -> u64 {
 /// Generic BTC address validation — any well-formed mainnet address is OK.
 /// Used for recipients (we don't care what address type they prefer; the
 /// `bitcoin` crate's script_pubkey() will encode P2WPKH/P2TR/P2SH correctly).
+///
+/// Delegates to the vendored [`tinywallet_bus`] crate, which owns the address
+/// format itself. Nothing about parsing a Bitcoin address is OpenHuman-
+/// specific, so the rules live where any host can reach them; what stays here
+/// is the `Result<_, String>` shape the rest of this domain speaks.
 pub fn validate_btc_address(addr: &str) -> Result<String, String> {
-    let trimmed = addr.trim();
-    if trimmed.is_empty() {
-        return Err("BTC address is empty".to_string());
-    }
-    Address::from_str(trimmed)
-        .map_err(|e| format!("invalid BTC address '{trimmed}': {e}"))?
-        .require_network(Network::Bitcoin)
-        .map_err(|e| format!("BTC address '{trimmed}' is not mainnet: {e}"))?;
-    Ok(trimmed.to_string())
+    let result = tinywallet_bus::address::btc::validate(addr).map_err(|e| e.to_string());
+    debug!(
+        "{LOG_PREFIX} validate_address role=recipient result={}",
+        if result.is_ok() {
+            "accepted"
+        } else {
+            "rejected"
+        }
+    );
+    result
 }
 
 /// Sender-side validation — must be P2WPKH because we only know how to
 /// derive + sign for native segwit (`bc1q…`). Recipients can be any type.
+///
+/// See [`validate_btc_address`] for why this delegates. `tinywallet-bus` keeps the
+/// two rules as separate functions for the same reason this module does: using
+/// the recipient rule for a sender accepts an address that only fails later,
+/// at signing time.
 pub fn validate_btc_sender_address(addr: &str) -> Result<String, String> {
-    let trimmed = validate_btc_address(addr)?;
-    let parsed = Address::from_str(&trimmed)
-        .map_err(|e| format!("invalid BTC sender '{trimmed}': {e}"))?
-        .assume_checked();
-    if !parsed.script_pubkey().is_p2wpkh() {
-        return Err(format!(
-            "BTC sender '{trimmed}' is not P2WPKH (only bc1q… native segwit is supported for signing)"
-        ));
-    }
-    Ok(trimmed)
+    let result = tinywallet_bus::address::btc::validate_sender(addr).map_err(|e| e.to_string());
+    debug!(
+        "{LOG_PREFIX} validate_address role=sender result={}",
+        if result.is_ok() {
+            "accepted"
+        } else {
+            "rejected"
+        }
+    );
+    result
 }
-
-use std::str::FromStr;
 
 pub async fn native_balance(address: &str) -> Result<u128, String> {
     validate_btc_address(address)?;
@@ -123,40 +121,31 @@ pub async fn broadcast_raw_hex(tx_hex: &str) -> Result<String, String> {
     rest_post_text(&url, tx_hex, "text/plain").await
 }
 
-/// Best-effort lookup of an address's spending scriptPubKey by parsing it.
-fn script_pubkey_for_addr(addr: &str) -> Result<ScriptBuf, String> {
-    let parsed = Address::from_str(addr)
-        .map_err(|e| format!("invalid address '{addr}': {e}"))?
-        .require_network(Network::Bitcoin)
-        .map_err(|e| format!("address '{addr}' is not mainnet: {e}"))?;
-    Ok(parsed.script_pubkey())
-}
-
-/// Derive a P2WPKH PrivateKey for `derivation_path` from a BIP39 mnemonic.
+/// Derive the P2WPKH signing key for `derivation_path` from a BIP-39 mnemonic.
+///
+/// Test-only, and deliberately on the **root** `tinywallet` crate rather than
+/// `tinywallet-bus`: `key` is one of the gates that did not move into the
+/// contract crate, because deriving is the module's job. The root crate is a
+/// dev-dependency here, so this derivation stack is not linked into the shipped
+/// binary. Production derives inside the wallet module, via
+/// `modules::wallet::derive_account`.
+///
+/// Custody stays here: the mnemonic is decrypted from the keyring by this crate
+/// and handed over as a `&str` that is not retained.
+#[cfg(test)]
 fn derive_btc_private_key(
     mnemonic: &str,
     derivation_path: &str,
-) -> Result<(PrivateKey, CompressedPublicKey), String> {
-    use coins_bip39::{English, Mnemonic};
-    let mnemonic: Mnemonic<English> = mnemonic
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid BIP39 mnemonic: {e}"))?;
-    let seed = mnemonic
-        .to_seed(None)
-        .map_err(|e| format!("failed to derive BIP39 seed: {e}"))?;
-    let xpriv = Xpriv::new_master(Network::Bitcoin, &seed)
-        .map_err(|e| format!("failed to derive BTC master key: {e}"))?;
-    let secp = Secp256k1::signing_only();
-    let path = DerivationPath::from_str(derivation_path)
-        .map_err(|e| format!("invalid BTC derivation path '{derivation_path}': {e}"))?;
-    let derived = xpriv
-        .derive_priv(&secp, &path)
-        .map_err(|e| format!("failed to derive BTC child key: {e}"))?;
-    let private_key = PrivateKey::new(derived.private_key, Network::Bitcoin);
-    let public_key = CompressedPublicKey::from_private_key(&secp, &private_key)
-        .map_err(|e| format!("failed to derive BTC public key: {e}"))?;
-    Ok((private_key, public_key))
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let derived = tinywallet::key::derive(tinywallet::Chain::Btc, mnemonic, derivation_path)
+        .map_err(|e| e.to_string())?;
+    let secret = derived.secret_bytes().to_vec();
+    // Compressed, because a P2WPKH witness program is defined over the
+    // compressed encoding — the uncompressed form yields a valid-looking
+    // address for an account holding no funds.
+    let public_key = super::super::execution::compressed_public_key(&secret)
+        .map_err(|_| "tinywallet returned an unusable BTC key".to_string())?;
+    Ok((secret, public_key))
 }
 
 /// Select UTXOs to cover `amount_sats + fee_sats`, returning the selected
@@ -218,72 +207,48 @@ pub async fn execute_btc_quote(mut quote: PreparedTransaction) -> Result<Executi
     )
     .await?
     .value;
-    let (private_key, public_key) = derive_btc_private_key(&mnemonic, &secret.derivation_path)?;
-
-    let from_spk = script_pubkey_for_addr(&from_addr)?;
-    let to_spk = script_pubkey_for_addr(&to_addr)?;
-
-    // Build inputs.
-    let mut tx_inputs = Vec::with_capacity(selected.len());
-    for utxo in &selected {
-        let txid = bitcoin::Txid::from_str(&utxo.txid)
-            .map_err(|e| format!("invalid utxo txid '{}': {e}", utxo.txid))?;
-        tx_inputs.push(TxIn {
-            previous_output: OutPoint {
-                txid,
-                vout: utxo.vout,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
-            witness: Witness::default(),
-        });
-    }
-    // Outputs: recipient + (optional) change to self.
-    let mut tx_outputs = vec![TxOut {
-        value: Amount::from_sat(amount_sats),
-        script_pubkey: to_spk,
-    }];
-    if change_sats > 546 {
-        tx_outputs.push(TxOut {
-            value: Amount::from_sat(change_sats),
-            script_pubkey: from_spk.clone(),
-        });
-    }
-
-    let mut tx = Transaction {
-        version: Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: tx_inputs,
-        output: tx_outputs,
+    // Derivation and signing both happen in the loaded wallet module now, so no
+    // private key is reassembled here. The phrase travels over a confidential
+    // call to a module that has proved it is an artifact this build pinned —
+    // see `modules::wallet::attested_proxy`.
+    let signing_secret = tinywallet_bus::wire::SecretMaterial {
+        mnemonic,
+        derivation_path: secret.derivation_path.clone(),
+        chain: tinywallet_bus::Chain::Btc,
     };
 
-    // Sign each input (BIP143 segwit sighash).
-    let secp = Secp256k1::signing_only();
-    let mut sighash_cache = SighashCache::new(&mut tx);
-    let mut witnesses = Vec::with_capacity(selected.len());
-    for (idx, utxo) in selected.iter().enumerate() {
-        let sighash = sighash_cache
-            .p2wpkh_signature_hash(
-                idx,
-                &from_spk,
-                Amount::from_sat(utxo.value),
-                EcdsaSighashType::All,
-            )
-            .map_err(|e| format!("failed to compute BTC sighash: {e}"))?;
-        let msg = Message::from_digest(sighash.to_byte_array());
-        let sig = secp.sign_ecdsa(&msg, &private_key.inner);
-        let mut witness = Witness::new();
-        let mut sig_bytes = sig.serialize_der().to_vec();
-        sig_bytes.push(EcdsaSighashType::All as u8);
-        witness.push(sig_bytes);
-        witness.push(public_key.to_bytes());
-        witnesses.push(witness);
-    }
-    for (input, witness) in tx.input.iter_mut().zip(witnesses) {
-        input.witness = witness;
-    }
+    // Selection stays here — this crate knows the fee policy and the UTXO
+    // source — but the transaction itself is encoded by the loaded wallet
+    // module, which also re-runs the same largest-first selection over the
+    // UTXOs it is handed. Passing only the already-selected set keeps the two
+    // in agreement: the module's `select_coins` and `select_utxos` above are
+    // the same algorithm, down to the 546-sat dust rule, so it reselects
+    // exactly what was chosen here.
+    let transaction = tinywallet_bus::wire::TransactionSpec::Btc {
+        from: from_addr.clone(),
+        to: to_addr.clone(),
+        amount_sat: amount_sats,
+        fee_sat: fee_sats,
+        utxos: selected
+            .iter()
+            .map(|utxo| tinywallet_bus::wire::Utxo {
+                txid: utxo.txid.clone(),
+                vout: utxo.vout,
+                value: utxo.value,
+            })
+            .collect(),
+    };
+    // One signature per selected input, all produced inside the module and
+    // applied there in input order — see `modules::wallet`.
+    let signed = crate::openhuman::modules::wallet::sign_transaction_in_module(
+        &config,
+        &transaction,
+        &signing_secret,
+    )
+    .await
+    .map_err(|e| format!("failed to sign BTC transaction: {e}"))?;
 
-    let tx_hex = serialize_hex(&tx);
+    let tx_hex = signed.raw;
     let txid_hex = broadcast_raw_hex(&tx_hex).await?;
     quote.estimated_fee_raw = fee_sats.to_string();
     quote.status = PreparedStatus::Broadcasted;
@@ -434,310 +399,5 @@ pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::web3::wallet::execution::{
-        insert_quote_for_test, now_ms, reset_quote_store_for_tests, PreparedKind, PreparedStatus,
-        PreparedTransaction,
-    };
-    use crate::openhuman::web3::wallet::test_support::{
-        sample_btc_address, setup_wallet_in, TEST_LOCK,
-    };
-    use axum::{
-        routing::{get, post},
-        Router,
-    };
-    use serde_json::json;
-    use std::sync::Arc;
-    use tempfile::TempDir;
-    use tokio::net::TcpListener;
-
-    #[test]
-    fn validate_btc_address_accepts_known_p2wpkh() {
-        // bech32 P2WPKH from BIP173 examples.
-        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
-        assert_eq!(validate_btc_address(addr).unwrap(), addr);
-    }
-
-    #[test]
-    fn validate_btc_address_rejects_testnet() {
-        let err =
-            validate_btc_address("tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3")
-                .unwrap_err();
-        assert!(
-            err.contains("not mainnet") || err.contains("invalid"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn validate_btc_sender_address_rejects_p2tr() {
-        // P2TR (bech32m, bc1p…) is a valid recipient but cannot be a sender —
-        // we only know how to sign P2WPKH inputs in this iteration.
-        let p2tr = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr";
-        // Generic validation must accept it (recipients can be any type).
-        assert_eq!(validate_btc_address(p2tr).unwrap(), p2tr);
-        // Sender validation must reject it.
-        let err = validate_btc_sender_address(p2tr).unwrap_err();
-        assert!(err.contains("not P2WPKH"), "got: {err}");
-    }
-
-    #[test]
-    fn select_utxos_largest_first_returns_change() {
-        let utxos = vec![
-            EsploraUtxo {
-                txid: "a".into(),
-                vout: 0,
-                value: 5000,
-            },
-            EsploraUtxo {
-                txid: "b".into(),
-                vout: 0,
-                value: 10_000,
-            },
-            EsploraUtxo {
-                txid: "c".into(),
-                vout: 0,
-                value: 1_000,
-            },
-        ];
-        let (chosen, change) = select_utxos(&utxos, 6_000, 2_000).unwrap();
-        assert_eq!(chosen.len(), 1);
-        assert_eq!(chosen[0].txid, "b");
-        assert_eq!(change, 2_000);
-    }
-
-    #[test]
-    fn select_utxos_combines_multiple_when_needed() {
-        let utxos = vec![
-            EsploraUtxo {
-                txid: "a".into(),
-                vout: 0,
-                value: 5000,
-            },
-            EsploraUtxo {
-                txid: "b".into(),
-                vout: 0,
-                value: 5000,
-            },
-            EsploraUtxo {
-                txid: "c".into(),
-                vout: 0,
-                value: 5000,
-            },
-        ];
-        let (chosen, change) = select_utxos(&utxos, 11_000, 1_000).unwrap();
-        assert_eq!(chosen.len(), 3);
-        assert_eq!(change, 3_000);
-    }
-
-    #[test]
-    fn select_utxos_errors_when_insufficient() {
-        let utxos = vec![EsploraUtxo {
-            txid: "a".into(),
-            vout: 0,
-            value: 1_000,
-        }];
-        let err = select_utxos(&utxos, 5_000, 1_000).unwrap_err();
-        assert!(err.contains("insufficient"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn execute_btc_quote_builds_psbt_signs_and_broadcasts() {
-        let _guard = TEST_LOCK.lock();
-        reset_quote_store_for_tests();
-        let temp = TempDir::new().unwrap();
-        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
-
-        // Mock state: collect raw tx hex posted to /tx.
-        let raw_txs: Arc<parking_lot::Mutex<Vec<String>>> =
-            Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let raw_txs_clone = raw_txs.clone();
-        let from_addr = sample_btc_address().to_string();
-        // Real-shaped UTXO; value high enough to cover amount + fee.
-        let utxo_txid = "1111111111111111111111111111111111111111111111111111111111111111";
-        let utxo_json = json!([
-            { "txid": utxo_txid, "vout": 0, "value": 100_000u64 }
-        ]);
-        let utxo_clone = utxo_json.clone();
-        let app = Router::new()
-            .route(
-                "/address/{addr}/utxo",
-                get(move || {
-                    let body = utxo_clone.clone();
-                    async move { axum::Json(body) }
-                }),
-            )
-            .route(
-                "/tx",
-                post(move |body: String| {
-                    let raw_txs = raw_txs_clone.clone();
-                    async move {
-                        raw_txs.lock().push(body);
-                        // Return a known fake txid the test can assert on.
-                        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-                            .to_string()
-                    }
-                }),
-            );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
-
-        let now = now_ms();
-        let quote = PreparedTransaction {
-            quote_id: "q_btc_native_1".to_string(),
-            kind: PreparedKind::NativeTransfer,
-            chain: WalletChain::Btc,
-            evm_network: None,
-            from_address: from_addr.clone(),
-            to_address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
-            asset_symbol: "BTC".to_string(),
-            amount_raw: "50000".to_string(),
-            amount_formatted: "0.00050000".to_string(),
-            receive_symbol: None,
-            min_receive_raw: None,
-            calldata: None,
-            token_address: None,
-            estimated_fee_raw: "5000".to_string(),
-            status: PreparedStatus::AwaitingConfirmation,
-            created_at_ms: now,
-            expires_at_ms: now + 60_000,
-            notes: vec![],
-            owner: None,
-        };
-        insert_quote_for_test(quote.clone());
-
-        let result = execute_btc_quote(quote).await.expect("btc broadcast ok");
-        assert_eq!(result.status, PreparedStatus::Broadcasted);
-        assert_eq!(
-            result.transaction_hash,
-            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-        );
-        let raw = raw_txs.lock().clone();
-        assert_eq!(raw.len(), 1, "exactly one broadcast call");
-        let tx_hex = &raw[0];
-        assert!(!tx_hex.is_empty(), "tx hex must be non-empty");
-        // Witness-segwit transactions include the BIP141 marker+flag (0x0001).
-        assert!(
-            tx_hex.contains("0001"),
-            "expected segwit marker, got: {tx_hex}"
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_btc_quote_rejects_insufficient_utxos() {
-        let _guard = TEST_LOCK.lock();
-        reset_quote_store_for_tests();
-        let temp = TempDir::new().unwrap();
-        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
-
-        // Empty UTXO set — must error.
-        let app = Router::new().route(
-            "/address/{addr}/utxo",
-            get(|| async { axum::Json(json!([])) }),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
-
-        let now = now_ms();
-        let quote = PreparedTransaction {
-            quote_id: "q_btc_native_empty".to_string(),
-            kind: PreparedKind::NativeTransfer,
-            chain: WalletChain::Btc,
-            evm_network: None,
-            from_address: sample_btc_address().to_string(),
-            to_address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string(),
-            asset_symbol: "BTC".to_string(),
-            amount_raw: "50000".to_string(),
-            amount_formatted: "0.00050000".to_string(),
-            receive_symbol: None,
-            min_receive_raw: None,
-            calldata: None,
-            token_address: None,
-            estimated_fee_raw: "5000".to_string(),
-            status: PreparedStatus::AwaitingConfirmation,
-            created_at_ms: now,
-            expires_at_ms: now + 60_000,
-            notes: vec![],
-            owner: None,
-        };
-        let err = execute_btc_quote(quote).await.unwrap_err();
-        assert!(err.contains("no spendable UTXOs"), "got: {err}");
-    }
-
-    #[test]
-    fn derive_btc_key_produces_known_p2wpkh_from_test_mnemonic() {
-        // BIP84 m/84'/0'/0'/0/0 from "abandon x11 about" → bc1qcr8...
-        // The compressed pubkey should serialize to 33 bytes.
-        let mnemonic =
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let (pk, pubkey) = derive_btc_private_key(mnemonic, "m/84'/0'/0'/0/0").unwrap();
-        assert_eq!(pk.network, bitcoin::NetworkKind::Main);
-        assert_eq!(pubkey.to_bytes().len(), 33);
-        let secp = Secp256k1::signing_only();
-        let addr = Address::p2wpkh(&pubkey, Network::Bitcoin);
-        // Known good vector for this mnemonic + path:
-        assert_eq!(
-            addr.to_string(),
-            "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
-        );
-        let _ = secp; // suppress unused
-    }
-
-    #[tokio::test]
-    async fn tx_status_confirmed_with_tip_confirmations() {
-        let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let app = Router::new()
-            .route(
-                "/tx/{txid}/status",
-                get(|| async {
-                    axum::Json(json!({"confirmed": true, "block_height": 800_000u64}))
-                }),
-            )
-            .route("/blocks/tip/height", get(|| async { "800002" }));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
-        let info = tx_status("deadbeef").await.unwrap();
-        assert_eq!(
-            info.state,
-            crate::openhuman::web3::wallet::execution::TxState::Confirmed
-        );
-        assert_eq!(info.block_number, Some(800_000));
-        assert_eq!(info.confirmations, Some(3));
-    }
-
-    #[tokio::test]
-    async fn lookup_tx_not_found_on_404() {
-        let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let app = Router::new().route(
-            "/tx/{txid}",
-            get(|| async { (axum::http::StatusCode::NOT_FOUND, "Transaction not found") }),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
-        let info = lookup_tx("deadbeef").await.unwrap();
-        assert!(!info.found);
-    }
-}
+#[path = "btc_tests.rs"]
+mod tests;

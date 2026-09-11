@@ -91,7 +91,7 @@ describe('BackgroundProcessesPanel', () => {
   ];
 
   it('renders nothing when closed', () => {
-    const { container } = render(
+    render(
       <BackgroundProcessesPanel
         open={false}
         processes={procs}
@@ -99,7 +99,9 @@ describe('BackgroundProcessesPanel', () => {
         onOpenProcess={vi.fn()}
       />
     );
-    expect(container).toBeEmptyDOMElement();
+    // Asserted against document.body, not the render container: the panel
+    // portals, so an empty container would pass even if it had rendered.
+    expect(document.body.querySelector('[data-testid="background-processes-panel"]')).toBeNull();
   });
 
   it('lists processes and opens one on click', async () => {
@@ -157,11 +159,15 @@ describe('BackgroundProcessesPanel', () => {
       },
       { taskId: 's1', name: 'NoGoal', goal: '', status: 'running', toolCount: 1, iterations: 3 },
     ];
-    const { container } = render(
+    render(
       <BackgroundProcessesPanel open processes={rows} onClose={vi.fn()} onOpenProcess={vi.fn()} />
     );
-    expect(container.textContent).toContain('1 tool call'); // singular branch (NoGoal row)
-    expect(container.textContent).toContain('3 steps'); // iterations branch
+    // The panel portals to document.body, so it is not inside `container`.
+    // Scoped to the panel root so unrelated body content cannot satisfy this.
+    const panel = document.body.querySelector('[data-testid="background-processes-panel"]');
+    expect(panel).not.toBeNull();
+    expect(panel!.textContent).toContain('1 tool call'); // singular branch (NoGoal row)
+    expect(panel!.textContent).toContain('3 steps'); // iterations branch
     // The goal renders for the row that has one; the goal-less row adds no copy.
     expect(screen.getAllByText('investigate the bridge')).toHaveLength(1);
   });
@@ -171,7 +177,9 @@ describe('BackgroundProcessesPanel', () => {
     render(
       <BackgroundProcessesPanel open processes={procs} onClose={onClose} onOpenProcess={vi.fn()} />
     );
-    fireEvent.keyDown(window, { key: 'Escape' });
+    // Radix's dismissable layer listens on the owning `document`, not on
+    // `window` — an event dispatched on `window` never reaches `document`.
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
 

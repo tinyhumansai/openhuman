@@ -27,12 +27,23 @@
 //! `false` when the `os` backend is selected.  Callers that opt out of keychain
 //! storage (file-encrypted JSON fallback) check this flag.  The `file` backend
 //! always reports as available.
+//!
+//! # File backends hold every secret in one file
+//!
+//! Both file backends keep the whole secret set in a single file, so a `set` of
+//! one key rewrites all of them. More than one process routinely addresses the
+//! same workspace, so that cycle is guarded by the cross-process lock in
+//! [`file_store`] — see that module for the two ways an unguarded cycle destroys
+//! secrets. Under `cfg(test)` the file backends resolve to a per-process scratch
+//! directory rather than any real workspace, so test code cannot reach a
+//! developer's live store.
 
 pub mod backend;
 pub mod crypto;
 pub mod encrypted_file_backend;
 pub mod encrypted_store;
 pub mod error;
+pub mod file_store;
 pub mod ops;
 pub mod store;
 
@@ -53,4 +64,5 @@ pub use store::init_workspace;
 pub(crate) use ops::force_backend_for_test;
 
 #[cfg(test)]
+#[path = "keyring_tests.rs"]
 mod tests;

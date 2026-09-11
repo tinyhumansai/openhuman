@@ -24,11 +24,3 @@ export interface IntegrationNotification {
   /** Optional in-app hash route (e.g. "/chat") set by the core triage pipeline. */
   deep_link?: string;
 }
-
-export interface NotificationStats {
-  total: number;
-  unread: number;
-  unscored: number;
-  by_provider: Record<string, number>;
-  by_action: Record<string, number>;
-}

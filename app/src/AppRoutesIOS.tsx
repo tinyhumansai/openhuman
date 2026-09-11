@@ -6,11 +6,11 @@
  * Two phases:
  *   1. Unpaired — /pair only. QR scan binds the phone to a desktop core,
  *      writes a profile to profileStore, then redirects to /human.
- *   2. Paired — /human, /chat, /settings/* are reachable. A mobile tab bar
+ *   2. Paired — /human, /chat and /settings/* are reachable. A mobile tab bar
  *      sits at the bottom of the viewport. Any unknown path falls back to
- *      /human. The existing desktop screens (HumanPage, Accounts, Settings)
- *      are reused as-is; they call core RPC through the TransportManager
- *      bound to the saved profile.
+ *      /human. The existing desktop screens (HumanPage, Accounts, Settings) are
+ *      reused as-is; they call core RPC through the TransportManager bound to
+ *      the saved profile.
  */
 import debug from 'debug';
 import { type FC } from 'react';

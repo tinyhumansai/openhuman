@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { memorySyncAuditLog, type SyncAuditEntry } from '../../utils/tauriCommands';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -95,76 +96,97 @@ export function SyncAuditPanel() {
         <span>
           {entries.length} {t('sync.runs', 'sync runs')}
         </span>
-        <span className="text-content-faint dark:text-neutral-600">·</span>
+        <span className="text-content-faint">·</span>
         <span>
           {formatTokens(totalInput)} in / {formatTokens(totalOutput)} out
         </span>
-        <span className="text-content-faint dark:text-neutral-600">·</span>
+        <span className="text-content-faint">·</span>
         <span className="font-medium">
           ${totalCost.toFixed(4)} {t('sync.totalCost', 'total')}
         </span>
       </div>
       <div className="max-h-48 overflow-y-auto rounded-md border border-line-subtle">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-surface-muted text-content-muted">
-            <tr>
-              <th className="px-3 py-1.5 text-left font-medium">{t('sync.when', 'When')}</th>
-              <th className="px-3 py-1.5 text-left font-medium">{t('sync.source', 'Source')}</th>
-              <th className="px-3 py-1.5 text-right font-medium">{t('sync.items', 'Items')}</th>
-              <th className="px-3 py-1.5 text-right font-medium">{t('sync.tokens', 'Tokens')}</th>
-              <th className="px-3 py-1.5 text-right font-medium">{t('sync.cost', 'Cost')}</th>
-              <th className="px-3 py-1.5 text-right font-medium">
+        <Table className="text-xs">
+          <TableHeader className="sticky top-0 bg-surface-muted text-content-muted">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="h-auto px-3 py-1.5 text-left text-xs font-medium">
+                {t('sync.when', 'When')}
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-left text-xs font-medium">
+                {t('sync.source', 'Source')}
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-right text-xs font-medium">
+                {t('sync.items', 'Items')}
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-right text-xs font-medium">
+                {t('sync.tokens', 'Tokens')}
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-right text-xs font-medium">
+                {t('sync.cost', 'Cost')}
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-right text-xs font-medium">
                 {t('sync.duration', 'Duration')}
-              </th>
-              <th className="px-3 py-1.5 text-center font-medium"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-50 dark:divide-neutral-800">
+              </TableHead>
+              <TableHead className="h-auto px-3 py-1.5 text-center text-xs font-medium" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {entries.map((e, i) => (
-              <tr
-                key={`${e.timestamp}-${i}`}
-                className="hover:bg-surface-muted dark:hover:bg-surface-muted/50">
-                <td
+              <TableRow key={`${e.timestamp}-${i}`} className="border-line-subtle">
+                <TableCell
                   className="px-3 py-1.5 text-content-secondary whitespace-nowrap"
                   title={e.timestamp}>
                   {timeAgo(e.timestamp, t)}
-                </td>
-                <td
+                </TableCell>
+                <TableCell
                   className="px-3 py-1.5 text-content-secondary truncate max-w-[180px]"
                   title={e.scope}>
                   {scopeLabel(e.scope)}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-content-secondary">
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right tabular-nums text-content-secondary">
                   {e.items_fetched}
-                </td>
-                <td
+                </TableCell>
+                <TableCell
                   className="px-3 py-1.5 text-right tabular-nums text-content-secondary"
                   title={`${e.input_tokens} in / ${e.output_tokens} out`}>
                   {formatTokens(e.input_tokens + e.output_tokens)}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums font-medium text-content-secondary">
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right tabular-nums font-medium text-content-secondary">
                   ${e.estimated_cost_usd.toFixed(4)}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-content-muted">
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right tabular-nums text-content-muted">
                   {formatDuration(e.duration_ms)}
-                </td>
-                <td className="px-3 py-1.5 text-center">
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-center">
                   {e.success ? (
-                    <span className="text-green-500" title={t('sync.status.success', 'Success')}>
+                    <span className="text-sage-500" title={t('sync.status.success', 'Success')}>
                       ✓
+                    </span>
+                  ) : (e.tree_ingest_failures ?? 0) > 0 || e.tree_error ? (
+                    // openhuman#5820: the fetch committed but the memory-tree
+                    // half dropped items — a distinct partial verdict, not the
+                    // plain ✗ (which reads as "nothing was fetched"). The
+                    // tooltip carries the core's tree_error so the row
+                    // explains itself.
+                    <span
+                      className="text-amber-500"
+                      title={
+                        e.tree_error ?? t('sync.status.partial', 'Fetched, memory ingest failed')
+                      }>
+                      ⚠
                     </span>
                   ) : (
                     <span
-                      className="text-red-500"
+                      className="text-coral-500"
                       title={e.error ?? t('sync.status.failed', 'Failed')}>
                       ✗
                     </span>
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

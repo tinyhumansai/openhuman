@@ -24,14 +24,41 @@ use tinyflows::error::{EngineError, Result};
 use super::{ToolBackend, ToolCallCtx};
 use crate::openhuman::config::ops as config_rpc;
 use crate::openhuman::config::Config;
-use crate::openhuman::integrations::composio::client::{
-    create_composio_client, direct_execute, ComposioClientKind,
-};
+use crate::openhuman::integrations::composio::module_client::{self as connectors, methods};
+use crate::openhuman::integrations::composio::types::ComposioExecuteRequest;
+use crate::openhuman::integrations::composio::ComposioExecuteResponse;
 use crate::openhuman::security::GateDecision;
 
 /// Dispatches a Composio action slug through the tier, curation, preflight and
 /// approval gates.
 pub(crate) struct ComposioToolBackend;
+
+/// Dispatches an action while preserving the workflow node's exact
+/// connected-account choice.
+///
+/// One call for both routes: the module owns the difference, so a flow no
+/// longer branches on which mode is live. `connection_id` is passed through
+/// rather than defaulted, because a workflow node that named an account meant
+/// that account — falling back to the ambient one would run the step against
+/// somebody else's inbox.
+async fn execute_for_connection(
+    config: &Config,
+    slug: &str,
+    args: Option<Value>,
+    connection_id: Option<&str>,
+) -> Result<ComposioExecuteResponse> {
+    connectors::call::<_, ComposioExecuteResponse>(
+        config,
+        methods::EXECUTE,
+        ComposioExecuteRequest {
+            tool: slug.to_string(),
+            arguments: args,
+            connection_id: connection_id.map(str::to_string),
+        },
+    )
+    .await
+    .map_err(EngineError::Capability)
+}
 
 #[async_trait]
 impl ToolBackend for ComposioToolBackend {
@@ -53,6 +80,8 @@ impl ToolBackend for ComposioToolBackend {
         super::super::preflight_composio_args(config, slug, args).await
     }
 
+    /// Executes a curated Composio action after account resolution and all
+    /// workflow security gates have succeeded.
     async fn invoke(
         &self,
         ctx: &ToolCallCtx<'_>,
@@ -72,7 +101,7 @@ impl ToolBackend for ComposioToolBackend {
             })?;
         // Autonomy-tier gate (Phase 2, made effect-aware): the node's
         // [`CommandClass`] is derived from the action's curated
-        // [`ToolScope`](crate::openhuman::memory::sync::composio::providers::ToolScope)
+        // [`ToolScope`](crate::openhuman::integrations::composio::providers::ToolScope)
         // via [`classify_composio_action_for_tier`] — a curated Read action
         // (e.g. `TWITTER_RECENT_SEARCH`) is `CommandClass::Read`, which every
         // tier `Allow`s; a curated Write/Admin action, or anything not
@@ -157,8 +186,6 @@ impl ToolBackend for ComposioToolBackend {
             return Err(EngineError::Capability(reason));
         }
 
-        let kind = create_composio_client(&live_config)
-            .map_err(|e| EngineError::Capability(e.to_string()))?;
         let args_opt = if args.is_null() { None } else { Some(args) };
         let connection_id = conn.and_then(super::super::composio_connection_id);
 
@@ -177,80 +204,37 @@ impl ToolBackend for ComposioToolBackend {
         tracing::debug!(
             target: "flows",
             %slug,
-            mode = kind.mode(),
+            mode = live_config.composio.mode.as_str(),
             has_connection_ref = connection_id.is_some(),
             "[flows] tool_call: invoking composio tool"
         );
 
-        let response = match kind {
-            ComposioClientKind::Backend(client) => {
-                if let Some((id, resolved)) = &resolved_account {
-                    match resolved {
-                        Some((toolkit, _label)) => tracing::warn!(
-                            target: "flows",
-                            %slug,
-                            connection_id = %id,
-                            %toolkit,
-                            "[flows] tool_call: EXECUTING ON THE WRONG ACCOUNT — connection_ref \
-                             names a specific connected account, but backend mode has no per-call \
-                             account-scoping path yet, so this call runs against the AMBIENT \
-                             signed-in session account instead of the one requested (E-m3, \
-                             documented backend-API-gap stub, see caps.rs's OpenHumanTools doc). \
-                             Proceeds rather than failing closed."
-                        ),
-                        None => tracing::warn!(
-                            target: "flows",
-                            %slug,
-                            connection_id = %id,
-                            "[flows] tool_call: POSSIBLY EXECUTING ON THE WRONG ACCOUNT — \
-                             connection_ref names a connection id not found among the user's live \
-                             connected accounts, and backend mode has no per-call account-scoping \
-                             path to validate it against anyway — this call runs against the \
-                             AMBIENT signed-in session account regardless (E-m3, documented \
-                             backend-API-gap stub, see caps.rs's OpenHumanTools doc). Proceeds \
-                             rather than failing closed."
-                        ),
-                    }
-                }
-                client
-                    .execute_tool(slug, args_opt)
-                    .await
-                    .map_err(|e| EngineError::Capability(e.to_string()))
-            }
-            ComposioClientKind::Direct(tool) => {
-                match &resolved_account {
-                    Some((id, Some((toolkit, _label)))) => tracing::info!(
-                        target: "flows",
-                        %slug,
-                        connection_id = %id,
-                        %toolkit,
-                        "[flows] tool_call: executing against the resolved connected account"
-                    ),
-                    Some((id, None)) => tracing::warn!(
-                        target: "flows",
-                        %slug,
-                        connection_id = %id,
-                        "[flows] tool_call: connection_ref connection_id not found among the user's \
-                         live connected accounts (stale cache or foreign id) — forwarding to \
-                         Composio Direct mode as-is"
-                    ),
-                    None => tracing::debug!(
-                        target: "flows",
-                        %slug,
-                        "[flows] tool_call: no connection_ref — using the ambient signed-in account"
-                    ),
-                }
-                direct_execute(
-                    &tool,
-                    slug,
-                    args_opt,
-                    &live_config.composio.entity_id,
-                    connection_id,
-                )
-                .await
-                .map_err(|e| EngineError::Capability(e.to_string()))
-            }
-        };
+        match &resolved_account {
+            Some((id, Some((toolkit, _label)))) => tracing::info!(
+                target: "flows",
+                %slug,
+                connection_id = %id,
+                %toolkit,
+                mode = live_config.composio.mode.as_str(),
+                "[flows] tool_call: executing against the resolved connected account"
+            ),
+            Some((id, None)) => tracing::warn!(
+                target: "flows",
+                %slug,
+                connection_id = %id,
+                mode = live_config.composio.mode.as_str(),
+                "[flows] tool_call: connection_ref connection_id not found among the user's live \
+                 connected accounts (stale cache or foreign id) — forwarding the exact id so the \
+                 provider can reject it rather than falling back to an ambient account"
+            ),
+            None => tracing::debug!(
+                target: "flows",
+                %slug,
+                mode = live_config.composio.mode.as_str(),
+                "[flows] tool_call: no connection_ref — using the ambient signed-in account"
+            ),
+        }
+        let response = execute_for_connection(&live_config, slug, args_opt, connection_id).await;
 
         // A successful HTTP round-trip can still carry a provider-side failure
         // (`{successful: false, error: "..."}`, e.g. a Slack 400 on
@@ -277,3 +261,7 @@ impl ToolBackend for ComposioToolBackend {
         serde_json::to_value(response?).map_err(|e| EngineError::Capability(e.to_string()))
     }
 }
+
+#[cfg(test)]
+#[path = "composio_tests.rs"]
+mod tests;

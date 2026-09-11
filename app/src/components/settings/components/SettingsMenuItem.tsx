@@ -1,5 +1,8 @@
 import { ReactNode } from 'react';
 
+import { cn } from '../../../lib/cn';
+import Button from '../../ui/Button';
+
 interface SettingsMenuItemProps {
   icon: ReactNode;
   title: string;
@@ -26,39 +29,48 @@ const SettingsMenuItem = ({
   // Color variations for dangerous items (like logout/delete)
   const titleColor = dangerous ? 'text-amber-600 dark:text-amber-300' : 'text-content';
   const iconColor = dangerous ? 'text-amber-600 dark:text-amber-300' : 'text-content';
-  const borderColor = 'border-line';
 
   // Border classes for first/last items
-  const borderClasses = isLast ? '' : `border-b ${borderColor}`;
+  const borderClasses = isLast ? '' : 'border-b border-line';
   const roundedClasses = isFirst ? 'first:rounded-t-3xl' : isLast ? 'last:rounded-b-3xl' : '';
 
   const content = (
     <>
-      <div className={`w-5 h-5 opacity-60 flex-shrink-0 mr-3 ${iconColor}`}>{icon}</div>
+      <div className={cn('w-5 h-5 opacity-60 shrink-0 mr-3', iconColor)}>{icon}</div>
       <div className="flex-1">
-        <div className={`font-medium text-sm mb-1 ${titleColor}`}>{title}</div>
+        <div className={cn('font-medium text-sm mb-1', titleColor)}>{title}</div>
         {description && <p className="opacity-70 text-xs">{description}</p>}
       </div>
-      {rightElement && <div className="flex-shrink-0 ml-3">{rightElement}</div>}
+      {rightElement && <div className="shrink-0 ml-3">{rightElement}</div>}
     </>
   );
 
   if (onClick) {
     return (
-      <button
+      <Button
         type="button"
+        variant="tertiary"
         data-testid={testId}
         onClick={onClick}
-        className={`w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content ${borderClasses} hover:bg-surface-hover transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
+        className={cn(
+          'h-auto w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content',
+          'hover:bg-surface-hover transition-all duration-200 text-left',
+          borderClasses,
+          roundedClasses
+        )}>
         {content}
-      </button>
+      </Button>
     );
   }
 
   return (
     <div
       data-testid={testId}
-      className={`w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content ${borderClasses} ${roundedClasses}`}>
+      className={cn(
+        'w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content',
+        borderClasses,
+        roundedClasses
+      )}>
       {content}
     </div>
   );

@@ -65,7 +65,7 @@ describe('<ThemeStudioPanel />', () => {
       colors: { surface: '1 2 3' },
       fonts: {},
       gradient: { canvas: 'linear-gradient(red, blue)' },
-      backdrop: { kind: 'image', imageUrl: 'https://example.com/bg.jpg', dots: false },
+      backdrop: { kind: 'image', imageUrl: 'https://example.com/bg.jpg' },
     };
 
     fireEvent.change(screen.getByLabelText('Import theme'), {
@@ -76,7 +76,86 @@ describe('<ThemeStudioPanel />', () => {
     expect(store.getState().theme.customThemes[0]).toMatchObject({
       name: 'Imported studio theme',
       gradient: { canvas: 'linear-gradient(red, blue)' },
-      backdrop: { kind: 'image', imageUrl: 'https://example.com/bg.jpg', dots: false },
+      backdrop: { kind: 'image', imageUrl: 'https://example.com/bg.jpg' },
+    });
+  });
+
+  // #5901: `typeof null === 'object'` and `typeof [] === 'object'`, so the old
+  // shape check let both through; `{ ...null }` and `{ ...[] }` each yield `{}`,
+  // and a malformed paste was stored as a theme.
+  //
+  // A non-string token value is rejected for a different reason: `swatchChannels`
+  // falls back only on null/undefined, so `{"surface": 42}` reaches
+  // `channelsToCss`, which calls `.trim()` and throws — crashing the panel on a
+  // theme already in the store.
+  it.each([
+    ['null colors', null],
+    ['an array of colors', []],
+    ['a string colors value', 'surface'],
+    ['a numeric colors value', 42],
+    ['a numeric token value', { surface: 42 }],
+    ['a null token value', { surface: null }],
+    ['an object token value', { surface: {} }],
+    ['one bad value among good ones', { surface: '1 2 3', content: 7 }],
+  ])('refuses to import a theme with %s', (_label, colors) => {
+    const { store } = renderWithProviders(<ThemeStudioPanel />, {
+      preloadedState: { theme: themeState },
+      initialEntries: ['/settings/theme'],
+    });
+
+    fireEvent.change(screen.getByLabelText('Import theme'), {
+      target: { value: JSON.stringify({ name: 'Malformed', isDark: false, colors }) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(screen.getByText('Could not parse that theme JSON.')).toBeInTheDocument();
+    expect(store.getState().theme.customThemes).toHaveLength(0);
+  });
+
+  it('still imports a theme carrying a single colour token', () => {
+    const { store } = renderWithProviders(<ThemeStudioPanel />, {
+      preloadedState: { theme: themeState },
+      initialEntries: ['/settings/theme'],
+    });
+
+    fireEvent.change(screen.getByLabelText('Import theme'), {
+      target: {
+        value: JSON.stringify({ name: 'Minimal', isDark: false, colors: { surface: '1 2 3' } }),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(store.getState().theme.customThemes).toHaveLength(1);
+    expect(store.getState().theme.customThemes[0]).toMatchObject({
+      name: 'Minimal',
+      colors: { surface: '1 2 3' },
+    });
+  });
+
+  // An empty colour map is VALID, not malformed. CLASSIC_LIGHT and CLASSIC_DARK
+  // both carry `colors: {}` (presets.ts:63-78) and mean it — they inherit the
+  // base tokens and express themselves through `isDark`. The panel's export
+  // serialises the effective theme, so rejecting `{}` would break its own
+  // export -> import round trip for the two most common themes.
+  it('imports a theme with an empty colour map, preserving isDark', () => {
+    const { store } = renderWithProviders(<ThemeStudioPanel />, {
+      preloadedState: { theme: themeState },
+      initialEntries: ['/settings/theme'],
+    });
+
+    fireEvent.change(screen.getByLabelText('Import theme'), {
+      target: {
+        value: JSON.stringify({ name: 'Inherits base', isDark: true, colors: {}, fonts: {} }),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(screen.queryByText('Could not parse that theme JSON.')).not.toBeInTheDocument();
+    expect(store.getState().theme.customThemes).toHaveLength(1);
+    expect(store.getState().theme.customThemes[0]).toMatchObject({
+      name: 'Inherits base',
+      isDark: true,
+      colors: {},
     });
   });
 });

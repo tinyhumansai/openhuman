@@ -65,6 +65,7 @@ struct RedeemCouponParams {
 
 pub fn all_billing_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        billing_schemas("billing_get_summary"),
         billing_schemas("billing_get_current_plan"),
         billing_schemas("billing_get_balance"),
         billing_schemas("billing_purchase_plan"),
@@ -85,6 +86,10 @@ pub fn all_billing_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_billing_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: billing_schemas("billing_get_summary"),
+            handler: handle_billing_get_summary,
+        },
         RegisteredController {
             schema: billing_schemas("billing_get_current_plan"),
             handler: handle_billing_get_current_plan,
@@ -150,6 +155,16 @@ pub fn all_billing_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn billing_schemas(function: &str) -> ControllerSchema {
     match function {
+        "billing_get_summary" => ControllerSchema {
+            namespace: "billing",
+            function: "get_summary",
+            description: "Fetch credits, plan, and hosted billing dashboard links.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "summary",
+                "Billing summary payload from backend /payments/summary.",
+            )],
+        },
         "billing_get_current_plan" => ControllerSchema {
             namespace: "billing",
             function: "get_current_plan",
@@ -376,6 +391,13 @@ pub fn billing_schemas(function: &str) -> ControllerSchema {
             }],
         },
     }
+}
+
+fn handle_billing_get_summary(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::hosted::billing::get_summary(&config).await?)
+    })
 }
 
 fn handle_billing_get_current_plan(_params: Map<String, Value>) -> ControllerFuture {

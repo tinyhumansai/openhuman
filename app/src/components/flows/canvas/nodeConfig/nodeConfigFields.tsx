@@ -18,16 +18,22 @@
 import createDebug from 'debug';
 import { useCallback, useId, useMemo, useState } from 'react';
 
+import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
+import {
+  Button,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupRoot,
+  NativeSelect,
+  Input as UiInput,
+  TextArea as UiTextArea,
+} from '../../../ui';
 import type { UpstreamExpressionOption } from './upstreamOptions';
 
 const log = createDebug('app:flows:nodeConfig:fields');
 
-export const INPUT_CLASS =
-  'w-full rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content ' +
-  'placeholder-content-faint transition-colors focus:border-primary-500 focus:outline-none ' +
-  'focus:ring-2 focus:ring-primary-500/20 disabled:opacity-50';
 export const MONO_CLASS = 'font-mono text-[13px]';
 
 /** Read a string field off a free-form config object, defaulting to `''`. */
@@ -94,10 +100,11 @@ export function TextField({ label, hint, value, onChange, placeholder, testId }:
   const id = useId();
   return (
     <Field label={label} hint={hint} htmlFor={id}>
-      <input
+      <UiInput
         id={id}
         type="text"
-        className={INPUT_CLASS}
+        inputSize="sm"
+        className="w-full"
         value={value}
         placeholder={placeholder}
         data-testid={testId}
@@ -126,10 +133,10 @@ export function TextAreaField({
   const id = useId();
   return (
     <Field label={label} hint={hint} htmlFor={id}>
-      <textarea
+      <UiTextArea
         id={id}
         rows={rows}
-        className={`${INPUT_CLASS} resize-y ${mono ? MONO_CLASS : ''}`}
+        className={cn('resize-y', mono && MONO_CLASS)}
         value={value}
         placeholder={placeholder}
         data-testid={testId}
@@ -157,9 +164,10 @@ export function SelectField({ label, hint, value, onChange, options, testId }: S
   const id = useId();
   return (
     <Field label={label} hint={hint} htmlFor={id}>
-      <select
+      <NativeSelect
         id={id}
-        className={INPUT_CLASS}
+        inputSize="sm"
+        className="w-full"
         value={value}
         data-testid={testId}
         onChange={e => onChange(e.target.value)}>
@@ -168,7 +176,7 @@ export function SelectField({ label, hint, value, onChange, options, testId }: S
             {opt.label}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </Field>
   );
 }
@@ -205,10 +213,11 @@ export function NumberField({
   const id = useId();
   return (
     <Field label={label} hint={hint} htmlFor={id}>
-      <input
+      <UiInput
         id={id}
         type="number"
-        className={INPUT_CLASS}
+        inputSize="sm"
+        className="w-full"
         value={value ?? ''}
         placeholder={placeholder}
         min={min}
@@ -245,11 +254,9 @@ export function UpstreamInsertSelect({
   const { t } = useT();
   if (options.length === 0) return null;
   return (
-    <select
-      className={
-        className ??
-        'max-w-[45%] shrink-0 cursor-pointer border-l border-line-strong bg-surface-muted px-1.5 text-[11px] text-content-muted focus:outline-none'
-      }
+    <NativeSelect
+      inputSize="sm"
+      className={cn('max-w-[45%] shrink-0 border-l text-[11px]', className)}
       value=""
       title={t('flows.nodeConfig.upstream.insertLabel', 'Insert a value from a previous step')}
       aria-label={t('flows.nodeConfig.upstream.insertLabel', 'Insert a value from a previous step')}
@@ -267,7 +274,7 @@ export function UpstreamInsertSelect({
           {opt.label}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -298,23 +305,22 @@ export function ExpressionField({
 }: ExpressionFieldProps) {
   const { t } = useT();
   const id = useId();
-  const borderClass = warning
-    ? 'border-amber-400 focus-within:border-amber-500 focus-within:ring-amber-500/20'
-    : 'border-line-strong focus-within:border-primary-500 focus-within:ring-primary-500/20';
   return (
     <Field label={label} hint={hint ?? t('flows.nodeConfig.expressionHint')} htmlFor={id}>
-      <div
-        className={`flex items-stretch overflow-hidden rounded-lg border bg-surface focus-within:ring-2 ${borderClass}`}>
-        <span
-          className="flex select-none items-center border-r border-line-strong bg-surface-muted px-2 font-mono text-[11px] font-semibold text-content-muted"
+      <InputGroupRoot size="sm">
+        <InputGroupAddon
+          className={cn(warning && 'border-amber-400')}
           title={t('flows.nodeConfig.expressionBadge')}
           aria-hidden="true">
-          =
-        </span>
-        <input
+          <span className="font-mono text-[11px] font-semibold">=</span>
+        </InputGroupAddon>
+        <InputGroupInput
           id={id}
           type="text"
-          className={`w-full bg-transparent px-2.5 py-1.5 ${MONO_CLASS} text-content placeholder-content-faint focus:outline-none`}
+          className={cn(
+            MONO_CLASS,
+            warning && 'border-amber-400 focus:border-amber-500 focus:ring-amber-500/20'
+          )}
           value={value}
           placeholder={placeholder}
           data-testid={testId}
@@ -325,9 +331,10 @@ export function ExpressionField({
             options={upstreamOptions}
             onInsert={onChange}
             testId={testId ? `${testId}-upstream` : undefined}
+            className="max-w-[45%] shrink-0 text-[11px]"
           />
         )}
-      </div>
+      </InputGroupRoot>
       {warning && (
         <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400" role="alert">
           {warning}
@@ -386,9 +393,10 @@ export function KeyMapField({
       <div className="space-y-1.5" data-testid={testId}>
         {rows.map(([k, v], i) => (
           <div key={i} className="flex items-center gap-1.5">
-            <input
+            <UiInput
               type="text"
-              className={`${INPUT_CLASS} flex-1`}
+              inputSize="sm"
+              className="flex-1"
               value={k}
               placeholder={t('flows.nodeConfig.keymapKeyPlaceholder')}
               onChange={e => {
@@ -397,9 +405,10 @@ export function KeyMapField({
                 commit(next);
               }}
             />
-            <input
+            <UiInput
               type="text"
-              className={`${INPUT_CLASS} flex-1 ${monoValues ? MONO_CLASS : ''}`}
+              inputSize="sm"
+              className={cn('flex-1', monoValues && MONO_CLASS)}
               value={v}
               placeholder={t('flows.nodeConfig.keymapValuePlaceholder')}
               onChange={e => {
@@ -416,25 +425,30 @@ export function KeyMapField({
                   next[i] = [k, expr];
                   commit(next);
                 }}
-                className="w-20 shrink-0 cursor-pointer rounded-md border border-line-strong bg-surface-muted px-1 py-1 text-[11px] text-content-muted focus:outline-none"
+                className="w-20 shrink-0 text-[11px]"
               />
             )}
-            <button
+            <Button
               type="button"
-              className="shrink-0 rounded-md px-1.5 py-1 text-content-faint hover:bg-surface-hover hover:text-coral-600"
+              variant="tertiary"
+              size="xs"
+              iconOnly
+              tone="danger"
               aria-label={t('flows.nodeConfig.keymapRemove')}
               onClick={() => commit(rows.filter((_, idx) => idx !== i))}>
               ✕
-            </button>
+            </Button>
           </div>
         ))}
-        <button
+        <Button
           type="button"
-          className="rounded-md border border-dashed border-line-strong px-2 py-1 text-xs text-content-muted hover:bg-surface-hover"
+          variant="secondary"
+          size="sm"
+          className="border-dashed"
           data-testid={testId ? `${testId}-add` : undefined}
           onClick={() => commit([...rows, ['', '']])}>
           + {t('flows.nodeConfig.keymapAdd')}
-        </button>
+        </Button>
       </div>
     </Field>
   );
@@ -493,12 +507,11 @@ export function JsonField({ label, hint, value, onChange, rows = 6, testId }: Js
 
   return (
     <Field label={label} hint={hint} htmlFor={id}>
-      <textarea
+      <UiTextArea
         id={id}
         rows={rows}
-        className={`${INPUT_CLASS} resize-y ${MONO_CLASS} ${
-          error ? 'border-coral-400 focus:border-coral-500 focus:ring-coral-500/20' : ''
-        }`}
+        invalid={error}
+        className={cn('resize-y', MONO_CLASS)}
         value={text}
         data-testid={testId}
         onChange={e => handleChange(e.target.value)}
@@ -559,9 +572,10 @@ export function CredentialPickerField({
 
   return (
     <Field label={resolvedLabel} hint={t('flows.nodeConfig.credentialHint')} htmlFor={id}>
-      <select
+      <NativeSelect
         id={id}
-        className={INPUT_CLASS}
+        inputSize="sm"
+        className="w-full"
         value={value}
         data-testid={testId}
         onChange={e => onChange(e.target.value)}>
@@ -571,7 +585,7 @@ export function CredentialPickerField({
             {conn.display} · {conn.kind}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </Field>
   );
 }

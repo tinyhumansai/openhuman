@@ -15,6 +15,22 @@ pub const CONVERSATION_MEMORY_NAMESPACE: &str = "conversation_memory";
 /// subconscious / Intelligence UI rather than the prompt context block.
 pub const CONVERSATION_REFLECTIONS_NAMESPACE: &str = "conversation_reflections";
 
+/// Memory namespace holding raw, verbatim user messages captured by the
+/// per-turn autosave.
+///
+/// These used to be stored with an empty namespace, which
+/// `sanitize_namespace` maps to `global` — the same namespace the default
+/// recall reads. Every message a user ever sent therefore accumulated in the
+/// one bucket that retrieval scanned in full, so recall got steadily slower
+/// for exactly the users who used the product most. Benchmarked at ~10k
+/// messages the scan dominated per-turn cost.
+///
+/// Distinct from [`CONVERSATION_MEMORY_NAMESPACE`], which holds *derived*
+/// durable facts rather than raw turns. These are the unprocessed messages:
+/// still queryable on demand by naming this namespace, but no longer swept
+/// into every default-namespace read.
+pub const CONVERSATION_RAW_NAMESPACE: &str = "conversation_raw";
+
 /// Importance tier — controls which memories are surfaced into a fresh
 /// chat by default. Only `High` candidates make it into the prompt block;
 /// `Medium` is retrievable on demand; `Low` is stored but never auto-

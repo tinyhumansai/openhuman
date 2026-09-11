@@ -13,11 +13,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use parking_lot::Mutex;
-
 use crate::openhuman::security::keyring::backend::KeyringBackend;
 use crate::openhuman::security::keyring::crypto::{self, KEY_LEN};
 use crate::openhuman::security::keyring::error::KeyringError;
+use crate::openhuman::security::keyring::file_store;
 use crate::openhuman::security::keyring::store::BackendKind;
 
 const KEYCHAIN_SERVICE: &str = "openhuman";
@@ -174,10 +173,17 @@ fn master_key() -> Option<&'static [u8; KEY_LEN]> {
 
 // ── Backend ──────────────────────────────────────────────────────────────────
 
+/// Every secret in one ChaCha20-Poly1305 file.
+///
+/// Mutations are a read → decrypt → modify → encrypt → write cycle over the
+/// whole set, guarded by the cross-process advisory lock in
+/// [`file_store::lock_for_write`]. An in-process mutex would not do: more than
+/// one process routinely addresses the same workspace (a desktop core and a
+/// `medulla` TUI embedding the same core), and the later writer's snapshot —
+/// read before the earlier writer landed — silently drops the earlier secret.
 pub struct EncryptedFileBackend {
     path: PathBuf,
     workspace_dir: PathBuf,
-    mutex: Mutex<()>,
 }
 
 impl EncryptedFileBackend {
@@ -185,7 +191,6 @@ impl EncryptedFileBackend {
         Self {
             path: workspace_dir.join(SECRETS_FILENAME),
             workspace_dir: workspace_dir.to_path_buf(),
-            mutex: Mutex::new(()),
         }
     }
 
@@ -230,42 +235,13 @@ impl EncryptedFileBackend {
         key: &[u8; KEY_LEN],
         map: &HashMap<String, String>,
     ) -> Result<(), KeyringError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| KeyringError::MigrationReadFailed {
-                path: parent.display().to_string(),
-                source: e,
-            })?;
-        }
-
         let json = serde_json::to_vec(map)
             .map_err(|e| KeyringError::Backend(format!("failed to serialize secrets: {e}")))?;
 
         let blob = crypto::chacha20_encrypt(key, &json)
             .map_err(|e| KeyringError::Backend(format!("encryption failed: {e}")))?;
 
-        let tmp_path = self.path.with_extension("enc.tmp");
-        std::fs::write(&tmp_path, &blob).map_err(|e| KeyringError::MigrationDeleteFailed {
-            path: tmp_path.display().to_string(),
-            source: e,
-        })?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            if let Err(e) = std::fs::set_permissions(&tmp_path, perms) {
-                log::warn!("[keyring:encrypted_file] could not set 0600 on temp file: {e}");
-            }
-        }
-
-        std::fs::rename(&tmp_path, &self.path).map_err(|e| {
-            KeyringError::MigrationDeleteFailed {
-                path: self.path.display().to_string(),
-                source: e,
-            }
-        })?;
-
-        Ok(())
+        file_store::write_atomic(&self.path, &blob)
     }
 
     fn migrate_legacy_dev_keychain(
@@ -320,17 +296,10 @@ impl EncryptedFileBackend {
         Ok(map)
     }
 
+    /// Move an undecryptable / unparseable secrets file aside so the next call
+    /// starts fresh without destroying the bytes.
     fn handle_corruption(&self) {
-        let ts = chrono::Utc::now().format("%Y%m%d%H%M%S");
-        let corrupt_path = self.path.with_extension(format!("enc.corrupt.{ts}"));
-        if let Err(e) = std::fs::rename(&self.path, &corrupt_path) {
-            log::error!("[keyring:encrypted_file] could not rename corrupt file: {e}");
-        } else {
-            log::warn!(
-                "[keyring:encrypted_file] corrupt file renamed to {}",
-                corrupt_path.display()
-            );
-        }
+        file_store::quarantine_corrupt(&self.path, "enc");
     }
 }
 
@@ -339,7 +308,11 @@ impl KeyringBackend for EncryptedFileBackend {
         let Some(key) = master_key() else {
             return Ok(None);
         };
-        let _guard = self.mutex.lock();
+        // `read_map` can mutate the filesystem: it migrates a missing file and
+        // quarantines corrupt ciphertext. Hold the same lock as writers for
+        // either case so a delayed quarantine cannot rename a replacement a
+        // concurrent `set` just published.
+        let _guard = file_store::lock_for_write(&self.path)?;
         let map = self.read_map(key)?;
         Ok(map.get(namespaced_key).cloned())
     }
@@ -350,7 +323,9 @@ impl KeyringBackend for EncryptedFileBackend {
                 "master key unavailable — cannot store secrets".to_string(),
             ));
         };
-        let _guard = self.mutex.lock();
+        // Held across the read as well as the write: taking it around the write
+        // alone would still let a stale map overwrite a concurrent one.
+        let _guard = file_store::lock_for_write(&self.path)?;
         let mut map = self.read_map(key)?;
         map.insert(namespaced_key.to_string(), value.to_string());
         self.write_map(key, &map)
@@ -360,7 +335,7 @@ impl KeyringBackend for EncryptedFileBackend {
         let Some(key) = master_key() else {
             return Ok(());
         };
-        let _guard = self.mutex.lock();
+        let _guard = file_store::lock_for_write(&self.path)?;
         let mut map = self.read_map(key)?;
         if map.remove(namespaced_key).is_some() {
             self.write_map(key, &map)?;
@@ -374,122 +349,5 @@ impl KeyringBackend for EncryptedFileBackend {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::{Cell, RefCell};
-
-    /// In-memory fake of the keychain entry, so [`load_or_mint_master_key`] can
-    /// be exercised without a real OS keychain. `absent_error` is a fn pointer
-    /// because `keyring::Error` is not `Clone` — we mint a fresh error per call.
-    /// These tests touch no process-wide state (`load_or_mint_master_key` never
-    /// reads `MASTER_KEY`), so no OnceLock reset seam is needed.
-    struct FakeEntry {
-        stored: RefCell<Option<String>>,
-        absent_error: fn() -> keyring::Error,
-        set_calls: Cell<usize>,
-    }
-
-    impl FakeEntry {
-        fn with_stored(value: &str) -> Self {
-            Self {
-                stored: RefCell::new(Some(value.to_string())),
-                absent_error: || keyring::Error::NoEntry,
-                set_calls: Cell::new(0),
-            }
-        }
-        fn absent(err: fn() -> keyring::Error) -> Self {
-            Self {
-                stored: RefCell::new(None),
-                absent_error: err,
-                set_calls: Cell::new(0),
-            }
-        }
-    }
-
-    impl MasterKeyEntry for FakeEntry {
-        fn get_password(&self) -> Result<String, keyring::Error> {
-            match &*self.stored.borrow() {
-                Some(v) => Ok(v.clone()),
-                None => Err((self.absent_error)()),
-            }
-        }
-        fn set_password(&self, value: &str) -> Result<(), keyring::Error> {
-            self.set_calls.set(self.set_calls.get() + 1);
-            *self.stored.borrow_mut() = Some(value.to_string());
-            Ok(())
-        }
-    }
-
-    fn access_denied() -> keyring::Error {
-        keyring::Error::NoStorageAccess(Box::new(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "keychain access denied",
-        )))
-    }
-
-    fn platform_failure() -> keyring::Error {
-        keyring::Error::PlatformFailure(Box::new(std::io::Error::other("platform boom")))
-    }
-
-    #[test]
-    fn loads_existing_key_without_minting() {
-        let hex = "ab".repeat(KEY_LEN); // 32 bytes of 0xab
-        let entry = FakeEntry::with_stored(&hex);
-        let key = load_or_mint_master_key(&entry).expect("should load existing key");
-        assert_eq!(key, [0xabu8; KEY_LEN]);
-        assert_eq!(entry.set_calls.get(), 0, "must not overwrite existing key");
-    }
-
-    #[test]
-    fn mints_only_on_no_entry() {
-        let entry = FakeEntry::absent(|| keyring::Error::NoEntry);
-        let key = load_or_mint_master_key(&entry).expect("should mint when genuinely absent");
-        assert_ne!(key, [0u8; KEY_LEN], "minted key should be random, not zero");
-        assert_eq!(
-            entry.set_calls.get(),
-            1,
-            "should store the freshly minted key"
-        );
-        // The key is now persisted, so a second load returns the same one.
-        assert!(entry.stored.borrow().is_some());
-    }
-
-    #[test]
-    fn does_not_mint_on_access_denied() {
-        // The #3311 case: existing key unreadable due to post-update ACL change.
-        let entry = FakeEntry::absent(access_denied);
-        let result = load_or_mint_master_key(&entry);
-        assert!(result.is_err(), "access denial must NOT mint a new key");
-        assert_eq!(
-            entry.set_calls.get(),
-            0,
-            "must never call set_password on access denial — that orphans existing secrets"
-        );
-        assert!(
-            entry.stored.borrow().is_none(),
-            "keychain entry left untouched"
-        );
-    }
-
-    #[test]
-    fn does_not_mint_on_platform_failure() {
-        // Variant-independence: any non-NoEntry error fails safe, not just
-        // NoStorageAccess (the exact macOS denial variant is unconfirmed).
-        let entry = FakeEntry::absent(platform_failure);
-        let result = load_or_mint_master_key(&entry);
-        assert!(result.is_err(), "platform failure must NOT mint a new key");
-        assert_eq!(entry.set_calls.get(), 0);
-    }
-
-    #[test]
-    fn rejects_wrong_length_key_without_minting() {
-        let entry = FakeEntry::with_stored("abcd"); // 2 bytes, not KEY_LEN
-        let result = load_or_mint_master_key(&entry);
-        assert!(result.is_err(), "wrong-length stored key is an error");
-        assert_eq!(
-            entry.set_calls.get(),
-            0,
-            "must not overwrite on length mismatch"
-        );
-    }
-}
+#[path = "encrypted_file_backend_tests.rs"]
+mod tests;

@@ -119,6 +119,24 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         if !source.enabled {
             continue;
         }
+        // A provider with no working fetch path is skipped before it can
+        // record anything. `run_source_once` would refuse it, and that
+        // refusal costs a `store::record_fetch` row and a
+        // `TaskSourceFetchFailed` event on every tick, forever — an
+        // unbounded write nobody asked for and nobody can act on.
+        //
+        // The manual `task_sources_fetch` RPC deliberately does NOT get this
+        // gate: a user who presses Fetch is owed the explanation. Only the
+        // timer is silenced, which is why the check lives here rather than
+        // inside `run_source_once` (which both paths share).
+        if !source.provider.can_fetch() {
+            tracing::debug!(
+                source_id = %source.id,
+                provider = %source.provider.as_str(),
+                "[task_sources:periodic] skipping source — provider has no task-fetch path"
+            );
+            continue;
+        }
         considered += 1;
         if !is_due(&source) {
             continue;
@@ -142,64 +160,5 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::integrations::task_sources::types::{
-        FilterSpec, ProviderSlug, SourceTarget,
-    };
-    use chrono::Utc;
-    use serde_json::json;
-
-    fn source(id: &str, interval_secs: u64) -> TaskSource {
-        TaskSource {
-            id: id.into(),
-            provider: ProviderSlug::Github,
-            connection_id: None,
-            name: None,
-            enabled: true,
-            filter: FilterSpec::Github {
-                repo: None,
-                labels: vec![],
-                assignee_is_me: true,
-                state: None,
-                fetch_mode: Default::default(),
-                extra: json!({}),
-            },
-            interval_secs,
-            target: SourceTarget::TodoOnly,
-            max_tasks_per_fetch: 25,
-            assigned_executor: None,
-            created_at: Utc::now(),
-            last_fetch_at: None,
-            last_status: None,
-        }
-    }
-
-    #[test]
-    fn tick_seconds_is_sane() {
-        assert!(TICK_SECONDS >= 60);
-        assert!(TICK_SECONDS <= 3600);
-    }
-
-    #[test]
-    fn never_polled_source_is_due() {
-        let s = source("ts-never-polled-xyz", 1800);
-        assert!(is_due(&s));
-    }
-
-    #[test]
-    fn recently_polled_source_is_not_due() {
-        let s = source("ts-recent-poll-xyz", 1800);
-        record_poll(&s.id);
-        assert!(!is_due(&s), "just-recorded poll should not be due again");
-    }
-
-    #[test]
-    fn zero_interval_is_floored_not_always_due() {
-        let s = source("ts-zero-interval-xyz", 0);
-        record_poll(&s.id);
-        // With the MIN_INTERVAL_SECONDS floor a just-polled zero-interval
-        // source is not immediately due again.
-        assert!(!is_due(&s));
-    }
-}
+#[path = "periodic_tests.rs"]
+mod tests;

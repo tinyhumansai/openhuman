@@ -79,7 +79,6 @@ OpenHuman تین چیزیں ہے جو زیادہ تر اسسٹنٹس نہیں ہ
 
 - **[میموری ٹری](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: آپ کا ڈیٹا اسکور شدہ Markdown درختوں میں کمپریس ہو کر آپ کی مشین پر SQLite میں محفوظ ہوتا ہے، اور ایک [Obsidian والٹ](https://x.com/karpathy/status/2039805659525644595) کے طور پر عکس بند ہوتا ہے جسے آپ کھول اور ایڈٹ کر سکتے ہیں۔ کوئی ویکٹر سوپ بلیک باکس نہیں۔
 - **[100+ OAuth انضمام، 5,000+ MCP سرورز، 90,000+ سکلز](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: ایک کلک سے Gmail، Notion، GitHub، Slack اور اپنے باقی اسٹیک میں پلگ ان کریں۔ [خودکار لانا](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch) ہر 20 منٹ میں دماغ کو خوراک دیتا ہے۔ اس کے پاس آج صبح ہی کل کا سیاق و سباق ہوتا ہے۔
-- **[ایک لاشعور](https://tinyhumans.gitbook.io/openhuman/features/subconscious)**: ایک پس منظر لوپ جو آپ کی دنیا کا موازنہ کرتا ہے، آپ کے اہداف کو آگے بڑھاتا ہے، اور آپ کی صبح کی بریفنگ لکھتا ہے۔ آپ کے ٹائپ کرنا چھوڑنے کے بعد بھی سوچ جاری رہتی ہے۔
 - **[اہداف اور ٹوڈوز](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: طویل مدتی اہداف، فی تھریڈ پائیدار اہداف، اور ہر گفتگو کے لیے ایک مشترکہ کنبان بورڈ۔
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ٹول آؤٹ پٹ ماڈل تک پہنچنے سے پہلے کمپریس ہوتا ہے: وہی معلومات، 80% تک کم ٹوکنز۔ اتنا بڑا دماغ اس کے بغیر ناقابلِ برداشت مہنگا ہوتا۔
 
@@ -88,13 +87,10 @@ OpenHuman تین چیزیں ہے جو زیادہ تر اسسٹنٹس نہیں ہ
 - **[ورک فلوز](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: ایجنٹ آٹومیشن تجویز کرتا ہے؛ آپ اسے کینوس پر جائزہ لے کر محفوظ کرتے ہیں۔ اوپن سورس [tinyflows](https://github.com/tinyhumansai/tinyflows) پر پائیدار، ٹرگر سے چلنے والے، منظوری سے محفوظ رنز۔
 - **[ایک ہارنس جو کام مکمل کرتا ہے](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: اوپن سورس [tinyagents](https://github.com/tinyhumansai/tinyagents) پر چیک پوائنٹ شدہ گراف رنز۔ اٹکے ہوئے ایجنٹس کو راہ دکھائی جاتی ہے، رکے ہوئے بنیادی وجہ واپس دیتے ہیں، ہر رن حقیقی فی کال لاگت کے ساتھ دوبارہ چلایا جا سکتا ہے۔
 - **[ایک split brain، ہمیشہ فعال](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: ایک تیز reflex ایجنٹ آنے والی ٹریفک کو چھانٹتا ہے جبکہ ایک گہرا reasoning کور ورکر فلیٹس کو کام سونپتا ہے، لاشعور کی رہنمائی میں۔
-- **[ایک ایجنٹ معیشت](https://tinyhumans.gitbook.io/openhuman/features/tinyplace)**: [tiny.place](https://tiny.place) پر ایک `@handle`، Signal-انکرپٹڈ ایجنٹ سے ایجنٹ آرکسٹریشن، x402 USDC انعامی کام اور تجارت۔ چابیاں کبھی ڈسک کو نہیں چھوتیں۔
 
 ### 🔬 گہرا محقق اور کام کرنے والا
 
-- **[SuperContext](https://tinyhumans.gitbook.io/openhuman/features/super-context)**: ایک ریسرچ اسکاؤٹ ماڈل کے آپ کا پہلا پیغام پڑھنے سے پہلے آپ کی یادداشت اور فائلوں کا جائزہ لے لیتا ہے۔ کوئی سرد آغاز نہیں۔
 - **سب کچھ شامل ہے**: ویب سرچ، سکریپر، کوڈر ٹول سیٹ، ایک حقیقی [براؤزر](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)، ان پروسیس Whisper کے ساتھ [مقامی آواز](../gitbooks/features/native-tools/voice.md)، اور ساتھ [ماڈل روٹنگ](https://tinyhumans.gitbook.io/openhuman/features/model-routing) جو ہر ورک لوڈ کے لیے صحیح LLM چنتی ہے، ایک سبسکرپشن، [مقامی AI اختیاری](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)۔
-- **[میٹنگ ایجنٹس](https://tinyhumans.gitbook.io/openhuman/features/mascot/meeting-agents)**: چہرے اور آواز کے ساتھ **Meet، Zoom، Teams، اور Webex** میں شامل ہوتا ہے۔ کیلنڈر سے خود بخود شامل ہوتا ہے، لائیو ٹرانسکرپٹ اسٹریم کرتا ہے، نام سے جواب دیتا ہے، خلاصہ + ایکشن آئٹمز محفوظ کرتا ہے۔
 - **[تصویر اور ویڈیو جنریشن](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**: Seedream/SeedEdit تصاویر اور Seedance/Veo ویڈیو، براہ راست آپ کے ورک اسپیس میں، اسی سبسکرپشن پر۔
 - **[17 میسجنگ چینلز](https://tinyhumans.gitbook.io/openhuman/features/channels)**: Telegram، Discord، Slack، WhatsApp، Signal، iMessage… اور ساتھ **مقامی ای میل** (IMAP IDLE + SMTP)۔ آپ کا ایجنٹ آپ تک وہیں پہنچتا ہے جہاں آپ پہلے سے موجود ہیں۔
 
@@ -202,11 +198,11 @@ n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhuman
 
 ## سورس سے تعاون
 
-نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
+نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
 
-1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.93.0 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
+1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.96.1 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
 2. ریپو کو fork اور کلون کریں، پھر `pnpm install` سے پہلے `git submodule update --init --recursive` چلائیں تاکہ وینڈرڈ Tauri/CEF سورس موجود ہوں۔
-3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app`، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
+3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app` (macOS) یا `pnpm dev:app:win` (Windows)، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
 
 مزید دستاویزات: [آرکیٹیکچر](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [سیٹ اپ](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [کلاؤڈ ڈیپلائے](../gitbooks/features/cloud-deploy.md)۔
 

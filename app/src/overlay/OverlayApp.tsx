@@ -23,7 +23,6 @@
  *
  * There is **no** demo loop — the overlay is entirely event-driven.
  */
-import { listen } from '@tauri-apps/api/event';
 import {
   currentMonitor,
   getCurrentWindow,
@@ -66,7 +65,7 @@ let lastPollDebugTs = 0;
 
 // ── State model ──────────────────────────────────────────────────────────
 
-type OverlayMode = 'idle' | 'stt' | 'attention' | 'companion';
+type OverlayMode = 'idle' | 'stt' | 'attention';
 type BubbleTone = 'neutral' | 'accent' | 'success';
 
 interface OverlayBubble {
@@ -94,36 +93,6 @@ interface OverlayAttentionPayload {
   tone?: BubbleTone;
   ttl_ms?: number;
   source?: string;
-}
-
-interface CompanionStateChangedPayload {
-  sessionId?: string;
-  state?: string;
-  previousState?: string;
-}
-
-/**
- * Convert companion state to a localized, user-friendly bubble label.
- *
- * Takes the translate function as an argument (rather than calling `useT`
- * directly) so the helper stays a pure function and is unit-testable
- * without rendering a React tree. The default branch wraps the raw state
- * string \u2014 it's a fallback for unknown states and not expected in practice.
- */
-export function companionStateLabel(state: string, t: (key: string) => string): string {
-  const inner = (() => {
-    switch (state) {
-      case 'listening':
-        return t('overlay.companion.listening');
-      case 'thinking':
-        return t('overlay.companion.thinking');
-      case 'speaking':
-        return t('overlay.companion.speaking');
-      default:
-        return state;
-    }
-  })();
-  return `\u201C${inner}\u201D`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -313,40 +282,6 @@ export default function OverlayApp() {
     [scheduleDismiss]
   );
 
-  // ── Companion state changes ──────────────────────────────────────────────
-  const handleCompanionStateChanged = useCallback(
-    (payload: CompanionStateChangedPayload) => {
-      const state = payload?.state ?? 'idle';
-      console.debug(`[overlay] companion:state_changed state=${state}`);
-
-      if (state === 'idle') {
-        scheduleDismiss(0);
-        return;
-      }
-      if (state === 'error') {
-        setMode('companion');
-        setBubble({
-          id: `companion-error-${Date.now()}`,
-          text: `\u201C${t('overlay.companion.error')}\u201D`,
-          tone: 'neutral',
-          compact: true,
-        });
-        scheduleDismiss(DEFAULT_ATTENTION_TTL_MS);
-        return;
-      }
-
-      clearDismissTimer();
-      setMode('companion');
-      setBubble({
-        id: `companion-${state}-${Date.now()}`,
-        text: companionStateLabel(state, t),
-        tone: state === 'speaking' ? 'success' : 'accent',
-        compact: true,
-      });
-    },
-    [clearDismissTimer, scheduleDismiss, t]
-  );
-
   // ── Socket.IO subscription lifecycle ───────────────────────────────────
   useEffect(() => {
     let socket: Socket | null = null;
@@ -400,28 +335,6 @@ export default function OverlayApp() {
       clearDismissTimer();
     };
   }, [clearDismissTimer, handleAttention, handleDictationToggle, handleDictationTranscription]);
-
-  // ── Companion state via Tauri event ────────────────────────────────────
-  // The desktop companion now lives shell-side and emits a
-  // `companion://state_changed` Tauri event (camelCase payload) rather than the
-  // old core Socket.IO `companion:state_changed` broadcast.
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void listen<CompanionStateChangedPayload>('companion://state_changed', event => {
-      handleCompanionStateChanged(event.payload);
-    }).then(fn => {
-      if (disposed) {
-        fn();
-        return;
-      }
-      unlisten = fn;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [handleCompanionStateChanged]);
 
   // ── Poll voice server status as fallback sync ─────────────────────────
   // Socket events are the primary state driver, but if an event is missed
@@ -711,9 +624,7 @@ export default function OverlayApp() {
                 ? t('overlay.ariaVoiceActive')
                 : mode === 'attention'
                   ? t('overlay.ariaAttention')
-                  : mode === 'companion'
-                    ? t('overlay.ariaCompanion')
-                    : t('overlay.ariaOrb')
+                  : t('overlay.ariaOrb')
             }
             onMouseDown={handleDragStart}
             onMouseMove={handleMouseMove}

@@ -428,7 +428,7 @@ describe('RecoveryPhrasePanel — replace-confirm → import path (handleImportR
     await waitFor(() => screen.getByText(/Enter your recovery phrase below/i));
 
     // Default is 12 word slots; switch to 24.
-    fireEvent.click(screen.getByRole('button', { name: '24' }));
+    fireEvent.click(screen.getByRole('radio', { name: '24' }));
 
     // 24 labelled inputs should now be visible.
     const inputs = screen.getAllByRole('textbox');
@@ -650,7 +650,7 @@ describe('RecoveryPhrasePanel — import mode word inputs and valid/invalid styl
     expect(screen.getAllByLabelText(/Recovery phrase word/i).length).toBe(12);
 
     // Click the "15" word-count button.
-    fireEvent.click(screen.getByRole('button', { name: '15' }));
+    fireEvent.click(screen.getByRole('radio', { name: '15' }));
 
     // Now 15 slots.
     expect(screen.getAllByLabelText(/Recovery phrase word/i).length).toBe(15);

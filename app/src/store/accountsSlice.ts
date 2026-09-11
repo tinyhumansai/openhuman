@@ -37,7 +37,6 @@ const initialState: AccountsState = {
   messages: {},
   unread: {},
   logs: {},
-  overlayOpen: false,
 };
 
 const accountsSlice = createSlice({
@@ -129,29 +128,6 @@ const accountsSlice = createSlice({
       }
     },
 
-    noteWebviewNotificationFired(state, action: PayloadAction<{ accountId: string }>) {
-      const { accountId } = action.payload;
-      if (!state.accounts[accountId]) return;
-      state.unread[accountId] = (state.unread[accountId] ?? 0) + 1;
-    },
-
-    focusAccountFromNotification(state, action: PayloadAction<{ accountId: string }>) {
-      const { accountId } = action.payload;
-      if (!state.accounts[accountId]) return;
-      state.activeAccountId = accountId;
-      state.unread[accountId] = 0;
-    },
-
-    /**
-     * Signals that a rail overlay (add-account modal / context menu) opened or
-     * closed. Read by the desktop shell to hide/restore the active provider
-     * webview, which composites above HTML and would otherwise paint over the
-     * overlay.
-     */
-    setAccountsOverlayOpen(state, action: PayloadAction<boolean>) {
-      state.overlayOpen = action.payload;
-    },
-
     resetAccountsState() {
       return initialState;
     },
@@ -204,9 +180,6 @@ export const {
   setAccountStatus,
   appendMessages,
   appendLog,
-  noteWebviewNotificationFired,
-  focusAccountFromNotification,
-  setAccountsOverlayOpen,
   resetAccountsState,
 } = accountsSlice.actions;
 

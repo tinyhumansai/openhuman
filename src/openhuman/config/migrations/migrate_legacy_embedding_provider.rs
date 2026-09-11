@@ -37,7 +37,7 @@
 //!
 //! Stored vectors written at the old signature are left in place: they are
 //! ignored by signature-filtered vector search and re-generated lazily by the
-//! existing re-embed backfill ([`crate::openhuman::memory::queue::ensure_reembed_backfill`])
+//! existing re-embed backfill ([`tinymemory_core::queue::ensure_reembed_backfill`])
 //! once memory next syncs. No DB surgery happens here — this mirrors the
 //! pure-config-mutation contract of the other migration steps.
 //!

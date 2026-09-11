@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
 /// A boxed async cleanup function.
-type ShutdownHook = Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type ShutdownHook = Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Global registry of shutdown hooks.
 static HOOKS: Lazy<Mutex<Vec<ShutdownHook>>> = Lazy::new(|| Mutex::new(Vec::new()));
@@ -34,22 +34,56 @@ where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let boxed: ShutdownHook = Box::new(move || Box::pin(hook()));
-    HOOKS.lock().expect("shutdown hooks poisoned").push(boxed);
+    HOOKS
+        .lock()
+        .expect("shutdown hooks poisoned")
+        .push(boxed_hook(hook));
+}
+
+/// Box a cleanup function without registering it.
+///
+/// For a caller that wants to run a hook through [`run_hook_list`] itself —
+/// a test above all, which must not reach into the process-wide registry: in
+/// a test binary that registry holds every other test's hooks, the shared
+/// memory engine's shutdown among them.
+pub fn boxed_hook<F, Fut>(hook: F) -> ShutdownHook
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    Box::new(move || Box::pin(hook()))
+}
+
+/// Take every registered hook, leaving the registry empty.
+///
+/// Draining is what makes the exit idempotent: a later take, or a signal
+/// landing mid-teardown, finds nothing to run twice.
+pub fn take_hooks() -> Vec<ShutdownHook> {
+    let mut guard = HOOKS.lock().expect("shutdown hooks poisoned");
+    std::mem::take(&mut *guard)
 }
 
 /// Run all registered hooks (called once during shutdown).
 ///
 /// This function drains the global `HOOKS` list and awaits each hook in sequence.
 async fn run_hooks() {
-    let hooks: Vec<ShutdownHook> = {
-        let mut guard = HOOKS.lock().expect("shutdown hooks poisoned");
-        // Use mem::take to clear the hooks list and take ownership of the vector.
-        std::mem::take(&mut *guard)
-    };
-    for hook in &hooks {
+    for hook in &take_hooks() {
         hook().await;
     }
+}
+
+/// Run `hooks` side by side.
+///
+/// For the embedded server's exit, whose graceful path is a cancellation token
+/// rather than SIGTERM: [`signal`] never resolves there, so the hooks it would
+/// have run — the memory engine releasing its queue leases, above all — never
+/// ran on a normal quit. Concurrent, unlike the signal path, because the caller
+/// runs this under a deadline, and in sequence one hook that never answers
+/// would keep every hook after it — the lease release among them — from so
+/// much as starting before the deadline dropped the lot. Run together, a
+/// hanging hook costs only itself.
+pub async fn run_hook_list(hooks: Vec<ShutdownHook>) {
+    futures::future::join_all(hooks.iter().map(|hook| hook())).await;
 }
 
 /// Returns a future that resolves when the process receives a termination

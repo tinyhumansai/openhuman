@@ -2,12 +2,11 @@
  * Derives a skill-card-friendly status for Voice Intelligence,
  * matching the state vocabulary used by third-party skills (Gmail, etc.).
  *
- * Voice has a dependency on Local AI models (STT must be downloaded),
- * so the status reflects that prerequisite.
+ * Speech-to-text is hosted, so the prerequisite is a *configured* engine
+ * (`voice_server.stt_engine` resolving to a provider), not a downloaded model.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useCoreState } from '../../providers/CoreStateProvider';
 import { isTauri } from '../../utils/tauriCommands/common';
 import {
   openhumanVoiceServerStatus,
@@ -25,7 +24,8 @@ import {
 } from '../skills/skillCardStatus';
 
 export interface VoiceSkillStatus extends SkillCardStatusDescriptor {
-  /** True when STT model is not yet downloaded. */
+  /** True when the configured STT engine does not resolve to a provider —
+   *  i.e. the user picked a third-party engine with no credentials set up. */
   sttModelMissing: boolean;
   /** Voice system availability info (null before first fetch). */
   voiceStatus: VoiceStatus | null;
@@ -34,9 +34,6 @@ export interface VoiceSkillStatus extends SkillCardStatusDescriptor {
 }
 
 export function useVoiceSkillStatus(): VoiceSkillStatus {
-  const { snapshot } = useCoreState();
-  const localAi = snapshot.runtime.localAi;
-
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [serverStatus, setServerStatus] = useState<VoiceServerStatus | null>(null);
 
@@ -60,15 +57,12 @@ export function useVoiceSkillStatus(): VoiceSkillStatus {
 
   const sttReady = useMemo(() => {
     if (!voiceStatus) return false;
-    if (!voiceStatus.stt_available) return false;
-    // The in-memory stt_state starts as "idle" and only flips to "ready"
-    // after the first download or transcription.  The authoritative check
-    // is `voiceStatus.stt_available` (which inspects the filesystem and
-    // engine readiness).  Only block when stt_state is explicitly an error
-    // state — "missing" means the model file really isn't on disk.
-    if (localAi && localAi.stt_state === 'missing') return false;
-    return true;
-  }, [voiceStatus, localAi]);
+    // `stt_available` is the authoritative check: it asks whether the
+    // configured hosted engine resolves to a provider at all. Nothing has to be
+    // installed for STT any more, so the local-AI asset state is no longer
+    // consulted here — a workspace that never downloaded a model is still ready.
+    return voiceStatus.stt_available;
+  }, [voiceStatus]);
 
   return useMemo(() => {
     // No data yet
@@ -76,7 +70,7 @@ export function useVoiceSkillStatus(): VoiceSkillStatus {
       return { ...offlineStatus(), sttModelMissing: false, voiceStatus, serverStatus };
     }
 
-    // STT model not downloaded — needs setup
+    // No usable STT engine — needs setup
     if (!sttReady) {
       return { ...setupRequiredStatus(), sttModelMissing: true, voiceStatus, serverStatus };
     }
