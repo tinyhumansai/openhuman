@@ -1600,8 +1600,8 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 mod tests {
     use super::{
         channel_connection_update_payload, event_alias, origin_is_allowed,
-        origin_is_allowed_with_extra,
-        publish_companion_state_changed, subscribe_companion_state_changed,
+        origin_is_allowed_with_extra, publish_companion_state_changed,
+        subscribe_companion_state_changed,
     };
 
     #[test]
@@ -1734,9 +1734,18 @@ mod tests {
     #[test]
     fn origin_allowlist_env_handles_comma_list_and_whitespace() {
         let extra = Some("https://a.example:9000 , https://b.example:8443");
-        assert!(origin_is_allowed_with_extra(Some("https://a.example:9000"), extra));
-        assert!(origin_is_allowed_with_extra(Some("https://b.example:8443"), extra));
-        assert!(!origin_is_allowed_with_extra(Some("https://c.example"), extra));
+        assert!(origin_is_allowed_with_extra(
+            Some("https://a.example:9000"),
+            extra
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("https://b.example:8443"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://c.example"),
+            extra
+        ));
     }
 
     #[test]
