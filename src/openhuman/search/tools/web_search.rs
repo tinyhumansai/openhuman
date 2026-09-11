@@ -15,6 +15,74 @@ use std::sync::Arc;
 /// through to the UI attribution ("Searched with …", #5136) with no code edit.
 const MANAGED_DEFAULT_PROVIDER: &str = "Exa";
 
+/// Classify a managed-search backend failure that is really an upstream
+/// provider quota or rate-limit fault.
+///
+/// The managed route resolves to a search provider server-side, so an upstream
+/// 402/429 never reaches us as that status: the backend wraps it in its own
+/// 4xx and the only trace is the provider's text carried in the detail. Left
+/// unclassified it surfaces to the agent as `Backend returned 400 Bad Request
+/// for POST /agent-integrations/parallel/search: {"error":"You have exceeded
+/// your credits limit…"}`, which tells a user nothing they can act on (#5750).
+///
+/// Matching is on the *upstream* signature rather than our own status, so it
+/// keeps working if the backend changes which 4xx it wraps the fault in, and
+/// stays correct when the managed route resolves to a provider other than the
+/// current default. Returns `None` for anything else, leaving the original
+/// error — and its detail — exactly as it was.
+///
+/// The replacement text deliberately carries none of the original detail: the
+/// provider echoes the submitted query back in its error body, and that body
+/// would otherwise reach the agent transcript.
+fn managed_search_quota_error(message: &str) -> Option<&'static str> {
+    // Only inspect the structured provider envelope before any echoed JSON
+    // body. The body may contain the submitted query, so searching all of it
+    // would let an unrelated query such as "HTTP 429" trigger this mapping.
+    let envelope = message
+        .split_once('{')
+        .map_or(message, |(prefix, _)| prefix);
+    let envelope_lowered = envelope.to_ascii_lowercase();
+    let provider_json = message
+        .find('{')
+        .and_then(|start| serde_json::from_str::<Value>(&message[start..]).ok());
+
+    // Exa tags credit exhaustion explicitly; the numeric form covers a
+    // provider status in its API-error envelope. A parsed tag avoids matching
+    // the same text when it appears in an echoed query or error string.
+    let credits_exhausted = provider_json
+        .as_ref()
+        .and_then(|body| body.get("tag"))
+        .and_then(Value::as_str)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("NO_MORE_CREDITS"))
+        || envelope_lowered.contains("api error (402)");
+    if credits_exhausted {
+        return Some(
+            "Managed web search is temporarily unavailable: the shared search credit pool is \
+             exhausted. Configure your own search API key under Connections > Search engine to \
+             keep searching, or try again later.",
+        );
+    }
+
+    // Accept only an explicit status in the outer/provider envelope. In
+    // particular, do not classify prose from the response body: providers
+    // commonly echo the query there verbatim.
+    if envelope_lowered.contains("api error (429)")
+        || envelope_lowered.contains("backend returned 429 ")
+        || provider_json
+            .as_ref()
+            .and_then(|body| body.get("status"))
+            .and_then(Value::as_u64)
+            == Some(429)
+    {
+        return Some(
+            "Managed web search is rate limited upstream. Please wait a moment before searching \
+             again, or configure your own search API key under Connections > Search engine.",
+        );
+    }
+
+    None
+}
+
 /// Resolve the provider name to attribute a managed search to. Uses the
 /// backend-reported provider when present and non-empty, otherwise falls back
 /// to [`MANAGED_DEFAULT_PROVIDER`]. Shared with the `tools.web_search` RPC so
@@ -305,7 +373,19 @@ impl Tool for WebSearchTool {
 
         let resp = client
             .post::<SearchResponse>("/agent-integrations/parallel/search", &body)
-            .await?;
+            .await
+            .map_err(
+                |error| match managed_search_quota_error(&error.to_string()) {
+                    Some(actionable) => {
+                        // Log the classification, never the detail — it echoes the query.
+                        tracing::warn!(
+                            "[web_search] managed search unavailable: upstream quota fault"
+                        );
+                        anyhow::anyhow!(actionable)
+                    }
+                    None => error,
+                },
+            )?;
 
         // Attribute the search to the provider the managed backend resolved to
         // (Exa by default). The provider name is echoed in the result text so
