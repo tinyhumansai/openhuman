@@ -223,26 +223,6 @@ const PrivacyPanel = () => {
           />
         </SettingsSection>
 
-        {/* Meeting Follow-ups Section (#1299) */}
-        <SettingsSection title={t('privacy.meetingFollowUps')}>
-          <SettingsRow
-            htmlFor="switch-meet-handoff"
-            label={t('privacy.autoHandoffMeet')}
-            description={t('privacy.autoHandoffMeetDesc')}
-            control={
-              <SettingsSwitch
-                id="switch-meet-handoff"
-                checked={meetAutoHandoff}
-                onCheckedChange={() => {
-                  void handleToggleMeetAutoHandoff();
-                }}
-                aria-label={t('privacy.autoHandoffMeet')}
-                data-testid="privacy-meet-handoff-toggle"
-              />
-            }
-          />
-        </SettingsSection>
-
         {/* Info Box */}
         <div className="p-4 bg-surface-muted rounded-xl border border-line">
           <div className="flex items-start space-x-3">
