@@ -142,6 +142,13 @@ fn render_withheld_specialists(ctx: &PromptContext<'_>) -> String {
         );
         return String::new();
     };
+    render_withheld_specialists_from_registry(ctx, registry)
+}
+
+fn render_withheld_specialists_from_registry(
+    ctx: &PromptContext<'_>,
+    registry: &AgentDefinitionRegistry,
+) -> String {
     let Some(definition) = resolve_definition(registry, ctx.agent_id) else {
         tracing::debug!(
             agent = ctx.agent_id,
