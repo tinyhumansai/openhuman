@@ -393,6 +393,10 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         AuthStyle::Anthropic => CompatAuthStyle::Anthropic,
         AuthStyle::None => CompatAuthStyle::None,
         AuthStyle::OpenhumanJwt => {
+            #[cfg(not(test))]
+            if let Err(error) = verify_backend_session_active(config) {
+                return Some(Err(error));
+            }
             let model_override =
                 (!effective_model.trim().is_empty()).then_some(effective_model.as_str());
             let (backend, pinned_model) =

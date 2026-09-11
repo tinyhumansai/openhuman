@@ -157,6 +157,8 @@ pub struct AppState {
 /// - [`HostKind::Docker`] — containerised deployment. Same env honour-rule as
 ///   CLI; the host shell is not the user's desktop so there is no UI surface
 ///   to route an approval prompt to.
+/// - [`HostKind::Library`] — an in-process embedding host that supplies its own
+///   provider credentials and does not participate in OpenHuman app login.
 ///
 /// [`HostKind::detect_standalone`] picks `Docker` vs `Cli` for standalone
 /// invocations using the standard Docker signals (`/.dockerenv` or
@@ -168,6 +170,7 @@ pub enum HostKind {
     TauriShell,
     Cli,
     Docker,
+    Library,
 }
 
 impl HostKind {
@@ -205,6 +208,7 @@ impl HostKind {
             HostKind::TauriShell => "tauri-shell",
             HostKind::Cli => "cli",
             HostKind::Docker => "docker",
+            HostKind::Library => "library",
         }
     }
 }
@@ -216,7 +220,7 @@ impl HostKind {
 /// - `override_ignored`: true when an env override was seen but suppressed
 ///   (Tauri shell with override-requested)
 /// - `gate_disabled_by_override`: true when an env override was honored and
-///   the gate is intentionally not installed (CLI / Docker)
+///   the gate is intentionally not installed (CLI / Docker / library)
 ///
 /// Extracted as a pure function so the host-aware policy can be exercised
 /// in isolation without standing up the full `bootstrap_core_runtime` path.
@@ -237,7 +241,7 @@ pub fn approval_gate_boot_decision(
             override_ignored: env_override_requested,
             gate_disabled_by_override: false,
         },
-        HostKind::Cli | HostKind::Docker => ApprovalGateBootDecision {
+        HostKind::Cli | HostKind::Docker | HostKind::Library => ApprovalGateBootDecision {
             install_gate: !env_override_requested,
             override_ignored: false,
             gate_disabled_by_override: env_override_requested,
@@ -416,6 +420,7 @@ mod tests {
         assert_eq!(HostKind::TauriShell.tag(), "tauri-shell");
         assert_eq!(HostKind::Cli.tag(), "cli");
         assert_eq!(HostKind::Docker.tag(), "docker");
+        assert_eq!(HostKind::Library.tag(), "library");
     }
 
     #[test]
@@ -423,6 +428,7 @@ mod tests {
         assert!(HostKind::TauriShell.is_desktop_shell());
         assert!(!HostKind::Cli.is_desktop_shell());
         assert!(!HostKind::Docker.is_desktop_shell());
+        assert!(!HostKind::Library.is_desktop_shell());
     }
 
     #[test]
@@ -476,7 +482,7 @@ mod tests {
 
     #[test]
     fn standalone_with_no_env_override_installs_gate_silently() {
-        for host in [HostKind::Cli, HostKind::Docker] {
+        for host in [HostKind::Cli, HostKind::Docker, HostKind::Library] {
             let d = approval_gate_boot_decision(host, false);
             assert!(
                 d.install_gate,

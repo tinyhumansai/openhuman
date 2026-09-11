@@ -644,7 +644,7 @@ fn a_durable_tool_owning_a_delegate_name_wins_everywhere_across_refreshes() {
                 .any(|tool| tool.name() == DELEGATE),
             "the colliding delegate must not be synthesised beside the durable tool"
         );
-        let specs: Vec<&crate::openhuman::tools::ToolSpec> = agent
+        let specs: Vec<&std::sync::Arc<crate::openhuman::tools::ToolSpec>> = agent
             .tool_specs()
             .iter()
             .filter(|spec| spec.name == DELEGATE)

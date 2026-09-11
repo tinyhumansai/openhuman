@@ -145,6 +145,12 @@ pub(super) async fn ws_loop(
             "[socket] Attempting connection (token_len={})...",
             token.len()
         );
+        // Record the credential this attempt actually authenticates with. The
+        // provider is re-read every iteration, so a session refreshed mid-loop
+        // would otherwise leave `SocketManager::is_live_for` comparing against
+        // the token this loop was spawned with and tearing down a healthy socket
+        // on the next connect (#6181).
+        *shared.connection_identity.write() = Some((url.clone(), token.clone()));
         *shared.status.write() = ConnectionStatus::Connecting;
         emit_state_change(&shared);
 

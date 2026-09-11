@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::core::subsystem::DriverClass;
+use crate::openhuman::memory::api::error::MemoryError;
 // Needed to call the family accessors on the *concrete* null provider
 // below; the handlers above reach them through `dyn MemoryProvider`, where
 // the trait is in scope by construction.
@@ -309,5 +310,65 @@ async fn add_generates_an_id_and_caps_a_request_that_left_its_limits_unset() {
         fetched.url.as_deref(),
         Some("https://github.invalid/owner/repo"),
         "the request's url"
+    );
+}
+
+// ── Profile-drift diagnosis on sync (#5820 follow-up) ────────────────────────
+//
+// The memory module is loaded once per process and tinybus never unloads a
+// library, so the `config_path` it is handed at load is the one it keeps. When
+// the host rebinds its workspace mid-process — boot signed out, then log in —
+// the host starts writing `[[memory_sources]]` into the new profile's
+// config.toml while the module is still reading the old one. Every id the host
+// registers is then unknown to the driver, and the user sees a bare
+// `NotFound` that reads like a missing source rather than a stale binding.
+//
+// The host holds both halves of that contradiction at the point of failure: its
+// own registry has the id, and the driver says it does not. Saying so is the
+// difference between a ten-minute diagnosis and half a day.
+
+#[test]
+fn a_not_found_for_a_source_the_host_has_registered_reports_the_stale_binding() {
+    let message = describe_source_sync_failure(
+        "src_8cc5c81a3a7b482b8f832a84faaa6c4e",
+        true,
+        &MemoryError::NotFound(
+            "no memory source registered as src_8cc5c81a3a7b482b8f832a84faaa6c4e".to_string(),
+        ),
+    );
+    assert!(
+        message.contains("different profile") || message.contains("restart"),
+        "a NotFound for an id the host DID register must name the stale binding and the \
+         remedy, not repeat the driver's 'no memory source registered' — got: {message}"
+    );
+    assert!(
+        message.contains("src_8cc5c81a3a7b482b8f832a84faaa6c4e"),
+        "the message must still name the source id: {message}"
+    );
+}
+
+#[test]
+fn a_not_found_for_an_id_the_host_never_registered_is_passed_through() {
+    let message = describe_source_sync_failure(
+        "src_never_existed",
+        false,
+        &MemoryError::NotFound("no memory source registered as src_never_existed".to_string()),
+    );
+    assert!(
+        !message.contains("different profile"),
+        "an id the host does not have either is a genuinely missing source, not drift — \
+         diagnosing it as a stale binding would send the reader down the wrong path: {message}"
+    );
+}
+
+#[test]
+fn a_non_not_found_failure_is_passed_through_unchanged() {
+    let inner = MemoryError::Backend("sqlite is locked".to_string());
+    let message = describe_source_sync_failure("src_1", true, &inner);
+    assert_eq!(
+        message,
+        inner.to_string(),
+        "only NotFound is ambiguous between 'missing' and 'stale binding'; every other \
+         failure must reach the caller as the driver stated it"
     );
 }

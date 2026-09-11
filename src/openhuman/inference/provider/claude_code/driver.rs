@@ -16,12 +16,66 @@ use tokio::sync::mpsc;
 
 /// Hard timeout per turn (PLAN §8). If the CLI hangs (network stall,
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
-const TURN_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_TURN_TIMEOUT_SECS: u64 = 900;
+
+/// Hard timeout per turn, overridable with
+/// `OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS`.
+///
+/// The default matches the harness's own 900s wall-clock backstop. It used to
+/// be 300s, which is shorter than a turn the CLI is *expected* to take once
+/// full access lets it run its own tools: the child was killed mid-work and the
+/// turn surfaced as a provider timeout rather than a slow answer.
+fn turn_timeout() -> Duration {
+    let secs = std::env::var("OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Classify the shape of an unparsable stream line without quoting it.
+///
+/// This says whether Claude spoke JSON at all - the one thing that tells a
+/// crashed CLI apart from a protocol change - and nothing about what the line
+/// said.
+fn parse_error_line_shape(line: &str) -> &'static str {
+    match line.trim_start().chars().next() {
+        Some('{') => "json object",
+        Some('[') => "json array",
+        Some('"') => "json string",
+        Some(_) => "non-json",
+        None => "blank",
+    }
+}
+
+/// Render the log line for a `ParseError` event, or `None` for anything else.
+///
+/// The parser keeps `ParseError` precisely so an unparsable line is reported
+/// instead of vanishing, but the event mapper turns it into no deltas - so the
+/// driver loop is the only place left that can say anything about it.
+///
+/// The line itself is never quoted. It is whatever Claude Code wrote to
+/// stdout (a malformed event, or a well-formed one of an unknown type), so it
+/// can carry the user's prompt, the model's reply, or a credential, and the
+/// desktop build routes `log` into rotating support logs and Sentry
+/// breadcrumbs. Shape, size, and the parser's own reason are enough to act on;
+/// content is not.
+fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
+    let ClaudeCodeEvent::ParseError { line, reason } = ev else {
+        return None;
+    };
+    Some(format!(
+        "[claude-code][driver] dropping unparsable stream line ({reason}): {} of {} bytes",
+        parse_error_line_shape(line),
+        line.len()
+    ))
+}
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
 use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
-use super::stream_parser::StreamJsonParser;
+use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
 
@@ -431,7 +485,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 
     // Wrap the streaming + wait in a timeout so a stuck CLI doesn't
     // block this task forever (PLAN §8).
-    let timed = tokio::time::timeout(TURN_TIMEOUT, async {
+    let timed = tokio::time::timeout(turn_timeout(), async {
         loop {
             let n = stdout
                 .read(&mut buf)
@@ -441,6 +495,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
                 break;
             }
             for ev in parser.feed_bytes(&buf[..n]) {
+                if let Some(msg) = parse_error_log_line(&ev) {
+                    log::warn!("{msg}");
+                }
                 for delta in mapper.handle(ev) {
                     if let Some(tx) = ctx.stream {
                         let _ = tx.send(delta).await;
@@ -449,6 +506,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
             }
         }
         for ev in parser.end() {
+            if let Some(msg) = parse_error_log_line(&ev) {
+                log::warn!("{msg}");
+            }
             for delta in mapper.handle(ev) {
                 if let Some(tx) = ctx.stream {
                     let _ = tx.send(delta).await;
@@ -468,14 +528,15 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         Ok(inner) => inner?,
         Err(_elapsed) => {
             log::error!(
-                "[claude-code][driver] turn timeout ({TURN_TIMEOUT:?}) exceeded; killing child"
+                "[claude-code][driver] turn timeout ({:?}) exceeded; killing child",
+                turn_timeout()
             );
             // kill_on_drop handles cleanup, but explicit kill gives us
             // a chance to collect stderr.
             let _ = child.kill().await;
             anyhow::bail!(
                 "[claude-code][driver] turn timed out after {:?}",
-                TURN_TIMEOUT
+                turn_timeout()
             );
         }
     };

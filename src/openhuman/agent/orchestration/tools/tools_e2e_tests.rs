@@ -1,5 +1,6 @@
 use super::{
-    ArchetypeDelegationTool, SkillDelegationTool, SpawnSubagentTool, SpawnWorkerThreadTool,
+    ArchetypeDelegationTool, DelegationTarget, SkillDelegationTool, SpawnSubagentTool,
+    SpawnWorkerThreadTool,
 };
 use crate::openhuman::agent::context::prompt::{ConnectedIntegration, ToolCallFormat};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
@@ -63,7 +64,7 @@ async fn archetype_delegation_tool_runs_child_agent_e2e() {
     )]));
     let tool = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".to_string(),
-        agent_id: "researcher".to_string(),
+        agent_id: DelegationTarget("researcher".to_string()),
         tool_description: "Delegate research work.".to_string(),
     };
 
@@ -112,7 +113,7 @@ async fn archetype_delegation_defaults_to_async_with_durable_session_e2e() {
     )]));
     let tool = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".to_string(),
-        agent_id: "researcher".to_string(),
+        agent_id: DelegationTarget("researcher".to_string()),
         tool_description: "Delegate research work.".to_string(),
     };
 

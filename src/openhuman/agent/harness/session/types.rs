@@ -115,17 +115,29 @@ pub struct Agent {
     pub(super) synthesized_tools: Arc<Vec<Box<dyn Tool>>>,
     /// Full tool specs: [`Self::tools`]' specs first, then the synthesised
     /// half, which [`Agent::refresh_delegation_tools`] swaps in place.
-    pub(super) tool_specs: Arc<Vec<ToolSpec>>,
+    ///
+    /// The leaves are `Arc<ToolSpec>` and are **shared** with
+    /// [`Self::durable_tool_specs`] and [`Self::visible_tool_specs`]: all three
+    /// views point at the same schema objects, so a JSON-Schema `parameters`
+    /// value is resident once per agent rather than three times
+    /// (openhuman#6218 — it was ~1.1 MiB of the ~2.5 MiB a live agent cost).
+    /// `refresh_delegation_tools` preserves that: `Arc::make_mut` clones the
+    /// vector of pointers, never the schemas behind them. Anything that
+    /// rebuilds an entry instead of cloning its `Arc` silently reintroduces the
+    /// copy, which is why
+    /// `builder_tests::part_01_tests::the_three_spec_views_share_their_leaf_schemas`
+    /// asserts pointer identity rather than equal contents.
+    pub(super) tool_specs: Arc<Vec<Arc<ToolSpec>>>,
     /// The specs of [`Self::tools`] alone, index for index. Sub-agents receive
     /// these via [`ParentExecutionContext::all_tool_specs`] beside
     /// [`Self::tools`], so a child's spec list can never name a synthesised
     /// delegate it holds no instance for (#4452). Fixed for the life of the
     /// agent, like the registry it describes.
-    pub(super) durable_tool_specs: Arc<Vec<ToolSpec>>,
+    pub(super) durable_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
     /// Tool specs filtered by the visible-tool allowlist and session
     /// permission policy. These are the specs actually sent to the
     /// provider in the main agent's chat requests.
-    pub(super) visible_tool_specs: Arc<Vec<ToolSpec>>,
+    pub(super) visible_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
     /// When non-empty, only these tool names are visible in the main
     /// agent's prompt and callable by the main agent. Sub-agents intersect
     /// their per-definition scopes with the effective parent-visible set.

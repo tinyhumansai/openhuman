@@ -253,12 +253,12 @@ fn assemble_turn_harness(
             Some(set) => set.contains(name),
         };
         // Defense-in-depth (issue #4452): a sub-agent must NEVER be handed a
-        // spawn/delegate tool, regardless of what the resolved allowlist contains.
-        // Re-assert the invariant here at registration time (not just on the
-        // caller's `allowed_indices`) so a misbuilt allowlist can't reintroduce
-        // `spawn_subagent`/`delegate_*`/worker-thread spawning into a child run.
+        // spawn/delegate tool whatever the allowlist says — re-assert it here at
+        // registration, not just on the caller's `allowed_indices`. Warn only when
+        // the allowlist actually readmitted one (issue #6157); the caller strips
+        // them first, so a bare `spawn_stripped` warn fired on every healthy run.
         let spawn_stripped = is_subagent_run && is_subagent_spawn_or_delegate_tool(name);
-        if spawn_stripped {
+        if spawn_stripped && admitted {
             tracing::warn!(
                 tool = name,
                 "[subagent] refusing to register spawn/delegate tool on sub-agent run"

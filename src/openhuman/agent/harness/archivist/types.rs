@@ -24,7 +24,13 @@ pub struct ArchivistHook {
     ///
     /// When `None`, the tree-ingest path is skipped. Set via
     /// [`ArchivistHook::with_config`] on the production path.
-    pub(super) config: Option<Config>,
+    ///
+    /// Held behind an `Arc` so the hook shares the session factory's single
+    /// `Config` snapshot rather than deep-cloning a 95-field struct with
+    /// nested `Vec`s into every live agent (openhuman#6218). `Config` is
+    /// immutable after construction, so sharing and copying are behaviourally
+    /// identical here.
+    pub(super) config: Option<std::sync::Arc<Config>>,
     /// Whether an LLM summariser can be built for this workspace. `false`
     /// means the heuristic bookend summary is used instead.
     ///

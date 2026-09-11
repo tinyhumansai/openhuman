@@ -740,7 +740,7 @@ impl Agent {
                     archivist_provider,
                     true,
                 )
-                .with_config(config.clone()),
+                .with_config(Arc::clone(&base_config)),
             );
             post_turn_hooks
                 .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
@@ -1245,7 +1245,11 @@ impl Agent {
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        agent.runtime_config = Some(Arc::new(config.clone()));
+        // The same snapshot `base_config` already holds — `Config` is immutable
+        // after construction, so a second deep clone bought nothing but a
+        // second resident copy of a 95-field struct with nested `Vec`s
+        // (openhuman#6218).
+        agent.runtime_config = Some(Arc::clone(&base_config));
         agent.last_seen_integrations_hash =
             crate::openhuman::integrations::composio::connected_set_hash(
                 &agent.connected_integrations,

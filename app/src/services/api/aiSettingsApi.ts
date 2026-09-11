@@ -118,6 +118,11 @@ export interface ModelInfo {
   id: string;
   owned_by?: string | null;
   context_window?: number | null;
+  /** Human-readable name; only the managed catalog listing supplies one. */
+  display_name?: string | null;
+  /** Charged price in USD per 1M tokens, when the listing publishes it. */
+  input_per_1m?: number | null;
+  output_per_1m?: number | null;
 }
 
 interface ProviderModelTestResult {

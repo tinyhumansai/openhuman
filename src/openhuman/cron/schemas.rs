@@ -72,7 +72,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "schedule",
                     ty: TypeSchema::Ref("CronSchedule"),
-                    comment: "When to run — { kind: 'cron', expr } | { kind: 'at', at } | { kind: 'every', every_ms }.",
+                    comment: "When to run — { kind: 'cron', expr } | { kind: 'at', at } | { kind: 'every', every_ms }. \
+                              Agent jobs must run at least 5 minutes apart.",
                     required: true,
                 },
                 FieldSchema {
@@ -163,7 +164,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "patch",
                     ty: TypeSchema::Ref("CronJobPatch"),
-                    comment: "Partial update payload with the fields to mutate.",
+                    comment: "Partial update payload with the fields to mutate. A new schedule on an agent job \
+                              must keep runs at least 5 minutes apart.",
                     required: true,
                 },
             ],

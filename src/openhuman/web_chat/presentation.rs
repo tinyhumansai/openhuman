@@ -71,7 +71,9 @@ pub(crate) async fn deliver_response(
     // Spawn reaction decision in parallel — it runs on the local model and
     // shouldn't block segmentation or delivery.
     let user_msg_owned = user_message.to_string();
-    let reaction_handle = tokio::spawn(async move { try_reaction(&user_msg_owned).await });
+    let reaction_handle = tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
+        async move { try_reaction(&user_msg_owned).await },
+    ));
 
     // Keep the response byte-for-byte in one assistant message. The legacy
     // segmentation helpers remain available to channel-specific callers/tests,

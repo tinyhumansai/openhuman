@@ -23,6 +23,13 @@ use tinytools::ToolRunContext;
 #[path = "mod_tests.rs"]
 mod tests;
 
+/// The git config overrides a shell-spawned `git` is forced to run under.
+///
+/// Re-exported from the module that owns the whole policy so the `shell` tool
+/// and `git_operations` cannot drift into two different answers about which
+/// config keys are dangerous.
+pub(crate) use git_operations_config::SHELL_NEUTRALISED_CONFIG;
+
 pub use apply_patch::ApplyPatchTool;
 pub use csv_export::CsvExportTool;
 pub use edit_file::EditFileTool;

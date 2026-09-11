@@ -78,7 +78,11 @@ async fn attributed_cron_build_retains_profile_gates() {
     let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
     profile.id = "alice".into();
     profile.built_in = false;
-    profile.allowed_tools = Some(vec!["file_read".into()]);
+    // `shell` rather than `file_read`: the subject here is that a profile's
+    // `allowed_tools` gate survives the cron build, and `file_read` moved into
+    // the `files` tool pack, so the visible set would come back as the
+    // `use_skill` proxy and the assertion would be about packing instead.
+    profile.allowed_tools = Some(vec!["shell".into()]);
     profile.memory_sources = Some(vec!["slack:#eng".into()]);
     crate::openhuman::agent::profiles::store::AgentProfileStore::new(config.workspace_dir.clone())
         .upsert(profile)
@@ -91,7 +95,7 @@ async fn attributed_cron_build_retains_profile_gates() {
 
     assert_eq!(
         built.agent.visible_tool_names_for_test(),
-        &["file_read".to_string()].into_iter().collect()
+        &["shell".to_string()].into_iter().collect()
     );
     assert_eq!(
         built.profile.and_then(|profile| profile.memory_sources),

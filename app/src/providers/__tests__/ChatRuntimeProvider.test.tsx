@@ -42,6 +42,8 @@ vi.mock('../../services/api/threadApi', () => ({
     purge: vi.fn(),
     getTaskBoard: vi.fn(),
     putTaskBoard: vi.fn(),
+    getTurnState: vi.fn(),
+    listRuns: vi.fn(),
   },
 }));
 
@@ -98,6 +100,8 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
     resetRuntimeState();
     vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
     vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.getTurnState).mockResolvedValue(null);
+    vi.mocked(threadApi.listRuns).mockResolvedValue([]);
     vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
       id: 'tid',
       title: 'new',
@@ -1243,6 +1247,40 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-flaky'));
     });
 
+    it('rehydrates the in-flight turn snapshot for an interrupted thread', async () => {
+      // A socket drop takes ~3s to heal (socket.io reconnectionDelay 2000 +
+      // handshake). `thread:<id>` has NO member for that whole window, and
+      // `emit_web_channel_event` is fire-and-forget — every progress frame and
+      // even the terminal `chat_done` emitted in the gap is dropped for good.
+      //
+      // Re-reading persisted messages is not enough: it recovers the final
+      // text but not the turn's live state, so a turn STILL running after the
+      // reconnect repaints nothing and the thread sits silent until the user
+      // reselects it or restarts the app. The core already persists that state
+      // and `fetchAndHydrateTurnState` already reads it — the thread-switch
+      // path (`Conversations.tsx`) dispatches it alongside `loadThreadMessages`.
+      // The reconnect path must do the same.
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValue({
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+
+      renderProvider();
+      act(() => {
+        store.dispatch(setActiveThread('t-inflight'));
+      });
+      vi.mocked(threadApi.getTurnState).mockClear();
+
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-inflight'));
+      await waitFor(() => expect(threadApi.getTurnState).toHaveBeenCalledWith('t-inflight'));
+    });
+
     it('does nothing on a connect with no interrupted threads', async () => {
       renderProvider();
       vi.mocked(socketService.subscribeThread).mockClear();
@@ -2300,6 +2338,8 @@ describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
     resetRuntimeState();
     vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
     vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.getTurnState).mockResolvedValue(null);
+    vi.mocked(threadApi.listRuns).mockResolvedValue([]);
     vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
       id: 'tid',
       title: 'new',

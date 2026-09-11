@@ -320,7 +320,20 @@ async fn auto_save_stores_messages_in_memory() {
         true, // auto_save enabled
     );
 
-    let _ = agent.turn("Remember this fact").await.unwrap();
+    // Scoped like a real chat turn. The autosave only stores what a person sent
+    // (`turn_origin::current_is_user_authored`), and production entry points
+    // scope an origin — web chat `WebChat`, channels `ExternalChannel` — so a
+    // test that skipped it would be asserting a shape no caller produces.
+    let _ = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: "t-autosave".into(),
+            client_id: "c-autosave".into(),
+            request_id: None,
+        },
+        agent.turn("Remember this fact"),
+    )
+    .await
+    .unwrap();
 
     // Both user message and assistant response should be saved. The assistant
     // reply is persisted synchronously, but the user message is saved

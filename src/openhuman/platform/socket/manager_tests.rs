@@ -383,6 +383,7 @@ fn emit_state_change_is_safe_to_call_on_empty_shared() {
         status: RwLock::new(ConnectionStatus::Connecting),
         socket_id: RwLock::new(None),
         error: RwLock::new(None),
+        connection_identity: RwLock::new(None),
     };
     // Must not panic even with all default state.
     emit_state_change(&shared);
@@ -396,6 +397,7 @@ fn emit_server_event_is_safe_without_subscribers() {
         status: RwLock::new(ConnectionStatus::Connected),
         socket_id: RwLock::new(Some("x".into())),
         error: RwLock::new(None),
+        connection_identity: RwLock::new(None),
     };
     // Pure logging — must not touch state or panic.
     emit_server_event(&shared, "any.event", json!({}));

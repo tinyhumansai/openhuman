@@ -79,6 +79,12 @@ export interface CurrentPlanData {
   weeklyBudgetUsd: number;
 }
 
+export interface BillingSummaryData {
+  credits: { promotionBalanceUsd: number; teamTopupUsd: number; totalUsd: number };
+  plan: CurrentPlanData;
+  links: { topUpUrl: string; manageUrl: string; apiKeysUrl: string };
+}
+
 export interface PurchasePlanData {
   checkoutUrl: string | null;
   sessionId: string;

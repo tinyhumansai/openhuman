@@ -634,3 +634,57 @@ fn tools_agent_is_registered() {
     let def = find("tools_agent");
     assert!(matches!(def.tools, ToolScope::Wildcard));
 }
+
+/// Two agents are deliberately missing from the orchestrator's subagent list.
+///
+/// Dropping an entry removes a synthesised `delegate_*` schema from every turn
+/// without removing the agent — cheaper than packing it, because a packed
+/// delegate still costs a row in the prompt's withheld-capability block.
+///
+/// This test pins registry membership only. It does NOT pin that either
+/// agent is dispatchable through `spawn_async_subagent` — today it is not:
+/// `execute_with_context_inner` additionally checks
+/// `parent.allowed_subagent_ids`, which is derived from this very
+/// `subagents.allowlist` (see `session/turn/tools.rs`), so a model that asks
+/// for either id gets a clean allowlist error rather than a spawn. See the
+/// comment above `[subagents]` in `orchestrator/agent.toml` for the tracked
+/// follow-up. Do not read `registry.get(dropped).is_some()` below as "and
+/// therefore spawnable" — it only proves the definition was not deleted.
+#[test]
+fn the_orchestrator_does_not_delegate_to_the_generalist_or_the_archivist() {
+    let registry = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+        .or_else(|| {
+            crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins().ok()?;
+            crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+        })
+        .expect("builtin agent definitions must load");
+    let orchestrator = registry
+        .get("orchestrator")
+        .expect("orchestrator is builtin");
+
+    let listed: Vec<&str> = orchestrator
+        .subagents
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::openhuman::agent::harness::definition::SubagentEntry::AgentId(id) => {
+                Some(id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    for dropped in ["tools_agent", "archivist"] {
+        assert!(
+            !listed.contains(&dropped),
+            "`{dropped}` is back on the orchestrator's subagent list, which \
+             re-adds its delegate schema to every turn"
+        );
+        // Still a real agent, resolvable by id in the registry — NOT a claim
+        // that it is currently reachable via spawn_async_subagent (it isn't;
+        // see the doc comment above).
+        assert!(
+            registry.get(dropped).is_some(),
+            "`{dropped}` must stay registered — its definition should not be \
+             deleted, only dropped from the orchestrator's advertised list"
+        );
+    }
+}

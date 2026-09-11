@@ -20,6 +20,8 @@ Scheduling is a first-class capability, not a workaround. The agent can set up r
 
 There's also a one-shot `schedule` tool in [System & Utilities](system-and-utilities.md) for "do this once at time T" cases that don't need a recurring entry.
 
+Agent jobs run a full model turn every time they fire, so they must be scheduled at least five minutes apart. `cron_add` and `cron_update` reject a tighter cron expression or `every_ms` for an agent job and say which two runs would be too close (`*/7 * * * *`, for instance, fires at :56 and again at :00). Shell jobs have no such floor.
+
 ## What it's good for
 
 - Daily / weekly digests delivered to your messaging channel of choice.

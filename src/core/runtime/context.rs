@@ -99,6 +99,42 @@ struct WorkspaceBinding {
     memory_subsystem: crate::openhuman::config::schema::MemorySubsystemConfig,
 }
 
+/// Say so when the workspace is rebound after the memory module has already
+/// loaded.
+///
+/// The module is handed its `config_path` once, when it loads, and tinybus
+/// never unloads a library — there is no shutdown path and nothing a shutdown
+/// could reclaim (`modules/host.rs`). So a rebind after the module is `Ready`
+/// leaves it reading the *previous* profile's source registry for the rest of
+/// the process: the host writes `[[memory_sources]]` into the new profile's
+/// `config.toml`, and every id it registers is unknown to the driver.
+///
+/// This is the boot-signed-out-then-log-in case. It cannot be repaired in
+/// process, so this does not try. It makes the moment the binding went stale
+/// visible in the log, beside the rebind that caused it, instead of leaving a
+/// bare `NotFound` on a sync minutes later as the only evidence.
+///
+/// Best-effort and never fatal: a build without the modules feature, or a
+/// process whose memory module never loaded, has nothing stale to report.
+#[cfg(feature = "modules")]
+fn warn_if_memory_module_outlived_its_profile(workspace_dir: &std::path::Path) {
+    use crate::openhuman::modules::types::ModuleState;
+    if crate::openhuman::modules::state_of(crate::openhuman::modules::memory::MODULE_ID)
+        == ModuleState::Ready
+    {
+        log::warn!(
+            "[core-context] workspace rebound to {} while the memory module is already loaded. \
+             The module keeps the source registry it was given when it loaded and cannot be \
+             rebound in this process, so memory sources registered under this profile will not \
+             be visible to it until the app is restarted.",
+            workspace_dir.display()
+        );
+    }
+}
+
+#[cfg(not(feature = "modules"))]
+fn warn_if_memory_module_outlived_its_profile(_workspace_dir: &std::path::Path) {}
+
 impl CoreContext {
     /// Run the core initialization sequence and return the context plus whether
     /// an operator-supplied RPC bearer exists (for the public-bind safety check
@@ -482,6 +518,7 @@ impl CoreContext {
             workspace_dir: Some(workspace_dir.to_path_buf()),
             memory_subsystem,
         };
+        warn_if_memory_module_outlived_its_profile(workspace_dir);
         Ok(())
     }
 
@@ -490,6 +527,20 @@ impl CoreContext {
     /// tenant's context here so the handler's `current()` reads isolated state.
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
         CURRENT_CONTEXT.scope(ctx, fut).await
+    }
+
+    /// Capture the current context now and carry it across a subsequently
+    /// spawned task. Calling this before `tokio::spawn` is essential: reading
+    /// `current()` inside the child would already have fallen back to the
+    /// process default.
+    pub fn propagate<F: Future>(fut: F) -> impl Future<Output = F::Output> {
+        let ctx = Self::current();
+        async move {
+            match ctx {
+                Some(ctx) => Self::scope(ctx, fut).await,
+                None => fut.await,
+            }
+        }
     }
 
     /// Test-only constructor: build a context with an explicit
@@ -898,6 +949,20 @@ mod tests {
         })
         .await;
         assert_eq!(seen, Some(PathBuf::from("/tmp/ctx-a")));
+    }
+
+    #[tokio::test]
+    async fn propagate_carries_scoped_context_into_spawned_task() {
+        let a = ctx("/tmp/ctx-propagated");
+        let seen = CoreContext::scope(a, async {
+            tokio::spawn(CoreContext::propagate(async {
+                CoreContext::current().unwrap().workspace_dir().unwrap()
+            }))
+            .await
+            .unwrap()
+        })
+        .await;
+        assert_eq!(seen, PathBuf::from("/tmp/ctx-propagated"));
     }
 
     #[tokio::test]

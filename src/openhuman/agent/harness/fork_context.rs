@@ -54,7 +54,7 @@ pub struct ParentExecutionContext {
     /// the provider for prefix-cache reuse. The parent's synthesised
     /// delegation specs are deliberately absent: a sub-agent is never handed a
     /// `delegate_*` tool (#4452), so there is no instance here for one.
-    pub all_tool_specs: Arc<Vec<ToolSpec>>,
+    pub all_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Names of the tools the parent actually advertises and will execute this
     /// turn. Consumers that recommend or directly invoke parent tools consult
@@ -68,7 +68,7 @@ pub struct ParentExecutionContext {
     /// building a child's tool set — that is [`Self::all_tools`] +
     /// [`Self::all_tool_specs`], which carry no delegate. Empty when the
     /// builder does not know the parent's surface.
-    pub visible_tool_specs: Arc<Vec<ToolSpec>>,
+    pub visible_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Explicit profile/channel ceiling inherited by child agents. This is not
     /// the parent's role-specific visible surface: an orchestrator may delegate

@@ -25,7 +25,10 @@ use once_cell::sync::Lazy as TestLazy;
 /// whole point of that test is that `fetch_current_user_cached` consults the
 /// record. Kept distinct from `APP_STATE_CACHE_TEST_LOCK` because the two guard
 /// different globals and nothing here writes the positive cache.
-static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
+/// `pub(super)` because `ops_tests.rs` needs it too: a successful fetch calls
+/// `clear_current_user_failure`, which wipes this global, so a test that lets a
+/// real fetch complete has to serialise against the tests seeding outages here.
+pub(super) static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
     TestLazy::new(|| tokio::sync::Mutex::new(()));
 
 /// Drops the seeded outage on the way out, so one test cannot leak into the next.

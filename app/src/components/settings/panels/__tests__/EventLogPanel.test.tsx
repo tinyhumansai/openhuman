@@ -213,7 +213,10 @@ describe('EventLogPanel', () => {
       expect(screen.getByText('ScrollTest')).toBeTruthy();
     });
 
-    const scrollDiv = container.querySelector('.max-h-\\[60vh\\]')!;
+    // Was `container.querySelector('.max-h-[60vh]')` — the scroll region was
+    // addressed by a utility class, so restyling it broke the test without any
+    // behaviour changing. A testid is the stable handle.
+    const scrollDiv = container.querySelector('[data-testid="event-log-scroll"]')!;
     Object.defineProperty(scrollDiv, 'scrollTop', { value: 100, writable: true });
     fireEvent.scroll(scrollDiv);
 

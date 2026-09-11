@@ -1101,7 +1101,10 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
             Arc::new(AtomicUsize::new(0)),
         ),
     ];
-    let all_specs = all_tools.iter().map(|tool| tool.spec()).collect::<Vec<_>>();
+    let all_specs = all_tools
+        .iter()
+        .map(|tool| Arc::new(tool.spec()))
+        .collect::<Vec<_>>();
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [

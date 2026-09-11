@@ -106,7 +106,9 @@ impl Tool for CronAddTool {
          Discord, Slack), set `delivery` to `{ \"mode\": \"announce\", \"channel\": <channel>, \
          \"to\": <reply target from the context block> }` so the reminder is delivered back to \
          the same chat instead of the desktop. Only use the default proactive mode when the \
-         user explicitly asks for an in-app notification or when no channel context is present."
+         user explicitly asks for an in-app notification or when no channel context is present.\n\
+         Agent jobs must be scheduled at least 5 minutes apart; a tighter cron expression or \
+         every_ms is rejected."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -122,7 +124,7 @@ impl Tool for CronAddTool {
                             "description": "Repeating cron schedule. 'tz' is an IANA timezone (e.g. 'America/Los_Angeles'); defaults to device-local timezone.",
                             "properties": {
                                 "kind": { "type": "string", "const": "cron" },
-                                "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields)" },
+                                "expr": { "type": "string", "description": "Cron expression (5, 6, or 7 fields). For agent jobs, consecutive runs must be at least 5 minutes apart." },
                                 "tz": { "type": "string", "description": "Optional IANA timezone name" },
                                 "active_hours": {
                                     "type": "object",
@@ -153,7 +155,7 @@ impl Tool for CronAddTool {
                             "description": "Repeating job that fires every N milliseconds.",
                             "properties": {
                                 "kind": { "type": "string", "const": "every" },
-                                "every_ms": { "type": "integer", "description": "Interval in milliseconds (must be > 0)" }
+                                "every_ms": { "type": "integer", "description": "Interval in milliseconds (must be > 0; at least 300000 = 5 minutes for agent jobs)" }
                             },
                             "required": ["kind", "every_ms"],
                             "additionalProperties": false

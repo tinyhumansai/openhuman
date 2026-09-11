@@ -534,12 +534,22 @@ pub(crate) async fn run_turn_via_tinyagents(
 /// name the tools that pause the loop (e.g. `ask_user_clarification`) and surface
 /// the question via [`TinyagentsTurnOutcome::early_exit_tool`].
 /// True when `name` is a sub-agent spawn/delegation tool that a **child** run
-/// must never be able to invoke (issue #4452). Mirrors the caller-side strip in
-/// `subagent_runner::tool_prep::is_subagent_spawn_tool` plus the worker-thread
-/// spawn, re-asserted at registration as defense-in-depth so a misconfigured
-/// allowlist cannot reintroduce sub-agent spawning into a nested run. Kept local
-/// to this seam (rather than importing the `pub(super)` runner helper) so the
-/// invariant travels with the registration site that enforces it.
+/// must never be able to invoke (issue #4452), re-asserted at registration as
+/// defense-in-depth so a misconfigured allowlist cannot reintroduce sub-agent
+/// spawning into a nested run. Kept local to this seam (rather than importing
+/// the `pub(super)` runner helper) so the invariant travels with the
+/// registration site that enforces it.
+///
+/// **This is a strict subset of the caller-side strip**, not a mirror of it
+/// (issue #6157). `subagent_runner::tool_prep::is_subagent_spawn_tool` also
+/// resolves each archetype's `delegate_name` override through the definition
+/// registry — `plan`, `research`, `run_code`, `review_code`, … — none of which
+/// carry the `delegate_` prefix this match relies on. Matching them here would
+/// put a registry lookup on the per-tool registration loop, so the caller
+/// stays responsible for the override names: every path that feeds `allowed`
+/// runs `is_subagent_spawn_tool` first, including the dynamic per-spawn tools
+/// (`subagent_runner::ops::runner`). Widen this predicate in lockstep if that
+/// ever stops being true.
 fn is_subagent_spawn_or_delegate_tool(name: &str) -> bool {
     name == "spawn_subagent"
         || name.starts_with("delegate_")

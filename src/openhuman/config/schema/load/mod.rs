@@ -57,6 +57,8 @@ pub(crate) use migrate::{migrate_cloud_provider_slugs, migrate_legacy_inference_
 #[cfg(test)]
 pub(crate) use std::path::PathBuf;
 
+mod atomic_commit;
+
 #[cfg(unix)]
 pub(super) async fn sync_directory(path: &std::path::Path) -> anyhow::Result<()> {
     use anyhow::Context;

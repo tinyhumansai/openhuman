@@ -171,6 +171,16 @@ fn routed_config(endpoint: &str, api_key: &str, model: &str) -> Config {
     config
 }
 
+#[test]
+fn only_library_hosts_are_exempt_from_app_login() {
+    use crate::core::types::HostKind;
+
+    assert!(!host_requires_session(HostKind::Library));
+    for host in [HostKind::TauriShell, HostKind::Cli, HostKind::Docker] {
+        assert!(host_requires_session(host));
+    }
+}
+
 #[path = "factory_tests_part_01_tests.rs"]
 mod part_01_tests;
 #[path = "factory_tests_part_02_tests.rs"]

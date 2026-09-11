@@ -146,8 +146,12 @@ impl MemoryTree for ModuleMemoryProvider {
     /// so it is also the one whose bus deadline could bind. It rides the
     /// default: the module clamps the fold to the `token_budget` this caller
     /// supplied, and a summariser that outruns the deadline is the same failure
-    /// a caller must already handle — `summarise` documents a deterministic
-    /// fallback as the expected response to a model that errors or times out.
+    /// a caller must already handle — the contract puts the deterministic
+    /// fallback on the *caller* and states that the driver never substitutes
+    /// one, precisely so a fallback cannot be mistaken for a model's own work
+    /// once it is in the tree. An `Ok` here is therefore always the model's
+    /// text, or empty when there was nothing to fold; a model that errors,
+    /// times out or refuses arrives as `Err`, never as a filled-in summary.
     async fn summarise(
         &self,
         inputs: &[SummaryInput],

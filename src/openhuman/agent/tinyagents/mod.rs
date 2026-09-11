@@ -43,6 +43,7 @@ pub(crate) mod orchestration;
 // for rather than an exotic one.
 pub mod payload_summarizer;
 mod policy_denial;
+pub(crate) mod reaper;
 pub(crate) mod replay;
 pub mod resolved_route;
 pub(crate) mod retriever;

@@ -604,3 +604,103 @@ fn fake_locator_with_no_transcript_leaves_the_agent_cold() {
         "an Ok(None) read must report false like a missing file did"
     );
 }
+
+/// A resumed transcript must survive into `history`, not just into one request.
+///
+/// The prefix used to be spliced into the outgoing message list and dropped.
+/// Everything downstream reads `history`, so that cost the conversation twice,
+/// and both were observed against a live core before this test existed:
+///
+///  1. The **next** turn went out without it — a ten-message thread answered its
+///     following question from four messages. Amnesia first, cache miss second.
+///  2. The transcript persisted afterwards is serialized from `history`, so the
+///     file written after a resume held only the new turn. `latest_for_agent`
+///     hands that file to the next resume, so each restart truncated the thread
+///     further.
+///
+/// Asserting on `history` rather than on a rendered request is deliberate: the
+/// request was never the thing that was broken.
+#[tokio::test]
+async fn a_resumed_transcript_prefix_is_absorbed_into_history() {
+    use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
+
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let canned = crate::openhuman::agent::harness::session::transcript::SessionTranscript {
+        meta: fake_transcript_meta("thr_resume"),
+        messages: vec![
+            ChatMessage::system("stored system prompt"),
+            ChatMessage::user("first question"),
+            ChatMessage::assistant("first answer"),
+        ],
+    };
+    let (mut agent, _handle) = agent_with_fake_locator(workspace.path(), Some(canned));
+    agent.try_load_session_transcript();
+
+    // What `turn()` leaves behind on a resumed turn: a freshly rendered system
+    // prompt it had to build because `history` was empty, then this turn's user
+    // message.
+    agent.history = vec![
+        ConversationMessage::Chat(ChatMessage::system("freshly rendered prompt")),
+        ConversationMessage::Chat(ChatMessage::user("second question")),
+    ];
+
+    agent.absorb_resumed_transcript_prefix();
+
+    let rendered: Vec<(&str, &str)> = agent
+        .history
+        .iter()
+        .map(|entry| match entry {
+            ConversationMessage::Chat(chat) => (chat.role.as_str(), chat.content.as_str()),
+            other => panic!("expected only Chat entries, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        rendered,
+        vec![
+            // The stored prompt wins: it is the prefix the backend has already
+            // tokenised, and re-rendering it is what resuming exists to avoid.
+            ("system", "stored system prompt"),
+            ("user", "first question"),
+            ("assistant", "first answer"),
+            ("user", "second question"),
+        ],
+        "the replayed prefix must land in history ahead of this turn, with the \
+         freshly rendered system prompt dropped in favour of the stored one"
+    );
+    assert!(
+        agent.cached_transcript_messages.is_none(),
+        "the prefix is consumed once — history owns it from here"
+    );
+
+    // Defect (1): a second turn appends to a history that still carries the
+    // replayed conversation, rather than starting from just its own message.
+    agent
+        .history
+        .push(ConversationMessage::Chat(ChatMessage::user(
+            "third question",
+        )));
+    agent.absorb_resumed_transcript_prefix();
+    assert_eq!(
+        agent.history.len(),
+        5,
+        "a later turn must neither lose the replayed prefix nor duplicate it"
+    );
+
+    // Defect (2): what persistence serializes is that same full sequence, so
+    // the transcript written after a resume is complete and the *next* resume
+    // reads a whole thread rather than a truncated one.
+    let persisted = agent.tool_dispatcher.to_provider_messages(&agent.history);
+    assert_eq!(
+        persisted
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "stored system prompt",
+            "first question",
+            "first answer",
+            "second question",
+            "third question",
+        ],
+    );
+}

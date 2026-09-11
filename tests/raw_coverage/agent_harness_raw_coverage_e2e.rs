@@ -261,7 +261,7 @@ fn build_agent_with_tools(
 
 fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-    let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
+    let tool_specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [

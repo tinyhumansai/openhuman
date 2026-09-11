@@ -168,6 +168,30 @@ where
     Err(format!("{member}: {WITHOUT_MODULES}"))
 }
 
+/// Give an already-serving connector module the route the current config
+/// selects — for a signed-out user, that means dropping the credential it was
+/// configured with while signed in — without loading a module that is not
+/// serving. See `modules::connectors::reconcile_route_if_loaded`.
+///
+/// # Errors
+///
+/// As the module function: the module is serving but could not be reached or
+/// refused the reconfiguration.
+#[cfg(feature = "modules")]
+pub async fn reconcile_route_if_loaded(
+    config: &crate::openhuman::config::Config,
+) -> Result<(), String> {
+    crate::openhuman::modules::connectors::reconcile_route_if_loaded(config).await
+}
+
+/// Without the module loader there is no module holding a route. Always `Ok`.
+#[cfg(not(feature = "modules"))]
+pub async fn reconcile_route_if_loaded(
+    _config: &crate::openhuman::config::Config,
+) -> Result<(), String> {
+    Ok(())
+}
+
 /// Call a member that takes no arguments.
 ///
 /// # Errors

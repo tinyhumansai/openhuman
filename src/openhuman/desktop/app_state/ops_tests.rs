@@ -4,7 +4,15 @@ use parking_lot::Mutex as TestMutex;
 use serde_json::json;
 use tempfile::tempdir;
 
-static APP_STATE_CACHE_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
+/// Serialises every test that reads or writes the process-global snapshot
+/// caches. A `tokio` mutex rather than a `parking_lot` one so async tests can
+/// hold it across an `.await` — sibling `ops_current_user_backoff_tests.rs`
+/// guards its own global the same way.
+///
+/// `pub(super)` for `ops_snapshot_latency_tests.rs`, which seeds the positive
+/// cache and so has to serialise against the readers here.
+pub(super) static APP_STATE_CACHE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
+    TestLazy::new(|| tokio::sync::Mutex::new(()));
 
 #[test]
 fn sanitize_snapshot_user_drops_empty_payloads() {
@@ -142,7 +150,7 @@ fn save_and_reload_stored_app_state_round_trips() {
 
 #[test]
 fn peek_cached_current_user_identity_plucks_known_fields() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -170,7 +178,7 @@ fn peek_cached_current_user_identity_plucks_known_fields() {
 
 #[test]
 fn peek_cached_current_user_identity_returns_none_when_only_empty_fields_exist() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -203,7 +211,7 @@ impl Drop for SnapshotCacheResetGuard {
 
 #[test]
 fn runtime_snapshot_cache_hit_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -224,7 +232,7 @@ fn runtime_snapshot_cache_hit_within_ttl() {
 
 #[test]
 fn runtime_snapshot_cache_miss_after_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
@@ -243,7 +251,7 @@ fn runtime_snapshot_cache_miss_after_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -260,7 +268,7 @@ fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let cfg = Config::default();
@@ -280,7 +288,7 @@ fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_on_config_key_mismatch() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     // A fresh entry cached for one workspace must never be served to another

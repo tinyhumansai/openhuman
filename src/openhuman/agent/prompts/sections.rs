@@ -472,7 +472,7 @@ impl PromptSection for WorkspaceSection {
         let mut out = String::from(
             "## Workspace\n\n\
              Run `pwd` to confirm your working directory — that is where `shell` runs and \
-             where `file_read`/`file_write` resolve relative paths. Create files in that \
+             where every file tool resolves a relative path. Create files in that \
              directory and read them back from the same place (use the relative path, or \
              confirm the absolute path with `pwd`). Writes and reads outside your granted \
              locations (your working directory plus the scratch directory below) are blocked \

@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import BillingPanel from './BillingPanel';
 
 const navigateBack = vi.fn();
+const openUrlMock = vi.fn();
+const getSummaryMock = vi.fn();
+const getTeamUsageMock = vi.fn();
 
 vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
@@ -14,185 +17,169 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-const openUrlMock = vi.fn();
 vi.mock('../../../utils/openUrl', () => ({ openUrl: (url: string) => openUrlMock(url) }));
-
-const getCurrentPlanMock = vi.fn();
-const purchasePlanMock = vi.fn();
-const createCoinbaseChargeMock = vi.fn();
-
 vi.mock('../../../services/api/billingApi', () => ({
-  billingApi: {
-    getCurrentPlan: (...args: unknown[]) => getCurrentPlanMock(...args),
-    purchasePlan: (...args: unknown[]) => purchasePlanMock(...args),
-    createCoinbaseCharge: (...args: unknown[]) => createCoinbaseChargeMock(...args),
-  },
+  billingApi: { getSummary: (...args: unknown[]) => getSummaryMock(...args) },
 }));
+vi.mock('../../../services/api/creditsApi', () => ({
+  creditsApi: { getTeamUsage: (...args: unknown[]) => getTeamUsageMock(...args) },
+}));
+
+const summary = {
+  credits: { promotionBalanceUsd: 4.5, teamTopupUsd: 10, totalUsd: 14.5 },
+  plan: {
+    plan: 'PRO',
+    hasActiveSubscription: true,
+    planExpiry: '2026-12-01T00:00:00.000Z',
+    subscription: null,
+    monthlyBudgetUsd: 100,
+    weeklyBudgetUsd: 25,
+  },
+  links: {
+    topUpUrl: 'https://staging.tinyhumans.ai/dashboard?tab=billing',
+    manageUrl: 'https://staging.tinyhumans.ai/dashboard?tab=plans',
+    apiKeysUrl: 'https://staging.tinyhumans.ai/dashboard?tab=api-keys',
+  },
+};
+
+const usage = {
+  remainingUsd: 39.5,
+  cycleBudgetUsd: 25,
+  cycleSpentUsd: 6,
+  cycleStartDate: '2026-09-07T00:00:00.000Z',
+  cycleEndsAt: '2026-09-14T00:00:00.000Z',
+  plan: {
+    plan: 'PRO',
+    name: 'Pro',
+    marginPercent: 10,
+    payAsYouGoMarginPercent: 100,
+    discountVsPayAsYouGoPercent: 90,
+  },
+  insights: {
+    period: { startDate: '2026-09-07', endDate: '2026-09-14' },
+    totals: {
+      inferenceUsd: 5,
+      integrationsUsd: 1,
+      totalUsd: 6,
+      inferenceCalls: 20,
+      integrationCalls: 2,
+    },
+    dailySeries: [],
+    topModels: [],
+    topIntegrations: [],
+  },
+};
 
 describe('<BillingPanel />', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     openUrlMock.mockResolvedValue(undefined);
-    getCurrentPlanMock.mockResolvedValue({
-      plan: 'FREE',
-      hasActiveSubscription: false,
-      planExpiry: null,
-      subscription: null,
-      monthlyBudgetUsd: 0,
-      weeklyBudgetUsd: 0,
-    });
-    purchasePlanMock.mockResolvedValue({
-      checkoutUrl: 'https://checkout.stripe.com/test',
-      sessionId: 'test-session',
-    });
-    createCoinbaseChargeMock.mockResolvedValue({
-      gatewayTransactionId: 'test-gw',
-      hostedUrl: 'https://commerce.coinbase.com/test',
-      status: 'NEW',
-      expiresAt: '2026-01-01T00:00:00Z',
-    });
+    getSummaryMock.mockResolvedValue(summary);
+    getTeamUsageMock.mockResolvedValue(usage);
   });
 
-  it('renders the plan selector and the dashboard button without auto-opening the browser', async () => {
+  it('shows plan, balances, cycle spend, and total funds remaining', async () => {
     render(<BillingPanel />);
 
-    // SubscriptionPlans renders its own title; billing frequency selection is
-    // back in-app so users can change their plan without leaving the desktop app.
-    expect(screen.getByText('Choose a Plan')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open billing dashboard' })).toBeInTheDocument();
-
-    // getCurrentPlan is called on mount but must not trigger a browser open.
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-    expect(openUrlMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(getSummaryMock).toHaveBeenCalledTimes(1));
+    expect(getTeamUsageMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('PRO')).toBeInTheDocument();
+    expect(screen.getByText('$39.50')).toBeInTheDocument();
+    expect(screen.getByText('$4.50')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    expect(screen.getByText(/Spent \$6\.00 this cycle/i)).toBeInTheDocument();
   });
 
-  it('loads the current plan tier on mount and passes it to SubscriptionPlans', async () => {
-    getCurrentPlanMock.mockResolvedValue({
-      plan: 'BASIC',
-      hasActiveSubscription: true,
-      planExpiry: null,
-      subscription: null,
-      monthlyBudgetUsd: 20,
-      weeklyBudgetUsd: 10,
-    });
-
-    render(<BillingPanel />);
-
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-    // With BASIC as current tier the BASIC card shows the "Current plan" badge.
-    expect(await screen.findByText('Current plan')).toBeInTheDocument();
-  });
-
-  it('upgrade with card payment calls purchasePlan and opens the checkout URL', async () => {
-    render(<BillingPanel />);
-
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-
-    // Both BASIC and PRO show upgrade buttons when current tier is FREE.
-    const upgradeButtons = screen.getAllByRole('button', { name: 'Upgrade' });
-    fireEvent.click(upgradeButtons[0]);
-
-    await waitFor(() => expect(purchasePlanMock).toHaveBeenCalledTimes(1));
-    expect(purchasePlanMock).toHaveBeenCalledWith('BASIC_MONTHLY');
-    await waitFor(() =>
-      expect(openUrlMock).toHaveBeenCalledWith('https://checkout.stripe.com/test')
+  it('shows each response without waiting for the other request to settle', async () => {
+    let resolveUsage: (value: typeof usage) => void = () => undefined;
+    getTeamUsageMock.mockReturnValue(
+      new Promise<typeof usage>(resolve => {
+        resolveUsage = resolve;
+      })
     );
-  });
-
-  // The reason this PR exists: the interval toggle must reach `purchasePlan`.
-  // The monthly case above passes on the DEFAULT interval, so it stays green
-  // even if `buildPlanId(tier, billingInterval)` is hardcoded back to
-  // 'monthly' — i.e. even with the bug in #5865 fully restored. This is the
-  // case that fails when that happens.
-  it('upgrade after selecting Annual sends the yearly plan id', async () => {
-    render(<BillingPanel />);
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Annual' }));
-
-    const upgradeButtons = await screen.findAllByRole('button', { name: 'Upgrade' });
-    fireEvent.click(upgradeButtons[0]);
-
-    await waitFor(() => expect(purchasePlanMock).toHaveBeenCalledTimes(1));
-    expect(purchasePlanMock).toHaveBeenCalledWith('BASIC_YEARLY');
-  });
-
-  // The crypto branch of `handleUpgrade` had no test at all: the mock was
-  // declared and stubbed but never asserted on, so the whole branch was
-  // unexecuted. Also pins the interval coupling from the Codex P1 — selecting
-  // crypto forces `annual`, so the price on screen matches the charge.
-  it('upgrade with crypto creates a Coinbase charge and opens the hosted URL', async () => {
-    render(<BillingPanel />);
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-
-    fireEvent.click(screen.getByRole('switch'));
-
-    const upgradeButtons = await screen.findAllByRole('button', { name: 'Upgrade' });
-    fireEvent.click(upgradeButtons[0]);
-
-    await waitFor(() => expect(createCoinbaseChargeMock).toHaveBeenCalledTimes(1));
-    expect(createCoinbaseChargeMock).toHaveBeenCalledWith('BASIC');
-    // Crypto must never go through the Stripe path.
-    expect(purchasePlanMock).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(openUrlMock).toHaveBeenCalledWith('https://commerce.coinbase.com/test')
-    );
-    // Selecting crypto switches the interval to annual, so the monthly
-    // button is disabled and the displayed price cannot disagree with the
-    // charge that was created.
-    expect(screen.getByRole('button', { name: 'Monthly' })).toBeDisabled();
-  });
-
-  it('opens the billing dashboard when the user clicks the secondary button', async () => {
     render(<BillingPanel />);
 
+    expect(await screen.findByText('$4.50')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    expect(screen.queryByText('$39.50')).not.toBeInTheDocument();
+
+    await act(async () => resolveUsage(usage));
+    expect(await screen.findByText('$39.50')).toBeInTheDocument();
+  });
+
+  it('uses backend-provided dashboard URLs for billing actions', async () => {
+    render(<BillingPanel />);
+    await screen.findByText('$39.50');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Top Up Credits' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open billing dashboard' }));
-    await waitFor(() => expect(openUrlMock).toHaveBeenCalledTimes(1));
-    expect(openUrlMock).toHaveBeenLastCalledWith('https://tinyhumans.ai/dashboard');
+
+    expect(openUrlMock).toHaveBeenNthCalledWith(1, summary.links.topUpUrl);
+    expect(openUrlMock).toHaveBeenNthCalledWith(2, summary.links.manageUrl);
   });
 
-  it('invokes the navigation back handler from both the header and the inline button', async () => {
+  it('keeps usable cycle details visible when the aggregate summary fails', async () => {
+    getSummaryMock.mockRejectedValue(new Error('Summary unavailable'));
     render(<BillingPanel />);
 
-    // The SettingsHeader back button (aria-label "Back") and the inline
-    // "Back to settings" button both route through navigateBack.
+    expect(await screen.findByText('Summary unavailable')).toBeInTheDocument();
+    expect(screen.getByText('PRO')).toBeInTheDocument();
+    expect(screen.getByText('$39.50')).toBeInTheDocument();
+    expect(screen.getByText(/Spent \$6\.00 this cycle/i)).toBeInTheDocument();
+  });
+
+  it('renders malformed balances as unavailable and falls back from unusable links', async () => {
+    getSummaryMock.mockResolvedValue({
+      ...summary,
+      credits: {
+        promotionBalanceUsd: Number.NaN,
+        teamTopupUsd: -1,
+        totalUsd: Number.POSITIVE_INFINITY,
+      },
+      links: null,
+    });
+    render(<BillingPanel />);
+
+    await screen.findByText('$39.50');
+    expect(screen.getAllByText('n/a')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Top Up Credits' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open billing dashboard' }));
+    expect(openUrlMock).toHaveBeenNthCalledWith(1, 'https://tinyhumans.ai/dashboard?tab=billing');
+    expect(openUrlMock).toHaveBeenNthCalledWith(2, 'https://tinyhumans.ai/dashboard');
+  });
+
+  it('falls back when the backend returns empty billing links', async () => {
+    getSummaryMock.mockResolvedValue({
+      ...summary,
+      links: { ...summary.links, topUpUrl: '', manageUrl: '' },
+    });
+    render(<BillingPanel />);
+
+    await screen.findByText('$39.50');
+    fireEvent.click(screen.getByRole('button', { name: 'Top Up Credits' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open billing dashboard' }));
+    expect(openUrlMock).toHaveBeenNthCalledWith(1, 'https://tinyhumans.ai/dashboard?tab=billing');
+    expect(openUrlMock).toHaveBeenNthCalledWith(2, 'https://tinyhumans.ai/dashboard');
+  });
+
+  it('keeps plan and balances visible when cycle usage fails', async () => {
+    getTeamUsageMock.mockRejectedValue(new Error('Usage unavailable'));
+    render(<BillingPanel />);
+
+    expect(await screen.findByText('Usage unavailable')).toBeInTheDocument();
+    expect(screen.getByText('PRO')).toBeInTheDocument();
+    expect(screen.queryByText('$14.50')).not.toBeInTheDocument();
+    expect(screen.getAllByText('n/a').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Unable to load usage data/i)).toBeInTheDocument();
+  });
+
+  it('invokes the navigation back handler from both back buttons', async () => {
+    render(<BillingPanel />);
+    await screen.findByText('$39.50');
+
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to settings' }));
     expect(navigateBack).toHaveBeenCalledTimes(2);
-  });
-
-  it('shows an error message when getCurrentPlan rejects', async () => {
-    getCurrentPlanMock.mockRejectedValue(new Error('Network error'));
-
-    render(<BillingPanel />);
-
-    await waitFor(() => expect(screen.getByText('Network error')).toBeInTheDocument());
-  });
-
-  it('shows an error message when purchasePlan rejects', async () => {
-    purchasePlanMock.mockRejectedValue(new Error('Payment failed'));
-
-    render(<BillingPanel />);
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-
-    const upgradeButtons = screen.getAllByRole('button', { name: 'Upgrade' });
-    fireEvent.click(upgradeButtons[0]);
-
-    await waitFor(() => expect(screen.getByText('Payment failed')).toBeInTheDocument());
-  });
-
-  it('shows an error when purchasePlan returns no checkout URL', async () => {
-    purchasePlanMock.mockResolvedValue({ checkoutUrl: null, sessionId: 'test-session' });
-
-    render(<BillingPanel />);
-    await waitFor(() => expect(getCurrentPlanMock).toHaveBeenCalledTimes(1));
-
-    const upgradeButtons = screen.getAllByRole('button', { name: 'Upgrade' });
-    fireEvent.click(upgradeButtons[0]);
-
-    await waitFor(() =>
-      expect(screen.getByText('Checkout session did not return a redirect URL')).toBeInTheDocument()
-    );
-    expect(openUrlMock).not.toHaveBeenCalled();
   });
 });

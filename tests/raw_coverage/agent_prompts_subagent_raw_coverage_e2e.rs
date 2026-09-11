@@ -273,7 +273,7 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
 
 fn parent(workspace: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools = vec![tool("echo"), tool("delegate_nested"), tool("other__skip")];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [

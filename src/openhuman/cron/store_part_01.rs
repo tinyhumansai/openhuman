@@ -1,7 +1,7 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
-    next_run_for_schedule, schedule_cron_expression, validate_schedule, CronJob, CronJobPatch,
-    CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
+    next_run_for_schedule, schedule_cron_expression, validate_agent_schedule, validate_schedule,
+    CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -101,7 +101,9 @@ pub fn add_agent_job_with_definition(
     profile_id: Option<String>,
 ) -> Result<CronJob> {
     let now = Utc::now();
-    validate_schedule(&schedule, now)?;
+    // Agent runs are inference turns: on top of the generic checks, refuse a
+    // schedule tighter than `MIN_AGENT_JOB_INTERVAL` (#6158).
+    validate_agent_schedule(&schedule, now)?;
     let next_run = next_run_for_schedule(&schedule, now)?;
     let id = Uuid::new_v4().to_string();
     let expression = schedule_cron_expression(&schedule).unwrap_or_default();
@@ -402,7 +404,13 @@ pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<
     let mut schedule_changed = false;
 
     if let Some(schedule) = patch.schedule {
-        validate_schedule(&schedule, Utc::now())?;
+        // The agent-only floor applies whenever the schedule is (re)set, so a
+        // row that predates it keeps running untouched until its schedule is
+        // edited — and then has to comply like a new job.
+        match job.job_type {
+            JobType::Agent => validate_agent_schedule(&schedule, Utc::now())?,
+            JobType::Shell | JobType::Flow => validate_schedule(&schedule, Utc::now())?,
+        }
         job.schedule = schedule;
         job.expression = schedule_cron_expression(&job.schedule).unwrap_or_default();
         schedule_changed = true;

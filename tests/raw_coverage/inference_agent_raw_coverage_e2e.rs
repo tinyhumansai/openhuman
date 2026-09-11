@@ -3035,6 +3035,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
         AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
         RUN_WORKFLOW_TOOL_NAME,
     };
+    use openhuman_core::openhuman::agent::orchestration::tools::DelegationTarget;
     use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
 
     let ask = AskClarificationTool::new();
@@ -3083,7 +3084,11 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
     let archetype = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".into(),
-        agent_id: "researcher".into(),
+        // Constructed explicitly rather than via `.into()`: `DelegationTarget`
+        // exists so a routing target cannot be an anonymous string, and an
+        // ambient `From<&str>` would let any `.into()` mint one silently —
+        // re-opening the hole the newtype was added to close.
+        agent_id: DelegationTarget("researcher".into()),
         tool_description: "Use for research.".into(),
     };
     assert_eq!(

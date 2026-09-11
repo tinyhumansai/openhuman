@@ -704,6 +704,13 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     // stops queueing the thread for retry and reads on the
                     // strength of a room it is not in.
                     let joined = join_room_logged(&socket, &room, &socket.id.to_string());
+                    // Hand this socket whatever the approval gate still has
+                    // parked on the thread, BEFORE acknowledging the join, so a
+                    // client that orders its recovery reads against the ack
+                    // already holds the card.
+                    if joined {
+                        replay_parked_approval(&socket, thread_id);
+                    }
                     ack.send(&ThreadSubscribeAck { joined }).ok();
                 },
             );
@@ -1493,6 +1500,52 @@ fn event_alias(name: &str) -> Option<String> {
         return Some(name.replace(':', "_"));
     }
     None
+}
+
+/// Re-send the approval parked on `thread_id`, if any, to the socket that just
+/// joined that thread's room.
+///
+/// An approval is durable server-side state — the gate holds the parked call
+/// and a `pending_approvals` row — but it reaches the UI as ONE fire-and-forget
+/// emit from [`emit_web_channel_event`]. That emit can miss with no error and
+/// no trace: `io.to(room).emit()` on a room whose only member has gone is a
+/// silent no-op, there is no disconnect handler here so the core never learns a
+/// client died, a socket that reconnects lands in the thread room only for
+/// events emitted *after* it joins, and the bridge drops frames wholesale on
+/// broadcast lag. Any one of those leaves the turn parked forever with no card
+/// on screen and no way for the user to act.
+///
+/// `thread:subscribe` is the one signal that says "this socket is now watching
+/// this thread", which makes it the place to reconcile the two. Replaying is
+/// safe to repeat: the client keys the card by `request_id` and a decided
+/// request is no longer parked, so a socket that already has the card just
+/// re-renders the same one.
+#[cfg(feature = "http-server")]
+fn replay_parked_approval(socket: &SocketRef, thread_id: &str) {
+    let Some(gate) = crate::openhuman::security::approval::ApprovalGate::try_global() else {
+        return;
+    };
+    let Some(row) = gate.parked_request_for_thread(thread_id) else {
+        return;
+    };
+    let client_id = socket.id.to_string();
+    let event = crate::openhuman::web_chat::approval_request_event(
+        &row.request_id,
+        &row.tool_name,
+        &row.action_summary,
+        &row.args_redacted,
+        thread_id,
+        &client_id,
+    );
+    let Ok(payload) = serde_json::to_value(&event) else {
+        return;
+    };
+    log::info!(
+        "[socketio] replaying parked approval_request to joining socket client_id={client_id} thread_id={thread_id} request_id={} tool={}",
+        row.request_id,
+        row.tool_name
+    );
+    emit_with_aliases(socket, "approval_request", &payload);
 }
 
 #[cfg(feature = "http-server")]

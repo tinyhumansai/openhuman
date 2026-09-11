@@ -309,3 +309,110 @@ fn every_essential_action_is_read_only() {
         }
     }
 }
+
+// ── Dynamic-tool spawn strip (#6157) ────────────────────────────────────
+
+use crate::openhuman::tools::Tool;
+use async_trait::async_trait;
+
+/// A tool that is nothing but its name — the strip reads no other field.
+struct NamedTool(&'static str);
+
+#[async_trait]
+impl Tool for NamedTool {
+    /// The caller-chosen name.
+    fn name(&self) -> &str {
+        self.0
+    }
+
+    /// Unused by the strip.
+    fn description(&self) -> &str {
+        "stub"
+    }
+
+    /// Unused by the strip.
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    /// Never called: the strip only inspects names.
+    async fn execute(
+        &self,
+        _args: serde_json::Value,
+    ) -> anyhow::Result<crate::openhuman::tools::traits::ToolResult> {
+        Ok(crate::openhuman::tools::traits::ToolResult::success(
+            String::new(),
+        ))
+    }
+}
+
+/// A dynamic-tool list carrying exactly these names, in this order.
+fn dynamic(names: &[&'static str]) -> Vec<Box<dyn Tool>> {
+    names
+        .iter()
+        .map(|name| Box::new(NamedTool(name)) as Box<dyn Tool>)
+        .collect()
+}
+
+/// The surviving names, so a test can assert on content *and* order.
+fn names_of(tools: &[Box<dyn Tool>]) -> Vec<&str> {
+    tools.iter().map(|t| t.name()).collect()
+}
+
+/// The shape the runner actually builds: Composio actions plus the
+/// progressive-disclosure handoff tool, with spawn tools interleaved.
+#[test]
+fn dynamic_tools_keep_ordinary_actions_and_lose_spawn_tools() {
+    let mut tools = dynamic(&[
+        "GMAIL_FETCH_EMAILS",
+        "spawn_subagent",
+        "extract_from_result",
+        "delegate_graph",
+        "spawn_worker_thread",
+        "GMAIL_SEND_EMAIL",
+        "agent_prepare_context",
+    ]);
+    strip_spawn_tools_from_dynamic(&mut tools, "researcher");
+
+    assert_eq!(
+        names_of(&tools),
+        vec![
+            "GMAIL_FETCH_EMAILS",
+            "extract_from_result",
+            "GMAIL_SEND_EMAIL"
+        ],
+        "only spawn/delegate tools are dropped, and surviving order is preserved"
+    );
+}
+
+/// The whole reason the strip lives here rather than relying on the
+/// registration-time backstop: that backstop matches `delegate_*` by prefix and
+/// would keep `plan`, which is `planner`'s `delegate_name`.
+#[test]
+fn dynamic_tools_lose_unprefixed_delegate_name_overrides() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global(tmp.path())
+        .unwrap();
+
+    let mut tools = dynamic(&["plan", "run_code", "shell", "web_fetch"]);
+    strip_spawn_tools_from_dynamic(&mut tools, "researcher");
+
+    assert_eq!(
+        names_of(&tools),
+        vec!["shell", "web_fetch"],
+        "`delegate_name` overrides are spawn tools even without the prefix"
+    );
+}
+
+/// The live case today: no dynamic tool is named after a spawn tool, so the
+/// strip must be a no-op rather than a silent narrowing of the surface.
+#[test]
+fn a_dynamic_tool_list_without_spawn_tools_is_untouched() {
+    let mut tools = dynamic(&["GMAIL_FETCH_EMAILS", "extract_from_result"]);
+    strip_spawn_tools_from_dynamic(&mut tools, "researcher");
+
+    assert_eq!(
+        names_of(&tools),
+        vec!["GMAIL_FETCH_EMAILS", "extract_from_result"]
+    );
+}

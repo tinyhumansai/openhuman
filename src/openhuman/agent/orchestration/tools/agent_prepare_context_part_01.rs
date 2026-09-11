@@ -584,7 +584,9 @@ impl AgentPrepareContextTool {
             return String::new();
         };
         let visible = &parent.visible_tool_names;
-        let specs: &[crate::openhuman::tools::ToolSpec] = if parent.visible_tool_specs.is_empty() {
+        let specs: &[std::sync::Arc<crate::openhuman::tools::ToolSpec>] =
+            if parent.visible_tool_specs.is_empty()
+        {
             &parent.all_tool_specs
         } else {
             &parent.visible_tool_specs

@@ -422,3 +422,41 @@ pub(super) fn load_prompt_source(
         }
     }
 }
+
+/// Remove every sub-agent spawn/delegate tool from a child's **dynamic**
+/// (per-spawn) tool list, in place.
+///
+/// The archetype's static surface is stripped via `allowed_indices` in
+/// [`super::ops::run_typed_mode`], but dynamic tools — per-action Composio
+/// toolkit tools and `extract_from_result` — are appended afterwards and never
+/// pass through that filter. That makes this the only route by which a
+/// spawn/delegate name can reach a child's allowlist *admitted*, so the #4452
+/// invariant has to be re-asserted here (issue #6157).
+///
+/// Strip once, at the point the list is finished, rather than at each use: the
+/// same `Vec` feeds the provider-visible specs, the resolved allowlist, the
+/// prompt catalogue, harness registration and the custom-graph request. Filter
+/// one and the others disagree — a tool advertised but not admitted, or the
+/// reverse. The registration-time backstop in
+/// `tinyagents::is_subagent_spawn_or_delegate_tool` is not sufficient on its
+/// own here: it cannot resolve `delegate_name` overrides, so it matches
+/// strictly less than [`is_subagent_spawn_tool`] does.
+pub(super) fn strip_spawn_tools_from_dynamic(
+    dynamic_tools: &mut Vec<Box<dyn Tool>>,
+    agent_id: &str,
+) {
+    dynamic_tools.retain(|tool| {
+        let name = tool.name();
+        // `spawn_worker_thread` is matched separately for the same reason the
+        // caller-side strip does it: it spawns a run without being a delegate.
+        let is_spawn = is_subagent_spawn_tool(name) || name == "spawn_worker_thread";
+        if is_spawn {
+            tracing::warn!(
+                agent_id = %agent_id,
+                tool = name,
+                "[subagent_runner] dropped a spawn/delegate tool from a sub-agent's dynamic tools"
+            );
+        }
+        !is_spawn
+    });
+}

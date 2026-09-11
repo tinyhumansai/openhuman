@@ -512,23 +512,34 @@ pub fn save_app_state(config: &Config, state: &StoredAppState) -> Result<(), Str
     save_stored_app_state_unlocked(config, state)
 }
 
-fn build_client() -> Result<Client, String> {
+/// One process-wide client for `GET /auth/me`, so its pooled TCP+TLS
+/// connection survives between snapshot polls instead of being handshaken
+/// again on every one.
+///
+/// `app_state_snapshot` polls this endpoint for the life of the session. A
+/// `Client` built per call gave each poll its own connection pool, so every one
+/// paid a fresh TCP connect *and* TLS handshake before the request could go out
+/// — two extra WAN round trips on top of the one the request itself costs.
+/// Measured against the production backend over a ~250ms RTT link: ~780-1420ms
+/// on a cold connection versus ~380-540ms on a reused one (#6180).
+///
+/// `reqwest::Client` is internally reference-counted and built to be shared;
+/// holding one is the only way to keep its pool.
+///
+/// The product-identity header moved to the request rather than
+/// `default_headers`, because this client now outlives
+/// [`crate::api::product::set_product_identity`] — baking the header in here
+/// would pin whichever identity happened to be installed when the first
+/// snapshot ran. `MedullaClient` reads it per request for the same reason.
+static CURRENT_USER_CLIENT: Lazy<Result<Client, String>> = Lazy::new(|| {
     // Platform-appropriate TLS backend — see [`crate::openhuman::util::tls`].
     crate::openhuman::util::tls::tls_client_builder()
         .http1_only()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
-        // `GET /auth/me` is backend traffic like any other, so it carries the
-        // product identity. This client is hand-rolled rather than obtained
-        // from `BackendOAuthClient`, so it inherits nothing from that path's
-        // default headers — see [`crate::api::product`]. Set here rather than
-        // at the one call site because every user of this builder is
-        // backend-bound by construction (`resolve_base` resolves the backend
-        // API URL and nothing else).
-        .default_headers(crate::api::product::product_identity_headers())
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))
-}
+});
 
 fn resolve_base(config: &Config) -> Result<Url, String> {
     let base = effective_backend_api_url(&config.api_url);
@@ -545,13 +556,20 @@ async fn fetch_current_user(
     config: &Config,
     token: &str,
 ) -> Result<Option<Value>, CurrentUserFetchError> {
-    let client = build_client().map_err(CurrentUserFetchError::FetchFailed)?;
+    let client = CURRENT_USER_CLIENT
+        .as_ref()
+        .map_err(|e| CurrentUserFetchError::FetchFailed(e.clone()))?;
     let base = resolve_base(config).map_err(CurrentUserFetchError::FetchFailed)?;
     let url = base
         .join("auth/me")
         .map_err(|e| CurrentUserFetchError::FetchFailed(format!("build URL failed: {e}")))?;
     let response = client
         .request(Method::GET, url.clone())
+        // `GET /auth/me` is backend traffic like any other, so it carries the
+        // product identity. This request is hand-rolled rather than issued
+        // through `BackendOAuthClient`, so it inherits nothing from that path's
+        // default headers — see [`crate::api::product`].
+        .headers(crate::api::product::product_identity_headers())
         .header(AUTHORIZATION, bearer_authorization_value(token))
         .send()
         .await

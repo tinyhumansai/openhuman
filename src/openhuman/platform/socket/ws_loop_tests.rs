@@ -14,6 +14,7 @@ fn make_shared() -> Arc<SharedState> {
         status: RwLock::new(ConnectionStatus::Connected),
         socket_id: RwLock::new(None),
         error: RwLock::new(None),
+        connection_identity: RwLock::new(None),
     })
 }
 

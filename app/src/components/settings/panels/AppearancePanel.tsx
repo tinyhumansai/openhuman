@@ -99,7 +99,7 @@ const AppearancePanel = () => {
 
       {/* ── Font size picker — intentional bespoke tile UI ─────────── */}
       <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
+        <h3 className="mb-2 px-1 font-title text-sm font-semibold text-content">
           {t('settings.appearance.fontSizeHeading')}
         </h3>
         {/* Card forwards no `role`/`aria-label` to its wrapper, so the

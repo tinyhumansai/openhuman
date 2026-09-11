@@ -307,7 +307,11 @@ const EventLogPanel = () => {
   const domains = [...new Set(entries.map(e => e.domain))].sort();
 
   return (
-    <SettingsPanel testId="event-log-panel" description={t('settings.developerMenu.eventLog.desc')}>
+    <SettingsPanel
+      testId="event-log-panel"
+      scrollable={false}
+      bodyClassName="flex h-full min-h-0 flex-col gap-4"
+      description={t('settings.developerMenu.eventLog.desc')}>
       {/* Status bar */}
       <div className="flex flex-wrap items-center gap-2">
         <SettingsSelect
@@ -375,18 +379,33 @@ const EventLogPanel = () => {
         </Button>
       )}
 
-      {/* Event stream */}
-      <section className="space-y-1">
+      {/* Event stream.
+          This is a live region, not a document, so it claims the height rather
+          than taking a narrow measure: it was a `max-h-[60vh]` box that sized
+          to its content, so with no events the whole panel was a filter bar,
+          one grey sentence, and 700px of nothing -- indistinguishable from a
+          page that failed to load. Bounded and framed, the same emptiness reads
+          as a log that is connected and has not received anything yet, which is
+          what it is. */}
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line">
         <div
           ref={containerRef}
           onScroll={handleScroll}
-          className="max-h-[60vh] overflow-y-auto space-y-1">
+          data-testid="event-log-scroll"
+          className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
           {filteredEntries.length === 0 && (
-            <p className="text-xs text-content-muted py-4 text-center">
-              {isLive
-                ? t('settings.developerMenu.eventLog.waiting')
-                : t('settings.developerMenu.eventLog.notConnected')}
-            </p>
+            <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p className="text-sm text-content-secondary">
+                {isLive
+                  ? t('settings.developerMenu.eventLog.waiting')
+                  : t('settings.developerMenu.eventLog.notConnected')}
+              </p>
+              <p className="max-w-[44ch] text-xs text-content-faint">
+                {isLive
+                  ? t('settings.developerMenu.eventLog.waitingHint')
+                  : t('settings.developerMenu.eventLog.notConnectedHint')}
+              </p>
+            </div>
           )}
           {filteredEntries.map(entry => {
             const colors = DOMAIN_BADGE_COLORS[entry.domain] || {

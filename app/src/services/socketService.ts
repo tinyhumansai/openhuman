@@ -10,7 +10,7 @@ import { setBackend } from '../store/connectivitySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import type { UserErrorScope } from '../types/userError';
-import { IS_DEV } from '../utils/config';
+import { IS_DEV, IS_TEST } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
 import { getCoreRpcToken, getCoreRpcUrl } from './coreRpcClient';
 import { createCoreSocket } from './coreSocket';
@@ -26,11 +26,11 @@ const socketWarn = debug('socket:warn');
 const socketError = debug('socket:error');
 
 // Enable socket logging in development by default — but never under test.
-// `IS_DEV` is truthy in vitest, so without the MODE guard this force-enable
+// `IS_DEV` is truthy in vitest, so without the `IS_TEST` guard this force-enable
 // floods every test file that imports this service (measured: 412 lines /
 // 46KB of `flow:approval_request` listener churn in a single run), inflating
 // runtime enough to push suites past the runner's foreground timeout.
-if (IS_DEV && import.meta.env.MODE !== 'test') {
+if (IS_DEV && !IS_TEST) {
   debug.enable('socket*');
 }
 

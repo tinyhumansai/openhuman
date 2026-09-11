@@ -88,25 +88,25 @@ impl Agent {
     /// Borrow the agent's tool specs (pre-serialised). Captured at
     /// turn-start so sub-agents can pass byte-identical schemas to the
     /// provider for prefix-cache reuse.
-    pub fn tool_specs(&self) -> &[ToolSpec] {
+    pub fn tool_specs(&self) -> &[Arc<ToolSpec>] {
         self.tool_specs.as_slice()
     }
 
     /// Clone the agent's full tool specs `Arc` (durable and synthesised).
-    pub fn tool_specs_arc(&self) -> Arc<Vec<ToolSpec>> {
+    pub fn tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
         Arc::clone(&self.tool_specs)
     }
 
     /// Clone the agent's provider-facing spec list: visible, policy-allowed,
     /// de-duplicated, synthesised delegates included.
-    pub fn visible_tool_specs_arc(&self) -> Arc<Vec<ToolSpec>> {
+    pub fn visible_tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
         Arc::clone(&self.visible_tool_specs)
     }
 
     /// Clone the specs of the durable registry alone, index for index with
     /// [`Self::tools_arc`] — the pair a sub-agent is handed, so a child never
     /// sees a spec for a synthesised delegate it holds no instance for.
-    pub fn durable_tool_specs_arc(&self) -> Arc<Vec<ToolSpec>> {
+    pub fn durable_tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
         Arc::clone(&self.durable_tool_specs)
     }
 

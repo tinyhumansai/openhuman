@@ -133,9 +133,19 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
             graph.context_window,
             // Mid-flight steering from the session's run queue.
             graph.run_queue,
-            // The top-level chat turn surfaces clarifying questions inline rather
-            // than pausing the loop, so no early-exit tools here.
-            &[],
+            // `ask_user_clarification` pauses this turn: the seam returns the
+            // question as `outcome.text`, the caller ends the turn on it, and the
+            // user's next message is the answer. No resume plumbing is needed at
+            // the top level — unlike a delegated child, a chat turn's natural
+            // continuation IS the next user message.
+            //
+            // This was `&[]` with a comment claiming the chat turn "surfaces
+            // clarifying questions inline". It does not, and nothing else did
+            // either: the tool's output went back to the model as a successful
+            // result, so the model read its own question as answered and carried
+            // on. Users watched an "Ask User Clarification" step succeed without
+            // ever being asked anything.
+            &["ask_user_clarification"],
             // Pause gracefully at the model-call cap so the turn emits a resumable
             // checkpoint instead of erroring or returning a dangling tool cycle.
             true,

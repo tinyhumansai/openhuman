@@ -570,3 +570,77 @@ fn source_depth_matches_the_row_and_treats_zero_as_unbounded() {
     );
     assert_eq!(pick_source_sync_depth_days([], "gmail", "conn-1"), None);
 }
+
+// ── Backend mode with no session yet (#6176) ──────────────────────────
+//
+// The twin of the direct-mode-without-key guard: backend mode (the default)
+// with no app-session JWT is the fresh-install / signed-out state.
+// `composio_list_connections` must answer with an empty list instead of
+// letting the connector module report "loaded without a connector route",
+// which the boot-time memory-source reconcile and the 60 s periodic tick
+// would otherwise turn into an error-level report and a Sentry event.
+
+/// Store an app-session JWT in the auth store `config` points at, the same
+/// way `client_tests::config_with_session_token` does.
+fn store_test_session_token(config: &crate::openhuman::config::Config) {
+    crate::openhuman::security::credentials::AuthService::from_config(config)
+        .store_provider_token(
+            crate::openhuman::security::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "test-session-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store test session token");
+}
+
+#[test]
+fn backend_mode_without_session_is_true_for_default_mode_and_no_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    // `Config::default()` leaves `composio.mode` empty, which is backend mode.
+    let config = test_config(&tmp);
+    assert!(backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_true_for_explicit_backend_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = test_config(&tmp);
+    config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_BACKEND.into();
+    assert!(backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_in_direct_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Direct mode never needs a session; its no-key state belongs to
+    // `direct_mode_without_key`, and the two guards must not overlap.
+    let config = direct_mode_no_key_config(&tmp);
+    assert!(!backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_once_signed_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    store_test_session_token(&config);
+    // A stored session means the module gets a proxy route — the guard must
+    // step aside, or a signed-in user would see a silent empty list.
+    assert!(!backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_when_the_session_store_is_unreadable() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The auth-profile store lives in `config_path.parent()`
+    // (`state_dir_from_config`); a regular file there makes it fail to load,
+    // the same trick `auth_profile_lock_errors_do_not_include_local_paths`
+    // uses. A lookup that *failed* is not "signed out": the guard must step
+    // aside so the real fault keeps surfacing through the normal error path
+    // instead of being hidden behind a silent empty list.
+    let occupied = tmp.path().join("occupied");
+    std::fs::write(&occupied, "not a directory").unwrap();
+    let mut config = test_config(&tmp);
+    config.config_path = occupied.join("config.toml");
+    assert!(!backend_mode_without_session(&config));
+}

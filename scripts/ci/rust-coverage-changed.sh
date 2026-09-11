@@ -107,9 +107,14 @@ integration_test_targets() {
 # tested, and wrong for domains whose contract lives in an integration target:
 # such a gate never runs on a PR that touches only the domain's `src/`.
 #
-#   src/openhuman/memory/** → the golden-workspace schema gates. They stand
-#   between a memory-store schema change and a corrupted user workspace, and
-#   they are `tests/` targets, so `--lib` scoping alone skips them entirely.
+#   `src/openhuman/memory/**` used to sit here, naming the golden-workspace
+#   schema gates. Both of those targets — `memory_golden_fixture_e2e` and
+#   `memory_golden_parity_e2e` — were deleted in cc99ba9c6, which cut the
+#   engine out of the test build. A mapping that names a target Cargo no longer
+#   has is not a weaker gate: it is a hard `error: no test target named …` on
+#   every PR that touches the domain, so the entry is gone rather than pointed
+#   at a substitute. The domain scopes to its `--lib` filter alone until there
+#   is a live gate to name again.
 #
 #   src/openhuman/agent/harness/session/** and src/openhuman/threads/goals/**
 #   → `agent_turn_overrides_e2e`. Per-turn `TurnOverrides` (`session/types.rs`)
@@ -124,9 +129,6 @@ integration_test_targets() {
 # empty result.
 domain_integration_targets() {
   case "$1" in
-    src/openhuman/memory/*)
-      printf '%s\n' memory_golden_fixture_e2e memory_golden_parity_e2e
-      ;;
     src/openhuman/agent/harness/session/* | src/openhuman/threads/goals/*)
       printf '%s\n' agent_turn_overrides_e2e
       ;;
@@ -230,6 +232,13 @@ run_integration_target() {
   fi
 }
 
+compile_raw_coverage_target() {
+  log "compiling raw coverage integration target for src/** change"
+  bash scripts/ci-cancel-aware.sh cargo test \
+    --features "${PRODUCT_FEATURES}" \
+    --test raw_coverage_all --no-run
+}
+
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
@@ -269,6 +278,8 @@ while IFS= read -r f; do
 done < <(printf '%s\n' "${CHANGED_FILES}" | xargs -n1 printf '%s\n' 2>/dev/null || true)
 log "received ${#files[@]} changed rust file(s)"
 
+src_changed=false
+
 if [ "${#files[@]}" -eq 0 ]; then
   run_full "empty changed-file list — scoping unsafe"
 fi
@@ -279,6 +290,9 @@ fi
 lib_filters_raw=""
 test_targets_raw=""
 for f in "${files[@]}"; do
+  case "${f}" in
+    src/*) src_changed=true ;;
+  esac
   if [ ! -e "${f}" ]; then
     # dorny/paths-filter includes deleted paths. They contain no changed lines
     # to cover and, for tests, no longer correspond to runnable Cargo targets.
@@ -338,14 +352,6 @@ for f in "${files[@]}"; do
         log "${f} → integration gate '--test ${extra_target}'"
       done < <(domain_integration_targets "${f}")
       ;;
-    tests/fixtures/memory_golden/*)
-      # The golden memory-workspace fixture (committed .db blobs + the derived
-      # manifest). A change here IS the schema-gate re-baseline, so run the
-      # gates rather than falling through to the `*)` full-suite arm.
-      test_targets_raw="${test_targets_raw}memory_golden_fixture_e2e
-"
-      log "${f} → integration gate '--test memory_golden_fixture_e2e'"
-      ;;
     tests/raw_coverage/*.rs)
       # The ~76 *_raw_coverage_e2e.rs suites are aggregated into the single
       # `raw_coverage_all` target (see tests/raw_coverage_all.rs + build.rs), so
@@ -385,6 +391,13 @@ done < <(printf '%s' "${test_targets_raw}" | sort -u)
 
 if [ "${#lib_filters[@]}" -eq 0 ] && [ "${#test_targets[@]}" -eq 0 ]; then
   run_full "no scoped test targets derivable from the change set"
+fi
+
+if [ "${src_changed}" = true ]; then
+  # Scoped lib tests cannot compile integration targets that are not selected by
+  # a domain mapping. Build the aggregate raw-coverage target on every src/**
+  # change so source-only PRs cannot leave a broken integration suite behind.
+  compile_raw_coverage_target
 fi
 
 # Drop artifacts from previous coverage runs so merged profdata only reflects
