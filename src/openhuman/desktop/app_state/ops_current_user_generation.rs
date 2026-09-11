@@ -17,6 +17,13 @@
 /// cancelling each other out.
 static CURRENT_USER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Serializes session-profile mutation with pending-session persistence. The
+/// generation check must cover the profile write itself, not only the work
+/// that prepares its input, or logout can bump the generation between the
+/// check and `store_provider_token`.
+pub static CURRENT_USER_SESSION_MUTATION_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
+
 /// The failure write itself, taking the guard rather than the lock, so a caller
 /// that must decide *under* the lock can do so without re-entering it.
 fn record_current_user_failure_locked(

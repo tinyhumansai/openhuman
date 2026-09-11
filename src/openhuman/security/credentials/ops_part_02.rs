@@ -82,12 +82,20 @@ fn normalize_local_session_user(user: serde_json::Value, local_user_id: &str) ->
 }
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let _session_mutation_lock = crate::openhuman::desktop::app_state::
+        CURRENT_USER_SESSION_MUTATION_LOCK
+        .lock()
+        .await;
     let mut logs = Vec::new();
     // Flip the scheduler-gate override first so any background worker that
     // is mid-iteration (or wakes up while we tear down) stalls at its next
     // `wait_for_capacity()` call instead of firing requests at a backend
     // we're about to invalidate. Idempotent.
     crate::openhuman::cron::scheduler_gate::set_signed_out(true);
+
+    // Invalidate before removing the profile so a pending revalidation cannot
+    // recreate it after logout has finished the removal.
+    crate::openhuman::desktop::app_state::forget_current_user_caches();
 
     let auth = AuthService::from_config(config);
     let removed = auth
@@ -103,11 +111,6 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
         }
     }
     crate::openhuman::platform::socket::medulla::workflows::clear_workflow_bridge();
-
-    // Forget the cached `/auth/me` snapshot and the cached availability failure.
-    // Both are keyed on `(api_base, token)`, so signing back in with the same JWT
-    // inside their windows would replay pre-logout state (#5758).
-    crate::openhuman::desktop::app_state::forget_current_user_caches();
 
     // Clear the active user marker so subsequent config loads fall back to the
     // default (unauthenticated) openhuman directory.

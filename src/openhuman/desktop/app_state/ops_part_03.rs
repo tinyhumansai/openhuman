@@ -92,6 +92,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                         &token,
                         session_metadata.clone(),
                         fresh_user.clone(),
+                        generation,
                     )
                     .await
                     {
