@@ -208,3 +208,131 @@ test.describe('Agent profiles — activate and delete', () => {
     await expect(page.getByLabel('ID', { exact: true })).toHaveCount(0);
   });
 });
+
+/**
+ * Failure paths (#5944 / #5900).
+ *
+ * Every test above is a happy path, which is how `[object Object]` shipped:
+ * `dispatch(thunk).unwrap()` rejects with Redux Toolkit's `SerializedError` — a
+ * plain object, never an `Error` — so the old `err instanceof Error` guard took
+ * its `String(err)` branch and stringified an object. The defect was even pinned
+ * as *expected* in a jsdom test before #5944 inverted it.
+ *
+ * These drive the real panels against a real core with only the one failing
+ * method stubbed, so the whole chain the fix lives on runs:
+ * `core RPC error → CoreRpcError → thunk rejection → SerializedError →
+ * errorMessage() → rendered text`. `coreRpcClient.ts:855-859` puts the JSON-RPC
+ * `error.message` on `CoreRpcError` verbatim, so the string asserted here is the
+ * one the backend sent.
+ *
+ * Each asserts the message IS shown *and* that `[object Object]` is NOT — the
+ * first fails on a regression, the second names the specific defect.
+ */
+test.describe('Agent profiles — a failing action shows the reason', () => {
+  test.describe.configure({ mode: 'serial' });
+  const NAME = 'W6 Failure Profile';
+  const ID = 'w6-failure-profile';
+
+  /**
+   * Fail exactly one RPC method with a JSON-RPC error, passing everything else
+   * through to the real core.
+   *
+   * The message is deliberately bland: `classifyRpcError` re-routes anything
+   * that looks like an auth, timeout or not-found failure, and a reclassified
+   * error would take a different path through the UI than the one under test.
+   */
+  const failMethod = async (page: Page, method: string, message: string) => {
+    await page.route('**/rpc', async (route, request) => {
+      const body = JSON.parse(request.postData() || '{}');
+      if (body.method === method) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32000, message } }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+  };
+
+  test.afterEach(async () => {
+    await deleteFromCore(ID);
+  });
+
+  test('a failing save shows the backend reason, not [object Object]', async ({ page }) => {
+    const REASON = 'the core declined to store this profile';
+    await deleteFromCore(ID);
+    await bootAuthenticatedPage(page, 'pw-w6-profile-fail', '/settings/profiles');
+    await openProfiles(page);
+    await failMethod(page, 'openhuman.profiles_upsert', REASON);
+
+    await page.getByRole('button', { name: 'New profile' }).click();
+    await expect(page.getByLabel('Name', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel('Name', { exact: true }).click();
+    await page.keyboard.type(NAME);
+    await page.getByRole('button', { name: 'Create' }).click();
+
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText(REASON, { timeout: 30_000 });
+    await expect(alert).not.toContainText('[object Object]');
+
+    // The editor must stay open on failure — navigating back to the list would
+    // discard what the user typed on an error they can act on.
+    await expect(page.getByLabel('Name', { exact: true })).toHaveValue(NAME);
+  });
+
+  test('a failing Set as active shows the backend reason, not [object Object]', async ({
+    page,
+  }) => {
+    const REASON = 'the core declined to switch profile';
+    await deleteFromCore(ID);
+    await callCoreRpc('openhuman.profiles_upsert', {
+      profile: {
+        id: ID,
+        name: NAME,
+        description: 'Seeded over RPC so the list starts from a known state.',
+        agentId: 'orchestrator',
+        builtIn: false,
+        includeAgentConversations: true,
+      },
+    }).catch(() => {});
+    await bootAuthenticatedPage(page, 'pw-w6-profile-fail-select', '/settings/profiles');
+    await openProfiles(page);
+    await failMethod(page, 'openhuman.profiles_select', REASON);
+
+    await row(page, NAME).getByText('Set as active').click();
+
+    // ProfilesPanel renders `actionError` as a plain styled <p>, not an Alert,
+    // so this is located by its text rather than by role.
+    await expect(page.getByText(REASON)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('[object Object]')).toHaveCount(0);
+  });
+
+  test('a failing delete shows the backend reason, not [object Object]', async ({ page }) => {
+    const REASON = 'the core declined to remove this profile';
+    await deleteFromCore(ID);
+    await callCoreRpc('openhuman.profiles_upsert', {
+      profile: {
+        id: ID,
+        name: NAME,
+        description: 'Seeded over RPC so the list starts from a known state.',
+        agentId: 'orchestrator',
+        builtIn: false,
+        includeAgentConversations: true,
+      },
+    }).catch(() => {});
+    await bootAuthenticatedPage(page, 'pw-w6-profile-fail-delete', '/settings/profiles');
+    await openProfiles(page);
+    await failMethod(page, 'openhuman.profiles_delete', REASON);
+
+    page.once('dialog', d => void d.accept());
+    await row(page, NAME).getByText('Delete').click();
+
+    await expect(page.getByText(REASON)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('[object Object]')).toHaveCount(0);
+
+    // The delete failed, so the profile must still be there.
+    await expect(row(page, NAME)).toBeVisible();
+  });
+});

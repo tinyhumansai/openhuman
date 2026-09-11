@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::types::ContentHint;
+use super::types::{ContentHint, ContentKind};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
@@ -112,6 +112,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "tool_name",
                     ty: TypeSchema::String,
                     comment: "Optional producing tool name (prior hint).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mime",
+                    ty: TypeSchema::String,
+                    comment: "Optional MIME type hint (`text/html`, `application/json`, …).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "extension",
+                    ty: TypeSchema::String,
+                    comment: "Optional file extension hint (no dot).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Optional search/query string; the search compressor ranks \
+                              matches by query-term density.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "explicit",
+                    // Declared as an enum, not a bare string: `/schema` is what
+                    // generators and model-facing tool definitions read, and an
+                    // unrestricted string there invites callers to propose values
+                    // that only fail once the handler runs. `check_type`
+                    // (`core/all.rs`) enforces the variant list at the dispatch
+                    // boundary, so the published contract and the rejection agree.
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec![
+                            "json",
+                            "code",
+                            "log",
+                            "search",
+                            "diff",
+                            "html",
+                            "plain_text",
+                        ],
+                    })),
+                    comment: "Optional hard override of the detected kind, skipping detection \
+                              entirely.",
                     required: false,
                 },
             ],
@@ -238,13 +280,39 @@ fn handle_detect(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Build a [`ContentHint`] from `compress`'s params.
+///
+/// All five hint fields are caller-supplied. Before #6088 only `source_tool` was
+/// read, so the debug controller could not reproduce what the content router
+/// actually does — in particular it could not force a kind via `explicit`, which
+/// is the one field that skips detection entirely.
+///
+/// An unrecognised `explicit` is refused rather than ignored: silently detecting
+/// instead of overriding is exactly the confusion this controller exists to
+/// resolve.
+fn compress_hint_from_params(params: &Map<String, Value>) -> Result<ContentHint, String> {
+    let explicit = match str_param(params, "explicit") {
+        Some(raw) => Some(raw.parse::<ContentKind>().map_err(|()| {
+            format!(
+                "invalid 'explicit': {raw:?} — expected one of: \
+                 json, code, log, search, diff, html, plain_text"
+            )
+        })?),
+        None => None,
+    };
+    Ok(ContentHint {
+        source_tool: str_param(params, "tool_name"),
+        mime: str_param(params, "mime"),
+        extension: str_param(params, "extension"),
+        query: str_param(params, "query"),
+        explicit,
+    })
+}
+
 fn handle_compress(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let content = str_param(&params, "content").ok_or("missing 'content'")?;
-        let hint = ContentHint {
-            source_tool: str_param(&params, "tool_name"),
-            ..Default::default()
-        };
+        let hint = compress_hint_from_params(&params)?;
         let res = super::compress(content, hint).await?;
         Ok(serde_json::json!({
             "applied": res.applied,

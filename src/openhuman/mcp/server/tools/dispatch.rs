@@ -215,7 +215,7 @@ async fn build_orchestrator_agent() -> Result<Agent, ToolCallError> {
         ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
     })?;
     agent.fetch_connected_integrations().await;
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
     Ok(agent)
 }
 
@@ -330,7 +330,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         "mcp_server",
     );
     agent.fetch_connected_integrations().await;
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
 
     // The MCP server surface exposes openhuman agents to remote MCP
     // clients. Treat callers as ExternalChannel — their prompt text is

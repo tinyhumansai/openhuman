@@ -291,6 +291,8 @@ fn sample_core_event(id: &str, ts: u64) -> CoreNotificationEvent {
         deep_link: Some("/settings/cron-jobs".to_string()),
         timestamp_ms: ts,
         actions: None,
+        workspace: None,
+        workspace_revision: None,
     }
 }
 

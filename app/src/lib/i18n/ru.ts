@@ -543,6 +543,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'Всегда включён в сборках разработки',
   'settings.clearAppData': 'Очистить данные приложения',
   'settings.clearAppDataDesc': 'Выйти из аккаунта и удалить все локальные данные приложения',
+  'settings.clearAppDataIrreversible': 'Это действие нельзя отменить.',
+  'settings.clearAppDataAction': 'Удалить данные',
   'settings.logOut': 'Выйти',
   'settings.logOutDesc': 'Выйти из своего аккаунта',
   'settings.exitLocalSession': 'Выход из локального сеанса',
@@ -2633,6 +2635,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Скоро',
   'memorySources.composioListFailed': 'Не удалось загрузить соединения Composio.',
   'memorySources.browse': 'Просматривать…',
+  'memorySources.folderPathUnavailable':
+    'Не удалось определить, где находится эта папка. Введите полный путь к ней.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2655,6 +2659,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'элементов синхронизировано',
   'memorySources.sync.upToDate': 'Актуально',
   'memorySources.sync.failedLabel': 'Не удалось',
+  'memorySources.sync.morePending': 'Есть что синхронизировать. Нажмите «Синхронизировать» ещё раз',
+  'memorySources.sync.budgetSpent': 'Дневной лимит запросов исчерпан. Попробуйте завтра',
   'time.justNow': 'только что',
   'time.secondsAgoSuffix': 'с назад',
   'time.minutesAgoSuffix': 'мин назад',
@@ -2700,6 +2706,19 @@ const messages: TranslationMap = {
     'Ни одну синхронизацию не удалось запустить. Проверьте каждый источник, чтобы узнать причину.',
   'memorySources.allIn.partial':
     'Запущено синхронизаций: {triggered}. Не удалось запустить: {failed}.',
+  'memorySources.repair.button': 'Восстановить старые воспоминания',
+  'memorySources.repair.title': 'Восстановить старые воспоминания?',
+  'memorySources.repair.message':
+    'До {scanned} синхронизированных документов были сохранены до исправления размещения в дереве памяти и не видны в графе памяти. Их размещение расходует кредиты на эмбеддинги. Документы, уже находящиеся в дереве, пропускаются.',
+  'memorySources.repair.confirm': 'Восстановить',
+  'memorySources.repair.cancel': 'Не сейчас',
+  'memorySources.repair.nothing':
+    'Нечего восстанавливать. Нет синхронизированных документов, ожидающих размещения.',
+  'memorySources.repair.success':
+    'Размещено в дереве памяти: {ingested} ({already} уже было, {skipped} пропущено).',
+  'memorySources.repair.morePending':
+    'Остались ещё. Нажмите «Восстановить старые воспоминания» снова.',
+  'memorySources.repair.failed': 'Не удалось восстановить старые воспоминания.',
   'memorySources.settings.button': 'Настройки',
   'memorySources.settings.title': 'Настройки синхронизации',
   'memorySources.settings.maxPrs': 'Максимум pull request',
@@ -2713,7 +2732,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Без лимита',
   'memorySources.settings.unlimitedTooltip':
     'Вы выбрали синхронизацию максимума для {toolkit}. Лимиты можно изменить здесь.',
-  'memorySources.settings.maxed': 'Заполнено',
   'memorySources.settings.save': 'Сохранить',
   'memorySources.settings.saving': 'Сохранение…',
   'memorySources.settings.saved': 'Настройки сохранены',
@@ -3375,6 +3393,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'ошибка',
   'conversations.subagent.statusAwaitingUser': 'ожидание пользователя',
   'conversations.subagent.statusCancelled': 'отменено',
+  'conversations.subagent.awaitingTitle': 'Ожидание вашего ответа',
+  'conversations.subagent.answerPlaceholder': 'Введите ваш ответ',
+  'conversations.subagent.answerSend': 'Отправить ответ',
+  'conversations.subagent.answerSent': 'Ответ отправлен',
   'conversations.agentTaskInsights.title': 'Сведения о задачах агента',
   'conversations.agentTaskInsights.response': 'Ответ',
   'conversations.agentTaskInsights.processSourceTitle': 'Источник процесса агента',
@@ -4972,6 +4994,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Журнал событий',
   'settings.developerMenu.eventLog.desc':
     'Живой поток с цветовой кодировкой обо всех событиях агента, инструмента и системы.',
+  'settings.developerMenu.eventLog.workspaceScope': 'Область рабочего пространства',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Текущее рабочее пространство',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Все рабочие пространства',
   'settings.developerMenu.eventLog.allTypes': 'Все типы',
   'settings.developerMenu.eventLog.filterAgent': 'Фильтр...',
   'settings.developerMenu.eventLog.download': 'Скачать',
@@ -4979,6 +5004,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Жить',
   'settings.developerMenu.eventLog.disconnected': 'Отключено',
   'settings.developerMenu.eventLog.waiting': 'Ждем событий...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'События появляются здесь по мере работы агентов, инструментов и системы. Пока ничего не произошло.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Подключитесь к ядру снова, чтобы возобновить поток.',
   'settings.developerMenu.eventLog.notConnected': 'Не подключен к ядру',
   'settings.developerMenu.eventLog.jumpToLatest': 'Перейти к последней версии',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6119,6 +6148,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Подсказки маршрутизации',
   'settings.agents.editor.modelTiers': 'Уровни моделей',
   'settings.agents.editor.modelCustom': 'Идентификатор модели…',
+  'settings.agents.editor.modelManaged': 'Управляемые модели',
   'settings.agents.editor.modelCustomPlaceholder': 'напр. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Добавить инструменты',
   'settings.agents.editor.toolsAllSelected': 'Все инструменты',
@@ -6266,6 +6296,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Режим хранения секретов',
   'keyring.settings.mode.osKeychain': 'Связка ключей ОС',
   'keyring.settings.mode.encryptedFile': 'Локальное шифрование',
+  'keyring.settings.mode.localEncryptedFile': 'Зашифрованный файл',
+  'keyring.settings.mode.localPlaintextFile': 'Незашифрованный файл',
   'keyring.settings.mode.consentPending': 'Не настроено',
   'keyring.settings.mode.declined': 'Отклонено',
   'keyring.settings.availability': 'Доступность связки ключей',
@@ -6606,6 +6638,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Локальная модель недоступна',
   'userErrors.localModelUnavailable.body':
     'Ollama недоступен по настроенному адресу, либо нужная модель там не установлена. Запустите Ollama и загрузите модель по этому адресу или переведите эту работу на облачного провайдера.',
+  'userErrors.replyDeliveryFailed.title': 'Не удалось показать ответ',
+  'userErrors.replyDeliveryFailed.body':
+    'Агент завершил этот ход, но его ответ не удалось сохранить или прочитать заново. Спросите ещё раз, чтобы он повторил.',
   'userErrors.memoryStoreCorrupt.title': 'Индекс памяти был повреждён',
   'userErrors.memoryStoreCorrupt.body':
     'База данных дерева памяти была повреждена. Повреждённый файл сохранён рядом с данными памяти, а пустой индекс создан заново. Заново синхронизируйте источники памяти, чтобы заполнить его.',
@@ -6687,6 +6722,8 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': 'Только загружено',
   'sync.pipeline.storedWithoutVectors': 'Сохранено без векторов. Семантический поиск недоступен.',
+  'sync.pipeline.vectorsPending':
+    'Блоков в ожидании векторов: {count}. Семантический поиск скоро охватит их.',
   'sync.pipeline.signInToEnable': 'Войдите, чтобы включить',
   'sync.pipeline.extractionFailed':
     'Не удалось извлечь структуру памяти. Вики может быть неполной.',

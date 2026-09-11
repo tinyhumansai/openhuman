@@ -70,7 +70,6 @@ async fn attributed_cron_build_retains_profile_gates() {
     // than relied upon from another test: `install_for_tests` is
     // `Once`-guarded, so a test that omits it passes only while some
     // earlier test in the same binary happened to run first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("init built-in agent definitions");
     let tmp = TempDir::new().unwrap();
@@ -107,7 +106,6 @@ async fn attributed_cron_build_applies_profile_temperature_and_prompt_defaults()
     // than relied upon from another test: `install_for_tests` is
     // `Once`-guarded, so a test that omits it passes only while some
     // earlier test in the same binary happened to run first.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("init built-in agent definitions");
     let tmp = TempDir::new().unwrap();

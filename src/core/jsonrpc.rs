@@ -1593,11 +1593,29 @@ async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
 
     log::debug!("[events/domain] client connected, streaming domain events");
 
+    // The active workspace, resolved once here so a client that connects
+    // mid-life starts out knowing which rows are its own rather than
+    // waiting for the next event to tell it (#5966). This is the one place
+    // in this handler that can afford the authoritative read — it happens
+    // per connection, not per event — and it refills the cache the row
+    // stamping below relies on.
+    let active_workspace = crate::openhuman::config::active_workspace_dir()
+        .await
+        .map(|dir| crate::openhuman::config::workspace_handle(&dir))
+        .map_err(|error| {
+            log::warn!(
+                "[events/domain] could not resolve the active workspace ({error}); \
+                 the client will scope the log once an event says which workspace is active"
+            );
+        })
+        .ok();
+
     // Send config as first SSE event so frontend can apply settings.
     let config_event = Event::default().event("config").data(
         serde_json::to_string(&json!({
             "max_entries": es_cfg.max_entries,
             "new_entries": es_cfg.new_entries,
+            "active_workspace": active_workspace,
         }))
         .unwrap_or_default(),
     );
@@ -1619,10 +1637,39 @@ async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
         let domain = event.domain().to_string();
         let event_name = event.variant_name();
         let agent = event.agent_hint().unwrap_or("").to_string();
+        // Most variants say everything in their name; the ones whose point is
+        // a failure *reason* would otherwise reach the log with the reason
+        // discarded, so they opt into one already-redacted line (#5931). It is
+        // `null` for every other variant, which renders as no change.
+        let detail = event.log_detail();
+        // Which workspace this row belongs to, and which one is current
+        // (#5966). One process serves more than one workspace over its life,
+        // so without these two a row left over from a workspace the user has
+        // switched away from is indistinguishable from one belonging to the
+        // workspace they are in.
+        //
+        // Both are *handles*, never `workspace_dir` itself: this envelope
+        // feeds a settings panel and its NDJSON download, and the path is
+        // under the user's home directory.
+        //
+        // `active` is read from the cache rather than resolved. This closure
+        // is synchronous — `tokio_stream`'s `filter_map` — so it could not
+        // await a resolve, and it runs for every domain event the process
+        // publishes, so it should not want to. `None` means "not resolved
+        // since the last workspace marker write", which the client treats as
+        // unknown rather than as a mismatch.
+        let workspace = event
+            .workspace_dir()
+            .map(crate::openhuman::config::workspace_handle);
+        let active = crate::openhuman::config::active_workspace_dir_cached()
+            .map(|dir| crate::openhuman::config::workspace_handle(&dir));
         let data = json!({
             "domain": domain,
             "event": event_name,
             "agent": agent,
+            "detail": detail,
+            "workspace": workspace,
+            "active_workspace": active,
             "timestamp": chrono::Utc::now().format("%H:%M:%S").to_string(),
         });
         let data_str = serde_json::to_string(&data).ok()?;
@@ -2536,6 +2583,7 @@ pub async fn bootstrap_core_runtime(
                 crate::core::types::HostKind::TauriShell => "tauri-shell",
                 crate::core::types::HostKind::Cli => "cli",
                 crate::core::types::HostKind::Docker => "docker",
+                crate::core::types::HostKind::Library => "library",
             },
         },
     );

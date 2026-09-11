@@ -252,6 +252,41 @@ async fn auth_me_failing_server() -> (
     (url, task, shutdown_tx)
 }
 
+/// Answers `/auth/me` 200 with an empty object — the backend is healthy but
+/// carries no user, so the snapshot falls back to the stored one (#5930).
+async fn auth_me_empty_user_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind empty-user auth/me listener");
+    let url = format!("http://{}", listener.local_addr().expect("listener addr"));
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => {
+                    let Ok((mut stream, _)) = accepted else { break; };
+                    let mut req = [0_u8; 2048];
+                    let _ = stream.read(&mut req).await;
+                    let body = "{}";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        }
+    });
+    (url, task, shutdown_tx)
+}
+
 async fn auth_me_rejected_server() -> (
     String,
     tokio::task::JoinHandle<()>,
@@ -934,6 +969,19 @@ async fn snapshot_clears_pending_session_when_backend_revalidation_is_rejected()
     assert!(snap.auth.user.is_none());
     assert!(snap.current_user.is_none());
     assert!(snap.session_token.is_none());
+    // A signed-out snapshot must not also describe a user it no longer
+    // reports. The staleness fields are read from the pre-rejection
+    // `session_token`, so without an explicit guard this arm published
+    // `currentUserStale` metadata for the identity it had just cleared
+    // (#5930).
+    assert!(
+        !snap.current_user_stale,
+        "a rejected session must not be reported as a stale user"
+    );
+    assert_eq!(
+        snap.current_user_stale_seconds, None,
+        "a rejected session must not carry a stale-user age"
+    );
     let profile = AuthService::from_config(&config)
         .get_profile(APP_SESSION_PROVIDER, None)
         .expect("read profile after rejection");
@@ -1473,4 +1521,66 @@ async fn round14_credentials_prefix_listing_and_composio_direct_edges() {
         .await
         .expect("clear composio key idempotent");
     assert_eq!(cleared_again.value["removed"], false);
+}
+
+/// A 200 that carries no user must not be counted as a refresh (#5930).
+///
+/// The backend is healthy, so the failure backoff is cleared — but the caller
+/// falls back to `stored_user`, and reporting a ~0s age for data that was never
+/// replaced is exactly the staleness signal being wrong in the direction that
+/// matters: it would tell the app the snapshot is fresh when it is not.
+#[tokio::test]
+async fn an_empty_user_response_is_not_counted_as_a_refresh() {
+    let _lock = env_lock();
+    let (api_url, server_task, shutdown_tx) = auth_me_empty_user_server().await;
+    let harness = setup(&api_url);
+    let config = harness.config().await;
+
+    let mut metadata = HashMap::new();
+    metadata.insert("user_id".to_string(), "empty-user-round".to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({ "id": "empty-user-round", "email": "empty@example.test" }).to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "round.empty.user",
+            metadata,
+            true,
+        )
+        .expect("seed app session");
+
+    let snap = snapshot()
+        .await
+        .expect("snapshot with an empty backend user")
+        .value;
+
+    // The stored identity is still what the app shows. Asserted by id, not
+    // `is_some()`: the backend answered `{}`, and a snapshot that echoed that
+    // back as `Some({})` would satisfy `is_some()` while having lost the user.
+    assert_eq!(
+        snap.current_user.as_ref().and_then(|v| v.get("id")),
+        Some(&json!("empty-user-round")),
+        "an empty backend answer must leave the stored identity in place"
+    );
+    // NOT stale: `current_user_stale` reports whether the backend could be
+    // *reached*, and here it answered fine — it simply had no user. Marking an
+    // empty 200 as stale would conflate an outage with an account that has no
+    // profile, and would keep the flag raised while the backoff it is derived
+    // from is closed.
+    assert!(
+        !snap.current_user_stale,
+        "a backend that answered is not an outage, even when it answered empty"
+    );
+    // And its age is unknown rather than zero: nothing was refreshed, so there
+    // is no successful refresh to measure from.
+    assert_eq!(
+        snap.current_user_stale_seconds, None,
+        "an empty answer must not stamp a refresh age for data it did not replace"
+    );
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
 }

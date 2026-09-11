@@ -28,7 +28,8 @@ async fn spawn_parallel_turn(
     // `run_chat_task` requires a queue handle — give each its own.
     let run_queue = crate::openhuman::agent::harness::run_queue::RunQueue::new();
 
-    let handle = tokio::spawn(async move {
+    let handle = tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
+        async move {
         let approval_ctx = crate::openhuman::security::approval::ApprovalChatContext {
             thread_id: thread_id_task.clone(),
             client_id: client_id_task.clone(),
@@ -68,6 +69,9 @@ async fn spawn_parallel_turn(
                     &user_message,
                     &chat_result.citations,
                     chat_result.usage.as_ref(),
+                    // The workspace the turn ran in, so the reply is stored
+                    // there before it is announced (#6034).
+                    Some(chat_result.workspace_dir.as_path()),
                 )
                 .await;
             }
@@ -152,7 +156,8 @@ async fn spawn_parallel_turn(
         }
 
         PARALLEL_IN_FLIGHT.lock().await.remove(&request_id_task);
-    });
+        },
+    ));
 
     PARALLEL_IN_FLIGHT.lock().await.insert(
         request_id,

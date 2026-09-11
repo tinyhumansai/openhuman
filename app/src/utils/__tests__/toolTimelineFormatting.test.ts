@@ -443,6 +443,19 @@ describe('categorizeTool', () => {
     expect(categorizeTool('subagent:web_fetch')).toBe('fetch');
     expect(categorizeTool('GMAIL_SEND_EMAIL')).toBe('other');
   });
+
+  it('categorizes the canonical web-search name, not only its settings id', () => {
+    // `web_search` is the UI toggle id; the core expands it to `web_search_tool`
+    // (`src/openhuman/tools/user_filter.rs:79-80`), and that is the name a
+    // timeline row actually carries. The rest of this file already special-cased
+    // the canonical name for labels and provider attribution; the category map
+    // was the one place that had not, so a real search row categorized as
+    // `other` — wrong icon and wrong group summary in the rail, and (since
+    // #6169) a row kept on the main transcript that belongs in the rail.
+    expect(categorizeTool('web_search_tool')).toBe('search');
+    expect(categorizeTool('web_search')).toBe('search');
+    expect(categorizeTool('subagent:web_search_tool')).toBe('search');
+  });
 });
 
 describe('buildProcessingBlocks', () => {

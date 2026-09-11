@@ -16,7 +16,6 @@ fn all_tools_includes_spawn_subagent() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -95,7 +94,6 @@ fn all_tools_includes_spawn_async_subagent() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -131,7 +129,6 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -173,7 +170,6 @@ fn all_tools_always_registers_curl() {
     // The embedding seam fails loudly when unwired. This
     // test doesn't use that helper (it needs the `Arc<dyn Memory>` alongside
     // its own config setup below), so it installs the seams directly.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -305,7 +301,6 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -420,7 +415,6 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -456,7 +450,6 @@ fn all_tools_includes_current_time() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -595,7 +588,6 @@ fn all_tools_excludes_browser_when_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()

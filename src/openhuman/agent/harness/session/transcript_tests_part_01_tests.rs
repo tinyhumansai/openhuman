@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn intermediate_assistant_reasoning_is_lifted_without_turn_usage() {
+    let mut message = ChatMessage::assistant("I will inspect the repository.");
+    message.extra_metadata = Some(serde_json::json!({
+        crate::openhuman::agent::message_convert::REASONING_EXT_KEY:
+            "First identify the relevant files."
+    }));
+
+    let line = build_message_line(&message, None, Some("request-1"), false);
+    assert_eq!(
+        line.reasoning_content.as_deref(),
+        Some("First identify the relevant files.")
+    );
+}
+
+#[test]
 fn round_trip_produces_byte_identical_messages() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test.jsonl");

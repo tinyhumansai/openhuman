@@ -97,6 +97,7 @@ changes anything here.
 | Path | Reason |
 | --- | --- |
 | `memory/tinycortex/sync.rs` | The engine seam. |
+| `vendor/tinymemory/crates/tinymemory-core/src/backfill.rs` (`.get_document(`) | The connector-tree backfill (tinymemory#136 / openhuman#6012) reads each stored connector document back through the engine's read-one escape hatch before re-filing it into the memory tree. Engine-internal and beneath the module contract; the host reaches it only through `MemoryMaintenance::backfill_connector_trees`, which the kernel guard tiers as a read for a dry run and a write for a real pass. |
 | `memory/global.rs` | The process-global slot itself. |
 | `memory/ops/helpers.rs` | Defines `active_memory_client`. |
 | `memory/ops/guard.rs`, `guard_tests.rs` | The guarded resolver; matches only in prose and in its own fallback. |

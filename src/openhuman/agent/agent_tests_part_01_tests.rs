@@ -308,7 +308,7 @@ async fn history_trims_after_max_messages() {
 
 #[tokio::test]
 async fn auto_save_stores_messages_in_memory() {
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response(
         "I remember everything",
     )]));
@@ -343,7 +343,7 @@ async fn auto_save_stores_messages_in_memory() {
 
 #[tokio::test]
 async fn auto_save_disabled_does_not_store() {
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("hello")]));
 
     let (mut agent, _tmp2) = build_agent_with_memory(

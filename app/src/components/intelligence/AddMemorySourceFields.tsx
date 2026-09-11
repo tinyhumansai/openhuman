@@ -19,6 +19,7 @@ import type { ComposioConnection } from '../../lib/composio/types';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { SourceKind } from '../../services/memorySourcesService';
 import TextField from '../ui/TextField';
+import { FolderField } from './FolderField';
 
 const log = debug('intelligence:add-memory-source-dialog');
 
@@ -50,62 +51,6 @@ interface FieldProps {
   onChange: (v: string) => void;
   placeholder?: string;
   type?: string;
-}
-
-interface FolderFieldProps {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}
-
-function FolderField({ label, value, onChange }: FolderFieldProps) {
-  const { t } = useT();
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-content-secondary">{label}</span>
-      <div className="mt-1 flex gap-2">
-        <TextField
-          type="text"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={t('memorySources.folderPathPlaceholder')}
-        />
-        <label
-          className="shrink-0 cursor-pointer rounded-md border border-line-strong bg-surface px-3 py-2
-                     text-xs font-medium text-content-secondary transition-colors
-                     hover:border-primary-400 hover:text-primary-600
-                     dark:bg-surface-muted dark:text-content-secondary
-                     dark:hover:border-primary-500 dark:hover:text-primary-400">
-          {t('memorySources.browse')}
-          <input
-            type="file"
-            // @ts-expect-error — non-standard but supported in CEF/Chromium
-            webkitdirectory=""
-            multiple
-            className="hidden"
-            onChange={e => {
-              const files = e.target.files;
-              if (!files || files.length === 0) return;
-              // Chromium exposes the chosen directory path on the first file's `path`
-              // attribute when the renderer has filesystem-aware integration (CEF).
-              // Fall back to webkitRelativePath split if `path` isn't available.
-              const first = files[0] as File & { path?: string };
-              if (first.path) {
-                // first.path is the absolute path to the file. Derive the directory
-                // by trimming the relative portion (everything after the chosen root).
-                const rel = first.webkitRelativePath || first.name;
-                const abs = first.path;
-                const idx = abs.lastIndexOf(rel);
-                onChange(idx > 0 ? abs.slice(0, idx).replace(/\/$/, '') : abs);
-              } else if (first.webkitRelativePath) {
-                onChange(first.webkitRelativePath.split('/')[0]);
-              }
-            }}
-          />
-        </label>
-      </div>
-    </label>
-  );
 }
 
 export function Field({ label, value, onChange, placeholder, type = 'text' }: FieldProps) {

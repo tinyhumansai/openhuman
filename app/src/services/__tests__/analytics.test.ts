@@ -74,6 +74,9 @@ vi.mock('../../utils/config', () => ({
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
   SUPPORT_URL: 'https://support.example/help',
+  // The mocked SUPPORT_URL models a configured endpoint (an env override),
+  // which is the case that can consume `?ref=`.
+  SUPPORT_URL_ACCEPTS_REF: true,
   TAURI_CARGO_VERSION: '0.57.4',
   // analytics.ts now imports CoreRpcError from coreRpcClient, whose
   // dependency chain reads CORE_RPC_URL and CORE_RPC_TIMEOUT_MS. Provide

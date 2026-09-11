@@ -13,6 +13,7 @@ mod read_diff;
 mod run_linter;
 mod run_tests;
 mod update_memory_md;
+mod write_sink;
 
 use crate::openhuman::security::policy::{TrustedAccess, TrustedRoot};
 use crate::openhuman::security::SecurityPolicy;

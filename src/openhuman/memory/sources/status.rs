@@ -75,7 +75,8 @@ impl FreshnessLabel {
 /// RPC has always returned it.
 ///
 /// Field for field and name for name the engine's `SourceStatus`, so the
-/// response JSON is unchanged by the move.
+/// response JSON is unchanged by the move — plus the two in-flight fields the
+/// host adds from its own memory of the stage stream (openhuman#6019).
 #[derive(Clone, Debug, Serialize)]
 pub struct SourceStatus {
     pub source_id: String,
@@ -83,6 +84,14 @@ pub struct SourceStatus {
     pub chunks_pending: u64,
     pub last_chunk_at_ms: Option<i64>,
     pub freshness: FreshnessLabel,
+    /// The stage of a sync in flight for this source, as the stage stream last
+    /// reported it; `None` when nothing is running. The chunk counts cannot
+    /// say this — a connector still paging has written nothing — and without
+    /// it a Sources screen mounting mid-run showed the row idle, as if the
+    /// sync had stopped (openhuman#6019).
+    pub sync_stage: Option<String>,
+    /// The free-text detail that came with [`Self::sync_stage`], if any.
+    pub sync_detail: Option<String>,
 }
 
 impl SourceStatus {
@@ -97,7 +106,27 @@ impl SourceStatus {
             chunks_pending: 0,
             last_chunk_at_ms: None,
             freshness: FreshnessLabel::Idle,
+            sync_stage: None,
+            sync_detail: None,
         }
+    }
+
+    /// The row with the run in flight written onto it, when there is one.
+    pub(crate) fn with_live_sync(
+        mut self,
+        live: Option<crate::openhuman::memory::sync_activity::LiveSync>,
+    ) -> Self {
+        match live {
+            Some(live) => {
+                self.sync_stage = Some(live.stage);
+                self.sync_detail = live.detail;
+            }
+            None => {
+                self.sync_stage = None;
+                self.sync_detail = None;
+            }
+        }
+        self
     }
 }
 
@@ -126,7 +155,15 @@ pub(crate) fn source_id_prefix(source: &MemorySourceEntry) -> String {
     match source.kind {
         SourceKind::Composio => {
             match (source.toolkit.as_deref(), source.connection_id.as_deref()) {
-                (Some(toolkit), Some(connection_id)) => format!("{toolkit}:{connection_id}:"),
+                // Normalised exactly as the engine keys the rows
+                // (`ingest_connector_item_into_tree`: toolkit trimmed and
+                // lower-cased, connection trimmed), so a slug that ever arrives
+                // in another case still counts its own chunks instead of none.
+                (Some(toolkit), Some(connection_id)) => format!(
+                    "{}:{}:",
+                    toolkit.trim().to_ascii_lowercase(),
+                    connection_id.trim()
+                ),
                 // A connection-less entry gets an unmatchable prefix, not the
                 // bare `{toolkit}:` — that widened prefix matched *every*
                 // connection of the toolkit, so a malformed or legacy Gmail
@@ -166,6 +203,9 @@ pub(crate) fn source_id_prefix(source: &MemorySourceEntry) -> String {
 pub async fn status_list(config: &Config) -> Result<Vec<SourceStatus>, String> {
     let sources = super::registry::list_sources().await?;
     if sources.is_empty() {
+        // Nothing to ask about, so nothing would touch the in-flight map;
+        // sweep it here so a source removed mid-run leaves it eventually.
+        crate::openhuman::memory::sync_activity::prune_stale();
         return Ok(Vec::new());
     }
 
@@ -187,20 +227,27 @@ pub async fn status_list(config: &Config) -> Result<Vec<SourceStatus>, String> {
     Ok(sources
         .into_iter()
         .map(|source| {
+            // The run in flight, from the process's memory of the stage
+            // stream rather than from the store: the store only learns of a
+            // run once something is written (openhuman#6019).
+            let live = crate::openhuman::memory::sync_activity::live_sync(&source.id);
             // Paired by `source_id`, not by position: the member echoes the id
             // precisely so a caller need not trust the order, and a mis-indexed
             // row here would report one connector's progress under another's
             // name.
-            match rows.iter().find(|row| row.source_id == source.id) {
+            let status = match rows.iter().find(|row| row.source_id == source.id) {
                 Some(row) => SourceStatus {
                     source_id: source.id,
                     chunks_synced: row.chunks_synced,
                     chunks_pending: row.chunks_pending,
                     last_chunk_at_ms: row.last_chunk_at_ms,
                     freshness: FreshnessLabel::from_age_ms(row.last_chunk_at_ms, now_ms),
+                    sync_stage: None,
+                    sync_detail: None,
                 },
                 None => SourceStatus::idle(source.id),
-            }
+            };
+            status.with_live_sync(live)
         })
         .collect())
 }

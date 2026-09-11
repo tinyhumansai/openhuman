@@ -179,7 +179,13 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   apply_patch: 'write',
   grep: 'search',
   glob: 'search',
+  // `web_search_tool` is the runtime tool name; `web_search` is only the UI
+  // toggle id the core expands from (`tools/user_filter.rs:79-80`, and
+  // `test/e2e/specs/harness-search-tool-flow.spec.ts:10` says so outright).
+  // Both are mapped: the toggle id never reaches a timeline row, but leaving
+  // it out would break any older snapshot that recorded the alias.
   web_search: 'search',
+  web_search_tool: 'search',
   gitbooks_search: 'search',
   gitbooks_get_page: 'read',
   shell: 'run',

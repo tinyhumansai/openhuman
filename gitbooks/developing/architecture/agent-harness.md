@@ -7,6 +7,26 @@ icon: layer-group
 
 # Agent Harness
 
+## Embedding OpenHuman as a library
+
+`openhuman_core::Harness` builds one in-process core for a caller that supplies
+its workspace, provider endpoint and credential, skills, MCP servers, and tool
+policy. Such a harness identifies as `HostKind::Library`: inference does not
+depend on OpenHuman app login, including inference-readiness checks for workflow
+agent nodes. Backend features such as integrations and managed services still
+need whatever identity their endpoint requires.
+
+Build one harness and issue concurrent `run` or `turn(...).send()` calls on it;
+do not build one core per agent. Each call owns a distinct session unless a
+prior session id is supplied. The conversation store coordinates metadata per
+workspace and message writes per thread, so independent agents do not serialize
+on one process-wide store mutex.
+
+`Workspace::Inherit` together with `Provider::inherit()` is deliberately not
+library-routed inference. It borrows the installed OpenHuman configuration and
+therefore keeps the installed application's session checks. Supply an explicit
+provider when embedding without app login.
+
 > **Status (issue #4249, tinyagents migration):** the agent turn no longer runs
 > on the in-tree `run_turn_engine` loop. **All three entry points (`Agent::turn`,
 > the channel/CLI bus path, and `run_subagent`) now drive every turn through the
@@ -288,7 +308,7 @@ The child run itself still uses the same runner:
 
 `wait_subagent` and `steer_subagent` accept either the durable `subagent_session_id` or the transient `task_id`; durable ids are preferred across turns. `list_subagents` shows reusable children for the current parent thread, and `close_subagent` marks a worker non-reusable and cancels it if it is still running. Inline blocking is explicit via `blocking: true`; it is no longer the default.
 
-The synthesized archetype delegations (`delegate_*`, `build_workflow`, and the other `delegate_name` tools) follow the same contract: they route through the durable async path by default, returning an `[async_subagent_ref]` (with `subagent_session_id` + `task_id`) immediately, and the finished result is inserted into the parent chat as a new system turn via `background_completions`/`background_delivery`. They fall back to inline blocking automatically when there is no parent agent turn or no chat thread to deliver into (cron/CLI), or when `blocking: true` is passed. Cross-turn continuity comes from three pieces: the per-turn `[active_subagents]` roster merges the live in-memory registry with the durable `subagent_sessions` store (so a cold-booted orchestrator still sees earlier workers); `continue_subagent` falls back from pause checkpoints to the durable store, resuming an idle worker with its persisted history; and a `workflow_proposal` payload found in a finished child's history is persisted as a parent-thread message (`extraMetadata.scope = "workflow_proposal"`) that the frontend rehydrates into the proposal card on thread load.
+The synthesized archetype delegations (`delegate_*`, `build_workflow`, and the other `delegate_name` tools) follow the same contract: they route through the durable async path by default, returning an `[async_subagent_ref]` (with `subagent_session_id` + `task_id`) immediately, and the finished result is inserted into the parent chat as a new system turn via `background_completions`/`background_delivery`. That delivery turn (`task_dispatcher::run_system_turn_on_thread`, the same runner autonomous task sessions use) persists its own closing message — `sender: "agent"`, id `agent:<run_id>`, `extraMetadata.requestId = run_id` — **before** it emits `chat_done` as `client_id: "system"`; the frontend reuses that id, so its usual `chat_done` append collapses onto the same row (the conversation store is idempotent for these deterministic `agent:`-prefixed ids; every other id is UUID-fresh and keeps the constant-time append path) instead of persisting the delivered result a second time (#5933). **Interactive turns follow the same contract since #6034**: `web_chat::presentation::deliver_response` stores the reply under `agent:<request_id>` before publishing `chat_done`, so an answer the core produced exists on disk whether or not a client is there to receive the announcement — a dropped socket, a failed append or a reloaded webview costs a repaint, not the reply. The exception is a segmented delivery, where the client owns one row per segment and the core stores none; the frontend keeps generated ids there for exactly that reason. They fall back to inline blocking automatically when there is no parent agent turn or no chat thread to deliver into (cron/CLI), or when `blocking: true` is passed. Cross-turn continuity comes from three pieces: the per-turn `[active_subagents]` roster merges the live in-memory registry with the durable `subagent_sessions` store (so a cold-booted orchestrator still sees earlier workers); `continue_subagent` falls back from pause checkpoints to the durable store, resuming an idle worker with its persisted history; and a `workflow_proposal` payload found in a finished child's history is persisted as a parent-thread message (`extraMetadata.scope = "workflow_proposal"`) that the frontend rehydrates into the proposal card on thread load.
 
 ### Spawn hierarchy and tiers
 

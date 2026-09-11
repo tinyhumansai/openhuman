@@ -500,6 +500,14 @@ struct AssembledTurnHarness {
     handle: Option<SteeringHandle>,
     /// Records the first early-exit tool round, when early-exit tools exist.
     early_exit_hook: Option<EarlyExitHook>,
+    /// Set by [`FinalCallWrapUpMiddleware`] when it turned the last permitted
+    /// model call into the turn's conclusion (issue #6014). `None` when the
+    /// middleware is not installed (a run that does not pause at its cap).
+    ///
+    /// A flag rather than an inference off the run, because this turn now ends
+    /// the way a finished one does — the model returns text and requests no
+    /// tools — so `final_response.is_none()` no longer tells the two apart.
+    wrap_up_fired: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Number of callable tools registered.
     tool_count: usize,
     /// TinyAgents named-capability projection for this turn. The live run still

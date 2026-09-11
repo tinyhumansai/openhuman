@@ -38,11 +38,26 @@ pub fn is_unsupported_by_route(error: &str) -> bool {
 
 /// Keep the structured Composio classification at the start of the error.
 ///
-/// TinyBus prefixes member failures twice — the member name (`Execute: `) and,
-/// since the module extraction, the wire error name
-/// (`ai.tinyhumans.tinybus.Error.Failed: `) — but the frontend parser
-/// intentionally requires the classification at byte zero. Both layers are
-/// peeled before checking; other errors retain their full context unchanged.
+/// TinyBus prefixes a member failure with the member name (`Execute: `) and,
+/// since the module extraction, with its wire error name
+/// (`ai.tinyhumans.tinybus.Error.<Kind>: `) — but the frontend parser
+/// intentionally requires the classification at byte zero, so every transport
+/// layer is peeled before checking. Errors that are not classified retain their
+/// full context unchanged.
+///
+/// # Why the wire layer is peeled in a loop
+///
+/// It used to be peeled once, with a second `strip_prefix` afterwards as a
+/// fallback for `Error.Failed: ` specifically. That fallback could not fire for
+/// the shape its comment described: the single peel above it already consumed
+/// `Error.Failed: `, so the branch was reachable only by a *doubly* wire-wrapped
+/// error — which nothing documented, and which the fallback's own comment did
+/// not claim to handle. Nesting depth is a property of the transport, not
+/// something this function should hardcode a guess at, so it now strips as many
+/// layers as are present. Output is unchanged for every shape the old form
+/// handled, including the double wrap the fallback did catch; a triple or deeper
+/// wrap, which the old form silently passed through unnormalised (and so
+/// reported to the user as an unclassified outage), now normalises too.
 fn normalize_error(member: &str, error: String) -> String {
     const CLASSIFIED: &str = "[composio:error:";
     const WIRE_ERROR_PREFIX: &str = "ai.tinyhumans.tinybus.Error.";
@@ -50,28 +65,20 @@ fn normalize_error(member: &str, error: String) -> String {
         .strip_prefix(member)
         .and_then(|remainder| remainder.strip_prefix(": "))
     {
-        // Optionally peel the bus wire-name layer: `ai.tinyhumans.tinybus.
-        // Error.<Kind>: `. `<Kind>` is a bare identifier, so the next `: `
-        // ends it; anything shaped differently is left alone.
-        let module_error = remainder
+        // Peel each `ai.tinyhumans.tinybus.Error.<Kind>: ` layer. `<Kind>` is a
+        // bare identifier, so the next `: ` ends it; anything shaped differently
+        // stops the loop and is left alone. An embedded marker that does NOT
+        // follow a wire prefix is never promoted — the `starts_with` below is
+        // what decides, and it runs on the fully-peeled remainder only.
+        let mut module_error = remainder;
+        while let Some(tail) = module_error
             .strip_prefix(WIRE_ERROR_PREFIX)
             .and_then(|rest| rest.split_once(": ").map(|(_, tail)| tail))
-            .unwrap_or(remainder);
+        {
+            module_error = tail;
+        }
         if module_error.starts_with(CLASSIFIED) {
             return module_error.to_string();
-        }
-        // Recent TinyBus versions wrap member failures in their wire error
-        // name before preserving the module's message:
-        // `Execute: ai.tinyhumans.tinybus.Error.Failed: [composio:error:…]`.
-        // That wrapper is transport context, not provider text, so retain the
-        // frontend's byte-zero classification contract exactly as for the
-        // older unwrapped shape. Do not promote an arbitrary embedded marker:
-        // it must follow this known TinyBus failure prefix.
-        const TINYBUS_FAILED: &str = "ai.tinyhumans.tinybus.Error.Failed: ";
-        if let Some(classified) = module_error.strip_prefix(TINYBUS_FAILED) {
-            if classified.starts_with(CLASSIFIED) {
-                return classified.to_string();
-            }
         }
     }
     error
@@ -159,6 +166,30 @@ where
     Reply: serde::de::DeserializeOwned,
 {
     Err(format!("{member}: {WITHOUT_MODULES}"))
+}
+
+/// Give an already-serving connector module the route the current config
+/// selects — for a signed-out user, that means dropping the credential it was
+/// configured with while signed in — without loading a module that is not
+/// serving. See `modules::connectors::reconcile_route_if_loaded`.
+///
+/// # Errors
+///
+/// As the module function: the module is serving but could not be reached or
+/// refused the reconfiguration.
+#[cfg(feature = "modules")]
+pub async fn reconcile_route_if_loaded(
+    config: &crate::openhuman::config::Config,
+) -> Result<(), String> {
+    crate::openhuman::modules::connectors::reconcile_route_if_loaded(config).await
+}
+
+/// Without the module loader there is no module holding a route. Always `Ok`.
+#[cfg(not(feature = "modules"))]
+pub async fn reconcile_route_if_loaded(
+    _config: &crate::openhuman::config::Config,
+) -> Result<(), String> {
+    Ok(())
 }
 
 /// Call a member that takes no arguments.

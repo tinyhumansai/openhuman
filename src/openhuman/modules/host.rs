@@ -67,6 +67,18 @@ impl ModuleRuntime {
         &self.connection
     }
 
+    /// Spawn `future` with process lifetime.
+    ///
+    /// For work that other callers wait on — a module resolution — and that
+    /// must therefore outlive whichever caller runtime started it.
+    pub fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.handle.spawn(future)
+    }
+
     /// Run module admission work on this runtime's blocking pool.
     pub async fn blocking<F>(&self, work: F) -> Result<(), String>
     where

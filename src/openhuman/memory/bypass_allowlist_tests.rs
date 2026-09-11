@@ -135,12 +135,6 @@ const BYPASS_PATTERNS: &[(&str, &str)] = &[
 /// Sorted by path, then pattern — [`scan`] returns a `BTreeSet`, so keeping the
 /// literal in the same order makes diffs readable.
 const ALLOWED: &[(&str, &str, &str)] = &[
-    // ── Standalone binaries: their own process, no ambient CoreContext ──
-    (
-        "src/bin/library_profile/scenarios/cold_phases.rs",
-        "MemoryClient::from_workspace_dir(",
-        "profiling harness; boots its own client outside the guard's process model",
-    ),
     // ── Metadata-only reads: driver identity, never memory content ──
     (
         "src/core/cli_capability.rs",
@@ -260,6 +254,21 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "vendor/tinymemory/crates/tinymemory-core/src/engine/sync.rs",
         "global::client_if_ready(",
         "the TinyCortex engine seam; it sits beneath the contract, not above it",
+    ),
+    // ── Engine-internal backfill reader (tinymemory#136, openhuman#6012) ──
+    //
+    // `backfill_connector_trees` re-files connector documents that were stored
+    // before the openhuman#6007 routing fix into the memory tree. It reads each
+    // stored document back through the engine's own read-one escape hatch and
+    // hands the body to the same ingest funnel the sync path writes through.
+    // Engine code beneath the module contract: the host reaches it only via
+    // `MemoryMaintenance::backfill_connector_trees`, which the kernel guard
+    // already tiers (dry-run as a read, a real pass as a write), so there is no
+    // host-side guard left for this read to route through.
+    (
+        "vendor/tinymemory/crates/tinymemory-core/src/backfill.rs",
+        ".get_document(",
+        "engine-internal read-back of stored connector documents for the tree backfill; beneath the contract, reached by the host only through the guarded Maintenance member",
     ),
 ];
 

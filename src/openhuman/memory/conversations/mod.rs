@@ -12,12 +12,12 @@
 //!
 //! Three parts, and the split is about ownership rather than size:
 //!
-//! - `store` — the implementation: on-disk format, the process-wide write
-//!   lock, the warm index cache, CRUD and search. Everything below is
+//! - `store` — the implementation: on-disk format, root lifecycle and sharded
+//!   metadata/message locks, the warm index cache, CRUD and search. Everything below is
 //!   re-exported from here, so callers name
 //!   `crate::openhuman::memory::conversations::{…}` and never the subtree.
 //! - [`blocking`] — `spawn_blocking` wrappers. Every store entry point is
-//!   synchronous and takes a `parking_lot` mutex across fsync'd file IO, so an
+//!   synchronous and can take `parking_lot` locks across fsync'd file IO, so an
 //!   `async fn` that calls one directly parks a tokio **worker** thread for the
 //!   whole wait. Request paths must use these (#5156).
 //! - `bus` — the `core::bus` subscriber that mirrors inbound and processed
@@ -53,8 +53,8 @@ mod store;
 
 pub use bus::register_conversation_persistence_subscriber;
 pub use store::{
-    append_message, delete_thread, ensure_thread, get_messages, list_threads, purge_threads,
-    update_message, update_thread_labels, update_thread_title, ConversationMessage,
-    ConversationMessagePatch, ConversationPurgeStats, ConversationStore, ConversationThread,
-    CreateConversationThread, CrossThreadHit,
+    append_message, delete_thread, ensure_thread, get_messages, is_deterministic_message_id,
+    list_threads, purge_threads, run_reply_message_id, update_message, update_thread_labels,
+    update_thread_title, ConversationMessage, ConversationMessagePatch, ConversationPurgeStats,
+    ConversationStore, ConversationThread, CreateConversationThread, CrossThreadHit,
 };

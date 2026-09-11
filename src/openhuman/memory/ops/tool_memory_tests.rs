@@ -2,7 +2,7 @@ use super::*;
 use crate::openhuman::memory::api::tool_memory::ToolMemoryPriority;
 
 fn ensure_memory_client() {
-    crate::openhuman::memory::ops::ensure_shared_memory_client();
+    crate::openhuman::memory::ops::shared_memory_test_workspace();
 }
 
 fn unique_tool_name() -> String {

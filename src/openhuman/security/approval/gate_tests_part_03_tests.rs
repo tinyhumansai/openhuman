@@ -501,6 +501,22 @@ async fn flow_origin_park_publishes_flow_approval_request_and_notification() {
     .await
     .expect("timed out waiting for the flow-gate-approval notification");
     assert_eq!(notif.id, format!("flow-gate-approval:{request_id}"));
+    // Bound to the workspace the flow parked in (#5966): this publisher
+    // bypasses the bridge that stamps workspace identity, and the gate is
+    // process-wide, so an unbound banner would stay actionable after a
+    // workspace switch and approve this call from another workspace.
+    let workspace = notif
+        .workspace
+        .as_deref()
+        .expect("a flow approval names the workspace it parked in");
+    assert!(
+        workspace.starts_with("ws_"),
+        "the binding is an opaque handle, never a path: {workspace}"
+    );
+    assert!(
+        notif.workspace_revision.is_some(),
+        "the binding carries the revision the workspace was current under"
+    );
     let actions = notif.actions.expect("notification must declare actions");
     let action_ids: Vec<_> = actions.iter().map(|a| a.action_id.as_str()).collect();
     assert_eq!(

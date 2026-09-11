@@ -36,11 +36,12 @@ const SOURCE_KIND: &str = "composio";
 
 /// Per-pass item budget handed to the connector's `Sync` member.
 ///
-/// One pass is one budgeted slice of the account; the pass loop in
-/// `composio_sync_for_source` multiplies this by its `MAX_PASSES` bound into a
-/// worst case of 25k items per click, instead of "whatever the module decides
-/// a call means".
-pub const SYNC_PASS_MAX_ITEMS: usize = 500;
+/// One pass is one budgeted slice of the account; the pass loop multiplies it
+/// by `MAX_PASSES` into a worst case of 10k items per click. 200, not 500: a
+/// pass reaches the memory module as ONE `AcceptSourceItems` call that embeds
+/// each document in turn (~1.7 s each), and 500 ran ~14 min into the host's
+/// 15-minute deadline, logging a false `initial sync failed` (openhuman#6025).
+pub const SYNC_PASS_MAX_ITEMS: usize = 200;
 
 /// The next pass's item budget, or `None` when the configured per-run cap is
 /// spent and the run should end.
@@ -71,12 +72,27 @@ pub(crate) fn next_pass_budget(source_max_items: Option<u32>, total_written: u64
 /// A parse contract, not prose: the Sources UI extracts the count with
 /// `/ingested\s+(\d+)\s+item/i` and falls back to a generic "up to date"
 /// when it cannot (#3295). Pinned by a unit test against that exact pattern.
-pub(crate) fn completed_sync_detail(total_written: u64, more_pending: bool) -> String {
-    if more_pending {
+///
+/// `note` is what the module said about a run that stopped short — today's
+/// request budget being spent, above all. It rides *after* the count, never
+/// inside it, so the regex keeps matching and everything past the count is
+/// free text the UI can show. Without it a spent budget wrote zero items and
+/// read back as "Up to date", the opposite of what happened.
+pub(crate) fn completed_sync_detail(
+    total_written: u64,
+    more_pending: bool,
+    note: Option<&str>,
+) -> String {
+    let mut detail = if more_pending {
         format!("ingested {total_written} item(s), more pending — Sync again to continue")
     } else {
         format!("ingested {total_written} item(s)")
+    };
+    if let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) {
+        detail.push_str("; ");
+        detail.push_str(note);
     }
+    detail
 }
 
 /// Aggregate result of [`composio_refresh_all_identities`].
@@ -252,7 +268,7 @@ pub async fn composio_sync_for_source(
 
 /// [`composio_sync_for_source`] with the source's configured per-run ingest
 /// cap. `None` preserves unlimited: the loop still slices the account into
-/// 500-item passes, but stops only when the connector reports the end.
+/// 200-item passes, but stops only when the connector reports the end.
 pub async fn composio_sync_budgeted(
     config: &Config,
     connection_id: &str,
@@ -313,7 +329,7 @@ pub async fn composio_sync_budgeted(
     // `completed` with pages unfetched cleared the row while records remained
     // (review finding on this PR) — so loop passes until the connector reports
     // the end, bounded so an upstream that never completes cannot pin this
-    // task forever. The bound is generous: 50 pages ≈ 5,000 records per click.
+    // task forever. The bound is generous: 50 passes ≈ 10,000 records per click.
     const MAX_PASSES: usize = 50;
 
     // Published before the spawn: the row's "running" exists before the RPC
@@ -325,6 +341,11 @@ pub async fn composio_sync_budgeted(
         let mut total_written: u64 = 0;
         let mut passes = 0usize;
         let mut more_pending = false;
+        // The module's own account of a pass that stopped short (the day's
+        // request budget, typically). The last pass's word wins, present or
+        // absent: it describes the state the run ended in, and a pass that
+        // completes cleanly must not inherit the note of an earlier one.
+        let mut stop_note: Option<String> = None;
         let outcome = loop {
             passes += 1;
             // The source's configured per-run cap wins over the pass ceiling:
@@ -346,6 +367,12 @@ pub async fn composio_sync_budgeted(
                 Ok(pass) => {
                     total_written = total_written.saturating_add(u64::from(pass.written));
                     more_pending = pass.more_pending;
+                    stop_note = pass
+                        .message
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|message| !message.is_empty())
+                        .map(str::to_string);
                     tracing::info!(
                         toolkit = %toolkit_for_log,
                         connection_id = %connection_for_log,
@@ -367,6 +394,20 @@ pub async fn composio_sync_budgeted(
                         // settles with the honest count and the remainder named.
                         break Ok(());
                     }
+                    // A heartbeat between passes. The module reports only a
+                    // run's first stage and its last, and a run of many passes
+                    // can outlive the host's memory of it: `memory::sync_activity`
+                    // forgets a run after a bounded silence, because the bus can
+                    // lose a terminal stage (openhuman#6019). One pass is bounded
+                    // by the slow call's deadline, so a stage per pass keeps the
+                    // run alive for exactly as long as it runs — and tells the
+                    // row where it is.
+                    publish_stage(
+                        "running",
+                        Some(format!(
+                            "pass {passes} done, {total_written} item(s) so far"
+                        )),
+                    );
                 }
                 Err(error) => break Err(error),
             }
@@ -378,7 +419,11 @@ pub async fn composio_sync_budgeted(
                 // falls back to a generic "up to date" when it cannot (#3295).
                 publish_stage(
                     "completed",
-                    Some(completed_sync_detail(total_written, more_pending)),
+                    Some(completed_sync_detail(
+                        total_written,
+                        more_pending,
+                        stop_note.as_deref(),
+                    )),
                 );
             }
             Err(error) => {
@@ -410,8 +455,8 @@ pub async fn composio_sync_budgeted(
 
 /// What one [`run_sync_pass`] call did.
 ///
-/// A superset of the `usize` the caller inside this file needs, so
-/// `memory::sync::composio::providers::slack::rpc` — the other caller — can
+/// A superset of the `usize` the caller inside this file needs, so the
+/// single-call entry points behind `pass_budget::run_sync_within_budget` can
 /// build a [`SyncOutcome`] without a second round trip through the module.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SyncPassOutcome {
@@ -427,6 +472,10 @@ pub(crate) struct SyncPassOutcome {
     /// Whether the module has more to read — the caller decides whether to
     /// call again.
     pub more_pending: bool,
+    /// What the module said about a run that stopped short — today's request
+    /// budget being spent, above all. Carried so the completed-stage detail
+    /// can say *why* zero items arrived instead of reading as "up to date".
+    pub message: Option<String>,
 }
 
 /// Read one connection through the module and ingest what it returns.
@@ -436,11 +485,11 @@ pub(crate) struct SyncPassOutcome {
 /// stands, and re-deciding that here would give the run two opinions about
 /// what has been read.
 ///
-/// `pub(crate)` — also called from
-/// `memory::sync::composio::providers::slack::rpc`, which needs the same
-/// tinyconnectors-mediated sync pass `composio_sync` runs here, but awaited
-/// synchronously rather than fired into a background task (its RPC contract
-/// is "return the outcome", not "return that a run started").
+/// `pub(crate)` — also driven by `pass_budget::run_sync_within_budget` for
+/// the entry points that sync once per invocation (periodic tick, manual
+/// provider sync, `connection_created`, the Slack ingest RPC), which repeat
+/// this pass within one call's item budget and await it synchronously rather
+/// than firing it into a background task.
 pub(crate) async fn run_sync_pass(
     config: &Config,
     toolkit: &str,
@@ -450,6 +499,13 @@ pub(crate) async fn run_sync_pass(
 ) -> Result<SyncPassOutcome, String> {
     // Sync pages the whole account inside the call; the default 30s bus
     // deadline reported failure on runs the module then finished successfully.
+    // The per-source "Sync depth (days)" cap. Until contract 1.8 gave the
+    // request a field for it, the setting reached the log and nothing else;
+    // the module now turns it into Gmail's own `after:` search term, so a
+    // bounded first sync costs one page of recent mail rather than a walk
+    // through the years. `None` reads unbounded, as every earlier release did.
+    let depth_days = source_sync_depth_days(config, toolkit, connection_id);
+
     let response = connectors::call_slow::<_, ConnectorSyncResponse>(
         config,
         methods::SYNC,
@@ -462,6 +518,7 @@ pub(crate) async fn run_sync_pass(
             // pass loop bounds nothing (review finding). complete=false at the
             // budget → more_pending → the loop (or the next click) resumes.
             max_items: Some(pass_budget),
+            depth_days,
             ..ConnectorSyncRequest::default()
         },
     )
@@ -474,6 +531,7 @@ pub(crate) async fn run_sync_pass(
             written: 0,
             already_ingested: false,
             more_pending: !response.batch.complete,
+            message: response.message,
         });
     }
 
@@ -503,6 +561,72 @@ pub(crate) async fn run_sync_pass(
         .await
         .map_err(|error| format!("ingesting {toolkit} records failed: {error}"))?;
 
+    // openhuman#6007: seal this source's summary tree once the pass has written
+    // something.
+    //
+    // Tree ingest writes its L0 chunk rows synchronously, but the Memory Tree
+    // graph and tree-backed recall read *sealed* summaries. A buffer seals on
+    // the 50k-token budget or, failing that, on the seven-day
+    // `DEFAULT_FLUSH_AGE_SECS` force-flush — and nothing on the sync path ever
+    // asked for one. So an incremental run of a handful of messages stayed
+    // under the budget and its memories were invisible for up to a week, while
+    // the source row reported them ingested the entire time.
+    //
+    // `flush_source_tree` rather than `flush_pending`, for two reasons that
+    // are the whole of tinyhumansai/tinymemory#135:
+    //
+    // - It **bypasses the job queue**. `flush_pending` enqueues, and that queue
+    //   dedupes on `date + hour/3`, so a request landing while an earlier flush
+    //   was already running was suppressed — and if that flush had already
+    //   walked past this buffer, nothing remained queued for it. The periodic
+    //   tick does not rescue those: it enqueues the default seven-day age and
+    //   steps straight over a buffer written minutes ago. With no queue there
+    //   is no dedupe key and nothing to be suppressed against.
+    // - It seals **one scope**. `flush_pending` is workspace-wide, so a Gmail
+    //   sync also sealed whatever a folder or `github_repo` source had left
+    //   pending — unrelated trees nudged by an unrelated event.
+    //
+    // The scope is built exactly as the ingest funnel builds `path_scope`
+    // (`{toolkit}:{connection_id}`, toolkit lowercased), because it has to name
+    // the same tree the items were filed under. A drift here seals nothing and
+    // says `Ok(0)` while doing it.
+    //
+    // Here rather than at the callers: `run_sync_pass` has three of them (the
+    // budgeted loop in this file, the Slack trigger RPC, and the sync bus), and
+    // one rule spread across call sites is exactly what caused #6007 — two
+    // would have got the flush and the third would have been forgotten.
+    //
+    // Best-effort by construction. The records are committed; an unsealed
+    // buffer is a delay, not a loss. Nothing here may turn a successful sync
+    // into a failed one. Safe to call unconditionally, too: the contract makes
+    // an empty scope `Ok(0)` rather than an error.
+    if outcome.written > 0 {
+        let scope = format!(
+            "{}:{}",
+            toolkit.trim().to_ascii_lowercase(),
+            connection_id.trim()
+        );
+        match binding.provider().as_tree() {
+            Some(tree) => match tree.flush_source_tree(&scope).await {
+                Ok(seals) => tracing::debug!(
+                    scope = %scope,
+                    seals_fired = seals,
+                    "[composio] source tree sealed after sync pass"
+                ),
+                Err(error) => tracing::warn!(
+                    scope = %scope,
+                    error = %error,
+                    "[composio] source tree could not be sealed; ingested records stay \
+                     unsealed until a later seal reaches them"
+                ),
+            },
+            None => tracing::debug!(
+                driver = %binding.driver_id(),
+                "[composio] bound driver serves no Tree; skipping the post-sync seal"
+            ),
+        }
+    }
+
     if !response.batch.complete {
         // The module keeps its own cursor, so the next call resumes where this
         // one stopped. Saying so is worth a line: a partial run that looked
@@ -527,7 +651,78 @@ pub(crate) async fn run_sync_pass(
         written: outcome.written,
         already_ingested: outcome.already_ingested,
         more_pending: !response.batch.complete,
+        message: response.message,
     })
+}
+
+/// The per-source "Sync depth (days)" cap for one connection, from the
+/// memory-sources registry the pass's own `config` names.
+///
+/// Resolved here rather than threaded through every caller because there are
+/// five of them (the row button, All In, the periodic loop, the connection
+/// bootstrap, Slack's own RPC), and `max_items` already showed what happens
+/// when each open-codes the same rule: two of the five disagreed
+/// (openhuman#6007). Read through `config`, not the process environment: a
+/// pass is bound to one workspace, and the global registry path would answer a
+/// caller bound to workspace B with workspace A's rows — the cross-workspace
+/// leak the registry's `_in` variants exist to prevent. `None` when the row is
+/// missing, carries no cap, or the registry cannot be read — each means "no
+/// lower bound", which is what every release before the field existed did, so
+/// a registry hiccup degrades to the old behaviour rather than to a failed
+/// sync.
+fn source_sync_depth_days(config: &Config, toolkit: &str, connection_id: &str) -> Option<u32> {
+    let sources = match crate::openhuman::memory::sources::registry::list_sources_in(config) {
+        Ok(sources) => sources,
+        Err(error) => {
+            tracing::warn!(
+                toolkit = %toolkit,
+                connection_id = %connection_id,
+                error = %error,
+                "[composio] memory-sources registry unreadable for the sync depth; \
+                 syncing without a lower bound"
+            );
+            return None;
+        }
+    };
+    pick_source_sync_depth_days(
+        sources
+            .iter()
+            .filter(|source| source.kind == crate::openhuman::memory::sources::SourceKind::Composio)
+            .map(|source| {
+                (
+                    source.toolkit.as_deref(),
+                    source.connection_id.as_deref(),
+                    source.sync_depth_days,
+                )
+            }),
+        toolkit,
+        connection_id,
+    )
+}
+
+/// The cap of the row matching `toolkit` and `connection_id`, if any.
+///
+/// Matched the way the engine keys the rows — toolkit case-insensitively and
+/// trimmed, connection trimmed — and a cap of zero reads as none: the settings
+/// field stores "unlimited" as an empty value, and a zero typed by hand would
+/// otherwise ask Gmail for mail newer than today.
+pub(crate) fn pick_source_sync_depth_days<'a>(
+    rows: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>, Option<u32>)>,
+    toolkit: &str,
+    connection_id: &str,
+) -> Option<u32> {
+    let toolkit = toolkit.trim();
+    let connection_id = connection_id.trim();
+    rows.into_iter()
+        .find_map(|(row_toolkit, row_connection, depth)| {
+            let same_toolkit =
+                row_toolkit.is_some_and(|slug| slug.trim().eq_ignore_ascii_case(toolkit));
+            let same_connection = row_connection.is_some_and(|id| id.trim() == connection_id);
+            (same_toolkit && same_connection)
+                .then_some(depth)
+                .flatten()
+                .filter(|days| *days > 0)
+        })
 }
 
 /// Parse the optional `reason` parameter into a [`SyncReason`].
@@ -551,5 +746,5 @@ pub(crate) fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
 /// name; this avoids re-plumbing the cfg(test) re-export).
 #[cfg(test)]
 pub(crate) fn completed_sync_detail_for_test(total: u64, more: bool) -> String {
-    completed_sync_detail(total, more)
+    completed_sync_detail(total, more, None)
 }

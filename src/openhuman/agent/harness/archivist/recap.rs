@@ -5,22 +5,11 @@ use super::types::ArchivistHook;
 use crate::openhuman::memory::api::provider::{
     ConversationSegment, EpisodicTurn, SummaryContext, SummaryInput,
 };
+use std::time::Duration;
 // The fold itself is `MemoryTree::summarise` now, so the DTOs are the
 // contract's owned ones and `tree_kind` is the wire string the driver
 // validates rather than the engine's `TreeKind` enum (#5560).
 //
-// The engine `summarise` survives under `cfg(test)` only, where the recap
-// tests install a deterministic chat provider through the engine's own
-// task-local; see [`ArchivistHook::summarize_entries`] for why that arm cannot
-// go through the driver. Named on the engine crate directly: the host's
-// `memory::tree` re-export shim stopped serving production and was deleted
-// (#5560), so a test-only reach into the engine spells the crate out.
-#[cfg(test)]
-use std::sync::Arc;
-#[cfg(test)]
-use tinymemory_core::tree::summarise::summarise;
-#[cfg(test)]
-use tinymemory_core::tree::tree::TreeKind;
 
 /// Total input/context budget for one summarisation fold.
 ///
@@ -40,6 +29,34 @@ const INPUT_TOKEN_BUDGET: u32 = 50_000;
 /// See [`INPUT_TOKEN_BUDGET`] for why this is a copy.
 const SUMMARY_OVERHEAD_RESERVE_TOKENS: u32 = 2_048;
 
+/// How long a segment recap may take before the turn stops waiting for it.
+///
+/// This bound is **reasoned, not measured** — say so plainly, because the
+/// number should be re-tuned the moment someone has real folds to look at.
+/// The attempt to measure it (#6200) produced nothing usable: the workspace it
+/// ran in had no summariser configured, so every fold short-circuited to the
+/// heuristic without a network call.
+///
+/// Three things set it:
+///
+/// - **600 s is what it replaces.** `tinyinference`'s request default is the
+///   only bound under this call today, and `ChatPrompt` carries no per-call
+///   override, so a summariser that accepts a connection and then goes silent
+///   holds the turn for ten minutes.
+/// - **It must clear two attempts.** `tinymemory`'s retry gives up on a further
+///   attempt once ~20 s have elapsed, so its realistic worst case is two folds
+///   back to back. A deadline under that would cut the chain before the second
+///   attempt and quietly turn the retry into dead code.
+/// - **Overshooting is cheap now, undershooting is not.** Since #6156 a fold
+///   that misses this writes nothing and leaves the segment `'closed'` for the
+///   recovery pass, so a healthy-but-slow fold is deferred rather than lost.
+///   Cutting a good fold short only churns.
+///
+/// Compare `AUTO_RECALL_BUDGET` (5 s), which bounds a *retrieval* on the same
+/// turn path and was set from a field measurement. A fold is an LLM generation
+/// over up to `INPUT_TOKEN_BUDGET` tokens, so it is not the same kind of wait.
+const RECAP_DEADLINE: Duration = Duration::from_secs(90);
+
 /// Fold one segment's corpus through the **guarded** driver's tree family.
 ///
 /// The guard rather than the archivist's own provider handle, because
@@ -58,7 +75,6 @@ const SUMMARY_OVERHEAD_RESERVE_TOKENS: u32 = 2_048;
 /// the fold itself failed with. Every one of them lands on the caller's
 /// existing error arm — the heuristic bookend — which is exactly where an
 /// engine error landed before.
-#[cfg(not(test))]
 async fn fold_through_driver(
     inputs: &[SummaryInput],
     context: &SummaryContext,
@@ -207,11 +223,11 @@ impl ArchivistHook {
     ///
     /// Returns `(text, produced_by_llm)`. `produced_by_llm == false` means the
     /// LLM was unavailable / failed / returned empty and `text` is the shallow
-    /// heuristic `fallback_summary` bookend stub. That stub is an acceptable
-    /// durable last-resort on the *finalize* path, but callers driving the
-    /// **live prompt** (rolling recap → compaction) must treat
-    /// `produced_by_llm == false` as "no real recap" and fall back to their
-    /// own strategy — the stub must never become live compaction text.
+    /// heuristic `fallback_summary` bookend stub. Both callers treat that as
+    /// "no real recap" (#6156): the rolling recap keeps it out of the live
+    /// prompt so it can never become compaction text, and the finalize path
+    /// writes nothing at all — no summary row, no embedding, no goals
+    /// enrichment — rather than sealing the segment around a placeholder.
     pub(super) async fn summarize_entries(
         &self,
         entries: &[&EpisodicTurn],
@@ -272,67 +288,60 @@ impl ArchivistHook {
         // recorded as the boolean it always was. See `lifecycle::with_config`.
         if self.summariser_available {
             if let Some(ref config) = self.config {
-                // Read only by the `cfg(test)` arm below, now that production
-                // folds through the driver. The `Some` gate stays because it is
-                // the one this function has always had: no config, no LLM
-                // recap, heuristic bookend instead.
-                #[cfg(not(test))]
+                // The `Some` gate stays because it is the one this function
+                // has always had: no config, no LLM recap, heuristic bookend
+                // instead. Nothing reads the config now that every build folds
+                // through the driver.
                 let _ = config;
                 tracing::debug!(
                     "[archivist] summarize_entries: LLM recap segment={segment_id} entries={}",
                     entries.len()
                 );
-                // Test-only: the engine's `summarise` builds its own chat
-                // provider, and `build_chat_runtime` consults this task-local
-                // before building one. Scoping the call is what keeps the recap
-                // tests off the network, and it is why this arm cannot go
-                // through the driver: the override is a static inside the
-                // engine crate this binary links for tests, which a module in
-                // its own process would not see. Production has no such
-                // override and never names the engine's chat module (#5560).
-                #[cfg(test)]
-                let summary_result = {
-                    let engine_inputs: Vec<_> = corpus_inputs
-                        .iter()
-                        .map(|input| tinymemory_core::tree::summarise::SummaryInput {
-                            id: input.id.clone(),
-                            content: input.content.clone(),
-                            token_count: input.token_count,
-                            entities: input.entities.clone(),
-                            topics: input.topics.clone(),
-                            time_range_start: input.time_range_start,
-                            time_range_end: input.time_range_end,
-                            score: input.score,
-                        })
-                        .collect();
-                    let engine_ctx = tinymemory_core::tree::summarise::SummaryContext {
-                        tree_id: &summary_ctx.tree_id,
-                        tree_kind: TreeKind::parse(&summary_ctx.tree_kind)
-                            .expect("summarize_entries builds a tree_kind the engine knows"),
-                        target_level: summary_ctx.target_level,
-                        token_budget: summary_ctx.token_budget,
-                        input_token_budget: summary_ctx.input_token_budget,
-                        overhead_reserve_tokens: summary_ctx.overhead_reserve_tokens,
-                        ask: summary_ctx.ask.as_deref(),
-                    };
-                    if let Some(provider) = self.chat_provider.as_ref() {
-                        tinymemory_core::chat::test_override::with_provider(
-                            Arc::clone(provider),
-                            summarise(config, &engine_inputs, &engine_ctx),
-                        )
-                        .await
-                    } else {
-                        summarise(config, &engine_inputs, &engine_ctx).await
+                // #6200: bounded because this await is on the turn path — the
+                // caller's `flush_open_segment` runs before a turn returns — and
+                // the only bound under it otherwise is tinyinference's 600 s
+                // request default. Wrapping here rather than passing a timeout
+                // down keeps it host-side: `ChatPrompt` has no timeout field, so
+                // the alternative is a `tinymemory` contract change, a release
+                // and a re-pin. It also bounds the whole retry chain rather than
+                // a single attempt, which is the thing the turn actually waits
+                // on. `elapsed_ms` rides every arm so the number above can be
+                // re-tuned from real folds.
+                let started = std::time::Instant::now();
+                let summary_result = match tokio::time::timeout(
+                    RECAP_DEADLINE,
+                    fold_through_driver(&corpus_inputs, &summary_ctx),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        let elapsed_ms = started.elapsed().as_millis();
+                        // WARN, not debug: a fold that outlasts the deadline
+                        // held the turn for the whole of it, and that is the
+                        // symptom worth finding in a log. Falls through to
+                        // the same `(bookend, false)` the error arm returns,
+                        // so nothing is persisted and the segment keeps the
+                        // marker a later pass selects on.
+                        tracing::warn!(
+                            "[archivist] summarize_entries: recap exceeded {:?} \
+                                 elapsed_ms={elapsed_ms} — segment={segment_id} left \
+                                 unsummarised for a later pass",
+                            RECAP_DEADLINE
+                        );
+                        return (
+                            super::boundary::fallback_summary(first, last, turn_count),
+                            false,
+                        );
                     }
                 };
-                #[cfg(not(test))]
-                let summary_result = fold_through_driver(&corpus_inputs, &summary_ctx).await;
+                let elapsed_ms = started.elapsed().as_millis();
 
                 match summary_result {
                     Ok(output) if !output.content.is_empty() => {
                         tracing::debug!(
                             "[archivist] summarize_entries: LLM recap ok segment={segment_id} \
-                             chars={}",
+                             chars={} elapsed_ms={elapsed_ms}",
                             output.content.len()
                         );
                         return (output.content, true);
@@ -340,13 +349,14 @@ impl ArchivistHook {
                     Ok(_) => {
                         tracing::debug!(
                             "[archivist] summarize_entries: LLM returned empty — \
-                             heuristic fallback segment={segment_id}"
+                             heuristic fallback segment={segment_id} elapsed_ms={elapsed_ms}"
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
                             "[archivist] summarize_entries: LLM recap failed (non-fatal) \
-                             segment={segment_id}: {e} — heuristic fallback"
+                             segment={segment_id} elapsed_ms={elapsed_ms}: {e} — \
+                             heuristic fallback"
                         );
                     }
                 }

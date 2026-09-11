@@ -17,6 +17,10 @@ use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 const GITHUB_OWNER: &str = "tinyhumansai";
 const GITHUB_REPO: &str = "openhuman";
 
+/// Origin of the release-metadata API. Not configurable at runtime — see
+/// `check_available_with_base_url`.
+const GITHUB_API_BASE: &str = "https://api.github.com";
+
 /// Current binary version (set at compile time from Cargo.toml).
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -87,13 +91,25 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 /// Check GitHub Releases for a newer version of openhuman-core.
 pub async fn check_available() -> Result<UpdateInfo, String> {
+    check_available_with_base_url(GITHUB_API_BASE).await
+}
+
+/// `check_available`, with the API origin injected.
+///
+/// Deliberately **private**, and deliberately not an env var. `ops::validate_download_url`
+/// pins asset downloads to the GitHub host allowlist on purpose; a runtime-overridable
+/// release endpoint would be a self-update redirection primitive on the highest-trust
+/// path in the product. The only caller besides `check_available` is the unit suite,
+/// which points it at a local mock — which is what the note in `scheduler_tests.rs`
+/// asked for.
+async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, String> {
     let current = current_version();
     log::info!(
         "[update] checking for updates — current version: {}",
         current
     );
 
-    let url = format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest");
+    let url = format!("{base_url}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest");
 
     let client = reqwest::Client::builder()
         .user_agent("openhuman-core-updater")

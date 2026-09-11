@@ -46,6 +46,10 @@ pub fn register_sync_stage_bridge(config: &Config) {
         }
     }
 
+    // The process's memory of the stream the bridge feeds: which sources are
+    // in flight right now, for the status list (openhuman#6019).
+    super::sync_activity::register();
+
     // Trigger batch embedding when a sync completes. Extract no longer embeds
     // inline — the backfill pass picks up all un-embedded chunks in large
     // batches (up to 1000 items per API call).

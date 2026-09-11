@@ -44,7 +44,11 @@ interface FeedbackSubmitFormProps {
   onAccepted: (result: CreateFeedbackResult) => void;
 }
 
-const INPUT_CLASS = 'w-full rounded-xl bg-surface-muted px-4 py-2.5';
+// The card fills the pane; the fields inside it do not. A title line and a
+// description are prose, and prose past ~80 characters per line is measurably
+// harder to read -- a full-pane textarea also makes a short body look like a
+// mistake. 68ch keeps both comfortable without leaving the field looking stunted.
+const INPUT_CLASS = 'w-full max-w-[68ch] rounded-xl bg-surface-muted px-4 py-2.5';
 
 export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormProps) {
   const { t } = useT();
@@ -159,57 +163,55 @@ export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormPro
 
   return (
     <div className="rounded-2xl border border-line bg-surface p-6 shadow-soft dark:shadow-none">
-      <h2 className="font-title text-base font-semibold text-content">
-        {t('feedback.submit.heading')}
-      </h2>
-      <p className="mb-4 mt-0.5 text-xs text-content-muted">{t('feedback.submit.subheading')}</p>
+      {/* The type toggle used to be two full-width `size="lg"` buttons stacked
+          above the fields: a binary property of the draft, rendered larger and
+          louder than the title, the body and Submit combined, so the form read
+          as "pick one of two things" and the primary action read as dead.
+          It is now a pill beside the heading -- the same shape and placement
+          the billing panel gives its monthly/annual switch, which is the same
+          kind of control: one bit that qualifies the thing below it. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="max-w-[52ch]">
+          <h2 className="font-title text-base font-semibold text-content">
+            {t('feedback.submit.heading')}
+          </h2>
+          <p className="mt-0.5 text-xs text-content-muted">{t('feedback.submit.subheading')}</p>
+        </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-2.5">
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={() => {
-            // Changing the type is an edit like any other: the advice the last
-            // submission came back with is no longer about what is on screen.
-            setType('feature');
-            setSubmittedQuality(null);
-          }}
-          aria-pressed={type === 'feature'}
-          className={
-            type === 'feature'
-              ? 'border-primary-500 bg-primary-500/10 text-primary-600 ring-1 ring-primary-500/30 dark:text-primary-400'
-              : 'text-content-muted'
-          }>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.8}
-              d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3zM18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z"
-            />
-          </svg>
-          {t('feedback.type.feature')}
-        </Button>
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={() => {
-            setType('bug');
-            setSubmittedQuality(null);
-          }}
-          aria-pressed={type === 'bug'}
-          tone={type === 'bug' ? 'danger' : 'default'}
-          className={type === 'bug' ? 'ring-1 ring-coral-500/30' : 'text-content-muted'}>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.8}
-              d="M12 8a4 4 0 00-4 4v2a4 4 0 008 0v-2a4 4 0 00-4-4zM9.5 5.5L8.2 4.2M14.5 5.5l1.3-1.3M8 12.5H4.5M16 12.5h3.5M8 16l-2.8 1.6M16 16l2.8 1.6"
-            />
-          </svg>
-          {t('feedback.type.bug')}
-        </Button>
+        <div
+          role="group"
+          aria-label={t('feedback.submit.heading')}
+          className="inline-flex w-fit shrink-0 rounded-full bg-surface-subtle p-1 ring-1 ring-line">
+          <Button
+            variant={type === 'feature' ? 'primary' : 'tertiary'}
+            size="sm"
+            className="rounded-full"
+            onClick={() => {
+              // Changing the type is an edit like any other: the advice the last
+              // submission came back with is no longer about what is on screen.
+              // Clicking the pill that is already selected is not an edit, so it
+              // must not discard advice an accepted-with-warning submission just
+              // produced -- easier to hit now that these are adjacent pills.
+              if (type === 'feature') return;
+              setType('feature');
+              setSubmittedQuality(null);
+            }}
+            aria-pressed={type === 'feature'}>
+            {t('feedback.type.feature')}
+          </Button>
+          <Button
+            variant={type === 'bug' ? 'primary' : 'tertiary'}
+            size="sm"
+            className="rounded-full"
+            onClick={() => {
+              if (type === 'bug') return;
+              setType('bug');
+              setSubmittedQuality(null);
+            }}
+            aria-pressed={type === 'bug'}>
+            {t('feedback.type.bug')}
+          </Button>
+        </div>
       </div>
 
       <label htmlFor="feedback-title" className="sr-only">

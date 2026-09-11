@@ -36,6 +36,7 @@ function renderRow(overrides: Partial<React.ComponentProps<typeof MemorySourceRo
     source: makeSource(),
     status: null,
     pipeline: null,
+    backfill: null,
     isAuthenticated: true,
     isSyncing: false,
     isBuilding: false,

@@ -174,7 +174,20 @@ impl GitOperationsTool {
         // Validate files argument against injection patterns
         self.sanitize_git_args(files)?;
 
-        let mut git_args = vec!["diff", "--unified=3"];
+        // `--no-ext-diff` is where external-diff suppression has to live: it is
+        // a diff-command flag, and the `-c diff.external=` that used to stand in
+        // for it made git exec the empty string instead of disabling anything.
+        //
+        // `--no-textconv` is a SEPARATE mechanism and needs its own flag.
+        // `--no-ext-diff` covers `diff.external` and `diff.<driver>.command`;
+        // it does not touch `diff.<driver>.textconv`, which a `.gitattributes`
+        // line (`*.bin diff=evil`) can select and which git then EXECUTES to
+        // render a binary file as text. Verified against a scratch repo: with
+        // `--no-ext-diff` alone the textconv script ran; adding
+        // `--no-textconv` it did not. `hardened_git`'s `-c` list cannot close
+        // this — driver names are arbitrary, so there is no finite set of keys
+        // to neutralise, and the suppression has to be a command flag.
+        let mut git_args = vec!["diff", "--no-ext-diff", "--no-textconv", "--unified=3"];
         if cached {
             git_args.push("--cached");
         }

@@ -125,7 +125,14 @@ pub(super) const NEUTRALISED_CONFIG: &[&str] = &[
     "core.sshCommand=",
     "core.pager=cat",
     "core.editor=false",
-    "diff.external=",
+    // NOT `diff.external=`. An empty value does not disable an external diff —
+    // git tries to *execute* the empty string and the whole command dies with
+    // `error: cannot run : No such file or directory` / `fatal: external diff
+    // died`, so every `diff` operation failed rather than being hardened.
+    // Suppression belongs on the command instead: `git diff --no-ext-diff`,
+    // which ignores `diff.external` however the repository set it. Verified
+    // both ways against a repo with `diff.external=/bin/false`: plain `diff`
+    // dies, `--no-ext-diff` prints the patch.
     "sequence.editor=false",
     "uploadpack.packObjectsHook=",
 ];

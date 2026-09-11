@@ -483,3 +483,47 @@ fn the_reactive_fleet_tools_are_never_packed() {
         );
     }
 }
+
+#[test]
+fn rebinding_a_pack_handle_repoints_it_at_the_new_registry() {
+    // `bind_pack_registry`'s own docs say to "call this after **every**
+    // rebinding of the agent's tool `Arc`", but the handle used to hold a
+    // `OnceLock`, so the second write was dropped on the floor. An agent that
+    // rebuilt its tool vector kept a `Weak` into the old allocation; once that
+    // allocation went away the upgrade failed and every `load_skill` /
+    // `use_skill` reported the registry as unavailable for the rest of the
+    // session. Last write must win.
+    let name = pack("crypto").unwrap().tools[0];
+
+    // The agent's first tool `Arc`, with the packed tool marked Dangerous.
+    let first = registry_with(name, PermissionLevel::Dangerous);
+    let use_skill = find(&first, USE_SKILL);
+    let args = json!({"skill": "crypto", "tool": name});
+    assert_eq!(
+        use_skill.permission_level_with_args(&args),
+        PermissionLevel::Dangerous,
+        "sanity: the first binding resolves"
+    );
+
+    // The agent rebuilds its registry into a *different* allocation, where the
+    // same packed tool is only ReadOnly.
+    let mut rebuilt: Vec<Box<dyn Tool>> = vec![Box::new(FakeTool {
+        name,
+        level: PermissionLevel::ReadOnly,
+        external: false,
+        timeout: ToolTimeout::Inherit,
+    })];
+    append_pack_tools(&mut rebuilt);
+    let rebuilt = Arc::new(rebuilt);
+
+    // Re-point the ORIGINAL handle at it, which is what a rebuild does.
+    crate::openhuman::tools::traits::pack_registry_handle(use_skill)
+        .expect("use_skill exposes a pack registry handle")
+        .bind(Arc::downgrade(&rebuilt));
+
+    assert_eq!(
+        use_skill.permission_level_with_args(&args),
+        PermissionLevel::ReadOnly,
+        "the rebound handle must resolve against the new registry, not the old one"
+    );
+}

@@ -3,7 +3,7 @@
 use super::*;
 
 use crate::openhuman::memory::guard::MemoryGuard;
-use crate::openhuman::memory::ops::{ensure_shared_memory_client, GLOBAL_MEMORY_TEST_LOCK};
+use crate::openhuman::memory::ops::{shared_memory_test_workspace, GLOBAL_MEMORY_TEST_LOCK};
 use crate::openhuman::security::SecurityPolicy;
 use serde_json::json;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ fn test_security() -> Arc<SecurityPolicy> {
 /// the duration, and this clears the two lanes so a leftover row from an
 /// earlier test cannot satisfy (or break) an assertion here.
 async fn fresh_guard() -> Arc<MemoryGuard> {
-    ensure_shared_memory_client();
+    shared_memory_test_workspace();
     let guard = crate::openhuman::memory::ops::guard::active_memory_guard()
         .await
         .expect("guard resolves");

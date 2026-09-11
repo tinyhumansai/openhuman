@@ -7,6 +7,7 @@ import {
   createSkillToolChainLatencyTracker,
   SKILL_TOOL_CHAIN_TARGET_MS,
 } from '../lib/ai/skillToolChainLatency';
+import { classifyReplyDeliveryFailure } from '../lib/userErrors/classify';
 import { ingestRuntimeErrorSignal } from '../lib/userErrors/report';
 import { maybeParseWorkflowProposalTool } from '../lib/workflows/workflowProposal';
 import {
@@ -28,6 +29,7 @@ import {
   segmentText,
   subscribeChatEvents,
 } from '../services/chatService';
+import { socketService } from '../services/socketService';
 import { store } from '../store';
 import {
   appendSubagentStreamDelta,
@@ -39,7 +41,8 @@ import {
   clearProcessingForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
-  fetchAndHydrateDerivedTranscript,
+  fetchAndHydrateCompletedTurnState,
+  fetchAndHydrateTurnState,
   markInferenceTurnStreaming,
   parseToolFailure,
   recordChatTurnUsage,
@@ -74,10 +77,12 @@ import {
   clearThreadInferenceActive,
   createNewThread,
   generateThreadTitleIfNeeded,
+  loadThreadMessages,
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
-import { DERIVED_TRANSCRIPT_ENABLED, IS_PROD } from '../utils/config';
+import { reportUserError } from '../store/userErrorsSlice';
+import { IS_PROD } from '../utils/config';
 import { AssistantUiRuntimeProvider } from './AssistantUiRuntimeProvider';
 import { isProactiveConversationSurface, proactiveThreadPins } from './proactiveThreadPins';
 
@@ -219,6 +224,48 @@ function chatDoneExtraMetadata(event: ChatDoneEvent): Record<string, unknown> | 
 }
 
 /**
+ * Message id for a reply the CORE already persisted before announcing it.
+ *
+ * Core-initiated turns (`client_id === 'system'`: autonomous task sessions and
+ * background sub-agent result delivery via `run_system_turn_on_thread`) write
+ * their own closing message — `task_session::append_final`, keyed
+ * `agent:<run_id>` — and only then emit `chat_done` / `chat_error` with that
+ * run id as `request_id`. Reusing the same id here makes our own
+ * `addInferenceResponse` append collapse onto the core's row (the conversation
+ * store is idempotent by message id) instead of persisting a second copy that
+ * rendered as a duplicate reply under the answer (#5933). Interactive turns
+ * keep their generated ids: nothing else has persisted them.
+ */
+function corePersistedMessageId(event: {
+  client_id?: string;
+  request_id?: string;
+}): string | undefined {
+  return event.client_id === 'system' && event.request_id ? `agent:${event.request_id}` : undefined;
+}
+
+/**
+ * Message id for a delivered reply, shared with the core.
+ *
+ * Since #6034 the core stores an unsegmented reply before it announces it, on
+ * every surface that carries a workspace — interactive turns and forked lanes,
+ * not just the core-initiated ones {@link corePersistedMessageId} covers. Both
+ * writers therefore derive the id from the same `request_id`, which is what
+ * makes our append collapse onto the core's row rather than add a second copy
+ * of the answer (#5933).
+ *
+ * A segmented `chat_done` is excluded on purpose: the core leaves those rows to
+ * us (one per segment), so there is nothing to collapse onto and a shared id
+ * would make several segments fight over one row.
+ */
+function deliveredReplyMessageId(event: {
+  request_id?: string;
+  segment_total?: number | null;
+}): string | undefined {
+  if (event.segment_total) return undefined;
+  return event.request_id ? `agent:${event.request_id}` : undefined;
+}
+
+/**
  * Map a `chat_done` event's holistic usage onto the `recordChatTurnUsage`
  * payload. Prefers the structured `usage` object (tokens + cost + context window
  * + per-sub-agent breakdown); falls back to the deprecated flat token fields for
@@ -290,6 +337,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   // (#4273, AC3). Single instance for the provider's lifetime; observability
   // only — it never gates or cancels a turn.
   const skillLatencyRef = useRef(createSkillToolChainLatencyTracker());
+  // Threads that had a turn in flight when the socket dropped, held across the
+  // gap so the reconnect can rejoin their rooms and re-read them (#6034).
+  const interruptedThreadsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     toolTimelineRef.current = toolTimelineByThread;
@@ -454,6 +504,71 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
 
+    /**
+     * Tell the user a finished reply could not be shown.
+     *
+     * The turn ran and was paid for, and by this point neither writer left a
+     * row — so a console line is the wrong place for it. An in-thread message
+     * is not an option either: writing one needs the very append that just
+     * failed. The shell's notice panel is the surface that does not depend on
+     * the thread store.
+     */
+    const reportLostReply = (threadId: string) => {
+      const descriptor = classifyReplyDeliveryFailure(threadId);
+      if (descriptor) dispatch(reportUserError({ descriptor, at: Date.now() }));
+    };
+
+    /**
+     * Put a delivered reply back on screen after our own append failed.
+     *
+     * Since #6034 the core stores an unsegmented reply before it announces it,
+     * so a failed `threads_message_append` is almost always a lost *render*
+     * rather than a lost answer: re-reading the thread brings the core's row
+     * into the cache and the reply appears without the user re-asking.
+     *
+     * The residual case — neither writer stored it — is reported at error
+     * level rather than through the dev-only debug channel. It cannot be
+     * surfaced as an in-thread message, because writing one needs the same
+     * append that just failed.
+     */
+    const recoverDeliveredReply = async (event: ChatDoneEvent, cause: unknown) => {
+      const expectedId = deliveredReplyMessageId(event);
+      try {
+        await dispatch(loadThreadMessages(event.thread_id)).unwrap();
+      } catch (refetchError) {
+        console.error(
+          '[chat-runtime] a delivered reply could not be appended or re-read; it may be missing from this thread',
+          {
+            threadId: event.thread_id,
+            requestId: event.request_id,
+            appendError: cause instanceof Error ? cause.message : String(cause),
+            refetchError:
+              refetchError instanceof Error ? refetchError.message : String(refetchError),
+          }
+        );
+        reportLostReply(event.thread_id);
+        return;
+      }
+      const recovered = expectedId
+        ? (store.getState().thread.messagesByThreadId[event.thread_id] ?? []).some(
+            m => m.id === expectedId
+          )
+        : false;
+      if (recovered) {
+        rtLog('chat_done_recovered_from_store', {
+          thread: event.thread_id,
+          request: event.request_id,
+        });
+        return;
+      }
+      console.error('[chat-runtime] a delivered reply is absent from the thread after a refetch', {
+        threadId: event.thread_id,
+        requestId: event.request_id,
+        appendError: cause instanceof Error ? cause.message : String(cause),
+      });
+      reportLostReply(event.thread_id);
+    };
+
     const finishChatDoneTurn = async (event: ChatDoneEvent, path: string) => {
       rtLog('refresh_usage_counter', {
         thread: event.thread_id,
@@ -473,14 +588,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       await flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
-      // Live-turn seam: the turn just settled and its line was appended to the
-      // append-only transcript. Invalidate/refresh the thread's derived
-      // settled-turn trails so the next reopen is fresh. The just-finished turn
-      // is the newest, so the derived hydration skips it — this never fights the
-      // live anchor, and it does not touch any socket delta handler.
-      if (DERIVED_TRANSCRIPT_ENABLED) {
-        void dispatch(fetchAndHydrateDerivedTranscript(event.thread_id));
-      }
+      // Socket reducers keep only the current iteration's prose in the live
+      // buffer. Once the turn settles, replace that partial projection with
+      // the core's completed snapshot, whose ordered transcript contains every
+      // parent and sub-agent event from the whole turn. Doing this here (after
+      // ending the live lifecycle) matters: `hydrateRuntimeFromSnapshot`
+      // intentionally refuses to overwrite an actively streaming turn.
+      await dispatch(fetchAndHydrateCompletedTurnState(event.thread_id));
     };
 
     rtLog('subscribe_chat_events', { socket: socketStatus });
@@ -620,6 +734,22 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onSubagentSpawned: event => {
+        // Event-seen guard, matching `onToolCall`/`onToolResult`. This socket
+        // reconnects and redelivers freely (13+ times in one measured
+        // session), and a replayed `subagent_spawned` that lands AFTER
+        // `subagent_awaiting_user` looks exactly like `continue_subagent`
+        // resuming the child — the reducer would clear the pause and the
+        // question would vanish while the child was still blocked. `seq` is
+        // the core's own answer to this: `(request_id, seq)` is stamped per
+        // emission (`publish_seq_stamped`), so a redelivery repeats the pair
+        // and a real resume never does. The reducer keeps its own durable
+        // check for the case this bounded cache has already evicted.
+        const eventKey = `subagent_spawned:${event.thread_id}:${event.request_id ?? 'none'}:${event.seq ?? `${event.round}:${event.skill_id}:${event.tool_name}`}`;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        ) {
+          return;
+        }
         const prev = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         dispatch(
           setInferenceStatusForThread({
@@ -645,14 +775,29 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             workerThreadId: event.subagent?.worker_thread_id,
             mode: event.subagent?.mode,
             dedicatedThread: event.subagent?.dedicated_thread,
+            // Identity of THIS emission, carried into the reducer so it can
+            // tell a resume from a replay without depending on the cache above.
+            spawnEventId: `${event.request_id ?? 'none'}:${event.seq ?? 'noseq'}`,
           })
         );
       },
       onSubagentAwaitingUser: (event: ChatSubagentDoneEvent) => {
+        // Same guard, mirrored: a replayed `subagent_awaiting_user` arriving
+        // after the child has resumed would re-park a running row.
+        const eventKey = `subagent_awaiting_user:${event.thread_id}:${event.request_id ?? 'none'}:${event.seq ?? `${event.round}:${event.skill_id}:${event.tool_name}`}`;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        ) {
+          return;
+        }
         dispatch(
           subagentAwaitingUser({
             threadId: event.thread_id,
             rowId: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
+            // The core puts the child's `ask_user_clarification` question in
+            // `message` (progress_bridge.rs:1055). It is the only copy of the
+            // question the frontend ever receives.
+            question: event.message,
           })
         );
       },
@@ -1129,6 +1274,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                   addInferenceResponse({
                     content: event.full_response,
                     threadId: event.thread_id,
+                    messageId: deliveredReplyMessageId(event),
                     extraMetadata: chatDoneExtraMetadata(event),
                   })
                 ).unwrap();
@@ -1144,6 +1290,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                   request: event.request_id,
                   error: error instanceof Error ? error.message : String(error),
                 });
+                await recoverDeliveredReply(event, error);
               }
             })();
           }
@@ -1176,6 +1323,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 addInferenceResponse({
                   content: event.full_response,
                   threadId: event.thread_id,
+                  messageId: deliveredReplyMessageId(event),
                   extraMetadata: chatDoneExtraMetadata(event),
                 })
               ).unwrap();
@@ -1191,6 +1339,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 request: event.request_id,
                 error: error instanceof Error ? error.message : String(error),
               });
+              await recoverDeliveredReply(event, error);
             }
             await finishChatDoneTurn(event, 'proactive');
           })();
@@ -1211,6 +1360,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 addInferenceResponse({
                   content: event.full_response,
                   threadId: event.thread_id,
+                  messageId: corePersistedMessageId(event),
                   extraMetadata: chatDoneExtraMetadata(event),
                 })
               ).unwrap();
@@ -1281,6 +1431,33 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             scope: 'chat',
             sourceDomain: 'chat',
           });
+          // #5868: a session_expired chat error means the Rust core already
+          // published DomainEvent::SessionExpired and set signed_out=true, but
+          // the auth:session_expired socket event may have been suppressed
+          // (isBootstrapping guard) or missed. Dispatch the same window event
+          // socketService emits so CoreStateProvider's runReauth() fires the
+          // clearSession() → login redirect path from this side too. The 10s
+          // debounce in runReauth() ensures a concurrent socket event does not
+          // cause a double-clear.
+          if (event.error_type === 'session_expired') {
+            // `reason: 'unconfirmed'` is load-bearing, not defensive. The core
+            // classifies this error with `is_session_expired_message`, which
+            // matches the LOCAL guards "no backend session token" and
+            // "session jwt required" as well as a real backend expiry
+            // (`core/observability.rs`). Those two fire transiently before the
+            // on-disk auth profile has been read — #2758 is the bug where
+            // treating them as definitive forced a re-login even though the
+            // token had survived the restart. `unconfirmed` routes through
+            // `confirmSessionTokenGone()` in `runReauth`, so a signal raised
+            // while the token is still on disk stops short of the destructive
+            // `clearSession()`. A genuine expiry still corroborates and signs
+            // out; only the false positive is filtered.
+            window.dispatchEvent(
+              new CustomEvent('openhuman:session-expired', {
+                detail: { source: 'chat-error', reason: 'unconfirmed' },
+              })
+            );
+          }
         }
 
         // Parallel (forked) turn error: resolve only its lane, leaving the
@@ -1334,9 +1511,23 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           // surfacing it tells the user *why* the turn failed instead of a blanket apology.
           // The hardcoded constant is only a last-resort fallback for an empty/missing message.
           const errorContent = event.message || USER_FACING_AGENT_ERROR_MESSAGE;
-          if (!(lastMsg?.sender === 'agent' && lastMsg?.content === errorContent)) {
+          // A core-owned failure carries a deterministic id, so dedupe on that
+          // rather than on the text. Two runs can fail with byte-identical
+          // content — the same upstream provider message, or the generic
+          // fallback above — and a text check would then read the previous
+          // run's row as this one and drop the current failure from the cache.
+          // Interactive turns have no pre-persisted id and keep the text check.
+          const errorMessageId = corePersistedMessageId(event);
+          const alreadyPresent = errorMessageId
+            ? threadMessages.some(message => message.id === errorMessageId)
+            : lastMsg?.sender === 'agent' && lastMsg?.content === errorContent;
+          if (!alreadyPresent) {
             void dispatch(
-              addInferenceResponse({ content: errorContent, threadId: event.thread_id })
+              addInferenceResponse({
+                content: errorContent,
+                threadId: event.thread_id,
+                messageId: errorMessageId,
+              })
             );
           }
 
@@ -1384,6 +1575,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const threadIds = Object.keys(lifecycles);
     const activeThreadIds = Object.keys(state.thread.activeThreadIds);
     if (threadIds.length === 0 && activeThreadIds.length === 0) return;
+    // Remember what was in flight BEFORE the markers are cleared below. The
+    // reconnect handler in `socketService` re-subscribes from
+    // `activeThreadIds`, which this effect is about to empty — so without this
+    // snapshot the new socket rejoins only the selected thread's room, and a
+    // turn finishing on any other thread announces itself to a `client_id`
+    // that no longer exists (#6034).
+    interruptedThreadsRef.current = new Set([...threadIds, ...activeThreadIds]);
     // Abandon any in-flight tool-chain latency windows: a disconnect tears down
     // these turns without an onDone/onError, so without this the next tool call
     // on a reused thread would attribute stale elapsed/tool counts (#4288).
@@ -1406,6 +1604,49 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     // active markers (setActiveThread(null) clears the whole set).
     if (activeThreadIds.length > 0) {
       dispatch(setActiveThread(null));
+    }
+  }, [socketStatus, dispatch]);
+
+  // Heal the threads a disconnect orphaned, once the socket is back.
+  //
+  // Two things are wrong at this moment and neither fixes itself. The new
+  // socket has a new `client_id`, so the only route left to an in-flight turn
+  // is its `thread:<id>` room — and the reconnect handler rejoined just the
+  // selected thread. And a turn that finished while we were away announced its
+  // `chat_done` to nobody: the reply is on disk (the core stores it before
+  // announcing it) but nothing re-reads the thread while the user stays put.
+  // Re-subscribe and re-read, so a reply that landed during the gap appears
+  // instead of looking lost until the thread is reselected (#6034).
+  useEffect(() => {
+    if (socketStatus !== 'connected') return;
+    const interrupted = interruptedThreadsRef.current;
+    if (interrupted.size === 0) return;
+    rtLog('socket_reconnect_heal', { threads: interrupted.size });
+    for (const threadId of [...interrupted]) {
+      // Read only after the room join is acknowledged. Firing both at once
+      // leaves a window where the read misses a reply that lands a moment
+      // later and the turn's `chat_done` goes to a room we have not joined
+      // yet — the reply would then stay invisible until a manual reload.
+      // `subscribeThread` resolves `false` on its own timeout, or immediately
+      // if the socket has already dropped again, so the read is never skipped.
+      void socketService.subscribeThread(threadId).then(joined => {
+        // Forget the thread only once it is provably back in its room. A
+        // socket that dropped again between `connected` and this effect never
+        // emitted, and dropping the id here would strand that thread until the
+        // user reselected it; keeping it means the next connection retries.
+        if (joined) interruptedThreadsRef.current.delete(threadId);
+        // Re-read the messages AND rehydrate the turn snapshot — the same
+        // pair the thread-switch path dispatches (`Conversations.tsx`).
+        // Messages alone recover the final text of a turn that finished in
+        // the gap, but nothing of a turn still running: every frame emitted
+        // while `thread:<id>` had no member was dropped (the emit is
+        // fire-and-forget), so the live lifecycle, iteration counter and tool
+        // timeline can only come back from the core's persisted snapshot.
+        // Without this a turn that outlives the reconnect renders nothing at
+        // all until the user reselects the thread or restarts the app.
+        void dispatch(fetchAndHydrateTurnState(threadId));
+        return dispatch(loadThreadMessages(threadId));
+      });
     }
   }, [socketStatus, dispatch]);
 

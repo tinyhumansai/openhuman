@@ -551,6 +551,8 @@ const messages: TranslationMap = {
   'settings.clearAppData': 'Cancella dati app',
   'settings.clearAppDataDesc':
     "Disconnetti e cancella permanentemente tutti i dati locali dell'app",
+  'settings.clearAppDataIrreversible': 'Questa azione è irreversibile.',
+  'settings.clearAppDataAction': 'Cancella i dati',
   'settings.logOut': 'Disconnetti',
   'settings.logOutDesc': 'Disconnetti dal tuo account',
   'settings.exitLocalSession': 'Esci dalla sessione locale',
@@ -2664,6 +2666,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Prossimamente',
   'memorySources.composioListFailed': 'Impossibile caricare le connessioni Composio.',
   'memorySources.browse': 'Sfoglia…',
+  'memorySources.folderPathUnavailable':
+    'Impossibile determinare dove si trova quella cartella. Digita invece il suo percorso completo.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2686,6 +2690,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'elementi sincronizzati',
   'memorySources.sync.upToDate': 'Aggiornato',
   'memorySources.sync.failedLabel': 'Non riuscito',
+  'memorySources.sync.morePending': 'Altro da sincronizzare. Fai di nuovo clic su Sincronizza',
+  'memorySources.sync.budgetSpent': 'Il budget di richieste di oggi è esaurito. Riprova domani',
   'time.justNow': 'proprio ora',
   'time.secondsAgoSuffix': 's fa',
   'time.minutesAgoSuffix': 'min fa',
@@ -2729,6 +2735,19 @@ const messages: TranslationMap = {
   'memorySources.allIn.allFailed':
     'Nessuna sincronizzazione è potuta partire. Controlla ogni fonte per vedere il motivo.',
   'memorySources.allIn.partial': 'Sincronizzazioni avviate: {triggered}. Non avviabili: {failed}.',
+  'memorySources.repair.button': 'Ripara i ricordi meno recenti',
+  'memorySources.repair.title': 'Riparare i ricordi meno recenti?',
+  'memorySources.repair.message':
+    "Fino a {scanned} documenti sincronizzati sono stati salvati prima della correzione dell'archiviazione nell'albero della memoria e non compaiono nel grafo della memoria. Archiviarli consuma crediti di embedding. I documenti già nell'albero vengono saltati.",
+  'memorySources.repair.confirm': 'Ripara',
+  'memorySources.repair.cancel': 'Non ora',
+  'memorySources.repair.nothing':
+    'Niente da riparare. Nessun documento sincronizzato è in attesa di archiviazione.',
+  'memorySources.repair.success':
+    "{ingested} archiviati nell'albero della memoria ({already} già presenti, {skipped} saltati).",
+  'memorySources.repair.morePending':
+    'Ne restano altri. Fai di nuovo clic su Ripara i ricordi meno recenti.',
+  'memorySources.repair.failed': 'Impossibile riparare i ricordi meno recenti.',
   'memorySources.settings.button': 'Impostazioni',
   'memorySources.settings.title': 'Impostazioni di sincronizzazione',
   'memorySources.settings.maxPrs': 'Numero massimo di pull request',
@@ -2742,7 +2761,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Illimitato',
   'memorySources.settings.unlimitedTooltip':
     'Hai scelto di sincronizzare il massimo per {toolkit}. Puoi modificare i limiti qui.',
-  'memorySources.settings.maxed': 'Pieno',
   'memorySources.settings.save': 'Salva',
   'memorySources.settings.saving': 'Salvataggio…',
   'memorySources.settings.saved': 'Impostazioni salvate',
@@ -3405,6 +3423,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'non riuscito',
   'conversations.subagent.statusAwaitingUser': "in attesa dell'utente",
   'conversations.subagent.statusCancelled': 'annullato',
+  'conversations.subagent.awaitingTitle': 'In attesa della tua risposta',
+  'conversations.subagent.answerPlaceholder': 'Scrivi la tua risposta',
+  'conversations.subagent.answerSend': 'Invia risposta',
+  'conversations.subagent.answerSent': 'Risposta inviata',
   'conversations.agentTaskInsights.title': 'Approfondimenti attività agente',
   'conversations.agentTaskInsights.response': 'Risposta',
   'conversations.agentTaskInsights.processSourceTitle': "Origine del processo dell'agente",
@@ -5001,6 +5023,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Registro eventi',
   'settings.developerMenu.eventLog.desc':
     'Flusso in diretta codificato a colori di tutti gli eventi di agenti, strumenti e sistemi',
+  'settings.developerMenu.eventLog.workspaceScope': 'Ambito dello spazio di lavoro',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Questo spazio di lavoro',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Tutti gli spazi di lavoro',
   'settings.developerMenu.eventLog.allTypes': 'Tutti i tipi',
   'settings.developerMenu.eventLog.filterAgent': 'Filtro...',
   'settings.developerMenu.eventLog.download': 'Scarica',
@@ -5008,6 +5033,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Vivere',
   'settings.developerMenu.eventLog.disconnected': 'Disconnesso',
   'settings.developerMenu.eventLog.waiting': 'In attesa degli eventi...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Gli eventi compaiono qui mentre agenti, strumenti e sistema lavorano. Per ora non è successo nulla.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Riconnettiti al core per riprendere lo streaming.',
   'settings.developerMenu.eventLog.notConnected': 'Non connesso al nucleo',
   'settings.developerMenu.eventLog.jumpToLatest': "Vai all'ultimo",
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6162,6 +6191,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Suggerimenti di instradamento',
   'settings.agents.editor.modelTiers': 'Livelli di modello',
   'settings.agents.editor.modelCustom': 'ID modello personalizzato…',
+  'settings.agents.editor.modelManaged': 'Modelli gestiti',
   'settings.agents.editor.modelCustomPlaceholder': 'es. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Aggiungi strumenti',
   'settings.agents.editor.toolsAllSelected': 'Tutti gli strumenti',
@@ -6310,6 +6340,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Modalità archiviazione segreti',
   'keyring.settings.mode.osKeychain': 'Portachiavi del SO',
   'keyring.settings.mode.encryptedFile': 'Locale crittografato',
+  'keyring.settings.mode.localEncryptedFile': 'File crittografato',
+  'keyring.settings.mode.localPlaintextFile': 'File non crittografato',
   'keyring.settings.mode.consentPending': 'Non configurato',
   'keyring.settings.mode.declined': 'Rifiutato',
   'keyring.settings.availability': 'Disponibilità portachiavi',
@@ -6657,6 +6689,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.body':
     "Ollama non è raggiungibile sull'endpoint configurato, oppure il modello necessario non è installato lì. Avvia Ollama e scarica il modello su quell'endpoint, oppure sposta questo lavoro su un provider cloud.",
   'userErrors.scope.chat': 'Chat',
+  'userErrors.replyDeliveryFailed.title': 'Impossibile mostrare la risposta',
+  'userErrors.replyDeliveryFailed.body':
+    'L’agente ha completato questo turno, ma la sua risposta non è stata salvata né riletta. Chiedi di nuovo per fartela ripetere.',
   'userErrors.memoryStoreCorrupt.title': 'L’indice della memoria era corrotto',
   'userErrors.memoryStoreCorrupt.body':
     'Il database dell’albero della memoria era danneggiato. Il file danneggiato è stato conservato accanto ai tuoi dati di memoria ed è stato ricostruito un indice vuoto. Risincronizza le tue fonti di memoria per riempirlo di nuovo.',
@@ -6740,6 +6775,8 @@ const messages: TranslationMap = {
   'sync.pipeline.ingestedOnly': 'Solo acquisito',
   'sync.pipeline.storedWithoutVectors':
     'Memorizzato senza vettori. Ricerca semantica non disponibile.',
+  'sync.pipeline.vectorsPending':
+    'Chunk in attesa dei vettori: {count}. La ricerca semantica li coprirà a breve.',
   'sync.pipeline.signInToEnable': 'Accedi per attivare',
   'sync.pipeline.extractionFailed':
     'Estrazione della struttura della memoria non riuscita. Il wiki potrebbe essere incompleto.',

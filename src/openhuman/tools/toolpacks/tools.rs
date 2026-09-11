@@ -1,6 +1,6 @@
 //! The two always-on tools that stand in for every packed tool.
 
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, RwLock, Weak};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -26,21 +26,37 @@ type ToolRegistryRef = Weak<Vec<Box<dyn Tool>>>;
 /// cycle that never drops.
 #[derive(Clone, Default)]
 pub struct PackRegistryHandle {
-    inner: Arc<OnceLock<ToolRegistryRef>>,
+    inner: Arc<RwLock<Option<ToolRegistryRef>>>,
 }
 
 impl PackRegistryHandle {
+    /// Point this handle at the registry it lives in, replacing any previous
+    /// binding.
+    ///
+    /// Rebinding has to actually take effect. This was a `OnceLock` whose
+    /// second write was dropped, which silently contradicted
+    /// [`super::bind_pack_registry`]'s own instruction to "re-bind after any
+    /// later rebuild of this `Arc`": once an agent replaced its tool vector the
+    /// handle still pointed at the old allocation, the `Weak` failed to
+    /// upgrade, and every `load_skill` / `use_skill` call reported the registry
+    /// as unavailable for the rest of the session. Last write wins.
     pub fn bind(&self, registry: ToolRegistryRef) {
-        // Binding twice is not an error: an agent that rebuilds its tool `Arc`
-        // re-binds, and the first write simply wins for that generation. What
-        // must never happen is a *silent* mismatch, so log the redundant bind.
-        if self.inner.set(registry).is_err() {
-            tracing::trace!("[toolpacks] registry handle already bound — keeping first binding");
+        match self.inner.write() {
+            Ok(mut slot) => *slot = Some(registry),
+            // The lock is only ever held for a pointer read or write, so a
+            // poisoned lock means a panic elsewhere. Recover rather than
+            // propagate: a stale binding degrades to "skill unavailable",
+            // which is the failure this rebinding exists to prevent.
+            Err(poisoned) => *poisoned.into_inner() = Some(registry),
         }
     }
 
     fn tools(&self) -> Option<ToolVec> {
-        self.inner.get()?.upgrade()
+        let slot = match self.inner.read() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        slot.as_ref()?.upgrade()
     }
 
     /// Resolve a packed tool by name, enforcing that it belongs to `skill`.

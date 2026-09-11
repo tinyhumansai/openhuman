@@ -1954,9 +1954,13 @@ async fn inference_provider_factory_and_classifiers_cover_user_state_edges() {
     config.reasoning_provider = None;
     config.memory_provider = None;
     assert_eq!(provider_for_role("chat", &config), "mock:chat-model@0.25");
+    // #6109: `reasoning` is unset, and an unset route no longer borrows a
+    // sibling's BYOK provider. It resolves through `primary_cloud` like every
+    // other unset workload — the same answer `memory` gives just below.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "mock:chat-model@0.25"
+        "openhuman",
+        "an unset reasoning route must not inherit chat's BYOK provider"
     );
     assert_eq!(provider_for_role("memory", &config), "openhuman");
 }
@@ -3155,7 +3159,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
 #[tokio::test]
 async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges() {
-    let memory = Arc::new(RecordingMemory::default());
+    let _memory = Arc::new(RecordingMemory::default());
     let security = Arc::new(SecurityPolicy::default());
 
     assert_eq!(FacetClass::parse(" Tooling "), Some(FacetClass::Tooling));

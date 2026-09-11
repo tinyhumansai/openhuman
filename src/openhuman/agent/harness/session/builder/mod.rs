@@ -15,7 +15,7 @@ mod builder_tests;
 
 use crate::openhuman::agent::harness::definition::{AgentDefinition, ToolScope};
 use crate::openhuman::tools::agent_policy::ToolPolicySession;
-use crate::openhuman::tools::ToolSpec;
+use crate::openhuman::tools::{Tool, ToolSpec};
 
 /// Drop entries with duplicate `name` fields, first occurrence wins.
 ///
@@ -49,6 +49,41 @@ pub(crate) fn dedup_visible_tool_specs(specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
         );
     }
     deduped
+}
+
+/// Drop every synthesised delegation tool whose name a durable tool already
+/// owns.
+///
+/// The durable registry and the synthesised set are advertised, classified and
+/// dispatched as one surface, and every reader resolves a name to its first
+/// match with the durable set enumerated first. A synthesised entry that
+/// collides can therefore never be reached — keeping it would put one tool's
+/// schema on the wire and run another's (a `delegate_name = "research"`
+/// beside a same-named skill tool, #1710). Applied when the session is built
+/// and again on every refresh, so the two sets are disjoint by construction
+/// and a collision resolves the same way at both sites.
+pub(crate) fn drop_synthesized_name_collisions(
+    durable: &[Box<dyn Tool>],
+    synthesized: Vec<Box<dyn Tool>>,
+) -> Vec<Box<dyn Tool>> {
+    let taken: std::collections::HashSet<&str> = durable.iter().map(|t| t.name()).collect();
+    let mut kept: Vec<Box<dyn Tool>> = Vec::with_capacity(synthesized.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for tool in synthesized {
+        if taken.contains(tool.name()) {
+            dropped.push(tool.name().to_string());
+        } else {
+            kept.push(tool);
+        }
+    }
+    if !dropped.is_empty() {
+        log::warn!(
+            "[agent] dropped {} synthesised delegation tool(s) whose name a durable tool already owns: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    kept
 }
 
 pub(super) fn visible_tool_specs_for_policy(

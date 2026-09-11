@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as chatService from '../../services/chatService';
 import { threadApi } from '../../services/api/threadApi';
+import { socketService } from '../../services/socketService';
 import { store } from '../../store';
 import {
   clearAllChatRuntime,
@@ -15,7 +16,12 @@ import {
   setPendingPlanReviewForThread,
 } from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
-import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
+import {
+  clearAllThreads,
+  loadThreads,
+  setActiveThread,
+  setSelectedThread,
+} from '../../store/threadSlice';
 import ChatRuntimeProvider from '../ChatRuntimeProvider';
 import { clearAllProactiveThreadPins } from '../proactiveThreadPins';
 
@@ -36,7 +42,13 @@ vi.mock('../../services/api/threadApi', () => ({
     purge: vi.fn(),
     getTaskBoard: vi.fn(),
     putTaskBoard: vi.fn(),
+    getTurnState: vi.fn(),
+    listRuns: vi.fn(),
   },
+}));
+
+vi.mock('../../services/socketService', () => ({
+  socketService: { subscribeThread: vi.fn(() => Promise.resolve(true)) },
 }));
 
 vi.mock('../../hooks/usageRefresh', () => ({ requestUsageRefresh: vi.fn() }));
@@ -88,6 +100,8 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
     resetRuntimeState();
     vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
     vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.getTurnState).mockResolvedValue(null);
+    vi.mocked(threadApi.listRuns).mockResolvedValue([]);
     vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
       id: 'tid',
       title: 'new',
@@ -480,6 +494,238 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
       // Snapshot refetch fired exactly once on the first chat_done — issue #924.
       await waitFor(() => expect(mockRefetchSnapshot).toHaveBeenCalledTimes(1));
+    });
+
+    it('persists a core-initiated (system) turn under the id the core already wrote (#5933)', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-sys',
+          request_id: 'bgdeliver-1',
+          client_id: 'system',
+          full_response: 'Same two issues as before',
+          rounds_used: 1,
+        });
+      });
+
+      // The same `agent:<run_id>` id `task_session::append_final` used, so the
+      // core's idempotent store collapses this append onto its own row instead
+      // of keeping a second copy of the reply.
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-sys',
+          expect.objectContaining({
+            id: 'agent:bgdeliver-1',
+            sender: 'agent',
+            content: 'Same two issues as before',
+            extraMetadata: expect.objectContaining({ requestId: 'bgdeliver-1' }),
+          })
+        )
+      );
+    });
+
+    it('persists a core-initiated (system) turn failure under the same core id', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-sys-err',
+          request_id: 'bgdeliver-2',
+          client_id: 'system',
+          message: 'Run failed: boom',
+          error_type: 'inference',
+          round: null,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-sys-err',
+          expect.objectContaining({ id: 'agent:bgdeliver-2', sender: 'agent' })
+        )
+      );
+    });
+
+    it('persists a second core failure with identical text under its own id (#5933)', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-sys-err-dup',
+          request_id: 'bgdeliver-a',
+          client_id: 'system',
+          message: 'Run failed: boom',
+          error_type: 'inference',
+          round: null,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-sys-err-dup',
+          expect.objectContaining({ id: 'agent:bgdeliver-a' })
+        )
+      );
+
+      // Same thread, same failure text, a different run. The core persisted
+      // this one as `agent:bgdeliver-b`; deduping on the last row's content
+      // would read the previous run's row as this one and drop the new
+      // failure from the cache entirely.
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-sys-err-dup',
+          request_id: 'bgdeliver-b',
+          client_id: 'system',
+          message: 'Run failed: boom',
+          error_type: 'inference',
+          round: null,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-sys-err-dup',
+          expect.objectContaining({ id: 'agent:bgdeliver-b', sender: 'agent' })
+        )
+      );
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('still suppresses a repeat of the same core failure event', async () => {
+      const listeners = renderProvider();
+      const fire = () =>
+        act(() => {
+          listeners.onError?.({
+            thread_id: 't-sys-err-same',
+            request_id: 'bgdeliver-c',
+            client_id: 'system',
+            message: 'Run failed: boom',
+            error_type: 'inference',
+            round: null,
+          });
+        });
+
+      fire();
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+
+      // The row is in the cache under `agent:bgdeliver-c` now, so the id check
+      // recognises the redelivery. Trading the content check for an id check
+      // must not turn a duplicate event into a duplicate append.
+      fire();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('mirrors the core id on an interactive chat_done so the two writers collapse (#6034)', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-user',
+          request_id: 'r-user',
+          full_response: 'hi',
+          rounds_used: 1,
+        });
+      });
+
+      // The core stores an unsegmented reply before announcing it, so this
+      // append must carry the same `agent:<request_id>` id — otherwise the
+      // thread ends up with the core's row AND ours, which is #5933 again.
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+      const [, persisted] = vi.mocked(threadApi.appendMessage).mock.calls[0];
+      expect(persisted.id).toBe('agent:r-user');
+      expect(persisted.sender).toBe('agent');
+    });
+
+    it('surfaces a user-visible error when neither writer stored the reply (#6034)', async () => {
+      vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('rpc timeout'));
+      // The refetch succeeds but the row is genuinely not there — the case
+      // where the core write failed too. A console line is not enough here:
+      // the user is looking at a finished turn with no answer.
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValueOnce({
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+
+      const listeners = renderProvider();
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-gone',
+          request_id: 'r-gone',
+          full_response: 'an answer nobody stored',
+          rounds_used: 1,
+        });
+      });
+
+      await waitFor(() =>
+        expect(
+          Object.values(store.getState().userErrors.byId).some(
+            e => e.kind === 'reply_delivery_failed'
+          )
+        ).toBe(true)
+      );
+    });
+
+    it('keeps a generated id for a segmented chat_done (the core left those rows to us)', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-seg',
+          request_id: 'r-seg',
+          full_response: 'one two',
+          segment_total: 2,
+          rounds_used: 1,
+        });
+      });
+
+      // Segments are the client's rows to write, several of them under one
+      // request id, so a shared deterministic id would make them collapse onto
+      // each other and lose all but the first.
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+      const [, persisted] = vi.mocked(threadApi.appendMessage).mock.calls[0];
+      expect(persisted.id).not.toBe('agent:r-seg');
+    });
+
+    it('re-reads the thread when the append fails, so the core row still renders (#6034)', async () => {
+      vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('rpc timeout'));
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'agent:r-lost',
+            content: 'the answer the core stored',
+            type: 'text',
+            sender: 'agent',
+            createdAt: new Date().toISOString(),
+            extraMetadata: {},
+          },
+        ],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onDone?.({
+          thread_id: 't-lost',
+          request_id: 'r-lost',
+          full_response: 'the answer the core stored',
+          rounds_used: 1,
+        });
+      });
+
+      // The failed append used to end the story with a debug log and no
+      // assistant row. Re-reading the thread is what brings the core's copy
+      // into the cache without the user having to ask again.
+      await waitFor(() => expect(threadApi.getThreadMessages).toHaveBeenCalledWith('t-lost'));
+      await waitFor(() =>
+        expect(
+          (store.getState().thread.messagesByThreadId['t-lost'] ?? []).some(
+            m => m.id === 'agent:r-lost'
+          )
+        ).toBe(true)
+      );
     });
 
     it('stores a parked plan review from the plan_review_request event', () => {
@@ -930,6 +1176,125 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
       await waitFor(() => expect(threadApi.createNewThread).toHaveBeenCalledTimes(1));
       expect(threadApi.appendMessage).toHaveBeenCalledWith('voice-thread-2', expect.anything());
+    });
+  });
+
+  describe('socket reconnect recovery (#6034)', () => {
+    it('rejoins the rooms of interrupted threads and re-reads them once the socket returns', async () => {
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValue({
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+
+      renderProvider();
+
+      // A turn is in flight on a thread the user is not looking at.
+      act(() => {
+        store.dispatch(setActiveThread('t-away'));
+      });
+      vi.mocked(threadApi.getThreadMessages).mockClear();
+      vi.mocked(socketService.subscribeThread).mockClear();
+
+      // The socket drops. The provider clears every active marker so the
+      // composer unlocks, which is also what erases the list the reconnect
+      // handler would have re-subscribed from.
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      expect(store.getState().thread.activeThreadIds).toEqual({});
+
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+
+      // Rejoin the room, so a turn still running can still reach us under the
+      // new client_id, and re-read the thread, so a turn that finished during
+      // the gap is not invisible until the thread is reselected.
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-away'));
+      await waitFor(() => expect(threadApi.getThreadMessages).toHaveBeenCalledWith('t-away'));
+    });
+
+    it('retries a thread whose room join never emitted, on the next connection', async () => {
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValue({
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+      // The socket dropped again between `connected` and this effect, so the
+      // emit never went out. Forgetting the thread here would strand it until
+      // the user reselected it.
+      vi.mocked(socketService.subscribeThread).mockResolvedValueOnce(false);
+
+      renderProvider();
+      act(() => {
+        store.dispatch(setActiveThread('t-flaky'));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-flaky'));
+
+      vi.mocked(socketService.subscribeThread).mockClear();
+      vi.mocked(socketService.subscribeThread).mockResolvedValue(true);
+
+      // Second reconnect: the thread is still pending, so it is retried.
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-flaky'));
+    });
+
+    it('rehydrates the in-flight turn snapshot for an interrupted thread', async () => {
+      // A socket drop takes ~3s to heal (socket.io reconnectionDelay 2000 +
+      // handshake). `thread:<id>` has NO member for that whole window, and
+      // `emit_web_channel_event` is fire-and-forget — every progress frame and
+      // even the terminal `chat_done` emitted in the gap is dropped for good.
+      //
+      // Re-reading persisted messages is not enough: it recovers the final
+      // text but not the turn's live state, so a turn STILL running after the
+      // reconnect repaints nothing and the thread sits silent until the user
+      // reselects it or restarts the app. The core already persists that state
+      // and `fetchAndHydrateTurnState` already reads it — the thread-switch
+      // path (`Conversations.tsx`) dispatches it alongside `loadThreadMessages`.
+      // The reconnect path must do the same.
+      vi.mocked(threadApi.getThreadMessages).mockResolvedValue({
+        messages: [],
+      } as unknown as Awaited<ReturnType<typeof threadApi.getThreadMessages>>);
+
+      renderProvider();
+      act(() => {
+        store.dispatch(setActiveThread('t-inflight'));
+      });
+      vi.mocked(threadApi.getTurnState).mockClear();
+
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+
+      await waitFor(() => expect(socketService.subscribeThread).toHaveBeenCalledWith('t-inflight'));
+      await waitFor(() => expect(threadApi.getTurnState).toHaveBeenCalledWith('t-inflight'));
+    });
+
+    it('does nothing on a connect with no interrupted threads', async () => {
+      renderProvider();
+      vi.mocked(socketService.subscribeThread).mockClear();
+
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'disconnected' }));
+      });
+      act(() => {
+        store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      });
+
+      // A blip with nothing in flight must not re-read every thread the user
+      // has ever opened.
+      expect(socketService.subscribeThread).not.toHaveBeenCalled();
     });
   });
 
@@ -1973,6 +2338,8 @@ describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
     resetRuntimeState();
     vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
     vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.getTurnState).mockResolvedValue(null);
+    vi.mocked(threadApi.listRuns).mockResolvedValue([]);
     vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
       id: 'tid',
       title: 'new',
@@ -2050,6 +2417,55 @@ describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
     expect(warnSpy.mock.calls.some(args => String(args[0]).includes('[skill-latency]'))).toBe(
       false
     );
+  });
+
+  it('dispatches openhuman:session-expired window event on session_expired chat error (#5868)', () => {
+    const listeners = renderProvider();
+    const received: Event[] = [];
+    const handler = (e: Event) => received.push(e);
+    window.addEventListener('openhuman:session-expired', handler);
+
+    act(() => {
+      listeners.onError?.({
+        thread_id: 't-sess',
+        request_id: 'r1',
+        error_type: 'session_expired',
+        message: 'Your OpenHuman session has expired. Please sign in again to continue.',
+      } as chatService.ChatErrorEvent);
+    });
+
+    window.removeEventListener('openhuman:session-expired', handler);
+    expect(received).toHaveLength(1);
+    expect((received[0] as CustomEvent).detail?.source).toBe('chat-error');
+    // The reason is the load-bearing half, not decoration. `CoreStateProvider`
+    // defaults a reason-less `openhuman:session-expired` to `confirmed`, which
+    // SKIPS `confirmSessionTokenGone()` and runs the destructive
+    // `clearSession()`. The core reaches this error type through
+    // `is_session_expired_message`, which also matches the local guards
+    // "no backend session token" and "session jwt required" — the transient
+    // pre-profile-load signals #2758 exists to corroborate rather than trust.
+    // Dropping this field silently reintroduces that bug through a new door,
+    // so it is asserted here, at the dispatch, where the value is decided.
+    expect((received[0] as CustomEvent).detail?.reason).toBe('unconfirmed');
+  });
+
+  it('does not dispatch openhuman:session-expired for non-session error types', () => {
+    const listeners = renderProvider();
+    const received: Event[] = [];
+    const handler = (e: Event) => received.push(e);
+    window.addEventListener('openhuman:session-expired', handler);
+
+    act(() => {
+      listeners.onError?.({
+        thread_id: 't-inf',
+        request_id: 'r1',
+        error_type: 'inference',
+        message: 'Something went wrong.',
+      } as chatService.ChatErrorEvent);
+    });
+
+    window.removeEventListener('openhuman:session-expired', handler);
+    expect(received).toHaveLength(0);
   });
 
   it('closes the latency window on chat_error without warning', () => {

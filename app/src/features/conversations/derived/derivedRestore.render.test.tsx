@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { describe, expect, it } from 'vitest';
 
@@ -73,6 +73,14 @@ describe('derived transcript restore (mapper → PastTurnInsights)', () => {
     expect(screen.getAllByTestId('processing-tool-row').length).toBeGreaterThan(0);
     // The sub-agent's own reasoning trail renders beneath.
     const subagents = screen.getByTestId('past-turn-subagents');
+    // Assert the trigger before clicking: a bare `querySelector('button')!`
+    // throws an opaque TypeError at the click, pointing the stack at the click
+    // rather than at the element that was never rendered.
+    const subagentTrigger = screen
+      .getByTestId('assistant-ui-subagent-call')
+      .querySelector('button');
+    expect(subagentTrigger).not.toBeNull();
+    fireEvent.click(subagentTrigger as HTMLElement);
     expect(subagents.textContent).toContain('child reasoning trail');
   });
 });

@@ -72,7 +72,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "schedule",
                     ty: TypeSchema::Ref("CronSchedule"),
-                    comment: "When to run — { kind: 'cron', expr } | { kind: 'at', at } | { kind: 'every', every_ms }.",
+                    comment: "When to run — { kind: 'cron', expr } | { kind: 'at', at } | { kind: 'every', every_ms }. \
+                              Agent jobs must run at least 5 minutes apart.",
                     required: true,
                 },
                 FieldSchema {
@@ -163,7 +164,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "patch",
                     ty: TypeSchema::Ref("CronJobPatch"),
-                    comment: "Partial update payload with the fields to mutate.",
+                    comment: "Partial update payload with the fields to mutate. A new schedule on an agent job \
+                              must keep runs at least 5 minutes apart.",
                     required: true,
                 },
             ],
@@ -201,10 +203,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        // The handler enqueues the execution on a background task and returns
+        // as soon as the job is queued, so the declared output describes the
+        // enqueue acknowledgement — not the terminal outcome. Declaring
+        // `ok`/`error`, `duration_ms` or `output` here would promise a shape
+        // this controller cannot produce; those live in `cron_runs`.
         "run" => ControllerSchema {
             namespace: "cron",
             function: "run",
-            description: "Run a cron job immediately and record run metadata.",
+            description: "Enqueue a cron job for immediate background execution and return once it \
+                          is queued. The terminal outcome (ok/error, duration, output) is recorded \
+                          in the run history — read it with `cron_runs`.",
             inputs: vec![job_id_input(
                 "Identifier of the cron job to execute immediately.",
             )],
@@ -215,32 +224,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
                         FieldSchema {
                             name: "job_id",
                             ty: TypeSchema::String,
-                            comment: "Executed cron job identifier.",
+                            comment: "Enqueued cron job identifier.",
                             required: true,
                         },
                         FieldSchema {
                             name: "status",
                             ty: TypeSchema::Enum {
-                                variants: vec!["ok", "error"],
+                                variants: vec!["queued"],
                             },
-                            comment: "Execution status.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "duration_ms",
-                            ty: TypeSchema::I64,
-                            comment: "Execution duration in milliseconds.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "output",
-                            ty: TypeSchema::String,
-                            comment: "Captured command output (possibly truncated).",
+                            comment: "Always \"queued\" — the job runs in the background; poll \
+                                      `cron_runs` for the terminal status.",
                             required: true,
                         },
                     ],
                 },
-                comment: "Immediate execution result payload.",
+                comment: "Enqueue acknowledgement payload.",
                 required: true,
             }],
         },

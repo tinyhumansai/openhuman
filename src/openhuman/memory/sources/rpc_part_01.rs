@@ -502,6 +502,53 @@ pub struct SyncResponse {
     pub source_id: String,
 }
 
+/// Which sync path a source row belongs to.
+///
+/// Extracted because there are **two** callers and they disagreed. The per-row
+/// Sync button ([`sync_rpc`]) special-cased Composio; the Apply-all sweep
+/// ([`apply_all_in_rpc`]) dispatched every enabled row through
+/// `MemorySourceSync`, which the driver refuses for Composio ("… is synced
+/// through the connector module, not this engine"). So "sync everything" failed
+/// for exactly the rows a user most expects it to fix (openhuman#6007). Two call
+/// sites open-coding one rule is how that happened; both now match on this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SyncDispatch {
+    /// Connector-mediated. tinymemory v1.13.4 removed the engine's in-process
+    /// Composio sync, so the connector-backed run IS the sync for this kind —
+    /// the same entry point the `openhuman.composio_sync` RPC uses, which reads
+    /// the connected account through the module and ingests through this same
+    /// binding.
+    Connector {
+        connection_id: String,
+        max_items: Option<u32>,
+    },
+    /// The memory driver's own source pipeline — folder, git, RSS, and every
+    /// other tree-coupled kind.
+    Driver,
+}
+
+/// Resolve a source row to its sync path.
+///
+/// The only failure is a Composio row carrying no `connection_id`: the connector
+/// call is addressed *by* connection, so there is nothing to sync and nothing to
+/// guess. That is a malformed row rather than a transient fault, which is why the
+/// message says to remove and re-add rather than to retry.
+pub(crate) fn sync_dispatch(entry: &MemorySourceEntry) -> Result<SyncDispatch, String> {
+    if entry.kind != tinymemory_sources::types::SourceKind::Composio {
+        return Ok(SyncDispatch::Driver);
+    }
+    let connection_id = entry.connection_id.clone().ok_or_else(|| {
+        format!(
+            "composio source '{}' has no connection_id; remove and re-add the source",
+            entry.id
+        )
+    })?;
+    Ok(SyncDispatch::Connector {
+        connection_id,
+        max_items: entry.max_items,
+    })
+}
+
 pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, String> {
     tracing::info!(source_id = %req.source_id, "[memory_sources] sync_rpc: entry");
 
@@ -522,26 +569,20 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
         if !entry.enabled {
             return Err(format!("source '{}' is disabled", entry.id));
         }
-        // Composio rows never reach the memory driver's pipeline: v1.13.4
-        // removed the engine's in-process Composio sync, and the driver now
-        // answers this id with "synced through the connector module, not this
-        // pipeline". The connector-backed run IS the sync for this kind, so
-        // the one Sync button dispatches there — same entry point the
-        // `openhuman.composio_sync` RPC uses, which reads the connected
-        // account through the module and ingests through this same binding.
-        if entry.kind == tinymemory_sources::types::SourceKind::Composio {
-            let connection_id = entry.connection_id.as_deref().ok_or_else(|| {
-                format!(
-                    "composio source '{}' has no connection_id; remove and re-add the source",
-                    entry.id
-                )
-            })?;
+        // Composio rows never reach the memory driver's pipeline — see
+        // [`SyncDispatch`], which both this button and the Apply-all sweep read
+        // the rule from.
+        if let SyncDispatch::Connector {
+            connection_id,
+            max_items,
+        } = sync_dispatch(&entry)?
+        {
             crate::openhuman::integrations::composio::ops::composio_sync_budgeted(
                 &config,
-                connection_id,
+                &connection_id,
                 Some("manual".to_string()),
                 Some(entry.id.clone()),
-                entry.max_items,
+                max_items,
             )
             .await?;
             return Ok(RpcOutcome::new(

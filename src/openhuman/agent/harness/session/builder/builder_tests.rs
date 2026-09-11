@@ -67,3 +67,5 @@ fn custom_profile(
 mod part_01_tests;
 #[path = "builder_tests_part_02_tests.rs"]
 mod part_02_tests;
+#[path = "builder_tests_part_03_tests.rs"]
+mod part_03_tests;

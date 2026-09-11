@@ -1,4 +1,5 @@
 import packageJson from '../../package.json';
+import { DISCORD_INVITE_URL } from './links';
 
 const APP_ENV = (import.meta.env.VITE_OPENHUMAN_APP_ENV as string | undefined)
   ?.trim()
@@ -246,10 +247,53 @@ export const OPENHUMAN_GITHUB_REPO_URL = ((): string => {
   }
 })();
 
-/** Support page base URL. The crash screen appends `?ref=<sentryEventId>` so support can correlate a user's pasted Error ID to the exact Sentry event. Override via VITE_SUPPORT_URL for deployment-specific support endpoints. */
-export const SUPPORT_URL =
-  (import.meta.env.VITE_SUPPORT_URL as string | undefined)?.trim() ||
-  'https://tinyhumans.ai/support';
+const SUPPORT_URL_OVERRIDE = (import.meta.env.VITE_SUPPORT_URL as string | undefined)?.trim();
+
+/**
+ * Where "Contact Support" on the crash screen sends the user.
+ *
+ * The default is the community Discord — `https://tinyhumans.ai/support` 404s
+ * (#5870). It is the same value as `links.ts`'s `DISCORD_INVITE_URL` and is
+ * imported from there rather than repeated, so moving the vanity domain is one
+ * edit and not two.
+ *
+ * Override with `VITE_SUPPORT_URL` for a deployment that runs a real support
+ * endpoint. See {@link SUPPORT_URL_ACCEPTS_REF} for why that distinction is
+ * load-bearing rather than cosmetic.
+ */
+export const SUPPORT_URL = SUPPORT_URL_OVERRIDE || DISCORD_INVITE_URL;
+
+/**
+ * Whether {@link SUPPORT_URL} is a destination that can consume
+ * `?ref=<sentryEventId>`.
+ *
+ * Only an explicitly configured endpoint can: a Discord invite renders a join
+ * page and ignores the query entirely, so appending a ref there produces a
+ * link that looks like it carries the crash id and does not — the correlation
+ * the ref exists for silently stops happening (tinysweeper on #5953).
+ *
+ * The crash screen still surfaces the Error ID as copyable text
+ * (`ErrorFallbackScreen`), so the user can carry it into the Discord thread by
+ * hand; what this flag removes is the *false* promise, not the path.
+ *
+ * Defaults to "an override is configured", because `VITE_SUPPORT_URL` exists
+ * for deployment-specific *support endpoints* and one of those can consume a
+ * ref by definition. Set `VITE_SUPPORT_URL_ACCEPTS_REF=false` for the case
+ * that inference gets wrong — an override pointed at a chat invite, which
+ * ignores the query the same way the Discord default does. The escape hatch is
+ * an opt-OUT rather than an opt-in on purpose: defaulting to `false` would
+ * make the *useful* behaviour the one a deployer can forget to switch on, and
+ * forgetting it fails silently, which is the exact failure this whole flag
+ * exists to remove.
+ */
+const SUPPORT_URL_ACCEPTS_REF_OVERRIDE = (
+  import.meta.env.VITE_SUPPORT_URL_ACCEPTS_REF as string | undefined
+)?.trim();
+
+export const SUPPORT_URL_ACCEPTS_REF =
+  SUPPORT_URL_ACCEPTS_REF_OVERRIDE !== undefined && SUPPORT_URL_ACCEPTS_REF_OVERRIDE !== ''
+    ? SUPPORT_URL_ACCEPTS_REF_OVERRIDE === 'true'
+    : Boolean(SUPPORT_URL_OVERRIDE);
 
 /**
  * Set `VITE_SENTRY_SMOKE_TEST=true` in one build (or in `.env.local`) to

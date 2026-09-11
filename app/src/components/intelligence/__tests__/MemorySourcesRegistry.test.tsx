@@ -17,6 +17,7 @@ import {
   openhumanUpdateMemorySyncSettings,
 } from '../../../utils/tauriCommands/config';
 import {
+  memoryTreeBackfillStatus,
   memoryTreePipelineStatus,
   type MemoryTreePipelineStatus,
 } from '../../../utils/tauriCommands/memoryTree';
@@ -39,9 +40,11 @@ vi.mock('../../../services/memorySourcesService', async () => {
 });
 
 // Mock tauriCommands/memoryTree. The registry now also polls
-// memoryTreePipelineStatus for downstream health (GH-4690); default it to a
-// healthy running snapshot so no source row shows a spurious warning.
+// memoryTreePipelineStatus for downstream health (GH-4690) and
+// memoryTreeBackfillStatus for embed work in flight (openhuman#6025); default
+// both to a healthy, idle snapshot so no source row shows a spurious warning.
 vi.mock('../../../utils/tauriCommands/memoryTree', () => ({
+  memoryTreeBackfillStatus: vi.fn().mockResolvedValue({ in_progress: false, pending_jobs: 0 }),
   memoryTreeFlushSource: vi.fn().mockResolvedValue({ seals_fired: 0 }),
   memoryTreePipelineStatus: vi
     .fn()
@@ -70,6 +73,7 @@ const mockedApplyAllIn = vi.mocked(service.applyAllIn);
 const mockedGetSync = vi.mocked(openhumanGetMemorySyncSettings);
 const mockedUpdateSync = vi.mocked(openhumanUpdateMemorySyncSettings);
 const mockedPipeline = vi.mocked(memoryTreePipelineStatus);
+const mockedBackfill = vi.mocked(memoryTreeBackfillStatus);
 
 /** A healthy `memory_tree_pipeline_status` snapshot (no degradation). */
 function healthyPipeline(
@@ -131,6 +135,7 @@ describe('MemorySourcesRegistry', () => {
     // Default: schedule RPCs succeed with the unset/default 24h view.
     mockedGetSync.mockResolvedValue(syncSettings());
     mockedUpdateSync.mockResolvedValue(syncSettings());
+    mockedBackfill.mockResolvedValue({ in_progress: false, pending_jobs: 0 });
   });
 
   // -------------------------------------------------------------------------
@@ -147,6 +152,53 @@ describe('MemorySourcesRegistry', () => {
     mockedStatus.mockResolvedValue([]);
     renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
     await screen.findByText(/no memory sources/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Embed backlog: pending vs stuck (openhuman#6025)
+  // -------------------------------------------------------------------------
+  it('hands the backfill snapshot to rows so a draining backlog reads as pending, not failed', async () => {
+    // Nothing about this source alone says "still moving" (idle freshness);
+    // only the registry's backfill poll does. If the poll were not wired
+    // through to the row, this would render the amber warning.
+    mockedStatus.mockResolvedValue([
+      {
+        source_id: 'src_1',
+        chunks_synced: 10,
+        chunks_pending: 4,
+        last_chunk_at_ms: 0,
+        freshness: 'idle',
+      },
+    ]);
+    mockedBackfill.mockResolvedValue({ in_progress: true, pending_jobs: 1 });
+    mockedList.mockResolvedValue([makeSource()]);
+    renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+
+    const note = await screen.findByTestId('memory-source-vectors-pending-src_1');
+    expect(note).toHaveTextContent('Chunks waiting for vectors: 4');
+    expect(screen.queryByTestId('memory-source-pipeline-warning-src_1')).not.toBeInTheDocument();
+    expect(mockedBackfill).toHaveBeenCalled();
+  });
+
+  it('falls back to the amber warning when the backfill poll fails and nothing is fresh', async () => {
+    // Best-effort: a failed backfill RPC must neither hide the source list
+    // nor invent a "draining" state. With the source idle, the truthful
+    // verdict is the warning.
+    mockedStatus.mockResolvedValue([
+      {
+        source_id: 'src_1',
+        chunks_synced: 10,
+        chunks_pending: 4,
+        last_chunk_at_ms: 0,
+        freshness: 'idle',
+      },
+    ]);
+    mockedBackfill.mockRejectedValue(new Error('backfill_status unavailable'));
+    mockedList.mockResolvedValue([makeSource()]);
+    renderWithProviders(<MemorySourcesRegistry pollIntervalMs={0} />);
+
+    await screen.findByTestId('memory-source-pipeline-warning-src_1');
+    expect(screen.queryByTestId('memory-source-vectors-pending-src_1')).not.toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
@@ -622,8 +674,10 @@ describe('MemorySourcesRegistry', () => {
           source_id: 'src_1',
           chunks_synced: 1,
           chunks_pending: 1,
-          last_chunk_at_ms: Date.now(),
-          freshness: 'recent',
+          // Long idle: nothing is draining this backlog (openhuman#6025 —
+          // a recent chunk or a running backfill would read as "pending").
+          last_chunk_at_ms: Date.now() - 60 * 60_000,
+          freshness: 'idle',
         },
       ]);
       // Even with a "healthy" global snapshot, the per-source pending chunks
@@ -637,7 +691,7 @@ describe('MemorySourcesRegistry', () => {
         /Stored without vectors/i
       );
       // Clean freshness badge must be gone.
-      expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+      expect(screen.queryByText('Idle')).not.toBeInTheDocument();
       // A link to the full memory-health panel is offered.
       expect(screen.getByTestId('memory-source-view-health-src_1')).toBeInTheDocument();
     });

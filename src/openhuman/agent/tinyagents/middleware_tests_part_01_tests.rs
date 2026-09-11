@@ -1,4 +1,8 @@
+// Imported here rather than in `middleware_part_01.rs` since #6014: the
+// production install site moved to `assemble_turn_harness` (which names it
+// fully-qualified), so the module itself no longer references the type.
 use super::*;
+use tinyagents_harness::middleware::MicrocompactMiddleware;
 
 // #4462: image-aware token estimation. A base64 image marker must be priced
 // at the flat IMAGE_MARKER_TOKEN_COST, not chars/4 of its payload — otherwise

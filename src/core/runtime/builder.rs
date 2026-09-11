@@ -841,7 +841,16 @@ impl CoreRuntime {
             });
         }
 
-        if let Some(shutdown_token) = shutdown_token {
+        // Arms memory's exit gate for the eventual exit (and clears one a
+        // previous server in this process may have left): from here on a
+        // memory binding built during exit is refused rather than missed.
+        crate::openhuman::memory::exit::server_starting();
+
+        // The serve result is held, not propagated, until the exit work below
+        // has run. A `?` here on a server error would skip the memory teardown
+        // on exactly the exits where a wedged store is likeliest, and the
+        // callers only forward the error — nobody else runs the cleanup.
+        let served = if let Some(shutdown_token) = shutdown_token {
             log::info!(
                 "[core] embedded server waiting on cancellation token for graceful shutdown"
             );
@@ -849,12 +858,25 @@ impl CoreRuntime {
                 .with_graceful_shutdown(async move {
                     shutdown_token.cancelled().await;
                 })
-                .await?;
+                .await
         } else {
             axum::serve(listener, app)
                 .with_graceful_shutdown(crate::core::shutdown::signal())
-                .await?;
+                .await
+        };
+        if let Err(error) = &served {
+            log::warn!(
+                "[core] embedded server ended with an error; running exit cleanup before \
+                 reporting it: {error}"
+            );
         }
+
+        // Memory first. The engine's queue worker holds leases on in-flight
+        // jobs, and releasing them is a write to the store, so it has to happen
+        // while the store is still open and before anything else on the way
+        // out (tinymemory#133). Bounded inside, on one shared deadline: a
+        // wedged store costs at most that budget, never the exit.
+        crate::openhuman::memory::exit::shutdown_for_exit().await;
 
         // Server has stopped accepting and in-flight requests drained. Kill any
         // `ollama serve` openhuman itself spawned (no-op when externally
@@ -876,6 +898,7 @@ impl CoreRuntime {
             }
         }
 
+        served?;
         Ok(())
     }
 

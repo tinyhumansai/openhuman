@@ -17,6 +17,7 @@ interface SubscriptionPlansProps {
   isPurchasing: boolean;
   purchasingTier: PlanTier | null;
   paymentConfirmed: boolean;
+  upgradesDisabled?: boolean;
   onUpgrade: (tier: PlanTier) => void;
 }
 
@@ -29,6 +30,7 @@ const SubscriptionPlans = ({
   isPurchasing,
   purchasingTier,
   paymentConfirmed,
+  upgradesDisabled = false,
   onUpgrade,
 }: SubscriptionPlansProps) => {
   const { t } = useT();
@@ -228,7 +230,7 @@ const SubscriptionPlans = ({
                       size="sm"
                       className="rounded-full"
                       onClick={() => onUpgrade(plan.tier)}
-                      disabled={isPurchasing}>
+                      disabled={isPurchasing || upgradesDisabled}>
                       {isThisPurchasing
                         ? t('settings.billing.subscription.waiting')
                         : t('settings.billing.subscription.upgrade')}

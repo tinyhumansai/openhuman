@@ -4,7 +4,7 @@
 use crate::openhuman::memory::api::provider::chunks::ChunkQuery;
 use crate::openhuman::memory::api::provider::retrieval::{CoverWindowQuery, FastRetrieveQuery};
 use crate::openhuman::memory::api::provider::types::SourceScope;
-use crate::openhuman::memory::api::provider::{MemoryProvider, MemoryTree};
+use crate::openhuman::memory::api::provider::{MemoryMaintenance, MemoryProvider, MemoryTree};
 use crate::openhuman::memory::api::tree::IngestRequest;
 use crate::openhuman::memory::api::types::MemoryTaint;
 
@@ -670,4 +670,50 @@ async fn summarise_inputs_are_not_redacted_for_an_embedded_driver() {
         .await
         .expect("summarise");
     assert_eq!(driver.only_call().content.as_deref(), Some(secrety));
+}
+
+/// openhuman#6012, review finding: a dry run is a read.
+///
+/// The member is tiered by what the call *does*, not by what it could do. A dry
+/// run counts what a pass would examine and writes nothing, so a `readonly`
+/// operator must be able to make it — that is the safe way to size an expensive
+/// job, and it is the default (`dry_run` omitted means `true`), so gating it
+/// behind the write tier would have refused the ordinary request outright.
+/// Executing re-files documents and stays refused at that tier.
+#[tokio::test]
+async fn guard_admits_a_backfill_dry_run_at_readonly_but_refuses_the_executing_pass() {
+    use crate::openhuman::memory::api::provider::types::BackfillTreesRequest;
+
+    let dir = std::env::temp_dir();
+    let _tier = live_policy::install_scoped(
+        std::sync::Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::ReadOnly,
+            ..SecurityPolicy::default()
+        }),
+        dir.clone(),
+        dir,
+    );
+
+    let (_driver, guard) = guarded(embedded_policy());
+    let maintenance = guard.as_maintenance().expect("maintenance family");
+
+    maintenance
+        .backfill_connector_trees(BackfillTreesRequest {
+            limit: None,
+            dry_run: true,
+        })
+        .await
+        .expect("a dry run writes nothing, so a readonly tier must admit it");
+
+    let err = maintenance
+        .backfill_connector_trees(BackfillTreesRequest {
+            limit: None,
+            dry_run: false,
+        })
+        .await
+        .expect_err("a readonly tier must refuse the executing pass");
+    assert!(
+        err.to_string().contains("memory guard: "),
+        "the refusal must come from the guard, not the driver: {err}"
+    );
 }

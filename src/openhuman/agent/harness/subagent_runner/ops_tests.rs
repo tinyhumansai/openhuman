@@ -253,6 +253,7 @@ fn make_parent(
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),

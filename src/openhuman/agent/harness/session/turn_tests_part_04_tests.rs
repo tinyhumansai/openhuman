@@ -462,3 +462,150 @@ fn skill_retraction_note_names_removed_skills_and_warns_against_run_skill() {
         "retraction note must not look like an install announcement: {note}"
     );
 }
+
+// ── Lane B through the production memory handle (#6041) ─────────────────────
+//
+// Every other turn test binds the embedded store, whose `Memory` impl answers
+// `recall_relevant_by_vector` itself. Production binds `DriverMemory`, which
+// sat on the trait's empty default — so Lane B never injected anything on a
+// module-backed install and no test noticed. These run the real `turn()` over
+// `DriverMemory` on a scripted driver.
+
+use crate::openhuman::agent::experience::ops::DriverMemory;
+use crate::openhuman::memory::api::provider::MemoryProvider;
+use crate::openhuman::memory::guard::test_support::{
+    namespace_hit, namespace_summary, RecordingProvider,
+};
+use crate::openhuman::memory::preferences::USER_PREF_SITUATIONAL_NAMESPACE;
+
+const PREFERENCES_BANNER: &str = "## Relevant preferences for this message";
+
+pub(super) fn scripted_reply(text: &str) -> Arc<SequenceProvider> {
+    Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some(text.into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
+    })
+}
+
+/// A turn-capable agent whose memory is the production adapter over `driver`.
+fn make_agent_over_driver(
+    provider: Arc<dyn ChatModel<()>>,
+    driver: Arc<RecordingProvider>,
+) -> Agent {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    std::mem::forget(workspace);
+    let mem: Arc<dyn Memory> = Arc::new(DriverMemory::new(driver as Arc<dyn MemoryProvider>));
+
+    Agent::builder()
+        .chat_model(provider)
+        .tools(vec![])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .config(crate::openhuman::config::AgentConfig::default())
+        .context_config(crate::openhuman::config::ContextConfig::default())
+        .workspace_dir(workspace_path)
+        .event_context("turn-test-session", "turn-test-channel")
+        .build()
+        .unwrap()
+}
+
+/// The user messages the model was sent on the first (only) request.
+async fn first_request_user_messages(provider: &SequenceProvider) -> Vec<String> {
+    let requests = provider.requests.lock().await;
+    let request = requests.first().expect("the model was called once");
+    request
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn situational_preference_reaches_the_model_through_driver_memory() {
+    // The namespace must look populated (a non-zero count) before Lane B pays
+    // for the vector recall; then the scored hits decide what is injected.
+    let driver = Arc::new(
+        RecordingProvider::new()
+            .with_namespace_summaries(vec![namespace_summary(USER_PREF_SITUATIONAL_NAMESPACE, 2)])
+            .with_namespace_hits(vec![
+                namespace_hit(
+                    USER_PREF_SITUATIONAL_NAMESPACE,
+                    "editor",
+                    "Prefers vim for editing code.",
+                    0.9,
+                ),
+                namespace_hit(
+                    USER_PREF_SITUATIONAL_NAMESPACE,
+                    "lexical_only",
+                    "Shares words, means nothing.",
+                    0.1,
+                ),
+            ]),
+    );
+    let provider_impl = scripted_reply("vim it is.");
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+    let mut agent = make_agent_over_driver(provider, driver.clone());
+
+    agent
+        .turn("which editor should I use for this rust project?")
+        .await
+        .expect("turn succeeds");
+
+    assert!(
+        driver
+            .calls()
+            .iter()
+            .any(|c| c.method == "retrieval.recall_namespace_scored"),
+        "Lane B must ask the driver, not the trait default: {:?}",
+        driver.calls()
+    );
+    let user = first_request_user_messages(&provider_impl).await;
+    let last = user.last().expect("a user message");
+    assert!(
+        last.contains(PREFERENCES_BANNER) && last.contains("Prefers vim for editing code."),
+        "the situational preference must ride the user message: {last}"
+    );
+    assert!(
+        !last.contains("Shares words, means nothing."),
+        "a hit below the vector floor must not be injected: {last}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_situational_preference_means_no_block_and_no_embed_through_driver_memory() {
+    // Nothing stored under the situational namespace: the lane must find that
+    // out from the namespace counts and never reach the vector recall, which
+    // is the call that embeds the message.
+    let driver = Arc::new(RecordingProvider::new());
+    let provider_impl = scripted_reply("Sunny.");
+    let provider: Arc<dyn ChatModel<()>> = provider_impl.clone();
+    let mut agent = make_agent_over_driver(provider, driver.clone());
+
+    agent
+        .turn("what's the weather today")
+        .await
+        .expect("turn succeeds");
+    let user = first_request_user_messages(&provider_impl).await;
+    assert!(
+        user.iter().all(|u| !u.contains(PREFERENCES_BANNER)),
+        "an empty answer must inject nothing: {user:?}"
+    );
+    let methods: Vec<String> = driver.calls().into_iter().map(|c| c.method).collect();
+    assert!(
+        methods.iter().any(|m| m == "core.namespaces"),
+        "the lane must ask for the namespace counts: {methods:?}"
+    );
+    assert!(
+        !methods
+            .iter()
+            .any(|m| m == "retrieval.recall_namespace_scored"),
+        "an empty namespace must not cost an embed round trip: {methods:?}"
+    );
+}

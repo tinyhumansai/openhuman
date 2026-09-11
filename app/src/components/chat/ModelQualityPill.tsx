@@ -21,8 +21,35 @@ interface ModelQualityPillProps {
   onValueChange?: (value: string | null, contextWindow?: number | null) => void;
 }
 
+/**
+ * A managed passthrough model id: `openrouter/<author>/<slug>`, optionally with
+ * a `:tag` variant suffix (`:free`, `:nitro`).
+ *
+ * These are encoded BARE (no `slug:` prefix) because the managed backend
+ * addresses its own models directly. Both round-trip helpers below must special
+ * case them: a BYOK value is `providerSlug:model` where the slug never contains
+ * `/`, so splitting a passthrough id on `:` would parse
+ * `openrouter/nex-agi/nex-n2.5-mini:free` as provider
+ * `openrouter/nex-agi/nex-n2.5-mini` + model `free`, and one without any `:`
+ * would decode to null and silently drop the selection on reopen.
+ */
+/**
+ * Stable empty list. An inline `[]` prop is a new identity on every render,
+ * which re-triggered the picker's catalog effect each render.
+ */
+const NO_LOCAL_MODELS: never[] = [];
+
+function isManagedPassthroughId(value: string): boolean {
+  if (!value.startsWith('openrouter/')) return false;
+  const rest = value.slice('openrouter/'.length).split(':')[0];
+  return rest.split('/').filter(Boolean).length === 2;
+}
+
 function selectionFromValue(value: string | null | undefined): ProviderModelSelection | null {
   if (!value || value.startsWith('hint:')) return null;
+  if (isManagedPassthroughId(value)) {
+    return { source: { kind: 'managed' }, model: value };
+  }
   const separator = value.indexOf(':');
   if (separator <= 0 || separator === value.length - 1) return null;
   return {
@@ -34,9 +61,13 @@ function selectionFromValue(value: string | null | undefined): ProviderModelSele
 function selectionValue(selection: ProviderModelSelection): string | null {
   const { source, model } = selection;
   switch (source.kind) {
-    // Managed has no model id to encode — clearing the override IS the choice.
+    // Managed with no model keeps the original contract: clearing the override
+    // IS the choice, and the product routes per workload. A pinned catalog id
+    // (e.g. `openrouter/deepseek/deepseek-v4-flash`) is sent bare — no
+    // `slug:` prefix — because the managed backend addresses its own models
+    // directly, and a prefix would be parsed as a BYOK provider selector.
     case 'managed':
-      return null;
+      return model.trim() ? model.trim() : null;
     case 'cloud':
       return `${source.providerSlug}:${model}`;
     case 'local':
@@ -48,6 +79,12 @@ function selectionValue(selection: ProviderModelSelection): string | null {
 
 function displayValue(value: string | null | undefined): string {
   if (!value || value.startsWith('hint:')) return 'OpenHuman';
+  // Managed ids carry no `providerSlug:` prefix to strip, and slicing on `:`
+  // would reduce `…/nex-n2.5-mini:free` to just `free`. Show the model name.
+  if (isManagedPassthroughId(value)) {
+    const rest = value.slice('openrouter/'.length);
+    return rest.split('/').slice(1).join('/');
+  }
   const separator = value.indexOf(':');
   return separator >= 0 ? value.slice(separator + 1) : value;
 }
@@ -122,7 +159,7 @@ export default function ModelQualityPill({
       {open && !loading && (
         <ProviderModelPickerDialog
           cloudProviders={providers}
-          localModels={[]}
+          localModels={NO_LOCAL_MODELS}
           ollamaRunning={false}
           claudeCodeEnabled={false}
           initial={initial}

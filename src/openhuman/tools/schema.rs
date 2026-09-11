@@ -4,3 +4,7 @@
 //! as the stable host import path for existing tools and controller code.
 
 pub use tinyagents_harness::tool::{CleaningStrategy, SchemaCleanr, GEMINI_UNSUPPORTED_KEYWORDS};
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod tests;

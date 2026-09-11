@@ -476,6 +476,46 @@ class SocketService {
   }
 
   /**
+   * Join one thread's event room.
+   *
+   * The reconnect handler re-subscribes from `activeThreadIds`, which the chat
+   * runtime clears when the socket drops — so a turn left in flight on a thread
+   * the user had navigated away from has no room to be delivered into once a new
+   * `client_id` is issued, and its `chat_done` reaches nobody. `ChatRuntimeProvider`
+   * calls this for the threads it remembers across that gap (#6034).
+   *
+   * Emitting the room join directly rather than through {@link emit} keeps a
+   * disconnected call quiet: re-subscription is what the `connect` handler
+   * already does, so a warning here would only be noise.
+   */
+  subscribeThread(threadId: string, timeoutMs = 3000): Promise<boolean> {
+    if (!threadId || !this.socket?.connected) return Promise.resolve(false);
+    socketLog('Subscribing to thread room', { threadId });
+    const socket = this.socket;
+    return new Promise<boolean>(resolve => {
+      let settled = false;
+      const finish = (joined: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(joined);
+      };
+      // A caller that reads the thread after this resolves cannot race the
+      // join: the server acknowledges only once the socket is in the room.
+      // The timeout keeps a server that never acks (an older core) from
+      // stalling recovery — the read still happens, just without the ordering
+      // guarantee, which is exactly the pre-ack behaviour.
+      const timer = setTimeout(() => {
+        socketWarn('Thread room subscription not acknowledged', { threadId });
+        finish(false);
+      }, timeoutMs);
+      socket.emit('thread:subscribe', { thread_id: threadId }, () => {
+        clearTimeout(timer);
+        finish(true);
+      });
+    });
+  }
+
+  /**
    * Listen to an event from the server
    */
   on(event: string, callback: (...args: unknown[]) => void): void {

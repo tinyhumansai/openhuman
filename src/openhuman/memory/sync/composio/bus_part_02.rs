@@ -333,13 +333,12 @@ impl EventHandler<DomainEvent> for ComposioConnectionCreatedSubscriber {
                 // bound driver's `MemorySourceSink` instead — the same
                 // `run_sync_pass` helper every other sync entry point in this
                 // domain uses now.
-                let attempted = crate::openhuman::integrations::composio::ops::run_sync_pass(
+                let attempted = crate::openhuman::integrations::composio::ops::run_sync_within_budget(
                     &host_config,
                     &toolkit,
                     &connection_id,
                     "connection_created",
-                                    crate::openhuman::integrations::composio::ops::SYNC_PASS_MAX_ITEMS,
-)
+                )
                 .await;
                 match attempted {
                     Ok(pass) => {

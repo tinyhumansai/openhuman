@@ -556,6 +556,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'In Entwicklungs-Builds immer aktiviert',
   'settings.clearAppData': 'App-Daten löschen',
   'settings.clearAppDataDesc': 'Melde dich ab und lösche alle lokalen App-Daten dauerhaft',
+  'settings.clearAppDataIrreversible': 'Dies kann nicht rückgängig gemacht werden.',
+  'settings.clearAppDataAction': 'Daten löschen',
   'settings.logOut': 'Abmelden',
   'settings.logOutDesc': 'Melde dich von deinem Konto ab',
   'settings.exitLocalSession': 'Lokale Sitzung beenden',
@@ -2689,6 +2691,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Demnächst',
   'memorySources.composioListFailed': 'Fehler beim Laden der Composio-Verbindungen.',
   'memorySources.browse': 'Durchsuchen…',
+  'memorySources.folderPathUnavailable':
+    'Der Speicherort dieses Ordners konnte nicht ermittelt werden. Geben Sie stattdessen den vollständigen Pfad ein.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': 'Md. ',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2711,6 +2715,9 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'Elemente synchronisiert',
   'memorySources.sync.upToDate': 'Aktuell',
   'memorySources.sync.failedLabel': 'Fehlgeschlagen',
+  'memorySources.sync.morePending': 'Mehr zu synchronisieren. Erneut auf Synchronisieren klicken',
+  'memorySources.sync.budgetSpent':
+    'Das heutige Anfragebudget ist aufgebraucht. Morgen erneut versuchen',
   'time.justNow': 'gerade eben',
   'time.secondsAgoSuffix': 'vor {count} Sek.',
   'time.minutesAgoSuffix': 'vor {count} Min.',
@@ -2754,6 +2761,19 @@ const messages: TranslationMap = {
     'Keine Synchronisierung konnte gestartet werden. Prüfe jede Quelle, um den Grund zu sehen.',
   'memorySources.allIn.partial':
     'Gestartete Synchronisierungen: {triggered}. Nicht startbar: {failed}.',
+  'memorySources.repair.button': 'Ältere Erinnerungen reparieren',
+  'memorySources.repair.title': 'Ältere Erinnerungen reparieren?',
+  'memorySources.repair.message':
+    'Bis zu {scanned} synchronisierte Dokumente wurden gespeichert, bevor die Ablage im Gedächtnisbaum korrigiert wurde, und sind im Gedächtnisgraphen unsichtbar. Das Ablegen verbraucht Embedding-Guthaben. Bereits abgelegte Dokumente werden übersprungen.',
+  'memorySources.repair.confirm': 'Reparieren',
+  'memorySources.repair.cancel': 'Nicht jetzt',
+  'memorySources.repair.nothing':
+    'Nichts zu reparieren. Keine synchronisierten Dokumente warten auf die Ablage.',
+  'memorySources.repair.success':
+    '{ingested} im Gedächtnisbaum abgelegt ({already} bereits vorhanden, {skipped} übersprungen).',
+  'memorySources.repair.morePending':
+    'Es sind noch weitere übrig. Erneut auf „Ältere Erinnerungen reparieren“ klicken.',
+  'memorySources.repair.failed': 'Ältere Erinnerungen konnten nicht repariert werden.',
   'memorySources.settings.button': 'Einstellungen',
   'memorySources.settings.title': 'Synchronisierungseinstellungen',
   'memorySources.settings.maxPrs': 'Maximale Pull-Requests',
@@ -2767,7 +2787,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Unbegrenzt',
   'memorySources.settings.unlimitedTooltip':
     'Du hast dich entschieden, das Maximum für {toolkit} zu synchronisieren. Du kannst die Limits hier ändern.',
-  'memorySources.settings.maxed': 'Voll',
   'memorySources.settings.save': 'Speichern',
   'memorySources.settings.saving': 'Speichern…',
   'memorySources.settings.saved': 'Einstellungen gespeichert',
@@ -3442,6 +3461,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'fehlgeschlagen',
   'conversations.subagent.statusAwaitingUser': 'warte auf Benutzer',
   'conversations.subagent.statusCancelled': 'abgebrochen',
+  'conversations.subagent.awaitingTitle': 'Wartet auf deine Antwort',
+  'conversations.subagent.answerPlaceholder': 'Antwort eingeben',
+  'conversations.subagent.answerSend': 'Antwort senden',
+  'conversations.subagent.answerSent': 'Antwort gesendet',
   'conversations.agentTaskInsights.title': 'Agenten-Aufgabeneinblicke',
   'conversations.agentTaskInsights.response': 'Antwort',
   'conversations.agentTaskInsights.processSourceTitle': 'Agentenprozess-Quelle',
@@ -5055,6 +5078,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Ereignisprotokoll',
   'settings.developerMenu.eventLog.desc':
     'Farbcodierter Live-Stream aller Agenten-, Tool- und Systemereignisse',
+  'settings.developerMenu.eventLog.workspaceScope': 'Arbeitsbereich',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Dieser Arbeitsbereich',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Alle Arbeitsbereiche',
   'settings.developerMenu.eventLog.allTypes': 'Alle Typen',
   'settings.developerMenu.eventLog.filterAgent': 'Filter&#xA0;…',
   'settings.developerMenu.eventLog.download': 'Herunterladen',
@@ -5062,6 +5088,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Nicht verbunden',
   'settings.developerMenu.eventLog.waiting': 'Warten auf Ereignisse...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Ereignisse erscheinen hier, sobald Agenten, Tools und das System arbeiten. Bisher ist nichts passiert.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Verbinden Sie sich erneut mit dem Core, um den Stream fortzusetzen.',
   'settings.developerMenu.eventLog.notConnected': 'Mit dem Hauptprogramm verbundenName',
   'settings.developerMenu.eventLog.jumpToLatest': 'Zur neuesten Seite springen',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6216,6 +6246,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Routing-Hinweise',
   'settings.agents.editor.modelTiers': 'Modellstufen',
   'settings.agents.editor.modelCustom': 'Benutzerdefinierte Modell-ID…',
+  'settings.agents.editor.modelManaged': 'Verwaltete Modelle',
   'settings.agents.editor.modelCustomPlaceholder': 'z. B. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Tools hinzufügen',
   'settings.agents.editor.toolsAllSelected': 'Alle Tools',
@@ -6364,6 +6395,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Geheimnisspeicher-Modus',
   'keyring.settings.mode.osKeychain': 'OS-Schlüsselbund',
   'keyring.settings.mode.encryptedFile': 'Lokal verschlüsselt',
+  'keyring.settings.mode.localEncryptedFile': 'Verschlüsselte Datei',
+  'keyring.settings.mode.localPlaintextFile': 'Unverschlüsselte Datei',
   'keyring.settings.mode.consentPending': 'Nicht konfiguriert',
   'keyring.settings.mode.declined': 'Abgelehnt',
   'keyring.settings.availability': 'Schlüsselbund-Verfügbarkeit',
@@ -6715,6 +6748,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Lokales Modell nicht verfügbar',
   'userErrors.localModelUnavailable.body':
     'Ollama ist unter dem konfigurierten Endpunkt nicht erreichbar, oder das benötigte Modell ist dort nicht installiert. Starte Ollama und lade das Modell auf diesem Endpunkt, oder verlagere diese Arbeit auf einen Cloud-Anbieter.',
+  'userErrors.replyDeliveryFailed.title': 'Antwort konnte nicht angezeigt werden',
+  'userErrors.replyDeliveryFailed.body':
+    'Der Agent hat diese Runde beendet, seine Antwort ließ sich aber weder speichern noch erneut lesen. Frag noch einmal, damit er sie wiederholt.',
   'userErrors.memoryStoreCorrupt.title': 'Gedächtnisindex war beschädigt',
   'userErrors.memoryStoreCorrupt.body':
     'Die Datenbank des Gedächtnisbaums war beschädigt. Die beschädigte Datei wurde neben deinen Gedächtnisdaten aufbewahrt und ein leerer Index neu aufgebaut. Synchronisiere deine Gedächtnisquellen erneut, um ihn wieder zu füllen.',
@@ -6798,6 +6834,8 @@ const messages: TranslationMap = {
   'sync.pipeline.ingestedOnly': 'Nur aufgenommen',
   'sync.pipeline.storedWithoutVectors':
     'Ohne Vektoren gespeichert. Semantische Suche nicht verfügbar.',
+  'sync.pipeline.vectorsPending':
+    'Brocken, die auf Vektoren warten: {count}. Die semantische Suche deckt sie in Kürze ab.',
   'sync.pipeline.signInToEnable': 'Zum Aktivieren anmelden',
   'sync.pipeline.extractionFailed':
     'Extraktion der Speicherstruktur fehlgeschlagen. Das Wiki ist möglicherweise unvollständig.',

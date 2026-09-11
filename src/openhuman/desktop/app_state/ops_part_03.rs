@@ -63,7 +63,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             return snapshot_current_user_result(stored_user.clone());
         }
         match tokio::time::timeout(
-            AUTH_FETCH_TIMEOUT,
+            auth_fetch_timeout(),
             fetch_current_user_cached(&config, &token, !pending_backend_validation),
         )
         .await
@@ -149,6 +149,24 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 );
                 snapshot_current_user_result(stored_user.clone())
             }
+            Ok(Err(CurrentUserFetchError::Suppressed {
+                inner,
+                consecutive,
+                retry_in,
+            })) => {
+                // Not a failure of *this* poll: the backoff window opened by an
+                // earlier failure is still running, so no request was made and
+                // this arm cost microseconds. Logging it at `warn` with the
+                // same wording as a live failure is what made a working backoff
+                // look like a hammering loop in #5930's own log evidence.
+                debug!(
+                    "{LOG_PREFIX} current user refresh suppressed; backend unavailable or unhealthy \
+                     {consecutive}x, next live attempt in {}s, using stored snapshot fallback: {}",
+                    retry_in.as_secs(),
+                    inner.message()
+                );
+                snapshot_current_user_result(stored_user.clone())
+            }
             Ok(Err(error)) => {
                 warn!(
                     "{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {}",
@@ -159,7 +177,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             Err(_) if pending_backend_validation => {
                 warn!(
                     "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
-                    AUTH_FETCH_TIMEOUT.as_secs()
+                    auth_fetch_timeout().as_secs()
                 );
                 note_current_user_timeout(&config, &token);
                 snapshot_current_user_result(stored_user.clone())
@@ -167,7 +185,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             Err(_) => {
                 warn!(
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
-                    AUTH_FETCH_TIMEOUT.as_secs()
+                    auth_fetch_timeout().as_secs()
                 );
                 note_current_user_timeout(&config, &token);
                 snapshot_current_user_result(stored_user.clone())
@@ -195,6 +213,32 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let (current_user_result, runtime) = tokio::join!(current_user_future, runtime_future);
     let enrich_ms = t_enrich.elapsed().as_millis();
     let (current_user, revalidated_config) = current_user_result;
+    // Read before the `DeferredSessionRejected` arm below clears
+    // `session_token`, and keyed off the same `config` the fetch used so the
+    // answer describes this identity's backend, not a previous one's.
+    //
+    // A rejected session is excluded outright: that arm is about to clear
+    // `auth`, `session_token` and `current_user`, and a signed-out snapshot
+    // carrying `currentUserStale: true` would describe a user it no longer
+    // reports.
+    //
+    // The token is matched to the fetch above, which filters on the *trimmed*
+    // token being non-empty but keys the failure record on the raw one.
+    // Trimming here instead would look up a key that was never written, and
+    // staleness would read as `false` for every token with surrounding
+    // whitespace.
+    let session_rejected = matches!(current_user, SnapshotCurrentUser::DeferredSessionRejected);
+    let (current_user_stale, current_user_stale_seconds) = match session_token
+        .as_deref()
+        .filter(|_| !session_rejected)
+        .filter(|&token| !token.trim().is_empty() && !is_local_session_token(token))
+    {
+        Some(token) => current_user_staleness(&current_user_api_base(&config), token),
+        // Signed out, rejected, or a local-only token that never talks to the
+        // backend: there is nothing for the stored snapshot to be stale
+        // relative to.
+        None => (false, None),
+    };
     let mut snapshot_config = config.clone();
     if let Some(revalidated_config) = revalidated_config {
         snapshot_config = *revalidated_config;
@@ -283,6 +327,8 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             runtime,
             health,
             config_recovered: super::config_recovered_this_session(),
+            current_user_stale,
+            current_user_stale_seconds,
         },
         vec!["core app state snapshot fetched".to_string()],
     ))

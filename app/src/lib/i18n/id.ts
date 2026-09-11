@@ -542,6 +542,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'Selalu aktif di build pengembangan',
   'settings.clearAppData': 'Bersihkan Data Aplikasi',
   'settings.clearAppDataDesc': 'Keluar dan hapus permanen semua data aplikasi lokal',
+  'settings.clearAppDataIrreversible': 'Tindakan ini tidak dapat dibatalkan.',
+  'settings.clearAppDataAction': 'Hapus data',
   'settings.logOut': 'Keluar',
   'settings.logOutDesc': 'Keluar dari akun Anda',
   'settings.exitLocalSession': 'Keluar dari sesi lokal',
@@ -2626,6 +2628,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Segera hadir',
   'memorySources.composioListFailed': 'Gagal memuat koneksi Composio.',
   'memorySources.browse': 'Jelajahi...',
+  'memorySources.folderPathUnavailable':
+    'Tidak dapat menentukan lokasi folder tersebut. Ketik jalur lengkapnya sebagai gantinya.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '* * /*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2648,6 +2652,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'item tersinkron',
   'memorySources.sync.upToDate': 'Sudah terbaru',
   'memorySources.sync.failedLabel': 'Gagal',
+  'memorySources.sync.morePending': 'Masih ada yang perlu disinkronkan. Klik Sinkronkan lagi',
+  'memorySources.sync.budgetSpent': 'Anggaran permintaan hari ini sudah habis. Coba lagi besok',
   'time.justNow': 'baru saja',
   'time.secondsAgoSuffix': 'd lalu',
   'time.minutesAgoSuffix': 'm lalu',
@@ -2690,6 +2696,18 @@ const messages: TranslationMap = {
   'memorySources.allIn.allFailed':
     'Tidak ada sinkronisasi yang bisa dimulai. Periksa setiap sumber untuk melihat alasannya.',
   'memorySources.allIn.partial': 'Sinkronisasi dimulai: {triggered}. Tidak bisa dimulai: {failed}.',
+  'memorySources.repair.button': 'Perbaiki memori lama',
+  'memorySources.repair.title': 'Perbaiki memori lama?',
+  'memorySources.repair.message':
+    'Hingga {scanned} dokumen yang disinkronkan disimpan sebelum pengarsipan pohon memori diperbaiki dan tidak terlihat di grafik memori. Mengarsipkannya menggunakan kredit embedding. Dokumen yang sudah ada di pohon dilewati.',
+  'memorySources.repair.confirm': 'Perbaiki',
+  'memorySources.repair.cancel': 'Nanti saja',
+  'memorySources.repair.nothing':
+    'Tidak ada yang perlu diperbaiki. Tidak ada dokumen tersinkron yang menunggu diarsipkan.',
+  'memorySources.repair.success':
+    '{ingested} diarsipkan ke pohon memori ({already} sudah ada, {skipped} dilewati).',
+  'memorySources.repair.morePending': 'Masih ada sisa. Klik Perbaiki memori lama lagi.',
+  'memorySources.repair.failed': 'Tidak dapat memperbaiki memori lama.',
   'memorySources.settings.button': 'Pengaturan',
   'memorySources.settings.title': 'Pengaturan sinkronisasi',
   'memorySources.settings.maxPrs': 'Maksimal pull request',
@@ -2703,7 +2721,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Tanpa batas',
   'memorySources.settings.unlimitedTooltip':
     'Anda memilih menyinkronkan maksimum untuk {toolkit}. Anda dapat mengubah batas di sini.',
-  'memorySources.settings.maxed': 'Penuh',
   'memorySources.settings.save': 'Simpan',
   'memorySources.settings.saving': 'Menyimpan…',
   'memorySources.settings.saved': 'Pengaturan tersimpan',
@@ -3363,6 +3380,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'gagal',
   'conversations.subagent.statusAwaitingUser': 'menunggu pengguna',
   'conversations.subagent.statusCancelled': 'dibatalkan',
+  'conversations.subagent.awaitingTitle': 'Menunggu jawaban Anda',
+  'conversations.subagent.answerPlaceholder': 'Ketik jawaban Anda',
+  'conversations.subagent.answerSend': 'Kirim jawaban',
+  'conversations.subagent.answerSent': 'Jawaban terkirim',
   'conversations.agentTaskInsights.title': 'Wawasan tugas agen',
   'conversations.agentTaskInsights.response': 'Respons',
   'conversations.agentTaskInsights.processSourceTitle': 'Sumber proses agen',
@@ -4950,6 +4971,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Log Peristiwa',
   'settings.developerMenu.eventLog.desc':
     'Siaran warna langsung dari semua agen, alat, dan peristiwa sistem',
+  'settings.developerMenu.eventLog.workspaceScope': 'Cakupan ruang kerja',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Ruang kerja ini',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Semua ruang kerja',
   'settings.developerMenu.eventLog.allTypes': 'Semua jenis',
   'settings.developerMenu.eventLog.filterAgent': 'Filter...',
   'settings.developerMenu.eventLog.download': 'Unduh',
@@ -4957,6 +4981,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Terputus',
   'settings.developerMenu.eventLog.waiting': 'Menunggu peristiwa...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Peristiwa muncul di sini saat agen, alat, dan sistem bekerja. Belum ada yang terjadi.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Hubungkan kembali ke core untuk melanjutkan aliran.',
   'settings.developerMenu.eventLog.notConnected': 'Tidak terhubung ke inti',
   'settings.developerMenu.eventLog.jumpToLatest': 'Lompat ke terbaru',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6085,6 +6113,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Petunjuk rute',
   'settings.agents.editor.modelTiers': 'Tingkatan model',
   'settings.agents.editor.modelCustom': 'ID model kustom…',
+  'settings.agents.editor.modelManaged': 'Model terkelola',
   'settings.agents.editor.modelCustomPlaceholder': 'mis. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Tambah alat',
   'settings.agents.editor.toolsAllSelected': 'Semua alat',
@@ -6232,6 +6261,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Mode penyimpanan rahasia',
   'keyring.settings.mode.osKeychain': 'Keychain OS',
   'keyring.settings.mode.encryptedFile': 'Lokal terenkripsi',
+  'keyring.settings.mode.localEncryptedFile': 'Berkas terenkripsi',
+  'keyring.settings.mode.localPlaintextFile': 'Berkas tanpa enkripsi',
   'keyring.settings.mode.consentPending': 'Belum dikonfigurasi',
   'keyring.settings.mode.declined': 'Ditolak',
   'keyring.settings.availability': 'Ketersediaan keychain',
@@ -6568,6 +6599,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Model lokal tidak tersedia',
   'userErrors.localModelUnavailable.body':
     'Ollama tidak dapat dijangkau di endpoint yang dikonfigurasi, atau model yang dibutuhkan belum terpasang di sana. Jalankan Ollama dan unduh modelnya di endpoint tersebut, atau alihkan pekerjaan ini ke penyedia cloud.',
+  'userErrors.replyDeliveryFailed.title': 'Balasan tidak dapat ditampilkan',
+  'userErrors.replyDeliveryFailed.body':
+    'Agen menyelesaikan giliran ini, tetapi balasannya tidak dapat disimpan atau dibaca ulang. Tanyakan lagi agar diulangi.',
   'userErrors.memoryStoreCorrupt.title': 'Indeks memori rusak',
   'userErrors.memoryStoreCorrupt.body':
     'Basis data pohon memori mengalami kerusakan. Berkas yang rusak disimpan di samping data memori Anda, dan indeks kosong telah dibangun ulang. Sinkronkan ulang sumber memori untuk mengisinya kembali.',
@@ -6648,6 +6682,8 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': 'Hanya diserap',
   'sync.pipeline.storedWithoutVectors': 'Disimpan tanpa vektor. Pencarian semantik tidak tersedia.',
+  'sync.pipeline.vectorsPending':
+    'Chunk yang menunggu vektor: {count}. Pencarian semantik akan segera mencakupnya.',
   'sync.pipeline.signInToEnable': 'Masuk untuk mengaktifkan',
   'sync.pipeline.extractionFailed': 'Ekstraksi struktur memori gagal. Wiki mungkin tidak lengkap.',
   'sync.pipeline.treeDegraded':

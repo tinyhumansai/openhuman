@@ -332,3 +332,6 @@ fn projects_turn_content_from_root_model_io() {
         &serde_json::json!("short summary")
     );
 }
+
+#[path = "journal_projection_tests_part_02_tests.rs"]
+mod part_02_tests;

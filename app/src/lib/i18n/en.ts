@@ -338,8 +338,11 @@ const en: TranslationMap = {
   'settings.developerMode.title': 'Developer mode',
   'settings.developerMode.description': 'Show advanced developer & diagnostic tools',
   'settings.developerMode.enabledByBuild': 'Always on in development builds',
-  'settings.clearAppData': 'Clear App Data',
-  'settings.clearAppDataDesc': 'Sign out and permanently clear all local app data',
+  'settings.clearAppData': 'Clear app data',
+  'settings.clearAppDataDesc':
+    'Signs you out and deletes every thread, setting, and cached file stored on this device.',
+  'settings.clearAppDataIrreversible': 'This cannot be undone.',
+  'settings.clearAppDataAction': 'Clear data',
   'settings.logOut': 'Log out',
   'settings.logOutDesc': 'Sign out of your account',
   'settings.exitLocalSession': 'Exit local session',
@@ -430,7 +433,7 @@ const en: TranslationMap = {
   'settings.ai.llmProviderDesc': 'Choose and configure your AI provider',
 
   // Clear App Data modal
-  'clearData.title': 'Clear App Data',
+  'clearData.title': 'Clear app data',
   'clearData.warning': 'This will sign you out and permanently delete local app data including:',
   'clearData.bulletSettings': 'App settings and conversations',
   'clearData.bulletCache': 'All local integration cache data',
@@ -2952,6 +2955,8 @@ const en: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690) — raw sync ≠ retrieval-ready
   'sync.pipeline.ingestedOnly': 'Ingested only',
   'sync.pipeline.storedWithoutVectors': 'Stored without vectors. Semantic search unavailable.',
+  'sync.pipeline.vectorsPending':
+    'Chunks waiting for vectors: {count}. Semantic search will cover them shortly.',
   'sync.pipeline.signInToEnable': 'Sign in to enable',
   'sync.pipeline.extractionFailed': 'Memory structure extraction failed. Wiki may be incomplete.',
   'sync.pipeline.treeDegraded': 'Memory tree degraded. Retrieval may return stale results.',
@@ -2981,6 +2986,8 @@ const en: TranslationMap = {
   'memorySources.comingSoon': 'Coming soon',
   'memorySources.composioListFailed': 'Failed to load Composio connections.',
   'memorySources.browse': 'Browse…',
+  'memorySources.folderPathUnavailable':
+    'Could not determine where that folder is. Type its full path instead.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -3003,6 +3010,8 @@ const en: TranslationMap = {
   'memorySources.sync.itemsSynced': 'items synced',
   'memorySources.sync.upToDate': 'Up to date',
   'memorySources.sync.failedLabel': 'Failed',
+  'memorySources.sync.morePending': 'More to sync. Click Sync again',
+  'memorySources.sync.budgetSpent': "Today's request budget is spent. Try again tomorrow",
   'time.justNow': 'just now',
   'time.secondsAgoSuffix': 's ago',
   'time.minutesAgoSuffix': 'm ago',
@@ -3044,6 +3053,17 @@ const en: TranslationMap = {
   'memorySources.allIn.failed': 'Could not apply All In. Please try again.',
   'memorySources.allIn.allFailed': 'No sync could start. Check each source for the reason.',
   'memorySources.allIn.partial': 'Syncs started: {triggered}. Could not start: {failed}.',
+  'memorySources.repair.button': 'Repair older memories',
+  'memorySources.repair.title': 'Repair older memories?',
+  'memorySources.repair.message':
+    'Up to {scanned} synced documents were stored before memory-tree filing was fixed and are invisible to the memory graph. Filing them uses embedding credits. Documents already in the tree are skipped.',
+  'memorySources.repair.confirm': 'Repair',
+  'memorySources.repair.cancel': 'Not now',
+  'memorySources.repair.nothing': 'Nothing to repair. No synced documents are waiting to be filed.',
+  'memorySources.repair.success':
+    'Filed {ingested} into the memory tree ({already} already there, {skipped} skipped).',
+  'memorySources.repair.morePending': 'More remain. Click Repair older memories again.',
+  'memorySources.repair.failed': 'Could not repair older memories.',
   'memorySources.settings.button': 'Settings',
   'memorySources.settings.title': 'Sync settings',
   'memorySources.settings.maxPrs': 'Max pull requests',
@@ -3057,7 +3077,6 @@ const en: TranslationMap = {
   'memorySources.settings.unlimited': 'Unlimited',
   'memorySources.settings.unlimitedTooltip':
     "You've opted in to sync the maximum for {toolkit}. You can change the caps here.",
-  'memorySources.settings.maxed': 'Maxed',
   'memorySources.settings.save': 'Save',
   'memorySources.settings.saving': 'Saving…',
   'memorySources.settings.saved': 'Settings saved',
@@ -3864,6 +3883,10 @@ const en: TranslationMap = {
   'conversations.subagent.statusFailed': 'failed',
   'conversations.subagent.statusAwaitingUser': 'awaiting user',
   'conversations.subagent.statusCancelled': 'cancelled',
+  'conversations.subagent.awaitingTitle': 'Waiting for your answer',
+  'conversations.subagent.answerPlaceholder': 'Type your answer',
+  'conversations.subagent.answerSend': 'Send answer',
+  'conversations.subagent.answerSent': 'Answer sent',
   'conversations.agentTaskInsights.title': 'Agentic task insights',
   'conversations.agentTaskInsights.response': 'Response',
   'conversations.agentTaskInsights.processSourceTitle': 'Agent Process Source',
@@ -5624,6 +5647,9 @@ const en: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Event Log',
   'settings.developerMenu.eventLog.desc':
     'Live colour-coded stream of all agent, tool, and system events',
+  'settings.developerMenu.eventLog.workspaceScope': 'Workspace scope',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'This workspace',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'All workspaces',
   'settings.developerMenu.eventLog.allTypes': 'All types',
   'settings.developerMenu.eventLog.filterAgent': 'Filter...',
   'settings.developerMenu.eventLog.download': 'Download',
@@ -5631,6 +5657,9 @@ const en: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Disconnected',
   'settings.developerMenu.eventLog.waiting': 'Waiting for events...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Events appear here as agents, tools, and the system do work. Nothing has happened yet.',
+  'settings.developerMenu.eventLog.notConnectedHint': 'Reconnect to the core to resume the stream.',
   'settings.developerMenu.eventLog.notConnected': 'Not connected to core',
   'settings.developerMenu.eventLog.jumpToLatest': 'Jump to latest',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6849,6 +6878,7 @@ const en: TranslationMap = {
   'settings.agents.editor.modelHints': 'Route hints',
   'settings.agents.editor.modelTiers': 'Model tiers',
   'settings.agents.editor.modelCustom': 'Custom model id…',
+  'settings.agents.editor.modelManaged': 'Managed models',
   'settings.agents.editor.modelCustomPlaceholder': 'e.g. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Add tools',
   'settings.agents.editor.toolsAllSelected': 'All tools',
@@ -6940,6 +6970,8 @@ const en: TranslationMap = {
   'keyring.settings.storageMode': 'Secret storage mode',
   'keyring.settings.mode.osKeychain': 'OS Keychain',
   'keyring.settings.mode.encryptedFile': 'Local Encrypted',
+  'keyring.settings.mode.localEncryptedFile': 'Encrypted file',
+  'keyring.settings.mode.localPlaintextFile': 'Unencrypted file',
   'keyring.settings.mode.consentPending': 'Not configured',
   'keyring.settings.mode.declined': 'Declined',
   'keyring.settings.availability': 'Keychain availability',
@@ -7046,6 +7078,9 @@ const en: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Local model unavailable',
   'userErrors.localModelUnavailable.body':
     'Ollama is not reachable at the configured endpoint, or the required model is not installed there. Start Ollama and pull the model at that endpoint, or switch this workload to a cloud provider.',
+  'userErrors.replyDeliveryFailed.title': 'Reply could not be shown',
+  'userErrors.replyDeliveryFailed.body':
+    'The agent finished this turn, but its reply could not be saved or read back. Ask again to have it repeated.',
   'userErrors.memoryStoreCorrupt.title': 'Memory index was corrupted',
   'userErrors.memoryStoreCorrupt.body':
     'The database behind your memory tree was damaged. The damaged file was preserved next to your memory data, and an empty index was rebuilt. Re-sync your memory sources to fill it again.',
