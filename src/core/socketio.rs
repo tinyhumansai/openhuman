@@ -1599,8 +1599,8 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 #[cfg(all(test, feature = "http-server"))]
 mod tests {
     use super::{
-        channel_connection_update_payload, event_alias, origin_is_allowed,
-        origin_is_allowed_with_extra, publish_companion_state_changed,
+        channel_connection_update_payload, event_alias, origin_is_allowed_with_extra,
+        publish_companion_state_changed,
         subscribe_companion_state_changed,
     };
 
@@ -1667,7 +1667,7 @@ mod tests {
 
     #[test]
     fn origin_allowlist_accepts_native_clients() {
-        assert!(origin_is_allowed(None));
+        assert!(origin_is_allowed_with_extra(None, None));
     }
 
     #[test]
@@ -1678,45 +1678,48 @@ mod tests {
         //   - Linux / older Windows builds use `https://tauri.localhost`
         // All three flavours are the same trust tier (the bundled webview),
         // so each must pass the handshake gate.
-        assert!(origin_is_allowed(Some("tauri://localhost")));
-        assert!(origin_is_allowed(Some("https://tauri.localhost")));
-        assert!(origin_is_allowed(Some("http://tauri.localhost")));
+        assert!(origin_is_allowed_with_extra(Some("tauri://localhost"), None));
+        assert!(origin_is_allowed_with_extra(Some("https://tauri.localhost"), None));
+        assert!(origin_is_allowed_with_extra(Some("http://tauri.localhost"), None));
     }
 
     #[test]
     fn origin_allowlist_accepts_local_dev_server() {
-        assert!(origin_is_allowed(Some("http://localhost:1420")));
-        assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
-        assert!(origin_is_allowed(Some("http://[::1]:1420")));
+        assert!(origin_is_allowed_with_extra(Some("http://localhost:1420"), None));
+        assert!(origin_is_allowed_with_extra(Some("http://127.0.0.1:1420"), None));
+        assert!(origin_is_allowed_with_extra(Some("http://[::1]:1420"), None));
         // Loopback without an explicit port (some CEF builds stamp this
         // shape when the shell runs on the default port).
-        assert!(origin_is_allowed(Some("http://localhost")));
+        assert!(origin_is_allowed_with_extra(Some("http://localhost"), None));
     }
 
     #[test]
     fn origin_allowlist_rejects_cross_origin_browser_pages() {
-        assert!(!origin_is_allowed(Some("https://attacker.example")));
-        assert!(!origin_is_allowed(Some("http://evil.local")));
-        assert!(!origin_is_allowed(Some("null")));
-        assert!(!origin_is_allowed(Some("")));
+        assert!(!origin_is_allowed_with_extra(Some("https://attacker.example"), None));
+        assert!(!origin_is_allowed_with_extra(Some("http://evil.local"), None));
+        assert!(!origin_is_allowed_with_extra(Some("null"), None));
+        assert!(!origin_is_allowed_with_extra(Some(""), None));
     }
 
     #[test]
     fn origin_allowlist_rejects_host_prefix_decoys() {
         // Regression: `starts_with("localhost")` accepted these; the exact
         // host match must not.
-        assert!(!origin_is_allowed(Some(
+        assert!(!origin_is_allowed_with_extra(Some(
             "http://localhost.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some(
+        ), None));
+        assert!(!origin_is_allowed_with_extra(Some(
             "http://127.0.0.1.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some("https://localhost-evil")));
+        ), None));
+        assert!(!origin_is_allowed_with_extra(Some("https://localhost-evil"), None));
         // Same rule applies to the tauri.localhost host — must be exact.
-        assert!(!origin_is_allowed(Some(
+        assert!(!origin_is_allowed_with_extra(Some(
             "http://tauri.localhost.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
+        ), None));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://tauri.localhost.evil"),
+            None
+        ));
     }
 
     #[test]
@@ -1776,7 +1779,10 @@ mod tests {
 
     #[test]
     fn origin_allowlist_rejects_unparseable_origin() {
-        assert!(!origin_is_allowed(Some("not a url")));
-        assert!(!origin_is_allowed(Some("javascript:alert(1)")));
+        assert!(!origin_is_allowed_with_extra(Some("not a url"), None));
+        assert!(!origin_is_allowed_with_extra(
+            Some("javascript:alert(1)"),
+            None
+        ));
     }
 }
