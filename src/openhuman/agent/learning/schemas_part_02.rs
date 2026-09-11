@@ -110,7 +110,7 @@ fn handle_get_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use tinymemory_api::provider::UserState;
+        use tinymemory_api::provider::{FacetState, UserState};
 
         let class_str = params
             .get("class")
@@ -196,11 +196,22 @@ fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
             return Err(format!("facet not found: {fk}"));
         }
 
-        let facet = cache
+        let mut facet = cache
             .get(&fk)
             .await
             .map_err(|e| format!("re-read failed: {e:#}"))?
             .ok_or_else(|| "facet disappeared after update".to_string())?;
+
+        // Pinning makes a provisional facet part of the learned profile
+        // immediately; otherwise the UI reports it as pinned while the
+        // prompt/cache path (which reads Active facets) still omits it.
+        if facet.state == FacetState::Provisional {
+            facet.state = FacetState::Active;
+            cache
+                .upsert(&facet)
+                .await
+                .map_err(|e| format!("activate pinned facet failed: {e:#}"))?;
+        }
 
         let log = vec![format!("learning.pin_facet: key={fk} user_state=pinned")];
         let payload = serde_json::json!({ "facet": facet_to_json(&facet) });

@@ -164,7 +164,7 @@ impl Agent {
         // (situational) prefs are NOT injected here — they ride the user message
         // via per-turn recall (Lane B).
         if !self.learning_enabled && self.explicit_preferences_enabled {
-            let general = crate::openhuman::memory::preferences::load_general_preferences(
+            let general = crate::openhuman::memory::preferences::load_general_preferences_on(
                 &self.memory,
                 crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
             )
@@ -208,7 +208,7 @@ impl Agent {
         // then Active facets from the ambient personalization cache. Lane A
         // wins on normalised-text collisions; the merge is capped so the
         // prompt block stays bounded.
-        let general = crate::openhuman::memory::preferences::load_general_preferences(
+        let general = crate::openhuman::memory::preferences::load_general_preferences_on(
             &self.memory,
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
@@ -254,7 +254,8 @@ impl Agent {
             &self.memory_subdir,
             limits.per_namespace_max_chars,
             limits.total_tree_max_chars,
-        );
+        )
+        .await;
 
         LearnedContextData {
             observations: obs_entries
@@ -286,9 +287,14 @@ impl Agent {
     /// instructions and learned context.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
         let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
+        let visible_specs: Vec<ToolSpec> = self
+            .visible_tool_specs
+            .iter()
+            .map(|spec| spec.as_ref().clone())
+            .collect();
         let instructions = self
             .tool_dispatcher
-            .prompt_instructions_for_specs(self.visible_tool_specs.as_slice())
+            .prompt_instructions_for_specs(&visible_specs)
             .unwrap_or_else(|| self.tool_dispatcher.prompt_instructions(tools_slice));
         // Adapt the owned Box<dyn Tool> slice into the shared PromptTool
         // shape that every prompt-building call-site uses. Temporary vec

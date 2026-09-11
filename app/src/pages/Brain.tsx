@@ -79,7 +79,9 @@ export default function Brain() {
     },
     [location.pathname, location.search, navigate]
   );
-  const [graph, setGraph] = useState<GraphExportResponse | null>(null);
+  const [graph, setGraph] = useState<{ ownerId: string | null; data: GraphExportResponse } | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<GraphMode>('tree');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -170,7 +172,7 @@ export default function Brain() {
           resp.nodes.length,
           resp.edges.length
         );
-        setGraph(resp);
+        setGraph({ ownerId: authUserId, data: resp });
         renderedGeneration = myGeneration;
         // Clear the error on an ACCEPTED SUCCESS, not only when a load starts.
         // Two `load()` calls can overlap (the initial one and a
@@ -346,7 +348,7 @@ export default function Brain() {
                         onModeChange={setMode}
                         onRefresh={refresh}
                         onToast={addToast}
-                        contentRootAbs={graph?.content_root_abs}
+                        contentRootAbs={graph?.data.content_root_abs}
                       />
 
                       {/*
@@ -379,10 +381,10 @@ export default function Brain() {
                         </Alert>
                       ) : null}
 
-                      {graph ? (
+                      {graph && graph.ownerId === authUserId ? (
                         <MemoryGraph
-                          nodes={graph.nodes}
-                          edges={graph.edges}
+                          nodes={graph.data.nodes}
+                          edges={graph.data.edges}
                           mode={mode}
                           emptyHint={t('brain.empty')}
                         />
