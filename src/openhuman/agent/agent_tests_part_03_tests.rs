@@ -54,7 +54,7 @@ async fn poll_for_stored_user_message(mem: &Arc<dyn Memory>) -> Vec<String> {
 async fn an_external_channel_turn_stores_the_user_message() {
     use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin};
 
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("got it")]));
     let (mut agent, _tmp2) = build_agent_with_memory(provider, vec![], mem.clone(), true);
 
@@ -83,7 +83,7 @@ async fn an_external_channel_turn_stores_the_user_message() {
 async fn a_direct_chat_turn_stores_the_user_message() {
     use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin};
 
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("noted")]));
     let (mut agent, _tmp2) = build_agent_with_memory(provider, vec![], mem.clone(), true);
 
@@ -112,7 +112,7 @@ async fn an_automation_turn_does_not_store_its_prompt_as_the_users_memory() {
         with_origin, AgentTurnOrigin, TrustedAutomationSource,
     };
 
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("goals updated")]));
     let (mut agent, _tmp2) = build_agent_with_memory(
         provider,
@@ -145,7 +145,7 @@ async fn an_automation_turn_does_not_store_its_prompt_as_the_users_memory() {
 /// quietly write host text into the user's memory.
 #[tokio::test]
 async fn an_unscoped_turn_stores_no_user_message() {
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("ok")]));
     let (mut agent, _tmp2) = build_agent_with_memory(provider, vec![], mem.clone(), true);
 
