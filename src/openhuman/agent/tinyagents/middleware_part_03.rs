@@ -134,21 +134,23 @@ impl ToolPolicyMiddleware {
             }
             .render());
         }
-        if call.name == "use_skill"
-            && let Some(inner_tool) = call
+        if call.name == "use_skill" {
+            if let Some(inner_tool) = call
                 .arguments
                 .get("tool")
                 .and_then(serde_json::Value::as_str)
-            && self.session.decision_for(inner_tool).blocks_execution()
-        {
-            let hint = crate::openhuman::tools::toolpacks::pack_for_tool(inner_tool)
-                .map(|pack| self.route_for_pack(pack))
-                .filter(|h| !h.is_empty())
-                .map(|h| format!(" {h}"))
-                .unwrap_or_default();
-            return Some(format!(
-                "Tool `{inner_tool}` is not allowed in the current session and cannot be used through `use_skill`.{hint}"
-            ));
+            {
+                if self.session.decision_for(inner_tool).blocks_execution() {
+                    let hint = crate::openhuman::tools::toolpacks::pack_for_tool(inner_tool)
+                        .map(|pack| self.route_for_pack(pack))
+                        .filter(|h| !h.is_empty())
+                        .map(|h| format!(" {h}"))
+                        .unwrap_or_default();
+                    return Some(format!(
+                        "Tool `{inner_tool}` is not allowed in the current session and cannot be used through `use_skill`.{hint}"
+                    ));
+                }
+            }
         }
         None
     }
