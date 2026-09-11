@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn cc_session_exists_in_detects_present_and_absent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let id = "11111111-2222-4333-8444-555555555555";
+    assert!(!cc_session_exists_in(dir.path(), id));
+    let proj = dir.path().join("projects").join("-Users-someone-project");
+    std::fs::create_dir_all(&proj).expect("mkdir projects");
+    std::fs::write(proj.join(format!("{id}.jsonl")), b"{}").expect("write session");
+    assert!(cc_session_exists_in(dir.path(), id));
+    assert!(!cc_session_exists_in(
+        dir.path(),
+        "99999999-2222-4333-8444-555555555555"
+    ));
+}
+
+#[test]
 fn write_mcp_http_config_emits_http_url_with_bearer_header() {
     let dir = tempfile::tempdir().expect("tempdir");
     let addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
