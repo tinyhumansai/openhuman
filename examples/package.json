@@ -1,0 +1,16 @@
+{
+  "name": "@agentos/openhuman-plugin",
+  "version": "1.0.0",
+  "description": "Functional OpenHuman identity attestation tool for Agent OS (Solana)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
