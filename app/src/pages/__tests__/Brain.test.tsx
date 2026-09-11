@@ -68,9 +68,7 @@ vi.mock('../../components/intelligence/SyncAuditPanel', async () => {
 });
 vi.mock('../../components/intelligence/FacetsPanel', async () => {
   const React = await import('react');
-  return {
-    default: () => React.createElement('div', { 'data-testid': 'brain-profile' }),
-  };
+  return { default: () => React.createElement('div', { 'data-testid': 'brain-profile' }) };
 });
 
 const makeGraph = (n: number) => ({

@@ -107,7 +107,14 @@ describe('<FacetsPanel />', () => {
   });
 
   it('unpins and forgets facets, and rebuilds the cache', async () => {
-    const pinned = { key: 'identity/name', value: 'Alice', state: 'active', user_state: 'pinned', stability: 2, class: 'identity' };
+    const pinned = {
+      key: 'identity/name',
+      value: 'Alice',
+      state: 'active',
+      user_state: 'pinned',
+      stability: 2,
+      class: 'identity',
+    };
     listFacets.mockResolvedValue([pinned]);
     render(<FacetsPanel />);
     await screen.findByTestId('facet-row-identity/name');
@@ -132,7 +139,9 @@ describe('<FacetsPanel />', () => {
   });
 
   it('handles refresh and rebuild failures without losing the panel', async () => {
-    listFacets.mockResolvedValue([{ key: 'other/value', value: 'x', state: 'active', stability: 1 }]);
+    listFacets.mockResolvedValue([
+      { key: 'other/value', value: 'x', state: 'active', stability: 1 },
+    ]);
     render(<FacetsPanel />);
     await screen.findByTestId('facet-row-other/value');
 
