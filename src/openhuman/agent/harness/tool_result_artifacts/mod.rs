@@ -322,6 +322,20 @@ pub(crate) async fn apply_per_result_persistence(
         }
     }
 
+    // Reached two ways, and only one of them was audible: a persist that FAILED
+    // warns just above, but a run with no artifact store configured falls
+    // through to here silently — the oversized tail is discarded with nothing
+    // recording that it happened. Say so, so "where did the rest of my search
+    // result go" is answerable from the logs rather than by reading this
+    // function.
+    if store.is_none() {
+        log::info!(
+            "[agent][tool-result-artifacts] no artifact store configured; truncating oversized tool result inline tool={} original_bytes={} budget_bytes={} — the tail is discarded, not recoverable",
+            tool_name,
+            original_bytes,
+            budget_bytes
+        );
+    }
     let (output, BudgetOutcome { final_bytes, .. }) =
         apply_tool_result_budget(content, budget_bytes);
     (

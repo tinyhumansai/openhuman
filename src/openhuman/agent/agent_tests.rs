@@ -37,7 +37,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinymemory_core::store as memory_store;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test Helpers — Mock Provider, Mock Tool, Mock Memory
@@ -226,34 +225,25 @@ impl Tool for CountingTool {
 /// The returned `TempDir` must be held alive for the duration of the test
 /// to prevent the directory (and its SQLite database) from being deleted.
 fn make_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
-    // The embedding seam fails loudly when unwired; before the memory
-    // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
+    // `backend: "none"` is what this fixture used to ask the engine's factory
+    // for, and a no-op store is exactly what that produced — so the config is
+    // gone rather than kept as an unused binding that reads like it still
+    // selects something.
     let tmp = tempfile::TempDir::new().unwrap();
-    let cfg = MemoryConfig {
-        backend: "none".into(),
-        ..MemoryConfig::default()
-    };
-    // The embedding seam fails loudly when unwired; before the memory
-    // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = crate::openhuman::memory::test_support::noop_memory();
     (mem, tmp)
 }
 
-fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
-    // The embedding seam fails loudly when unwired; before the memory
-    // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
+/// A memory that **retains**, for the two auto-save tests that read it back.
+///
+/// This was `make_sqlite_memory` and asked the engine's factory for a
+/// `backend = "sqlite"` store. The name went with the engine: nothing in
+/// either caller is about SQL — they write through the agent and then assert
+/// on `count()` — so what they need is a store that keeps things, and the
+/// rename says which of the two properties is load-bearing.
+fn make_retaining_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
     let tmp = tempfile::TempDir::new().unwrap();
-    let cfg = MemoryConfig {
-        backend: "sqlite".into(),
-        ..MemoryConfig::default()
-    };
-    // The embedding seam fails loudly when unwired; before the memory
-    // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = crate::openhuman::memory::test_support::retaining_memory();
     (mem, tmp)
 }
 
@@ -349,3 +339,5 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
 mod part_01_tests;
 #[path = "agent_tests_part_02_tests.rs"]
 mod part_02_tests;
+#[path = "agent_tests_part_03_tests.rs"]
+mod part_03_tests;

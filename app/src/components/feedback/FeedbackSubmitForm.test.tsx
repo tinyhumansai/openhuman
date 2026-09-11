@@ -215,6 +215,56 @@ describe('<FeedbackSubmitForm /> quality tiers', () => {
     expect(await screen.findByText('Add steps to reproduce.')).toBeInTheDocument();
   });
 
+  // The advice from an accepted-with-warning submission outlives the draft it
+  // was about, so the only thing that should discard it is an edit. Selecting
+  // the type you are already on is not an edit -- and it went from an unlikely
+  // misclick on a full-width button to an easy one on an adjacent pill.
+  it('keeps warned-submission advice when the already-selected type is re-clicked', async () => {
+    mockValidate.mockResolvedValue({ tier: 'warn', reason: 'Add steps to reproduce.' });
+    mockSubmit.mockResolvedValueOnce({
+      accepted: true,
+      reason: 'ok',
+      feedback: makeItem(),
+      quality: { tier: 'warn', reason: 'Add steps to reproduce.' },
+    });
+
+    render(<FeedbackSubmitForm onAccepted={() => {}} />);
+    fillForm('Crash', 'It crashes.');
+    await screen.findByTestId('feedback-quality-hint');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    expect(await screen.findByText('Add steps to reproduce.')).toBeInTheDocument();
+
+    // `feature` is the default, so this is the pill that is already active.
+    fireEvent.click(screen.getByRole('button', { name: 'Feature' }));
+
+    expect(screen.getByText('Add steps to reproduce.')).toBeInTheDocument();
+  });
+
+  // The other half of the same guard: it must skip the reset only when the type
+  // is unchanged. A guard that swallowed the reset outright would leave stale
+  // advice attached to a draft whose type just changed.
+  it('discards warned-submission advice when the type actually changes', async () => {
+    mockValidate.mockResolvedValue({ tier: 'warn', reason: 'Add steps to reproduce.' });
+    mockSubmit.mockResolvedValueOnce({
+      accepted: true,
+      reason: 'ok',
+      feedback: makeItem(),
+      quality: { tier: 'warn', reason: 'Add steps to reproduce.' },
+    });
+
+    render(<FeedbackSubmitForm onAccepted={() => {}} />);
+    fillForm('Crash', 'It crashes.');
+    await screen.findByTestId('feedback-quality-hint');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    expect(await screen.findByText('Add steps to reproduce.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bug' }));
+
+    await waitFor(() =>
+      expect(screen.queryByText('Add steps to reproduce.')).not.toBeInTheDocument()
+    );
+  });
+
   // apiClient rejects with a plain `{ success, error }` object, not an Error.
   // Without handling that shape the server's reason is replaced by the generic
   // failure copy, and a blocked submitter is told nothing useful.

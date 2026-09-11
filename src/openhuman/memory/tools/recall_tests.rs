@@ -104,3 +104,40 @@ fn name_and_schema() {
     assert_eq!(tool.name(), "memory_recall");
     assert!(tool.parameters_schema()["properties"]["query"].is_object());
 }
+
+/// Only the query is required: a caller that names no namespace searches the
+/// default scope instead of being sent back to guess one (#6040).
+#[test]
+fn schema_requires_only_the_query() {
+    let schema = MemoryRecallTool::new().parameters_schema();
+    assert_eq!(schema["required"], json!(["query"]));
+    assert!(schema["properties"]["namespace"].is_object());
+}
+
+#[test]
+fn resolve_namespace_defaults_when_absent() {
+    let args = json!({"query": "idol"});
+    let namespace = resolve_namespace(&args).unwrap();
+    assert_eq!(namespace, DEFAULT_AGENT_MEMORY_NAMESPACE);
+}
+
+#[test]
+fn resolve_namespace_keeps_an_explicit_one_trimmed() {
+    let args = json!({"namespace": " skill-gmail ", "query": "x"});
+    let namespace = resolve_namespace(&args).unwrap();
+    assert_eq!(namespace, "skill-gmail");
+}
+
+#[test]
+fn resolve_namespace_rejects_an_explicit_empty_one() {
+    assert!(resolve_namespace(&json!({"namespace": "   ", "query": "x"})).is_err());
+}
+
+#[test]
+fn resolve_namespace_rejects_a_non_string_namespace() {
+    // Present but wrong-typed is a caller mistake, not a request for the
+    // default scope: a `null` or a number must not widen the search.
+    assert!(resolve_namespace(&json!({"namespace": null, "query": "x"})).is_err());
+    assert!(resolve_namespace(&json!({"namespace": 7, "query": "x"})).is_err());
+    assert!(resolve_namespace(&json!({"namespace": ["a"], "query": "x"})).is_err());
+}

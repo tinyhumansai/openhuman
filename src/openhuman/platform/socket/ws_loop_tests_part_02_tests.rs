@@ -33,6 +33,7 @@ async fn ws_loop_follows_301_to_working_backend() {
             emit_rx,
             shutdown_rx,
             internal_tx,
+            Arc::new(Mutex::new(false)),
         )
         .await;
     });
@@ -146,6 +147,7 @@ async fn ws_loop_calls_provider_before_each_attempt() {
             emit_rx,
             shutdown_rx,
             internal_tx,
+            Arc::new(Mutex::new(false)),
         )
         .await;
     });
@@ -201,6 +203,7 @@ async fn ws_loop_escalates_immediately_on_invalid_token_no_refresh() {
             emit_rx,
             shutdown_rx,
             internal_tx,
+            Arc::new(Mutex::new(false)),
         )
         .await;
     });
@@ -270,6 +273,7 @@ async fn ws_loop_retries_with_fresh_token_on_invalid_token() {
             emit_rx,
             shutdown_rx,
             internal_tx,
+            Arc::new(Mutex::new(false)),
         )
         .await;
     });
@@ -358,6 +362,7 @@ async fn ws_loop_bounds_fresh_token_retries_with_rotating_provider() {
             emit_rx,
             shutdown_rx,
             internal_tx,
+            Arc::new(Mutex::new(false)),
         )
         .await;
     });

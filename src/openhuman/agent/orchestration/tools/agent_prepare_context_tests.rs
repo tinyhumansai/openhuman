@@ -319,3 +319,123 @@ fn credits_exhausted_scout_failure_does_not_reach_sentry() {
     );
     assert_eq!(events[0].level, sentry::Level::Error);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parent tool catalogue: rendered from the parent's own advertised surface
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A spec with the given name and description; the schema is irrelevant here.
+fn catalog_spec(
+    name: &str,
+    description: &str,
+) -> std::sync::Arc<crate::openhuman::tools::ToolSpec> {
+    std::sync::Arc::new(crate::openhuman::tools::ToolSpec {
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters: serde_json::json!({"type": "object"}),
+    })
+}
+
+/// A parent context whose inheritable registry (`all_tool_specs`) and own
+/// advertised surface (`visible_tool_specs`) are chosen by the caller.
+/// `visible_tool_names` is derived from the visible specs, as the turn
+/// builder derives it.
+fn parent_context_with_specs(
+    all_tool_specs: Vec<std::sync::Arc<crate::openhuman::tools::ToolSpec>>,
+    visible_tool_specs: Vec<std::sync::Arc<crate::openhuman::tools::ToolSpec>>,
+) -> crate::openhuman::agent::harness::fork_context::ParentExecutionContext {
+    use std::sync::Arc;
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_dir = workspace.path().to_path_buf();
+    std::mem::forget(workspace);
+    // The context needs *a* memory to be constructed with and never reads one
+    // back, which is exactly what `noop_memory` is for.
+    let memory: Arc<dyn crate::openhuman::memory::Memory> =
+        crate::openhuman::memory::test_support::noop_memory();
+    let model: Arc<dyn tinyinference::model::ChatModel<()>> =
+        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
+    crate::openhuman::agent::harness::fork_context::ParentExecutionContext {
+        workspace_descriptor: None,
+        agent_definition_id: "orchestrator".into(),
+        allowed_subagent_ids: std::collections::HashSet::new(),
+        turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
+        all_tools: Arc::new(Vec::new()),
+        all_tool_specs: Arc::new(all_tool_specs),
+        visible_tool_names: visible_tool_specs
+            .iter()
+            .map(|spec| spec.name.clone())
+            .collect(),
+        visible_tool_specs: Arc::new(visible_tool_specs),
+        subagent_tool_ceiling_names: std::collections::HashSet::new(),
+        model_name: "test-model".into(),
+        temperature: 0.0,
+        workspace_dir,
+        memory,
+        agent_config: crate::openhuman::config::AgentConfig::default(),
+        workflows: Arc::new(Vec::new()),
+        memory_context: Arc::new(None),
+        session_id: "parent-session".into(),
+        channel: "test".into(),
+        connected_integrations: Vec::new(),
+        tool_call_format: crate::openhuman::agent::context::prompt::ToolCallFormat::Native,
+        session_key: "parent-key".into(),
+        session_parent_prefix: None,
+        on_progress: None,
+        run_queue: None,
+    }
+}
+
+/// The catalogue describes the parent's own advertised surface, which includes
+/// its synthesised `delegate_*` tools — not `all_tool_specs`, which is what a
+/// child may inherit and deliberately carries no delegate (#4452). The scout
+/// exists to recommend exactly those delegates back to the parent.
+#[tokio::test]
+async fn catalog_lists_the_parents_synthesised_delegates_from_its_visible_specs() {
+    let ctx = parent_context_with_specs(
+        vec![
+            catalog_spec("echo", "durable"),
+            catalog_spec("agent_prepare_context", "this tool"),
+        ],
+        vec![
+            catalog_spec("echo", "durable"),
+            catalog_spec(
+                "delegate_to_integrations_agent",
+                "route to a connected integration",
+            ),
+            catalog_spec("agent_prepare_context", "this tool"),
+        ],
+    );
+    let catalog = crate::openhuman::agent::harness::fork_context::with_parent_context(ctx, async {
+        AgentPrepareContextTool::render_parent_tool_catalog()
+    })
+    .await;
+    assert!(
+        catalog.contains("- delegate_to_integrations_agent: route to a connected integration\n"),
+        "the parent's delegate must be recommendable: {catalog:?}"
+    );
+    assert!(catalog.contains("- echo: durable\n"));
+    assert!(
+        !catalog.contains("agent_prepare_context"),
+        "the scout must not recommend another scout pass"
+    );
+}
+
+/// A context without a visible spec list (background builders, older
+/// callers) keeps the previous behaviour: the inheritable registry, filtered
+/// by the visible names.
+#[tokio::test]
+async fn catalog_falls_back_to_all_tool_specs_when_visible_specs_are_absent() {
+    let mut ctx = parent_context_with_specs(
+        vec![
+            catalog_spec("echo", "durable"),
+            catalog_spec("hidden", "not advertised"),
+        ],
+        Vec::new(),
+    );
+    ctx.visible_tool_names = std::iter::once("echo".to_string()).collect();
+    let catalog = crate::openhuman::agent::harness::fork_context::with_parent_context(ctx, async {
+        AgentPrepareContextTool::render_parent_tool_catalog()
+    })
+    .await;
+    assert_eq!(catalog, "- echo: durable\n");
+}

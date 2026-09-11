@@ -392,6 +392,69 @@ describe('EmbeddingsPanel', () => {
     );
   });
 
+  it('reopens the selected custom provider with its active settings populated', async () => {
+    const settings = makeSettings({
+      provider: 'custom:https://embeddings.example.com/v1',
+      model: 'acme-embed-v2',
+      dimensions: 2048,
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', {
+          requires_api_key: true,
+          requires_endpoint: true,
+          has_api_key: true,
+        }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+
+    expect(await screen.findByPlaceholderText(/https:\/\/your-endpoint/i)).toHaveValue(
+      'https://embeddings.example.com/v1'
+    );
+    expect(screen.getByPlaceholderText('text-embedding-3-small')).toHaveValue('acme-embed-v2');
+    expect(screen.getByRole('spinbutton')).toHaveValue(2048);
+    expect(screen.getByPlaceholderText(/paste your api key/i)).toHaveValue('');
+    expect(vi.mocked(updateEmbeddingsSettings)).not.toHaveBeenCalled();
+  });
+
+  it('opens a retained custom profile while embeddings are disabled', async () => {
+    const settings = makeSettings({
+      provider: 'none',
+      model: 'acme-embed-v2',
+      dimensions: 2048,
+      custom_settings: {
+        endpoint: 'https://embeddings.example.com/v1',
+        model: 'acme-embed-v2',
+        dimensions: 2048,
+      },
+      providers: [
+        makeProvider('none', { requires_api_key: false }),
+        makeProvider('custom', {
+          requires_api_key: true,
+          requires_endpoint: true,
+          has_api_key: true,
+        }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+
+    expect(await screen.findByPlaceholderText(/https:\/\/your-endpoint/i)).toHaveValue(
+      'https://embeddings.example.com/v1'
+    );
+    expect(screen.getByPlaceholderText('text-embedding-3-small')).toHaveValue('acme-embed-v2');
+    expect(screen.getByRole('spinbutton')).toHaveValue(2048);
+  });
+
   it('can fill and save the custom endpoint form', async () => {
     const settings = makeSettings({
       providers: [

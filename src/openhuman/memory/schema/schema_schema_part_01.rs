@@ -481,6 +481,83 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 },
             ],
         }),
+"backfill_connector_trees" => Some( ControllerSchema {
+            namespace: NAMESPACE,
+            function: "backfill_connector_trees",
+            description: "Re-file connector documents stored before the memory-tree \
+                          routing fix (#6007) into the tree. Those records are already \
+                          embedded in the document store but invisible to tree recall, \
+                          the memory graph and the source row's ingest status, and a \
+                          re-sync will not recover them: the per-item sync gate treats \
+                          them as done. Idempotent — the ingest gate recognises what it \
+                          already treed, so a repeated pass writes nothing. EXPENSIVE: \
+                          one read and one set of chunk embeddings per document, so \
+                          `dry_run` defaults to true and a caller must ask for the write.",
+            inputs: vec![
+                FieldSchema {
+                    name: "dry_run",
+                    ty: TypeSchema::Bool,
+                    comment: "Report what a pass would examine and write nothing. \
+                              Defaults to TRUE — the write is the opt-in.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::U64,
+                    comment: "Documents to examine at most. Omit to leave the bound to \
+                              the driver. Resume by calling again; the work is \
+                              idempotent, so there is no cursor to carry.",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "executed",
+                    ty: TypeSchema::Bool,
+                    comment: "Which mode ran: false is the dry-run preview, true a \
+                              real pass. The mode, not \"did anything change\" — \
+                              `ingested` answers that.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "scanned",
+                    ty: TypeSchema::U64,
+                    comment: "Documents examined.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "ingested",
+                    ty: TypeSchema::U64,
+                    comment: "Documents that produced new memory-tree rows.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "already_present",
+                    ty: TypeSchema::U64,
+                    comment: "Documents the tree already held — what makes a repeated \
+                              run readable as \"nothing left to do\".",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "skipped",
+                    ty: TypeSchema::U64,
+                    comment: "Documents left alone rather than filed under a guess.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "more_pending",
+                    ty: TypeSchema::Bool,
+                    comment: "The pass stopped on its limit with documents unexamined.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "notes",
+                    ty: TypeSchema::Json,
+                    comment: "Bounded, human-readable reasons behind `skipped`.",
+                    required: true,
+                },
+            ],
+        }),
 "flush_now" => Some( ControllerSchema {
             namespace: NAMESPACE,
             function: "flush_now",

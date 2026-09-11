@@ -32,7 +32,12 @@ fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
 }
 
 #[test]
-fn lookup_openai_bearer_token_keeps_expired_token_when_refresh_fails_without_runtime() {
+fn lookup_openai_bearer_token_returns_session_expired_error_when_refresh_fails_on_expired_token() {
+    // A token that is 5 minutes past expiry with a refresh token present but no
+    // tokio runtime available (so try_refresh_oauth_token returns Err).
+    // After the fix in store.rs: is_expiring_within(ZERO) returns true AND
+    // refresh returned Err, so the function must return Err with a
+    // "session expired" message rather than Ok(Some("expired-access")).
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let store = AuthProfilesStore::new(tmp.path(), false);
@@ -50,8 +55,47 @@ fn lookup_openai_bearer_token_keeps_expired_token_when_refresh_fails_without_run
     );
     store.upsert_profile(oauth_profile, true).unwrap();
 
-    let token = lookup_openai_bearer_token(&config).unwrap();
-    assert_eq!(token.as_deref(), Some("expired-access"));
+    let result = lookup_openai_bearer_token(&config);
+    let err = result.expect_err("expected Err for expired token with failed refresh");
+    assert!(
+        err.to_lowercase()
+            .contains("authentication token is expired"),
+        "error message should contain 'authentication token is expired' to trigger \
+         is_openai_oauth_session_expired_message (not the app-session classifier), got: {err:?}"
+    );
+}
+
+#[test]
+fn lookup_openai_bearer_token_returns_ok_when_nearly_expiring_and_refresh_fails() {
+    // A token expiring 30 seconds in the future — within the 2-minute warning
+    // window but NOT yet expired.  The refresh fails (no tokio runtime), but
+    // since is_expiring_within(ZERO) is false the function must still return
+    // Ok(Some(...)) so the caller can make one last inference call before the
+    // token truly expires.
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "nearly-expiring-access".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() + Duration::seconds(30)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+
+    let token = lookup_openai_bearer_token(&config)
+        .expect("nearly-expiring token should be returned even when refresh fails");
+    assert_eq!(
+        token.as_deref(),
+        Some("nearly-expiring-access"),
+        "should return the existing token for one last inference call"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -69,7 +113,10 @@ async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_toke
             access_token: "oauth-access".into(),
             refresh_token: Some("refresh-token".into()),
             id_token: None,
-            expires_at: Some(Utc::now() - Duration::minutes(5)),
+            // Token is nearly-expiring (within 2-min skew) but NOT past expiry.
+            // This ensures refresh is attempted while the session-expired path
+            // (which fires only when expires_at <= now()) stays silent on failure.
+            expires_at: Some(Utc::now() + Duration::seconds(90)),
             token_type: Some("Bearer".into()),
             scope: None,
         },
@@ -97,7 +144,7 @@ async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_toke
     assert_eq!(
         token.as_deref(),
         Some("oauth-access"),
-        "invalid refresh payload should not replace the last known good access token"
+        "a failed refresh on a not-yet-expired token should return the cached token, not error"
     );
 
     let reloaded = AuthProfilesStore::new(tmp.path(), false).load().unwrap();

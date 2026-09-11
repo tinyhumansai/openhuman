@@ -25,7 +25,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MemorySourceEntry, SourceStatus } from '../../services/memorySourcesService';
 import { MemorySourceRow } from './MemorySourceRow';
 
-vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
+// Keys come back verbatim, except the one with a placeholder: it comes back as
+// its English shape so the count interpolation is asserted, not just the key.
+vi.mock('../../lib/i18n/I18nContext', () => ({
+  useT: () => ({
+    t: (k: string) =>
+      k === 'sync.pipeline.vectorsPending' ? 'Chunks waiting for vectors: {count}' : k,
+  }),
+}));
 
 const SOURCE_ID = 'src_brain_1';
 
@@ -40,14 +47,20 @@ function makeSource(overrides: Partial<MemorySourceEntry> = {}): MemorySourceEnt
   };
 }
 
-/** The incident's shape: everything ingested, nothing embedded. */
+/**
+ * The incident's shape: everything ingested, nothing embedded, and nothing
+ * moving — the newest chunk is long past the core's five-minute `recent`
+ * window and no backfill snapshot says a chain is draining it. (A backlog
+ * that IS moving is the neutral "waiting for vectors" note, pinned at the
+ * bottom of this file — openhuman#6025.)
+ */
 function storedWithoutVectors(overrides: Partial<SourceStatus> = {}): SourceStatus {
   return {
     source_id: SOURCE_ID,
     chunks_synced: 2581,
     chunks_pending: 2581,
-    last_chunk_at_ms: Date.now(),
-    freshness: 'recent',
+    last_chunk_at_ms: Date.now() - 60 * 60_000,
+    freshness: 'idle',
     ...overrides,
   } as SourceStatus;
 }
@@ -57,6 +70,7 @@ function renderRow(overrides: Partial<React.ComponentProps<typeof MemorySourceRo
     source: makeSource(),
     status: null,
     pipeline: null,
+    backfill: null,
     isAuthenticated: true,
     isSyncing: false,
     isBuilding: false,
@@ -130,10 +144,11 @@ describe('MemorySourceRow — the row tells the truth about embedding state', ()
 });
 
 describe('MemorySourceRow — what suppresses the warning', () => {
-  // `settled = !progress && !result` in MemorySourceRow.tsx. This suppression is
-  // correct (mid-sync `chunks_pending` is legitimately transient) and is also the
-  // most plausible way for the indicator to never appear: a source wedged in a
-  // progress state would warn about nothing forever. Both directions are pinned.
+  // `settled = !progress` in MemorySourceRow.tsx (openhuman#6025 dropped the
+  // `!result` half). Suppressing while progress streams is correct (mid-sync
+  // `chunks_pending` is legitimately transient) and is also the most plausible
+  // way for the indicator to never appear: a source wedged in a progress state
+  // would warn about nothing forever. Both directions are pinned.
   it('hides the warning while a sync is actively reporting progress', () => {
     renderRow({
       status: storedWithoutVectors(),
@@ -145,31 +160,19 @@ describe('MemorySourceRow — what suppresses the warning', () => {
     expect(warning()).not.toBeInTheDocument();
   });
 
-  // Skipped, not deleted, and it asserts the DESIRED behaviour rather than the
-  // current one — which is the only framing that satisfies both reviews on this
-  // thread.
-  //
-  // The bug: `settled = !progress && !result` (MemorySourceRow.tsx:100), and
-  // MemorySourcesRegistry clears `result` only when the NEXT sync starts
-  // (`:213`, `:358`). Nothing else drops it. So after any completed or failed
-  // sync the "stored without vectors" warning is suppressed indefinitely —
-  // exactly the incident this file exists for.
-  //
-  // Asserting the suppression as correct would make the bug a required
-  // contract, so a genuine fix would turn this red (CodeRabbit's objection, and
-  // it is right). Deleting the case would leave it invisible again, which is
-  // how it hid in the first place (Codex's objection, also right). Defining the
-  // expected behaviour and skipping until it holds does neither: it is a
-  // written-down spec for the fix, and it goes green the moment the fix lands.
-  //
-  // UNSKIP when the suppression is narrowed to `!progress`, or when the
-  // registry clears `syncResults` once the row's status refreshes post-sync.
-  // Tracked in ~/tinyhuman/bugs/W6-ui-bugs.md #14.
-  it.skip('should still warn after a sync finishes while chunks remain unembedded', () => {
+  // A terminal result chip no longer suppresses the verdict (openhuman#6025):
+  // the chip sits on the row until the NEXT sync starts, so `!result` hid a
+  // real hole in recall indefinitely — exactly the incident this file exists
+  // for. The verdict now tells a draining backlog from a stuck one itself,
+  // so the chip is not needed as a proxy. This case was written, and skipped,
+  // as the spec for that fix; it went green the moment the fix landed.
+  it('still warns after a sync finishes while chunks remain unembedded', () => {
     renderRow({
       status: storedWithoutVectors(),
       progress: null,
-      result: { ok: true } as unknown as React.ComponentProps<typeof MemorySourceRow>['result'],
+      result: { kind: 'success', items: 2581, note: null } as unknown as React.ComponentProps<
+        typeof MemorySourceRow
+      >['result'],
     });
 
     expect(warning()).toBeInTheDocument();
@@ -206,5 +209,80 @@ describe('MemorySourceRow — what suppresses the warning', () => {
 
     expect(warning()).toBeInTheDocument();
     expect(screen.queryByTestId(`memory-source-signin-${SOURCE_ID}`)).not.toBeInTheDocument();
+  });
+});
+
+describe('MemorySourceRow — a backlog that is still draining is pending, not failed (openhuman#6025)', () => {
+  const pendingNote = () => screen.queryByTestId(`memory-source-vectors-pending-${SOURCE_ID}`);
+
+  it('shows the neutral waiting note, not the warning, while a re-embed chain has rows to process', () => {
+    // The report: 676 chunks, 322 pending, ten minutes after a Gmail sync, and
+    // the row went amber for a backlog the engine was already draining.
+    renderRow({
+      status: storedWithoutVectors({ chunks_synced: 676, chunks_pending: 322 }),
+      backfill: { in_progress: true, pending_jobs: 1 },
+    });
+
+    expect(warning()).not.toBeInTheDocument();
+    const note = pendingNote();
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveTextContent('Chunks waiting for vectors: 322');
+    // The freshness pill stays; the amber "Ingested only" pill does not appear.
+    expect(screen.getByText('sync.idle')).toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`memory-source-ingested-only-${SOURCE_ID}`)
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the waiting note while the newest chunk is recent, even with no backfill snapshot', () => {
+    renderRow({
+      status: storedWithoutVectors({
+        chunks_pending: 4,
+        freshness: 'recent',
+        last_chunk_at_ms: Date.now(),
+      }),
+      backfill: null,
+    });
+
+    expect(warning()).not.toBeInTheDocument();
+    expect(pendingNote()).toBeInTheDocument();
+  });
+
+  it('keeps the waiting note beside a fresh result chip', () => {
+    // The minutes right after `completed` are exactly when the backlog is
+    // visible; the chip must hide neither the note nor (above) the warning.
+    renderRow({
+      status: storedWithoutVectors({ chunks_pending: 322, freshness: 'active' }),
+      backfill: { in_progress: true, pending_jobs: 1 },
+      result: { kind: 'success', items: 500, note: null } as unknown as React.ComponentProps<
+        typeof MemorySourceRow
+      >['result'],
+    });
+
+    expect(screen.getByTestId(`memory-source-result-${SOURCE_ID}`)).toBeInTheDocument();
+    expect(pendingNote()).toBeInTheDocument();
+    expect(warning()).not.toBeInTheDocument();
+  });
+
+  it('turns amber once the backlog is idle with no chain queued', () => {
+    renderRow({
+      status: storedWithoutVectors({ chunks_pending: 322 }),
+      backfill: { in_progress: false, pending_jobs: 0 },
+    });
+
+    expect(pendingNote()).not.toBeInTheDocument();
+    expect(warning()).toBeInTheDocument();
+  });
+
+  it('hides the note while a sync is actively reporting progress', () => {
+    renderRow({
+      status: storedWithoutVectors({ chunks_pending: 322, freshness: 'active' }),
+      backfill: { in_progress: true, pending_jobs: 1 },
+      progress: { processed: 10, total: 2581 } as unknown as React.ComponentProps<
+        typeof MemorySourceRow
+      >['progress'],
+    });
+
+    expect(pendingNote()).not.toBeInTheDocument();
   });
 });

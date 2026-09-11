@@ -73,12 +73,32 @@ omit_memory_md = false
 # If you are here to propose the mega-tool again, it is a routing-quality change
 # needing an eval, not a token change.
 #
+# Two agents are deliberately ABSENT from this list, and absence is the point:
+# dropping an entry removes its synthesised `delegate_*` schema from every turn
+# without deleting the agent's registry entry. `spawn_async_subagent` builds
+# its `agent_id` enum from the whole registry, so `tools_agent` and
+# `archivist` still appear as choices — but note that they are NOT actually
+# dispatchable that way today: `execute_with_context_inner` additionally
+# checks `parent.allowed_subagent_ids`, which `session/turn/tools.rs` derives
+# from this very `subagents.allowlist`, so a model that calls
+# `spawn_async_subagent(agent_id = "tools_agent" | "archivist")` gets a clean
+# "not in parent agent's subagents.allowlist" error, not a dispatch. Making
+# them genuinely id-reachable without paying for a dedicated tool needs a
+# separate "spawn-permitted but unadvertised" list threaded through
+# `AgentDefinition`, `validate_tier_hierarchy` and the RPC-facing registry
+# model — tracked as follow-up, not done here.
+#
+#   * `tools_agent` — the generalist shell/HTTP/web-search worker. The
+#     orchestrator now carries `shell`, `web_search_tool`, `web_fetch` and
+#     `run_code` itself, so the delegate was a second door onto work it can
+#     already do directly.
+#   * `archivist` — memory archiving runs on its own post-turn hook, so the
+#     model rarely needs to ask for it, and asking is not how it usually happens.
 [subagents]
 allowlist = [
     "researcher",
     "planner",
     "code_executor",
-    "tools_agent",
     # Task-board/source/workflow specialist. Route any request to create,
     # edit, approve/reject, fetch, clear, remove, or summarize agent tasks,
     # proactive task sources, workflow bundles, task evidence, or artifacts
@@ -112,7 +132,6 @@ allowlist = [
     "video_agent",
     "skill_creator",
     "critic",
-    "archivist",
     # Product docs/help specialist. Route OpenHuman docs, settings,
     # setup, and feature questions here before guessing from priors.
     "help",
@@ -245,10 +264,7 @@ named = [
     # goals" because this allowlist never named the family — capability and
     # domain gates both pass at runtime (the driver advertises `goals`), so
     # this list was the only closed layer (#5875 test session).
-    "goals_list",
-    "goals_add",
-    "goals_edit",
-    "goals_delete",
+    "goals",
     # Memory-protocol close-out (#4116). A successful `memory_store` is a durable
     # write, so the memory-protocol middleware appends a "call `update_memory_md`
     # to keep the MEMORY.md index in sync" note to the tool result and warns at run

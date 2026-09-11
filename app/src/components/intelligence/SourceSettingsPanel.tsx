@@ -52,27 +52,13 @@ type LimitFields = Pick<
 // Item-count caps where a "Maxed" badge is meaningful (synced count vs cap).
 // Time-window (sync_depth_days/since_days) and budget (tokens/cost) caps don't
 // map to a chunk count, so they never show "Maxed".
-const COUNT_FIELDS = new Set<keyof LimitFields>([
-  'max_items',
-  'max_prs',
-  'max_issues',
-  'max_commits',
-]);
-
 interface SourceSettingsPanelProps {
   source: MemorySourceEntry;
-  /** Chunks already synced for this source — drives the "Maxed" badge. */
-  syncedCount?: number;
   onSaved: (updated: MemorySourceEntry) => void;
   onToast?: (toast: { type: 'success' | 'error'; title: string; message?: string }) => void;
 }
 
-export function SourceSettingsPanel({
-  source,
-  syncedCount,
-  onSaved,
-  onToast,
-}: SourceSettingsPanelProps) {
+export function SourceSettingsPanel({ source, onSaved, onToast }: SourceSettingsPanelProps) {
   const { t } = useT();
   const fields = KIND_FIELDS[source.kind] ?? [];
 
@@ -146,25 +132,17 @@ export function SourceSettingsPanel({
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {fields.map(field => {
-          const cap = Number(values[field]);
           const isUnlimited = (values[field] ?? '') === '';
-          const isMaxed =
-            COUNT_FIELDS.has(field) &&
-            !isUnlimited &&
-            Number.isFinite(cap) &&
-            typeof syncedCount === 'number' &&
-            syncedCount >= cap;
+          // No "Maxed" badge. The only count a row has is *chunks*, and a cap
+          // is *items* (emails, issues, commits); one email is several
+          // chunks, so the badge lit long before the cap was reached. It
+          // comes back when the status carries an item count (openhuman#6012).
           return (
             <div key={field}>
               <label
                 htmlFor={`src-setting-${source.id}-${field}`}
                 className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
                 {t(FIELD_LABEL_KEYS[field])}
-                {isMaxed && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                    {t('memorySources.settings.maxed')}
-                  </span>
-                )}
                 {isUnlimited && (
                   <span
                     className="inline-flex cursor-help text-content-faint"

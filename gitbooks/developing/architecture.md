@@ -290,7 +290,7 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 
 ## Vendored crate family & recent shifts
 
-Core subsystems run on published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinycortex`, `tinychannels`, `tinyjuice`) so crate changes can be tested in-tree before publishing. The major ownership boundaries are:
+Core subsystems run on published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinychannels`, `tinyjuice`, `tinymemory`, …) so crate changes can be tested in-tree before publishing. `tinycortex` is not a top-level submodule: the memory engine is reached through the copy `tinymemory` vendors (`vendor/tinymemory/vendor/tinycortex`), which is the commit the prebuilt `tinymemory` module is built from. The major ownership boundaries are:
 
 - **Agent engine on tinyagents** — every agent turn runs through the `tinyagents` crate harness via the seam in `src/openhuman/agent/tinyagents/`; see [Agent Harness](architecture/agent-harness.md).
 - **Memory on tinycortex** — the generic store/tree/queue/retrieval/sync engine is crate-owned. OpenHuman keeps RPC, tools, scheduling, credentials, security/event policy, worker orchestration, and the host namespace-document store; `src/openhuman/memory/tinycortex/` implements those seams. Concrete embedding transports are shared through `tinyagents::harness::embeddings`.

@@ -21,6 +21,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// question of the same role.
 const RECAP_INFERENCE_ROLE: &str = "summarization";
 
+/// Whether a finalize-time recap may be handed to a consumer that will treat
+/// it as real conversation content.
+///
+/// `from_llm == false` means [`ArchivistHook::summarize_entries`] returned the
+/// `boundary::fallback_summary` bookend — the segment's first and last 200
+/// characters joined by a pipe. That string is not a summary of anything; it
+/// is a placeholder that reads like one.
+///
+/// The emptiness term is a belt: a successful LLM recap is already non-empty
+/// by construction, because `summarize_entries` only reports `true` from the
+/// `Ok(output) if !output.content.is_empty()` arm. It fires on a shape that
+/// cannot occur today, and exists so a future arm cannot quietly reintroduce
+/// one.
+pub(super) fn recap_is_usable(from_llm: bool, summary: &str) -> bool {
+    from_llm && !summary.trim().is_empty()
+}
+
 impl ArchivistHook {
     /// Create an Archivist hook over the workspace's bound memory driver.
     ///
@@ -33,8 +50,6 @@ impl ArchivistHook {
             boundary_config: BoundaryConfig::default(),
             config: None,
             summariser_available: false,
-            #[cfg(test)]
-            chat_provider: None,
         }
     }
 
@@ -61,9 +76,10 @@ impl ArchivistHook {
     ///
     /// That question is the host's to answer, and this asks it directly.
     /// `build_chat_provider` wraps `tinymemory_core::chat_host::
-    /// create_chat_model_with_model_id`, which is a process-global seam whose
-    /// only implementation is `OpenHumanChatHost` in `memory/host_impls.rs`,
-    /// and that forwards verbatim to the call below — same role, same config,
+    /// create_chat_model_with_model_id`, which was a process-global seam whose
+    /// only implementation was `OpenHumanChatHost` in `memory/host_impls.rs`
+    /// (deleted with the in-process engine, openhuman#6161), and that forwarded
+    /// verbatim to the call below — same role, same config,
     /// same temperature. The predicate is therefore unchanged; what changed is
     /// that the archivist no longer names the memory engine to evaluate it
     /// (#5560), and no longer builds a model it will not use.
@@ -75,7 +91,7 @@ impl ArchivistHook {
     /// `new`, `disabled` or `new_with_stubs*` — and the tests that do need a
     /// deterministic LLM install the task-local around the call itself, which
     /// is where it has to be anyway for `summarise` to see it.
-    pub fn with_config(mut self, config: Config) -> Self {
+    pub fn with_config(mut self, config: std::sync::Arc<Config>) -> Self {
         // Probe the summariser: can this host build a chat model for the recap
         // role right now? The model is dropped immediately — see above.
         let probe = crate::openhuman::inference::provider::create_chat_model_with_model_id(
@@ -113,8 +129,6 @@ impl ArchivistHook {
             boundary_config: BoundaryConfig::default(),
             config: None,
             summariser_available: false,
-            #[cfg(test)]
-            chat_provider: None,
         }
     }
 
@@ -304,18 +318,33 @@ impl ArchivistHook {
 
     /// Called when a segment is closed.
     ///
-    /// Produces a segment recap (LLM if a chat provider is configured,
-    /// otherwise the heuristic fallback), embeds the recap, extracts
-    /// heuristic events, and updates the user profile.
+    /// Produces a segment recap, extracts heuristic events, updates the user
+    /// profile, and pipes the segment's raw turns into the memory tree.
+    ///
+    /// What happens to the recap depends on where it came from (#6156). An LLM
+    /// recap is persisted with `set_segment_summary`, embedded, and handed to
+    /// goals enrichment. The heuristic `boundary::fallback_summary` bookend is
+    /// none of those things — it is logged and dropped, leaving the segment
+    /// unsummarised on purpose. Everything downstream of the recap (events,
+    /// profile facets, tree ingest) runs either way, because none of it reads
+    /// the summary.
     ///
     /// Soft-fallback contract (mirrors `LlmSummariser`): this function
     /// never returns `Err`; all failures are logged and ignored.
+    /// Returns whether a usable LLM recap was produced for this segment.
+    ///
+    /// The caller uses it as a liveness signal, not as a success code: a `true`
+    /// means the summariser answered *just now*, which is the only first-hand
+    /// evidence the app gets that it is reachable. `false` covers every reason
+    /// a recap did not happen — no driver, no entries, no summariser, or a
+    /// summariser that failed — because none of them are a moment to spend
+    /// budget re-trying older segments against the same provider (#6186).
     pub(super) async fn on_segment_closed(
         &self,
         segment: &ConversationSegment,
         session_id: &str,
         now: f64,
-    ) {
+    ) -> bool {
         // Gather the conversation text for this segment. Prefer the
         // md-backed memory_archivist read when config is available; fall
         // back to the driver's episodic family otherwise.
@@ -335,7 +364,7 @@ impl ArchivistHook {
                 "[archivist] segment={} has no entries — skipping recap",
                 segment.segment_id
             );
-            return;
+            return false;
         }
 
         // Build segment text from user messages (for event extraction).
@@ -347,32 +376,73 @@ impl ArchivistHook {
             .join(". ");
 
         // ── Segment recap (LLM or heuristic fallback) ────────────────────
-        let (summary, _from_llm) = self
+        let (summary, from_llm) = self
             .summarize_entries(&segment_entries, &segment.segment_id, segment.turn_count)
             .await;
 
-        // Persist the recap.
-        let set_summary = match self.episodic() {
-            Some(episodic) => {
-                episodic
-                    .set_segment_summary(&segment.segment_id, &summary, now)
-                    .await
-            }
-            None => return,
+        // Hoisted above the two recap arms because what is missing here is the
+        // driver, not the summary: with no episodic family there is nothing to
+        // write on either arm, and this is the exit that path has always taken.
+        let Some(episodic) = self.episodic() else {
+            return false;
         };
-        if let Err(e) = set_summary {
-            tracing::warn!("[archivist] failed to set segment summary: {e}");
-        } else {
-            tracing::debug!(
-                "[archivist] recap persisted segment={} summary_chars={}",
-                segment.segment_id,
-                summary.len()
-            );
-        }
 
-        // ── Finalize-time embedding ───────────────────────────────────────
-        self.embed_segment_recap(&segment.segment_id, &summary, now)
-            .await;
+        if recap_is_usable(from_llm, &summary) {
+            // Persist the recap.
+            let set_summary = episodic
+                .set_segment_summary(&segment.segment_id, &summary, now)
+                .await;
+            if let Err(e) = set_summary {
+                tracing::warn!("[archivist] failed to set segment summary: {e}");
+            } else {
+                tracing::debug!(
+                    "[archivist] recap persisted segment={} summary_chars={}",
+                    segment.segment_id,
+                    summary.len()
+                );
+            }
+
+            // ── Finalize-time embedding ───────────────────────────────────
+            self.embed_segment_recap(&segment.segment_id, &summary, now)
+                .await;
+        } else {
+            // #6156. The bookend is not written, not embedded, and not handed
+            // to goals enrichment.
+            //
+            // Persisting it would be worse than storing nothing, because
+            // `segment_set_summary` also flips the row to `status='summarised'`
+            // — and that flip is the one thing that removes the segment from
+            // the `segments_pending_summary` query a later re-summarisation
+            // pass selects on. Leaving the row `'closed'` with a NULL summary
+            // IS the provenance marker, at no schema cost.
+            //
+            // Nothing is lost by dropping the bookend either: it is derived
+            // from the segment's first and last turn, both of which stay in the
+            // episodic store, so it can be recomputed at any time.
+            //
+            // WARN only when a summariser was actually expected. With none
+            // configured for the workspace at all this is the steady state
+            // rather than a degradation, and warning once per segment close
+            // would bury the case #6156 is about — a summariser that exists
+            // and did not answer — in noise from the case that is working as
+            // intended.
+            if self.summariser_available {
+                tracing::warn!(
+                    "[archivist] no LLM recap for segment={} ({} turns) — summary NOT persisted, \
+                     NOT embedded, NOT sent to goals enrichment; the segment stays unsummarised \
+                     so a later pass can recap it once a summariser answers",
+                    segment.segment_id,
+                    segment.turn_count,
+                );
+            } else {
+                tracing::debug!(
+                    "[archivist] no summariser for this workspace — segment={} ({} turns) left \
+                     unsummarised",
+                    segment.segment_id,
+                    segment.turn_count,
+                );
+            }
+        }
 
         // ── Heuristic event extraction ────────────────────────────────────
         if !segment_text.is_empty() {
@@ -472,7 +542,13 @@ impl ArchivistHook {
         // the user's durable goals list stays fresh. Feed it the fresh recap
         // as context. Detached + non-fatal: never blocks segment close.
         if let Some(ref cfg) = self.config {
-            if cfg.learning.goals_enrichment_enabled && !summary.trim().is_empty() {
+            // #6156: the recap term leads deliberately. Handing the bookend to
+            // the goals agent means an LLM call whose entire context is two
+            // truncated utterances, and it will invent durable goals out of
+            // that noise. Ordering it ahead of the config flag also keeps it
+            // evaluated whenever a config is attached, rather than being
+            // short-circuited away by an unrelated toggle.
+            if recap_is_usable(from_llm, &summary) && cfg.learning.goals_enrichment_enabled {
                 tracing::debug!(
                     "[memory_goals] segment closed — spawning goals enrichment \
                      session={session_id} segment={}",
@@ -483,12 +559,17 @@ impl ArchivistHook {
                     segment.segment_id, summary
                 );
                 crate::openhuman::memory::goals::spawn_enrich_goals(
-                    cfg.clone(),
+                    // The hook now shares the factory's `Arc<Config>`; this
+                    // detached task still owns a `Config`, so materialise one
+                    // here. Once per closed segment, not once per live agent.
+                    cfg.as_ref().clone(),
                     cfg.workspace_dir.clone(),
                     context,
                 );
             }
         }
+
+        recap_is_usable(from_llm, &summary)
     }
 
     /// Embed `summary` for `segment_id` and write the per-model embedding row.
@@ -502,6 +583,11 @@ impl ArchivistHook {
     /// zero entries) and an empty embed input is guaranteed to 400 from
     /// the upstream embedding API (#13021). The segment is sealed without
     /// an embedding row; subsequent recap edits can re-embed.
+    ///
+    /// Since #6156 the finalize caller also declines to call this at all for a
+    /// heuristic recap, so this guard is no longer the only thing standing
+    /// between a bookend stub and the embedder. It now covers direct callers
+    /// and any future one that has not made that decision for itself.
     pub(super) async fn embed_segment_recap(&self, segment_id: &str, summary: &str, now: f64) {
         if summary.trim().is_empty() {
             tracing::warn!(
@@ -576,3 +662,7 @@ impl ArchivistHook {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod tests;

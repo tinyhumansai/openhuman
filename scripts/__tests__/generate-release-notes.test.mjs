@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   buildOpenAiRequest,
   buildReleasePayload,
+  collectCommits,
+  createRecordSplitter,
   ensureAllPullRequestsLinked,
   extractPullRequestNumbers,
   parseArgs,
   parseGitHubRepoFromRemote,
   parseGitLog,
+  priorAuthorKeys,
   renderDeterministicNotes,
 } from '../release/generate-release-notes.mjs';
 
@@ -210,4 +217,98 @@ test('deterministic notes omit new contributors section when there are none', ()
 
   const markdown = renderDeterministicNotes({ title: 'v1.0.0 to main', payload });
   assert.doesNotMatch(markdown, /## New Contributors/);
+});
+
+test('record splitter reassembles records across chunk boundaries', () => {
+  const records = [];
+  const splitter = createRecordSplitter('\x1e', (record) => records.push(record));
+
+  // A separator straddling two chunks is the failure mode a naive
+  // `chunk.split(sep)` reader gets wrong, so feed one byte at a time.
+  const stream = 'alpha\x1ebeta\x1egamma';
+  for (const character of stream) {
+    splitter.push(character);
+  }
+  assert.deepEqual(records, ['alpha', 'beta']);
+
+  // The final record has no trailing separator; end() must still emit it.
+  splitter.end();
+  assert.deepEqual(records, ['alpha', 'beta', 'gamma']);
+
+  // end() is idempotent — a second call must not re-emit.
+  splitter.end();
+  assert.deepEqual(records, ['alpha', 'beta', 'gamma']);
+});
+
+test('commit collection survives a git log larger than the 1 MiB spawn buffer', async (t) => {
+  // Regression guard for the v0.63.21 release failure: `execFileSync` buffers the
+  // child's whole stdout and throws `spawnSync git ENOBUFS` past Node's 1 MiB
+  // `maxBuffer` default. The release span grows with every unpublished tag, so the
+  // collector must not have a fixed output ceiling at all.
+  const MAX_BUFFER_BYTES = 1024 * 1024;
+  const repo = mkdtempSync(join(tmpdir(), 'release-notes-enobufs-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+
+  // Ignore the ambient git config: a developer's global `commit.gpgsign` or
+  // `tag.gpgSign` would otherwise make the fixture prompt or fail.
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+    });
+
+  git('init', '--quiet', '--initial-branch', 'main');
+  git('config', 'user.name', 'Range Fixture');
+  git('config', 'user.email', 'range@example.test');
+  git('config', 'commit.gpgsign', 'false');
+  git('config', 'tag.gpgSign', 'false');
+  git('commit', '--allow-empty', '--quiet', '-m', 'base');
+  git('tag', 'start');
+
+  const COMMITS = 150;
+  const SUBJECT_PADDING = 8000;
+  for (let index = 0; index < COMMITS; index += 1) {
+    git(
+      'commit',
+      '--allow-empty',
+      '--quiet',
+      '-m',
+      `chore: padded commit ${index} ${'x'.repeat(SUBJECT_PADDING)} (#${1000 + index})`,
+    );
+  }
+  git('tag', 'end');
+
+  const previousCwd = process.cwd();
+  process.chdir(repo);
+  t.after(() => process.chdir(previousCwd));
+
+  // The fixture is only a regression guard if it actually overflows the buffer
+  // the old implementation used.
+  const rawBytes = Buffer.byteLength(
+    execFileSync(
+      'git',
+      ['log', 'start..end', '--reverse', '--format=%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1e'],
+      {
+        cwd: repo,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+      },
+    ),
+  );
+  assert.ok(
+    rawBytes > MAX_BUFFER_BYTES,
+    `fixture must exceed the 1 MiB spawn buffer, got ${rawBytes} bytes`,
+  );
+
+  const commits = await collectCommits('start', 'end');
+  assert.equal(commits.length, COMMITS);
+  assert.equal(commits.at(0).primaryPrNumber, 1000);
+  assert.equal(commits.at(-1).primaryPrNumber, 1000 + COMMITS - 1);
+  assert.ok(commits.every((commit) => commit.sha.length === 40));
+
+  const priorKeys = await priorAuthorKeys('start');
+  assert.ok(priorKeys.has('range fixture <range@example.test>'));
 });

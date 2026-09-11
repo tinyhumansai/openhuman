@@ -50,9 +50,19 @@ fn build_enforces_read_simulate_confirm_execute() {
         body.contains("ask_user_clarification"),
         "prompt must require explicit user confirmation before execute"
     );
+    // The executable surface is the web3 quote/execute family, which consumes
+    // the `quote_id` its matching quote call returned (`web3/store.rs`
+    // `execute_quote` -> `take_quote_for`). It was `prepared_id` when the prompt
+    // was written against `wallet_execute_prepared` — a `wallet.*` RPC method
+    // that has no agent Tool wrapper, so that call could never resolve.
     assert!(
-        body.contains("prepared_id"),
-        "execute step must consume a prepared_id, not fabricated parameters"
+        body.contains("quote_id"),
+        "execute step must consume a quote_id returned by the matching quote call, \
+         not fabricated parameters"
+    );
+    assert!(
+        body.contains("prepare-only") || body.contains("no tool in your surface executes it"),
+        "prompt must state plainly that a plain transfer cannot be executed by this agent"
     );
 }
 

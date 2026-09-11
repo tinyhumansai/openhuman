@@ -55,10 +55,11 @@
 //!   internal bearer or a stable user-managed external API key stored under
 //!   `openhuman::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER`.
 
-use std::io::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[cfg(unix)]
+use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
 

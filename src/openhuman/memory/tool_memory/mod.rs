@@ -66,6 +66,10 @@ pub use store::{ToolMemoryStore, TOOL_MEMORY_PROMPT_CAP};
 pub mod capture;
 pub mod prompt;
 pub mod store;
+#[cfg(test)]
+pub mod test_support;
+#[cfg(test)]
+pub use test_support::test_helpers;
 
 /// Build the rule store over OpenHuman's shared memory object.
 ///
@@ -78,23 +82,3 @@ pub fn tool_memory_store(memory: Arc<dyn Memory>) -> ToolMemoryStore {
     log::trace!("[memory::tool_memory] building ToolMemoryStore over the host memory object");
     ToolMemoryStore::new(memory)
 }
-
-// The engine crate's `MockMemory` fixture, re-exported under its historical
-// path `memory::tool_memory::test_helpers`.
-//
-// Test-only in both directions: `tinymemory-core` compiles it behind
-// `cfg(any(test, feature = "test-support"))`, and both items below are
-// `#[cfg(test)]`, so they exist only in `cargo test --lib` builds where the
-// dev-dependency at `Cargo.toml`'s `[dev-dependencies]` supplies the crate.
-// Four inline `#[cfg(test)]` modules reach it — `capture` in this directory,
-// `agent::experience::{capture, store}` and
-// `agent::tinyagents::host::experience_store`.
-//
-// The `pub use tinymemory_core::…` line itself sits one level down, in
-// `test_support/mod.rs`; that module's docs say why, and the path callers use
-// does not change.
-#[cfg(test)]
-pub mod test_support;
-
-#[cfg(test)]
-pub use test_support::test_helpers;

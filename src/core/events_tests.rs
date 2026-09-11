@@ -1,5 +1,13 @@
 use super::*;
 
+/// The workspace an MCP supervisor event is attributed to.
+///
+/// One process supervises every workspace it has opened, so these events name
+/// theirs; nothing in these cases depends on which one it is (#5931).
+fn mcp_workspace() -> std::path::PathBuf {
+    std::path::PathBuf::from("/tmp/openhuman-ws")
+}
+
 #[test]
 fn all_variants_have_correct_domain() {
     let cases: Vec<(DomainEvent, &str)> = vec![
@@ -503,6 +511,60 @@ fn all_variants_have_correct_domain() {
             },
             "auth",
         ),
+        // MCP reconnect supervisor (#5931)
+        (
+            DomainEvent::McpServerProbeTimedOut {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                probe_timeout_secs: 8,
+                consecutive_timeouts: 1,
+                teardown_after: 3,
+                workspace_dir: mcp_workspace(),
+            },
+            "mcp_client",
+        ),
+        (
+            DomainEvent::McpServerTransportDropped {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                outcome: "broken".into(),
+                detail: Some("connection reset".into()),
+                elapsed_ms: Some(1961),
+                consecutive_timeouts: 0,
+                workspace_dir: mcp_workspace(),
+            },
+            "mcp_client",
+        ),
+        (
+            DomainEvent::McpServerReconnected {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                tool_count: 25,
+                after_failures: 0,
+                workspace_dir: mcp_workspace(),
+            },
+            "mcp_client",
+        ),
+        (
+            DomainEvent::McpServerReconnectFailed {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                error: "connection refused".into(),
+                failures: 1,
+                retry_in_secs: 5,
+                workspace_dir: mcp_workspace(),
+            },
+            "mcp_client",
+        ),
+        (
+            DomainEvent::McpServerParked {
+                server_id: "srv-1".into(),
+                qualified_name: "@scope/server".into(),
+                error: "the `uvx` launcher is not installed".into(),
+                workspace_dir: mcp_workspace(),
+            },
+            "mcp_client",
+        ),
     ];
 
     for (event, expected_domain) in cases {
@@ -559,4 +621,426 @@ fn memory_driver_bind_failed_domain_and_name() {
     };
     assert_eq!(event.domain(), "memory");
     assert_eq!(event.variant_name(), "MemoryDriverBindFailed");
+}
+
+/// The Event Log's "agent" column is the only per-row context the stream
+/// carries, so every MCP row must name its server there (#5931): the
+/// supervisor's verdicts by the registry name a user knows the server by, the
+/// RPC-driven lifecycle by the install id.
+#[test]
+fn mcp_supervisor_events_name_themselves_and_hint_the_server() {
+    let cases: Vec<(DomainEvent, &str)> = vec![
+        (
+            DomainEvent::McpServerProbeTimedOut {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                probe_timeout_secs: 8,
+                consecutive_timeouts: 1,
+                teardown_after: 3,
+                workspace_dir: mcp_workspace(),
+            },
+            "McpServerProbeTimedOut",
+        ),
+        (
+            DomainEvent::McpServerTransportDropped {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                outcome: "timed_out".into(),
+                detail: None,
+                elapsed_ms: Some(8_000),
+                consecutive_timeouts: 3,
+                workspace_dir: mcp_workspace(),
+            },
+            "McpServerTransportDropped",
+        ),
+        (
+            DomainEvent::McpServerReconnected {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                tool_count: 25,
+                after_failures: 1,
+                workspace_dir: mcp_workspace(),
+            },
+            "McpServerReconnected",
+        ),
+        (
+            DomainEvent::McpServerReconnectFailed {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                error: "connection refused".into(),
+                failures: 1,
+                retry_in_secs: 5,
+                workspace_dir: mcp_workspace(),
+            },
+            "McpServerReconnectFailed",
+        ),
+        (
+            DomainEvent::McpServerParked {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                error: "the `uvx` launcher is not installed".into(),
+                workspace_dir: mcp_workspace(),
+            },
+            "McpServerParked",
+        ),
+    ];
+
+    for (event, expected_name) in cases {
+        assert_eq!(event.variant_name(), expected_name);
+        assert_eq!(event.domain(), "mcp_client");
+        assert_eq!(
+            event.agent_hint(),
+            Some("ac.inference.sh/mcp"),
+            "{expected_name} should hint the registry name"
+        );
+    }
+}
+
+#[test]
+fn mcp_lifecycle_events_hint_the_install_id() {
+    let cases = vec![
+        DomainEvent::McpServerInstalled {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+        },
+        DomainEvent::McpServerConnected {
+            server_id: "srv-1".into(),
+            tool_count: 3,
+        },
+        DomainEvent::McpServerDisconnected {
+            server_id: "srv-1".into(),
+            reason: Some("disabled".into()),
+        },
+    ];
+
+    for event in cases {
+        assert_eq!(
+            event.agent_hint(),
+            Some("srv-1"),
+            "{} should hint the install id",
+            event.variant_name()
+        );
+    }
+}
+
+/// The Event Log envelope carries the variant name, the agent hint and a
+/// timestamp — no payload — so the supervisor variants attach the one line a
+/// reader needs to tell a broken transport from a timed-out one (#5931).
+#[test]
+fn mcp_supervisor_events_summarise_themselves_for_the_event_log() {
+    let cases: Vec<(DomainEvent, Vec<&str>)> = vec![
+        (
+            DomainEvent::McpServerProbeTimedOut {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                probe_timeout_secs: 8,
+                consecutive_timeouts: 1,
+                teardown_after: 3,
+                workspace_dir: mcp_workspace(),
+            },
+            vec!["8s", "1", "3"],
+        ),
+        (
+            DomainEvent::McpServerTransportDropped {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                outcome: "broken".into(),
+                detail: Some("connection reset".into()),
+                elapsed_ms: Some(1961),
+                consecutive_timeouts: 0,
+                workspace_dir: mcp_workspace(),
+            },
+            vec!["broken", "1961ms", "connection reset"],
+        ),
+        (
+            DomainEvent::McpServerReconnected {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                tool_count: 25,
+                after_failures: 2,
+                workspace_dir: mcp_workspace(),
+            },
+            vec!["25 tools", "2 failed"],
+        ),
+        (
+            DomainEvent::McpServerReconnectFailed {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                error: "connection refused".into(),
+                failures: 1,
+                retry_in_secs: 5,
+                workspace_dir: mcp_workspace(),
+            },
+            vec!["attempt 1", "5s", "connection refused"],
+        ),
+        (
+            DomainEvent::McpServerParked {
+                server_id: "srv-1".into(),
+                qualified_name: "ac.inference.sh/mcp".into(),
+                error: "the `uvx` launcher is not installed".into(),
+                workspace_dir: mcp_workspace(),
+            },
+            vec!["parked", "uvx"],
+        ),
+    ];
+
+    for (event, expected) in cases {
+        let detail = event
+            .log_detail()
+            .unwrap_or_else(|| panic!("{} should summarise itself", event.variant_name()));
+        for fragment in expected {
+            assert!(
+                detail.contains(fragment),
+                "{} detail {detail:?} is missing {fragment:?}",
+                event.variant_name()
+            );
+        }
+        assert!(
+            !detail.contains("/tmp/openhuman-ws"),
+            "{} must not print its workspace into a shared panel: {detail:?}",
+            event.variant_name()
+        );
+    }
+}
+
+/// A transport drop with nothing measured still says what happened.
+#[test]
+fn a_missing_entry_drop_summarises_without_a_measurement() {
+    let detail = DomainEvent::McpServerTransportDropped {
+        server_id: "srv-1".into(),
+        qualified_name: "ac.inference.sh/mcp".into(),
+        outcome: "missing".into(),
+        detail: None,
+        elapsed_ms: None,
+        consecutive_timeouts: 0,
+        workspace_dir: mcp_workspace(),
+    }
+    .log_detail()
+    .expect("a drop always summarises");
+    assert_eq!(detail, "session ended: missing");
+}
+
+/// One row cannot flood the log, and truncation never splits a character.
+#[test]
+fn a_long_error_is_clipped_on_a_character_boundary() {
+    let detail = DomainEvent::McpServerParked {
+        server_id: "srv-1".into(),
+        qualified_name: "ac.inference.sh/mcp".into(),
+        error: "é".repeat(400),
+        workspace_dir: mcp_workspace(),
+    }
+    .log_detail()
+    .expect("a parked server always summarises");
+    assert!(detail.ends_with('…'), "{detail:?}");
+    assert_eq!(detail.chars().filter(|c| *c == 'é').count(), 160);
+}
+
+/// Every other variant is unchanged: no detail, so its row renders as before.
+#[test]
+fn events_outside_the_supervisor_have_no_event_log_detail() {
+    assert!(DomainEvent::CronJobCompleted {
+        job_id: "job-1".into(),
+        success: true,
+        output: "done".into(),
+    }
+    .log_detail()
+    .is_none());
+    assert!(DomainEvent::McpServerConnected {
+        server_id: "srv-1".into(),
+        tool_count: 25,
+    }
+    .log_detail()
+    .is_none());
+}
+
+// ── workspace_dir ────────────────────────────────────────────────────────
+
+/// A workspace that is not [`mcp_workspace`], so a test can tell "the
+/// accessor returned *a* path" apart from "the accessor returned *this*
+/// path".
+fn other_workspace() -> std::path::PathBuf {
+    std::path::PathBuf::from("/tmp/openhuman-other-ws")
+}
+
+/// Every variant that carries a workspace must be reachable through the one
+/// accessor. The bug this guards is not a missing arm in the abstract: before
+/// #5966 the notification bridge kept its own list, it named only the MCP
+/// family, and the channel and artifact families — which carry the same field
+/// — were silently ungated. A consumer that filters by workspace must be able
+/// to ask one question and get every bound event, or it covers a subset and
+/// nothing says which.
+#[test]
+fn every_workspace_bound_variant_is_reachable_through_one_accessor() {
+    let ws = other_workspace();
+    let cases: Vec<DomainEvent> = vec![
+        DomainEvent::ChannelMessageReceived {
+            channel: "c".into(),
+            message_id: "m1".into(),
+            sender: "s".into(),
+            reply_target: "r".into(),
+            content: "hi".into(),
+            thread_ts: None,
+            inbound_envelope: None,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::ChannelMessageProcessed {
+            channel: "c".into(),
+            message_id: "m1".into(),
+            sender: "s".into(),
+            reply_target: "r".into(),
+            content: "hi".into(),
+            thread_ts: None,
+            response: "ok".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            elapsed_ms: 1,
+            success: true,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::ArtifactReady {
+            artifact_id: "a1".into(),
+            kind: "document".into(),
+            title: "t".into(),
+            workspace_dir: ws.to_string_lossy().into_owned(),
+            path: "a1/doc.docx".into(),
+            size_bytes: 1,
+            thread_id: None,
+            client_id: None,
+        },
+        DomainEvent::ArtifactFailed {
+            artifact_id: "a1".into(),
+            kind: "document".into(),
+            title: "t".into(),
+            workspace_dir: ws.to_string_lossy().into_owned(),
+            error: "boom".into(),
+            thread_id: None,
+            client_id: None,
+        },
+        DomainEvent::ArtifactPending {
+            artifact_id: "a1".into(),
+            kind: "document".into(),
+            title: "t".into(),
+            workspace_dir: ws.to_string_lossy().into_owned(),
+            path: "a1/doc.docx".into(),
+            thread_id: None,
+            client_id: None,
+        },
+        DomainEvent::McpServerProbeTimedOut {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            probe_timeout_secs: 8,
+            consecutive_timeouts: 1,
+            teardown_after: 3,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::McpServerTransportDropped {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            outcome: "timed_out".into(),
+            detail: None,
+            elapsed_ms: Some(8_000),
+            consecutive_timeouts: 3,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::McpServerReconnected {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            tool_count: 4,
+            after_failures: 1,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::McpServerReconnectFailed {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            error: "refused".into(),
+            failures: 1,
+            retry_in_secs: 30,
+            workspace_dir: ws.clone(),
+        },
+        DomainEvent::McpServerParked {
+            server_id: "srv-1".into(),
+            qualified_name: "ac.inference.sh/mcp".into(),
+            error: "refused".into(),
+            workspace_dir: ws.clone(),
+        },
+    ];
+
+    for event in cases {
+        assert_eq!(
+            event.workspace_dir(),
+            Some(ws.as_path()),
+            "{} carries a workspace but the accessor did not return it",
+            event.variant_name()
+        );
+    }
+}
+
+/// `None` here means "not bound to a workspace", which a consumer filtering
+/// by workspace must let through rather than drop. Getting this backwards
+/// would silence cron, webhook and sub-agent notifications entirely.
+#[test]
+fn events_without_a_workspace_report_none() {
+    assert_eq!(
+        DomainEvent::AgentPathsChanged.workspace_dir(),
+        None,
+        "a process-wide event must not claim a workspace"
+    );
+    assert_eq!(
+        DomainEvent::CronJobCompleted {
+            job_id: "job-1".into(),
+            success: true,
+            output: "done".into(),
+        }
+        .workspace_dir(),
+        None
+    );
+    assert_eq!(
+        DomainEvent::ChannelReactionReceived {
+            channel: "c".into(),
+            sender: "s".into(),
+            target_message_id: "m1".into(),
+            emoji: "👍".into(),
+        }
+        .workspace_dir(),
+        None,
+        "a channel event with no workspace field must not borrow one"
+    );
+}
+
+/// The artifact family carries its workspace as a `String`, so it is the one
+/// place an *empty* value is representable. Reading that back as the empty
+/// path would bind the event to a workspace nothing matches, hiding it from
+/// every scoped consumer — strictly worse than reporting it unbound, which at
+/// least shows it everywhere.
+#[test]
+fn an_empty_artifact_workspace_reads_as_unbound_not_as_a_workspace() {
+    assert_eq!(
+        DomainEvent::ArtifactReady {
+            artifact_id: "a1".into(),
+            kind: "document".into(),
+            title: "t".into(),
+            workspace_dir: String::new(),
+            path: "a1/doc.docx".into(),
+            size_bytes: 1,
+            thread_id: None,
+            client_id: None,
+        }
+        .workspace_dir(),
+        None
+    );
+}
+
+/// The switch announcement names a workspace but is deliberately not *bound*
+/// to one: it is what tells a consumer the active workspace changed, so
+/// filtering it by the rule it announces would hide the announcement from
+/// exactly the consumers that are still out of date.
+#[test]
+fn the_workspace_switch_announcement_is_not_itself_workspace_bound() {
+    let event = DomainEvent::ActiveWorkspaceChanged {
+        workspace_dir: other_workspace(),
+        revision: 1,
+    };
+    assert_eq!(event.workspace_dir(), None);
+    assert_eq!(event.variant_name(), "ActiveWorkspaceChanged");
+    assert_eq!(DomainEvent::domain(&event), "system");
 }

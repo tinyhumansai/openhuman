@@ -618,3 +618,52 @@ fn classify_inference_error_empty_response_is_actionable_and_retryable() {
         classified.message
     );
 }
+
+#[test]
+fn codex_oauth_expiry_classifies_as_provider_error_not_session_expired() {
+    // The error from store.rs contains "authentication token is expired" (an
+    // is_openai_oauth_session_expired_message marker) wrapped in the factory
+    // chain prefix. Verify it routes to `provider_error` (Codex reconnect),
+    // NOT `session_expired` (OpenHuman sign-in), so the user gets the correct
+    // remedy. (#5869)
+    let err = "[chat-factory] openai oauth lookup failed: \
+               Codex authentication token is expired — refresh failed: \
+               Token exchange failed: HTTP 401 Unauthorized: \
+               {\"error\":{\"message\":\"Could not validate your token. \
+               Please try signing in again.\",\"code\":\"token_expired\"}}. \
+               Please reconnect Codex in Settings \u{2192} Integrations.";
+    let classified = classify_inference_error(err);
+    assert_eq!(
+        classified.error_type, "provider_error",
+        "Codex OAuth expiry must not route to the OpenHuman sign-in flow"
+    );
+    assert!(
+        classified.message.contains("Integrations"),
+        "must surface the Settings → Integrations remedy: {}",
+        classified.message
+    );
+    assert!(
+        !classified
+            .message
+            .contains("Your OpenHuman session has expired"),
+        "must not show the app-session copy: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn non_codex_token_expired_does_not_classify_as_codex_oauth() {
+    // A generic provider error containing "token_expired" (without the Codex
+    // sentinel prefix) must NOT be classified as a Codex OAuth expiry. Without
+    // the "codex authentication token is expired" guard, the old broad predicate
+    // would have matched. (#5869)
+    let err = "openai error 401: {\"error\":{\"code\":\"token_expired\",\
+               \"message\":\"Please try signing in again.\"}}";
+    let classified = classify_inference_error(err);
+    assert_ne!(
+        classified.provider.as_deref(),
+        Some("openai_codex"),
+        "generic token_expired error must not route to the Codex reconnect flow: {}",
+        classified.message
+    );
+}

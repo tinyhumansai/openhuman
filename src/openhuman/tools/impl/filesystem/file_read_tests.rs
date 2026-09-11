@@ -271,3 +271,26 @@ async fn file_read_rejects_oversized_file() {
 
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }
+
+#[tokio::test]
+async fn file_read_reports_invalid_utf8_as_an_error_not_a_panic() {
+    let dir = std::env::temp_dir().join("openhuman_test_file_read_non_utf8");
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+
+    // Passes the size cap, fails `read_to_string`: 0x80 is a lone UTF-8
+    // continuation byte with no lead byte, invalid at any position.
+    tokio::fs::write(dir.join("binary.dat"), [0xFFu8, 0xFE, 0x00, 0x80])
+        .await
+        .unwrap();
+
+    let tool = FileReadTool::new(test_security(dir.clone()));
+    let result = tool.execute(json!({"path": "binary.dat"})).await.unwrap();
+    assert!(
+        result.is_error,
+        "invalid UTF-8 must surface as a tool error, not succeed with replaced/garbled text"
+    );
+    assert!(&result.output().contains("Failed to read file"));
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}

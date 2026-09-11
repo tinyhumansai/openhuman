@@ -28,7 +28,7 @@ fn adapter(autonomy: AutonomyLevel) -> (TempDir, OpenHumanMemory) {
     // workspace otherwise resolves to answers `Unsupported`, which the node
     // reports as a capability error rather than as an absent profile. This is
     // the driver the loaded module wraps.
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
     (
         tmp,
         OpenHumanMemory {

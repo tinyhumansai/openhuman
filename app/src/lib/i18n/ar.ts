@@ -521,6 +521,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'مفعّل دائمًا في إصدارات التطوير',
   'settings.clearAppData': 'مسح بيانات التطبيق',
   'settings.clearAppDataDesc': 'تسجيل الخروج وحذف جميع البيانات المحلية للتطبيق نهائيًا',
+  'settings.clearAppDataIrreversible': 'لا يمكن التراجع عن هذا الإجراء.',
+  'settings.clearAppDataAction': 'حذف البيانات',
   'settings.logOut': 'تسجيل الخروج',
   'settings.logOutDesc': 'تسجيل الخروج من حسابك',
   'settings.exitLocalSession': 'الخروج من الجلسة المحلية',
@@ -1348,7 +1350,7 @@ const messages: TranslationMap = {
   'settings.search.title': 'محرك البحث',
   'settings.search.menuDesc': 'تخلف عن البحث أو التنصت على مزودك الخاص بمفتاح اكسوكس',
   'settings.search.description':
-    'اختر محرك البحث الذي يستخدمه الوكيل، أو عطّل أدوات البحث بالكامل. يستخدم الوضع المُدار واجهة خلفية OpenHuman (بدون إعداد). تعمل محركات Parallel وBrave وQuerit وExa مباشرةً من جهازك باستخدام مفتاح API الخاص بك.',
+    'اختر محرك البحث الذي يستخدمه الوكيل، أو عطّل أدوات البحث بالكامل. يستخدم الوضع المُدار واجهة خلفية OpenHuman (بدون إعداد). تعمل محركات Parallel وBrave وQuerit وExa وTavily مباشرةً من جهازك باستخدام مفتاح API الخاص بك.',
   'settings.search.engineAria': 'محرك البحث',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc': 'أزل أدوات البحث من سياق الوكيل وقائمة الأدوات المتاحة.',
@@ -1356,7 +1358,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'الإعداد الافتراضي. يتم توجيهه عبر خادم OpenHuman الخلفي، المدعوم حاليًا بواسطة Exa: لا حاجة إلى مفتاح API.',
   'settings.search.localManagedUnavailable':
-    'بحث OpenHuman المُدار غير متاح للمستخدمين المحليين. أضف مفتاح Parallel أو Brave أو Querit أو Exa الخاص بك لتفعيل البحث على الويب.',
+    'بحث OpenHuman المُدار غير متاح للمستخدمين المحليين. أضف مفتاح Parallel أو Brave أو Querit أو Exa أو Tavily الخاص بك لتفعيل البحث على الويب.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'واجهة برمجية متوازية مباشرة: أدوات البحث والاستخراج والمحادثة والبحث المتعمق والإثراء ومجموعات البيانات.',
@@ -1368,6 +1370,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'بحث عصبي مدعوم من Exa. يتطلب مفتاح API الخاص بك من Exa. يضيف أدوات البحث والعثور على صفحات مشابهة واسترجاع محتوى الصفحات.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'بحث الويب والأخبار والمالية مدعوم من Tavily. يتطلب مفتاح API الخاص بك من Tavily. يضيف أدوات البحث واستخراج محتوى الصفحات.',
   'settings.search.statusConfigured': 'تم تكوينه',
   'settings.search.statusNeedsKey': 'يحتاج إلى مفتاح API',
   'settings.search.fallbackToManaged':
@@ -1389,6 +1394,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'مفتاح API الخاص بـ Querit',
   'settings.search.placeholderExa': 'الصق مفتاح API الخاص بـ Exa…',
+  'settings.search.tavilyKeyLabel': 'مفتاح API الخاص بـ Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'المواقع الشبكية المسموح بها',
   'settings.search.allowedSitesHint':
     'المضيفون الذين يُسمح للمساعد بفتحهم وقراءتهم (عبر جلب الويب وأداة المتصفح) مضيف واحد في كل سطر، مثل reuters.com. يشمل المضيف نطاقاته الفرعية أيضًا. البحث على الويب نفسه لا يتقيّد بهذه القائمة.',
@@ -2552,6 +2559,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'قريباً',
   'memorySources.composioListFailed': 'فشل في تحميل الأتصالات Xqx0x.',
   'memorySources.browse': '(بروز)...',
+  'memorySources.folderPathUnavailable':
+    'تعذر تحديد موقع هذا المجلد. اكتب مساره الكامل بدلاً من ذلك.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2574,6 +2583,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'عناصر تمت مزامنتها',
   'memorySources.sync.upToDate': 'محدّث',
   'memorySources.sync.failedLabel': 'فشل',
+  'memorySources.sync.morePending': 'يوجد المزيد للمزامنة. انقر على «مزامنة» مرة أخرى',
+  'memorySources.sync.budgetSpent': 'استُنفدت ميزانية الطلبات لليوم. حاول مرة أخرى غدًا',
   'time.justNow': 'للتو',
   'time.secondsAgoSuffix': 'ثانية مضت',
   'time.minutesAgoSuffix': 'دقيقة مضت',
@@ -2615,6 +2626,17 @@ const messages: TranslationMap = {
   'memorySources.allIn.failed': 'تعذّر تطبيق خيار الكل. يرجى المحاولة مرة أخرى.',
   'memorySources.allIn.allFailed': 'تعذّر بدء أي مزامنة. تحقق من كل مصدر لمعرفة السبب.',
   'memorySources.allIn.partial': 'المزامنات التي بدأت: {triggered}. التي تعذّر بدؤها: {failed}.',
+  'memorySources.repair.button': 'إصلاح الذكريات الأقدم',
+  'memorySources.repair.title': 'إصلاح الذكريات الأقدم؟',
+  'memorySources.repair.message':
+    'حُفظ ما يصل إلى {scanned} مستندًا متزامنًا قبل إصلاح الأرشفة في شجرة الذاكرة، وهي غير مرئية في رسم الذاكرة البياني. تستهلك أرشفتها رصيد التضمين. تُتخطى المستندات الموجودة أصلًا في الشجرة.',
+  'memorySources.repair.confirm': 'إصلاح',
+  'memorySources.repair.cancel': 'ليس الآن',
+  'memorySources.repair.nothing': 'لا شيء لإصلاحه. لا توجد مستندات متزامنة بانتظار الأرشفة.',
+  'memorySources.repair.success':
+    'تمت أرشفة {ingested} في شجرة الذاكرة ({already} موجودة مسبقًا، {skipped} تم تخطيها).',
+  'memorySources.repair.morePending': 'بقي المزيد. انقر على «إصلاح الذكريات الأقدم» مرة أخرى.',
+  'memorySources.repair.failed': 'تعذّر إصلاح الذكريات الأقدم.',
   'memorySources.settings.button': 'الإعدادات',
   'memorySources.settings.title': 'إعدادات المزامنة',
   'memorySources.settings.maxPrs': 'أقصى عدد لطلبات السحب',
@@ -2628,7 +2650,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'غير محدود',
   'memorySources.settings.unlimitedTooltip':
     'لقد اخترت مزامنة الحد الأقصى لـ {toolkit}. يمكنك تغيير الحدود من هنا.',
-  'memorySources.settings.maxed': 'مكتمل',
   'memorySources.settings.save': 'حفظ',
   'memorySources.settings.saving': 'جارٍ الحفظ…',
   'memorySources.settings.saved': 'تم حفظ الإعدادات',
@@ -3272,6 +3293,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'فشل',
   'conversations.subagent.statusAwaitingUser': 'في انتظار المستخدم',
   'conversations.subagent.statusCancelled': 'أُلغيت',
+  'conversations.subagent.awaitingTitle': 'في انتظار إجابتك',
+  'conversations.subagent.answerPlaceholder': 'اكتب إجابتك',
+  'conversations.subagent.answerSend': 'إرسال الإجابة',
+  'conversations.subagent.answerSent': 'تم إرسال الإجابة',
   'conversations.agentTaskInsights.title': 'رؤى مهام الوكيل',
   'conversations.agentTaskInsights.response': 'الرد',
   'conversations.agentTaskInsights.processSourceTitle': 'مصدر عملية الوكيل',
@@ -4231,7 +4256,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'تسجيل الدخول عبر Claude',
   'settings.ai.claudeCode.reconnect': 'إعادة الاتصال',
   'settings.ai.claudeCode.loginHint':
-    'يفتح طرفية تُشغّل claude login. بعد اكتمالها، انقر على إعادة الفحص.',
+    'يفتح طرفية تُشغّل claude auth login --claudeai. بعد اكتمالها، انقر على إعادة الفحص.',
   'settings.ai.claudeCode.loginError': 'تعذّر فتح طرفية تسجيل الدخول. يُرجى المحاولة مرة أخرى.',
   'settings.ai.claudeCode.fullAccess': 'وصول كامل',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4810,6 +4835,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'الحدث',
   'settings.developerMenu.eventLog.desc':
     'تيار ملون مباشر لجميع العناصر والأدوات والأحداث النظامية',
+  'settings.developerMenu.eventLog.workspaceScope': 'نطاق مساحة العمل',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'مساحة العمل الحالية',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'كل مساحات العمل',
   'settings.developerMenu.eventLog.allTypes': 'جميع الأنواع',
   'settings.developerMenu.eventLog.filterAgent': '(فيلتر)',
   'settings.developerMenu.eventLog.download': 'تحميل',
@@ -4817,6 +4845,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'الحياة',
   'settings.developerMenu.eventLog.disconnected': 'مفصولة',
   'settings.developerMenu.eventLog.waiting': 'ننتظر الأحداث...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'تظهر الأحداث هنا عندما تعمل الوكلاء والأدوات والنظام. لم يحدث شيء بعد.',
+  'settings.developerMenu.eventLog.notConnectedHint': 'أعد الاتصال بالنواة لاستئناف البث.',
   'settings.developerMenu.eventLog.notConnected': 'غير متصل بالنواة',
   'settings.developerMenu.eventLog.jumpToLatest': 'اقفز على آخر',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -5915,6 +5946,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'تلميحات التوجيه',
   'settings.agents.editor.modelTiers': 'مستويات النموذج',
   'settings.agents.editor.modelCustom': 'معرّف نموذج مخصص…',
+  'settings.agents.editor.modelManaged': 'النماذج المُدارة',
   'settings.agents.editor.modelCustomPlaceholder': 'مثال: anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'إضافة أدوات',
   'settings.agents.editor.toolsAllSelected': 'كل الأدوات',
@@ -6059,6 +6091,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'وضع تخزين الأسرار',
   'keyring.settings.mode.osKeychain': 'سلسلة مفاتيح النظام',
   'keyring.settings.mode.encryptedFile': 'مشفَّر محلياً',
+  'keyring.settings.mode.localEncryptedFile': 'ملف مشفَّر',
+  'keyring.settings.mode.localPlaintextFile': 'ملف غير مشفَّر',
   'keyring.settings.mode.consentPending': 'غير مُهيَّأ',
   'keyring.settings.mode.declined': 'مرفوض',
   'keyring.settings.availability': 'توفّر سلسلة المفاتيح',
@@ -6383,6 +6417,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'النموذج المحلي غير متاح',
   'userErrors.localModelUnavailable.body':
     'لا يمكن الوصول إلى Ollama على النقطة الطرفية المُهيأة، أو أن النموذج المطلوب غير مثبّت عليها. شغّل Ollama ونزّل النموذج على تلك النقطة الطرفية، أو حوّل هذا العمل إلى مزوّد سحابي.',
+  'userErrors.replyDeliveryFailed.title': 'تعذّر عرض الرد',
+  'userErrors.replyDeliveryFailed.body':
+    'أنهى الوكيل هذه الجولة، لكن تعذّر حفظ ردّه أو قراءته مجددًا. اطلب منه تكرار الرد.',
   'userErrors.memoryStoreCorrupt.title': 'تلف فهرس الذاكرة',
   'userErrors.memoryStoreCorrupt.body':
     'كانت قاعدة بيانات شجرة الذاكرة تالفة. تم الاحتفاظ بالملف التالف بجوار بيانات الذاكرة وأعيد إنشاء فهرس فارغ. أعد مزامنة مصادر الذاكرة لإعادة تعبئته.',
@@ -6426,6 +6463,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'حذف',
   'flows.delete.deleting': 'جارٍ الحذف…',
   'flows.canvas.renameLabel': 'إعادة تسمية سير العمل',
+  'settings.ai.openaiOauthTitle': 'تسجيل الدخول باستخدام ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'سجّل الدخول بحساب ChatGPT لاستخدام نماذج OpenAI من دون مفتاح API.',
+  'settings.ai.openaiOauthConnect': 'تسجيل الدخول باستخدام ChatGPT',
+  'settings.ai.openaiOauthConnected': 'متصل بـ ChatGPT',
+  'settings.ai.openaiOauthOpening': 'جارٍ فتح تسجيل الدخول…',
+  'settings.ai.openaiOauthCallbackHint':
+    'بعد تسجيل الدخول، الصق عنوان URL الكامل لإعادة التوجيه من متصفحك (يبدأ بـ http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'إكمال تسجيل الدخول إلى ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'قطع الاتصال بـ ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'تسجيل الدخول إلى ChatGPT متاح فقط في تطبيق سطح المكتب.',
+  'settings.ai.openaiOauthStartError':
+    'تعذّر بدء تسجيل الدخول إلى ChatGPT. حاول مجددًا أو استخدم مفتاح API.',
+  'settings.ai.openaiOauthCompleteError':
+    'لم يكتمل تسجيل الدخول إلى ChatGPT. تحقّق من عنوان إعادة التوجيه وحاول مجددًا.',
+  'settings.ai.openaiOauthCallbackRequired': 'الصق عنوان إعادة التوجيه من متصفحك بعد تسجيل الدخول.',
+  'settings.ai.openaiOauthDisconnectError': 'تعذّر قطع الاتصال بـ ChatGPT. يُرجى المحاولة مجددًا.',
   'memorySources.codingSessions.title': 'جلسات وكلاء البرمجة',
   'memorySources.codingSessions.description':
     'حوّل قرارات وتصحيحات Codex وClaude Code إلى ذاكرة شخصية خاصة.',
@@ -6462,6 +6518,8 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': 'تم الاستيعاب فقط',
   'sync.pipeline.storedWithoutVectors': 'مخزَّن بدون متجهات. البحث الدلالي غير متاح.',
+  'sync.pipeline.vectorsPending':
+    'أجزاء في انتظار المتجهات: {count}. سيشملها البحث الدلالي قريبًا.',
   'sync.pipeline.signInToEnable': 'سجّل الدخول للتفعيل',
   'sync.pipeline.extractionFailed': 'فشل استخراج بنية الذاكرة. قد يكون الويكي غير مكتمل.',
   'sync.pipeline.treeDegraded': 'شجرة الذاكرة متدهورة. قد يُرجع الاسترجاع نتائج قديمة.',

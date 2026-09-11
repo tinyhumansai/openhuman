@@ -48,6 +48,7 @@ mod deep_link_ipc_windows;
 // developer host covers them.
 mod deep_link_registration_check;
 mod dictation_hotkeys;
+mod directory_picker;
 mod file_logging;
 // Routing the frontend to a core that is not the one in this process. Leaf
 // gated: with `gateways` off the commands are simply absent, which is what the
@@ -3394,6 +3395,11 @@ pub fn run() {
             // too (CodeRabbit on #4127). The Save-As dialog that used to sit in
             // front of this went with the shell's `rfd` dependency.
             artifact_commands::download_artifact_to_downloads,
+            // Native directory chooser for the folder memory-source (#5831).
+            // Unlike the Save-As dialog above it, this one has no renderer-side
+            // substitute: a `webkitdirectory` input cannot report where the
+            // directory it returned actually lives.
+            directory_picker::pick_directory_via_dialog,
             check_core_update,
             apply_core_update,
             check_app_update,

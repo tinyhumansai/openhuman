@@ -5,7 +5,7 @@ Thin RPC adapter domain over the hosted backend's payment API. It exposes plan l
 ## Responsibilities
 
 - Authenticate each call with the stored app-session JWT (`Authorization: Bearer …`) and reject calls with no session.
-- Fetch current plan/entitlements (`/payments/stripe/currentPlan`) and credit balance (`/payments/credits/balance`).
+- Fetch the aggregate billing summary (`/payments/summary`), current plan/entitlements, and credit balance.
 - Create Stripe Checkout sessions (`purchase_plan`), the Stripe customer portal session, and Stripe SetupIntents for adding cards.
 - Initiate credit top-ups via Stripe or Coinbase, and create Coinbase Commerce charges (crypto / annual billing).
 - Page credit transaction history; read/update Stripe auto-recharge settings; list/update/delete saved cards.
@@ -25,15 +25,16 @@ Thin RPC adapter domain over the hosted backend's payment API. It exposes plan l
 
 From `mod.rs`:
 
-- `ops::*` — async handlers: `get_current_plan`, `get_balance`, `get_transactions`, `get_auto_recharge`, `update_auto_recharge`, `get_cards`, `create_setup_intent`, `update_card`, `delete_card`, `purchase_plan`, `create_portal_session`, `top_up_credits`, `create_coinbase_charge`, `redeem_coupon`, `get_user_coupons`. Each takes `&Config` (plus typed params) and returns `Result<RpcOutcome<Value>, String>`.
+- `ops::*` — async handlers: `get_summary`, `get_current_plan`, `get_balance`, `get_transactions`, `get_auto_recharge`, `update_auto_recharge`, `get_cards`, `create_setup_intent`, `update_card`, `delete_card`, `purchase_plan`, `create_portal_session`, `top_up_credits`, `create_coinbase_charge`, `redeem_coupon`, `get_user_coupons`. Each takes `&Config` (plus typed params) and returns `Result<RpcOutcome<Value>, String>`.
 - `all_billing_controller_schemas()`, `all_billing_registered_controllers()`, `billing_schemas(function: &str)` — registry wiring.
 
 ## RPC / controllers
 
-Namespace `billing` (15 methods, exposed as `openhuman.billing_*`):
+Namespace `billing` (16 methods, exposed as `openhuman.billing_*`):
 
 | Method | Backend endpoint |
 | --- | --- |
+| `billing_get_summary` | `GET /payments/summary` |
 | `billing_get_current_plan` | `GET /payments/stripe/currentPlan` |
 | `billing_get_balance` | `GET /payments/credits/balance` |
 | `billing_get_transactions` | `GET /payments/credits/transactions?limit&offset` |

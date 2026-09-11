@@ -128,3 +128,68 @@ async fn handlers_error_without_initialized_manager() {
     let err = handle_emit(Map::new()).await.unwrap_err();
     assert!(err.contains("SocketManager not initialized"));
 }
+
+/// #6111 — the lifecycle handlers and `socket_state` must publish `status` in one vocabulary.
+///
+/// The three lifecycle handlers used to build their payload with `format!("{:?}", status)` while
+/// `socket_state` went through `ConnectionStatus`' `#[serde(rename_all = "lowercase")]`, so one
+/// namespace answered `"Disconnected"` and `"disconnected"` for the same field. This pins the
+/// decided direction (serde) against the source of truth — the serde encoding itself — rather
+/// than against a hand-written list that could drift with it.
+#[test]
+fn status_payload_matches_the_serde_encoding_for_every_variant() {
+    for status in [
+        ConnectionStatus::Disconnected,
+        ConnectionStatus::Connecting,
+        ConnectionStatus::Connected,
+        ConnectionStatus::Reconnecting,
+        ConnectionStatus::Error,
+    ] {
+        let state = SocketState {
+            status,
+            socket_id: None,
+            error: None,
+        };
+
+        // What `socket_state` publishes for this status.
+        let from_state = serde_json::to_value(&state).expect("serialize SocketState");
+        let expected = from_state
+            .get("status")
+            .and_then(Value::as_str)
+            .expect("SocketState serialises a status field");
+
+        // What the lifecycle handlers publish for the same status.
+        let payload = status_payload(&state);
+        assert_eq!(
+            payload.get("status").and_then(Value::as_str),
+            Some(expected),
+            "lifecycle handlers and socket_state must agree on {status:?}"
+        );
+        assert_ne!(
+            payload.get("status").and_then(Value::as_str),
+            Some(format!("{status:?}").as_str()),
+            "{status:?} must not be published in Rust's Debug spelling"
+        );
+    }
+}
+
+/// The slug is lowercase for every variant — the property `connectivity_diag` and the frontend's
+/// lowercase comparisons rely on.
+#[test]
+fn status_slug_is_lowercase_for_every_variant() {
+    for status in [
+        ConnectionStatus::Disconnected,
+        ConnectionStatus::Connecting,
+        ConnectionStatus::Connected,
+        ConnectionStatus::Reconnecting,
+        ConnectionStatus::Error,
+    ] {
+        let slug = status_slug(status);
+        assert!(!slug.is_empty(), "{status:?} produced an empty slug");
+        assert_eq!(
+            slug,
+            slug.to_lowercase(),
+            "{status:?} slug is not lowercase"
+        );
+    }
+}

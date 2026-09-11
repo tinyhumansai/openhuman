@@ -1,4 +1,3 @@
-
 // ── list_facets ───────────────────────────────────────────────────────────────
 
 fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
@@ -11,6 +10,13 @@ fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
             .get("class")
             .and_then(Value::as_str)
             .map(str::to_string);
+
+        // Reject an unknown class before touching the store, so a filter that
+        // could never match a facet is surfaced as an error instead of an
+        // empty result the caller cannot distinguish from "nothing learned".
+        if let Some(cls) = &class_filter {
+            crate::openhuman::agent::learning::cache::parse_facet_class_name(cls)?;
+        }
 
         let cache = get_cache().await?;
 
@@ -27,11 +33,20 @@ fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
                 f.state == FacetState::Active || f.state == FacetState::Provisional
             })
             .filter(|f| {
-                if let Some(cls) = &class_filter {
-                    f.class.as_deref() == Some(cls.as_str())
-                        || f.key.starts_with(&format!("{cls}/"))
-                } else {
-                    true
+                // Match on the class column when it is set — that stays
+                // authoritative, so a row explicitly tagged with another class
+                // can never match `cls` via its key prefix (the #6077 leak
+                // stays closed). A row with no class column falls back to its
+                // key prefix, which is where a canonical key like
+                // `style/verbosity` carries the class the column omits — the
+                // behaviour the dropped `|| key.starts_with(...)` arm provided
+                // for legitimate classless rows.
+                match &class_filter {
+                    Some(cls) => {
+                        f.class.as_deref() == Some(cls.as_str())
+                            || (f.class.is_none() && f.key.starts_with(&format!("{cls}/")))
+                    }
+                    None => true,
                 }
             })
             .map(facet_to_json)
@@ -52,6 +67,12 @@ fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_get_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        // These refusals are reachable from a dispatched call, not only from a
+        // direct one. An *absent* `class`/`key` is refused earlier by
+        // `core::all::validate_params`, in its own wording — but an explicit
+        // `{"class": null}` passes that gate (the required check tests key
+        // presence, and its type check returns early on null), so on that path
+        // this is the only guard. See the `validate_params` docs (#6073).
         let class_str = params
             .get("class")
             .and_then(Value::as_str)
@@ -62,6 +83,8 @@ fn handle_get_facet(params: Map<String, Value>) -> ControllerFuture {
             .and_then(Value::as_str)
             .ok_or_else(|| "missing required `key`".to_string())?
             .to_string();
+
+        crate::openhuman::agent::learning::cache::parse_facet_class_name(&class_str)?;
 
         let fk = full_key(&class_str, &key_suffix);
         tracing::debug!("[learning.get_facet] key={fk}");
@@ -104,6 +127,8 @@ fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
             .and_then(Value::as_str)
             .ok_or_else(|| "missing required `value`".to_string())?
             .to_string();
+
+        crate::openhuman::agent::learning::cache::parse_facet_class_name(&class_str)?;
 
         let fk = full_key(&class_str, &key_suffix);
         tracing::debug!("[learning.update_facet] key={fk} value={new_value}");
@@ -156,6 +181,8 @@ fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required `key`".to_string())?
             .to_string();
 
+        crate::openhuman::agent::learning::cache::parse_facet_class_name(&class_str)?;
+
         let fk = full_key(&class_str, &key_suffix);
         tracing::debug!("[learning.pin_facet] key={fk}");
 
@@ -198,6 +225,8 @@ fn handle_unpin_facet(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required `key`".to_string())?
             .to_string();
 
+        crate::openhuman::agent::learning::cache::parse_facet_class_name(&class_str)?;
+
         let fk = full_key(&class_str, &key_suffix);
         tracing::debug!("[learning.unpin_facet] key={fk}");
 
@@ -225,6 +254,21 @@ fn handle_unpin_facet(params: Map<String, Value>) -> ControllerFuture {
 
 // ── forget_facet ──────────────────────────────────────────────────────────────
 
+/// The log line `learning.forget_facet` emits, given whether a row was actually
+/// written.
+///
+/// Split out so the claim can be unit-tested without a cache: the defect this
+/// replaces built the "state=dropped user_state=forgotten" line unconditionally,
+/// *before* the read told it whether there was anything to drop, so an absent key
+/// produced a log asserting a state change that never happened (#6108).
+fn forget_facet_log(full_key: &str, dropped: bool) -> Vec<String> {
+    vec![if dropped {
+        format!("learning.forget_facet: key={full_key} state=dropped user_state=forgotten")
+    } else {
+        format!("learning.forget_facet: key={full_key} not present — no change")
+    }]
+}
+
 fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         use tinymemory_api::provider::{FacetState, UserState};
@@ -240,6 +284,8 @@ fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
             .ok_or_else(|| "missing required `key`".to_string())?
             .to_string();
 
+        crate::openhuman::agent::learning::cache::parse_facet_class_name(&class_str)?;
+
         let fk = full_key(&class_str, &key_suffix);
         tracing::debug!("[learning.forget_facet] key={fk}");
 
@@ -250,7 +296,12 @@ fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
             .await
             .map_err(|e| format!("get failed: {e:#}"))?;
 
-        let facet_json = if let Some(mut f) = facet_before {
+        // Absent is not an error: forgetting is idempotent, and erroring would
+        // leak whether the facet existed — the wrong direction for a privacy
+        // operation. The agent tool (`tools.rs`) has always behaved this way;
+        // what was wrong here was the *log*, built before the branch was known,
+        // so a typo'd key produced a line claiming a row had been dropped.
+        let (facet_json, dropped) = if let Some(mut f) = facet_before {
             // Mark Forgotten + Dropped so it doesn't resurface.
             f.user_state = UserState::Forgotten;
             f.state = FacetState::Dropped;
@@ -263,14 +314,12 @@ fn handle_forget_facet(params: Map<String, Value>) -> ControllerFuture {
                 .await
                 .map_err(|e| format!("re-read failed: {e:#}"))?
                 .unwrap_or(f);
-            facet_to_json(&updated)
+            (facet_to_json(&updated), true)
         } else {
-            serde_json::Value::Null
+            (serde_json::Value::Null, false)
         };
 
-        let log = vec![format!(
-            "learning.forget_facet: key={fk} state=dropped user_state=forgotten"
-        )];
+        let log = forget_facet_log(&fk, dropped);
         let payload = serde_json::json!({ "facet": facet_json });
         RpcOutcome::new(payload, log).into_cli_compatible_json()
     })

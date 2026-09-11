@@ -114,45 +114,86 @@ async fn delete_source_rejects_a_blank_source_id_before_touching_a_driver() {
     );
 }
 
-/// An unknown source removes nothing and cleans no tree, and the host maps that
-/// all-zero `ForgetOutcome` onto `deleted: false`.
-///
-/// The mapping is the whole point of the assertion: `deleted` is now an OR over
-/// **two** counts, and a source that matched nothing must not read as one whose
-/// stranded summary tree was swept.
+/// openhuman#6012. Same distinction the wipes above turn on: a backfill the
+/// driver cannot perform must not read as `scanned: 0` success. A caller seeing
+/// that concludes their stored records are already treed and stops looking —
+/// which is exactly the wrong conclusion, because "invisible memories" is the
+/// symptom this RPC exists to clear.
 #[tokio::test]
-async fn delete_source_is_idempotent_for_an_unknown_source_id() {
+async fn backfill_connector_trees_refuses_a_driver_that_serves_no_maintenance() {
     let (_tmp, cfg) = test_config();
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&cfg);
+    install_null_driver(&cfg);
 
-    let outcome = delete_source_rpc(&cfg, "notion:never-ingested".to_string())
+    let err = super::backfill_connector_trees_rpc(&cfg, None, true)
         .await
-        .expect("an unknown source is not an error")
-        .value;
-    assert!(!outcome.deleted);
-    assert_eq!(outcome.chunks_removed, 0);
-}
-
-/// The source id can embed user-linked identifiers, so it is hashed into the
-/// log line rather than written out. Pinned here because the log is assembled
-/// beside the response and is easy to "improve" into a leak.
-#[tokio::test]
-async fn delete_source_never_logs_the_raw_source_id() {
-    let (_tmp, cfg) = test_config();
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&cfg);
-
-    let source_id = "notion:alice@example.com/private-page";
-    let outcome = delete_source_rpc(&cfg, source_id.to_string())
-        .await
-        .expect("an unknown source is not an error");
+        .expect_err("a driver with no Maintenance family cannot re-file anything");
     assert!(
-        !outcome.logs[0].contains(source_id),
-        "log leaked the source id: {}",
-        outcome.logs[0]
+        err.contains("does not serve Maintenance"),
+        "the refusal must name the family: {err}"
     );
     assert!(
-        outcome.logs[0].contains("source_id_hash="),
-        "log should carry the redacted id: {}",
-        outcome.logs[0]
+        err.contains(tinymemory_api::null::NULL_DRIVER_ID),
+        "and the driver, so an operator can tell which one refused: {err}"
+    );
+}
+
+/// `executed` reports the **mode**, not the effect — and every counter the
+/// driver reports reaches the caller unchanged.
+///
+/// The counters are deliberately distinct and non-zero. An all-zero fixture
+/// would pass just as happily if this RPC dropped the driver's numbers or
+/// replaced them with zeros, which is the whole class of bug the mapping can
+/// have (review finding). Distinct values also catch a transposition — two
+/// fields swapped is invisible when both are 0.
+#[tokio::test]
+async fn backfill_connector_trees_reports_the_mode_and_passes_the_counters_through() {
+    use crate::openhuman::memory::api::provider::types::BackfillTreesOutcome;
+
+    let (_tmp, cfg) = test_config();
+    binding::install_for_test(
+        &cfg.workspace_dir,
+        &cfg.subsystems.memory,
+        Arc::new(
+            binding::FixedDiagnostics::new(Default::default(), Default::default())
+                .backfilling_trees(BackfillTreesOutcome {
+                    scanned: 41,
+                    ingested: 17,
+                    already_present: 23,
+                    skipped: 5,
+                    more_pending: true,
+                    notes: vec!["skill-gmail: skipped".to_string()],
+                }),
+        ) as Arc<dyn MemoryProvider>,
+    );
+
+    let preview = super::backfill_connector_trees_rpc(&cfg, None, true)
+        .await
+        .expect("a dry run is answerable")
+        .value;
+    assert!(!preview.executed, "a dry run is the preview mode");
+
+    let real = super::backfill_connector_trees_rpc(&cfg, Some(10), false)
+        .await
+        .expect("an executing pass is answerable")
+        .value;
+    assert!(
+        real.executed,
+        "a real pass reports the mode even when it finds nothing left to do"
+    );
+    assert_eq!(real.scanned, 41, "scanned must come from the driver");
+    assert_eq!(real.ingested, 17, "ingested must come from the driver");
+    assert_eq!(
+        real.already_present, 23,
+        "already_present must come from the driver"
+    );
+    assert_eq!(real.skipped, 5, "skipped must come from the driver");
+    assert!(
+        real.more_pending,
+        "more_pending must survive; a pass that stopped on its limit must not read as complete"
+    );
+    assert_eq!(
+        real.notes,
+        vec!["skill-gmail: skipped".to_string()],
+        "the skip reasons are what tell an operator which accounts were left alone"
     );
 }

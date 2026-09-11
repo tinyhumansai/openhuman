@@ -92,11 +92,27 @@ pub enum SubagentRunStatus {
     Completed,
     /// The sub-agent called `ask_user_clarification` and is waiting
     /// for the orchestrator to relay the user's answer via
-    /// `continue_subagent`. The checkpoint file contains the full
-    /// conversation history for resumption.
+    /// `continue_subagent`.
     AwaitingUser {
         question: String,
         options: Option<Vec<String>>,
+        /// Where the paused conversation was persisted, or `None` when it
+        /// could not be.
+        ///
+        /// This used to be an unstated promise — the doc said "the checkpoint
+        /// file contains the full conversation history" while every write
+        /// failure in the runner was logged at `warn` and then reported as an
+        /// ordinary `AwaitingUser` anyway. The orchestrator relayed a question
+        /// and a `task_id`, and the failure only surfaced much later, when the
+        /// user had already answered and `continue_subagent` found nothing on
+        /// disk. Carrying the outcome here is what makes a failed write
+        /// visible at pause time rather than at resume time (#5928).
+        ///
+        /// `None` does not mean resumption is impossible: a sub-agent with a
+        /// durable session can still be continued from the
+        /// `[active_subagents]` roster. It means resumption *from this pause*
+        /// is not available, which is a different promise.
+        checkpoint: Option<PathBuf>,
     },
     /// The sub-agent stopped WITHOUT reaching its goal — a circuit breaker
     /// halted it (stuck: repeated identical call / repeated output / repeated

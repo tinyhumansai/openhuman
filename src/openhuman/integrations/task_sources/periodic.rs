@@ -119,6 +119,24 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
         if !source.enabled {
             continue;
         }
+        // A provider with no working fetch path is skipped before it can
+        // record anything. `run_source_once` would refuse it, and that
+        // refusal costs a `store::record_fetch` row and a
+        // `TaskSourceFetchFailed` event on every tick, forever — an
+        // unbounded write nobody asked for and nobody can act on.
+        //
+        // The manual `task_sources_fetch` RPC deliberately does NOT get this
+        // gate: a user who presses Fetch is owed the explanation. Only the
+        // timer is silenced, which is why the check lives here rather than
+        // inside `run_source_once` (which both paths share).
+        if !source.provider.can_fetch() {
+            tracing::debug!(
+                source_id = %source.id,
+                provider = %source.provider.as_str(),
+                "[task_sources:periodic] skipping source — provider has no task-fetch path"
+            );
+            continue;
+        }
         considered += 1;
         if !is_due(&source) {
             continue;

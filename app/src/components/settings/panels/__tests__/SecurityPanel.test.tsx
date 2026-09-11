@@ -64,17 +64,33 @@ describe('SecurityPanel — storage mode badge (lines 11, 27)', () => {
     mockRetryKeyringProbe.mockResolvedValue(undefined);
   });
 
-  it('renders os_keyring mode badge — key not in en.ts so t() returns key', () => {
+  // The core sends activeMode snake_case; the en.ts keys are camelCase. These
+  // used to assert the raw key ('keyring.settings.mode.os_keyring'), which is
+  // what the badge actually rendered before MODE_I18N_KEY bridged the two --
+  // 'declined' was the only mode that resolved, because it is spelled the same
+  // either way. Each mode now asserts its real label.
+  it('renders os_keyring mode badge with its translated label', () => {
     setupState(makeKeyringStatus({ activeMode: 'os_keyring' }));
     renderWithProviders(<SecurityPanel />);
-    // 'keyring.settings.mode.os_keyring' not in en.ts → rendered as key
-    expect(screen.getByText('keyring.settings.mode.os_keyring')).toBeInTheDocument();
+    expect(screen.getByText('OS Keychain')).toBeInTheDocument();
   });
 
-  it('renders local_encrypted mode badge', () => {
+  it('renders local_encrypted mode badge with its translated label', () => {
     setupState(makeKeyringStatus({ activeMode: 'local_encrypted' }));
     renderWithProviders(<SecurityPanel />);
-    expect(screen.getByText('keyring.settings.mode.local_encrypted')).toBeInTheDocument();
+    expect(screen.getByText('Local Encrypted')).toBeInTheDocument();
+  });
+
+  it('renders local_encrypted_file mode badge with its translated label', () => {
+    setupState(makeKeyringStatus({ activeMode: 'local_encrypted_file' }));
+    renderWithProviders(<SecurityPanel />);
+    expect(screen.getByText('Encrypted file')).toBeInTheDocument();
+  });
+
+  it('renders local_plaintext_file mode badge with its translated label', () => {
+    setupState(makeKeyringStatus({ activeMode: 'local_plaintext_file' }));
+    renderWithProviders(<SecurityPanel />);
+    expect(screen.getByText('Unencrypted file')).toBeInTheDocument();
   });
 
   it('renders declined mode badge (line 27 — MODE_BADGE_VARIANT.declined = danger)', () => {
@@ -84,10 +100,10 @@ describe('SecurityPanel — storage mode badge (lines 11, 27)', () => {
     expect(screen.getByText('Declined')).toBeInTheDocument();
   });
 
-  it('renders consent_pending mode badge', () => {
+  it('renders consent_pending mode badge with its translated label', () => {
     setupState(makeKeyringStatus({ activeMode: 'consent_pending' }));
     renderWithProviders(<SecurityPanel />);
-    expect(screen.getByText('keyring.settings.mode.consent_pending')).toBeInTheDocument();
+    expect(screen.getByText('Not configured')).toBeInTheDocument();
   });
 });
 

@@ -97,7 +97,7 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
 ///
 /// Callers should use this function instead of `validate_url` in all
 /// paths that make outbound HTTP requests.
-pub(super) async fn validate_url_with_dns_check(
+pub async fn validate_url_with_dns_check(
     raw_url: &str,
     allowed_domains: &[String],
 ) -> anyhow::Result<String> {

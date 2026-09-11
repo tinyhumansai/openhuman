@@ -394,10 +394,17 @@ fn duplicate_sanitised_slug_drops_later_collisions() {
     let schema = delegate_tool.parameters_schema();
     let enum_vals = schema["properties"]["toolkit"]["enum"].as_array().unwrap();
     let slugs: Vec<&str> = enum_vals.iter().map(|v| v.as_str().unwrap()).collect();
+    // Sorted, not arrival order: the enum is advertised in a cached prefix, so
+    // its order is fixed by slug rather than by however the backend happened to
+    // list the connections (see `collect_orchestrator_tools`). The collision
+    // rule this test is actually about is unaffected — "first arrival keeps the
+    // slug" is decided before the sort, and the description assertions below
+    // are what pin which of the two Slacks won.
     assert_eq!(
         slugs,
-        vec!["slack_bot", "notion"],
-        "second slack_bot collision must be dropped, not silently shadowed"
+        vec!["notion", "slack_bot"],
+        "second slack_bot collision must be dropped, not silently shadowed, \
+         and the surviving slugs must be advertised in sorted order"
     );
     // The dropped description must not appear in the tool description
     // either — otherwise the orchestrator would think there's a route

@@ -88,13 +88,26 @@ export default function AppSidebar() {
       // body below — no fill of its own, chrome shows through (see the
       // expanded-branch comment for why). `items-center` centers the
       // fixed-size trigger/rail buttons in the narrow column.
-      <div className="flex h-full min-h-0 flex-col items-center gap-0.5">
+      //
+      // The whole column is the drag region, not just the strip below it. At
+      // {@link SIDEBAR_ICON_WIDTH} (56px) around 32px buttons, the margins
+      // either side of every rail icon — plus the `gap-0.5` bands and the
+      // wrapper above `CollapsedNavRail` — are unmarked container, and Tauri's
+      // `drag.js` drags a bare region only on a direct hit, so all of that was
+      // dead window chrome sitting directly under the traffic lights. `"deep"`
+      // covers the subtree instead. Nothing in this column scrolls or selects,
+      // and clickable elements short-circuit `isDragRegion` before the `deep`
+      // branch, so the reopen trigger and every rail button still click.
+      <div
+        data-tauri-drag-region="deep"
+        className="flex h-full min-h-0 flex-col items-center gap-0.5">
         {/* macOS overlay title bar (titleBarStyle: Overlay) floats the traffic
             lights over the top-left. The expanded SidebarHeader dodges them by
-            right-aligning, but this narrow rail can't — so reserve a draggable
-            strip the height of the window controls and start the rail below
-            it, clear of the lights. */}
-        <div className="h-7 w-full flex-none" data-tauri-drag-region />
+            right-aligning, but this narrow rail can't — so reserve a strip the
+            height of the window controls and start the rail below it, clear of
+            the lights. It carries no drag region of its own: the column above
+            already drags, and this only has to hold that height open. */}
+        <div className="h-7 w-full flex-none" />
         <Tooltip label={t('layout.showSidebar')}>
           {/* The primitive's own trigger, so reopening goes through the same
               controlled `onOpenChange` `RootShellLayout` drives every other

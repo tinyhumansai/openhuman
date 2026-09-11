@@ -4,18 +4,17 @@
 # Full workflow automation for a GitHub issue:
 # 0. Worktree setup (create worktree → new branch)
 # 1. Issue fetching and validation
-# 1.5. Context gathering (CLAUDE.md, memory.md, recent commits)
+# 1.5. Context gathering (CLAUDE.md, recent commits)
 # 2. Planning with architectobot agent
 # 3. Implementation with codecrusher agent
 # 4. Cross-checking (typecheck, lint, format, build)
 # 5. Quality checks and test runs
-# 6. Memory updates with memory-keeper agent
-# 7. Commit with proper message
-# 8. Merge main and resolve conflicts
-# 9. Push and create draft PR
-# 10. Review cycle with pr-reviewer agent
-# 11. Mark ready for review (with user confirmation)
-# 12. Cleanup (with user confirmation)
+# 6. Commit with proper message
+# 7. Merge main and resolve conflicts
+# 8. Push and create draft PR
+# 9. Review cycle with pr-reviewer agent
+# 10. Mark ready for review (with user confirmation)
+# 11. Cleanup (with user confirmation)
 
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,14 +103,6 @@ else
   context_info+="⚠️ CLAUDE.md not found\n"
 fi
 
-if [ -f ".claude/memory.md" ]; then
-  echo "[deep-work] ✅ found .claude/memory.md"
-  context_info+="✅ .claude/memory.md available\n"
-else
-  echo "[deep-work] ⚠️  .claude/memory.md not found"
-  context_info+="⚠️ .claude/memory.md not found\n"
-fi
-
 echo "[deep-work] checking recent commits..."
 recent_commits=$(git log --oneline -10 main)
 context_info+="📝 Recent commits:\n$recent_commits\n"
@@ -197,31 +188,9 @@ if ! run_quality_checks "implementation"; then
   exit 1
 fi
 
-# Step 6: Memory updates
+# Step 6: Commit
 echo ""
-echo "[deep-work] === Step 6: Memory updates ==="
-echo "[deep-work] 🧠 calling memory-keeper to update project knowledge..."
-
-memory_prompt="I've just completed implementation work on GitHub issue #${issue}: \"${title}\".
-
-Please update the project memory (.claude/memory.md) with any important learnings, patterns, gotchas, or insights from this work that would help future development on this project.
-
-Focus on:
-- New patterns or conventions established
-- Technical challenges overcome
-- Important gotchas or edge cases discovered
-- Useful debugging techniques
-- Architecture insights
-- Testing approaches that worked well
-
-Only add genuinely useful information that would help someone working on similar issues in the future."
-
-# Call memory-keeper agent directly via claude with task flag
-echo "$memory_prompt" | claude --task memory-keeper
-
-# Step 7: Commit
-echo ""
-echo "[deep-work] === Step 7: Commit ==="
+echo "[deep-work] === Step 6: Commit ==="
 
 echo "[deep-work] staging changes for commit..."
 git add .
@@ -243,9 +212,9 @@ EOF
 
 echo "[deep-work] ✅ changes committed"
 
-# Step 8: Merge main and resolve conflicts
+# Step 7: Merge main and resolve conflicts
 echo ""
-echo "[deep-work] === Step 8: Merge main & resolve conflicts ==="
+echo "[deep-work] === Step 7: Merge main & resolve conflicts ==="
 echo "[deep-work] fetching latest main..."
 
 # Fetch main from main worktree location
@@ -262,9 +231,9 @@ fi
 
 echo "[deep-work] ✅ main merged successfully"
 
-# Step 9: Push and create draft PR
+# Step 8: Push and create draft PR
 echo ""
-echo "[deep-work] === Step 9: Push & create draft PR ==="
+echo "[deep-work] === Step 8: Push & create draft PR ==="
 
 branch=$(git branch --show-current)
 echo "[deep-work] pushing branch $branch to origin..."
@@ -316,9 +285,9 @@ fi
 
 echo "[deep-work] 📝 draft PR created: $pr_url"
 
-# Step 10: Review cycle
+# Step 9: Review cycle
 echo ""
-echo "[deep-work] === Step 10: Review cycle ==="
+echo "[deep-work] === Step 9: Review cycle ==="
 echo "[deep-work] 🔍 calling pr-reviewer for automated review..."
 
 review_prompt="Please perform a thorough CodeRabbit-style review of this PR: $pr_url
@@ -337,9 +306,9 @@ After review, apply any approved suggestions, run quality checks, commit and pus
 # Call pr-reviewer agent directly via claude with task flag
 echo "$review_prompt" | claude --task pr-reviewer
 
-# Step 11: Mark ready for review (user confirmation)
+# Step 10: Mark ready for review (user confirmation)
 echo ""
-echo "[deep-work] === Step 11: Ready for review ==="
+echo "[deep-work] === Step 10: Ready for review ==="
 echo "[deep-work] 🎉 Workflow complete! The PR has been created and auto-reviewed."
 echo ""
 echo "PR URL: $pr_url"
@@ -357,9 +326,9 @@ else
   echo "  gh pr ready $pr_url"
 fi
 
-# Step 12: Cleanup (user confirmation)
+# Step 11: Cleanup (user confirmation)
 echo ""
-echo "[deep-work] === Step 12: Cleanup ==="
+echo "[deep-work] === Step 11: Cleanup ==="
 echo ""
 echo "The worktree for issue #$issue is at $worktree_dir (branch: $branch)."
 echo ""

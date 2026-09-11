@@ -127,6 +127,30 @@ export function classifyIntegrationError(
   };
 }
 
+/**
+ * #6034: a completed reply that reached neither writer, so there is nothing to
+ * render and nothing to re-read.
+ *
+ * The caller already knows this happened — it just failed an append and a
+ * refetch — so, like the two constructors above, this takes the fact rather
+ * than sniffing prose. Scoped per thread so two different lost replies are two
+ * entries, and one thread failing repeatedly is one entry with a count.
+ */
+export function classifyReplyDeliveryFailure(threadId: string): UserErrorDescriptor | null {
+  const thread = threadId?.trim();
+  if (!thread) return null;
+  return {
+    id: userErrorId('reply_delivery_failed', 'chat', thread),
+    kind: 'reply_delivery_failed',
+    severity: 'error',
+    scope: 'chat',
+    sourceDomain: 'chat',
+    titleKey: 'userErrors.replyDeliveryFailed.title',
+    bodyKey: 'userErrors.replyDeliveryFailed.body',
+    action: 'dismiss',
+  };
+}
+
 /** Build the stable dedupe identity for an error. */
 export function userErrorId(
   kind: UserErrorDescriptor['kind'],

@@ -60,9 +60,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "CPU architecture (x86_64, aarch64, …).",
                     required: true,
                 },
+                // `SystemInfo.pid` is a `u32` and serializes as a JSON number,
+                // so the declaration is `U64`, not `String` (#6074). Output
+                // fields are not validated at dispatch, but this schema is what
+                // generates the frontend's RPC types and what the agent tool
+                // surface advertises to a model, so a wrong type here is wrong
+                // at both consumers.
                 FieldSchema {
                     name: "pid",
-                    ty: TypeSchema::String,
+                    ty: TypeSchema::U64,
                     comment: "Current process ID.",
                     required: true,
                 },

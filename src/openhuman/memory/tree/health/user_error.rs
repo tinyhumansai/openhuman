@@ -108,6 +108,76 @@ pub(crate) fn notice_memory_module_unavailable_once(reason: &str) {
     });
 }
 
+/// Once-per-process notice for an archivist embedding failure that indicates the
+/// local model runtime is unavailable (openhuman#5867).
+///
+/// The archivist runs one embedding call per conversation segment; a broken
+/// local runtime produces one failure per segment. Bounding the notification to
+/// once-per-process matches the rationale of [`notice_corrupt_store_once`]:
+/// per-segment notices would be a banner storm. `origin` names the producing
+/// path — logged, never sent to the frontend.
+///
+/// Uses [`std::sync::Once::call_once_force`] so the latch is not set until
+/// after the publish runs: if `publish_web_channel_event` panics, the `Once`
+/// is left in the poisoned state and `call_once_force` lets the next call
+/// retry rather than re-panicking, so a transient panic does not permanently
+/// suppress the notification.
+pub(crate) fn notice_local_model_unavailable_once(origin: &str) {
+    static EMBED_UNAVAILABLE_NOTICED: std::sync::Once = std::sync::Once::new();
+    EMBED_UNAVAILABLE_NOTICED.call_once_force(|_| {
+        log::warn!(
+            "[archivist] action=broadcast_user_error kind={LOCAL_MODEL_UNAVAILABLE_KIND} \
+             source={MEMORY_USER_ERROR_SOURCE} origin={origin}"
+        );
+        crate::openhuman::web_chat::publish_web_channel_event(local_model_unavailable_user_error());
+    });
+}
+
+/// Text classifier for a local Ollama model failure, for errors that crossed
+/// the bus and only exist as strings.
+///
+/// Every literal below is quoted from the upstream source rather than from the
+/// error text as remembered — an earlier revision matched
+/// `"Ollama embedding model … is not installed at …"`, which reads plausibly
+/// and appears nowhere in `tinyinference`, so the model-not-pulled half of
+/// openhuman#5867 was never classified.
+///
+/// Three shapes, covering both models the archivist needs (the embedder and
+/// the summarisation model — #5867 names `bge-m3` *and* `gemma3:4b`):
+///
+/// 1. Daemon not listening —
+///    `"ollama embed request failed (is Ollama running at {base}?): {error}"`
+///    (`embeddings/ollama.rs:136`).
+/// 2. Embedding model not pulled — Ollama answers 404 and the embeddings path
+///    renders it through `ollama_http_error` as
+///    `"ollama embed failed with status {status}: {body}"`
+///    (`embeddings/ollama.rs:241`). Anchored on the status so the other six
+///    `"ollama embed …"` shapes in that file (NaN, count/dimension mismatch,
+///    empty vector, parse failure) keep their own non-notification path —
+///    those are data faults, not an absent runtime.
+/// 3. Chat model not pulled — `"Ollama model `{model}` is not installed at
+///    {base_url}. …"` (`providers/openai/local.rs:376`). Note the wording:
+///    `Ollama model`, with no `embedding`.
+///
+/// All three are Ollama-anchored, so a generic cloud-embedder transport
+/// failure ("error sending request for url …") does not match and keeps its
+/// own non-notification path. Mirrors `classify_embed_error_str` from
+/// `tinycortex` — the typed host-side classifier it maps to
+/// `FailureCode::LocalModelUnavailable` — but operates on the pre-stringified
+/// `MemoryError` rendering so it works across the module-bus boundary where the
+/// typed error is no longer available.
+pub(crate) fn is_local_embedding_error(message: &str) -> bool {
+    let msg = message.to_ascii_lowercase();
+    // 1. The daemon is not listening.
+    msg.contains("is ollama running at")
+        // 2. The embedding model was never pulled: Ollama answers 404.
+        || msg.contains("ollama embed failed with status 404")
+        // 3. The chat/summarisation model was never pulled. Matched on
+        //    "ollama" rather than the exact noun phrase so a future reword
+        //    between "Ollama model" and "Ollama embedding model" still lands.
+        || (msg.contains("is not installed at") && msg.contains("ollama"))
+}
+
 /// host-side fallback for paths that only ever see text.
 pub(crate) fn is_corrupt_store_error(message: &str) -> bool {
     let msg = message.to_ascii_lowercase();

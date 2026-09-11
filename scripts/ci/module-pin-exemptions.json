@@ -23,6 +23,12 @@
       "submodule": "vendor/tinyruntime",
       "expect": "v0.2.4",
       "reason": "The provider is published independently at v0.2.2 while tinyruntime shared source contract is v0.2.4; registry retains its matching published provider artifact."
+    },
+    {
+      "id": "tinymcp",
+      "submodule": "vendor/tinymcp",
+      "expect": "v0.3.2-2-g8b0627d",
+      "reason": "The host compiles the MCP contract against tinyhumansai/tinymcp#13 (Supervisor::tick returns a TickReport; needed by openhuman#5931), merged to tinymcp main but not yet in a tagged release, while the registry keeps the published v0.3.2 artifact. The drift is compile-only: the tinymcp module is registry-entered but not wired (AGENTS.md, 'step two of the extraction'), so no build downloads or loads that artifact. Delete this entry when tinymcp cuts its next release and the registry pin moves onto it."
     }
   ]
 }

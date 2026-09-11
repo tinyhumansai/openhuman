@@ -4,9 +4,6 @@
 [submodule "vendor/tinyflows"]
 	path = vendor/tinyflows
 	url = https://github.com/tinyhumansai/tinyflows
-[submodule "vendor/tinycortex"]
-	path = vendor/tinycortex
-	url = https://github.com/tinyhumansai/tinycortex
 [submodule "vendor/tinychannels"]
 	path = vendor/tinychannels
 	url = https://github.com/tinyhumansai/tinychannels

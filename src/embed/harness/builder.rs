@@ -57,7 +57,7 @@ impl HarnessBuilder {
             services: None,
             domains: None,
             tool_groups: None,
-            host_kind: HostKind::Cli,
+            host_kind: HostKind::Library,
             config: None,
             session: None,
             backend_url: None,
@@ -139,7 +139,7 @@ impl HarnessBuilder {
     ///
     /// [`domains`](Self::domains) decides which families *exist*; this decides
     /// how the tools of the families that do exist are disclosed — schemas on
-    /// the wire, withheld behind `load_skill` / `use_skill`, or not registered
+    /// the wire, withheld behind `use_skill`, or not registered
     /// at all.
     ///
     /// Defaults to every group withheld, matching the desktop app. Reach for
@@ -167,8 +167,8 @@ impl HarnessBuilder {
         self
     }
 
-    /// Identify the host to the core. Defaults to [`HostKind::Cli`], the
-    /// standalone bootstrap path.
+    /// Identify the host to the core. Defaults to [`HostKind::Library`], which
+    /// accepts caller-supplied provider credentials without OpenHuman app login.
     pub fn host_kind(mut self, host_kind: HostKind) -> Self {
         self.host_kind = host_kind;
         self
@@ -177,13 +177,12 @@ impl HarnessBuilder {
     /// Point the core's backend calls at `url`.
     ///
     /// Even a harness running entirely on its own inference endpoint still
-    /// talks to a backend for everything that is not a completion — the session
-    /// check, integrations, billing, telemetry. Left unset, that is whatever
+    /// can talk to a backend for everything that is not a completion —
+    /// integrations, billing, telemetry. Left unset, that is whatever
     /// [`Config`] resolves to, which for a fresh config is the hosted
     /// TinyHumans backend: a harness with no real account will make live calls
-    /// there, be rejected, and — because a rejection publishes `SessionExpired`
-    /// — have its *next* turn fail the custom-provider gate for reasons that
-    /// have nothing to do with the turn.
+    /// there and be rejected. Library-routed inference is independent of those
+    /// calls, but the backend features themselves will still fail.
     ///
     /// Set it to a stub (or a self-hosted backend) whenever the harness is not
     /// signed in to the real one.
@@ -194,13 +193,11 @@ impl HarnessBuilder {
 
     /// Install a session before the first turn.
     ///
-    /// Routing a turn at a custom provider is gated on an active app session
-    /// (`verify_session_active`), so a harness given its own endpoint and key
-    /// **still needs one** — the gate cannot distinguish a library host from an
-    /// unregistered desktop user trying to skip registration.
-    ///
-    /// [`Session::backend`] for a real JWT; [`Session::local`] for a host that
-    /// brings its own provider credentials and needs nothing from the backend.
+    /// The default [`HostKind::Library`] does not require an OpenHuman app
+    /// login when the caller supplies a provider. Use [`Session::backend`] only
+    /// when the embedded workload also calls authenticated TinyHumans backend
+    /// services. [`Session::local`] remains available for compatibility with
+    /// non-library host modes and offline tests.
     pub fn session(mut self, session: Session) -> Self {
         self.session = Some(session);
         self
@@ -314,6 +311,17 @@ impl HarnessBuilder {
             }
         }
 
+        // An endpoint without a model is deliberately ignored by the route
+        // applicator. Host policy must follow that effective behavior rather
+        // than the syntactic presence of endpoint credentials, or an ignored
+        // route could exempt an inherited installed provider from login.
+        let routed_provider_effective = self.provider.has_usable_route()
+            && config
+                .as_ref()
+                .and_then(|config| config.default_model.as_deref())
+                .is_some_and(|model| !model.trim().is_empty());
+        let host_kind = effective_host_kind(self.host_kind, inherit, routed_provider_effective);
+
         #[cfg(feature = "skills")]
         if let Some(dir) = self.skills_dir.as_deref() {
             super::skills::install(dir, &resolved.workspace_dir)?;
@@ -345,11 +353,11 @@ impl HarnessBuilder {
         log::debug!(
             "[embed][harness] building host_kind={:?} inherit_workspace={inherit} \
              routed_provider={} domains={domains:?} tool_groups={tool_groups:?}",
-            self.host_kind,
+            host_kind,
             self.provider.is_routed(),
         );
 
-        let mut builder = CoreBuilder::new(self.host_kind)
+        let mut builder = CoreBuilder::new(host_kind)
             .domains(domains)
             .tool_groups(tool_groups)
             .services(services)
@@ -363,17 +371,33 @@ impl HarnessBuilder {
 
         // After the build, because storing a session is an ordinary RPC and
         // needs a dispatchable core. Before returning, so the harness a caller
-        // receives is one whose first turn will not fail the provider gate.
+        // receives has the requested backend identity before its first turn.
         if let Some(session) = self.session {
             core.auth().store(session).await?;
         }
 
         Ok(Harness {
-            core,
+            core: Some(core),
             provider: self.provider,
             access: self.access,
             _workspace: resolved,
         })
+    }
+}
+
+/// Preserve the installed application's authentication policy when the
+/// harness borrows both its workspace and provider. `Library` means the host
+/// supplied inference; it must not become a blanket way to bypass the session
+/// gate around an operator-installed provider.
+fn effective_host_kind(
+    requested: HostKind,
+    inherit_workspace: bool,
+    routed_provider_effective: bool,
+) -> HostKind {
+    if requested == HostKind::Library && inherit_workspace && !routed_provider_effective {
+        HostKind::Cli
+    } else {
+        requested
     }
 }
 

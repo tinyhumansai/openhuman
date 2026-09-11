@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as agentProfilesModule from '../../services/api/agentProfilesApi';
 import * as coreStateApi from '../../services/coreStateApi';
 import * as tauriCommands from '../../utils/tauriCommands';
 import { __resetForTests as resetConfigRecoveryNotice } from '../../lib/configRecoveryNotice';
@@ -17,6 +18,9 @@ import CoreStateProvider, {
 
 vi.mock('../../services/coreStateApi');
 vi.mock('../../services/analytics', () => ({ syncAnalyticsConsent: vi.fn() }));
+vi.mock('../../services/api/agentProfilesApi', () => ({
+  agentProfilesApi: { list: vi.fn(), select: vi.fn(), upsert: vi.fn(), delete: vi.fn() },
+}));
 
 type Snapshot = Awaited<ReturnType<typeof coreStateApi.fetchCoreAppSnapshot>>;
 
@@ -120,11 +124,15 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
   const getTeamMembers = vi.mocked(coreStateApi.getTeamMembers);
   const getTeamInvites = vi.mocked(coreStateApi.getTeamInvites);
 
+  const listProfiles = vi.mocked(agentProfilesModule.agentProfilesApi.list);
+
   beforeEach(() => {
     fetchSnapshot.mockReset();
     listTeams.mockReset();
     getTeamMembers.mockReset();
     getTeamInvites.mockReset();
+    listProfiles.mockReset();
+    listProfiles.mockResolvedValue({ profiles: [], activeProfileId: 'default' } as never);
     resetCoreStateStore();
     setActiveUserId(null);
   });
@@ -536,6 +544,96 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
   });
 
+  it('does not clear a local session while its refreshed snapshot is still pending', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    const stored = deferred<void>();
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'cloud-user', sessionToken: 'old' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.storeSession).mockReset();
+    vi.mocked(tauriCommands.storeSession).mockReturnValue(stored.promise as never);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer captureCtx={next => (ctx = next)} />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    let storing!: Promise<void>;
+    await act(async () => {
+      storing = ctx!.storeSessionToken(localToken, { id: 'local' });
+      await Promise.resolve();
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: {
+            method: 'openhuman.announcements_get_latest',
+            source: 'rpc',
+            reason: 'confirmed',
+          },
+        })
+      );
+      // Drain past the microtask queue: the handler may `await` before it can
+      // reach `logout`, and a single `Promise.resolve()` tick would let this
+      // assertion pass without that path having had a chance to run.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+    stored.resolve();
+    await act(async () => storing);
+  });
+
+  it('keeps a stored local session when a pre-store poll settles after the store', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    const prestorePoll = deferred<Snapshot>();
+    // Bootstrap answers with the cloud identity, the poll started *before* the
+    // store is held open, and every poll after the store sees the local session.
+    fetchSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ userId: 'cloud-user', sessionToken: 'old' }))
+      .mockReturnValueOnce(prestorePoll.promise as never)
+      .mockResolvedValue(makeSnapshot({ userId: 'local', sessionToken: localToken }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.storeSession).mockReset();
+    vi.mocked(tauriCommands.storeSession).mockResolvedValue(undefined as never);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer captureCtx={next => (ctx = next)} />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    let storing!: Promise<void>;
+    await act(async () => {
+      // A poll is already in flight when the local session is stored...
+      void ctx!.refresh();
+      storing = ctx!.storeSessionToken(localToken, { id: 'local' });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      // ...and it settles with the stale cloud snapshot only after the store.
+      prestorePoll.resolve(makeSnapshot({ userId: 'cloud-user', sessionToken: 'old' }));
+      await storing;
+    });
+
+    expect(getCoreStateSnapshot().snapshot.sessionToken).toBe(localToken);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc', reason: 'confirmed' },
+        })
+      );
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
   it('dispatching core-rpc-auth-expired triggers clearSession (and debounces repeated fires within 10s)', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
     listTeams.mockResolvedValue([]);
@@ -852,6 +950,71 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     expect(vi.mocked(tauriCommands.storeSession)).toHaveBeenCalled();
   });
+
+  // Regression for #5872: the active agent profile must be fetched from the
+  // backend immediately when identity is established so the first chat request
+  // carries the correct profileId rather than the 'default' initialState value.
+  it('dispatches loadAgentProfiles when identity is established (#5872)', async () => {
+    // Returning user: seed matches snapshot userId so isFlip = false.
+    // First snapshot transitions previousIdentity (null) → nextIdentity ('u1'),
+    // which sets shouldClearScopedCaches = true and fires the !isFlip block.
+    setActiveUserId('u1');
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    // Flush micro-tasks so the void-dispatched promise chain completes.
+    await act(async () => {});
+
+    expect(listProfiles).toHaveBeenCalled();
+  });
+
+  // The isFlip = TRUE half, which is the whole reason the guard above omits
+  // `!isFlip` (the neighbouring loadThreads block does gate on it). Without
+  // this, a future refactor "tidying" `!isFlip` back in to match its neighbour
+  // would pass every test in this file and silently break the web path, where
+  // restartApp() is a no-op and the next poll has shouldClearScopedCaches
+  // false — so this dispatch would never fire again.
+  it('still dispatches loadAgentProfiles when the identity FLIPS (#5872)', async () => {
+    // u1 established first; `tok*` is not a local session token
+    // (isLocalSessionToken requires a 3-part `….local` shape), so the
+    // subsequent change to u2 gives seedUserId !== nextIdentity && !isLocalSession
+    // => isFlip === true.
+    setActiveUserId('u1');
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    await act(async () => {});
+
+    // Ignore the establish-time load; we are asserting on the flip itself.
+    listProfiles.mockClear();
+
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u2', sessionToken: 'tok2' }));
+    await act(async () => {
+      await ctx!.refresh();
+    });
+    await waitFor(() => expect(screen.getByTestId('user').textContent).toBe('u2'));
+    await act(async () => {});
+
+    expect(listProfiles).toHaveBeenCalled();
+  });
 });
 
 describe('coreStatePollFailureWarningMessage', () => {
@@ -968,6 +1131,163 @@ describe('CoreStateProvider — config recovery notice (#5167)', () => {
 
     await waitFor(() => expect(screen.getByTestId('user').textContent).toBe('u1'));
     expect(recoveryItems()).toHaveLength(0);
+  });
+});
+
+describe('session expiry fixes (#5868)', () => {
+  it('clearSession calls refresh even when tauriLogout throws', async () => {
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: 'tok1' })
+    );
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockRejectedValue(new Error('already cleared'));
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockClear();
+
+    // Trigger a confirmed session-expiry via the socket path.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', { detail: { source: 'test' } })
+      );
+    });
+
+    // Even though logout threw, refresh must still have fired (one new snapshot
+    // fetch) and the snapshot should now show signed-out state.
+    await waitFor(() =>
+      expect(vi.mocked(coreStateApi.fetchCoreAppSnapshot)).toHaveBeenCalledTimes(1)
+    );
+    await waitFor(() => expect(screen.getByTestId('token').textContent).toBe('none'));
+  });
+
+  it('confirmed session-expiry during bootstrap is replayed after the first snapshot lands (#5868)', async () => {
+    // The module-level store may carry isBootstrapping:false from prior tests;
+    // reset it so the component mounts with the correct initial value.
+    setCoreStateSnapshot({ ...getCoreStateSnapshot(), isBootstrapping: true, isReady: false });
+
+    // Hold the first snapshot until we control the release.
+    let resolveSnapshot!: (
+      v: Awaited<ReturnType<typeof coreStateApi.fetchCoreAppSnapshot>>
+    ) => void;
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockImplementation(
+      () =>
+        new Promise(res => {
+          resolveSnapshot = res;
+        })
+    );
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    // getSessionToken: return null so confirmSessionTokenGone fast-paths to true
+    // (only reached for unconfirmed events — confirmed skips the check entirely).
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue(null);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    // Fire a confirmed session-expiry WHILE bootstrap is still pending.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', { detail: { source: 'test-bootstrap' } })
+      );
+    });
+
+    // logout must NOT have been called yet — bootstrap not done.
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+
+    // Now let the snapshot land, completing bootstrap.
+    await act(async () => {
+      resolveSnapshot(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    });
+
+    // The pending reauth must replay and call logout.
+    await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not sign out on a chat-error expiry while the session token is still on disk (#2758)', async () => {
+    // The failure mode this pins is a REGRESSION OF #2758, reached through a
+    // new door. `is_session_expired_message` (core/observability.rs) classifies
+    // the local guards "no backend session token" and "session jwt required"
+    // under the same `session_expired` error type as a real backend expiry, and
+    // those fire transiently before the on-disk auth profile has been read.
+    //
+    // `clearSession()` is destructive — `auth_clear_session` deletes the auth
+    // profile — so a merely-suggestive signal must be corroborated first. That
+    // is what `reason: 'unconfirmed'` buys: `runReauth` calls
+    // `confirmSessionTokenGone()` and stops when the token is still there.
+    //
+    // Revert the dispatch to `confirmed` (or drop the `reason` from the
+    // ChatRuntimeProvider dispatch) and this test fails: corroboration is
+    // skipped and the user is signed out with a perfectly good token on disk.
+    setCoreStateSnapshot({ ...getCoreStateSnapshot(), isBootstrapping: false, isReady: true });
+
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: 'tok1' })
+    );
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    // The whole point: the token is STILL PRESENT. Corroboration must find it
+    // and abandon the sign-out.
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue('tok1');
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', {
+          detail: { source: 'chat-error', reason: 'unconfirmed' },
+        })
+      );
+    });
+
+    // Let the async corroboration settle before asserting the negative, so this
+    // cannot pass merely by checking too early.
+    await waitFor(() => expect(vi.mocked(tauriCommands.getSessionToken)).toHaveBeenCalled());
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
+  it('still signs out on a chat-error expiry once the token is genuinely gone', async () => {
+    // The positive control for the test above: `unconfirmed` must not become a
+    // way to never sign out. Same dispatch, same path — only the corroboration
+    // result differs — so a fix that simply ignored chat-error expiries would
+    // pass the previous test and fail this one.
+    setCoreStateSnapshot({ ...getCoreStateSnapshot(), isBootstrapping: false, isReady: true });
+
+    vi.mocked(coreStateApi.fetchCoreAppSnapshot).mockResolvedValue(
+      makeSnapshot({ userId: 'u1', sessionToken: 'tok1' })
+    );
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue(null);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('openhuman:session-expired', {
+          detail: { source: 'chat-error', reason: 'unconfirmed' },
+        })
+      );
+    });
+
+    await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1));
   });
 });
 

@@ -13,7 +13,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
-use crate::openhuman::skills::WorkflowScope;
+use crate::openhuman::skills::{Workflow, WorkflowScope};
 
 /// One declared input — a parameter the skill needs, with a human description.
 /// `required` inputs must be supplied at run time; `kind` is an optional type
@@ -172,6 +172,20 @@ pub fn load_workflows_with_profile(
     workspace_dir: &Path,
     profile_skills_root: Option<&Path>,
 ) -> Vec<WorkflowDefinition> {
+    load_workflows_and_discovered(workspace_dir, profile_skills_root).0
+}
+
+/// [`load_workflows_with_profile`] plus the discovered bundles the definitions
+/// were built from.
+///
+/// Discovery re-reads and re-parses every bundle under every root, so a caller
+/// that needs both the runnable definitions and the discovered metadata (scope
+/// and frontmatter `name`, which `WorkflowDefinition` does not carry) takes
+/// them from this one pass instead of running discovery a second time (#6166).
+fn load_workflows_and_discovered(
+    workspace_dir: &Path,
+    profile_skills_root: Option<&Path>,
+) -> (Vec<WorkflowDefinition>, Vec<Workflow>) {
     // Prune any legacy bundled skills an older build left behind so discover's
     // legacy scan no longer surfaces them (idempotent).
     prune_legacy_default_workflows(workspace_dir);
@@ -192,12 +206,13 @@ pub fn load_workflows_with_profile(
     // discovery the create/list path uses, then load each one's definition.
     let home = dirs::home_dir();
     let trusted = super::ops_discover::is_workspace_trusted(workspace_dir);
-    for wf in super::ops_discover::discover_workflows_with_profile(
+    let discovered = super::ops_discover::discover_workflows_with_profile(
         home.as_deref(),
         Some(workspace_dir),
         profile_skills_root,
         trusted,
-    ) {
+    );
+    for wf in &discovered {
         let Some(skill_md) = wf.location.as_ref() else {
             continue;
         };
@@ -222,7 +237,7 @@ pub fn load_workflows_with_profile(
             workflows.push(def);
         }
     }
-    workflows
+    (workflows, discovered)
 }
 
 /// Build a runnable [`WorkflowDefinition`] from a single workflow directory.
@@ -287,7 +302,7 @@ pub fn get_workflow_with_profile(
     id: &str,
     profile_skills_root: Option<&Path>,
 ) -> Option<WorkflowDefinition> {
-    let workflows = load_workflows_with_profile(workspace_dir, profile_skills_root);
+    let (workflows, discovered) = load_workflows_and_discovered(workspace_dir, profile_skills_root);
     // Built-ins are prepended and discovered workflows follow them. Search in
     // reverse so the scope-resolved discovered entry (profile wins over global)
     // also wins over a built-in with the same runnable id.
@@ -300,23 +315,19 @@ pub fn get_workflow_with_profile(
     // a private workflow admitted by the profile-local allow set can actually
     // be described and run. Keep the legacy profile-less lookup id-only: global
     // display names have never been runnable ids and may collide with builtins.
-    let home = dirs::home_dir();
-    let trusted = super::ops_discover::is_workspace_trusted(workspace_dir);
-    let slug = super::ops_discover::discover_workflows_with_profile(
-        home.as_deref(),
-        Some(workspace_dir),
-        profile_skills_root,
-        trusted,
-    )
-    .into_iter()
-    .find(|workflow| workflow.scope == WorkflowScope::Profile && workflow.name == id)
-    .map(|workflow| {
-        if workflow.dir_name.is_empty() {
-            workflow.name
-        } else {
-            workflow.dir_name
-        }
-    })?;
+    //
+    // Answered from the discovery pass already in hand — this used to re-run a
+    // full on-disk discovery and re-parse every bundle a second time (#6166).
+    let slug = discovered
+        .into_iter()
+        .find(|workflow| workflow.scope == WorkflowScope::Profile && workflow.name == id)
+        .map(|workflow| {
+            if workflow.dir_name.is_empty() {
+                workflow.name
+            } else {
+                workflow.dir_name
+            }
+        })?;
 
     workflows
         .into_iter()

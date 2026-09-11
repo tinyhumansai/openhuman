@@ -126,7 +126,18 @@ pub fn discover_workflows_with_profile(
     profile_skills_root: Option<&Path>,
     trusted: bool,
 ) -> Vec<Workflow> {
+    #[cfg(test)]
+    DISCOVERY_CALLS.with(|c| c.set(c.get() + 1));
     discover_workflows_inner(home_dir, workspace_dir, profile_skills_root, trusted)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only counter of full on-disk discovery passes made on this thread.
+    /// Discovery re-reads and re-parses every skill bundle under every root, so
+    /// a caller that runs it twice for one lookup pays the whole tree twice
+    /// (#6166). Thread-local so parallel tests can't perturb each other's count.
+    pub(crate) static DISCOVERY_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the workspace has opted into loading project-scope skills.

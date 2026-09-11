@@ -267,6 +267,7 @@ impl Config {
             &ProcessEnv,
         )
         .await
+        .inspect(super::active_workspace::publish_loaded_workspace)
     }
 
     pub(crate) async fn load_or_init_with_env_lookup(
@@ -490,6 +491,16 @@ impl Config {
                 schema_version: crate::openhuman::config::migrations::CURRENT_SCHEMA_VERSION,
                 ..Default::default()
             };
+            // A workspace created here is stamped at the *current* schema
+            // version, so the `run_pending` call below has no gate left to
+            // cross — including the `== 1` step that is the only place the
+            // managed `openhuman` cloud provider has ever been seeded. Without
+            // this, every fresh install starts with `cloud_providers = []` and
+            // can never acquire the entry, which is what left real workspaces
+            // failing `inference_list_models("openhuman")` before any request
+            // was made. Seed before the first `save` so the entry is on disk
+            // from the very first write rather than on some later one.
+            crate::openhuman::config::migrations::seed_new_workspace(&mut config);
             config.save().await?;
 
             #[cfg(unix)]
@@ -691,57 +702,17 @@ impl Config {
             .context("Failed to fsync temporary config file")?;
         drop(temp_file);
 
-        let had_existing_config = tokio::fs::try_exists(&self.config_path)
-            .await
-            .unwrap_or(false);
-        if had_existing_config {
-            fs::copy(&temp_path, &backup_path).await.with_context(|| {
-                format!(
-                    "Failed to create config backup before atomic replace: {}",
-                    backup_path.display()
-                )
-            })?;
-        }
-
-        // Parallel test/runtime cleanup can remove an otherwise valid config
-        // directory after the temporary file is written. Recreate it directly
-        // before the rename so the atomic replacement retains its guarantee.
-        fs::create_dir_all(parent_dir).await.with_context(|| {
-            format!(
-                "Failed to recreate config directory before atomic replace: {}",
-                parent_dir.display()
-            )
-        })?;
-
-        let replace = fs::rename(&temp_path, &self.config_path).await;
-        // A concurrently-cleaning test or runtime can still remove the parent
-        // in the narrow window after the create_dir_all above. Retry the rename
-        // once after recreating it; the temp file lives alongside the target and
-        // remains available across that directory-entry race.
-        let replace = match replace {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir_all(parent_dir).await.with_context(|| {
-                    format!(
-                        "Failed to recreate config directory for atomic replace retry: {}",
-                        parent_dir.display()
-                    )
-                })?;
-                fs::rename(&temp_path, &self.config_path).await
-            }
-            result => result,
-        };
-
-        if let Err(e) = replace {
-            let _ = fs::remove_file(&temp_path).await;
-            if had_existing_config && backup_path.exists() {
-                fs::copy(&backup_path, &self.config_path)
-                    .await
-                    .context("Failed to restore config backup")?;
-            }
-            anyhow::bail!("Failed to atomically replace config file: {e}");
-        }
-
-        super::sync_directory(parent_dir).await?;
+        // Everything above can still fail with the live config untouched.
+        // `commit_replacement` owns the swap, and returns `Err` only while the
+        // old config is still in place — see its docs for why callers that roll
+        // back on `Err` depend on that.
+        super::atomic_commit::commit_replacement(
+            &temp_path,
+            &self.config_path,
+            parent_dir,
+            &backup_path,
+        )
+        .await?;
 
         Ok(())
     }

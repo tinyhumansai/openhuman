@@ -1,4 +1,8 @@
 use super::*;
+// `schema.rs` is a re-export shim over `tinyagents_harness::tool`, so
+// `super::*` brings `SchemaCleanr` but not the `json!` macro the way it did
+// when the implementation (and its own imports) lived in this module.
+use serde_json::json;
 
 #[test]
 fn test_remove_unsupported_keywords() {

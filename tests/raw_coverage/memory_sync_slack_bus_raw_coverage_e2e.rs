@@ -68,9 +68,6 @@ fn ensure_memory_seams(config: Arc<Config>) {
             .name("memory-sync-slack-bus-raw-coverage-seams".to_string())
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    Arc::clone(&config),
-                );
                 #[cfg(feature = "modules")]
                 openhuman_core::openhuman::modules::memory::set_modules_policy(config);
             })

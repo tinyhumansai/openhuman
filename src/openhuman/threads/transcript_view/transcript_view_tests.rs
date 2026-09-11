@@ -124,6 +124,60 @@ fn projects_turn_with_tools_reasoning_and_sanitization() {
 }
 
 #[test]
+fn recovers_tool_name_from_native_envelope_without_turn_usage() {
+    let dir = TempDir::new().unwrap();
+    let envelope = serde_json::json!({
+        "content": null,
+        "tool_calls": [{
+            "id": "call-web-1",
+            "name": "web_fetch",
+            "arguments": { "url": "https://example.com" }
+        }]
+    })
+    .to_string();
+    let assistant = serde_json::json!({
+        "role": "assistant",
+        "content": envelope,
+        "request_id": "req-native"
+    })
+    .to_string();
+    let result =
+        r#"{"role":"tool","content":"Example Domain","id":"call-web-1","request_id":"req-native"}"#;
+    let path = write_raw(
+        dir.path(),
+        "101_orchestrator",
+        "thr_native",
+        &[assistant.as_str(), result],
+    );
+    let display = read_transcript_display(&path).unwrap();
+    let items = project_records(&display.records);
+
+    let tool = items
+        .iter()
+        .find_map(|item| match item {
+            DisplayItem::ToolCall {
+                name,
+                args,
+                result,
+                status,
+                ..
+            } => Some((name, args, result, status)),
+            _ => None,
+        })
+        .expect("native envelope tool call projected");
+    assert_eq!(tool.0, "web_fetch");
+    assert_eq!(
+        tool.1
+            .as_ref()
+            .and_then(|args| args.get("url"))
+            .and_then(serde_json::Value::as_str),
+        Some("https://example.com")
+    );
+    assert_eq!(tool.2.as_deref(), Some("Example Domain"));
+    assert_eq!(*tool.3, ToolCallStatus::Success);
+}
+
+#[test]
 fn projects_compaction_and_interrupted_partial() {
     let dir = TempDir::new().unwrap();
     let body = vec![

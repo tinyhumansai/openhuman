@@ -8,8 +8,6 @@ use crate::openhuman::memory::api::chunks::{DataSource, SourceRef};
 use crate::openhuman::memory::api::provider::types::IngestItem;
 use crate::openhuman::memory::api::provider::{ConversationSegment, EpisodicTurn};
 use crate::openhuman::memory::api::types::MemoryTaint;
-#[cfg(test)]
-use std::sync::Arc;
 
 impl ArchivistHook {
     /// Pipe a closed segment's raw prose turns into the memory tree as
@@ -142,26 +140,6 @@ impl ArchivistHook {
         // here any more — the driver owns chunking and extraction.
         let _ = config;
 
-        // Test-only. The ingest above is a contract call, but the driver behind
-        // it runs an extraction LLM of its own, built from `Config` rather than
-        // handed in — so a test that did not scope this task-local would reach
-        // the managed backend over the network, and the ingest swallows its own
-        // failures (below), which surfaces as zero tree chunks rather than as a
-        // network error. `tinymemory_core::chat::build_chat_runtime` consults
-        // the override before building anything, which is what makes these
-        // deterministic. Production has no override and never names the engine's
-        // chat module (#5560); the engine is a dev-dependency for this fixture.
-        #[cfg(test)]
-        let ingest_result = if let Some(provider) = self.chat_provider.as_ref() {
-            tinymemory_core::chat::test_override::with_provider(
-                Arc::clone(provider),
-                ingest.ingest_chat(messages),
-            )
-            .await
-        } else {
-            ingest.ingest_chat(messages).await
-        };
-        #[cfg(not(test))]
         let ingest_result = ingest.ingest_chat(messages).await;
 
         match ingest_result {
@@ -199,6 +177,22 @@ impl ArchivistHook {
                          error={rendered}"
                     );
                     crate::openhuman::memory::tree::health::user_error::notice_corrupt_store_once(
+                        "archivist tree ingest",
+                    );
+                } else if crate::openhuman::memory::tree::health::user_error::is_local_embedding_error(
+                    &rendered,
+                ) {
+                    tracing::warn!(
+                        "[archivist] tree ingest hit a local-model embedding failure \
+                         (non-fatal): source_id={source_id} session={session_id} \
+                         segment={segment_id} error={rendered}"
+                    );
+                    // Surface a once-per-process user notification so the
+                    // frontend can prompt the user to check their local model
+                    // configuration (openhuman#5867). Only fires for confirmed
+                    // Ollama-specific errors; storage/bus/RPC failures are
+                    // logged above and left to the existing retry/backoff path.
+                    crate::openhuman::memory::tree::health::user_error::notice_local_model_unavailable_once(
                         "archivist tree ingest",
                     );
                 } else {

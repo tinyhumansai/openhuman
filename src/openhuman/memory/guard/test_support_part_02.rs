@@ -247,7 +247,7 @@ impl MemoryEpisodic for RecordingProvider {
     ) -> Result<Vec<crate::openhuman::memory::api::provider::episodic::EpisodicTurn>, MemoryError>
     {
         self.record(Call::plain("episodic.session_turns"));
-        Ok(vec![])
+        Ok(self.session_turns.lock().unwrap().clone())
     }
 
     async fn open_segment(
@@ -259,6 +259,26 @@ impl MemoryEpisodic for RecordingProvider {
     > {
         self.record(Call::plain("episodic.open_segment"));
         Ok(None)
+    }
+
+    async fn segments_pending_summary(
+        &self,
+        limit: u32,
+    ) -> Result<
+        Vec<crate::openhuman::memory::api::provider::episodic::ConversationSegment>,
+        MemoryError,
+    > {
+        self.record(Call::plain("episodic.segments_pending_summary"));
+        // Honour `limit` — a fake that ignored it would let a test drive more
+        // segments than the caller asked for and hide a bounded-recovery bug.
+        Ok(self
+            .pending_segments
+            .lock()
+            .unwrap()
+            .iter()
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
 
     async fn create_segment(
@@ -468,7 +488,7 @@ impl MemoryRetrieval for RecordingProvider {
             taint: None,
             scoped: Some(scope.is_some()),
         });
-        Ok(RetrievalResponse::default())
+        Ok(self.fast_retrieve_result.lock().unwrap().clone())
     }
 
     async fn cover_window(
@@ -532,13 +552,29 @@ impl MemoryRetrieval for RecordingProvider {
 
     async fn recall_namespace_scored(
         &self,
-        _namespace: &str,
+        namespace: &str,
         _query: &str,
-        _limit: usize,
+        limit: usize,
         _exclude_session_id: Option<&str>,
     ) -> Result<Vec<NamespaceMemoryHit>, MemoryError> {
-        self.record(Call::plain("retrieval.recall_namespace_scored"));
-        Ok(vec![])
+        // Honours the two request parameters a caller can get wrong — the
+        // namespace it asks for and the page it accepts — and records them,
+        // so a test can assert both rather than only the content it got.
+        self.record(Call {
+            method: "retrieval.recall_namespace_scored".into(),
+            content: Some(format!("namespace={namespace} limit={limit}")),
+            taint: None,
+            scoped: None,
+        });
+        Ok(self
+            .namespace_hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|hit| hit.namespace == namespace)
+            .take(limit)
+            .cloned()
+            .collect())
     }
 
     async fn recall_namespace_recent(
@@ -702,27 +738,5 @@ impl MemoryEventIngest for RecordingProvider {
             scoped: None,
         });
         Ok(IngestOutcome::default())
-    }
-}
-
-#[async_trait]
-impl MemoryAnswer for RecordingProvider {
-    async fn answer(
-        &self,
-        _request: crate::openhuman::memory::api::provider::operations::AnswerRequest,
-    ) -> Result<crate::openhuman::memory::api::provider::operations::AnswerResponse, MemoryError>
-    {
-        self.record(Call {
-            method: "answer.answer".into(),
-            content: None,
-            taint: None,
-            scoped: None,
-        });
-        Ok(crate::openhuman::memory::api::provider::operations::AnswerResponse {
-            answer: String::new(),
-            model: None,
-            citations: Vec::new(),
-            steps: Vec::new(),
-        })
     }
 }

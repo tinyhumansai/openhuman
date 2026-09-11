@@ -10,8 +10,24 @@
 //! ## What this migration does
 //!
 //! 1. **Merges new commands** into `config.autonomy.allowed_commands`. Only
-//!    commands not already present are added, so any user customisation
-//!    (e.g. additional entries, deliberate removals) is fully preserved.
+//!    commands not already present are added, so additional entries a user has
+//!    made are preserved.
+//!
+//!    ⚠️ **A deliberate removal is NOT preserved, and cannot be.** The merge is
+//!    additive and has no record of what the v3 default contained, so it cannot
+//!    tell "absent because the user removed it" from "absent because it
+//!    post-dates this config". A narrowed `allowed_commands` is therefore
+//!    widened back. This doc previously claimed removals were "fully
+//!    preserved"; that was false in the one direction that matters for a
+//!    command allowlist.
+//!
+//!    This bites hardest on a **hand-written** `config.toml`: `schema_version`
+//!    is `#[serde(default)]`, so a file without the field loads as version `0`
+//!    and runs the whole 0→10 chain including this migration — even though it
+//!    was never a v3 config. A config this code writes is stamped with
+//!    `CURRENT_SCHEMA_VERSION` on creation (`schema/load/impl_load.rs`), so the
+//!    fresh-install path is unaffected. Set `schema_version` explicitly to opt
+//!    out.
 //! 2. **Merges new auto-approve tools** into `config.autonomy.auto_approve`
 //!    with the same additive-only merge logic.
 //! 3. **Bumps `max_actions_per_hour`** from 20 (the old hard-coded default)
@@ -78,6 +94,8 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
     );
 
     // Merge new commands (additive only — never remove user entries).
+    let commands_before = config.autonomy.allowed_commands.clone();
+    let mut added_commands: Vec<&str> = Vec::new();
     for &cmd in NEW_COMMANDS {
         if !config.autonomy.allowed_commands.iter().any(|c| c == cmd) {
             log::debug!(
@@ -85,8 +103,46 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
                 cmd
             );
             config.autonomy.allowed_commands.push(cmd.to_string());
+            added_commands.push(cmd);
             stats.commands_added += 1;
         }
+    }
+
+    // Widening a command allowlist is a security-relevant change, and until now
+    // it happened at DEBUG — invisible on a default log level, and invisible in
+    // the file on disk, which still shows the narrow list the user wrote.
+    //
+    // Warn whenever anything is added, including when the prior list was EMPTY.
+    // An earlier revision of this guard skipped the empty case on the reasoning
+    // that such a config "never expressed an opinion". That was backwards:
+    // `allowed_commands = []` is a deny-all shell policy and the strongest
+    // curated choice there is, so suppressing the warning silenced exactly the
+    // users with the most to lose.
+    if !added_commands.is_empty() {
+        // The remediation has to be honest about ordering, in both directions.
+        //
+        // The widening is already in effect for THIS process: the mutation
+        // above is what `SecurityPolicy` reads for the rest of the session,
+        // whatever happens next. Whether it reaches disk is a separate
+        // question — `run_pending` bumps `schema_version` and calls
+        // `Config::save`, and on a save failure it rolls the *version* back and
+        // retries next launch (`migrations/mod.rs:196-207`). It does not roll
+        // back the widened list, so a failed save leaves this run widened and
+        // the next launch widening it again.
+        //
+        // So: do not claim it is persisted (it may not be), and do not imply it
+        // is harmless until it is (it is not).
+        log::warn!(
+            "[migrations][expand-autonomy-defaults] widened allowed_commands from {} to {} \
+             entries; added: {}. This is in force for this session already, and is written to \
+             config.toml if the migration's save succeeds. If the previous list was curated, \
+             restore it in config.toml (the removals were NOT preserved) and set \
+             `schema_version = {}` to keep this migration from running again.",
+            commands_before.len(),
+            config.autonomy.allowed_commands.len(),
+            added_commands.join(", "),
+            crate::openhuman::config::migrations::CURRENT_SCHEMA_VERSION,
+        );
     }
 
     // Merge new auto-approve tools (additive only).

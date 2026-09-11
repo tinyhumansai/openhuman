@@ -212,6 +212,30 @@ pub(super) fn handle_flush_source(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
+pub(super) fn handle_backfill_connector_trees(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        /// `dry_run` defaults to **true**, and the default is the point.
+        ///
+        /// A pass costs one read and one set of chunk embeddings per document,
+        /// against a user's embedding budget. A caller that omits the field gets
+        /// the preview; writing is something you ask for.
+        #[derive(serde::Deserialize)]
+        struct Req {
+            #[serde(default = "dry_run_default")]
+            dry_run: bool,
+            #[serde(default)]
+            limit: Option<u64>,
+        }
+        fn dry_run_default() -> bool {
+            true
+        }
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::backfill_connector_trees_rpc(&config, req.limit, req.dry_run).await?)
+    })
+}
+
 pub(super) fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;

@@ -3,6 +3,7 @@
 pub mod bus;
 pub mod cli;
 mod core;
+pub mod credential_ref;
 pub mod http_creds;
 pub mod ops;
 pub mod profiles;
@@ -17,6 +18,7 @@ pub use crate::api::rest::{
     BackendOAuthClient, ConnectResponse, IntegrationSummary, IntegrationTokensHandoff,
 };
 pub use core::*;
+pub use credential_ref::{CredentialRef, CredentialRefError, CredentialRefScheme, ResolvedSecret};
 pub use http_creds::{
     HttpCredential, HttpCredentialScheme, HttpCredentialSummary, HttpCredentialsStore,
 };
