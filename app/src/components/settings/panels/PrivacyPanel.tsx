@@ -50,9 +50,8 @@ function kindLabel(kind: PrivacyDataKind, t: (key: string) => string): string {
 }
 
 const PrivacyPanel = () => {
-  const { snapshot, setAnalyticsEnabled, setMeetAutoOrchestratorHandoff } = useCoreState();
+  const { snapshot, setAnalyticsEnabled } = useCoreState();
   const analyticsEnabled = snapshot.analyticsEnabled;
-  const meetAutoHandoff = snapshot.meetAutoOrchestratorHandoff;
   const { t } = useT();
 
   const [capabilities, setCapabilities] = useState<AnnotatedCapability[]>([]);
@@ -112,15 +111,6 @@ const PrivacyPanel = () => {
       await setAnalyticsEnabled(newValue);
     } catch (error) {
       console.warn('[privacy] failed to persist analytics setting:', error);
-    }
-  };
-
-  const handleToggleMeetAutoHandoff = async () => {
-    const newValue = !meetAutoHandoff;
-    try {
-      await setMeetAutoOrchestratorHandoff(newValue);
-    } catch (error) {
-      console.warn('[privacy] failed to persist meet auto-handoff setting:', error);
     }
   };
 
