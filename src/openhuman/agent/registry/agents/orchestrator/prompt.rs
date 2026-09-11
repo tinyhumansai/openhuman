@@ -418,6 +418,7 @@ fn format_connected_mcp_block(
                     &sanitized,
                 )
                 .is_some()
+                    || contains_routing_override(&sanitized)
                 {
                     tracing::warn!(
                         qualified_name = %s.qualified_name,
@@ -448,6 +449,15 @@ fn format_connected_mcp_block(
         }
     }
     out
+}
+
+/// Keep remote instructions out of the system prompt when they contain a
+/// routing override that is too specific for the general-purpose scanner.
+fn contains_routing_override(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains("ignore")
+        && lowered.contains("routing")
+        && (lowered.contains("obey") || lowered.contains("follow"))
 }
 
 /// Render the delegator-voice `## Connected Integrations` block. Only
