@@ -249,7 +249,7 @@ impl ExaClient {
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 anyhow::bail!(
                     "Exa rate limit exceeded (HTTP 429). \
-                     Please wait a moment before searching again."
+                     Please wait a moment before retrying."
                 );
             }
             anyhow::bail!("Exa returned non-2xx status {status}");

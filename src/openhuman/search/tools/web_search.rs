@@ -37,11 +37,24 @@ const MANAGED_DEFAULT_PROVIDER: &str = "Exa";
 fn managed_search_quota_error(message: &str) -> Option<&'static str> {
     let lowered = message.to_ascii_lowercase();
 
-    // Exa tags credit exhaustion explicitly; the numeric form covers providers
-    // that only report the status. `credit` is required alongside the bare
-    // status so an unrelated 402 in a URL or id cannot trip this.
-    let credits_exhausted = lowered.contains("no_more_credits")
-        || (lowered.contains("402") && lowered.contains("credit"));
+    // Only inspect the structured provider envelope before any echoed JSON
+    // body. The body may contain the submitted query, so searching all of it
+    // would let an unrelated query such as "HTTP 429" trigger this mapping.
+    let envelope = message.split_once('{').map_or(message, |(prefix, _)| prefix);
+    let envelope_lowered = envelope.to_ascii_lowercase();
+    let provider_json = message
+        .find('{')
+        .and_then(|start| serde_json::from_str::<Value>(&message[start..]).ok());
+
+    // Exa tags credit exhaustion explicitly; the numeric form covers a
+    // provider status in its API-error envelope. A parsed tag avoids matching
+    // the same text when it appears in an echoed query or error string.
+    let credits_exhausted = provider_json
+        .as_ref()
+        .and_then(|body| body.get("tag"))
+        .and_then(Value::as_str)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("NO_MORE_CREDITS"))
+        || envelope_lowered.contains("api error (402)");
     if credits_exhausted {
         return Some(
             "Managed web search is temporarily unavailable: the shared search credit pool is \
@@ -50,7 +63,17 @@ fn managed_search_quota_error(message: &str) -> Option<&'static str> {
         );
     }
 
-    if lowered.contains("429") || lowered.contains("rate limit") {
+    // Accept only an explicit status in the outer/provider envelope. In
+    // particular, do not classify prose from the response body: providers
+    // commonly echo the query there verbatim.
+    if envelope_lowered.contains("api error (429)")
+        || envelope_lowered.contains("backend returned 429 ")
+        || provider_json
+            .as_ref()
+            .and_then(|body| body.get("status"))
+            .and_then(Value::as_u64)
+            == Some(429)
+    {
         return Some(
             "Managed web search is rate limited upstream. Please wait a moment before searching \
              again, or configure your own search API key under Connections > Search engine.",

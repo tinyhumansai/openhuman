@@ -632,7 +632,7 @@ fn managed_quota_classifier_matches_the_tag_alone() {
 fn managed_quota_classifier_matches_rate_limits() {
     for message in [
         "Backend returned 429 Too Many Requests for POST /agent-integrations/parallel/search: slow down",
-        "Backend returned 400 Bad Request for POST /x: provider rate limit exceeded",
+        "Exa API error (429): {\"error\":\"temporarily unavailable\"}",
     ] {
         let classified =
             managed_search_quota_error(message).expect("rate-limit fault must classify");
@@ -654,6 +654,11 @@ fn managed_quota_classifier_leaves_unrelated_failures_alone() {
         // on its own — the classifier requires the word `credit` alongside it.
         "POST http://127.0.0.1:40200/agent-integrations/parallel/search failed: timed out",
         "Web search unavailable: no backend session token.",
+        // Quota-looking text in an echoed query must not replace the real
+        // failure classification.
+        "Backend returned 500 Internal Server Error for POST /x: query=NO_MORE_CREDITS",
+        "Backend returned 500 Internal Server Error for POST /x: query=what is HTTP 429",
+        "Backend returned 400 Bad Request for POST /x: {\"error\":\"query says rate limit\"}",
     ] {
         assert!(
             managed_search_quota_error(message).is_none(),
