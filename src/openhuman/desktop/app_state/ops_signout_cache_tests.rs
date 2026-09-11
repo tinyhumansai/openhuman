@@ -90,6 +90,73 @@ async fn signing_out_forgets_both_current_user_caches() {
     );
 }
 
+/// A pending `/auth/me` response that finishes after logout must not recreate
+/// the app-session profile that logout removed.
+///
+/// The call order makes the race deterministic: `generation` represents the
+/// pending refresh, `clear_session` wins the session-mutation lock and bumps
+/// the generation, and only then does the stale persistence attempt resume.
+#[tokio::test]
+async fn pending_revalidation_completing_after_logout_does_not_restore_the_session() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
+    let _reset = CurrentUserFailureResetGuard;
+
+    let tmp = tempdir().expect("tempdir");
+    let previous_home = std::env::var_os("HOME");
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+    let auth = AuthService::from_config(&config);
+    auth.store_provider_token(
+        APP_SESSION_PROVIDER,
+        DEFAULT_AUTH_PROFILE_NAME,
+        "jwt-pending-before-logout",
+        HashMap::new(),
+        true,
+    )
+    .expect("seed pending app-session profile");
+
+    let generation = current_user_generation();
+    crate::openhuman::security::credentials::ops::clear_session(&config)
+        .await
+        .expect("logout succeeds");
+
+    let error = persist_revalidated_session_user(
+        &config,
+        "jwt-pending-before-logout",
+        BTreeMap::new(),
+        json!({ "userId": "user-before-logout" }),
+        generation,
+    )
+    .await
+    .expect_err("stale pending persistence must stand down after logout");
+
+    match previous_home {
+        Some(value) => unsafe { std::env::set_var("HOME", value) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+
+    assert!(
+        error.contains("became stale after sign-out"),
+        "unexpected stale-persistence error: {error}"
+    );
+    assert!(
+        auth.get_profile(APP_SESSION_PROVIDER, None)
+            .expect("read app-session profile")
+            .is_none(),
+        "the stale pending response recreated the app-session profile after logout"
+    );
+}
+
 #[test]
 fn forget_current_user_caches_clears_the_positive_snapshot() {
     let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
