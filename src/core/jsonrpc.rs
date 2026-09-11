@@ -1965,7 +1965,7 @@ fn group_first_time(group: crate::core::all::DomainGroup) -> bool {
     group_first_time_when_bus_ready(
         DONE.get_or_init(|| Mutex::new(HashSet::new())),
         group,
-        crate::core::bus::BUS.is_initialised(),
+        crate::core::bus::BUS.get().is_some(),
     )
 }
 
@@ -1995,7 +1995,7 @@ fn learning_first_time() -> bool {
     static DONE: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
     learning_first_time_when_bus_ready(
         DONE.get_or_init(|| std::sync::Mutex::new(false)),
-        crate::core::bus::BUS.is_initialised(),
+        crate::core::bus::BUS.get().is_some(),
     )
 }
 

@@ -152,7 +152,7 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 
 ## 从源码贡献
 
-新贡献者？从 [`CONTRIBUTING.md`](../CONTRIBUTING.md) 了解 fork/PR 工作流和本地验证命令，或使用 [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) 中可直接复制粘贴的 AI 智能体提示词。快速路径：
+新贡献者？从 [`CONTRIBUTING.md`](../CONTRIBUTING.md) 了解 fork/PR 工作流和本地验证命令，或使用 [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) 中可直接复制粘贴的 AI 智能体提示词。快速路径：
 
 1. 安装 Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep，以及各平台桌面构建的前置依赖。
 2. Fork 并克隆仓库，然后运行 `git submodule update --init --recursive` 之后再执行 `pnpm install`，确保内置的 Tauri/CEF 源码就位。

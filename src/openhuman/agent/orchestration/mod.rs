@@ -13,8 +13,7 @@
 //! layer: durable SQL/JSON run ledgers, validation, cancellation semantics,
 //! compatibility events, and JSON-RPC/tool response formatting.
 //! [`running_subagents`] mirrors detached-sub-agent lifecycle into a
-//! TinyAgents task store; porting more of that lifecycle upstream is tracked
-//! in WP-5 of `docs/tinyagents-migration-plan-2026-07-22.md`.
+//! TinyAgents task store.
 
 pub mod agent_teams;
 pub(crate) mod background_completions;

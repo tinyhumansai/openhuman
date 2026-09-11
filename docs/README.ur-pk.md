@@ -198,7 +198,7 @@ n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhuman
 
 ## سورس سے تعاون
 
-نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
+نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
 
 1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.96.1 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
 2. ریپو کو fork اور کلون کریں، پھر `pnpm install` سے پہلے `git submodule update --init --recursive` چلائیں تاکہ وینڈرڈ Tauri/CEF سورس موجود ہوں۔

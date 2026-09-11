@@ -178,6 +178,21 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
     assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
+/// The wrapper reads readiness off the process-wide `BUS` singleton. Unit
+/// tests never stand that bus up (see `core::bus::init` on runtime affinity),
+/// so the observable contract here is the deferred case: with no bus the
+/// token is *not* consumed, and a later call can still claim it. The
+/// consumed/not-consumed transitions are pinned above through
+/// `group_first_time_when_bus_ready`.
+#[test]
+fn domain_subscriber_registration_wrapper_defers_without_a_global_bus() {
+    use crate::core::all::DomainGroup;
+
+    assert!(crate::core::bus::BUS.get().is_none());
+    assert!(!group_first_time(DomainGroup::Media));
+    assert!(!group_first_time(DomainGroup::Media));
+}
+
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot
 /// path (`register_domain_subscribers`), NOT inside
 /// `channels::runtime::startup::start_channels`, which is skipped for
