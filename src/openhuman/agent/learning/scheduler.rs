@@ -128,11 +128,18 @@ impl EventHandler<DomainEvent> for RebuildTriggerHandler {
         );
 
         let detector = Arc::clone(&self.detector);
+        let workspace_dir = self.workspace_dir.clone();
         let delay = EVENT_REBUILD_DELAY;
 
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            run_rebuild_logged(&detector, "event-driven").await;
+            if learning_enabled(&workspace_dir).await {
+                run_rebuild_logged(&detector, "event-driven").await;
+            } else {
+                tracing::debug!(
+                    "[learning::scheduler] learning disabled after debounce; skipping rebuild"
+                );
+            }
         });
     }
 }

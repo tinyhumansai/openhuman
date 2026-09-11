@@ -213,7 +213,9 @@ impl Agent {
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
-        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache().await;
+        let facets =
+            crate::openhuman::agent::learning::load_learned_from_global_cache(&self.workspace_dir)
+                .await;
         let standing =
             crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(
@@ -292,7 +294,7 @@ impl Agent {
         // shape that every prompt-building call-site uses. Temporary vec
         // borrows from `tools_slice` and lives for the duration of the
         // prompt build.
-        let prompt_tools = PromptTool::from_tools(tools_slice);
+        let prompt_tools = PromptTool::from_tool_refs(self.all_tool_refs());
         let prompt_visible_tool_names = self.tool_policy_session.visible_tool_names_for_prompt();
         // Load AGENTS.md instruction layers once per system-prompt build (never
         // re-read per turn — the caller builds the prompt once at session start

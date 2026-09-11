@@ -314,9 +314,19 @@ pub const CACHE_PROMPT_CAP: usize = 25;
 ///
 /// Returns an empty vec when the global client is not ready (startup race or
 /// tests that never called [`crate::openhuman::memory::global::init`]).
-pub async fn load_learned_from_global_cache() -> Vec<String> {
-    tracing::debug!("[learning::prompt] global facet client unavailable; skipping Active facets");
-    Vec::new()
+pub async fn load_learned_from_global_cache(workspace_dir: &std::path::Path) -> Vec<String> {
+    let config = crate::openhuman::config::schema::MemorySubsystemConfig::default();
+    let binding = match crate::openhuman::memory::binding::for_workspace(workspace_dir, &config) {
+        Ok(binding) => binding,
+        Err(error) => {
+            tracing::debug!(
+                "[learning::prompt] memory binding unavailable; skipping Active facets: {error}"
+            );
+            return Vec::new();
+        }
+    };
+    let cache = crate::openhuman::agent::learning::cache::FacetCache::new(binding.guard());
+    load_learned_from_cache(&cache).await
 }
 
 /// Merge Lane A explicit preferences with Active facet strings for prompt injection.
