@@ -405,6 +405,17 @@ fn format_connected_mcp_block(
             let raw = s.instructions.as_deref().unwrap_or("").trim();
             if raw.is_empty() {
                 String::new()
+            } else if crate::openhuman::security::prompt_injection::scan_tool_definition(
+                "instructions",
+                raw,
+            )
+            .is_some()
+            {
+                tracing::warn!(
+                    qualified_name = %s.qualified_name,
+                    "quarantining MCP server instructions flagged for prompt injection"
+                );
+                String::new()
             } else {
                 crate::openhuman::util::sanitize::sanitize_for_llm(raw, 600)
                     .replace(['\n', '\t'], " ")
