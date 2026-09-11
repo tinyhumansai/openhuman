@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { CodingSessionsCard } from '../components/intelligence/CodingSessionsCard';
+import FacetsPanel from '../components/intelligence/FacetsPanel';
 import GoalsPanel from '../components/intelligence/GoalsPanel';
 import { MemoryControls } from '../components/intelligence/MemoryControls';
 import { MemoryGraph } from '../components/intelligence/MemoryGraph';
@@ -28,7 +29,7 @@ import {
   memoryTreeGraphExport,
 } from '../utils/tauriCommands';
 
-type BrainTab = 'welcome' | 'graph' | 'goals' | 'sources' | 'sync';
+type BrainTab = 'welcome' | 'graph' | 'goals' | 'profile' | 'sources' | 'sync';
 
 /** Small inline icon helper for the Brain sidebar nav. */
 const navIcon = (d: string) => (
@@ -37,7 +38,7 @@ const navIcon = (d: string) => (
   </svg>
 );
 
-const BRAIN_TABS: readonly BrainTab[] = ['welcome', 'graph', 'goals', 'sources', 'sync'];
+const BRAIN_TABS: readonly BrainTab[] = ['welcome', 'graph', 'goals', 'profile', 'sources', 'sync'];
 
 /**
  * Backoff ladder for automatically retrying a failed graph load.
@@ -55,6 +56,7 @@ const RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000];
 const BRAIN_HEADERS: Record<Exclude<BrainTab, 'welcome'>, { titleKey: string; descKey: string }> = {
   graph: { titleKey: 'brain.tabs.graph', descKey: 'brain.header.graph' },
   goals: { titleKey: 'brain.tabs.goals', descKey: 'brain.header.goals' },
+  profile: { titleKey: 'brain.tabs.profile', descKey: 'brain.header.profile' },
   sources: { titleKey: 'brain.tabs.sources', descKey: 'brain.header.sources' },
   sync: { titleKey: 'brain.tabs.sync', descKey: 'brain.header.sync' },
 };
@@ -250,6 +252,13 @@ export default function Brain() {
                     icon: navIcon('M5 3v18M5 3l13 4-13 4M5 13l9 3-9 3'),
                   },
                   {
+                    value: 'profile',
+                    label: t('brain.tabs.profile'),
+                    icon: navIcon(
+                      'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'
+                    ),
+                  },
+                  {
                     value: 'sources',
                     label: t('brain.tabs.sources'),
                     icon: navIcon(
@@ -387,6 +396,8 @@ export default function Brain() {
 
                   {activeTab === 'goals' && <GoalsPanel />}
 
+                  {activeTab === 'profile' && <FacetsPanel />}
+
                   {activeTab === 'sources' && (
                     <div className="space-y-5 animate-fade-up">
                       <CodingSessionsCard onToast={addToast} />
@@ -420,4 +431,3 @@ export default function Brain() {
     </div>
   );
 }
-
