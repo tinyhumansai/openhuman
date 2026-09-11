@@ -35,8 +35,6 @@ const MANAGED_DEFAULT_PROVIDER: &str = "Exa";
 /// provider echoes the submitted query back in its error body, and that body
 /// would otherwise reach the agent transcript.
 fn managed_search_quota_error(message: &str) -> Option<&'static str> {
-    let lowered = message.to_ascii_lowercase();
-
     // Only inspect the structured provider envelope before any echoed JSON
     // body. The body may contain the submitted query, so searching all of it
     // would let an unrelated query such as "HTTP 429" trigger this mapping.
