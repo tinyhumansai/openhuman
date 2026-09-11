@@ -50,6 +50,7 @@ pub fn spawn_rebuild_loop(
     detector: Arc<StabilityDetector>,
     interval: Duration,
     mut shutdown_rx: watch::Receiver<bool>,
+    workspace_dir: std::path::PathBuf,
 ) {
     tracing::info!(
         "[learning::scheduler] starting periodic rebuild loop (interval={}s)",
@@ -65,7 +66,9 @@ pub fn spawn_rebuild_loop(
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    run_rebuild_logged(&detector, "periodic").await;
+                    if learning_enabled(&workspace_dir).await {
+                        run_rebuild_logged(&detector, "periodic").await;
+                    }
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
@@ -89,6 +92,7 @@ pub fn spawn_rebuild_loop(
 /// - [`DomainEvent::TreeSummarizerPropagated`] (tree summariser flush signal)
 struct RebuildTriggerHandler {
     detector: Arc<StabilityDetector>,
+    workspace_dir: std::path::PathBuf,
 }
 
 #[async_trait]
@@ -102,6 +106,10 @@ impl EventHandler<DomainEvent> for RebuildTriggerHandler {
     }
 
     async fn handle(&self, event: &DomainEvent) {
+        if !learning_enabled(&self.workspace_dir).await {
+            tracing::debug!("[learning::scheduler] learning disabled; skipping rebuild trigger");
+            return;
+        }
         let should_trigger = match event {
             DomainEvent::DocumentCanonicalized { source_kind, .. } => {
                 matches!(source_kind.as_str(), "email" | "document")
@@ -134,8 +142,21 @@ impl EventHandler<DomainEvent> for RebuildTriggerHandler {
 /// The returned `SubscriptionHandle` must be kept alive for the subscription to
 /// remain active. Callers should store it in a static `OnceLock` (same pattern
 /// as the `EmailSignatureSubscriber`).
-pub fn register_event_trigger(detector: Arc<StabilityDetector>) -> Option<SubscriptionHandle> {
-    BUS.subscribe(Arc::new(RebuildTriggerHandler { detector }))
+pub fn register_event_trigger(
+    detector: Arc<StabilityDetector>,
+    workspace_dir: std::path::PathBuf,
+) -> Option<SubscriptionHandle> {
+    BUS.subscribe(Arc::new(RebuildTriggerHandler { detector, workspace_dir }))
+}
+
+async fn learning_enabled(workspace_dir: &std::path::Path) -> bool {
+    match crate::openhuman::config::ops::load_config_for_workspace_with_timeout(workspace_dir).await {
+        Ok(config) => config.learning.enabled,
+        Err(error) => {
+            tracing::warn!("[learning::scheduler] unable to read learning setting; skipping rebuild: {error}");
+            false
+        }
+    }
 }
 
 // ── Shared rebuild runner ─────────────────────────────────────────────────────

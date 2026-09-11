@@ -47,7 +47,9 @@ pub fn register_learning_subscribers(workspace_dir: std::path::PathBuf) {
     // DocumentCanonicalized events and emits Identity candidates into the
     // buffer. Needs no memory client, so it always registers.
     register_email_signature_once(&EMAIL_SIG_HANDLE, || {
-        crate::openhuman::agent::learning::extract::signature::register_email_signature_subscriber()
+        crate::openhuman::agent::learning::extract::signature::register_email_signature_subscriber(
+            workspace_dir.clone(),
+        )
     });
 
     // Phase 3 + Phase 4 learning: rebuild trigger + periodic loop + the
@@ -195,8 +197,9 @@ fn register_with_memory(
             Arc::clone(&detector),
             crate::openhuman::agent::learning::scheduler::DEFAULT_REBUILD_INTERVAL,
             shutdown_rx,
+            workspace_dir.to_path_buf(),
         );
-        let handle = register_event_trigger(detector);
+        let handle = register_event_trigger(detector, workspace_dir.to_path_buf());
         if handle.is_some() {
             tracing::info!(
                 "[learning::scheduler] rebuild trigger + periodic loop registered \
