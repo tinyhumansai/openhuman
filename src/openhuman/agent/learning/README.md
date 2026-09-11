@@ -70,7 +70,7 @@ Namespace `learning` (wired into `src/core/all.rs`; 13 controllers). Methods:
 | `learning.reset_cache` | Delete all `Auto` rows, preserve `Pinned`. |
 | `learning.get_settings` / `learning.update_settings` | Read / persist the `learning.enabled` master switch (takes effect on new sessions). |
 
-All handlers go through the memory client's `profile_store()` and a `FacetCache`; `linkedin_enrichment` / `save_profile` load config via `config::rpc::load_config_with_timeout`.
+Facet handlers go through the memory client's `profile_store()` and a `FacetCache`; settings handlers load and save `Config`, while `linkedin_enrichment` / `save_profile` load config via `config::rpc::load_config_with_timeout`.
 
 ## Agent tools
 
