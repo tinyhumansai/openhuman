@@ -79,7 +79,6 @@ fn scrub_json_credentials(value: serde_json::Value) -> serde_json::Value {
         other => other,
     }
 }
-
 #[async_trait]
 impl ToolMiddleware<()> for ToolPolicyMiddleware {
     fn name(&self) -> &str {
