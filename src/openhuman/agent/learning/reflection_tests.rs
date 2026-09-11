@@ -357,7 +357,7 @@ async fn on_turn_complete_dedupes_reflections_across_heuristic_and_llm_paths() {
 
     let memory_impl = Arc::new(MockMemory::default());
     let memory: Arc<dyn Memory> = memory_impl.clone();
-    let stub_model = Arc::new(tinyagents::harness::testkit::ScriptedModel::replies(vec![
+    let stub_model = Arc::new(tinyagents_harness::testkit::ScriptedModel::replies(vec![
         r#"{"observations":[],"patterns":[],"user_preferences":[],
                 "user_reflections":["Going forward I want concise replies"]}"#,
     ]));
@@ -535,7 +535,7 @@ async fn on_turn_complete_emits_style_candidates_from_llm_preferences() {
     use crate::openhuman::agent::learning::candidate::{self, FacetClass};
 
     let memory: Arc<dyn Memory> = Arc::new(MockMemory::default());
-    let stub_model = Arc::new(tinyagents::harness::testkit::ScriptedModel::replies(vec![
+    let stub_model = Arc::new(tinyagents_harness::testkit::ScriptedModel::replies(vec![
         r#"{"observations":[],"patterns":[],"user_preferences":["verbosity=terse"],"user_reflections":[]}"#,
     ]));
     let hook = ReflectionHook::new(

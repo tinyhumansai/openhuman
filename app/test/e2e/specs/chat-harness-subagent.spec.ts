@@ -153,14 +153,6 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     // clean signed-in state rather than a polluted one (the source of the
     // intermittent "final canary never arrives" failures).
     await resetApp(USER_ID, { clearAuthSession: true });
-    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
-      value: false,
-    });
-    expect(superContext.ok).toBe(true);
-    console.log(
-      '[chat-harness-subagent] Disabled super context for deterministic scripted LLM calls'
-    );
-
     setMockBehavior('llmKeywordRules', JSON.stringify(KEYWORD_RULES));
     // Faster streaming for non-tool-call responses so this spec doesn't
     // need 30s of patience for three full streams.

@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import debug from 'debug';
 import { REHYDRATE } from 'redux-persist';
 
 import {
@@ -9,6 +10,8 @@ import type { MascotColor } from '../features/human/Mascot/mascotPalette';
 import type { Locale } from '../lib/i18n/types';
 import { MASCOT_VOICE_ID } from '../utils/config';
 import { resetUserScopedState } from './resetActions';
+
+const mascotLog = debug('mascot:slice');
 
 export const SUPPORTED_MASCOT_COLORS: readonly MascotColor[] = [
   'yellow',
@@ -41,6 +44,28 @@ export const MAX_MASCOT_VOICE_ID_LEN = 128;
 export const MAX_CUSTOM_MASCOT_GIF_URL_LEN = 2048;
 
 /**
+ * Upper bound on the *source file* a user may upload as a custom image avatar
+ * (issue #5360). Uploaded avatars are inlined as base64 `data:image/…` strings
+ * inside the persisted `mascot` slice, which lives in the localStorage-backed
+ * `userScopedStorage`. localStorage is a shared, few-megabyte budget, so the
+ * cap is deliberately small — a large avatar would bloat the blob and, because
+ * `userScopedStorage.setItem` silently swallows QuotaExceededError, an oversize
+ * write drops the *entire* mascot slice (colour, voice, selection) rather than
+ * failing loudly. The UI enforces this before dispatch so the user sees a clear
+ * "too large" error instead of losing their settings.
+ */
+export const MAX_CUSTOM_MASCOT_AVATAR_UPLOAD_BYTES = Math.floor(1.5 * 1024 * 1024);
+
+/**
+ * Reducer-boundary backstop on an inlined base64 image data URL. base64
+ * inflates the raw file by ~4/3, so a 1.5 MB upload yields ~2.1 MB of string;
+ * this cap (~2.2 MB) leaves headroom while still rejecting a hand-pasted or
+ * tampered data URL that skipped the UI's byte check. Plain http/https/file
+ * URLs keep the far tighter MAX_CUSTOM_MASCOT_GIF_URL_LEN.
+ */
+export const MAX_CUSTOM_MASCOT_AVATAR_DATA_URL_LEN = 2_200_000;
+
+/**
  * Upper bound on how many per-mascot voice overrides we persist (issue
  * #4277). A user only ever drives two mascots in a meeting, but they may
  * try several before settling; the cap keeps the persisted map bounded
@@ -69,24 +94,82 @@ function isMascotVoiceId(value: unknown): value is string {
   );
 }
 
-function hasGifPath(value: string): boolean {
+// Raster image extensions accepted for a custom avatar (issue #5360). `.svg`
+// is deliberately absent — an SVG can carry inline scripts, so it stays a
+// rejected avatar source even though the render path is a plain <img>.
+const CUSTOM_MASCOT_AVATAR_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'];
+
+// Matches a base64-encoded raster image data URL. `image/svg+xml` is excluded
+// for the same script-injection reason.
+//
+// The payload requires *structurally valid* base64, not merely base64-ish
+// characters: a run of whole 4-character quartets, optionally ending in one
+// padded group (`xx==` or `xxx=`). A looser `[A-Za-z0-9+/]+={0,2}` would accept
+// truncated payloads like `A=` — the reducer would then persist an avatar no
+// image decoder can render, so the user sees a silently broken mascot rather
+// than a rejection. The empty payload (`data:image/png;base64,`) is rejected
+// too: every branch consumes at least one group.
+//
+// No ReDoS: the two top-level branches are disjoint (one ends in padding, one
+// cannot), and each quantified group has a fixed 4-character width, so a
+// failing match backtracks linearly. Callers still gate on length first.
+const CUSTOM_MASCOT_AVATAR_DATA_URL_RE =
+  /^data:image\/(?:png|jpe?g|gif|webp|bmp);base64,(?:(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)|(?:[A-Za-z0-9+/]{4})+)$/;
+
+function hasImagePath(value: string): boolean {
   const [path = ''] = value.split(/[?#]/, 1);
-  return path.toLowerCase().endsWith('.gif');
+  const lower = path.toLowerCase();
+  return CUSTOM_MASCOT_AVATAR_EXTENSIONS.some(ext => lower.endsWith(ext));
 }
 
+function isCustomMascotAvatarDataUrl(value: string): boolean {
+  return (
+    value.length <= MAX_CUSTOM_MASCOT_AVATAR_DATA_URL_LEN &&
+    CUSTOM_MASCOT_AVATAR_DATA_URL_RE.test(value)
+  );
+}
+
+/**
+ * Coarse, privacy-safe label for where an avatar value came from, for logging.
+ * Deliberately derived from the value's *prefix* only — never its content — so
+ * a diagnostic can never leak a filename, a local path, or image bytes.
+ */
+function customMascotAvatarSourceCategory(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('data:')) return 'data-url';
+  if (trimmed.startsWith('https:')) return 'https';
+  if (trimmed.startsWith('http:')) return 'http-loopback';
+  if (trimmed.startsWith('file:')) return 'file-url';
+  if (trimmed.startsWith('/') || trimmed.startsWith('~/')) return 'local-path';
+  return 'other';
+}
+
+/**
+ * Accepts a custom mascot avatar source: a base64 raster-image data URL (from
+ * an uploaded PNG/GIF/JPEG/WebP/BMP, issue #5360), or an http(s)/file/relative
+ * URL pointing at one of those image types. The field name keeps its legacy
+ * `Gif` spelling for persistence compatibility — the stored value survives
+ * rehydrate — but the accepted set is now any safe raster image, not GIF only.
+ */
 export function isCustomMascotGifUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim();
-  if (trimmed.length === 0 || trimmed.length > MAX_CUSTOM_MASCOT_GIF_URL_LEN) return false;
+  if (trimmed.length === 0) return false;
+
+  // Uploaded avatars are inlined as base64 data URLs; they get their own
+  // (much larger) length cap and a strict raster-only allowlist.
+  if (trimmed.startsWith('data:')) return isCustomMascotAvatarDataUrl(trimmed);
+
+  if (trimmed.length > MAX_CUSTOM_MASCOT_GIF_URL_LEN) return false;
 
   try {
     const parsed = new URL(trimmed);
-    if (!hasGifPath(parsed.pathname)) return false;
+    if (!hasImagePath(parsed.pathname)) return false;
     if (parsed.protocol === 'https:' || parsed.protocol === 'file:') return true;
     if (parsed.protocol !== 'http:') return false;
     return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
   } catch {
-    return hasGifPath(trimmed) && (trimmed.startsWith('/') || trimmed.startsWith('~/'));
+    return hasImagePath(trimmed) && (trimmed.startsWith('/') || trimmed.startsWith('~/'));
   }
 }
 
@@ -152,7 +235,57 @@ interface MascotState {
   customMascotGifUrl: string | null;
   customPrimaryColor: string;
   customSecondaryColor: string;
+  /**
+   * Whether the chat surface's mascot is scaled up into its right-hand voice
+   * stage (`true`) or docked as the small figure standing on the composer
+   * (`false`). Persisted so the user's choice survives a reload — the merged
+   * chat/Human surface has no other memory of which mode they were in.
+   */
+  chatMascotExpanded: boolean;
+  /**
+   * Whether agent replies are spoken back through TTS with mascot lipsync.
+   *
+   * Previously ad-hoc `localStorage['human.speakReplies']`, duplicated in the
+   * Human page and the chat page's face-mode panel. Now one persisted source of
+   * truth (`AGENTS.md`: prefer Redux over ad-hoc localStorage); the legacy key
+   * is migrated once on rehydrate.
+   */
+  speakReplies: boolean;
+  /**
+   * Live mic state for the chat mascot: `true` while `MicComposer` is
+   * recording, which forces the `listening` pose.
+   *
+   * Deliberately NOT persisted — it is transient hardware state, and a `true`
+   * restored from localStorage would pin the mascot into a listening pose with
+   * no mic running.
+   */
+  chatMascotListening: boolean;
+  /**
+   * Whether the mascot appears on the chat composer at all.
+   *
+   * Dismissing it from the composer is a real preference, not a session quirk —
+   * someone who does not want a character on their message box should not have
+   * to re-dismiss it on every launch. Re-enabled from
+   * Settings → Appearance → Chat, which is why the dismiss dialog names that
+   * path: a hidden control the user cannot find again is a trap.
+   */
+  chatMascotDismissed: boolean;
+  /**
+   * Which voice-chat implementation the mascot's voice stage uses (#5399).
+   * `classic` is
+   * today's turn-based record → transcribe → reply → TTS pipeline; `realtime`
+   * is the streaming ElevenLabs Agents session. Defaults to `classic` and is
+   * only togglable when `VOICE_MODE_FLAG_ENABLED` is on, so the realtime path
+   * ships dark until it is ready.
+   */
+  voiceMode: VoiceMode;
 }
+
+/** Voice-chat implementation used by the mascot's voice stage. */
+export type VoiceMode = 'classic' | 'realtime';
+
+const isVoiceMode = (value: unknown): value is VoiceMode =>
+  value === 'classic' || value === 'realtime';
 
 const initialState: MascotState = {
   color: DEFAULT_MASCOT_COLOR,
@@ -165,7 +298,49 @@ const initialState: MascotState = {
   customMascotGifUrl: null,
   customPrimaryColor: '#F7D145',
   customSecondaryColor: '#B23C05',
+  chatMascotExpanded: false,
+  speakReplies: true,
+  chatMascotListening: false,
+  chatMascotDismissed: false,
+  voiceMode: 'classic',
 };
+
+/**
+ * localStorage key the speak-replies preference used before it moved into this
+ * slice. Exported for the migration test.
+ */
+export const LEGACY_SPEAK_REPLIES_KEY = 'human.speakReplies';
+
+/**
+ * Fold the pre-Redux `human.speakReplies` preference into the persisted mascot
+ * blob, then delete it.
+ *
+ * Runs as a redux-persist `migrate` hook — deliberately NOT inside the reducer.
+ * Reading and deleting a localStorage key is a side effect, and a reducer that
+ * performs one is not a pure function of `(state, action)`: replaying the action
+ * log (devtools time-travel) would take the other branch the second time,
+ * because the key is gone. `migrate` is the layer that is *allowed* to do this,
+ * and it runs before REHYDRATE, so the legacy value simply arrives in the
+ * payload and the reducer stays pure.
+ *
+ * The legacy value wins over the slice default on purpose: a user who turned TTS
+ * off before the merge must not have it silently turned back on.
+ */
+export function migrateLegacySpeakReplies(
+  persisted: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(LEGACY_SPEAK_REPLIES_KEY);
+    if (raw === null) return persisted;
+    window.localStorage.removeItem(LEGACY_SPEAK_REPLIES_KEY);
+  } catch {
+    // localStorage can throw in sandboxed / private contexts — nothing to do.
+    return persisted;
+  }
+  mascotLog('[mascot][migrate] speakReplies from legacy localStorage raw=%s', raw);
+  return { ...(persisted ?? {}), speakReplies: raw === '1' };
+}
 
 /**
  * Scrub a persisted / raw `mascotVoices` blob down to valid
@@ -261,14 +436,27 @@ const mascotSlice = createSlice({
     },
     setCustomMascotGifUrl(state, action: PayloadAction<string | null>) {
       if (action.payload == null) {
+        console.debug('[mascot-avatar] store: cleared');
         state.customMascotGifUrl = null;
         return;
       }
-      if (isCustomMascotGifUrl(action.payload)) {
-        state.customMascotGifUrl = action.payload.trim();
+      // Diagnostics carry the source *category* and length only — never the URL,
+      // local path, or data URL itself, any of which can hold a filename or
+      // the image bytes. A silent reject here is otherwise invisible: the
+      // reducer's failure mode is a cleared avatar, not an error.
+      const trimmed = action.payload.trim();
+      const category = customMascotAvatarSourceCategory(trimmed);
+      // Read the length up front: `isCustomMascotGifUrl` is a `value is string`
+      // predicate, so the else-branch narrows an already-`string` argument to
+      // `never` and no property access survives there.
+      const length = trimmed.length;
+      if (isCustomMascotGifUrl(trimmed)) {
+        console.debug('[mascot-avatar] store: accepted', category, length);
+        state.customMascotGifUrl = trimmed;
         state.selectedMascotId = null;
         state.secondaryMascotId = null;
       } else {
+        console.debug('[mascot-avatar] store: rejected', category, length);
         state.customMascotGifUrl = null;
       }
     },
@@ -306,6 +494,39 @@ const mascotSlice = createSlice({
     setCustomSecondaryColor(state, action: PayloadAction<string>) {
       state.customSecondaryColor = action.payload;
     },
+    setChatMascotExpanded(state, action: PayloadAction<boolean>) {
+      const next = Boolean(action.payload);
+      if (state.chatMascotExpanded === next) return;
+      state.chatMascotExpanded = next;
+      mascotLog('[mascot][chat-stage] expanded=%s', next);
+    },
+    setSpeakReplies(state, action: PayloadAction<boolean>) {
+      state.speakReplies = Boolean(action.payload);
+      mascotLog('[mascot][voice] speakReplies=%s', state.speakReplies);
+    },
+    setChatMascotDismissed(state, action: PayloadAction<boolean>) {
+      const next = Boolean(action.payload);
+      if (state.chatMascotDismissed === next) return;
+      state.chatMascotDismissed = next;
+      // Collapsing on dismiss keeps the two flags from disagreeing: a dismissed
+      // mascot that is still marked expanded would reopen its voice stage the
+      // moment it is restored, which is not what the user asked for.
+      if (next) state.chatMascotExpanded = false;
+      mascotLog('[mascot][chat-stage] dismissed=%s', next);
+    },
+    setChatMascotListening(state, action: PayloadAction<boolean>) {
+      const next = Boolean(action.payload);
+      // Guard the no-op: `MicComposer` reports its state on every transition and
+      // a same-value dispatch would re-render the mascot stage for nothing.
+      if (state.chatMascotListening === next) return;
+      state.chatMascotListening = next;
+      mascotLog('[mascot][voice] listening=%s', next);
+    },
+    setVoiceMode(state, action: PayloadAction<VoiceMode>) {
+      if (isVoiceMode(action.payload)) {
+        state.voiceMode = action.payload;
+      }
+    },
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
@@ -326,6 +547,10 @@ const mascotSlice = createSlice({
           customMascotGifUrl?: unknown;
           customPrimaryColor?: unknown;
           customSecondaryColor?: unknown;
+          chatMascotExpanded?: unknown;
+          chatMascotDismissed?: unknown;
+          speakReplies?: unknown;
+          voiceMode?: unknown;
         };
       };
       if (rehydrateAction.key !== 'mascot') return;
@@ -387,6 +612,28 @@ const mascotSlice = createSlice({
       const rsc = rehydrateAction.payload?.customSecondaryColor;
       state.customSecondaryColor =
         typeof rsc === 'string' && rsc.length > 0 ? rsc : initialState.customSecondaryColor;
+      // Chat-mascot stage: absent in pre-merge blobs, so `false` (docked) is the
+      // right default — it matches a fresh install.
+      state.chatMascotExpanded =
+        typeof rehydrateAction.payload?.chatMascotExpanded === 'boolean'
+          ? rehydrateAction.payload.chatMascotExpanded
+          : initialState.chatMascotExpanded;
+      // `speakReplies` moved here from `localStorage['human.speakReplies']`. The
+      // legacy value, if any, was already folded into this payload by
+      // `migrateLegacySpeakReplies` (see the note there on why that cannot live
+      // in this reducer), so there is nothing to special-case.
+      state.speakReplies =
+        typeof rehydrateAction.payload?.speakReplies === 'boolean'
+          ? rehydrateAction.payload.speakReplies
+          : initialState.speakReplies;
+      state.chatMascotDismissed =
+        typeof rehydrateAction.payload?.chatMascotDismissed === 'boolean'
+          ? rehydrateAction.payload.chatMascotDismissed
+          : initialState.chatMascotDismissed;
+      // Never restored — see the field docs on `chatMascotListening`.
+      state.chatMascotListening = false;
+      const restoredVoiceMode = rehydrateAction.payload?.voiceMode;
+      state.voiceMode = isVoiceMode(restoredVoiceMode) ? restoredVoiceMode : 'classic';
     });
   },
 });
@@ -402,7 +649,29 @@ export const {
   setCustomMascotGifUrl,
   setCustomPrimaryColor,
   setCustomSecondaryColor,
+  setChatMascotExpanded,
+  setChatMascotDismissed,
+  setSpeakReplies,
+  setChatMascotListening,
+  setVoiceMode,
 } = mascotSlice.actions;
+
+/**
+ * Whether the chat mascot is scaled up into its voice stage. Tolerates a
+ * pre-merge persisted slice (the field is simply absent there).
+ */
+export const selectChatMascotExpanded = (state: { mascot: MascotState }): boolean =>
+  state.mascot.chatMascotExpanded ?? false;
+
+export const selectSpeakReplies = (state: { mascot: MascotState }): boolean =>
+  state.mascot.speakReplies ?? true;
+
+export const selectChatMascotListening = (state: { mascot: MascotState }): boolean =>
+  state.mascot.chatMascotListening ?? false;
+
+/** Whether the user has dismissed the mascot from the composer. */
+export const selectChatMascotDismissed = (state: { mascot: MascotState }): boolean =>
+  state.mascot.chatMascotDismissed ?? false;
 
 export const selectMascotColor = (state: { mascot: MascotState }): MascotColor =>
   state.mascot.color;
@@ -424,6 +693,9 @@ export const selectSecondaryMascotId = (state: { mascot: MascotState }): string 
 
 export const selectMascotVoices = (state: { mascot: MascotState }): Record<string, string> =>
   state.mascot.mascotVoices ?? {};
+
+export const selectVoiceMode = (state: { mascot: MascotState }): VoiceMode =>
+  state.mascot.voiceMode ?? 'classic';
 
 /**
  * Explicit per-mascot voice override for `mascotId`, or `null` when none
@@ -506,9 +778,9 @@ interface MeetingMascotVoicePair {
 
 /**
  * Resolve the (up to two) mascots + voices a meeting join should use
- * (issue #4277). Single source of truth for both join paths — the CEF
- * `meet_call_open_window` sender and the backend `agent_meetings_join`
- * sender — and for tests, so they can't drift.
+ * (issue #4277). Single source of truth for the backend
+ * `agent_meetings_join` sender and for tests, so they can't drift.
+ * (The in-app CEF join path was removed in #5478.)
  *
  * `secondary` is non-null only when a distinct second mascot is enabled
  * (`selectDualMascotEnabled`). Each slot's voice is its per-mascot

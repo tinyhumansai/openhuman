@@ -39,7 +39,8 @@ pub mod types;
 
 pub use types::{
     CandidateKind, ConversationReflection, Importance, IngestionReport, MemoryCandidate,
-    Provenance, CONVERSATION_MEMORY_NAMESPACE, CONVERSATION_REFLECTIONS_NAMESPACE,
+    Provenance, CONVERSATION_MEMORY_NAMESPACE, CONVERSATION_RAW_NAMESPACE,
+    CONVERSATION_REFLECTIONS_NAMESPACE,
 };
 
 use crate::openhuman::agent::harness::session::transcript::{self, SessionTranscript};
@@ -208,5 +209,5 @@ pub async fn ingest_session_transcript(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "transcript_ingest_tests.rs"]
 mod tests;

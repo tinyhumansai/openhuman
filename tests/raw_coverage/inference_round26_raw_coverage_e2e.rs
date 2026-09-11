@@ -106,9 +106,7 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
     config.local_ai.model_id = "gemma3:1b-it-qat".to_string();
     config.local_ai.embedding_model_id = "bge-m3".to_string();
     config.local_ai.preload_embedding_model = true;
-    config.local_ai.preload_stt_model = false;
     config.local_ai.preload_tts_voice = false;
-    config.local_ai.stt_download_url = Some(format!("{base}/asset/stt"));
     config.local_ai.tts_download_url = Some(format!("{base}/asset/tts"));
 
     let service = LocalAiService::new(&config);
@@ -126,7 +124,6 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
     assert_eq!(assets.chat.state, "ready");
     assert_eq!(assets.embedding.state, "ready");
     assert_eq!(assets.vision.state, "disabled");
-    assert_eq!(assets.stt.state, "ondemand");
     assert!(
         matches!(assets.tts.state.as_str(), "ondemand" | "ready"),
         "tts state should be on-demand or already resolved, got {}",
@@ -140,7 +137,6 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
         .expect("downloads progress");
     assert_eq!(progress.chat.state, "ready");
     assert_eq!(progress.embedding.state, "ready");
-    assert_eq!(progress.stt.state, "ondemand");
 
     let diagnostics = service.diagnostics(&config).await.expect("diagnostics");
     assert_eq!(diagnostics["ollama_running"], true);

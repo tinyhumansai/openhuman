@@ -2,7 +2,7 @@
  * pttTranscribe — speech-to-text adapter for pttService.
  *
  * Reuses the existing `openhuman.voice_transcribe_bytes` RPC (see
- * `src/openhuman/voice/ops.rs`). The Rust side handles cloud + whisper.cpp
+ * `src/openhuman/voice/ops.rs`). The Rust side picks the hosted engine
  * routing based on the user's `stt_provider` setting and applies optional
  * LLM cleanup, so the renderer only needs to push raw bytes.
  *
@@ -41,7 +41,7 @@ export async function transcribePttAudio(buf: ArrayBuffer): Promise<string> {
     /* skipCleanup */ false
   );
   // `result.text` is the cleaned-up version (LLM-polished when enabled);
-  // `raw_text` is the unfiltered whisper output. Prefer text but fall back.
+  // `raw_text` is the unfiltered engine output. Prefer text but fall back.
   const text = (result?.text ?? result?.raw_text ?? '').trim();
   return text;
 }

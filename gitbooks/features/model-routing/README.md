@@ -32,14 +32,14 @@ The router wraps several pre-created providers (Anthropic, OpenAI, Google, Groq,
 
 ## Common hints
 
-| Hint | Typical target | When it's used |
-| --- | --- | --- |
-| `hint:reasoning` | A strong reasoning model | Multi-step planning, math, code-heavy turns |
-| `hint:fast` | A fast/cheap model | UI helpers, autocompletes, small classification calls |
-| `hint:vision` | A vision-capable model | Screenshots, image attachments, OCR |
-| `hint:summarize` | A model good at compression | Memory tree summary builders |
-| `hint:code` | A code-tuned model | Native coder turns |
-| `hint:burst` | A high-throughput, low-cost model | Cheap, latency-tolerant pre-flight sweeps, e.g. the SuperContext scout |
+| Hint             | Typical target                    | When it's used                                                         |
+| ---------------- | --------------------------------- | ---------------------------------------------------------------------- |
+| `hint:reasoning` | A strong reasoning model          | Multi-step planning, math, code-heavy turns                            |
+| `hint:fast`      | A fast/cheap model                | UI helpers, autocompletes, small classification calls                  |
+| `hint:vision`    | A vision-capable model            | Screenshots, image attachments, OCR                                    |
+| `hint:summarize` | A model good at compression       | Memory tree summary builders                                           |
+| `hint:code`      | A code-tuned model                | Native coder turns                                                     |
+| `hint:burst`     | A high-throughput, low-cost model | Cheap, latency-tolerant work for high-fanout agents |
 
 The exact mappings are configurable; the defaults ship sensible per-provider routes.
 
@@ -93,7 +93,7 @@ For `[teams.*]`, `lead_model` applies to agents that can delegate and `agent_mod
 
 ## Why this isn't just "model switcher"
 
-Routing isn't a UI dropdown. The agent loop itself emits hints based on what it's about to do. You don't pick the model; the *task* does. That's the difference between "multi-model" and "smart routing".
+Routing isn't a UI dropdown. The agent loop itself emits hints based on what it's about to do. You don't pick the model; the _task_ does. That's the difference between "multi-model" and "smart routing".
 
 ## See also
 

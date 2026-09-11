@@ -22,6 +22,7 @@ import type {
 import { isLocalSessionToken } from '../../utils/localSession';
 import { openUrl } from '../../utils/openUrl';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
+import Checkbox from '../ui/Checkbox';
 import {
   ChannelAuthFields,
   ChannelAuthModeCard,
@@ -368,21 +369,19 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
             )}
 
             {status === 'connected' && (
-              <label className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2">
-                <input
-                  type="checkbox"
+              <label
+                htmlFor={`${compositeKey}-clear-memory`}
+                className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2">
+                <Checkbox
+                  id={`${compositeKey}-clear-memory`}
                   checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
-                  onChange={event => {
-                    // Read `checked` here, not inside the updater. React resets
-                    // `currentTarget` to null as soon as the handler returns,
-                    // and a functional updater is invoked later while React
-                    // processes the update queue — so reading it in there threw
-                    // "Cannot read properties of null (reading 'checked')"
-                    // (#5161).
-                    const { checked } = event.currentTarget;
+                  className="mt-0.5"
+                  onCheckedChange={checked => {
+                    // `Checkbox` reads `e.target.checked` synchronously in its
+                    // own handler before invoking this callback, so the
+                    // stale-`currentTarget` bug (#5161) can't recur here.
                     setClearMemoryOnDisconnect(prev => ({ ...prev, [compositeKey]: checked }));
                   }}
-                  className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                 />
                 <span className="min-w-0">
                   <span className="block text-xs font-medium text-content">

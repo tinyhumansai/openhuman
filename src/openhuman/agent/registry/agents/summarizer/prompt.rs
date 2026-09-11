@@ -10,7 +10,23 @@ use crate::openhuman::agent::context::prompt::{
 };
 use anyhow::Result;
 
-const ARCHETYPE: &str = include_str!("prompt.md");
+/// The summarizer archetype, verbatim.
+///
+/// `pub` since issue #6014, for the same reason
+/// [`payload_summarizer`](crate::openhuman::agent::tinyagents::payload_summarizer)
+/// is: the trait invites an embedder to supply its own summarizer — the default
+/// implementation dispatches a sub-agent, which an embedder may be unable to do
+/// — and the archetype is where the extraction contract is actually written
+/// down. Without it, anyone taking that invitation has to reinvent the prompt,
+/// and will reinvent it worse: the identifier rule, the structural hints that
+/// let a caller decide whether to re-fetch, the error-payload and
+/// binary-payload edge cases, and the "do not solve the parent task" boundary
+/// are all easy to omit and expensive to discover missing.
+///
+/// [`build`] remains the entry point for the sub-agent path, which additionally
+/// wants the user-files, tools and workspace sections. A caller running one
+/// tool-less model call wants this and nothing else.
+pub const ARCHETYPE: &str = include_str!("prompt.md");
 
 pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let mut out = String::with_capacity(4096);
@@ -39,37 +55,5 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::agent::context::prompt::{LearnedContextData, ToolCallFormat};
-    use std::collections::HashSet;
-
-    #[test]
-    fn build_returns_nonempty_body() {
-        let visible: HashSet<String> = HashSet::new();
-        let ctx = PromptContext {
-            workspace_dir: std::path::Path::new("."),
-            model_name: "test",
-            agent_id: "summarizer",
-            tools: &[],
-            workflows: &[],
-            dispatcher_instructions: "",
-            learned: LearnedContextData::default(),
-            visible_tool_names: &visible,
-            tool_call_format: ToolCallFormat::PFormat,
-            connected_integrations: &[],
-            connected_identities_md: String::new(),
-            include_profile: false,
-            include_memory_md: false,
-            curated_snapshot: None,
-            user_identity: None,
-            personality_soul_md: None,
-            personality_memory_md: None,
-            personality_roster: vec![],
-            agents_md_global: None,
-            agents_md_local: None,
-        };
-        let body = build(&ctx).unwrap();
-        assert!(!body.is_empty());
-    }
-}
+#[path = "prompt_tests.rs"]
+mod tests;

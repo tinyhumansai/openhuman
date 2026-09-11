@@ -16,7 +16,7 @@
 //! and [`EgressDescriptor::risk_categories`]. They default to
 //! [`IdentificationRisk::Unknown`] / empty here so S5 can fill them via
 //! [`EgressDescriptor::with_risk`] without a breaking reshape of this struct or
-//! the [`DomainEvent`](crate::core::event_bus::DomainEvent) variant that carries
+//! the [`DomainEvent`](crate::core::events::DomainEvent) variant that carries
 //! it.
 
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub enum EgressReason {
 ///
 /// Ordered least → most identifying. S2 never sets anything other than
 /// `Unknown`; the enum lives here now so the descriptor's shape (and the
-/// [`DomainEvent`](crate::core::event_bus::DomainEvent) that carries it) is
+/// [`DomainEvent`](crate::core::events::DomainEvent) that carries it) is
 /// stable before S5 wires the detector in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

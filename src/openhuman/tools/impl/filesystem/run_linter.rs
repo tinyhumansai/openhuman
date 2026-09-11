@@ -4,7 +4,7 @@ use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, To
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 /// Runs linters (cargo clippy, eslint) and returns structured findings.
 pub struct RunLinterTool {
@@ -16,8 +16,8 @@ impl RunLinterTool {
         Self { workspace_dir }
     }
 
-    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
-        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+    fn workspace_dir_for_context(&self, context: Option<&dyn ToolRunContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
             tracing::debug!(
                 workspace_root = %workspace.root.display(),
                 policy_id = %workspace.policy_id,
@@ -71,7 +71,7 @@ impl Tool for RunLinterTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let workspace_dir = self.workspace_dir_for_context(context);
         let linter = args
@@ -148,84 +148,5 @@ impl Tool for RunLinterTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use tempfile::TempDir;
-
-    fn make_tool(dir: &TempDir) -> RunLinterTool {
-        RunLinterTool::new(dir.path().to_path_buf())
-    }
-
-    #[test]
-    fn name_is_correct() {
-        let tmp = TempDir::new().unwrap();
-        assert_eq!(make_tool(&tmp).name(), "run_linter");
-    }
-
-    #[test]
-    fn description_is_non_empty() {
-        let tmp = TempDir::new().unwrap();
-        assert!(!make_tool(&tmp).description().is_empty());
-    }
-
-    #[test]
-    fn schema_is_object_type() {
-        let tmp = TempDir::new().unwrap();
-        let schema = make_tool(&tmp).parameters_schema();
-        assert_eq!(schema["type"], "object");
-    }
-
-    #[test]
-    fn permission_level_is_execute() {
-        let tmp = TempDir::new().unwrap();
-        assert_eq!(make_tool(&tmp).permission_level(), PermissionLevel::Execute);
-    }
-
-    #[tokio::test]
-    async fn auto_returns_error_when_no_project_files() {
-        let tmp = TempDir::new().unwrap();
-        let result = make_tool(&tmp)
-            .execute(json!({"linter": "auto"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Could not detect project type"));
-    }
-
-    #[tokio::test]
-    async fn unknown_linter_returns_error() {
-        let tmp = TempDir::new().unwrap();
-        let result = make_tool(&tmp)
-            .execute(json!({"linter": "rubocop"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Unknown linter"));
-    }
-
-    #[tokio::test]
-    async fn eslint_rejects_absolute_path() {
-        let tmp = TempDir::new().unwrap();
-        // Create a package.json so linter resolves to eslint
-        std::fs::write(tmp.path().join("package.json"), "{}").unwrap();
-        let result = make_tool(&tmp)
-            .execute(json!({"linter": "eslint", "path": "/etc/passwd"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("relative path"));
-    }
-
-    #[tokio::test]
-    async fn eslint_rejects_path_traversal() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("package.json"), "{}").unwrap();
-        let result = make_tool(&tmp)
-            .execute(json!({"linter": "eslint", "path": "../secret"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("relative path"));
-    }
-}
+#[path = "run_linter_tests.rs"]
+mod tests;

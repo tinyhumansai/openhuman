@@ -14,7 +14,8 @@ use axum::{
     routing::post,
     Router,
 };
-use openhuman_core::core::event_bus::{init_global, publish_global, DomainEvent};
+use openhuman_core::core::bus::BUS;
+use openhuman_core::core::events::DomainEvent;
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
 use openhuman_core::openhuman::web_chat::{
     cancel_chat, register_approval_surface_subscriber, start_chat, subscribe_web_channel_events,
@@ -255,11 +256,11 @@ fn __shared_env_lock() -> std::sync::MutexGuard<'static, ()> {
 #[tokio::test]
 async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellation() {
     let _env_lock = __shared_env_lock();
-    init_global(64);
+    openhuman_core::core::bus::init().await.expect("bus init");
     register_approval_surface_subscriber();
     let mut rx = subscribe_web_channel_events();
 
-    publish_global(DomainEvent::ApprovalRequested {
+    BUS.publish(DomainEvent::ApprovalRequested {
         request_id: "round18-approval".to_string(),
         tool_name: "filesystem.write".to_string(),
         action_summary: "write a test artifact".to_string(),
@@ -290,7 +291,7 @@ async fn web_channel_approval_bridge_forced_errors_and_newer_request_cancellatio
         Some(&json!("target/channels-web-telegram-round18-artifact"))
     );
 
-    publish_global(DomainEvent::ApprovalRequested {
+    BUS.publish(DomainEvent::ApprovalRequested {
         request_id: "round18-approval-without-chat".to_string(),
         tool_name: "filesystem.write".to_string(),
         action_summary: "missing chat routing".to_string(),

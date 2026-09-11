@@ -1,10 +1,10 @@
 //! WebSocket streaming transcription endpoint.
 //!
-//! Accepts a WebSocket connection that receives PCM16 audio chunks (16kHz mono)
-//! and periodically runs whisper inference on the accumulated buffer, sending
-//! back partial transcription results as JSON messages.
+//! Accepts a WebSocket connection that receives PCM16 audio chunks (16kHz mono),
+//! accumulates them, and transcribes the completed utterance through the hosted
+//! STT engine when the client stops.
 //!
-//! Protocol:
+//! Protocol (unchanged — the client contract predates the engine swap):
 //!   Client → Server: binary frames containing PCM16 LE audio bytes (16kHz mono)
 //!   Server → Client: JSON text frames:
 //!     { "type": "partial",  "text": "..." }          — interim transcription
@@ -12,6 +12,17 @@
 //!                                                        `{"type":"stop"}` text frame
 //!     { "type": "error",    "message": "..." }        — on error
 //!   Client → Server: text frame `{"type":"stop"}`     — end recording, get final result
+//!
+//! ## No partial results
+//! `partial` frames are part of the protocol but are never emitted any more.
+//! They came from the bundled in-process whisper.cpp engine, which could
+//! re-decode a 15-second sliding window every 500 ms for free. That engine is
+//! gone — STT is a hosted round trip now (`voice_server.stt_engine`) — and
+//! re-uploading the window on every tick would multiply the request count and
+//! the bill by ~30× for text the client discards a moment later. The frame type
+//! stays in the protocol so a future streaming-capable engine can start sending
+//! it without a client change; `dictation.streaming` only controls whether we
+//! log that partials were requested.
 //!
 //! # Security notes
 //!
@@ -31,22 +42,24 @@
 //! `MAX_FULL_AUDIO_SAMPLES` (~5 min at 16 kHz). Clients that stream beyond this limit
 //! are disconnected with an error frame; see `append_stream_samples`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
 use super::postprocess;
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::local as local_ai;
-use crate::openhuman::inference::local::service::whisper_engine;
-use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
+use crate::openhuman::voice::{create_stt_provider, effective_stt_provider};
 
 const LOG_PREFIX: &str = "[voice-stream]";
 const AUDIO_SAMPLE_RATE: usize = 16_000;
-const MIN_PARTIAL_SAMPLES: usize = AUDIO_SAMPLE_RATE / 2; // 0.5s
+/// Sliding window retained alongside the full-audio buffer. Nothing consumes it
+/// today (see the "No partial results" note above); it is kept — and kept
+/// bounded — so a streaming-capable engine can be wired to it without
+/// re-deriving the windowing rules.
 const MAX_STREAM_BUFFER_SAMPLES: usize = AUDIO_SAMPLE_RATE * 15; // 15s sliding window
 
 /// Hard cap on the full-audio accumulation buffer.
@@ -124,164 +137,77 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
 
     let audio_buf: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
     let full_audio_buf: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
-    let audio_revision = Arc::new(AtomicU64::new(0));
-    let interval_ms = config.dictation.streaming_interval_ms;
-    let do_streaming = config.dictation.streaming;
-
-    // Periodic inference task — runs every `interval_ms` on the accumulated buffer
-    let buf_clone = audio_buf.clone();
-    let revision_clone = audio_revision.clone();
-    let config_clone = config.clone();
-    let (partial_tx, mut partial_rx) = tokio::sync::mpsc::channel::<String>(8);
-
-    let inference_handle = if do_streaming {
-        let handle = tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_millis(interval_ms.max(500)));
-            let mut last_seen_revision = 0u64;
-
-            loop {
-                interval.tick().await;
-
-                let current_revision = revision_clone.load(Ordering::Relaxed);
-                if current_revision == last_seen_revision {
-                    continue;
-                }
-                last_seen_revision = current_revision;
-
-                let samples: Vec<i16> = {
-                    let guard = buf_clone.lock().await;
-                    if guard.len() < MIN_PARTIAL_SAMPLES {
-                        // Less than 0.5s of audio — skip
-                        continue;
-                    }
-                    guard.clone()
-                };
-
-                let service = local_ai::global(&config_clone);
-                match whisper_engine::transcribe_pcm_i16(&service.whisper, &samples, None, None) {
-                    Ok(result) => {
-                        if !result.text.is_empty() {
-                            log::debug!(
-                                "{LOG_PREFIX} partial transcription ({} samples, avg_logprob={:.3}): {}",
-                                samples.len(),
-                                result.avg_logprob.unwrap_or(0.0),
-                                utf8_safe_prefix_at_byte_boundary(&result.text, 80)
-                            );
-                            if partial_tx.send(result.text).await.is_err() {
-                                break; // receiver dropped
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("{LOG_PREFIX} partial inference error: {e}");
-                    }
-                }
-            }
-        });
-        Some(handle)
-    } else {
-        None
-    };
+    if config.dictation.streaming {
+        log::debug!(
+            "{LOG_PREFIX} dictation.streaming is on but the configured STT engine has no partial \
+             transcription path — only the final result will be sent"
+        );
+    }
 
     loop {
-        tokio::select! {
-            // Forward partial results to the client
-            Some(partial_text) = partial_rx.recv() => {
-                let msg = serde_json::json!({
-                    "type": "partial",
-                    "text": partial_text,
-                });
-                if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
-                    log::debug!("{LOG_PREFIX} client disconnected while sending partial");
-                    break;
+        match socket.recv().await {
+            Some(Ok(Message::Binary(data))) => {
+                let Some(samples) = decode_pcm16le_frame(&data) else {
+                    log::warn!("{LOG_PREFIX} received odd-length binary frame, skipping");
+                    continue;
+                };
+
+                let cap_exceeded = {
+                    let mut full = full_audio_buf.lock().await;
+                    let mut buf = audio_buf.lock().await;
+                    let ok = append_stream_samples(&mut buf, &mut full, &samples);
+                    if ok {
+                        log::trace!(
+                            "{LOG_PREFIX} buffered {} new samples, total {}",
+                            samples.len(),
+                            buf.len()
+                        );
+                    }
+                    !ok
+                };
+
+                if cap_exceeded {
+                    // Send an error frame and close — never OOM.
+                    let err_msg = serde_json::json!({
+                        "type": "error",
+                        "message": format!(
+                            "Recording limit reached: maximum {} minutes of audio per session",
+                            MAX_FULL_AUDIO_SAMPLES / AUDIO_SAMPLE_RATE / 60
+                        ),
+                    });
+                    let _ = socket.send(Message::Text(err_msg.to_string().into())).await;
+                    log::warn!(
+                        "{LOG_PREFIX} disconnecting client: full_audio_buf cap ({} samples, \
+                         {} min at 16 kHz) exceeded",
+                        MAX_FULL_AUDIO_SAMPLES,
+                        MAX_FULL_AUDIO_SAMPLES / AUDIO_SAMPLE_RATE / 60,
+                    );
+                    return;
                 }
             }
 
-            // Receive audio data or commands from the client
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Binary(data))) => {
-                        let Some(samples) = decode_pcm16le_frame(&data) else {
-                            log::warn!("{LOG_PREFIX} received odd-length binary frame, skipping");
-                            continue;
-                        };
-
-                        let cap_exceeded = {
-                            let mut full = full_audio_buf.lock().await;
-                            let mut buf = audio_buf.lock().await;
-                            let ok = append_stream_samples(&mut buf, &mut full, &samples);
-                            if ok {
-                                audio_revision.fetch_add(1, Ordering::Relaxed);
-                                log::trace!(
-                                    "{LOG_PREFIX} buffered {} new samples, total {}",
-                                    samples.len(),
-                                    buf.len()
-                                );
-                            }
-                            !ok
-                        };
-
-                        if cap_exceeded {
-                            // Send an error frame and close — never OOM.
-                            let err_msg = serde_json::json!({
-                                "type": "error",
-                                "message": format!(
-                                    "Recording limit reached: maximum {} minutes of audio per session",
-                                    MAX_FULL_AUDIO_SAMPLES / AUDIO_SAMPLE_RATE / 60
-                                ),
-                            });
-                            let _ = socket
-                                .send(Message::Text(err_msg.to_string().into()))
-                                .await;
-                            log::warn!(
-                                "{LOG_PREFIX} disconnecting client: full_audio_buf cap ({} samples, \
-                                 {} min at 16 kHz) exceeded",
-                                MAX_FULL_AUDIO_SAMPLES,
-                                MAX_FULL_AUDIO_SAMPLES / AUDIO_SAMPLE_RATE / 60,
-                            );
-                            if let Some(h) = inference_handle {
-                                h.abort();
-                            }
-                            return;
-                        }
-                    }
-
-                    Some(Ok(Message::Text(text))) => {
-                        if is_stop_command(&text) {
-                            log::info!("{LOG_PREFIX} stop command received, running final inference");
-                            break; // fall through to final transcription
-                        }
-                    }
-
-                    Some(Ok(Message::Close(_))) | None => {
-                        log::info!("{LOG_PREFIX} client disconnected");
-                        if let Some(h) = inference_handle {
-                            h.abort();
-                        }
-                        return;
-                    }
-
-                    Some(Err(e)) => {
-                        log::warn!("{LOG_PREFIX} websocket error: {e}");
-                        if let Some(h) = inference_handle {
-                            h.abort();
-                        }
-                        return;
-                    }
-
-                    _ => {}
+            Some(Ok(Message::Text(text))) => {
+                if is_stop_command(&text) {
+                    log::info!("{LOG_PREFIX} stop command received, running final transcription");
+                    break; // fall through to final transcription
                 }
             }
+
+            Some(Ok(Message::Close(_))) | None => {
+                log::info!("{LOG_PREFIX} client disconnected");
+                return;
+            }
+
+            Some(Err(e)) => {
+                log::warn!("{LOG_PREFIX} websocket error: {e}");
+                return;
+            }
+
+            _ => {}
         }
     }
 
-    // Stop the periodic inference task
-    if let Some(h) = inference_handle {
-        h.abort();
-    }
-
-    // Run final transcription on the complete buffer
+    // Run the final transcription on the complete buffer.
     let final_samples = full_audio_buf.lock().await.clone();
     if final_samples.is_empty() {
         let msg = serde_json::json!({
@@ -294,25 +220,69 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     }
 
     log::info!(
-        "{LOG_PREFIX} running final inference on {} samples ({:.1}s)",
+        "{LOG_PREFIX} transcribing {} samples ({:.1}s) via the configured STT engine",
         final_samples.len(),
-        final_samples.len() as f64 / 16000.0
+        final_samples.len() as f64 / AUDIO_SAMPLE_RATE as f64
     );
 
-    let service = local_ai::global(&config);
-    let raw_text =
-        match whisper_engine::transcribe_pcm_i16(&service.whisper, &final_samples, None, None) {
-            Ok(result) => result.text,
-            Err(e) => {
-                log::warn!("{LOG_PREFIX} final inference error: {e}");
-                let msg = serde_json::json!({
-                    "type": "error",
-                    "message": format!("Transcription failed: {e}"),
-                });
-                let _ = socket.send(Message::Text(msg.to_string().into())).await;
-                return;
-            }
-        };
+    // The client streams headerless PCM16LE; the hosted endpoint needs a
+    // container, so wrap it in a WAV before upload. `EncodeWavPcm16` keeps the
+    // samples exact rather than round-tripping them through `f32`.
+    let wav_bytes = match crate::openhuman::modules::voice::encode_wav_pcm16(
+        &config,
+        &final_samples,
+        AUDIO_SAMPLE_RATE as u32,
+        1,
+    )
+    .await
+    {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            // Tell the client before dropping the socket. WAV framing became
+            // fallible when it moved to the module, and a client waiting for
+            // `final` or `error` would otherwise get neither — every other
+            // failure path in this handler sends a frame first.
+            //
+            // The frame carries no module detail, matching the redaction the
+            // transcription-failure path below uses: the reason is a host
+            // concern and goes to the log, not to the renderer.
+            log::warn!("{LOG_PREFIX} could not frame dictation audio as WAV: {error}");
+            let err_msg = serde_json::json!({
+                "type": "error",
+                "message": "Could not prepare the recording for transcription",
+            });
+            let _ = socket.send(Message::Text(err_msg.to_string().into())).await;
+            return;
+        }
+    };
+    let provider_name = effective_stt_provider(&config);
+    let audio_base64 = BASE64.encode(&wav_bytes);
+    let raw_text = match async {
+        let provider =
+            create_stt_provider(&provider_name, "", &config).map_err(|error| error.to_string())?;
+        provider
+            .transcribe(
+                &config,
+                &audio_base64,
+                Some("audio/wav"),
+                Some("dictation.wav"),
+                None,
+            )
+            .await
+    }
+    .await
+    {
+        Ok(outcome) => outcome.value.text,
+        Err(e) => {
+            log::warn!("{LOG_PREFIX} configured transcription failed: {e}");
+            let msg = serde_json::json!({
+                "type": "error",
+                "message": format!("Transcription failed: {e}"),
+            });
+            let _ = socket.send(Message::Text(msg.to_string().into())).await;
+            return;
+        }
+    };
 
     // LLM refinement if enabled
     let refined_text = if config.dictation.llm_refinement && !raw_text.is_empty() {
@@ -332,114 +302,5 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decode_pcm16le_frame_rejects_odd_length() {
-        assert!(decode_pcm16le_frame(&[1, 2, 3]).is_none());
-    }
-
-    #[test]
-    fn decode_pcm16le_frame_decodes_samples() {
-        let samples = decode_pcm16le_frame(&[0x01, 0x00, 0xff, 0xff]).expect("decode");
-        assert_eq!(samples, vec![1, -1]);
-    }
-
-    #[test]
-    fn append_stream_samples_keeps_full_audio_and_trims_window() {
-        let mut audio = vec![0; MAX_STREAM_BUFFER_SAMPLES - 2];
-        let mut full = vec![1, 2];
-        let ok = append_stream_samples(&mut audio, &mut full, &[3, 4, 5, 6]);
-
-        assert!(ok, "should succeed when under cap");
-        assert_eq!(full, vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(audio.len(), MAX_STREAM_BUFFER_SAMPLES);
-        assert_eq!(&audio[audio.len() - 4..], &[3, 4, 5, 6]);
-    }
-
-    /// Feed enough samples to hit the full-audio cap and verify:
-    /// 1. The buffer does NOT grow past `MAX_FULL_AUDIO_SAMPLES`.
-    /// 2. `append_stream_samples` returns `false` (cap-exceeded signal) when the next
-    ///    chunk would overflow.
-    #[test]
-    fn append_stream_samples_enforces_full_audio_cap() {
-        let chunk_size = 1_024usize;
-        let mut audio = Vec::new();
-        let mut full = Vec::new();
-
-        // Fill up to exactly the cap in chunks.
-        let full_chunks = MAX_FULL_AUDIO_SAMPLES / chunk_size;
-        let chunk = vec![0i16; chunk_size];
-        for _ in 0..full_chunks {
-            let ok = append_stream_samples(&mut audio, &mut full, &chunk);
-            assert!(ok, "should succeed while under cap");
-        }
-
-        // The buffer may now be at or just below MAX_FULL_AUDIO_SAMPLES (depending on
-        // whether MAX_FULL_AUDIO_SAMPLES is an exact multiple of chunk_size).
-        assert!(
-            full.len() <= MAX_FULL_AUDIO_SAMPLES,
-            "full_audio_buf must not exceed cap before overflow chunk"
-        );
-
-        // One more chunk must be rejected.
-        let extra = vec![1i16; chunk_size];
-        let ok = append_stream_samples(&mut audio, &mut full, &extra);
-        assert!(
-            !ok,
-            "must return false (cap exceeded) when appending would overflow"
-        );
-
-        // The buffer must not have grown.
-        assert!(
-            full.len() <= MAX_FULL_AUDIO_SAMPLES,
-            "full_audio_buf must not exceed MAX_FULL_AUDIO_SAMPLES after cap is hit"
-        );
-    }
-
-    /// A single oversized chunk that would exceed the cap on its own must also be rejected.
-    #[test]
-    fn append_stream_samples_rejects_single_oversized_chunk() {
-        let mut audio = Vec::new();
-        let mut full = Vec::new();
-
-        // Pre-fill to near the cap (1 sample short).
-        let near_full = vec![0i16; MAX_FULL_AUDIO_SAMPLES - 1];
-        let ok = append_stream_samples(&mut audio, &mut full, &near_full);
-        assert!(ok, "pre-fill should succeed");
-
-        // A 2-sample chunk would push us 1 sample over the cap.
-        let ok = append_stream_samples(&mut audio, &mut full, &[7, 8]);
-        assert!(!ok, "must return false when chunk crosses the cap boundary");
-        assert!(
-            full.len() <= MAX_FULL_AUDIO_SAMPLES,
-            "full_audio_buf must not exceed cap"
-        );
-    }
-
-    #[test]
-    fn append_stream_samples_returns_false_when_full_audio_cap_reached() {
-        let mut audio = vec![];
-        let mut full = vec![0i16; MAX_FULL_AUDIO_SAMPLES];
-        let ok = append_stream_samples(&mut audio, &mut full, &[1, 2, 3]);
-
-        assert!(!ok, "should return false once cap is reached");
-        assert_eq!(
-            full.len(),
-            MAX_FULL_AUDIO_SAMPLES,
-            "full buf must not grow past cap"
-        );
-        assert!(
-            audio.is_empty(),
-            "sliding window must not receive new samples"
-        );
-    }
-
-    #[test]
-    fn is_stop_command_only_accepts_stop_type() {
-        assert!(is_stop_command(r#"{"type":"stop"}"#));
-        assert!(!is_stop_command(r#"{"type":"continue"}"#));
-        assert!(!is_stop_command("not json"));
-    }
-}
+#[path = "streaming_tests.rs"]
+mod tests;

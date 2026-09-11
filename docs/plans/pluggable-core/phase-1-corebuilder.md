@@ -68,6 +68,32 @@ HTTP, socket.io, cron, channels, heartbeat, update scheduler.
 turn through `run_turn_via_tinyagents_shared`, and asserts no listener was
 bound.
 
+**Acceptance test status: done.** `tests/harness_embed.rs` and `examples/run_turn.rs` exist. The
+turn goes through `openhuman.inference_agent_chat` rather than reaching
+`run_turn_via_tinyagents_shared` directly — dispatch is the only path that
+honours `DomainSet` gating and installs `CoreContext` scope (see
+`src/embed/call.rs`), and bypassing it would serve domains the embedder switched
+off.
+
+`AgentRuntime` as sketched above was **not** built. The same slice is delivered
+as `embed::Core::agent()` — a sub-facade in the shape the rest of `embed` uses —
+with `openhuman_core::Harness` above it composing the runtime, the config and
+the workspace lifetime. Two findings from building it are worth recording,
+because both invalidate the assumption that `ServiceSet::none()` is sufficient
+for a library host:
+
+1. **`CoreBuilder::config(..)` does not reach handlers.** They load config per
+   dispatch via `load_config_with_timeout()`, which re-resolves the
+   process-global workspace. Fixed by publishing the supplied config on
+   `CoreContext` and having that loader prefer it — the Stage B seam this plan's
+   §2.4 anticipated, arriving here first.
+2. **A domain switched off in `DomainSet` could still start a background
+   client.** `start_login_gated_services` spawned the `hosted::orchestration`
+   client regardless, whose first backend call flips the scheduler gate to
+   signed-out and fails every later turn's custom-provider check. Now gated on
+   `domains().hosted`, read before the spawn (a spawned task does not inherit
+   the task-local context).
+
 ## Porting the consumers
 
 | Consumer                                                       | Change                                                                                                                                                                                                                     |

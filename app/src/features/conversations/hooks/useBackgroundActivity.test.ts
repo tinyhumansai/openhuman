@@ -5,25 +5,15 @@ import { callCoreRpc } from '../../../services/coreRpcClient';
 import { isTauri } from '../../../utils/tauriCommands/common';
 import { openhumanCronList } from '../../../utils/tauriCommands/cron';
 import { memorySyncStatusList } from '../../../utils/tauriCommands/memoryTree';
-import {
-  subconsciousStatus,
-  subconsciousTriggersStatus,
-} from '../../../utils/tauriCommands/subconscious';
 import { useBackgroundActivity, useMemorySyncActive } from './useBackgroundActivity';
 
 vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: vi.fn(() => true) }));
 vi.mock('../../../utils/tauriCommands/cron', () => ({ openhumanCronList: vi.fn() }));
 vi.mock('../../../utils/tauriCommands/memoryTree', () => ({ memorySyncStatusList: vi.fn() }));
-vi.mock('../../../utils/tauriCommands/subconscious', () => ({
-  subconsciousStatus: vi.fn(),
-  subconsciousTriggersStatus: vi.fn(),
-}));
 vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
 const mockCron = vi.mocked(openhumanCronList);
 const mockSyncList = vi.mocked(memorySyncStatusList);
-const mockSubStatus = vi.mocked(subconsciousStatus);
-const mockTriggers = vi.mocked(subconsciousTriggersStatus);
 const mockRpc = vi.mocked(callCoreRpc);
 const mockIsTauri = vi.mocked(isTauri);
 
@@ -44,32 +34,6 @@ function fixtures() {
         next_run: '2999-01-01T00:00:00Z',
       },
     ],
-    logs: [],
-  });
-  mockSubStatus.mockResolvedValue({
-    result: {
-      instance: 'memory',
-      enabled: true,
-      mode: 'event_driven',
-      provider_available: true,
-      provider_unavailable_reason: null,
-      interval_minutes: 5,
-      last_tick_at: 1_700_000_000,
-      total_ticks: 12,
-      consecutive_failures: 0,
-    },
-    logs: [],
-  });
-  mockTriggers.mockResolvedValue({
-    result: {
-      triggers_enabled: true,
-      mode: 'event_driven',
-      max_promotions_per_hour: 10,
-      orchestrator_running: true,
-      queue_depth: 2,
-      orchestrator_thread_id: 'subconscious:orchestrator',
-      user_thread_id: 'subconscious:user',
-    },
     logs: [],
   });
   mockRpc.mockResolvedValue({ running: true, current_title: 'Inbox', queue_depth: 1 });
@@ -99,15 +63,9 @@ describe('useBackgroundActivity', () => {
     expect(mockCron).not.toHaveBeenCalled();
   });
 
-  it('loads cron, subconscious and memory once open', async () => {
+  it('loads cron and memory once open', async () => {
     const { result } = renderHook(() => useBackgroundActivity(true));
     await waitFor(() => expect(result.current.cronJobs).toHaveLength(1));
-    expect(result.current.subconscious).toMatchObject({
-      mode: 'event_driven',
-      totalTicks: 12,
-      working: true,
-      queueDepth: 2,
-    });
     expect(result.current.memory).toMatchObject({
       ingesting: true,
       currentTitle: 'Inbox',
@@ -127,7 +85,7 @@ describe('useBackgroundActivity', () => {
   it('tolerates a failing source without dropping the others', async () => {
     mockCron.mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useBackgroundActivity(true));
-    await waitFor(() => expect(result.current.subconscious).not.toBeNull());
+    await waitFor(() => expect(result.current.memory.ingesting).toBe(true));
     expect(result.current.cronJobs).toHaveLength(0);
     expect(result.current.memory.ingesting).toBe(true);
   });

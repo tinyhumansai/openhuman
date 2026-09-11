@@ -20,10 +20,14 @@
  */
 import { useCallback, useState } from 'react';
 
+import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { ModelInfo } from '../../../../services/api/aiSettingsApi';
+import Alert from '../../../ui/Alert';
 import Button from '../../../ui/Button';
-import { SettingsSelect, SettingsTextField } from '../../controls';
+import Label from '../../../ui/Label';
+import NativeSelect from '../../../ui/NativeSelect';
+import TextField from '../../../ui/TextField';
 import { isAzureFoundryEndpoint, looksLikeAzureBaseModelId } from '../azureDeployment';
 
 /** Resolved entry-mode state for one picker. Produced by {@link useModelEntryMode}. */
@@ -103,6 +107,7 @@ export const ModelEntryField = ({
   placeholder,
   analyticsId,
   optionLabel,
+  className,
 }: {
   mode: ModelEntryMode;
   model: string;
@@ -118,6 +123,8 @@ export const ModelEntryField = ({
   analyticsId: string;
   /** Option text for a catalog entry. Defaults to the bare model id. */
   optionLabel?: (m: ModelInfo) => string;
+  /** Sizing for the field when it sits in a flex row beside its siblings. */
+  className?: string;
 }) => {
   const { t } = useT();
   const { isAzureProvider, manualEntry, useManualEntry, showAzureLegacyHint } = mode;
@@ -132,13 +139,13 @@ export const ModelEntryField = ({
   const showLoadingSelect = Boolean(catalogLoading) && !manualEntry;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-medium text-content-secondary">{fieldLabel}</label>
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      <Label className="text-xs text-content-secondary">{fieldLabel}</Label>
 
       {catalogError ? (
-        <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300 font-mono break-all">
+        <Alert variant="destructive" className="font-mono text-xs break-all">
           {catalogError}
-        </div>
+        </Alert>
       ) : null}
       {catalogError && onRetry ? (
         <div className="flex items-center gap-2">
@@ -156,11 +163,11 @@ export const ModelEntryField = ({
       ) : null}
 
       {showLoadingSelect ? (
-        <SettingsSelect disabled className="w-full opacity-60 cursor-wait">
+        <NativeSelect disabled className="w-full opacity-60 cursor-wait">
           <option>{t('settings.ai.loadingModels')}</option>
-        </SettingsSelect>
+        </NativeSelect>
       ) : useManualEntry ? (
-        <SettingsTextField
+        <TextField
           type="text"
           mono
           aria-label={fieldLabel}
@@ -169,7 +176,7 @@ export const ModelEntryField = ({
           placeholder={isAzureProvider ? t('settings.ai.deploymentNamePlaceholder') : placeholder}
         />
       ) : (
-        <SettingsSelect
+        <NativeSelect
           aria-label={fieldLabel}
           value={model}
           onChange={e => onModelChange(e.target.value)}
@@ -183,7 +190,7 @@ export const ModelEntryField = ({
               {optionLabel ? optionLabel(m) : m.id}
             </option>
           ))}
-        </SettingsSelect>
+        </NativeSelect>
       )}
 
       {/* Escape hatch out of the catalog: a deployment name (Azure) or any model
@@ -208,9 +215,9 @@ export const ModelEntryField = ({
         <p className="text-[11px] text-content-muted">{t('settings.ai.deploymentNameHelp')}</p>
       )}
       {showAzureLegacyHint && (
-        <p className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+        <Alert variant="warning" className="text-[11px]">
           {t('settings.ai.deploymentNameLegacyHint')}
-        </p>
+        </Alert>
       )}
     </div>
   );

@@ -2,7 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
-use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::events::DomainEvent;
+use tinybus::EventHandler;
+use tinybus::SubscriptionHandle;
 
 static HEALTH_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -12,7 +14,7 @@ pub fn register_health_subscriber() {
         return;
     }
 
-    match crate::core::event_bus::subscribe_global(Arc::new(HealthSubscriber)) {
+    match crate::core::bus::BUS.subscribe(Arc::new(HealthSubscriber)) {
         Some(handle) => {
             let _ = HEALTH_HANDLE.set(handle);
         }
@@ -25,7 +27,7 @@ pub fn register_health_subscriber() {
 pub struct HealthSubscriber;
 
 #[async_trait]
-impl EventHandler for HealthSubscriber {
+impl EventHandler<DomainEvent> for HealthSubscriber {
     fn name(&self) -> &str {
         "health::registry"
     }
@@ -73,45 +75,5 @@ impl EventHandler for HealthSubscriber {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unique_component(prefix: &str) -> String {
-        format!("{prefix}-{}", uuid::Uuid::new_v4())
-    }
-
-    #[tokio::test]
-    async fn health_changed_false_records_error() {
-        let component = unique_component("health-bus-error");
-        let sub = HealthSubscriber;
-        sub.handle(&DomainEvent::HealthChanged {
-            component: component.clone(),
-            healthy: false,
-            message: Some("boom".into()),
-        })
-        .await;
-
-        let snapshot = crate::openhuman::platform::health::snapshot();
-        let entry = snapshot.components.get(&component).unwrap();
-        assert_eq!(entry.status, "error");
-        assert_eq!(entry.last_error.as_deref(), Some("boom"));
-    }
-
-    #[tokio::test]
-    async fn channel_disconnected_marks_channel_component_error() {
-        let channel = format!("health-bus-channel-{}", uuid::Uuid::new_v4());
-        let sub = HealthSubscriber;
-        sub.handle(&DomainEvent::ChannelDisconnected {
-            channel: channel.clone(),
-            reason: "offline".into(),
-        })
-        .await;
-
-        let snapshot = crate::openhuman::platform::health::snapshot();
-        let entry = snapshot
-            .components
-            .get(&format!("channel:{channel}"))
-            .unwrap();
-        assert_eq!(entry.status, "error");
-    }
-}
+#[path = "bus_tests.rs"]
+mod tests;

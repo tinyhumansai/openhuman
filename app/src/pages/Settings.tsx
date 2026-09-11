@@ -4,16 +4,16 @@ import SettingsLayout from '../components/settings/layout/SettingsLayout';
 import { settingsRouteElements } from '../components/settings/settingsRouteElements';
 
 /**
- * Full-page Settings host. Used on iOS (and any non-desktop target) where
- * Settings is a routed screen rather than the desktop modal overlay. Wraps the
- * shared {@link settingsRouteElements} route table in the two-pane
- * {@link SettingsLayout} (persistent sidebar on md+, drill-down on narrow
- * viewports). Retired slugs are kept as redirects inside the shared table so
- * deep links keep working.
+ * Full-page Settings host, on every target. Wraps the shared
+ * {@link settingsRouteElements} route table in {@link SettingsLayout}, which
+ * projects the grouped settings nav into the app sidebar's dynamic region and
+ * renders the routed panel as a card — the same shape as every other routed
+ * page. Retired slugs are kept as redirects inside the shared table so deep
+ * links keep working.
  *
- * Desktop no longer mounts this — it renders the same route table inside
- * `SettingsModal` (see components/settings/modal/). The route elements are
- * shared so both hosts stay in lockstep.
+ * Desktop presented this as a centered modal over a stashed background location
+ * until that overlay was retired; `/settings/*` is now an ordinary route in
+ * both `AppRoutes` and `AppRoutesIOS`.
  */
 const Settings = () => {
   return (

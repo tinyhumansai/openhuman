@@ -121,6 +121,43 @@ jobs:
           touch .env
           touch app/.env
 
+      - name: Install checksum-pinned native test modules
+        run: |
+          # tinybus validates every directory ancestor. GitHub mounts the
+          # checkout as the host runner uid while this container runs as root,
+          # so keep native fixtures in a root-owned, ephemeral tree.
+          # Version and digest are ONE decision and live on adjacent lines for that
+          # reason: the archive name, the release tag and the checksum each used to
+          # carry the version independently, so a bump could update two of the three
+          # and leave a stale digest that only fails after the download. Both values
+          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+          # which is the authoritative pin — copy them from there, never recompute.
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          memory_dir="$module_root/tinymemory"
+          juice_dir="$module_root/tinyjuice"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
+          juice_archive="$juice_dir/tinyjuice-module-0.2.2-ubuntu-22.04-x86_64.tar.gz"
+          rm -rf "$memory_dir" "$juice_dir"
+          mkdir -p "$memory_dir" "$juice_dir"
+          curl --fail --location --silent --show-error \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
+            --output "$memory_archive"
+          curl --fail --location --silent --show-error \
+            "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.2.2/$(basename "$juice_archive")" \
+            --output "$juice_archive"
+          echo "${memory_sha256}  $memory_archive" \
+            | sha256sum --check
+          echo "fd8caf7fccb53328870fd26922aa9768d253cd4b3bf758967847d6512df03863  $juice_archive" \
+            | sha256sum --check
+          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+          tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
+          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
+            >> "$GITHUB_ENV"
+          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
+            >> "$GITHUB_ENV"
+
       - name: Run Rust E2E suite
         # Wrapped so the cancellation watchdog covers the whole suite (mock
         # server + node harness), not just the cargo segments the inner
@@ -305,8 +342,10 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Full desktop E2E suite on all three shipped OSes (build-once-then-fanout
-  # shards — see e2e-reusable.yml).
+  # Full desktop E2E suite on the currently supported Linux harness
+  # (build-once-then-fanout shards — see e2e-reusable.yml). macOS and Windows
+  # need native drivers after the Wry migration (#5485); enabling their old
+  # CEF/Appium path makes every shard fail before a spec starts.
   e2e-desktop:
     name: Desktop E2E (full suite, 3 OS)
     # No `secrets: inherit` — the called workflow uses no secrets; keep this
@@ -314,8 +353,8 @@ jobs:
     uses: ./.github/workflows/e2e-reusable.yml
     with:
       run_linux: true
-      run_macos: true
-      run_windows: true
+      run_macos: false
+      run_windows: false
       full: true
 
   ci-full-gate:

@@ -45,7 +45,7 @@ const BetaBanner = () => {
         type="button"
         aria-label={t('common.dismiss')}
         onClick={handleDismiss}
-        className="mt-0.5 flex-shrink-0 text-content-faint hover:text-content-secondary dark:text-content-secondary transition-colors">
+        className="mt-0.5 shrink-0 text-content-faint hover:text-content-secondary dark:text-content-secondary transition-colors">
         <svg
           className="h-3.5 w-3.5"
           fill="none"

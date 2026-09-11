@@ -45,7 +45,7 @@ import {
   type FlowSuggestion,
   listSuggestions,
 } from '../../services/api/flowsApi';
-import Button from '../ui/Button';
+import { Button } from '../ui';
 
 const log = createDebug('app:flows:suggested');
 
@@ -96,7 +96,7 @@ function SuggestionCard({
       <div className="flex items-start justify-between gap-2">
         <p className="font-semibold text-content">{suggestion.title}</p>
         {triggerKey && (
-          <span className="shrink-0 rounded-full bg-ocean-50 px-2 py-0.5 text-xs text-ocean-700 dark:bg-ocean-500/10 dark:text-ocean-200">
+          <span className="shrink-0 rounded-full bg-primary-50 px-2 py-0.5 text-xs text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
             {t(triggerKey)}
           </span>
         )}
@@ -273,7 +273,9 @@ export default function SuggestedWorkflows() {
       </div>
 
       {error && (
-        <p className="mt-2 text-xs text-coral" data-testid="flow-suggestions-error">
+        <p
+          className="mt-2 text-xs text-coral-600 dark:text-coral-400"
+          data-testid="flow-suggestions-error">
           {error}
         </p>
       )}

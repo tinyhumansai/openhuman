@@ -28,10 +28,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tinyagents::harness::message::Message as TaMessage;
-use tinyagents::harness::steering::{SteeringCommand, SteeringHandle};
+use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
+use tinyinference::message::Message as TaMessage;
 
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 use crate::openhuman::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
 
 use super::orchestration::{self, TaskId};
@@ -88,7 +89,7 @@ pub(super) async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle, th
         delivered,
         "[run_queue] delivered steer message(s) into running steering handle"
     );
-    publish_global(DomainEvent::RunQueueMessageDelivered {
+    BUS.publish(DomainEvent::RunQueueMessageDelivered {
         thread_id: thread_label.to_string(),
         mode: "steer".to_string(),
         delivered,
@@ -121,7 +122,7 @@ pub(super) async fn forward_collects(
         delivered,
         "[run_queue] delivered collect message(s) into running steering handle"
     );
-    publish_global(DomainEvent::RunQueueMessageDelivered {
+    BUS.publish(DomainEvent::RunQueueMessageDelivered {
         thread_id: thread_label.to_string(),
         mode: "collect".to_string(),
         delivered,
@@ -298,7 +299,7 @@ impl Drop for SteeringForwarderGuard {
             requeued,
             "[run_queue] requeued residual steer(s) as next-turn input (guard drop)"
         );
-        publish_global(DomainEvent::RunQueueSteerRequeued {
+        BUS.publish(DomainEvent::RunQueueSteerRequeued {
             thread_id: thread_label,
             requeued,
         });

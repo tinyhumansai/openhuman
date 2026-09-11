@@ -69,8 +69,8 @@ test.describe('Intelligence memory UI', () => {
     await row.getByTestId('memory-source-sync-folder').click();
     await expect(row).toContainText(/Sync|Syncing/);
 
-    await row.getByTitle('Disable').click();
-    await expect(row.getByTitle('Enable')).toBeVisible({ timeout: 15_000 });
+    await row.getByRole('switch', { name: 'Disable' }).click();
+    await expect(row.getByRole('switch', { name: 'Enable' })).toBeVisible({ timeout: 15_000 });
 
     await page.goto('/#/brain?tab=graph');
     await waitForAppReady(page);

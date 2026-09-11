@@ -43,9 +43,9 @@ Click **Connect** on any integration. A browser window opens for OAuth. Once you
 
 Each integration shows its current status:
 
-* **Not connected**. integration has not been set up.
-* **Connected**. integration is active and being synced.
-* **Manage**. active integration with options to reconfigure or disconnect.
+- **Not connected**. integration has not been set up.
+- **Connected**. integration is active and being synced.
+- **Manage**. active integration with options to reconfigure or disconnect.
 
 You can revoke any connection at any time from the **Connections** page.
 
@@ -53,9 +53,9 @@ You can revoke any connection at any time from the **Connections** page.
 
 Three integrations are special. OpenHuman uses them to _talk back_ to you, not just read from them:
 
-* **Telegram**. the primary messaging channel. Two-way: send and receive messages, manage chats, search history, create groups, 80+ actions on your behalf. All actions run through your own encrypted credentials.
-* **Discord**. send and receive messages via Discord. Connect your account to receive OpenHuman messages there.
-* **Web**. a browser-based chat interface within the desktop app. Messages stay entirely local.
+- **Telegram**. the primary messaging channel. Two-way: send and receive messages, manage chats, search history, create groups, 80+ actions on your behalf. All actions run through your own encrypted credentials.
+- **Discord**. send and receive messages via Discord. Connect your account to receive OpenHuman messages there.
+- **Web**. a browser-based chat interface within the desktop app. Messages stay entirely local.
 
 Set your default under **Connections → Channels**. The active route status shows which channel is currently in use. Telegram offers two credential modes: connect via OpenHuman (one-click, encrypted) or provide your own credentials for maximum control.
 
@@ -63,8 +63,8 @@ Set your default under **Connections → Channels**. The active route status sho
 
 The 118+ OAuth connectors are the curated path. Beyond them, OpenHuman opens up the wider open-tooling ecosystem:
 
-* **MCP servers**: a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
-* **Skills**: a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the **Connections → Skills** tab.)
+- **MCP servers**: a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
+- **Skills**: a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the **Connections → Skills** tab.)
 
 See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 
@@ -72,8 +72,8 @@ See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 
 Two capabilities ship native rather than as integrations because they're load-bearing for the desktop experience:
 
-* [**Voice**](../native-tools/voice.md). STT in, TTS out, plus a live Google Meet agent that joins meetings, transcribes them into your Memory Tree, and can speak back into the call.
-* [**Native tools**](../native-tools/README.md). built-in web search, web-fetch scraper, and a full filesystem/git/lint/test/grep coder toolset that the agent uses out of the box.
+- [**Voice**](../native-tools/voice.md). STT in, TTS out, plus a live Google Meet agent that joins meetings, transcribes them into your Memory Tree, and can speak back into the call.
+- [**Native tools**](../native-tools/README.md). built-in web search, web-fetch scraper, and a full filesystem/git/lint/test/grep coder toolset that the agent uses out of the box.
 
 ## Privacy boundary
 
@@ -85,6 +85,6 @@ See [Privacy & Security](../privacy-and-security.md) for the full boundary.
 
 ## See also
 
-* [Triggers](triggers.md), live events from connected integrations and how they fire agent actions.
-* [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md)
-* [Memory Tree](../obsidian-wiki/memory-tree.md)
+- [Triggers](triggers.md), live events from connected integrations and how they fire agent actions.
+- [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md)
+- [Memory Tree](../obsidian-wiki/memory-tree.md)

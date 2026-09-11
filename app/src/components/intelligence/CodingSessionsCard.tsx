@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
+  type CodingSessionDrainProgress,
   type CodingSessionSourceStatus,
+  drainCodingSessions,
   getCodingSessionStatus,
-  ingestCodingSessions,
 } from '../../services/memorySourcesService';
 import type { ToastNotification } from '../../types/intelligence';
+import { Card } from '../ui';
 import Button from '../ui/Button';
 
 interface CodingSessionsCardProps {
@@ -23,7 +25,13 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
   const [sources, setSources] = useState<CodingSessionSourceStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
+  const [progress, setProgress] = useState<CodingSessionDrainProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The ref keeps the synchronous `shouldStop` poll contract for the drain loop;
+  // the state mirror drives an immediate re-render so the Stop button disables on
+  // click instead of waiting for the next pass to fire `onProgress`.
+  const stopRequestedRef = useRef(false);
+  const [stopRequested, setStopRequested] = useState(false);
 
   const load = useCallback(async () => {
     console.debug('[coding-sessions] status: entry');
@@ -55,47 +63,87 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
     totals.files > 0 || sources.some(source => source.scan_truncated === true);
 
   const ingest = useCallback(async () => {
-    console.debug('[coding-sessions] ingest: entry');
+    console.debug('[coding-sessions] drain: entry');
+    stopRequestedRef.current = false;
+    setStopRequested(false);
     setIngesting(true);
+    setProgress(null);
     setError(null);
     try {
-      const result = await ingestCodingSessions(false);
+      const result = await drainCodingSessions({
+        onProgress: setProgress,
+        shouldStop: () => stopRequestedRef.current,
+      });
       console.debug(
-        '[coding-sessions] ingest: exit processed=%d failed=%d budget_hit=%s',
-        result.sessions_processed,
-        result.sessions_failed,
-        result.budget_hit
+        '[coding-sessions] drain: exit passes=%d processed=%d failed=%d more=%s timed_out=%s',
+        result.passes,
+        result.sessionsProcessed,
+        result.sessionsFailed,
+        result.moreRemaining,
+        result.timedOut
       );
-      const incomplete = result.sessions_failed > 0 || result.budget_hit;
+      // Any leftover backlog is incomplete, regardless of why the loop exited —
+      // a user Stop, the pass cap, or a stalled pass. Only a fully drained run
+      // (no more budget) is reported as complete success.
+      const incomplete = result.moreRemaining;
+      // A deadline outranks a stale failure count. `sessionsFailed` is assigned
+      // from the last *completed* pass, so when a later pass times out it
+      // describes work that is already superseded — while `timedOut` describes
+      // a run that is still going. Leading with the failure would tell the user
+      // to retry something that has not finished, which is the whole defect
+      // this branch exists to stop (#5802).
+      const message = result.timedOut
+        ? t('memorySources.codingSessions.stillRunningMessage').replace(
+            '{processed}',
+            String(result.sessionsProcessed)
+          )
+        : result.sessionsFailed > 0
+          ? t('memorySources.codingSessions.partialFailure')
+              .replace('{failed}', String(result.sessionsFailed))
+              .replace('{processed}', String(result.sessionsProcessed))
+          : incomplete
+            ? t('memorySources.codingSessions.stoppedMessage')
+                .replace('{processed}', String(result.sessionsProcessed))
+                .replace('{remaining}', String(result.remaining))
+            : t('memorySources.codingSessions.completeMessage')
+                .replace('{processed}', String(result.sessionsProcessed))
+                .replace('{observations}', String(result.observations));
+      const title = result.timedOut
+        ? t('memorySources.codingSessions.stillRunning')
+        : incomplete
+          ? t('memorySources.codingSessions.stopped')
+          : t('memorySources.codingSessions.complete');
       onToast?.({
-        type: incomplete ? 'warning' : 'success',
-        title: t('memorySources.codingSessions.complete'),
-        message:
-          result.sessions_failed > 0
-            ? t('memorySources.codingSessions.partialFailure')
-                .replace('{failed}', String(result.sessions_failed))
-                .replace('{processed}', String(result.sessions_processed))
-            : result.budget_hit
-              ? t('memorySources.codingSessions.moreRemaining')
-              : t('memorySources.codingSessions.completeMessage')
-                  .replace('{processed}', String(result.sessions_processed))
-                  .replace('{observations}', String(result.observations)),
+        type: result.timedOut
+          ? 'info'
+          : result.sessionsFailed > 0
+            ? 'warning'
+            : incomplete
+              ? 'info'
+              : 'success',
+        title,
+        message,
       });
       await load();
     } catch (cause) {
-      console.error('[coding-sessions] ingest failed', cause);
+      console.error('[coding-sessions] drain failed', cause);
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message);
       onToast?.({ type: 'error', title: t('memorySources.codingSessions.failed'), message });
     } finally {
       setIngesting(false);
+      setProgress(null);
     }
   }, [load, onToast, t]);
 
+  const stopDrain = useCallback(() => {
+    console.debug('[coding-sessions] drain: stop requested');
+    stopRequestedRef.current = true;
+    setStopRequested(true);
+  }, []);
+
   return (
-    <section
-      className="rounded-lg border border-line bg-surface p-4"
-      data-testid="coding-sessions-card">
+    <Card padded divided={false} data-testid="coding-sessions-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-content">
@@ -105,23 +153,56 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
             {t('memorySources.codingSessions.description')}
           </p>
         </div>
-        <Button
-          analyticsId="brain-sources-coding-sessions-ingest"
-          size="sm"
-          onClick={() => void ingest()}
-          disabled={loading || ingesting || !hasImportableHistory}
-          data-testid="coding-sessions-ingest">
-          {ingesting
-            ? t('memorySources.codingSessions.ingesting')
-            : t('memorySources.codingSessions.ingest')}
-        </Button>
+        <div className="flex items-center gap-2">
+          {ingesting && (
+            <Button
+              analyticsId="brain-sources-coding-sessions-stop"
+              size="sm"
+              variant="secondary"
+              onClick={stopDrain}
+              disabled={stopRequested}
+              data-testid="coding-sessions-stop">
+              {t('memorySources.codingSessions.stop')}
+            </Button>
+          )}
+          <Button
+            analyticsId="brain-sources-coding-sessions-ingest"
+            size="sm"
+            onClick={() => void ingest()}
+            disabled={loading || ingesting || !hasImportableHistory}
+            data-testid="coding-sessions-ingest">
+            {ingesting
+              ? t('memorySources.codingSessions.draining').replace(
+                  '{passes}',
+                  String(progress?.passes ?? 0)
+                )
+              : t('memorySources.codingSessions.importAll')}
+          </Button>
+        </div>
       </div>
+
+      {ingesting && progress && (
+        <p
+          className="mt-3 text-xs text-content-secondary"
+          data-testid="coding-sessions-progress"
+          role="status">
+          {t('memorySources.codingSessions.progress')
+            .replace('{processed}', String(progress.sessionsProcessed))
+            .replace('{observations}', String(progress.observations))}
+          {progress.moreRemaining
+            ? ` · ${t('memorySources.codingSessions.remaining').replace(
+                '{remaining}',
+                String(progress.remaining)
+              )}`
+            : ''}
+        </p>
+      )}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {sources.map(source => (
           <div
             key={source.kind}
-            className="rounded-md border border-line-subtle bg-surface-secondary px-3 py-2"
+            className="rounded-md border border-line-subtle bg-surface-muted px-3 py-2"
             data-testid={`coding-session-source-${source.kind}`}>
             <div className="text-xs font-medium text-content">
               {t(SOURCE_LABEL_KEYS[source.kind])}
@@ -152,6 +233,6 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
           {error}
         </p>
       )}
-    </section>
+    </Card>
   );
 }

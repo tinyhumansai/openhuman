@@ -167,7 +167,7 @@ Net: ~100 declarations → ~10 with identical per-toolkit coverage.
 - **Onboarding credential forms**: happy-path persistence + invalid-input-blocks-navigation for
   CustomInference/CustomSearch pages.
 - **Coverage-gate scope**: add `scripts/**` (and `packages/**`) to the path filters (§5).
-- **~20 RPC controller domains with zero E2E references** (`recall_calendar`, `tinyplace`,
+- **~20 RPC controller domains with zero E2E references** (`recall_calendar`,
   `devices`, `people`, `redirect_links`, …) — one RPC round-trip each; full list in Appendix A.3.
 
 ### P2 — polish / lower blast radius
@@ -494,7 +494,7 @@ names — **in-process calls, not RPC** — i.e. unit tests mislabeled `_e2e`. R
 ### A.3 Missing (adds to §4)
 
 - **P1 — ~20 registered controller domains with zero references anywhere in `tests/`**, including
-  real backend-facing surface: `recall_calendar`, `tinyplace`, `redirect_links`,
+  real backend-facing surface: `recall_calendar`, `redirect_links`,
   `desktop_companion`, `devices`, `announcements`, `provider_surfaces`, `people`,
   `council_registry`, `audio_toolkit`, `agent_experience`, `http_host`, `skill_runtime`,
   `session_import`. Minimum: one RPC round-trip (primary read + write) per domain via

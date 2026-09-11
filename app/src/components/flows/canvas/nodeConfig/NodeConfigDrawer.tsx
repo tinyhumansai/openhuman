@@ -24,6 +24,7 @@ import { NodeKindTile } from '../../../../lib/flows/nodeKindIcons';
 import { describeNode } from '../../../../lib/flows/nodeSummary';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
+import { Button, Input as UiInput } from '../../../ui';
 import { JsonField } from './nodeConfigFields';
 import { NODE_CONFIG_FORMS } from './nodeConfigForms';
 import { NodeConnections } from './NodeConnections';
@@ -96,13 +97,14 @@ function NodeConfigBody({
     <div className="space-y-3">
       {Form && (
         <div className="flex justify-end">
-          <button
+          <Button
             type="button"
-            className="rounded-md border border-line px-2 py-0.5 text-[11px] font-medium text-content-muted hover:bg-surface-hover"
+            variant="secondary"
+            size="xs"
             data-testid="node-config-raw-toggle"
             onClick={() => setRawMode(m => !m)}>
             {rawMode ? t('flows.nodeConfig.editForm') : t('flows.nodeConfig.editJson')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -182,9 +184,9 @@ function NodeConfigDrawer({
                 {kindLabel}
               </div>
             )}
-            <input
+            <UiInput
               type="text"
-              className="w-full border-0 bg-transparent p-0 text-sm font-semibold text-content focus:outline-none focus:ring-0"
+              className="h-auto! w-full border-0! bg-transparent! p-0! ring-0! font-semibold focus:ring-0!"
               value={node.data.name}
               aria-label={t('flows.nodeConfig.nameLabel')}
               placeholder={t('flows.nodeConfig.namePlaceholder')}
@@ -192,14 +194,17 @@ function NodeConfigDrawer({
               onChange={e => onChange(node.id, { name: e.target.value })}
             />
           </div>
-          <button
+          <Button
             type="button"
+            variant="tertiary"
+            size="xs"
+            iconOnly
             data-testid="node-config-close"
             onClick={onClose}
             aria-label={t('flows.nodeConfig.close')}
-            className="shrink-0 rounded-full p-1.5 text-content-faint hover:bg-surface-hover hover:text-content-secondary">
+            className="shrink-0 rounded-full">
             ✕
-          </button>
+          </Button>
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-3.5 py-3.5">

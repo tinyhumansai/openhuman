@@ -21,8 +21,8 @@ test.describe('Settings - AI & Skills', () => {
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
       .toContain('/connections');
-    await expect(page.getByRole('heading', { name: 'LLM Providers', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Routing', exact: true })).toBeVisible();
+    await expect(page.getByTestId('ai-tab-providers')).toBeVisible();
+    await expect(page.getByTestId('ai-tab-routing')).toBeVisible();
   });
 
   test('mounts Tools panel and shows tool toggles', async ({ page }) => {

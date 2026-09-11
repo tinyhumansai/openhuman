@@ -42,7 +42,7 @@
 use crate::openhuman::config::schema::ModelRegistryEntry;
 
 /// Month the published values below were last verified. Bump when refreshing.
-pub const PRICING_AS_OF: &str = "2026-06";
+pub const PRICING_AS_OF: &str = "2026-07";
 
 const TINYAGENTS_CATALOG_SOURCE: &str = "openhuman-cost-catalog";
 
@@ -332,6 +332,30 @@ const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
         output_per_mtok_usd: 0.10,
         context_window: 128_000,
     },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m3",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.12,
+        output_per_mtok_usd: 2.40,
+        context_window: 1_000_000,
+    },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m2.7",
+        input_per_mtok_usd: 0.30,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 1.20,
+        context_window: 204_800,
+    },
+    ModelPrice {
+        provider: "minimax",
+        model_id: "minimax-m2.7-highspeed",
+        input_per_mtok_usd: 0.60,
+        cached_input_per_mtok_usd: 0.06,
+        output_per_mtok_usd: 2.40,
+        context_window: 204_800,
+    },
 ];
 
 /// Normalise a model string for matching: lower-case, trim, drop a trailing
@@ -425,6 +449,11 @@ pub fn estimate_cost_usd(
     };
     let cached = cached_input_tokens.min(input_tokens);
     let standard_input = input_tokens.saturating_sub(cached);
+    if p.model_id == "minimax-m3" && input_tokens <= 512_000 {
+        return (standard_input as f64) * 0.30 / 1_000_000.0
+            + (cached as f64) * 0.06 / 1_000_000.0
+            + (output_tokens as f64) * 1.20 / 1_000_000.0;
+    }
     let per_tok = |mtok_rate: f64| mtok_rate / 1_000_000.0;
     (standard_input as f64) * per_tok(p.input_per_mtok_usd)
         + (cached as f64) * per_tok(p.cached_input_per_mtok_usd)
@@ -444,7 +473,7 @@ pub fn default_registry_entries() -> Vec<ModelRegistryEntry> {
             cost_per_1m_cached_input: p.cached_input_per_mtok_usd,
             cost_per_1m_output: p.output_per_mtok_usd,
             context_window: p.context_window,
-            vision: false,
+            vision: model_accepts_image_input(p.model_id),
         })
         .collect()
 }
@@ -453,14 +482,22 @@ fn per_token(rate_per_mtok: f64) -> Option<f64> {
     (rate_per_mtok > 0.0).then_some(rate_per_mtok / 1_000_000.0)
 }
 
+const VISION_INPUT_MODELS: &[&str] = &["minimax-m3"];
+
+pub fn model_accepts_image_input(model_id: &str) -> bool {
+    let normalized = normalize(model_id);
+    let bare = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    VISION_INPUT_MODELS.contains(&normalized.as_str()) || VISION_INPUT_MODELS.contains(&bare)
+}
+
 /// Project one OpenHuman catalog row into a TinyAgents model-catalog entry.
 ///
 /// This is intentionally a pricing/window projection only. OpenHuman still
 /// derives live runtime capability flags (tools, vision, streaming) from the
 /// provider adapter at construction time, because the static cost catalog does
 /// not yet encode those fields authoritatively for every provider/model.
-pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents::registry::ModelCatalogEntry {
-    tinyagents::registry::ModelCatalogEntry {
+pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents_registry::ModelCatalogEntry {
+    tinyagents_registry::ModelCatalogEntry {
         provider: price.provider.to_string(),
         model_id: price.model_id.to_string(),
         aliases: Vec::new(),
@@ -468,7 +505,7 @@ pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents::registry::Mod
         max_input_tokens: Some(u64::from(price.context_window)),
         max_output_tokens: None,
         deprecation_date: None,
-        pricing: tinyagents::registry::ModelPricing {
+        pricing: tinyagents_registry::ModelPricing {
             input_per_token: per_token(price.input_per_mtok_usd),
             output_per_token: per_token(price.output_per_mtok_usd),
             cache_read_input_per_token: per_token(price.cached_input_per_mtok_usd),
@@ -476,9 +513,10 @@ pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents::registry::Mod
             input_audio_per_token: None,
             output_reasoning_per_token: None,
         },
-        capabilities: tinyagents::registry::ModelCapabilities {
+        capabilities: tinyagents_registry::ModelCapabilities {
             prompt_caching: price.cached_input_per_mtok_usd > 0.0,
-            ..tinyagents::registry::ModelCapabilities::default()
+            vision: model_accepts_image_input(price.model_id),
+            ..tinyagents_registry::ModelCapabilities::default()
         },
         source: TINYAGENTS_CATALOG_SOURCE.to_string(),
         source_url: None,
@@ -489,7 +527,7 @@ pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents::registry::Mod
 /// Resolve a model id and return its TinyAgents catalog projection.
 pub fn tinyagents_catalog_entry_for_model(
     model: &str,
-) -> Option<tinyagents::registry::ModelCatalogEntry> {
+) -> Option<tinyagents_registry::ModelCatalogEntry> {
     lookup(model).map(tinyagents_catalog_entry)
 }
 
@@ -521,8 +559,8 @@ pub struct LocalCatalogModel {
 }
 
 /// Project one runtime-discovered local model into a TinyAgents catalog entry.
-fn local_catalog_entry(model: &LocalCatalogModel) -> tinyagents::registry::ModelCatalogEntry {
-    tinyagents::registry::ModelCatalogEntry {
+fn local_catalog_entry(model: &LocalCatalogModel) -> tinyagents_registry::ModelCatalogEntry {
+    tinyagents_registry::ModelCatalogEntry {
         provider: model.provider.clone(),
         model_id: model.model_id.clone(),
         aliases: Vec::new(),
@@ -532,11 +570,11 @@ fn local_catalog_entry(model: &LocalCatalogModel) -> tinyagents::registry::Model
         deprecation_date: None,
         // Local runtimes are not billed per token; leave every price unset (not
         // zero — `None` means "not applicable", not "free of charge").
-        pricing: tinyagents::registry::ModelPricing::default(),
-        capabilities: tinyagents::registry::ModelCapabilities {
+        pricing: tinyagents_registry::ModelPricing::default(),
+        capabilities: tinyagents_registry::ModelCapabilities {
             streaming: model.streaming,
             tool_calling: model.tool_calling,
-            ..tinyagents::registry::ModelCapabilities::default()
+            ..tinyagents_registry::ModelCapabilities::default()
         },
         source: TINYAGENTS_LOCAL_SOURCE.to_string(),
         source_url: None,
@@ -547,8 +585,8 @@ fn local_catalog_entry(model: &LocalCatalogModel) -> tinyagents::registry::Model
 /// Upsert `entry` into `models` keyed by `(provider, model_id)`: replace an
 /// existing row for that key, otherwise append. Later overlays win.
 fn upsert_catalog_entry(
-    models: &mut Vec<tinyagents::registry::ModelCatalogEntry>,
-    entry: tinyagents::registry::ModelCatalogEntry,
+    models: &mut Vec<tinyagents_registry::ModelCatalogEntry>,
+    entry: tinyagents_registry::ModelCatalogEntry,
 ) {
     if let Some(existing) = models
         .iter_mut()
@@ -567,7 +605,7 @@ fn upsert_catalog_entry(
 /// increasing precedence, so a later layer overrides an earlier one for the same
 /// `(provider, model_id)`:
 ///
-/// 1. **Crate seed** — `tinyagents::registry::ModelCatalog::seed()`, the crate's
+/// 1. **Crate seed** — `tinyagents_registry::ModelCatalog::seed()`, the crate's
 ///    checked-in offline catalog. This is the base/fallback set.
 /// 2. **OpenHuman static rows** — [`KNOWN_MODEL_PRICING`], projected via
 ///    [`tinyagents_catalog_entry`]. OpenHuman's published rates/windows are
@@ -592,9 +630,9 @@ fn upsert_catalog_entry(
 /// snapshot lookup is deferred until that lookup is proven numerically identical.
 pub fn unified_model_catalog(
     local_models: &[LocalCatalogModel],
-) -> tinyagents::registry::ModelCatalogSnapshot {
+) -> tinyagents_registry::ModelCatalogSnapshot {
     // 1. Crate seed as the base layer.
-    let (mut models, mut sources) = match tinyagents::registry::ModelCatalog::seed() {
+    let (mut models, mut sources) = match tinyagents_registry::ModelCatalog::seed() {
         Ok(catalog) => {
             let snapshot = catalog.snapshot();
             (snapshot.models.clone(), snapshot.sources.clone())
@@ -633,13 +671,13 @@ pub fn unified_model_catalog(
     }
 
     // Record OpenHuman's own provenance alongside the crate seed's sources.
-    sources.push(tinyagents::registry::ModelCatalogSource {
+    sources.push(tinyagents_registry::ModelCatalogSource {
         name: TINYAGENTS_CATALOG_SOURCE.to_string(),
         url: "repo:src/openhuman/platform/cost/catalog.rs".to_string(),
         retrieved_at: format!("{PRICING_AS_OF}-01T00:00:00Z"),
     });
 
-    tinyagents::registry::ModelCatalogSnapshot {
+    tinyagents_registry::ModelCatalogSnapshot {
         schema_version: 1,
         snapshot_id: format!("{TINYAGENTS_CATALOG_SOURCE}-unified-{PRICING_AS_OF}"),
         created_at: format!("{PRICING_AS_OF}-01T00:00:00Z"),
@@ -657,13 +695,14 @@ pub fn unified_model_catalog(
 /// models. Callers that cannot enumerate local runtimes (no config/network in
 /// hand) use this; callers that can pass discovered models to
 /// [`unified_model_catalog`] directly.
-pub fn tinyagents_catalog_snapshot() -> tinyagents::registry::ModelCatalogSnapshot {
+pub fn tinyagents_catalog_snapshot() -> tinyagents_registry::ModelCatalogSnapshot {
     unified_model_catalog(&[])
 }
 
 /// Pre-fill any **missing** (zero) price or context-window field on a registry
 /// entry from the catalog, matching on its `id`. Leaves user-supplied non-zero
-/// values and the `vision` flag untouched. Returns `true` when a field was
+/// values. Catalogued image-capable models also receive `vision: true` when
+/// the entry has the default false value. Returns `true` when a field was
 /// filled in.
 pub fn enrich_entry(entry: &mut ModelRegistryEntry) -> bool {
     let Some(price) = lookup(&entry.id) else {
@@ -686,280 +725,13 @@ pub fn enrich_entry(entry: &mut ModelRegistryEntry) -> bool {
         entry.context_window = price.context_window;
         changed = true;
     }
+    if !entry.vision && model_accepts_image_input(price.model_id) {
+        entry.vision = true;
+        changed = true;
+    }
     changed
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exact_lookup_resolves_canonical_ids() {
-        let p = lookup("claude-opus-4-8").expect("anthropic row");
-        assert_eq!(p.provider, "anthropic");
-        assert_eq!(p.input_per_mtok_usd, 5.00);
-        assert_eq!(p.output_per_mtok_usd, 25.00);
-        assert_eq!(p.cached_input_per_mtok_usd, 0.50);
-        assert_eq!(p.context_window, 1_000_000);
-    }
-
-    #[test]
-    fn lookup_is_case_insensitive() {
-        assert_eq!(lookup("GPT-4.1").unwrap().model_id, "gpt-4.1");
-    }
-
-    #[test]
-    fn lookup_strips_vendor_prefix_openrouter_style() {
-        assert_eq!(
-            lookup("anthropic/claude-sonnet-4-6").unwrap().model_id,
-            "claude-sonnet-4-6"
-        );
-        assert_eq!(
-            lookup("deepseek/deepseek-chat").unwrap().model_id,
-            "deepseek-chat"
-        );
-        assert_eq!(lookup("qwen/qwen3-max").unwrap().model_id, "qwen3-max");
-    }
-
-    #[test]
-    fn lookup_strips_context_and_tag_decorations() {
-        assert_eq!(
-            lookup("claude-opus-4-8[1m]").unwrap().model_id,
-            "claude-opus-4-8"
-        );
-        assert_eq!(lookup("kimi-k2.6:turbo").unwrap().model_id, "kimi-k2.6");
-        assert_eq!(
-            lookup("claude-opus-4-5@20251101").unwrap().model_id,
-            "claude-opus-4-5"
-        );
-    }
-
-    #[test]
-    fn lookup_longest_substring_wins_for_suffixed_ids() {
-        // A dated/suffixed id should resolve to the most specific row.
-        assert_eq!(
-            lookup("gpt-5.4-mini-2026-05-01").unwrap().model_id,
-            "gpt-5.4-mini"
-        );
-    }
-
-    #[test]
-    fn lookup_returns_none_for_unknown() {
-        assert!(lookup("totally-made-up-model").is_none());
-        assert!(lookup("").is_none());
-        assert!(
-            lookup("agentic-v1").is_none(),
-            "abstract tiers aren't vendor models"
-        );
-    }
-
-    #[test]
-    fn default_registry_entries_are_fully_populated() {
-        let entries = default_registry_entries();
-        assert_eq!(entries.len(), KNOWN_MODEL_PRICING.len());
-        for e in &entries {
-            assert!(e.cost_per_1m_input > 0.0, "{} missing input price", e.id);
-            assert!(e.cost_per_1m_output > 0.0, "{} missing output price", e.id);
-            assert!(e.context_window > 0, "{} missing context window", e.id);
-            assert!(!e.provider.is_empty());
-        }
-    }
-
-    #[test]
-    fn tinyagents_projection_uses_per_token_rates_and_context_window() {
-        let entry = tinyagents_catalog_entry_for_model("anthropic/claude-opus-4-8")
-            .expect("projected catalog entry");
-        assert_eq!(entry.provider, "anthropic");
-        assert_eq!(entry.model_id, "claude-opus-4-8");
-        assert_eq!(entry.mode, "chat");
-        assert_eq!(entry.max_input_tokens, Some(1_000_000));
-        assert_eq!(entry.pricing.input_per_token, Some(5.0 / 1_000_000.0));
-        assert_eq!(entry.pricing.output_per_token, Some(25.0 / 1_000_000.0));
-        assert_eq!(
-            entry.pricing.cache_read_input_per_token,
-            Some(0.50 / 1_000_000.0)
-        );
-        assert_eq!(entry.pricing.cache_creation_input_per_token, None);
-        assert_eq!(entry.pricing.output_reasoning_per_token, None);
-        assert!(entry.capabilities.prompt_caching);
-        assert_eq!(entry.source, TINYAGENTS_CATALOG_SOURCE);
-    }
-
-    #[test]
-    fn tinyagents_snapshot_contains_all_known_rows() {
-        let snapshot = tinyagents_catalog_snapshot();
-        assert_eq!(snapshot.schema_version, 1);
-        assert_eq!(snapshot.currency, "USD");
-        assert_eq!(snapshot.unit, "token");
-        // Unified snapshot is a superset (crate seed + OpenHuman overlay), so it
-        // is at least as large as the OpenHuman table and carries every
-        // OpenHuman row with its authoritative pricing/window.
-        assert!(snapshot.models.len() >= KNOWN_MODEL_PRICING.len());
-        for price in KNOWN_MODEL_PRICING {
-            let entry = snapshot
-                .models
-                .iter()
-                .find(|m| m.provider == price.provider && m.model_id == price.model_id)
-                .unwrap_or_else(|| panic!("missing {} in unified snapshot", price.model_id));
-            assert_eq!(
-                entry.max_input_tokens,
-                Some(u64::from(price.context_window))
-            );
-            assert_eq!(
-                entry.pricing.input_per_token,
-                Some(price.input_per_mtok_usd / 1_000_000.0)
-            );
-        }
-        // OpenHuman provenance is recorded alongside any crate-seed sources.
-        assert!(snapshot
-            .sources
-            .iter()
-            .any(|s| s.name == TINYAGENTS_CATALOG_SOURCE));
-    }
-
-    #[test]
-    fn unified_catalog_overlays_local_models() {
-        let local = vec![LocalCatalogModel {
-            provider: "ollama".to_string(),
-            model_id: "qwen3:14b".to_string(),
-            context_window: Some(32_768),
-            tool_calling: true,
-            streaming: true,
-        }];
-        let snapshot = unified_model_catalog(&local);
-        let entry = snapshot
-            .models
-            .iter()
-            .find(|m| m.provider == "ollama" && m.model_id == "qwen3:14b")
-            .expect("local model present");
-        assert_eq!(entry.max_input_tokens, Some(32_768));
-        assert!(entry.capabilities.tool_calling);
-        // Local runtime models are not billed per token.
-        assert_eq!(entry.pricing.input_per_token, None);
-        assert_eq!(entry.pricing.output_per_token, None);
-        assert_eq!(entry.source, TINYAGENTS_LOCAL_SOURCE);
-    }
-
-    #[test]
-    fn unified_catalog_backfills_missing_window_without_source_window() {
-        // A local model with no declared window falls back to the pattern table
-        // via `context_window_for_model` (deepseek pattern → 128k) instead of
-        // staying unbounded.
-        let local = vec![LocalCatalogModel {
-            provider: "ollama".to_string(),
-            model_id: "deepseek-r1:7b".to_string(),
-            context_window: None,
-            tool_calling: false,
-            streaming: true,
-        }];
-        let snapshot = unified_model_catalog(&local);
-        let entry = snapshot
-            .models
-            .iter()
-            .find(|m| m.provider == "ollama" && m.model_id == "deepseek-r1:7b")
-            .expect("local model present");
-        assert_eq!(entry.max_input_tokens, Some(128_000));
-    }
-
-    #[test]
-    fn enrich_fills_zeros_but_preserves_user_values() {
-        let mut e = ModelRegistryEntry {
-            id: "claude-opus-4-8".to_string(),
-            provider: "anthropic".to_string(),
-            cost_per_1m_input: 0.0,
-            cost_per_1m_cached_input: 0.0,
-            cost_per_1m_output: 99.0, // user override — must survive
-            context_window: 0,
-            vision: true,
-        };
-        assert!(enrich_entry(&mut e));
-        assert_eq!(e.cost_per_1m_input, 5.00);
-        assert_eq!(e.cost_per_1m_cached_input, 0.50);
-        assert_eq!(e.cost_per_1m_output, 99.0, "user value preserved");
-        assert_eq!(e.context_window, 1_000_000);
-        assert!(e.vision, "vision flag untouched");
-    }
-
-    #[test]
-    fn enrich_unknown_model_is_noop() {
-        let mut e = ModelRegistryEntry {
-            id: "unknown-model".to_string(),
-            ..Default::default()
-        };
-        assert!(!enrich_entry(&mut e));
-        assert_eq!(e.cost_per_1m_input, 0.0);
-        assert_eq!(e.context_window, 0);
-    }
-
-    #[test]
-    fn every_row_has_sane_values() {
-        for p in KNOWN_MODEL_PRICING {
-            assert!(p.input_per_mtok_usd > 0.0, "{}", p.model_id);
-            assert!(p.output_per_mtok_usd > 0.0, "{}", p.model_id);
-            assert!(p.context_window > 0, "{}", p.model_id);
-            assert!(
-                p.cached_input_per_mtok_usd <= p.input_per_mtok_usd,
-                "{} cached should not exceed input",
-                p.model_id
-            );
-        }
-    }
-
-    // ── estimate_cost_usd (issue #4249, Phase 5 — the $0-cost turn fix) ──────
-
-    fn approx(a: f64, b: f64) {
-        assert!((a - b).abs() < 1e-9, "expected {b}, got {a}");
-    }
-
-    #[test]
-    fn estimate_prices_standard_input_and_output() {
-        // opus-4-8: $5/$25 per MTok in/out. 1M in + 1M out, no cache.
-        approx(
-            estimate_cost_usd("claude-opus-4-8", 1_000_000, 1_000_000, 0),
-            30.00,
-        );
-    }
-
-    #[test]
-    fn estimate_bills_cached_prefix_at_the_cheaper_rate() {
-        // Fully cached input (cached == input) → cached rate only ($0.50/MTok).
-        approx(
-            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 1_000_000),
-            0.50,
-        );
-        // Half cached: 0.5M standard @ $5 + 0.5M cached @ $0.50 = 2.50 + 0.25.
-        approx(
-            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 500_000),
-            2.75,
-        );
-    }
-
-    #[test]
-    fn estimate_clamps_cached_to_input() {
-        // cached_input_tokens > input_tokens must not underflow or overcharge:
-        // it is clamped to input, so this is billed as fully cached.
-        approx(
-            estimate_cost_usd("claude-opus-4-8", 1_000_000, 0, 5_000_000),
-            0.50,
-        );
-    }
-
-    #[test]
-    fn estimate_returns_zero_for_uncatalogued_models() {
-        // "unknown, not free" — the caller treats 0.0 as no estimate available.
-        assert_eq!(
-            estimate_cost_usd("totally-made-up-model", 1_000_000, 1_000_000, 0),
-            0.0
-        );
-    }
-
-    #[test]
-    fn estimate_resolves_decorated_model_ids() {
-        // The catalog lookup normalizes tags/suffixes, so a decorated id
-        // (e.g. the runtime "[1m]" window tag) still prices correctly.
-        approx(
-            estimate_cost_usd("claude-opus-4-8[1m]", 1_000_000, 0, 0),
-            5.00,
-        );
-    }
-}
+#[path = "catalog_tests.rs"]
+mod tests;

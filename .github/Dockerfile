@@ -3,9 +3,6 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # System deps for Tauri + mold linker + clang + E2E testing (xvfb, dbus, webkit2gtk-driver).
-# CEF (bundled Chromium) runtime libs: libnss3, libnspr4, libgbm1, libxshmfence1,
-# libxkbcommon0, libatk-bridge2.0-0 — required to link/run the CEF shared lib that
-# cef-dll-sys downloads at build time (CEF is the default runtime now).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -26,25 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     at-spi2-core \
     dbus-x11 \
     webkit2gtk-driver \
-    libnss3 \
-    libnspr4 \
-    libgbm1 \
-    libxshmfence1 \
-    libxkbcommon0 \
-    libatk-bridge2.0-0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libcups2 \
-    libpangocairo-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Rust 1.93.0 with minimal profile + fmt/clippy
+# Rust 1.96.1 with minimal profile + fmt/clippy
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH="/usr/local/cargo/bin:$PATH"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
-    -y --default-toolchain 1.93.0 --profile minimal \
+    -y --default-toolchain 1.96.1 --profile minimal \
     -c rustfmt -c clippy \
     -t x86_64-unknown-linux-gnu
 
@@ -71,22 +57,9 @@ RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v0.10.0/scca
 # tauri-driver (WebDriver server for Tauri E2E tests)
 RUN cargo install tauri-driver --version 2.0.5
 
-# Vendored CEF-aware tauri-cli. The upstream @tauri-apps/cli binary does not
-# bundle CEF framework files into installers — only the fork at
-# app/src-tauri/vendor/tauri-cef (a submodule) does. We compile it here so
-# release/build workflows can invoke `cargo tauri build` directly without
-# paying the ~5 min compile cost every run.
-#
-# Submodule must be checked out before `docker build` (see docker-ci-image.yml
-# `submodules: recursive`). Source is discarded after install — only the
-# `cargo-tauri` binary in $CARGO_HOME/bin is kept.
-COPY app/src-tauri/vendor/tauri-cef /opt/tauri-cef
-RUN cargo install --locked --path /opt/tauri-cef/crates/tauri-cli \
-    && rm -rf /opt/tauri-cef /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
-
 # E2E entrypoint (starts Xvfb + dbus for headless webkit2gtk testing)
 COPY e2e/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Verify installs
-RUN rustc --version && cargo --version && node --version && pnpm --version && mold --version && sccache --version && which tauri-driver && cargo tauri --version
+RUN rustc --version && cargo --version && node --version && pnpm --version && mold --version && sccache --version && which tauri-driver

@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { CoreCronJob } from '../../../../utils/tauriCommands/cron';
 import type { MemorySyncStatusRow } from '../../../../utils/tauriCommands/memoryTree';
-import type { MemorySyncSummary, SubconsciousSummary } from '../../hooks/useBackgroundActivity';
-import { CronJobRow, MemorySection, SubconsciousRow } from '../BackgroundActivityRows';
+import type { MemorySyncSummary } from '../../hooks/useBackgroundActivity';
+import { CronJobRow, MemorySection } from '../BackgroundActivityRows';
 
 function cronJob(partial: Partial<CoreCronJob> & { id: string }): CoreCronJob {
   return {
@@ -79,39 +79,6 @@ describe('CronJobRow', () => {
     );
     expect(screen.getByText('One-off run')).toBeInTheDocument();
     expect(screen.getByText('Once')).toBeInTheDocument();
-  });
-});
-
-describe('SubconsciousRow', () => {
-  function summary(partial: Partial<SubconsciousSummary>): SubconsciousSummary {
-    return {
-      enabled: true,
-      mode: 'event_driven',
-      lastTickAt: null,
-      totalTicks: 0,
-      working: false,
-      queueDepth: null,
-      ...partial,
-    };
-  }
-
-  it('shows a live "Working…" pill when the orchestrator is busy', () => {
-    render(<SubconsciousRow summary={summary({ working: true, queueDepth: 3, totalTicks: 7 })} />);
-    expect(screen.getByText('Working…')).toBeInTheDocument();
-    expect(screen.getByText(/3 queued/)).toBeInTheDocument();
-    expect(screen.getByText(/7 runs/)).toBeInTheDocument();
-  });
-
-  it('shows Idle when enabled but not working', () => {
-    render(<SubconsciousRow summary={summary({ working: false })} />);
-    expect(screen.getByText('Idle')).toBeInTheDocument();
-  });
-
-  it('shows Off when disabled or mode is off', () => {
-    const { rerender } = render(<SubconsciousRow summary={summary({ enabled: false })} />);
-    expect(screen.getByText('Off')).toBeInTheDocument();
-    rerender(<SubconsciousRow summary={summary({ mode: 'off' })} />);
-    expect(screen.getByText('Off')).toBeInTheDocument();
   });
 });
 

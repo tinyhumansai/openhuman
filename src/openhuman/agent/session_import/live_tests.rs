@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use tempfile::TempDir;
-use tinyagents::harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
+use tinyagents_harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
 
 use super::convert::{sanitize_store_name, stream_name};
 use super::live::{
@@ -21,8 +21,8 @@ use super::live::{
 use super::ops::store_root;
 use super::types::{JournalMessage, SessionDescriptor, NS_SESSIONS};
 use crate::openhuman::agent::harness::session::transcript::{
-    attach_turn_usage_metadata, read_transcript, write_transcript, MessageUsage, SessionTranscript,
-    TranscriptMeta, TurnUsage,
+    attach_tool_failure_metadata, attach_turn_usage_metadata, read_transcript, write_transcript,
+    MessageUsage, SessionTranscript, TranscriptMeta, TurnUsage,
 };
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::ToolCall;
@@ -71,6 +71,26 @@ fn turn_usage() -> TurnUsage {
         }],
         iteration: 1,
     }
+}
+
+/// A multi-turn session whose messages carry the sidecar `extra_metadata` the
+/// single-turn happy-path fixture cannot express: a system message, a failed
+/// `tool` message tagged with `openhuman_tool_failure`, two assistant turns, and
+/// the trailing assistant that this turn's usage attaches to. The tool-failure
+/// marker is the deterministic asymmetry for #6149 — `write_transcript` strips it
+/// onto the line's top-level `failure`/`failure_detail` fields and the read-back
+/// never restores it to `extra_metadata`, so an in-memory reconstruction keeps a
+/// key the legacy JSONL round-trip has dropped.
+fn rich_base_messages() -> Vec<ChatMessage> {
+    let mut failed_tool = ChatMessage::tool("read_file failed: boom");
+    attach_tool_failure_metadata(&mut failed_tool, Some("boom"));
+    vec![
+        ChatMessage::system("you are the orchestrator"),
+        ChatMessage::user("read the file"),
+        ChatMessage::assistant("calling read_file"),
+        failed_tool,
+        ChatMessage::assistant("done"),
+    ]
 }
 
 /// Read the store journal stream back into `JournalMessage`s, mirroring the
@@ -223,23 +243,23 @@ async fn shadow_read_roundtrip_matches_legacy() {
     let stem = "1719_orchestrator";
     let jsonl_path = ws.path().join("session_raw").join(format!("{stem}.jsonl"));
 
-    let base_messages = vec![ChatMessage::user("hi"), ChatMessage::assistant("done")];
+    // A rich session (system + tool-failure + two assistant turns) so the fixture
+    // can actually express the sidecar-metadata asymmetries; a two-message
+    // happy-path turn cannot, which is why the pre-#6149 version passed vacuously.
+    let base_messages = rich_base_messages();
     let meta = meta("t-root");
     let usage = turn_usage();
 
-    // (1) Legacy authoritative write. (2) Live dual-write into the store.
+    // (1) Legacy authoritative write.
     write_transcript(&jsonl_path, &base_messages, &meta, Some(&usage)).expect("legacy write");
-    let mut live_messages = base_messages.clone();
-    let last_assistant = live_messages
-        .iter()
-        .rposition(|m| m.role == "assistant")
-        .expect("assistant message present");
-    attach_turn_usage_metadata(&mut live_messages[last_assistant], &usage);
-    let store_transcript = SessionTranscript {
-        meta: meta.clone(),
-        messages: live_messages,
-    };
-    write_live_turn(ws.path(), stem, &store_transcript)
+
+    // (2) Live dual-write, mirrored exactly as the fixed
+    // `maybe_dual_write_session_store` does (#6149): the store record IS
+    // `read_transcript(path)` — the legacy JSONL after its write→read round-trip,
+    // the same value the shadow reader compares against — not a hand-rebuilt copy
+    // of the in-memory turn.
+    let mirrored = read_transcript(&jsonl_path).expect("read legacy transcript for mirror");
+    write_live_turn(ws.path(), stem, &mirrored)
         .await
         .expect("live dual-write");
 
@@ -253,6 +273,68 @@ async fn shadow_read_roundtrip_matches_legacy() {
             messages: legacy.messages.len()
         },
         "round-tripped shadow read must match the legacy render with no divergence"
+    );
+}
+
+/// Regression guard for #6149. Building the store record from the *in-memory*
+/// turn — the pre-fix `maybe_dual_write_session_store` behaviour — instead of
+/// mirroring `read_transcript` diverges on sidecar `extra_metadata` even though
+/// every message body, id and role is byte-identical. Here the
+/// `openhuman_tool_failure` marker survives on the in-memory tool message while
+/// the legacy JSONL round-trip drops it, so the shadow reader reports a
+/// divergence at that message. The fix mirrors the round-tripped read, which is
+/// why `shadow_read_roundtrip_matches_legacy` above stays a clean `Match`.
+#[tokio::test]
+async fn in_memory_store_reconstruction_diverges_from_legacy_on_sidecar_metadata() {
+    let ws = TempDir::new().expect("tempdir");
+    let stem = "1719_orchestrator";
+    let jsonl_path = ws.path().join("session_raw").join(format!("{stem}.jsonl"));
+
+    let base_messages = rich_base_messages();
+    let meta = meta("t-root");
+    let usage = turn_usage();
+
+    write_transcript(&jsonl_path, &base_messages, &meta, Some(&usage)).expect("legacy write");
+
+    // Pre-fix store construction: clone the in-memory turn, attach usage to the
+    // last assistant, and mirror THAT — never round-tripping through the JSONL,
+    // so the tool-failure marker the round-trip strips is still present.
+    let mut live_messages = base_messages.clone();
+    let last_assistant = live_messages
+        .iter()
+        .rposition(|m| m.role == "assistant")
+        .expect("assistant message present");
+    attach_turn_usage_metadata(&mut live_messages[last_assistant], &usage);
+    let reconstructed = SessionTranscript {
+        meta: meta.clone(),
+        messages: live_messages,
+    };
+    write_live_turn(ws.path(), stem, &reconstructed)
+        .await
+        .expect("live dual-write");
+
+    let legacy = read_transcript(&jsonl_path).expect("read legacy transcript");
+    let outcome = shadow_read_compare(ws.path(), stem, &legacy).await;
+
+    // Pin the divergence to the tool-failure message specifically. `Some(_)`
+    // would also accept a mismatch at any other index — including a count
+    // mismatch, which `first_diff` reports as the shorter length — so it could
+    // pass for a reason that has nothing to do with the dropped sidecar key.
+    // Both sides must render every fixture message, and the first difference
+    // must be the `tool` message carrying `openhuman_tool_failure`.
+    let rendered = base_messages.len();
+    let tool_failure_idx = base_messages
+        .iter()
+        .position(|m| m.role == "tool")
+        .expect("tool message present");
+    assert_eq!(
+        outcome,
+        ShadowReadOutcome::Divergence {
+            legacy: rendered,
+            shadow: rendered,
+            first_diff: Some(tool_failure_idx),
+        },
+        "the in-memory reconstruction must diverge on the dropped tool-failure marker at index {tool_failure_idx}, with both sides rendering {rendered} messages"
     );
 }
 
@@ -303,7 +385,8 @@ async fn shadow_read_unavailable_and_divergence() {
 }
 
 /// The shadow read is driven by the `AgentConfig::session_shadow_reads` config
-/// flag (default **OFF**) with the `OPENHUMAN_SESSION_SHADOW_READS` env var as a
+/// flag (default **ON** since the Phase 2 parity soak) with the
+/// `OPENHUMAN_SESSION_SHADOW_READS` env var as a
 /// pure kill switch (can only force OFF, never ON). This exercises the decision
 /// matrix directly — the gate `maybe_shadow_read_session_store` early-returns
 /// (never invoking the reader) whenever this returns `false`. Env mutation is
@@ -352,4 +435,97 @@ fn shadow_read_flag_and_env_kill_switch() {
         Some(v) => std::env::set_var(ENV, v),
         None => std::env::remove_var(ENV),
     }
+}
+
+// ── Legacy on-disk shapes (plan-agents.md Phase 2) ────────────────────────────
+//
+// Phase 2's exit criteria name two legacy layouts that must survive the
+// migration: the date-grouped `session_raw/DDMMYYYY/` directory and the
+// markdown transcripts `read_transcript_legacy_md` still parses. Both predate
+// the store, so both reach the shadow read by a different route than the happy
+// path above — and a real user upgrading has them on disk today.
+
+/// A resume off the legacy **date-grouped** layout (`session_raw/DDMMYYYY/`)
+/// shadow-reads correctly.
+///
+/// The session key is the file *stem*, so the enclosing directory must not
+/// change it — a date-grouped transcript has to find the same store stream a
+/// flat one would. If the key were ever derived from the path instead, every
+/// pre-migration session would silently read as `Unavailable` and the parity
+/// soak would look clean while covering nothing.
+#[tokio::test]
+async fn shadow_read_matches_across_the_legacy_date_grouped_layout() {
+    let ws = TempDir::new().expect("tempdir");
+    let stem = "1719_orchestrator";
+    // The legacy layout nests the transcript under a DDMMYYYY directory.
+    let dated_dir = ws.path().join("session_raw").join("01012024");
+    std::fs::create_dir_all(&dated_dir).expect("create legacy dated dir");
+    let jsonl_path = dated_dir.join(format!("{stem}.jsonl"));
+
+    let base_messages = vec![ChatMessage::user("hi"), ChatMessage::assistant("done")];
+    let meta = meta("t-root");
+    let usage = turn_usage();
+
+    write_transcript(&jsonl_path, &base_messages, &meta, Some(&usage)).expect("legacy write");
+
+    let mut live_messages = base_messages.clone();
+    let last_assistant = live_messages
+        .iter()
+        .rposition(|m| m.role == "assistant")
+        .expect("assistant message present");
+    attach_turn_usage_metadata(&mut live_messages[last_assistant], &usage);
+    write_live_turn(
+        ws.path(),
+        stem,
+        &SessionTranscript {
+            meta,
+            messages: live_messages,
+        },
+    )
+    .await
+    .expect("live dual-write");
+
+    let legacy = read_transcript(&jsonl_path).expect("read legacy dated transcript");
+    assert_eq!(
+        shadow_read_compare(ws.path(), stem, &legacy).await,
+        ShadowReadOutcome::Match {
+            messages: legacy.messages.len()
+        },
+        "a date-grouped transcript must resolve the same store stream as a flat one"
+    );
+}
+
+/// A legacy **markdown** session shadow-reads as `Unavailable`, never as a
+/// divergence.
+///
+/// These transcripts predate the store entirely, so no dual-write ever ran for
+/// them and no stream exists. That must read as "no shadow to compare",
+/// because reporting it as divergence would flood the parity soak with false
+/// positives from every old session on disk — and the whole point of the soak
+/// is that a warning means something.
+#[tokio::test]
+async fn shadow_read_of_a_legacy_markdown_session_is_unavailable_not_divergent() {
+    let ws = TempDir::new().expect("tempdir");
+    let stem = "1719_orchestrator";
+    let md_path = ws.path().join("sessions").join("01012024");
+    std::fs::create_dir_all(&md_path).expect("create legacy md dir");
+    let md_file = md_path.join(format!("{stem}.md"));
+
+    // The pre-JSONL on-disk shape: an HTML-comment header plus `<!--MSG-->`
+    // delimited bodies.
+    std::fs::write(
+        &md_file,
+        "<!-- session_transcript\nagent: test_agent\ndispatcher: native\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:01:00Z\nturn_count: 1\ninput_tokens: 10\noutput_tokens: 5\ncached_input_tokens: 3\n-->\n\n<!--MSG role=\"user\"-->\nhello\n<!--/MSG-->\n<!--MSG role=\"assistant\"-->\nhi back\n<!--/MSG-->\n",
+    )
+    .expect("write legacy md");
+
+    // `read_transcript` routes a `.md` path to the legacy parser.
+    let legacy = read_transcript(&md_file).expect("read legacy md transcript");
+    assert_eq!(legacy.messages.len(), 2, "fixture parsed as two messages");
+
+    assert_eq!(
+        shadow_read_compare(ws.path(), stem, &legacy).await,
+        ShadowReadOutcome::Unavailable,
+        "a pre-store markdown session has no stream and must not read as divergence"
+    );
 }

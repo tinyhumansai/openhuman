@@ -8,6 +8,16 @@
 //! silently. The rendered string is returned as the (failed) tool result, so it
 //! flows back into the turn the same way the unknown-tool corrective error is
 //! surfaced to the model (see PR #4360).
+//!
+//! The relay instruction also states, at the point of denial, that the tool did
+//! not run and that no result for it may be reported. Pressure to produce a
+//! substantive answer, next to a tool result that carries no output, is an
+//! invitation for a weak model to fill the gap: an observed turn had every
+//! shell call denied and the agent then reported a fabricated directory listing
+//! and `git log` as if they had run. The system prompt's grounding rule did not
+//! bite; a contradiction sitting in the tool result itself has a better chance.
+//! It is a mitigation, not a guarantee — detecting fabrication needs the
+//! tool-call record carried out to the caller.
 
 use crate::openhuman::security::POLICY_BLOCKED_MARKER;
 use crate::openhuman::tools::PermissionLevel;
@@ -65,10 +75,14 @@ pub(super) enum PolicyDenial<'a> {
 }
 
 /// Suffix appended to every denial so the agent relays the block instead of
-/// silently stopping.
-const RELAY_INSTRUCTION: &str = "Relay this to the user: explain what was \
-    blocked and why, then offer the workaround as the next step. Do not stop \
-    silently.";
+/// silently stopping — *and* does not paper over the absent output by inventing
+/// it. The no-output sentence comes first deliberately: the relay directive on
+/// its own is pressure to produce a substantive answer, and the prohibition has
+/// to bound it before the model reads that pressure.
+const RELAY_INSTRUCTION: &str = "The tool did not run and produced no output — \
+    do NOT invent or report any result for it. Relay this to the user: explain \
+    what was blocked and why, then offer the workaround as the next step. Do \
+    not stop silently.";
 
 impl PolicyDenial<'_> {
     /// Render the denial as a structured `Blocked / Reason / Workaround / relay`
@@ -211,128 +225,5 @@ fn raise_tier_workaround(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn session_forbidden_with_required_lists_reason_and_workaround() {
-        let msg = PolicyDenial::SessionForbidden {
-            tool: "run_script",
-            required: Some(PermissionLevel::Execute),
-            allowed: PermissionLevel::ReadOnly,
-            channel: "web",
-        }
-        .render();
-
-        assert!(msg.starts_with("Blocked: Tool 'run_script'"));
-        assert!(msg.contains("Reason:"));
-        assert!(msg.contains("requires Execute permission"));
-        assert!(msg.contains("Workaround:"));
-        assert!(msg.contains("agent-access tier"));
-        // The relay instruction is what keeps the agent from halting silently.
-        assert!(msg.contains("Relay this to the user"));
-    }
-
-    #[test]
-    fn session_forbidden_without_required_still_has_workaround() {
-        let msg = PolicyDenial::SessionForbidden {
-            tool: "run_script",
-            required: None,
-            allowed: PermissionLevel::ReadOnly,
-            channel: "cron",
-        }
-        .render();
-
-        assert!(msg.contains("not permitted"));
-        assert!(msg.contains("Workaround:"));
-        assert!(msg.contains("Relay this to the user"));
-    }
-
-    #[test]
-    fn permission_too_low_names_both_levels() {
-        let msg = PolicyDenial::PermissionTooLow {
-            tool: "shell",
-            required: PermissionLevel::Write,
-            allowed: PermissionLevel::ReadOnly,
-            channel: "web",
-        }
-        .render();
-
-        assert!(msg.contains("needs Write permission"));
-        assert!(msg.contains("only grants ReadOnly"));
-        assert!(msg.contains("Workaround:"));
-    }
-
-    #[test]
-    fn policy_denied_carries_reason_and_alternative() {
-        let msg = PolicyDenial::PolicyDenied {
-            tool: "run_script",
-            policy: "sandbox",
-            reason: "sandbox restriction",
-        }
-        .render();
-
-        assert!(msg.contains("denied by policy 'sandbox'"));
-        assert!(msg.contains("sandbox restriction"));
-        assert!(msg.contains("permitted alternative"));
-        assert!(msg.contains("Relay this to the user"));
-    }
-
-    #[test]
-    fn security_policy_block_keeps_marker_and_adds_workaround_and_relay() {
-        let raw =
-            "[policy-blocked] Security policy: read-only mode — only read commands are allowed";
-        let msg = PolicyDenial::SecurityPolicyBlocked {
-            tool: "run_command",
-            raw_reason: raw,
-        }
-        .render();
-
-        // The marker survives so classification + the loop-breaker still match.
-        assert!(msg.contains(POLICY_BLOCKED_MARKER));
-        assert!(msg.starts_with("Blocked:"));
-        // The original reason is preserved (without a duplicated marker in it).
-        assert!(msg.contains("read-only mode — only read commands are allowed"));
-        assert!(msg.contains("Workaround:"));
-        assert!(msg.contains("agent-access tier / autonomy") || msg.contains("Agent access"));
-        assert!(msg.contains("Relay this to the user"));
-    }
-
-    #[test]
-    fn maybe_enrich_only_touches_raw_marker_results() {
-        // A raw marker line with no workaround → enriched.
-        let raw = "[policy-blocked] Command not allowed by security policy: rm -rf /";
-        let enriched = maybe_enrich_policy_block("run_command", raw)
-            .expect("a raw policy block should be enriched");
-        assert!(enriched.contains("Workaround:"));
-        assert!(enriched.contains("Relay this to the user"));
-        assert!(enriched.contains(POLICY_BLOCKED_MARKER));
-
-        // An already-structured ToolPolicyMiddleware denial (has "Workaround:") is
-        // left alone — no double-wrapping.
-        let already = PolicyDenial::PolicyDenied {
-            tool: "run_script",
-            policy: "sandbox",
-            reason: "sandbox restriction",
-        }
-        .render();
-        assert!(maybe_enrich_policy_block("run_script", &already).is_none());
-
-        // A plain non-policy error is untouched.
-        assert!(maybe_enrich_policy_block("read_file", "Error: file not found").is_none());
-    }
-
-    #[test]
-    fn approval_required_suggests_approval_then_retry() {
-        let msg = PolicyDenial::ApprovalRequired {
-            tool: "send_email",
-            policy: "approval_gate",
-            reason: "outbound message needs sign-off",
-        }
-        .render();
-
-        assert!(msg.contains("requires approval under policy 'approval_gate'"));
-        assert!(msg.contains("approve this action"));
-        assert!(msg.contains("Relay this to the user"));
-    }
-}
+#[path = "policy_denial_tests.rs"]
+mod tests;

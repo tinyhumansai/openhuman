@@ -13,7 +13,7 @@ import {
   getRequiredFieldsForToolkit,
   validateRequiredFieldValues,
 } from '../composio/toolkitRequiredFields';
-import Button from '../ui/Button';
+import { Button, TextField } from '../ui';
 
 /**
  * Inline OAuth connect card (#3993).
@@ -276,7 +276,7 @@ const IntegrationConnectCard: React.FC<Props> = ({ threadId, approval }) => {
     <div
       role="group"
       aria-label={approval.message || t('composio.connect.connect')}
-      className="rounded-xl border border-primary-200 bg-primary-50 p-3.5 text-sm shadow-sm dark:border-primary-800 dark:bg-primary-950">
+      className="rounded-xl border border-primary-200 bg-primary-50 p-3.5 text-sm shadow-xs dark:border-primary-800 dark:bg-primary-950">
       <div className="flex items-start gap-3">
         <span
           aria-hidden
@@ -284,7 +284,7 @@ const IntegrationConnectCard: React.FC<Props> = ({ threadId, approval }) => {
           🔗
         </span>
         <div className="min-w-0 flex-1">
-          <p className="break-words font-semibold text-content">
+          <p className="wrap-break-word font-semibold text-content">
             {approval.message || t('chat.approval.fallback')}
           </p>
 
@@ -294,14 +294,14 @@ const IntegrationConnectCard: React.FC<Props> = ({ threadId, approval }) => {
                 <label key={field.key} className="block text-xs text-content-secondary">
                   <span className="font-medium">{t(field.labelKey)}</span>
                   <span className="mt-1 flex items-center gap-1.5">
-                    <input
+                    <TextField
                       type="text"
                       value={fieldValues[field.key] ?? ''}
                       placeholder={field.placeholderKey ? t(field.placeholderKey) : undefined}
                       onChange={e =>
                         setFieldValues(prev => ({ ...prev, [field.key]: e.target.value }))
                       }
-                      className="min-w-0 flex-1 rounded-lg border border-line-strong bg-neutral-0 px-2.5 py-1.5 text-ink outline-none transition focus:border-primary-500 focus:ring-1 focus:ring-primary-500 dark:bg-surface dark:text-content"
+                      className="min-w-0 flex-1"
                     />
                     {field.suffix && (
                       <span className="shrink-0 text-content-faint">{field.suffix}</span>

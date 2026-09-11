@@ -167,9 +167,14 @@ describe('McpConnectionHealthToolbar', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Disconnect all/i }));
     expect(onDisconnect).not.toHaveBeenCalled();
-    // Confirm dialog appears with accessible structure
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // Confirm dialog appears with accessible structure. Migrated onto the
+    // shared `AlertDialog` (#radix-ui-foundation) per the "use AlertDialog for
+    // disconnect confirmations" convention — its Radix content carries
+    // `role="alertdialog"`, not `role="dialog"`, and this build's Radix
+    // doesn't stamp `aria-modal` (the real focus-trap + inert-background
+    // behavior is still there).
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
     expect(screen.getByText('Disconnect all MCP servers?')).toBeInTheDocument();
   });
 
@@ -187,7 +192,7 @@ describe('McpConnectionHealthToolbar', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onDisconnect).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('Escape closes the confirm dialog without calling onDisconnect', () => {
@@ -202,12 +207,12 @@ describe('McpConnectionHealthToolbar', () => {
     fireEvent.click(
       screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
     );
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
     act(() => {
       fireEvent.keyDown(document, { key: 'Escape' });
     });
     expect(onDisconnect).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('confirm in the dialog fires onDisconnect with connected IDs and closes the dialog', async () => {
@@ -233,7 +238,7 @@ describe('McpConnectionHealthToolbar', () => {
     });
     expect(onDisconnect).toHaveBeenCalledTimes(1);
     expect(onDisconnect).toHaveBeenCalledWith(['srv-1', 'srv-3']);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('disables both action buttons while a bulk operation is pending', async () => {

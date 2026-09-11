@@ -168,17 +168,13 @@ const themeSlice = createSlice({
       const theme = ensureEditableCustom(state);
       theme.fonts[action.payload.role] = action.payload.stack;
     },
-    /** Patch the backdrop (mesh/solid/image, dots); auto-forks a preset. */
+    /** Patch the backdrop (mesh/solid/image); auto-forks a preset. */
     setThemeBackdrop(
       state,
-      action: PayloadAction<{
-        kind?: 'mesh' | 'solid' | 'image';
-        imageUrl?: string;
-        dots?: boolean;
-      }>
+      action: PayloadAction<{ kind?: 'mesh' | 'solid' | 'image'; imageUrl?: string }>
     ) {
       const theme = ensureEditableCustom(state);
-      const prev = theme.backdrop ?? { kind: 'mesh' as const };
+      const prev = theme.backdrop ?? { kind: 'solid' as const };
       theme.backdrop = { ...prev, ...action.payload, kind: action.payload.kind ?? prev.kind };
     },
     /**

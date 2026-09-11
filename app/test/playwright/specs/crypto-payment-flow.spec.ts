@@ -10,7 +10,7 @@ test.describe('Crypto Payment Flow', () => {
 
   test('billing panel shows the moved-to-web redirect page', async ({ page }) => {
     await waitForAppReady(page);
-    await expect(page.getByRole('heading', { name: 'Open billing dashboard' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
     await expect(page.getByText(/Billing moved to the web/i)).toBeVisible();
   });
 

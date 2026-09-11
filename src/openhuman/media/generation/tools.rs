@@ -11,7 +11,9 @@
 //! (`wait:false`, so the backend charges + returns a request id immediately),
 //! then poll the request until it reaches a terminal state, download each
 //! resulting artifact into the agent's `generated-media/` root, and return the
-//! local file paths. The backend owns GMI keys, billing, and rate limiting.
+//! local file paths. If the request does not reach a terminal state within the
+//! wait budget, the tool returns an error (never a success with no file). The
+//! backend owns GMI keys, billing, and rate limiting.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,7 +27,7 @@ use crate::openhuman::integrations::IntegrationClient;
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 use super::download::persist_media;
 use super::types::MediaResponse;
@@ -36,7 +38,7 @@ const MODELS_PATH: &str = "/agent-integrations/media-generation/models";
 
 /// Poll cadence + caps. Images are fast; video can take minutes.
 const POLL_INTERVAL: Duration = Duration::from_secs(4);
-const IMAGE_MAX_WAIT_SECS: u64 = 180;
+const IMAGE_MAX_WAIT_SECS: u64 = 300;
 const VIDEO_MAX_WAIT_SECS: u64 = 420;
 
 /// Shared submit-then-poll-then-persist flow for both modalities.
@@ -68,21 +70,38 @@ async fn generate_and_persist(
     );
 
     let mut latest = submitted;
+    let mut last_poll_error: Option<String> = None;
     let deadline = Instant::now() + Duration::from_secs(max_wait_secs);
     while !latest.is_terminal() {
         if Instant::now() >= deadline {
             tracing::warn!(
-                "[media_generation] wait budget elapsed for request={} (status={})",
+                "[media_generation] wait budget elapsed for request={} (status={}, last_poll_error={:?})",
                 request_id,
-                latest.status
+                latest.status,
+                last_poll_error
             );
-            return ToolResult::success(format!(
-                "Media generation is still {} after {}s. It was accepted (request_id: {}) and \
-                 billed; it may finish shortly — check again later.",
-                latest.status, max_wait_secs, request_id
+            // The generation never reached a terminal state within the budget, so
+            // no artifact was downloaded. Surface an error rather than a false
+            // success — a caller told "success" would report a file that was never
+            // produced. Keep the message stable and free of upstream error text
+            // (that stays in the log line above): the request was accepted and
+            // billed and may still be running server-side, and there is no
+            // resume-by-id path, so retrying submits and bills a brand-new
+            // generation.
+            return ToolResult::error(format!(
+                "Media generation did not complete within {max_wait_secs}s (request_id: \
+                 {request_id}, last status: {}). The request was accepted and billed and may \
+                 still be running on the server. Calling this tool again starts and bills a \
+                 separate generation (there is no resume-by-id), so do not retry automatically — \
+                 report this to the user and let them decide.",
+                latest.status
             ));
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        // Don't sleep past the deadline: cap the poll interval to the time left so
+        // the wait budget is enforced before each poll. The poll request itself is
+        // bounded by the integration client's request timeout.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
         match client.get::<MediaResponse>(&status_path).await {
             Ok(resp) => {
                 tracing::debug!(
@@ -97,8 +116,10 @@ async fn generate_and_persist(
                     "[media_generation] poll error for request={}: {e}",
                     request_id
                 );
-                // Transient poll failures shouldn't abort a paid generation —
-                // keep polling until the deadline.
+                // Transient poll failures shouldn't abort a paid generation — keep
+                // polling until the deadline, but remember the last error so a
+                // timeout can explain why it never observed a terminal status.
+                last_poll_error = Some(e.to_string());
             }
         }
     }
@@ -151,10 +172,10 @@ async fn generate_and_persist(
 
 fn action_dir_for_context(
     default_action_dir: &Path,
-    context: Option<&ToolExecutionContext>,
+    context: Option<&dyn ToolRunContext>,
     tool_name: &str,
 ) -> PathBuf {
-    if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
         tracing::debug!(
             tool = tool_name,
             workspace_root = %workspace.root.display(),
@@ -269,7 +290,7 @@ impl Tool for MediaGenerateImageTool {
         &self,
         args: Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
         self.run(args, &action_dir).await
@@ -376,7 +397,7 @@ impl Tool for MediaGenerateVideoTool {
         &self,
         args: Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
         self.run(args, &action_dir).await

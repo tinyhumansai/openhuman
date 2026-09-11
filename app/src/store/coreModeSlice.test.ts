@@ -162,3 +162,54 @@ describe('coreModeSlice — sync-localStorage-derived initial state', () => {
     expect(next.mode).toEqual({ kind: 'local' });
   });
 });
+
+describe('coreModeSlice — gateway mode', () => {
+  async function freshImportWith(entries: Record<string, string>) {
+    localStorage.clear();
+    for (const [k, v] of Object.entries(entries)) localStorage.setItem(k, v);
+    vi.resetModules();
+    return import('./coreModeSlice');
+  }
+
+  it('recovers the chosen gateway synchronously on reload', async () => {
+    // redux-persist flushes asynchronously, so a reload can beat it. Without
+    // the synchronous marker the app would fall back to the picker after every
+    // restart even though the user had chosen a gateway.
+    const mod = await freshImportWith({
+      openhuman_core_mode: 'gateway',
+      openhuman_core_gateway_id: 'builder',
+    });
+
+    const state = mod.default(undefined, { type: '@@INIT' });
+    expect(state.mode).toEqual({ kind: 'gateway', gatewayId: 'builder' });
+  });
+
+  it('falls through to unset when the id is missing', async () => {
+    // There is nothing to activate, so asking again beats failing later.
+    const mod = await freshImportWith({ openhuman_core_mode: 'gateway' });
+
+    expect(mod.default(undefined, { type: '@@INIT' }).mode).toEqual({ kind: 'unset' });
+  });
+
+  it('stores only an id, never a spec or a credential', async () => {
+    const mod = await freshImportWith({
+      openhuman_core_mode: 'gateway',
+      openhuman_core_gateway_id: 'builder',
+    });
+    const state = mod.default(
+      undefined,
+      mod.setCoreMode({ kind: 'gateway', gatewayId: 'builder' })
+    );
+
+    expect(Object.keys(state.mode)).toEqual(['kind', 'gatewayId']);
+  });
+
+  it('switching away from a gateway replaces the mode outright', async () => {
+    const mod = await freshImportWith({});
+    const asGateway = mod.default(undefined, mod.setCoreMode({ kind: 'gateway', gatewayId: 'b' }));
+
+    expect(mod.default(asGateway, mod.setCoreMode({ kind: 'local' })).mode).toEqual({
+      kind: 'local',
+    });
+  });
+});

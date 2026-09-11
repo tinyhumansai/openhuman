@@ -1,4 +1,4 @@
-//! Compatibility facade over [`tinyagents::graph::todos`].
+//! Compatibility facade over [`tinyagents_graph::todos`].
 //!
 //! OpenHuman keeps its historical board-location and optional-thread snapshot
 //! shapes for RPC and tool callers. All task-board data, normalization, CRUD,
@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tinyagents::graph::todos::store as todos;
-use tinyagents::harness::store::Store;
+use tinyagents_graph::todos::store as todos;
+use tinyagents_harness::store::Store;
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::task_board::normalize_cards_for_wire;
@@ -22,7 +22,7 @@ use crate::openhuman::agent::tinyagents::todos::{
 pub const USER_TASKS_THREAD_ID: &str = "user-tasks";
 pub const ORCHESTRATOR_TASKS_THREAD_ID: &str = "orchestrator-tasks";
 
-pub use tinyagents::graph::todos::{parse_status, render_markdown, CardPatch};
+pub use tinyagents_graph::todos::{parse_status, render_markdown, CardPatch};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,7 +50,7 @@ impl BoardLocation {
     }
 }
 
-fn target(location: &BoardLocation) -> (Arc<dyn Store>, &str) {
+pub(super) fn target(location: &BoardLocation) -> (Arc<dyn Store>, &str) {
     match location {
         BoardLocation::Thread {
             workspace_dir,
@@ -62,7 +62,7 @@ fn target(location: &BoardLocation) -> (Arc<dyn Store>, &str) {
 
 fn snapshot(
     location: &BoardLocation,
-    value: tinyagents::graph::todos::TodosSnapshot,
+    value: tinyagents_graph::todos::TodosSnapshot,
 ) -> TodosSnapshot {
     TodosSnapshot {
         thread_id: location.thread_id().map(str::to_owned),
@@ -85,7 +85,7 @@ fn emit_progress(location: &BoardLocation, cards: &[TaskBoardCard]) {
     let Some(tx) = parent.on_progress else {
         return;
     };
-    let board = tinyagents::graph::todos::TaskBoard {
+    let board = tinyagents_graph::todos::TaskBoard {
         thread_id: thread_id.clone(),
         cards: cards.to_vec(),
         updated_at: progress_updated_at(),
@@ -97,7 +97,7 @@ fn emit_progress(location: &BoardLocation, cards: &[TaskBoardCard]) {
 
 fn finish(
     location: &BoardLocation,
-    result: tinyagents::error::Result<tinyagents::graph::todos::TodosSnapshot>,
+    result: tinyagents_harness::error::Result<tinyagents_graph::todos::TodosSnapshot>,
 ) -> Result<TodosSnapshot, String> {
     let mut value = result.map_err(|error| error.to_string())?;
     normalize_cards_for_wire(&mut value.cards);
@@ -227,13 +227,5 @@ pub(crate) fn scratch_test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn progress_timestamp_preserves_rfc3339_wire_format() {
-        let timestamp = super::progress_updated_at();
-        assert!(
-            chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok(),
-            "progress-event updated_at must remain RFC 3339"
-        );
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

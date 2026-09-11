@@ -1,0 +1,640 @@
+use super::*;
+
+/// `build_composio_client` must return `None` when the user has no auth
+/// token — callers treat that as "skip silently" (user not signed in).
+#[test]
+fn build_composio_client_none_without_auth_token() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    assert!(build_composio_client(&config).is_none());
+}
+
+#[test]
+fn build_composio_client_some_with_auth_token() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    crate::openhuman::security::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            crate::openhuman::security::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "test-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store test session token");
+    let client = build_composio_client(&config).expect("client should build when session is set");
+    assert!(
+        !client.inner().auth_token.is_empty(),
+        "resolved auth token should not be empty"
+    );
+}
+
+/// `authorize()` is input-validated — an empty / whitespace toolkit
+/// must error without making any HTTP call.
+#[tokio::test]
+async fn authorize_rejects_empty_toolkit() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client.authorize("   ", None).await.unwrap_err();
+    assert!(
+        err.to_string().contains("toolkit must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Privacy epic S7 (#4441): under LocalOnly, both execute entry points refuse
+/// the external tool call before any HTTP round-trip. The inner client points at
+/// an unreachable address, so a passing test proves the gate short-circuits
+/// before the network (a leaked call would fail with a transport error, not the
+/// local-only message).
+#[tokio::test]
+async fn execute_tool_blocked_under_local_only() {
+    // Thread-scoped LocalOnly (see `live_policy::test_privacy_scope`) — never
+    // mutates the process-global policy, so it can't race sibling mock tests.
+    let _mode = crate::openhuman::security::live_policy::test_privacy_scope(
+        crate::openhuman::config::PrivacyMode::LocalOnly,
+    );
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+
+    let err = client
+        .execute_tool("GITHUB_CREATE_ISSUE", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Local-only privacy mode is active"),
+        "execute_tool: unexpected error: {err}"
+    );
+    let err_once = client
+        .execute_tool_once("GITHUB_CREATE_ISSUE", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err_once
+            .to_string()
+            .contains("Local-only privacy mode is active"),
+        "execute_tool_once: unexpected error: {err_once}"
+    );
+}
+
+/// `authorize()` must reject a non-object `extra_params` before making any HTTP call.
+#[tokio::test]
+async fn authorize_rejects_non_object_extra_params() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .authorize("whatsapp", Some(serde_json::json!("waba-123")))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("extra_params must be a JSON object"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `authorize()` must reject an `extra_params` object that tries to override a reserved key.
+#[tokio::test]
+async fn authorize_rejects_reserved_key_override() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .authorize("whatsapp", Some(serde_json::json!({ "toolkit": "gmail" })))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("cannot override reserved key"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `delete_connection()` likewise must reject empty connection ids.
+#[tokio::test]
+async fn delete_connection_rejects_empty_id() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client.delete_connection("").await.unwrap_err();
+    assert!(
+        err.to_string().contains("connectionId must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `execute_tool()` must refuse empty slugs — otherwise the backend
+/// would receive a malformed request.
+#[tokio::test]
+async fn execute_tool_rejects_empty_slug() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client.execute_tool("", None).await.unwrap_err();
+    assert!(
+        err.to_string().contains("tool slug must not be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+/// ComposioClient is `Clone` so each tool gets a cheap handle share.
+/// Inner client must be Arc-shared — no duplication.
+#[test]
+fn client_clone_shares_inner_arc() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client_a = ComposioClient::new(inner);
+    let client_b = client_a.clone();
+    assert!(
+        Arc::ptr_eq(client_a.inner(), client_b.inner()),
+        "clones should share the same Arc<IntegrationClient>"
+    );
+}
+
+#[tokio::test]
+async fn list_toolkits_parses_backend_envelope() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/toolkits",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": { "toolkits": ["gmail", "notion"] }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.list_toolkits().await.unwrap();
+    assert_eq!(
+        resp.toolkits,
+        vec!["gmail".to_string(), "notion".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn list_connections_parses_connection_array() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connections": [
+                        { "id": "c1", "toolkit": "gmail", "status": "ACTIVE", "createdAt": "2026-01-01T00:00:00Z" },
+                        { "id": "c2", "toolkit": "notion", "status": "PENDING" }
+                    ]
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.list_connections().await.unwrap();
+    assert_eq!(resp.connections.len(), 2);
+    assert_eq!(resp.connections[0].id, "c1");
+    assert_eq!(resp.connections[1].status, "PENDING");
+}
+
+#[tokio::test]
+async fn authorize_posts_toolkit_and_returns_connect_url() {
+    let app =
+        Router::new().route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(body): Json<Value>| async move {
+                // Echo toolkit back so we know our POST body made it.
+                let tk = body["toolkit"].as_str().unwrap_or("").to_string();
+                let scopes = body["oauth_scopes"]
+                    .as_array()
+                    .expect("gmail authorize should include oauth_scopes");
+                assert!(scopes.iter().any(|scope| scope.as_str()
+                    == Some("https://www.googleapis.com/auth/gmail.readonly")));
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "connectUrl": format!("https://composio.example/{tk}/consent"),
+                        "connectionId": "conn-abc"
+                    }
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.authorize("gmail", None).await.unwrap();
+    assert!(resp.connect_url.contains("gmail"));
+    assert_eq!(resp.connection_id, "conn-abc");
+}
+
+#[tokio::test]
+async fn authorize_merges_gmail_required_oauth_scopes_with_extra_params() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|Json(body): Json<Value>| async move {
+            assert_eq!(body["toolkit"].as_str(), Some("gmail"));
+            assert_eq!(body["prompt"].as_str(), Some("consent"));
+            let scopes: Vec<&str> = body["oauth_scopes"]
+                .as_array()
+                .expect("oauth_scopes should be an array")
+                .iter()
+                .map(|item| item.as_str().expect("scope should be a string"))
+                .collect();
+            assert!(scopes.contains(&"openid"));
+            assert!(scopes.contains(&"https://www.googleapis.com/auth/gmail.readonly"));
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connectUrl": "https://composio.example/gmail/consent",
+                    "connectionId": "conn-gmail"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let extra = serde_json::json!({
+        "prompt": "consent",
+        "oauth_scopes": ["openid"]
+    });
+    let resp = client.authorize("gmail", Some(extra)).await.unwrap();
+    assert!(resp.connect_url.contains("gmail"));
+    assert_eq!(resp.connection_id, "conn-gmail");
+}
+
+#[tokio::test]
+async fn authorize_forwards_extra_params_and_returns_connect_url() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/authorize",
+        post(|Json(body): Json<Value>| async move {
+            // Assert extra_params are forwarded alongside toolkit.
+            assert_eq!(body["toolkit"].as_str(), Some("whatsapp"));
+            assert_eq!(body["waba_id"].as_str(), Some("waba-123"));
+            assert!(body.get("oauth_scopes").is_none());
+            Json(json!({
+                "success": true,
+                "data": {
+                    "connectUrl": "https://composio.example/whatsapp/consent",
+                    "connectionId": "conn-xyz"
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let extra = serde_json::json!({ "waba_id": "waba-123" });
+    let resp = client.authorize("whatsapp", Some(extra)).await.unwrap();
+    assert!(resp.connect_url.contains("whatsapp"));
+    assert_eq!(resp.connection_id, "conn-xyz");
+}
+
+#[tokio::test]
+async fn list_tools_filters_pass_through_as_csv_query_param() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/tools",
+        get(|Query(q): Query<HashMap<String, String>>| async move {
+            let toolkits = q.get("toolkits").cloned().unwrap_or_default();
+            let tags = q.get("tags").cloned().unwrap_or_default();
+            // Echo both filters back so the test can assert they reached the server.
+            let echo = if tags.is_empty() {
+                format!("ECHO_{toolkits}")
+            } else {
+                format!("ECHO_{toolkits}_TAGS_{tags}")
+            };
+            Json(json!({
+                "success": true,
+                "data": {
+                    "tools": [{
+                        "type": "function",
+                        "function": {
+                            "name": echo,
+                            "description": "echo",
+                            "parameters": {}
+                        }
+                    }]
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+
+    // No filter: URL should lack both query params
+    let resp_all = client.list_tools(None, None).await.unwrap();
+    assert_eq!(resp_all.tools.len(), 1);
+    assert_eq!(resp_all.tools[0].function.name, "ECHO_");
+
+    // toolkits only: CSV-joined
+    let resp_filtered = client
+        .list_tools(Some(&["gmail".to_string(), "notion".to_string()]), None)
+        .await
+        .unwrap();
+    assert_eq!(resp_filtered.tools[0].function.name, "ECHO_gmail,notion");
+
+    // Whitespace entries should be dropped before joining
+    let resp_trimmed = client
+        .list_tools(Some(&["gmail".to_string(), "  ".to_string()]), None)
+        .await
+        .unwrap();
+    assert_eq!(resp_trimmed.tools[0].function.name, "ECHO_gmail");
+
+    // tags only
+    let resp_tags = client
+        .list_tools(None, Some(&["readOnlyHint".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(resp_tags.tools[0].function.name, "ECHO__TAGS_readOnlyHint");
+
+    // toolkits + tags both forwarded
+    let resp_both = client
+        .list_tools(
+            Some(&["github".to_string()]),
+            Some(&["stars".to_string(), "repos".to_string()]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_both.tools[0].function.name,
+        "ECHO_github_TAGS_stars,repos"
+    );
+
+    // Empty tags slice treated as no filter
+    let resp_empty_tags = client
+        .list_tools(Some(&["gmail".to_string()]), Some(&[]))
+        .await
+        .unwrap();
+    assert_eq!(resp_empty_tags.tools[0].function.name, "ECHO_gmail");
+}
+
+/// Ambient execution must preserve the legacy unscoped request shape while
+/// still returning provider success and cost metadata.
+#[tokio::test]
+async fn execute_tool_returns_cost_and_success_flags() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|Json(body): Json<Value>| async move {
+            let tool = body["tool"].as_str().unwrap_or("").to_string();
+            assert!(
+                body.get("connectionId").is_none(),
+                "ambient execute_tool calls must omit per-account scoping"
+            );
+            Json(json!({
+                "success": true,
+                "data": {
+                    "data": { "echoed_tool": tool },
+                    "successful": true,
+                    "error": null,
+                    "costUsd": 0.0025
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client
+        .execute_tool("GMAIL_SEND_EMAIL", Some(json!({"to": "a@b.com"})))
+        .await
+        .unwrap();
+    assert!(resp.successful);
+    assert!((resp.cost_usd - 0.0025).abs() < f64::EPSILON);
+    assert_eq!(resp.data["echoed_tool"], "GMAIL_SEND_EMAIL");
+}
+
+#[tokio::test]
+async fn execute_tool_retries_once_on_post_oauth_auth_readiness_error() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|State(attempts): State<Arc<AtomicUsize>>| async move {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "data": {},
+                            "successful": false,
+                            "error": "Connection error, try to authenticate",
+                            "costUsd": 0.0
+                        }
+                    }))
+                } else {
+                    Json(json!({
+                        "success": true,
+                        "data": {
+                            "data": {"ok": true},
+                            "successful": true,
+                            "error": null,
+                            "costUsd": 0.001
+                        }
+                    }))
+                }
+            }),
+        )
+        .with_state(attempts.clone());
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+
+    let resp = client
+        .execute_tool_with_post_oauth_retry(
+            "GOOGLECALENDAR_EVENTS_LIST",
+            &json!({
+                "tool": "GOOGLECALENDAR_EVENTS_LIST",
+                "arguments": {}
+            }),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+    assert!(resp.successful);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn post_oauth_auth_readiness_error_matches_known_gateway_variants() {
+    for err in [
+        "Connection error, try to authenticate",
+        "connection error, try to authenticate",
+        "CONNECTION ERROR, TRY TO AUTHENTICATE",
+        "Action failed: Connection error, try to authenticate (gateway code 401)",
+    ] {
+        assert!(
+            is_post_oauth_auth_readiness_error(&ComposioExecuteResponse {
+                data: json!({}),
+                successful: false,
+                error: Some(err.to_string()),
+                cost_usd: 0.0,
+                markdown_formatted: None,
+            }),
+            "should classify retryable Composio auth-readiness error: {err}"
+        );
+    }
+}
+
+#[test]
+fn post_oauth_auth_readiness_error_rejects_unrelated_or_successful_payloads() {
+    for err in ["invalid_grant", "ratelimited", ""] {
+        assert!(
+            !is_post_oauth_auth_readiness_error(&ComposioExecuteResponse {
+                data: json!({}),
+                successful: false,
+                error: Some(err.to_string()),
+                cost_usd: 0.0,
+                markdown_formatted: None,
+            }),
+            "should not classify unrelated error as retryable: {err}"
+        );
+    }
+
+    assert!(!is_post_oauth_auth_readiness_error(
+        &ComposioExecuteResponse {
+            data: json!({}),
+            successful: true,
+            error: Some("Connection error, try to authenticate".to_string()),
+            cost_usd: 0.0,
+            markdown_formatted: None,
+        }
+    ));
+}
+
+#[tokio::test]
+async fn execute_tool_does_not_retry_other_auth_errors() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|State(attempts): State<Arc<AtomicUsize>>| async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "data": {},
+                        "successful": false,
+                        "error": "Invalid OAuth scope",
+                        "costUsd": 0.0
+                    }
+                }))
+            }),
+        )
+        .with_state(attempts.clone());
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+
+    let resp = client
+        .execute_tool_with_post_oauth_retry(
+            "GOOGLECALENDAR_EVENTS_LIST",
+            &json!({
+                "tool": "GOOGLECALENDAR_EVENTS_LIST",
+                "arguments": {}
+            }),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+    assert!(!resp.successful);
+    assert_eq!(resp.error.as_deref(), Some("Invalid OAuth scope"));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn execute_tool_without_arguments_sends_empty_object() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|Json(body): Json<Value>| async move {
+            // Verify default arguments is an object (not missing / null).
+            assert!(body["arguments"].is_object());
+            Json(json!({
+                "success": true,
+                "data": {
+                    "data": {},
+                    "successful": true,
+                    "error": null,
+                    "costUsd": 0.0
+                }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.execute_tool("NOOP_ACTION", None).await.unwrap();
+    assert!(resp.successful);
+}
+
+#[tokio::test]
+async fn backend_error_envelope_becomes_bail() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/toolkits",
+        get(|| async { Json(json!({ "success": false, "error": "backend unavailable" })) }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let err = client.list_toolkits().await.unwrap_err();
+    assert!(err.to_string().contains("backend unavailable"));
+}
+
+#[tokio::test]
+async fn http_error_status_propagates() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections",
+        get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let err = client.list_connections().await.unwrap_err();
+    assert!(err.to_string().contains("500") || err.to_string().contains("Backend returned"));
+}
+
+#[tokio::test]
+async fn delete_connection_happy_path_returns_deleted_true() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections/{id}",
+        axum::routing::delete(|Path(id): Path<String>| async move {
+            assert_eq!(id, "conn-42");
+            Json(json!({
+                "success": true,
+                "data": { "deleted": true }
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = build_client_for(base);
+    let resp = client.delete_connection("conn-42").await.unwrap();
+    assert!(resp.deleted);
+}
+
+// ── Trigger management (PR #671) ────────────────────────────────────
+
+#[tokio::test]
+async fn list_available_triggers_rejects_empty_toolkit() {
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+    let err = client
+        .list_available_triggers("   ", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("toolkit must not be empty"),
+        "unexpected: {err}"
+    );
+}

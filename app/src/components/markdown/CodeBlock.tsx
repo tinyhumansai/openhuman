@@ -124,7 +124,7 @@ function CodeBlockPre({ children, tone, ...rest }: CodeBlockPreProps) {
       {/* Code body — rehype-highlight has already applied hljs classes */}
       <pre
         {...rest}
-        className={`${rest.className ?? ''} !my-0 !rounded-none overflow-x-auto px-3 py-2.5 ${
+        className={`${rest.className ?? ''} my-0! rounded-none! overflow-x-auto px-3 py-2.5 ${
           tone === 'user' ? 'bg-white/10' : 'bg-stone-300/50 dark:bg-neutral-800/60'
         }`}>
         {children}

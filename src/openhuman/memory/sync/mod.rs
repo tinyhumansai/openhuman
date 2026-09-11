@@ -1,32 +1,33 @@
-//! Memory sync pipelines.
+//! Host layer over the memory sync domain.
 //!
-//! One top-level module hosting every "pull data from upstream → land it
-//! in memory_store" pipeline, organised by the kind of upstream it talks
-//! to. Three kinds today:
+//! What lives here is the JSON-RPC surface — handlers and controller schemas
+//! name OpenHuman's `RpcOutcome` and `ControllerSchema`, which no engine crate
+//! can see. The two submodules below are that surface.
 //!
-//! - [`composio`] — Composio managed connectors (Gmail, Slack, GitHub,
-//!   Notion, Linear, ClickUp, …). Pulls via the Composio Edge API.
-//! - [`workspace`] — Local workspace connectors (filesystem vault sync,
-//!   local-only ingest, agent-experience capture from the harness).
-//! - [`mcp`] — Third-party MCP servers. Pulls via the MCP protocol over
-//!   stdio/SSE.
+//! # Why there is no `pub use tinymemory_core::sync::*;` here any more (#5560)
 //!
-//! All three implement the [`SyncPipeline`] trait so the orchestrator
-//! (`memory::jobs`) can drive them uniformly: `init` → `tick` → repeat.
+//! There was one, described as keeping "every historical `memory::sync::…` path
+//! resolving". It resolved nothing. The glob's only reachable contribution was
+//! four engine modules — `audit`, `mcp`, `pipelines`, `workspace` — because the
+//! other two names it carried (`composio`, `sync_status`) are declared below
+//! and an explicit item shadows a glob import. A repo-wide search for those
+//! four under this path found **no consumer**: not in `src/`, not in `tests/`,
+//! not in the desktop shell's separate Cargo world. Every real caller goes
+//! through `memory::sync::composio`, which is its own module.
 //!
-//! ## Layer rules
+//! So this line was a compile-time edge to `tinymemory-core` bought for nobody,
+//! and dropping it is not a carve-out or a substitution — nothing resolved
+//! through it, so nothing changes shape. The sibling shims that *are* load
+//! bearing (`composio`, `composio::providers`, `composio::providers::slack`)
+//! keep theirs and say what pins them.
 //!
-//! - Sync writes into `memory_store` only — never directly into trees,
-//!   never directly into unified. The ingest pipeline in
-//!   `memory::ingest_pipeline` is the seam.
-//! - One pipeline per upstream service. Composio's GitHub and MCP's
-//!   GitHub are distinct pipelines because they hit different surfaces
-//!   with different cadence and auth.
-//! - Pipeline modules own their own types, their own state, and their
-//!   own retry/backoff policy. The trait gives the orchestrator a
-//!   single shape to call; everything else stays local.
+//! [`sync_status`] took a different route, twice. Its glob carried two names
+//! that *were* real, so they could not simply be dropped; they were repointed
+//! at the engine crate that defined them, and then — once its `rpc` started
+//! reading the driver's `MemorySourceSync::sync_statuses` instead of the
+//! engine's SQLite query — declared in that module outright, as the wire types
+//! they had always been on this side of the call. See its own docs for why the
+//! contract's `SourceSyncStatus` is deliberately not aliased in their place.
 
 pub mod composio;
-pub mod mcp;
 pub mod sync_status;
-pub mod workspace;

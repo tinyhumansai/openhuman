@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use tinyagents::harness::workspace::WorkspaceDescriptor;
+use tinyagents_harness::workspace::WorkspaceDescriptor;
 use tokio::sync::mpsc::Sender;
 
 use crate::openhuman::agent::harness::run_queue::RunQueue;
@@ -70,6 +70,14 @@ pub struct AgentTurnRequest {
     /// sub-agent `TurnContextMiddleware` so tool outputs compact like the chat
     /// path instead of taking a blunt byte-cap truncation (#4466).
     pub tokenjuice_compression: crate::openhuman::inference::tokenjuice::AgentTokenjuiceCompression,
+    /// The spawn's host-config snapshot, supplying the `[context]` middleware
+    /// knobs (compaction, microcompact, autocompact, tool-result budget).
+    ///
+    /// Carried on the request rather than loaded down in the graph
+    /// (plan-agents Phase 3): the graph is slated to move into TinyAgents,
+    /// which has no config file. `None` yields the safe byte-cap-only
+    /// defaults — the same degradation a failed load produced before.
+    pub config: Option<Arc<crate::openhuman::config::Config>>,
 }
 
 /// Token/cost totals a custom runner reports back. Mirrors the runner's internal

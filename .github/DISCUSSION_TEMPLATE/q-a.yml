@@ -1,0 +1,47 @@
+title: ""
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        OpenHuman runs on your machine, so most answers depend on your machine.
+        The four fields below are what a maintainer would ask for first.
+
+        Mark an answer when you get one — it is what the next person finds.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: The goal, not only the error.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you already tried?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenHuman version
+      description: The release, or the commit if you built from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Docker
+        - Mobile
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and provider
+      description: Which model you are running, and whether it is hosted or local.

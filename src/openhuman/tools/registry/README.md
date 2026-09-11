@@ -54,7 +54,7 @@ No owned persistence. `diagnostics()` reads (read-only) the `mcp_writes` table v
 - `crate::openhuman::config` (`Config`, `config::schema::CapabilityProviderTrustState`) — autonomy posture, MCP client allowlists, capability-provider config.
 - `crate::openhuman::mcp::server` (`McpToolSpec`, `tool_specs()`) — MCP stdio tool source for registry entries.
 - `crate::openhuman::mcp::registry::connections` (`all_connected_tools()`) — live MCP client server tools, fetched via `block_in_place` only on the multi-thread runtime.
-- `crate::openhuman::memory::store::chunks::store` — read-only `mcp_writes` audit query.
+- `tinymemory_core::store::chunks::store` — read-only `mcp_writes` audit query.
 - `crate::rpc::RpcOutcome` — RPC result envelope.
 
 ## Used by

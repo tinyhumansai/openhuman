@@ -20,9 +20,9 @@ process, and aggregates median/min/max duration, settled RSS, retained delta,
 and peak delta into `summary.json` + `summary.md`.
 
 ```bash
-./scripts/profile/library-bench.sh                              # all 7 scenarios, default build, 5 repeats
+./scripts/profile/library-bench.sh                              # all 6 scenarios, default build, 5 repeats
 ./scripts/profile/library-bench.sh --slim --repeat 7             # slim (no-default-features) build
-./scripts/profile/library-bench.sh --scenarios "long-agent,subagents" --turns 50 --warm
+./scripts/profile/library-bench.sh --scenarios "long-agent,subagent-storm" --turns 50 --warm
 ```
 
 Results land in `target/profile/rust-library/bench-<timestamp>/` (or `--out DIR`).
@@ -33,9 +33,9 @@ Wraps `samply record` around one scenario, isolated from persistence/timezone
 noise by default (matching the documented cold-path CPU recipe).
 
 ```bash
-./scripts/profile/library-cpu.sh subagents
+./scripts/profile/library-cpu.sh subagent-storm
 ./scripts/profile/library-cpu.sh long-agent -- OPENHUMAN_PROFILE_TURNS=50
-samply load target/profile/rust-library/subagents-cpu.json.gz
+samply load target/profile/rust-library/subagent-storm-cpu.json.gz
 ```
 
 ### `library-heap.sh` — live heap attribution via dhat
@@ -45,9 +45,9 @@ timing numbers from this build are perturbed by instrumentation; use it only
 for allocation-site/retained-bytes attribution, not for RSS comparisons.
 
 ```bash
-./scripts/profile/library-heap.sh memory-ingest
+./scripts/profile/library-heap.sh agent-turn
 # open https://nnethercote.github.io/dh_view/dh_view.html and load
-# target/profile/rust-library/dhat-memory-ingest.json
+# target/profile/rust-library/dhat-agent-turn.json
 ```
 
 ### `library-fleet.sh` — fleet sweep + 2 GB / 2 vCPU budget gate
@@ -118,10 +118,10 @@ runners don't false-fail.
 ./scripts/profile/library-bench.sh
 
 # 2. CPU attribution for the slowest/most interesting scenario
-./scripts/profile/library-cpu.sh subagents
+./scripts/profile/library-cpu.sh subagent-storm
 
 # 3. If a scenario's RSS looks off, drill into live heap
-./scripts/profile/library-heap.sh subagents
+./scripts/profile/library-heap.sh subagent-storm
 ```
 
 All scripts require `jq` for JSON parsing/aggregation; `library-cpu.sh` also

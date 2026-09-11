@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
+use openhuman_core::core::dispatch::UNKNOWN_METHOD_PREFIX;
 use openhuman_core::core::jsonrpc::build_core_http_router;
 
 const TEST_RPC_TOKEN: &str = "worker-c-modules-e2e-token";
@@ -203,10 +204,52 @@ fn error_message<'a>(value: &'a Value, context: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{context}: expected JSON-RPC error with message: {value}"))
 }
 
+/// Assert that `value` is a JSON-RPC response for a method the core actually
+/// serves.
+///
+/// This used to assert only that the envelope carried `result` **or** `error`,
+/// which every well-formed JSON-RPC response does — including
+/// `unknown method: openhuman.whatever`. The reachability loops below call ~90
+/// methods through this helper, so all of them could have been deleted from the
+/// registry and this file would still have passed.
+///
+/// An error is still tolerated, and deliberately: these loops call each method
+/// with empty params, so a registered method usually answers with a validation
+/// failure. That is a *completed dispatch* — the method resolved, took the
+/// params and rejected them — and it is the strongest thing a probe with no
+/// arguments can honestly assert. What must not happen is the request never
+/// reaching a handler at all, which is exactly what
+/// [`UNKNOWN_METHOD_PREFIX`] marks.
 fn assert_rpc_completed(value: &Value, context: &str) {
+    let error = match (value.get("result"), value.get("error")) {
+        (Some(_), None) => return,
+        (None, Some(error)) => error,
+        (Some(_), Some(_)) => panic!(
+            "{context}: response carries BOTH result and error, which is not a valid \
+             JSON-RPC envelope: {value}"
+        ),
+        (None, None) => panic!("{context}: response carries neither result nor error: {value}"),
+    };
+    // Not `unwrap_or_default()`: that turns a missing, null or non-string
+    // `message` into `""`, which then satisfies the check below and lets a
+    // malformed error-only response count as a completed dispatch — the same
+    // vacuous-pass shape this helper was rewritten to remove.
+    let Some(message) = error.get("message").and_then(Value::as_str) else {
+        panic!(
+            "{context}: error response carries no string `message`, so nothing can be \
+             concluded about whether the method dispatched: {value}"
+        );
+    };
+    // `starts_with`, not `contains`: `dispatch.rs:96` builds the string as
+    // `format!("{UNKNOWN_METHOD_PREFIX}{method}")`, so the marker is always at
+    // byte zero — `dispatch.rs:151` reads it back with `strip_prefix` for the
+    // same reason. `contains` would additionally reject a REGISTERED method
+    // whose own validation error quoted the phrase later in the message,
+    // turning a reachable surface into a false failure.
     assert!(
-        value.get("result").is_some() || value.get("error").is_some(),
-        "{context}: expected JSON-RPC result or error envelope: {value}"
+        !message.starts_with(UNKNOWN_METHOD_PREFIX),
+        "{context}: the core does not serve this method, so the surface is NOT reachable \
+         — the registry entry is missing or its namespace was renamed. Got: {message}"
     );
 }
 
@@ -829,6 +872,20 @@ async fn embeddings_controller_paths_validate_without_live_services() {
 async fn memory_tree_ingest_feeds_memory_sync_status() {
     let _lock = env_lock();
     let harness = setup().await;
+    // `memory_tree_ingest` writes through the bound memory driver, which under
+    // the `modules` gate is the loaded tinymemory artifact and resolves its
+    // config from the process-wide boot policy that boot publishes and this
+    // harness never did. Publish it from the config this harness wrote (HOME
+    // points at the harness tempdir, so this names its workspace and its
+    // registry file). The policy is first-call-wins and the module captures
+    // its workspace at load; this is the only case in the binary that reaches
+    // the driver, so nothing else contends for the slot.
+    #[cfg(feature = "modules")]
+    openhuman_core::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(
+        openhuman_core::openhuman::config::Config::load_or_init()
+            .await
+            .expect("load the harness config for the module policy"),
+    ));
 
     let ingest = rpc(
         &harness.rpc_base,
@@ -1174,21 +1231,9 @@ async fn memory_sources_folder_web_and_rss_readers_sync_through_rpc() {
         json!({ "source_id": web_id, "item_id": web_item_id }),
     )
     .await;
-    let web_content = payload(&web_read, "memory_sources_read_item web")
-        .get("content")
-        .expect("web content");
-    assert_eq!(
-        web_content.get("title").and_then(Value::as_str),
-        Some("Worker C page")
-    );
-    let web_body = web_content
-        .get("body")
-        .and_then(Value::as_str)
-        .expect("web body");
-    assert!(web_body.contains("Selected coverage article"));
     assert!(
-        !web_body.contains("Navigation text"),
-        "selector extraction should not include nav text: {web_body}"
+        error_message(&web_read, "memory_sources_read_item web").contains("public host"),
+        "loopback web source must be rejected before fetching: {web_read}"
     );
 
     let rss = rpc(
@@ -1216,58 +1261,9 @@ async fn memory_sources_folder_web_and_rss_readers_sync_through_rpc() {
         json!({ "source_id": rss_id }),
     )
     .await;
-    let rss_items_payload = payload(&rss_items, "memory_sources_list_items rss")
-        .get("items")
-        .and_then(Value::as_array)
-        .expect("rss items");
-    assert_eq!(
-        rss_items_payload.len(),
-        1,
-        "max_items should limit RSS list"
-    );
-    assert_eq!(
-        rss_items_payload[0].get("id").and_then(Value::as_str),
-        Some("rss-worker-c-1")
-    );
-
-    let rss_read = rpc(
-        &harness.rpc_base,
-        309,
-        "openhuman.memory_sources_read_item",
-        json!({ "source_id": rss_id, "item_id": "rss-worker-c-1" }),
-    )
-    .await;
-    let rss_content = payload(&rss_read, "memory_sources_read_item rss")
-        .get("content")
-        .expect("rss content");
-    assert_eq!(
-        rss_content.get("title").and_then(Value::as_str),
-        Some("RSS first item")
-    );
-    assert!(rss_content
-        .get("body")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .contains("RSS body & decoded entity"));
-    assert_eq!(
-        rss_content
-            .pointer("/metadata/link")
-            .and_then(Value::as_str),
-        Some("https://example.test/rss/1")
-    );
-
-    let sync = rpc(
-        &harness.rpc_base,
-        310,
-        "openhuman.memory_sources_sync",
-        json!({ "source_id": rss_id }),
-    )
-    .await;
-    assert_eq!(
-        payload(&sync, "memory_sources_sync rss")
-            .get("requested")
-            .and_then(Value::as_bool),
-        Some(true)
+    assert!(
+        error_message(&rss_items, "memory_sources_list_items rss").contains("public host"),
+        "loopback RSS source must be rejected before fetching: {rss_items}"
     );
 
     fixture_join.abort();

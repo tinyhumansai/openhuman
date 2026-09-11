@@ -19,10 +19,12 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 
+import { cn } from '../../../../lib/cn';
 import { listAvailableTriggers, listTools } from '../../../../lib/composio/composioApi';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
-import { Field, INPUT_CLASS, MONO_CLASS } from './nodeConfigFields';
+import { NativeSelect, Input as UiInput } from '../../../ui';
+import { Field, MONO_CLASS } from './nodeConfigFields';
 
 /** Sentinel select value that reveals a raw text input. */
 const CUSTOM = '__custom__';
@@ -81,8 +83,9 @@ export function ComposioToolkitField({
 
   return (
     <Field label={label} hint={hint}>
-      <select
-        className={INPUT_CLASS}
+      <NativeSelect
+        inputSize="sm"
+        className="w-full"
         value={value}
         data-testid={testId}
         onChange={e => onChange(e.target.value)}>
@@ -92,7 +95,7 @@ export function ComposioToolkitField({
             {toolkitLabel(tk)}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </Field>
   );
 }
@@ -173,17 +176,19 @@ function CatalogSlugField({
   return (
     <Field label={label} hint={hint}>
       {showCustomInput ? (
-        <input
+        <UiInput
           type="text"
-          className={`${INPUT_CLASS} ${MONO_CLASS}`}
+          inputSize="sm"
+          className={cn('w-full', MONO_CLASS)}
           value={value}
           placeholder={t('flows.nodeConfig.composio.customPlaceholder')}
           data-testid={testId ? `${testId}-custom` : undefined}
           onChange={e => onChange(e.target.value)}
         />
       ) : (
-        <select
-          className={INPUT_CLASS}
+        <NativeSelect
+          inputSize="sm"
+          className="w-full"
           value={value}
           disabled={loading}
           data-testid={testId}
@@ -205,7 +210,7 @@ function CatalogSlugField({
             </option>
           ))}
           <option value={CUSTOM}>{t('flows.nodeConfig.composio.custom')}</option>
-        </select>
+        </NativeSelect>
       )}
     </Field>
   );

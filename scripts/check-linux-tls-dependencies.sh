@@ -2,15 +2,24 @@
 set -euo pipefail
 
 target="${1:-x86_64-unknown-linux-gnu}"
-forbidden='^(native-tls|openssl|openssl-sys) v'
+forbidden='^(aws-lc-sys|aws-lc-rs) v'
 
 check_world() {
   local label="$1"
   local manifest="$2"
   local tree
   tree="$(cargo tree --locked --manifest-path "$manifest" --target "$target" --prefix none)"
+  if matches="$(printf '%s\n' "$tree" | grep -E "$forbidden")"; then
+    printf 'error: aws-lc dependencies found in %s for %s:\n%s\n' \
+      "$label" "$target" "$matches" >&2
+    exit 1
+  fi
+
+  # The core must use rustls only. Tauri has a deliberate native-TLS/OpenSSL
+  # exception for its updater/dev proxy dependencies, checked by ownership
+  # below so that only those known paths retain the exemption.
   if [[ "$label" == core ]] &&
-    matches="$(printf '%s\n' "$tree" | grep -E "$forbidden")"; then
+    matches="$(printf '%s\n' "$tree" | grep -E '^(native-tls|openssl|openssl-sys) v')"; then
     printf 'error: native TLS/OpenSSL dependencies found in %s for %s:\n%s\n' \
       "$label" "$target" "$matches" >&2
     exit 1

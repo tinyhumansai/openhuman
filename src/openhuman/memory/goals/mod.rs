@@ -1,33 +1,32 @@
-//! `memory_goals` — the agent's long-term goals when interacting with the
-//! user.
+//! The agent's long-term goals.
 //!
-//! A deliberately small, high-level domain: it maintains a compact markdown
-//! file (`MEMORY_GOALS.md`, ~200–500 tokens) holding an editable **list** of
-//! the user's durable goals. The list can be mutated three ways:
+//! # The split this domain landed on (#5560)
 //!
-//! - **Explicitly** — via RPC (`openhuman.memory_goals_{list,add,edit,delete}`)
-//!   or the matching agent tools (`goals_list` / `goals_add` / `goals_edit` /
-//!   `goals_delete`).
-//! - **By reflection** — a turn-based [`enrich`]ment agent (`goals_agent`) that
-//!   reads context + memory and applies add/edit/delete over several turns. On
-//!   an empty list it performs an initial population.
-//! - **Automatically** — the reflection agent is fired (best-effort) when the
-//!   conversation context is summarized; see the archivist segment-close hook.
+//! It used to have none: the store was `tinycortex::memory::goals`, reached
+//! in-process, and everything above it — the RPC surface, the reflection agent,
+//! the agent tools — named host types around that one call. With the engine
+//! behind the loaded module, the contract splits the domain in the one place it
+//! can be split without moving policy across a trait boundary:
 //!
-//! Persistence + cap enforcement live in [`store`]; the file is stored state,
-//! not injected into the main system prompt.
+//! - **Driver** ([`MemoryGoals`](crate::openhuman::memory::api::provider::MemoryGoals),
+//!   two members): read the document, replace the document. With it go
+//!   persistence, the symlink-escape check, and the item-count and byte-size
+//!   caps — all facts about a store, which is the thing a driver owns.
+//! - **Host** ([`doc`]): parse, validate, mutate. `set_goals`' own contract
+//!   docs say why the mutation surface may not be a driver's: the secret and
+//!   PII predicates it runs are safety policy, and a per-item mutation member
+//!   would put that policy behind a trait a third-party driver implements,
+//!   where it could be skipped.
+//!
+//! [`ops`] is where those two halves meet — it holds the read-modify-write and
+//! the lock that serialises it. Everything else here is unchanged: [`enrich`]
+//! still runs the real `goals_agent`, and [`schemas`] still publishes the same
+//! `memory_goals.*` wire shape.
 
+pub mod doc;
 pub mod enrich;
 pub mod ops;
-mod schemas;
-pub mod store;
-pub mod tools;
+pub mod schemas;
 
 pub use enrich::{enrich_goals, spawn_enrich_goals, GOALS_AGENT_ID};
 pub use schemas::{all_memory_goals_controller_schemas, all_memory_goals_registered_controllers};
-pub use tools::{GoalsAddTool, GoalsDeleteTool, GoalsEditTool, GoalsListTool};
-// W7: goal item/doc types are the crate's (byte-identical `MEMORY_GOALS.md`
-// render/parse); the host `types.rs` engine was deleted. Consumers use only
-// `.items` / `.render()` / `.is_empty()` / `.len()`, all present on the crate
-// type, so re-exporting is transparent.
-pub use tinycortex::memory::goals::types::{GoalItem, GoalsDoc};

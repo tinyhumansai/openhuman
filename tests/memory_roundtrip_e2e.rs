@@ -11,7 +11,7 @@
 //! Run with: `cargo test --test memory_roundtrip_e2e`
 
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tempfile::tempdir;
 
@@ -52,12 +52,42 @@ impl Drop for EnvVarGuard {
 
 /// Serialises tests: `HOME` + `OPENHUMAN_WORKSPACE` are process-global.
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
+static TEST_ROOT: OnceLock<tempfile::TempDir> = OnceLock::new();
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock poisoned")
+    match ENV_LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// This integration target calls memory operations without constructing a core
+/// runtime, so it supplies the seams that normal startup installs first.
+fn test_root() -> &'static tempfile::TempDir {
+    TEST_ROOT.get_or_init(|| tempdir().expect("memory roundtrip tempdir"))
+}
+
+fn ensure_memory_seams(workspace: &Path) {
+    MEMORY_SEAMS_INIT.get_or_init(|| {
+        let workspace = workspace.to_path_buf();
+        std::thread::Builder::new()
+            .name("memory-roundtrip-seams".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let config = Arc::new(openhuman_core::openhuman::config::Config {
+                    workspace_dir: workspace.clone(),
+                    action_dir: workspace.clone(),
+                    config_path: workspace.join("config.toml"),
+                    ..openhuman_core::openhuman::config::Config::default()
+                });
+                #[cfg(feature = "modules")]
+                openhuman_core::openhuman::modules::memory::set_modules_policy(config);
+            })
+            .expect("spawn memory roundtrip seam installer")
+            .join()
+            .expect("memory roundtrip seam installer panicked");
+    });
 }
 
 const NS: &str = "memory-roundtrip-e2e-773";
@@ -107,11 +137,12 @@ fn recall_context_request() -> RecallContextRequest {
 #[tokio::test]
 async fn doc_put_then_recall_memories_returns_canary() {
     let _lock = env_lock();
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_root();
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace_path = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace_path).expect("create workspace dir");
     let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_path);
+    ensure_memory_seams(&workspace_path);
 
     // Store the canary document.
     let put_outcome = doc_put(put_params()).await.expect("doc_put rpc");
@@ -137,11 +168,12 @@ async fn doc_put_then_recall_memories_returns_canary() {
 #[tokio::test]
 async fn doc_put_then_recall_context_renders_llm_context_message() {
     let _lock = env_lock();
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_root();
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace_path = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace_path).expect("create workspace dir");
     let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_path);
+    ensure_memory_seams(&workspace_path);
 
     doc_put(put_params()).await.expect("doc_put rpc");
 
@@ -172,11 +204,12 @@ async fn doc_put_then_recall_context_renders_llm_context_message() {
 #[tokio::test]
 async fn doc_put_with_multibyte_at_body_preview_boundary_does_not_panic() {
     let _lock = env_lock();
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_root();
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace_path = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace_path).expect("create workspace dir");
     let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_path);
+    ensure_memory_seams(&workspace_path);
 
     const BODY_PREVIEW_MAX_BYTES: usize = 2048;
     let zwnj = '\u{200c}'; // 3-byte codepoint
@@ -230,11 +263,12 @@ async fn doc_put_with_multibyte_at_body_preview_boundary_does_not_panic() {
 #[tokio::test]
 async fn clear_namespace_removes_canary_from_recall() {
     let _lock = env_lock();
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_root();
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace_path = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace_path).expect("create workspace dir");
     let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace_path);
+    ensure_memory_seams(&workspace_path);
 
     // Seed the namespace.
     doc_put(put_params()).await.expect("seed doc_put");

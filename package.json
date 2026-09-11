@@ -3,18 +3,19 @@
   "private": true,
   "packageManager": "pnpm@10.10.0+sha512.d615db246fe70f25dcfea6d8d73dee782ce23e2245e3c4f6f888249fb568149318637dca73c2c5c8ef2a4ca0d5657fb9567188bfab47f566d1ee6ce987815c39",
   "resolutions": {
-    "@tauri-apps/api": "2.10.1"
+    "@tauri-apps/api": "2.11.1"
   },
   "scripts": {
     "build": "pnpm --filter openhuman-app build",
     "docs:generate": "node scripts/generate-architecture-docs.mjs",
     "docs:check": "node scripts/generate-architecture-docs.mjs --check",
     "docs:test": "node --test scripts/__tests__/generate-architecture-docs.test.mjs",
-    "test:scripts": "node --test scripts/__tests__/*.test.mjs scripts/mock-api/*.test.mjs scripts/mock-api/routes/__tests__/*.test.mjs",
+    "test:scripts": "node --test scripts/__tests__/*.test.mjs scripts/mock-api/*.test.mjs scripts/mock-api/routes/__tests__/*.test.mjs scripts/bench/*.test.mjs",
     "test:inventory": "node scripts/generate-test-inventory.mjs",
     "compile": "pnpm --filter openhuman-app compile",
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
+    "dev:app:web": "bash scripts/run-dev-web.sh",
     "dev:app:win": "pnpm --filter openhuman-app dev:app:win",
     "dev:staging": "bash scripts/dev-staging.sh",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",
@@ -54,6 +55,7 @@
     "test:install-ps1": "pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1",
     "rust:check": "pnpm --filter openhuman-app rust:check",
     "rust:clippy": "cargo clippy -p openhuman -- -D warnings && pnpm --filter openhuman-app rust:clippy",
+    "rust:layout": "node scripts/ci/check-openhuman-rust-layout.mjs",
     "typecheck": "pnpm --filter openhuman-app compile",
     "tauri:ios:init": "bash scripts/ios-init.sh",
     "tauri:ios:dev": "pnpm --filter openhuman-app tauri:ios:dev",
@@ -73,6 +75,11 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.10.1"
+    "@tauri-apps/api": "2.11.1"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@assistant-ui/react-lexical@0.2.10": "app/patches/@assistant-ui__react-lexical@0.2.10.patch"
+    }
   }
 }

@@ -12,12 +12,32 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
+/// Params for `inference.agent_chat` and `inference.agent_chat_simple`.
+///
+/// A near-copy of the params in [`crate::openhuman::agent::schemas`], which
+/// backs the `agent.chat` / `agent.chat_simple` namespace over the same ops.
+/// The two diverge in one field: only this surface accepts a per-call
+/// `inference_url` + `api_key`, because `agent.chat` describes a turn on the
+/// account's own configured inference.
 #[derive(Debug, Deserialize)]
 struct AgentChatParams {
     message: String,
     model_override: Option<String>,
     temperature: Option<f64>,
     thread_id: Option<String>,
+    /// Optional per-turn working directory for the agent's filesystem / shell
+    /// tools. Absent or empty keeps the configured `action_dir`. Ignored by the
+    /// `*_simple` variant, which runs a bare provider call with no tools.
+    cwd: Option<String>,
+    /// OpenAI-compatible endpoint this one call should run against. Paired with
+    /// `api_key`; either alone is ignored. See
+    /// [`ephemeral_route`](crate::openhuman::config::schema::ephemeral_route).
+    #[serde(default)]
+    inference_url: Option<String>,
+    /// Bearer for `inference_url`. Never persisted and never handed to any
+    /// other provider.
+    #[serde(default)]
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,17 +63,6 @@ struct LocalAiDownloadAssetParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct LocalAiInstallWhisperParams {
-    /// Optional model size (`tiny`, `base`, `small`, `medium`,
-    /// `large-v3-turbo`). Defaults to `large-v3-turbo`.
-    #[serde(default)]
-    model_size: Option<String>,
-    /// When true, blow away any existing model file and re-download.
-    #[serde(default)]
-    force: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
 struct LocalAiInstallPiperParams {
     /// Optional Piper voice id (e.g. `en_US-lessac-medium`). Defaults to
     /// the bundled US-English Lessac voice.
@@ -74,9 +83,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("assets_status"),
         schemas("downloads_progress"),
         schemas("download_asset"),
-        schemas("install_whisper"),
         schemas("install_piper"),
-        schemas("whisper_install_status"),
         schemas("piper_install_status"),
         schemas("test_connection"),
     ]
@@ -117,16 +124,8 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_local_ai_download_asset,
         },
         RegisteredController {
-            schema: schemas("install_whisper"),
-            handler: handle_local_ai_install_whisper,
-        },
-        RegisteredController {
             schema: schemas("install_piper"),
             handler: handle_local_ai_install_piper,
-        },
-        RegisteredController {
-            schema: schemas("whisper_install_status"),
-            handler: handle_local_ai_whisper_install_status,
         },
         RegisteredController {
             schema: schemas("piper_install_status"),
@@ -152,6 +151,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string(
                     "thread_id",
                     "Optional backend thread id for cache grouping and inference logs.",
+                ),
+                optional_string(
+                    "cwd",
+                    "Optional working directory for this turn: the agent's file and shell \
+                     tools are rooted here, so relative paths resolve inside it. Must be an \
+                     existing directory. Omit (or pass empty) to use the configured action_dir.",
+                ),
+                optional_string(
+                    "inference_url",
+                    "Optional OpenAI-compatible endpoint for this call only. \
+                     Requires api_key; never persisted.",
+                ),
+                optional_string(
+                    "api_key",
+                    "Bearer for inference_url. Scoped to this call and to that \
+                     endpoint alone.",
                 ),
             ],
             outputs: vec![json_output("response", "Agent response payload.")],
@@ -224,22 +239,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![required_string("capability", "Asset capability id.")],
             outputs: vec![json_output("status", "Assets status payload.")],
         },
-        "install_whisper" => ControllerSchema {
-            namespace: "inference",
-            function: "install_whisper",
-            description: "Download whisper.cpp's GGML model (and on Windows the whisper-cli binary) into the workspace so the local STT factory has everything it needs to run.",
-            inputs: vec![
-                optional_string(
-                    "model_size",
-                    "Whisper model size (tiny, base, small, medium, large-v3-turbo). Defaults to large-v3-turbo.",
-                ),
-                optional_bool(
-                    "force",
-                    "When true, re-download even if the workspace already has a matching model.",
-                ),
-            ],
-            outputs: vec![json_output("status", "Whisper install status payload.")],
-        },
         "install_piper" => ControllerSchema {
             namespace: "inference",
             function: "install_piper",
@@ -255,13 +254,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 ),
             ],
             outputs: vec![json_output("status", "Piper install status payload.")],
-        },
-        "whisper_install_status" => ControllerSchema {
-            namespace: "inference",
-            function: "whisper_install_status",
-            description: "Query the Whisper install state (missing / installing / installed / broken / error) plus per-stage download progress.",
-            inputs: vec![],
-            outputs: vec![json_output("status", "Whisper install status payload.")],
         },
         "piper_install_status" => ControllerSchema {
             namespace: "inference",
@@ -303,6 +295,11 @@ fn handle_agent_chat(params: Map<String, Value>) -> ControllerFuture {
                 p.model_override,
                 p.temperature,
                 p.thread_id,
+                p.cwd,
+                crate::openhuman::config::schema::EphemeralRoute::from_params(
+                    p.inference_url,
+                    p.api_key,
+                ),
             )
             .await?,
         )
@@ -415,89 +412,16 @@ fn handle_local_ai_download_asset(params: Map<String, Value>) -> ControllerFutur
 // transition lands on the table when the background task finishes;
 // no caller awaits it.
 
-fn handle_local_ai_install_whisper(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<LocalAiInstallWhisperParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
-        let force = p.force.unwrap_or(false);
-
-        // Atomic install-start guard. A duplicate click while an install
-        // is already in flight (or a parallel auto-install firing
-        // alongside a manual click) must be a no-op — not a second
-        // concurrent download racing on the same `.part` file inside
-        // `download_to_file`. The previous read_status -> check ->
-        // write_status sequence was non-atomic and let two callers slip
-        // through; `try_acquire_install_slot` does the check-and-claim
-        // under a single mutex acquisition.
-        let slot =
-            match crate::openhuman::inference::local::voice_install_common::try_acquire_install_slot(
-                crate::openhuman::inference::local::voice_install_common::ENGINE_WHISPER,
-            ) {
-                Some(slot) => slot,
-                None => {
-                    tracing::debug!(
-                        "[voice-install:whisper] slot already held — returning current status"
-                    );
-                    let current = crate::openhuman::inference::local::voice_install_common::read_status(
-                    crate::openhuman::inference::local::voice_install_common::ENGINE_WHISPER,
-                );
-                    return serde_json::to_value(current)
-                        .map_err(|e| format!("serialize whisper status: {e}"));
-                }
-            };
-
-        // Mark "installing" before the spawn so the very next status poll
-        // (≤ 2s away) reflects the new state without a stale read.
-        crate::openhuman::inference::local::voice_install_common::write_status(
-            crate::openhuman::inference::local::voice_install_common::VoiceInstallStatus {
-                engine: crate::openhuman::inference::local::voice_install_common::ENGINE_WHISPER
-                    .to_string(),
-                state:
-                    crate::openhuman::inference::local::voice_install_common::VoiceInstallState::Installing,
-                progress: Some(0),
-                downloaded_bytes: None,
-                total_bytes: None,
-                stage: Some("queued".to_string()),
-                error_detail: None,
-            },
-        );
-
-        tracing::debug!(
-            model_size = ?p.model_size,
-            force,
-            "[voice-install:whisper] spawning background install"
-        );
-        let model_size = p.model_size.clone();
-        // Move the slot into the spawned task so it lives for the actual
-        // install duration (download + extract + validate), not just the
-        // RPC handler's lifetime. The slot's Drop releases the
-        // single-writer guard on task exit, including via panic.
-        tokio::spawn(async move {
-            let _slot = slot;
-            if let Err(e) = crate::openhuman::inference::local::install_whisper::install_whisper(
-                &config, model_size, force,
-            )
-            .await
-            {
-                log::warn!("[voice-install:whisper] background install failed: {e}");
-            }
-        });
-
-        let status = crate::openhuman::inference::local::voice_install_common::read_status(
-            crate::openhuman::inference::local::voice_install_common::ENGINE_WHISPER,
-        );
-        serde_json::to_value(status).map_err(|e| format!("serialize whisper status: {e}"))
-    })
-}
-
 fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<LocalAiInstallPiperParams>(params)?;
         let config = config_rpc::load_config_with_timeout().await?;
         let force = p.force.unwrap_or(false);
 
-        // See the whisper handler above for why this is an atomic slot
-        // acquisition rather than a read_status / write_status pair.
+        // Atomic install-start guard: a duplicate click while an install is
+        // already in flight must be a no-op, not a second concurrent download
+        // racing on the same `.part` file. `try_acquire_install_slot` does the
+        // check-and-claim under a single mutex acquisition.
         let slot =
             match crate::openhuman::inference::local::voice_install_common::try_acquire_install_slot(
                 crate::openhuman::inference::local::voice_install_common::ENGINE_PIPER,
@@ -535,8 +459,10 @@ fn handle_local_ai_install_piper(params: Map<String, Value>) -> ControllerFuture
             "[voice-install:piper] spawning background install"
         );
         let voice_id = p.voice_id.clone();
-        // Move the slot into the spawned task — same rationale as the
-        // whisper handler.
+        // Move the slot into the spawned task so it lives for the actual
+        // install duration (download + extract + validate), not just the RPC
+        // handler's lifetime. The slot's Drop releases the single-writer guard
+        // on task exit, including via panic.
         tokio::spawn(async move {
             let _slot = slot;
             if let Err(e) = crate::openhuman::inference::local::install_piper::install_piper(
@@ -564,14 +490,6 @@ fn handle_local_ai_test_connection(params: Map<String, Value>) -> ControllerFutu
             )
             .await?;
         serde_json::to_value(result).map_err(|e| format!("serialize test_connection result: {e}"))
-    })
-}
-
-fn handle_local_ai_whisper_install_status(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let status = crate::openhuman::inference::local::install_whisper::status(&config);
-        serde_json::to_value(status).map_err(|e| format!("serialize whisper status: {e}"))
     })
 }
 

@@ -26,7 +26,7 @@ const ROUTE_TIMEOUT = 10_000;
 //   /skills → /connections (back-compat redirect); use canonical route here
 //   /intelligence → /activity (back-compat redirect); use canonical route here
 //   /channels → /connections?tab=messaging (redirect)
-//   /human → /chat (Phase 6 redirect)
+//   /human → the Human surface (first-class tab)
 interface RouteCheck {
   hash: string;
   markers: string[];
@@ -55,10 +55,9 @@ const ROUTES: RouteCheck[] = [
   },
   { hash: '/rewards', markers: ['Rewards', 'Referral', 'Credits', 'Earn', 'Invite'] },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
-  // Brain page (the old /activity & /intelligence pages were retired; the
-  // Subconscious surface and memory live here now). Tabs: Graph, Memory,
-  // Sources, Subconscious, Sync.
-  { hash: '/brain', markers: ['Graph', 'Memory', 'Subconscious', 'Sources'] },
+  // Brain page (the old /activity & /intelligence pages were retired; memory
+  // lives here now). Tabs: Graph, Memory, Sources, Sync.
+  { hash: '/brain', markers: ['Graph', 'Memory', 'Sources'] },
   {
     hash: '/home',
     markers: [

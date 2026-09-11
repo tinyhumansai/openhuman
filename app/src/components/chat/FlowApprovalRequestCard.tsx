@@ -92,7 +92,7 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
           <p className="font-semibold text-amber-900 dark:text-amber-100">
             {t('chat.flowApproval.title')}
           </p>
-          <p className="mt-1 break-words text-amber-800/90 dark:text-amber-200/90">
+          <p className="mt-1 wrap-break-word text-amber-800/90 dark:text-amber-200/90">
             {request.summary || t('chat.flowApproval.fallback')}
           </p>
         </>
@@ -110,7 +110,9 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
             <span className="font-mono text-amber-950 dark:text-amber-100">{request.flow_id}</span>
           </p>
 
-          {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+          {errorMsg && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+          )}
         </>
       }
       actions={actions}

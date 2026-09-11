@@ -7,6 +7,11 @@ pub use ops::{
     normalize_task_key, reuse_decision, task_title_from_prompt, upsert_running,
 };
 pub use types::{
-    DurableSubagentSession, DurableSubagentSessionSummary, DurableSubagentStatus,
-    SubagentSessionSelector, SubagentSessionStore, SubagentSessionUpsert,
+    DurableSubagentSessionSummary, DurableSubagentStatus, SubagentSessionSelector,
+    SubagentSessionStore, SubagentSessionUpsert,
 };
+// Test-only since the `harness-subagent-audit` debug binary (and the
+// `orchestration::harness_audit` facade it needed) were removed: production
+// callers reach the session records through `DurableSubagentSessionSummary`.
+#[cfg(test)]
+pub use types::DurableSubagentSession;

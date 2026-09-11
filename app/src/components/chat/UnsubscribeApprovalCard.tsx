@@ -56,17 +56,15 @@ export const UnsubscribeApprovalCard: React.FC<Props> = ({ payload }) => {
   if (payload.action !== 'unsubscribe' || payload.status !== 'pending_approval') return null;
 
   return (
-    <div className="border border-line dark:border-gray-800 rounded-lg p-4 my-2 bg-surface-muted dark:bg-gray-900">
+    <div className="border border-line rounded-lg p-4 my-2 bg-surface-muted">
       <div className="flex items-start gap-3">
         <div className="text-xl">📧</div>
         <div className="flex-1">
-          <h4 className="font-semibold text-sm text-content dark:text-gray-100">
+          <h4 className="font-semibold text-sm text-content">
             {t('chat.unsubscribeApproval.title')}
           </h4>
-          <p className="text-sm text-content-secondary dark:text-gray-400 mt-1">
-            {payload.metadata.message}
-          </p>
-          <div className="text-xs text-content-muted mt-2 font-mono break-all bg-surface-subtle dark:bg-gray-800 p-2 rounded">
+          <p className="text-sm text-content-secondary mt-1">{payload.metadata.message}</p>
+          <div className="text-xs text-content-muted mt-2 font-mono break-all bg-surface-subtle p-2 rounded">
             {payload.metadata.unsubscribe_link}
           </div>
 

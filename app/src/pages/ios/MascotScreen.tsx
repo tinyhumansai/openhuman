@@ -93,8 +93,8 @@ const MascotChatTranscript: FC<TranscriptProps> = ({ messages }) => {
             className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-snug
               ${
                 msg.role === 'user'
-                  ? 'bg-[#4A83DD] text-white rounded-br-sm'
-                  : 'bg-surface/10 text-white/90 rounded-bl-sm'
+                  ? 'bg-[#4A83DD] text-content-inverted rounded-br-sm'
+                  : 'bg-surface/10 text-content-inverted/90 rounded-bl-sm'
               }
               ${msg.streaming ? 'animate-pulse' : ''}`}>
             {msg.text}
@@ -122,7 +122,7 @@ const PTTButton: FC<PTTButtonProps> = ({ active, partialText, ariaLabel, onDown,
     <div className="relative flex flex-col items-center justify-center gap-1">
       {partialText && (
         <div
-          className="absolute bottom-full mb-2 px-3 py-1.5 rounded-lg bg-black/80 text-white text-xs
+          className="absolute bottom-full mb-2 px-3 py-1.5 rounded-lg bg-surface-overlay/80 text-content-inverted text-xs
                      max-w-[200px] text-center pointer-events-none z-10">
           {partialText}
         </div>
@@ -144,7 +144,7 @@ const PTTButton: FC<PTTButtonProps> = ({ active, partialText, ariaLabel, onDown,
                    ${
                      active
                        ? 'bg-[#4A83DD] border-[#4A83DD] scale-110'
-                       : 'bg-surface/10 border-white/20 opacity-80'
+                       : 'bg-surface/10 border-content-inverted/20 opacity-80'
                    }`}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z" fill="white" />
@@ -179,7 +179,7 @@ const Toast: FC<ToastProps> = ({ message, onDismiss }) => (
   <div
     role="alert"
     className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50
-               px-4 py-2 rounded-xl bg-red-500/90 text-white text-sm
+               px-4 py-2 rounded-xl bg-red-500/90 text-content-inverted text-sm
                max-w-[80%] text-center shadow-lg"
     onClick={onDismiss}>
     {message}
@@ -409,14 +409,14 @@ export const MascotScreen: FC = () => {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#0f1117] text-white overflow-hidden relative">
+    <div className="flex flex-col h-screen bg-[#0f1117] text-content-inverted overflow-hidden relative">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-safe-top py-3 border-b border-white/10 shrink-0">
+      <div className="flex items-center justify-between px-4 pt-safe-top py-3 border-b border-content-inverted/10 shrink-0">
         <div className="flex flex-col">
-          <span className="text-xs text-white/40 uppercase tracking-wide">
+          <span className="text-xs text-content-inverted/40 uppercase tracking-wide">
             {t('iosMascot.connectedTo')}
           </span>
-          <span className="text-sm font-medium text-white/90 truncate max-w-[200px]">
+          <span className="text-sm font-medium text-content-inverted/90 truncate max-w-[200px]">
             {pairedLabel}
           </span>
         </div>
@@ -439,7 +439,7 @@ export const MascotScreen: FC = () => {
       {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
 
       {/* Input row */}
-      <div className="shrink-0 border-t border-white/10 px-4 pb-safe-bottom py-3">
+      <div className="shrink-0 border-t border-content-inverted/10 px-4 pb-safe-bottom py-3">
         <form onSubmit={e => void handleSend(e)} className="flex items-center gap-3">
           {/* PTT button — Layer 6 live implementation */}
           <PTTButton
@@ -457,8 +457,8 @@ export const MascotScreen: FC = () => {
             onChange={e => setInputText(e.target.value)}
             disabled={isSending}
             placeholder={isSending ? t('iosMascot.thinking') : t('iosMascot.typeMessage')}
-            className="flex-1 bg-surface/10 text-white placeholder-white/30 rounded-xl
-                       px-4 py-3 text-sm outline-none border border-white/10
+            className="flex-1 bg-surface/10 text-content-inverted placeholder-content-inverted/30 rounded-xl
+                       px-4 py-3 text-sm outline-hidden border border-content-inverted/10
                        focus:border-[#4A83DD]/60 transition-colors
                        disabled:opacity-50"
           />

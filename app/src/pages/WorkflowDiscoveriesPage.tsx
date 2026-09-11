@@ -5,19 +5,20 @@
  * list stays focused on the user's saved workflows.
  */
 import SuggestedWorkflows from '../components/flows/SuggestedWorkflows';
-import PanelPage from '../components/layout/PanelPage';
+import SettingsTabbedPage from '../components/settings/layout/SettingsTabbedPage';
 import { useT } from '../lib/i18n/I18nContext';
 
 export default function WorkflowDiscoveriesPage() {
   const { t } = useT();
   return (
-    <PanelPage
-      testId="workflow-discoveries-page"
-      title={t('flows.discoveries.title')}
-      description={t('flows.discoveries.description')}>
-      <div className="p-4">
+    <div className="h-full p-4">
+      <SettingsTabbedPage
+        title={t('flows.discoveries.title')}
+        description={t('flows.discoveries.description')}>
+        {/* No wrapper padding: SettingsTabbedPage's body already renders
+            `min-h-full pb-4 pt-4`, so a `pt-4` here double-pads the top. */}
         <SuggestedWorkflows />
-      </div>
-    </PanelPage>
+      </SettingsTabbedPage>
+    </div>
   );
 }

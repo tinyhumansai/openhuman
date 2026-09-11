@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use openhuman_core::core::event_bus::{init_global, request_native_global, DEFAULT_CAPACITY};
+use openhuman_core::core::bus::BUS;
 use openhuman_core::openhuman::agent::bus::{
     register_agent_handlers, AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD,
 };
@@ -11,12 +11,12 @@ use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolContent, ToolR
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
-use tinyagents::harness::model::{
+use tinyinference::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
@@ -61,12 +61,12 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.capture(&request, false);
         self.pop_response()
     }
 
-    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyinference::Result<ModelStream> {
         self.capture(&request, true);
         let response = self.pop_response()?;
         let mut items = vec![ModelStreamItem::Started];
@@ -85,13 +85,13 @@ impl ScriptedModel {
         });
     }
 
-    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+    fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("script exhausted fallback")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 
@@ -185,6 +185,7 @@ fn tool_response(name: &str, args: serde_json::Value) -> ModelResponse {
         raw: None,
         resolved_model: None,
         continue_turn: None,
+            served_from_cache: false,
     }
 }
 
@@ -199,9 +200,9 @@ async fn run_turn(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 ) -> Result<AgentTurnResponse, String> {
-    init_global(DEFAULT_CAPACITY);
+    openhuman_core::core::bus::init().await.expect("bus init");
     register_agent_handlers();
-    request_native_global::<AgentTurnRequest, AgentTurnResponse>(
+    BUS.native().request::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         AgentTurnRequest {
             turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(

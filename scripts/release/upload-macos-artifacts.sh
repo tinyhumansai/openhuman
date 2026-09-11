@@ -15,6 +15,10 @@ VERSION="${3:?}"
 ARCH="${4:?}"
 UPLOAD_REPO="${UPLOAD_REPO:-tinyhumansai/openhuman}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/release/tauri-signer.sh
+. "$SCRIPT_DIR/tauri-signer.sh"
+
 # ── Re-upload DMG ────────────────────────────────────────────────────────────
 DMG_PATH="$(find "$BUNDLE_DIR/dmg" -name '*.dmg' -maxdepth 1 2>/dev/null | head -1)"
 if [ -n "$DMG_PATH" ]; then
@@ -42,13 +46,12 @@ if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
     exit 1
   fi
 
-  # Tauri CLI reads the key from env and writes <file>.sig alongside.
-  # TAURI_SIGNING_PRIVATE_KEY_PASSWORD is optional (may be empty for unencrypted key).
+  # Signs via the npm @tauri-apps/cli the lane installs, and fails the job if no
+  # signer is available -- shipping an updater tarball whose .sig is missing or
+  # stale breaks updates for every installed client (#5658).
   echo "[upload] Signing updater tarball with Tauri signer..."
-  cargo tauri signer sign --private-key "$TAURI_SIGNING_PRIVATE_KEY" "$APP_ZIP"
-
-  if [ ! -f "${APP_ZIP}.sig" ]; then
-    echo "[upload] ERROR: ${APP_ZIP}.sig was not produced" >&2
+  if ! tauri_signer_sign "$APP_ZIP"; then
+    echo "[upload] ERROR: could not sign ${APP_ZIP}; refusing to upload an unsignatured updater artifact" >&2
     exit 1
   fi
 

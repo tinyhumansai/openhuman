@@ -78,10 +78,10 @@ async fn store_errors_surface_unchanged() {
 
 /// The starvation shape from #5156: several conversation operations in flight at
 /// once on a runtime with a **single** async worker. Each one contends for the
-/// store's process-global mutex, so with the calls made inline the single worker
-/// is parked in `lock()` and nothing else on the runtime can be polled. Off the
-/// blocking pool they all complete, and a plain cooperative task keeps being
-/// polled while they do.
+/// same store scope, so with the calls made inline the single worker can be
+/// parked in blocking disk or lock work and nothing else on the runtime can be
+/// polled. Off the blocking pool they all complete, and a plain cooperative
+/// task keeps being polled while they do.
 ///
 /// The cooperative ticker alone would not prove that: its 64 yields can all
 /// retire before any store task even reaches the lock, so it would stay green

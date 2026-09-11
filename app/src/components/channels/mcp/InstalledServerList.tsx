@@ -135,15 +135,15 @@ const InstalledServerList = ({
 
                 return (
                   <li key={server.server_id}>
-                    <button
-                      type="button"
+                    <Button
+                      variant="tertiary"
                       data-server-id={server.server_id}
                       onClick={() => onSelect(server.server_id)}
                       onKeyDown={handleItemKeyDown}
-                      className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                      className={`h-auto w-full justify-start gap-2.5 rounded-lg px-3 py-2.5 text-left font-normal ${
                         isSelected
-                          ? 'bg-primary-50 dark:bg-primary-500/15 border border-primary-200 dark:border-primary-500/30'
-                          : 'hover:bg-surface-hover border border-transparent'
+                          ? 'border border-primary-200 bg-primary-50 dark:border-primary-500/30 dark:bg-primary-500/15'
+                          : 'border border-transparent'
                       }`}>
                       <span
                         className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
@@ -163,7 +163,7 @@ const InstalledServerList = ({
                           </span>
                         )}
                       </span>
-                    </button>
+                    </Button>
                   </li>
                 );
               })}

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration as StdDuration;
 
 use chrono::Utc;
@@ -30,7 +30,9 @@ use openhuman_core::openhuman::memory::{
     RecallContextRequest, RecallMemoriesRequest, RecallNamespaceParams, WriteMemoryFileRequest,
 };
 use openhuman_core::openhuman::memory::sources::readers::SourceReader;
-use openhuman_core::openhuman::memory::sources::sync::sync_source;
+// The engine's own source pipeline. `memory::sources::sync` is host-side now and
+// carries only `derive_scopes`; `sync_source` stayed upstream because nothing in
+// `src/` calls it any more (#5560).
 use openhuman_core::openhuman::memory::sources::{ContentType, MemorySourceEntry, SourceKind};
 use openhuman_core::openhuman::threads::ops as thread_ops;
 use openhuman_core::openhuman::threads::welcome_migration::migrate_welcome_agent_artifacts;
@@ -103,6 +105,19 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn ensure_memory_seams(config: Arc<openhuman_core::openhuman::config::Config>) {
+    std::thread::Builder::new()
+        .name("round20-memory-seams".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            #[cfg(feature = "modules")]
+            openhuman_core::openhuman::modules::memory::set_modules_policy(config);
+        })
+        .expect("spawn round20 memory seam installer")
+        .join()
+        .expect("round20 memory seam installer panicked");
 }
 
 fn tempdir() -> TempDir {
@@ -278,7 +293,6 @@ async fn round20_app_state_quarantines_directory_state_and_uses_stored_user_on_h
     );
     assert_eq!(snap.session_token.as_deref(), Some("round20.remote.token"));
     assert!(!snap.analytics_enabled);
-    assert!(!snap.meet_auto_orchestrator_handoff);
 
     std::fs::remove_file(harness.app_state_file()).expect("remove app-state file");
     std::fs::create_dir_all(harness.app_state_file()).expect("directory at app-state path");
@@ -392,121 +406,10 @@ fn round20_credentials_profiles_cover_legacy_plaintext_errors_and_active_edges()
 }
 
 #[tokio::test]
-async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_network() {
-    let _lock = env_lock();
-    let harness = setup("http://127.0.0.1:9");
-    let config = harness.config().await;
-
-    let rss = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
-    let mut missing_url = source_entry("rss-missing-url", SourceKind::RssFeed);
-    assert_eq!(
-        rss.list_items(&missing_url, &config)
-            .await
-            .expect_err("rss url required"),
-        "rss source requires a url"
-    );
-
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("bind feed fixture");
-    let feed_url = format!("http://{}", listener.local_addr().expect("addr"));
-    let server = tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            let mut req = [0_u8; 1024];
-            let _ = stream.read(&mut req).await;
-            let response =
-                "HTTP/1.1 200 OK\r\ncontent-type: text/xml\r\ncontent-length: 10\r\n\r\nnot-a-feed";
-            let _ = stream.write_all(response.as_bytes()).await;
-            let _ = stream.shutdown().await;
-        }
-    });
-    missing_url.url = Some(feed_url);
-    let feed_err = rss
-        .list_items(&missing_url, &config)
-        .await
-        .expect_err("unrecognized feed rejected");
-    assert!(feed_err.contains("unrecognized feed format"));
-    let _ = server.await;
-
-    // GitHub reader portion requires a real `gh` on PATH to shadow with our
-    // fake. Skip on CI containers that lack `gh` — without it the reader
-    // falls through to the real GitHub API and rate-limits.
-    let gh_available = std::process::Command::new("gh")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    let tmp = tempdir();
-    let bin = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh_round20(&script);
-    let git_stub = bin.join("git");
-    std::fs::write(&git_stub, "#!/usr/bin/env bash\nexit 1\n").expect("write fake git");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&git_stub)
-            .expect("metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&git_stub, perms).expect("chmod fake git");
-    }
-    let old_path = std::env::var("PATH").unwrap_or_default();
-    let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
-
-    let github = openhuman_core::openhuman::memory::sources::readers::github::GithubReader;
-    let mut entry = source_entry("github-round20", SourceKind::GithubRepo);
-    entry.url = Some("git@github.com:tinyhumansai/openhuman.git".to_string());
-    if !gh_available {
-        eprintln!("skipping github reader assertions: gh CLI not available");
-    } else {
-        let items = github
-            .list_items(&entry, &config)
-            .await
-            .expect("github list via fake gh");
-        assert!(items.iter().any(|item| item.id == "commit:def456"));
-        assert!(items.iter().any(|item| item.id == "issue:20"));
-
-        let pr = github
-            .read_item(&entry, "pr:21", &config)
-            .await
-            .expect("read merged pr");
-        assert_eq!(pr.content_type, ContentType::Markdown);
-        assert!(pr.body.contains("merged at 2026-05-29T01:00:00Z"));
-        assert_eq!(
-            pr.metadata.get("merged").and_then(Value::as_bool),
-            Some(true)
-        );
-
-        let bad_issue = github
-            .read_item(&entry, "issue:not-a-number", &config)
-            .await
-            .expect_err("bad issue number");
-        assert!(bad_issue.contains("invalid issue number"));
-    }
-
-    let mut disabled = source_entry("disabled-twitter", SourceKind::TwitterQuery);
-    disabled.enabled = false;
-    let disabled_err = sync_source(disabled, config.clone())
-        .await
-        .expect_err("disabled sync rejected");
-    assert!(disabled_err.contains("is disabled"));
-
-    let twitter = source_entry("twitter-round20", SourceKind::TwitterQuery);
-    sync_source(twitter, config)
-        .await
-        .expect("twitter placeholder is reported by background task");
-    tokio::time::sleep(StdDuration::from_millis(25)).await;
-}
-
-#[tokio::test]
 async fn round20_memory_documents_files_and_envelopes_cover_success_and_failure_paths() {
     let _lock = env_lock();
     let harness = setup("http://127.0.0.1:9");
+    ensure_memory_seams(Arc::new(harness.config().await));
 
     let init = memory_init(MemoryInitRequest {
         jwt_token: Some("ignored-round20".to_string()),

@@ -4,7 +4,14 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
+
+use super::git_operations_config::{
+    disallowed_config_refusal, first_disallowed_repo_config_key, hardened_git,
+};
+use super::git_operations_render::{
+    render_branch_markdown, render_log_markdown, render_status_markdown,
+};
 
 /// Git operations tool for structured repository management.
 /// Provides safe, parsed git operations with JSON output.
@@ -31,8 +38,8 @@ impl GitOperationsTool {
     /// `ToolExecutionContext::from_run_context`. Otherwise falls back to the
     /// tool's configured `action_dir`, which preserves the non-isolated
     /// behaviour exactly. See #3376, #4249 (08.5).
-    fn effective_action_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
-        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+    fn effective_action_dir_for_context(&self, context: Option<&dyn ToolRunContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
             tracing::debug!(
                 workspace_root = %workspace.root.display(),
                 policy_id = %workspace.policy_id,
@@ -90,11 +97,15 @@ impl GitOperationsTool {
     }
 
     async fn run_git_command_in(&self, cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
-        let output = tokio::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .await?;
+        if let Some(key) = first_disallowed_repo_config_key(cwd).await? {
+            tracing::debug!(
+                "[git_operations] refusing to run git: dir={}, disallowed_config_key={key}",
+                cwd.display()
+            );
+            anyhow::bail!("{}", disallowed_config_refusal(cwd, &key))
+        }
+
+        let output = hardened_git(cwd).args(args).output().await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -163,7 +174,20 @@ impl GitOperationsTool {
         // Validate files argument against injection patterns
         self.sanitize_git_args(files)?;
 
-        let mut git_args = vec!["diff", "--unified=3"];
+        // `--no-ext-diff` is where external-diff suppression has to live: it is
+        // a diff-command flag, and the `-c diff.external=` that used to stand in
+        // for it made git exec the empty string instead of disabling anything.
+        //
+        // `--no-textconv` is a SEPARATE mechanism and needs its own flag.
+        // `--no-ext-diff` covers `diff.external` and `diff.<driver>.command`;
+        // it does not touch `diff.<driver>.textconv`, which a `.gitattributes`
+        // line (`*.bin diff=evil`) can select and which git then EXECUTES to
+        // render a binary file as text. Verified against a scratch repo: with
+        // `--no-ext-diff` alone the textconv script ran; adding
+        // `--no-textconv` it did not. `hardened_git`'s `-c` list cannot close
+        // this — driver names are arbitrary, so there is no finite set of keys
+        // to neutralise, and the suppression has to be a command flag.
+        let mut git_args = vec!["diff", "--no-ext-diff", "--no-textconv", "--unified=3"];
         if cached {
             git_args.push("--cached");
         }
@@ -510,7 +534,7 @@ impl Tool for GitOperationsTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         self.execute_in_context(args, context).await
     }
@@ -524,7 +548,7 @@ impl GitOperationsTool {
     async fn execute_in_context(
         &self,
         args: serde_json::Value,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let operation = match args.get("operation").and_then(|v| v.as_str()) {
             Some(op) => op,
@@ -533,24 +557,48 @@ impl GitOperationsTool {
             }
         };
 
-        // Check if we're in a git repository. A linked worktree's `.git` is a
-        // file (a gitdir pointer), not a directory — `exists()` covers both.
         let effective_dir = self.effective_action_dir_for_context(context);
-        if !effective_dir.join(".git").exists() {
-            // Try to find .git in parent directories
-            let mut current_dir = effective_dir.as_path();
-            let mut found_git = false;
-            while current_dir.parent().is_some() {
-                if current_dir.join(".git").exists() {
-                    found_git = true;
-                    break;
-                }
-                current_dir = current_dir.parent().unwrap();
-            }
-
-            if !found_git {
-                return Ok(ToolResult::error("Not in a git repository"));
-            }
+        // Validate the repository instead of trusting the presence of a `.git`
+        // path. This handles linked-worktree gitfiles and rejects malformed
+        // ancestor markers that Git itself cannot open.
+        //
+        // Probed with `hardened_git` directly rather than through
+        // `run_git_command_in`. That helper refuses up front when the
+        // repository config carries a disallowed key, and routing the probe
+        // through it made the refusal indistinguishable from "there is no
+        // repository here": `is_ok_and` discarded the error, so a repo setting
+        // `core.fsmonitor` / `credential.helper` / `core.worktree` was reported
+        // as **not a git repository** and the message naming the key was lost
+        // (#5494). `first_disallowed_repo_config_key` even documents the
+        // ordering this restores — it expects the caller to have established
+        // that `dir` is a repository before it runs.
+        //
+        // Safe to probe unguarded: `hardened_git` already neutralises every
+        // config key that names a command, so this invocation cannot be turned
+        // into an execution primitive, and the real command below still goes
+        // through the full allow-list check in `run_git_command_in`.
+        let is_worktree = hardened_git(&effective_dir)
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .await
+            .is_ok_and(|output| {
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+            });
+        if !is_worktree {
+            // The probe can fail *because* the repository is misconfigured: a
+            // `core.worktree` redirect git cannot follow, or a config file it
+            // cannot read. Ask the guard before concluding there is nothing
+            // here, so a refusal is reported as a refusal — "Not in a git
+            // repository" is both false and un-actionable for those (#5494).
+            return Ok(
+                match first_disallowed_repo_config_key(&effective_dir).await {
+                    Ok(Some(key)) => {
+                        ToolResult::error(disallowed_config_refusal(&effective_dir, &key))
+                    }
+                    Err(error) => ToolResult::error(error.to_string()),
+                    Ok(None) => ToolResult::error("Not in a git repository"),
+                },
+            );
         }
 
         // Check autonomy level for write operations
@@ -591,87 +639,10 @@ impl GitOperationsTool {
     }
 }
 
-fn render_status_markdown(result: &serde_json::Map<String, serde_json::Value>) -> String {
-    let mut out = String::new();
-    if let Some(branch) = result.get("branch").and_then(|v| v.as_str()) {
-        out.push_str(&format!("**branch**: `{branch}`\n"));
-    }
-    let clean = result
-        .get("clean")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if clean {
-        out.push_str("_Working tree clean._\n");
-        return out;
-    }
-    let push_section = |out: &mut String, label: &str, items: Option<&Vec<serde_json::Value>>| {
-        if let Some(items) = items {
-            if !items.is_empty() {
-                out.push_str(&format!("\n**{label}** ({})\n", items.len()));
-                for it in items {
-                    if let (Some(p), Some(s)) = (
-                        it.get("path").and_then(|v| v.as_str()),
-                        it.get("status").and_then(|v| v.as_str()),
-                    ) {
-                        out.push_str(&format!("- `{s}` {p}\n"));
-                    }
-                }
-            }
-        }
-    };
-    push_section(
-        &mut out,
-        "staged",
-        result.get("staged").and_then(|v| v.as_array()),
-    );
-    push_section(
-        &mut out,
-        "unstaged",
-        result.get("unstaged").and_then(|v| v.as_array()),
-    );
-    if let Some(items) = result.get("untracked").and_then(|v| v.as_array()) {
-        if !items.is_empty() {
-            out.push_str(&format!("\n**untracked** ({})\n", items.len()));
-            for it in items {
-                if let Some(p) = it.as_str() {
-                    out.push_str(&format!("- {p}\n"));
-                }
-            }
-        }
-    }
-    out
-}
-
-fn render_log_markdown(commits: &[serde_json::Value]) -> String {
-    if commits.is_empty() {
-        return "_No commits._".to_string();
-    }
-    let mut out = format!("# Commits ({})\n", commits.len());
-    for c in commits {
-        let hash = c.get("hash").and_then(|v| v.as_str()).unwrap_or("");
-        let short = hash.get(..hash.len().min(8)).unwrap_or(hash);
-        let author = c.get("author").and_then(|v| v.as_str()).unwrap_or("");
-        let date = c.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        let msg = c.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        out.push_str(&format!("- `{short}` {msg} _(by {author}, {date})_\n"));
-    }
-    out
-}
-
-fn render_branch_markdown(current: &str, branches: &[serde_json::Value]) -> String {
-    let mut out = format!("**current**: `{current}`\n\n## Branches\n");
-    for b in branches {
-        let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let cur = b.get("current").and_then(|v| v.as_bool()).unwrap_or(false);
-        if cur {
-            out.push_str(&format!("- **{name}** ← current\n"));
-        } else {
-            out.push_str(&format!("- {name}\n"));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 #[path = "git_operations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "git_operations_config_tests.rs"]
+mod config_tests;

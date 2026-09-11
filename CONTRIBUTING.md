@@ -25,7 +25,8 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 
 - Read the [README](README.md) for product context.
 - Use [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) for the current system architecture.
-- Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and discussions before starting work.
+- Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and [Discussions](https://github.com/tinyhumansai/openhuman/discussions) before starting work.
+- Stuck rather than fixing something? [SUPPORT.md](SUPPORT.md) routes questions, install trouble, memory behavior, and model problems to the right category; [`docs/community/discussions.md`](docs/community/discussions.md) explains how those threads are triaged.
 - For security issues, follow [SECURITY.md](SECURITY.md) and do not file public issues.
 
 ## Development Setup

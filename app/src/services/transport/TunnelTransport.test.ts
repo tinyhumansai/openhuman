@@ -450,4 +450,16 @@ describe('TunnelTransport', () => {
 
     await transport.close();
   });
+  it('a per-call timeoutMs replaces the tunnel default for that call', async () => {
+    // The RPC client forwards a caller's budget (a memory source sync runs for
+    // minutes); the tunnel must apply it instead of its own default.
+    const coreKp = generateKeypair();
+    const transport = new TunnelTransport('http://backend', 'CHAN_005', coreB64(coreKp), 'tok');
+    await connectTransport(transport);
+
+    const callP = transport.call('openhuman.ping', {}, { timeoutMs: 20 });
+    await expect(callP).rejects.toThrow(/\[tunnel\] openhuman.ping timed out after 20ms/);
+
+    await transport.close();
+  }, 10000);
 });

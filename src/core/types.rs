@@ -4,7 +4,6 @@
 //! responses, as well as maintaining application state across subsystems.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 /// Standard response structure for commands that include execution logs.
 ///
@@ -65,11 +64,12 @@ impl InvocationResult {
 /// - `logs.is_empty()` -> `inv.value`
 /// - `!logs.is_empty()` -> `{ "result": inv.value, "logs": inv.logs }`
 pub fn invocation_to_rpc_json(inv: InvocationResult) -> serde_json::Value {
-    if inv.logs.is_empty() {
-        inv.value
-    } else {
-        json!({ "result": inv.value, "logs": inv.logs })
-    }
+    // Delegates rather than repeating the rule. This function and
+    // `RpcOutcome::into_cli_compatible_json` are the two ways a controller
+    // result reaches a caller, and they carried independent copies of the same
+    // six lines — so a fix to one would have silently left the other on the old
+    // shape. See `crate::rpc::apply_log_envelope` (#6080).
+    crate::rpc::apply_log_envelope(inv.value, inv.logs)
 }
 
 /// Standard JSON-RPC 2.0 request format.
@@ -157,6 +157,8 @@ pub struct AppState {
 /// - [`HostKind::Docker`] — containerised deployment. Same env honour-rule as
 ///   CLI; the host shell is not the user's desktop so there is no UI surface
 ///   to route an approval prompt to.
+/// - [`HostKind::Library`] — an in-process embedding host that supplies its own
+///   provider credentials and does not participate in OpenHuman app login.
 ///
 /// [`HostKind::detect_standalone`] picks `Docker` vs `Cli` for standalone
 /// invocations using the standard Docker signals (`/.dockerenv` or
@@ -168,6 +170,7 @@ pub enum HostKind {
     TauriShell,
     Cli,
     Docker,
+    Library,
 }
 
 impl HostKind {
@@ -205,6 +208,7 @@ impl HostKind {
             HostKind::TauriShell => "tauri-shell",
             HostKind::Cli => "cli",
             HostKind::Docker => "docker",
+            HostKind::Library => "library",
         }
     }
 }
@@ -216,7 +220,7 @@ impl HostKind {
 /// - `override_ignored`: true when an env override was seen but suppressed
 ///   (Tauri shell with override-requested)
 /// - `gate_disabled_by_override`: true when an env override was honored and
-///   the gate is intentionally not installed (CLI / Docker)
+///   the gate is intentionally not installed (CLI / Docker / library)
 ///
 /// Extracted as a pure function so the host-aware policy can be exercised
 /// in isolation without standing up the full `bootstrap_core_runtime` path.
@@ -237,7 +241,7 @@ pub fn approval_gate_boot_decision(
             override_ignored: env_override_requested,
             gate_disabled_by_override: false,
         },
-        HostKind::Cli | HostKind::Docker => ApprovalGateBootDecision {
+        HostKind::Cli | HostKind::Docker | HostKind::Library => ApprovalGateBootDecision {
             install_gate: !env_override_requested,
             override_ignored: false,
             gate_disabled_by_override: env_override_requested,
@@ -286,6 +290,48 @@ mod tests {
         assert!(json.get("logs").is_some());
         assert_eq!(json["result"], json!({"data": true}));
         assert_eq!(json["logs"][0], "info");
+    }
+
+    /// The two controller return paths must produce byte-identical JSON for the
+    /// same (value, logs) pair.
+    ///
+    /// `RpcOutcome::into_cli_compatible_json` (the registry path, 152 call
+    /// sites) and `invocation_to_rpc_json` (the dynamic-dispatch path) used to
+    /// carry independent copies of the same envelope rule. Nothing linked them,
+    /// so a fix or a normalisation applied to one would have left the other
+    /// answering the old shape — the divergence would have been invisible until
+    /// a caller hit the wrong path. Both now delegate to
+    /// `rpc::apply_log_envelope`; this asserts they still agree, so a future
+    /// edit cannot re-fork them without failing here.
+    ///
+    /// It deliberately asserts *agreement*, not a particular shape: the shape
+    /// itself is the open question in #6080, and pinning it here would enshrine
+    /// the defect as intended behaviour.
+    #[test]
+    fn both_controller_return_paths_apply_the_same_log_envelope() {
+        for (value, logs) in [
+            (json!({ "data": true }), Vec::<String>::new()),
+            (json!({ "data": true }), vec!["one".to_string()]),
+            (json!(null), vec!["log on a null value".to_string()]),
+            (json!([1, 2, 3]), Vec::<String>::new()),
+            // A value that already carries a `result` key: the envelope must
+            // treat it as opaque data, not as an envelope to flatten.
+            (json!({ "result": "inner", "logs": ["not mine"] }), vec![]),
+        ] {
+            let via_dispatch = invocation_to_rpc_json(InvocationResult {
+                value: value.clone(),
+                logs: logs.clone(),
+            });
+            let via_registry = crate::rpc::RpcOutcome::new(value.clone(), logs.clone())
+                .into_cli_compatible_json()
+                .expect("a serde_json::Value always serializes");
+
+            assert_eq!(
+                via_dispatch, via_registry,
+                "the dispatch and registry paths disagreed for value={value} logs={logs:?}; \
+                 both must go through rpc::apply_log_envelope"
+            );
+        }
     }
 
     #[test]
@@ -374,6 +420,7 @@ mod tests {
         assert_eq!(HostKind::TauriShell.tag(), "tauri-shell");
         assert_eq!(HostKind::Cli.tag(), "cli");
         assert_eq!(HostKind::Docker.tag(), "docker");
+        assert_eq!(HostKind::Library.tag(), "library");
     }
 
     #[test]
@@ -381,6 +428,7 @@ mod tests {
         assert!(HostKind::TauriShell.is_desktop_shell());
         assert!(!HostKind::Cli.is_desktop_shell());
         assert!(!HostKind::Docker.is_desktop_shell());
+        assert!(!HostKind::Library.is_desktop_shell());
     }
 
     #[test]
@@ -434,7 +482,7 @@ mod tests {
 
     #[test]
     fn standalone_with_no_env_override_installs_gate_silently() {
-        for host in [HostKind::Cli, HostKind::Docker] {
+        for host in [HostKind::Cli, HostKind::Docker, HostKind::Library] {
             let d = approval_gate_boot_decision(host, false);
             assert!(
                 d.install_gate,

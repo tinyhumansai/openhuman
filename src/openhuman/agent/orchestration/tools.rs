@@ -41,7 +41,7 @@ pub(crate) use dispatch::dispatch_subagent;
 pub use agent_prepare_context::{
     run_context_scout, run_context_scout_with_catalog, AgentPrepareContextTool,
 };
-pub use archetype_delegation::ArchetypeDelegationTool;
+pub use archetype_delegation::{ArchetypeDelegationTool, DelegationTarget};
 pub use close_subagent::CloseSubagentTool;
 pub use continue_subagent::ContinueSubagentTool;
 pub use delegate_graph::DelegateGraphTool;

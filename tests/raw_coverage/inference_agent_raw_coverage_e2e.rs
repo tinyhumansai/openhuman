@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
 
 use openhuman_core::core::all::RegisteredController;
-use openhuman_core::core::event_bus::testing::BUS_HANDLER_LOCK;
-use openhuman_core::core::event_bus::{register_native_global, request_native_global};
+use openhuman_core::core::bus_testing::BUS_HANDLER_LOCK;
+use openhuman_core::core::bus::BUS;
 use openhuman_core::openhuman::agent::bus::{
     register_agent_handlers, AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD,
 };
@@ -100,9 +100,7 @@ use openhuman_core::openhuman::agent::Agent;
 use openhuman_core::openhuman::agent::{
     all_agent_controller_schemas, all_agent_registered_controllers,
 };
-use openhuman_core::openhuman::memory::agent::memory_loader::{
-    collect_recall_citations, DefaultMemoryLoader, MemoryLoader, CROSS_CHAT_HEADER,
-};
+use openhuman_core::openhuman::memory::agent::memory_loader::collect_recall_citations;
 use openhuman_core::openhuman::agent::registry::agents::BUILTINS;
 use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
@@ -145,10 +143,10 @@ use openhuman_core::openhuman::inference::temperature::{glob_match, temperature_
 use openhuman_core::openhuman::inference::voice::cloud_transcribe::{
     transcribe_cloud, CloudTranscribeOptions,
 };
-use openhuman_core::openhuman::inference::voice::hallucination::{
-    is_hallucinated_output, HallucinationMode,
-};
 use openhuman_core::openhuman::inference::voice::local_speech::{synthesize_piper, PiperOptions};
+use openhuman_core::openhuman::modules::voice::{
+    is_hallucinated, HallucinationMode, VoiceCallError,
+};
 use openhuman_core::openhuman::inference::voice::postprocess::cleanup_transcription;
 use openhuman_core::openhuman::inference::{
     all_inference_controller_schemas, all_inference_registered_controllers,
@@ -172,7 +170,7 @@ use openhuman_core::openhuman::agent::tinyagents::thread_context::{current_threa
 use openhuman_core::openhuman::threads::todos::ops::BoardLocation;
 use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{Tool, ToolResult, ToolSpec};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 
 static ENV_LOCK: &std::sync::OnceLock<std::sync::Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
@@ -248,7 +246,7 @@ impl ChatModel<()> for EchoModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         Ok(ModelResponse::assistant(
             request
                 .messages
@@ -1517,7 +1515,6 @@ named = ["todo", "plan_exit"]
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,
@@ -1811,33 +1808,9 @@ async fn inference_public_helpers_cover_context_windows_and_sentiment_fallbacks(
 }
 
 #[tokio::test]
-async fn agent_memory_loader_public_paths_cover_working_prior_cross_and_citations() {
+async fn agent_memory_recall_citations_filter_by_relevance_and_truncate() {
     let memory = ScriptedMemory {
         normal: Arc::new(vec![
-            memory_entry(
-                "working-1",
-                "working.user.timezone",
-                "Prefers UTC for release plans.",
-                Some("profile"),
-                None,
-                Some(0.95),
-            ),
-            memory_entry(
-                "working-low",
-                "working.user.low",
-                "Too weak to include.",
-                Some("profile"),
-                None,
-                Some(0.1),
-            ),
-            memory_entry(
-                "prior-1",
-                "high.preference.database",
-                "[high preference] Prefer Postgres for production services.\n[provenance] {\"thread_id\":\"older\"}",
-                Some("conversation_memory"),
-                Some("older-thread"),
-                Some(0.92),
-            ),
             memory_entry(
                 "citation-1",
                 "project.summary",
@@ -1855,44 +1828,8 @@ async fn agent_memory_loader_public_paths_cover_working_prior_cross_and_citation
                 Some(0.2),
             ),
         ]),
-        cross_session: Arc::new(vec![
-            memory_entry(
-                "episodic-cross:old",
-                "old-thread",
-                "Earlier chat mentioned round seven coverage priorities.",
-                Some("episodic_log"),
-                Some(r#"{"thread_id":"old-thread","client_id":"client"}"#),
-                Some(0.91),
-            ),
-            memory_entry(
-                "episodic-cross:current",
-                "current-thread",
-                "Current chat should be excluded from cross chat context.",
-                Some("episodic_log"),
-                Some(r#"{"thread_id":"current-thread"}"#),
-                Some(0.99),
-            ),
-        ]),
+        cross_session: Arc::new(Vec::new()),
     };
-
-    let context = with_thread_id("current-thread", async {
-        DefaultMemoryLoader::new(5, 0.4)
-            .with_max_chars(2_000)
-            .load_context(&memory, "coverage priorities")
-            .await
-    })
-    .await
-    .expect("memory context");
-
-    assert!(context.contains("[User working memory]"));
-    assert!(context.contains("working.user.timezone (as of 2026-05-29)"));
-    assert!(!context.contains("Too weak to include"));
-    assert!(context.contains("[Prior conversations]"));
-    assert!(context.contains("(noted 2026-05-29) [high preference] Prefer Postgres"));
-    assert!(!context.contains("[provenance]"));
-    assert!(context.contains(CROSS_CHAT_HEADER.trim_end()));
-    assert!(context.contains("Earlier chat mentioned round seven coverage priorities"));
-    assert!(!context.contains("Current chat should be excluded"));
 
     let citations = collect_recall_citations(&memory, "project", 8, 0.4)
         .await
@@ -1905,13 +1842,6 @@ async fn agent_memory_loader_public_paths_cover_working_prior_cross_and_citation
     assert!(!citations
         .iter()
         .any(|citation| citation.id == "citation-low"));
-
-    let tiny_budget = DefaultMemoryLoader::new(5, 0.4)
-        .with_max_chars("[User working memory]\n".len() - 1)
-        .load_context(&memory, "coverage priorities")
-        .await
-        .expect("tiny budget context");
-    assert!(tiny_budget.is_empty());
 }
 
 #[tokio::test]
@@ -2024,17 +1954,21 @@ async fn inference_provider_factory_and_classifiers_cover_user_state_edges() {
     config.reasoning_provider = None;
     config.memory_provider = None;
     assert_eq!(provider_for_role("chat", &config), "mock:chat-model@0.25");
+    // #6109: `reasoning` is unset, and an unset route no longer borrows a
+    // sibling's BYOK provider. It resolves through `primary_cloud` like every
+    // other unset workload — the same answer `memory` gives just below.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "mock:chat-model@0.25"
+        "openhuman",
+        "an unset reasoning route must not inherit chat's BYOK provider"
     );
     assert_eq!(provider_for_role("memory", &config), "openhuman");
 }
 
 #[tokio::test]
 async fn inference_openhuman_backend_provider_covers_authless_and_streaming_edges() {
-    use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    use tinyinference::message::Message;
+    use tinyinference::model::{ChatModel, ModelRequest};
 
     let state_dir = tempdir().expect("openhuman provider state");
     let provider = OpenHumanBackendModel::new(
@@ -2157,28 +2091,29 @@ async fn inference_http_models_router_uses_isolated_config_and_dedupes_entries()
         .all(|id| !id.ends_with("@0.2") && !id.ends_with("@0.4")));
 }
 
-#[test]
-fn inference_voice_and_triage_parsers_cover_public_error_shapes() {
-    assert!(is_hallucinated_output(
-        "[ blank_audio ]",
-        HallucinationMode::Conversation
+#[tokio::test]
+async fn inference_voice_and_triage_parsers_cover_public_error_shapes() {
+    // Hallucination detection moved behind the `tinyvoice` TinyBus module
+    // (see `openhuman::modules::voice`); this crate no longer has the
+    // pure-string detection logic to test directly. Without a loaded module
+    // the client must degrade to `Unavailable` rather than guess — that
+    // contract is what stays testable from this crate, and it is asserted
+    // for every mode the caller can request.
+    let workspace = tempdir().expect("voice module workspace");
+    let mut config = Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        ..Config::default()
+    };
+    config.modules.enabled = true;
+    config.modules.allow_download = false;
+
+    assert!(matches!(
+        is_hallucinated(&config, "[ blank_audio ]", HallucinationMode::Conversation).await,
+        Err(VoiceCallError::Unavailable(_))
     ));
-    assert!(is_hallucinated_output(
-        "Thank you. Thank you. Thank you.",
-        HallucinationMode::Conversation
-    ));
-    assert!(is_hallucinated_output(
-        "it it it it it it hello",
-        HallucinationMode::Conversation
-    ));
-    assert!(is_hallucinated_output("okay", HallucinationMode::Dictation));
-    assert!(!is_hallucinated_output(
-        "okay",
-        HallucinationMode::Conversation
-    ));
-    assert!(!is_hallucinated_output(
-        "no no no please stop",
-        HallucinationMode::Conversation
+    assert!(matches!(
+        is_hallucinated(&config, "okay", HallucinationMode::Dictation).await,
+        Err(VoiceCallError::Unavailable(_))
     ));
 
     let fenced = parse_triage_decision(
@@ -2489,7 +2424,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
     AgentDefinitionRegistry::init_global_builtins().expect("init builtins");
 
     register_agent_handlers();
-    let blocked = match request_native_global::<AgentTurnRequest, AgentTurnResponse>(
+    let blocked = match BUS.native().request::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         AgentTurnRequest {
             turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
@@ -2524,7 +2459,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
         .to_string()
         .contains("Prompt blocked by security policy"));
 
-    register_native_global::<AgentTurnRequest, AgentTurnResponse, _, _>(
+    BUS.native().register::<AgentTurnRequest, AgentTurnResponse, _, _>(
         AGENT_RUN_TURN_METHOD,
         |req| async move {
             assert_eq!(req.channel_name, "triage");
@@ -2562,7 +2497,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
     assert_eq!(decision.resolution_path.as_str(), "cloud");
     assert!(!decision.used_local);
 
-    register_native_global::<AgentTurnRequest, AgentTurnResponse, _, _>(
+    BUS.native().register::<AgentTurnRequest, AgentTurnResponse, _, _>(
         AGENT_RUN_TURN_METHOD,
         |_req| async move { Err("budget exceeded: add credits before retrying".into()) },
     );
@@ -2593,7 +2528,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
 
     let attempts = Arc::new(AtomicUsize::new(0));
     let attempts_for_handler = Arc::clone(&attempts);
-    register_native_global::<AgentTurnRequest, AgentTurnResponse, _, _>(
+    BUS.native().register::<AgentTurnRequest, AgentTurnResponse, _, _>(
         AGENT_RUN_TURN_METHOD,
         move |_req| {
             let attempts_for_handler = Arc::clone(&attempts_for_handler);
@@ -2714,14 +2649,8 @@ async fn inference_local_controllers_and_presets_cover_public_paths() {
     .expect("download progress");
     assert!(downloads.is_object());
 
-    let whisper_status = call(
-        controller(&local_registered, "whisper_install_status"),
-        json!({}),
-    )
-    .await
-    .expect("whisper install status");
-    assert_eq!(whisper_status.pointer("/engine"), Some(&json!("whisper")));
-
+    // `whisper_install_status` was deleted with the bundled whisper.cpp
+    // engine; piper is the only install-status controller left.
     let piper_status = call(
         controller(&local_registered, "piper_install_status"),
         json!({}),
@@ -2990,13 +2919,12 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         "You are a narrow coverage sub-agent.".into(),
         false,
         false,
-        true,
     )
     .build(&ctx)
     .expect("subagent builder");
     assert!(built.contains("coverage soul"));
     assert!(built.contains("coverage profile"));
-    assert!(built.contains("Output style"));
+    assert!(built.contains("# Writing style"));
 
     let narrow = render_subagent_system_prompt(
         workspace.path(),
@@ -3008,7 +2936,6 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         SubagentRenderOptions {
             include_safety_preamble: true,
             include_identity: true,
-            include_skills_catalog: false,
             include_profile: true,
             include_memory_md: true,
         },
@@ -3038,10 +2965,9 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
     assert!(PromptTool::with_schema("x", "desc", "{}".into())
         .parameters_schema
         .is_some());
-    let options = SubagentRenderOptions::from_definition_flags(false, true, false, true, false);
+    let options = SubagentRenderOptions::from_definition_flags(false, true, true, false);
     assert!(options.include_identity);
     assert!(!options.include_safety_preamble);
-    assert!(options.include_skills_catalog);
     assert!(!options.include_profile);
     assert!(options.include_memory_md);
 }
@@ -3109,6 +3035,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
         AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
         RUN_WORKFLOW_TOOL_NAME,
     };
+    use openhuman_core::openhuman::agent::orchestration::tools::DelegationTarget;
     use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
 
     let ask = AskClarificationTool::new();
@@ -3157,7 +3084,11 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
     let archetype = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".into(),
-        agent_id: "researcher".into(),
+        // Constructed explicitly rather than via `.into()`: `DelegationTarget`
+        // exists so a routing target cannot be an anonymous string, and an
+        // ambient `From<&str>` would let any `.into()` mint one silently —
+        // re-opening the hole the newtype was added to close.
+        agent_id: DelegationTarget("researcher".into()),
         tool_description: "Use for research.".into(),
     };
     assert_eq!(
@@ -3233,7 +3164,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
 #[tokio::test]
 async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges() {
-    let memory = Arc::new(RecordingMemory::default());
+    let _memory = Arc::new(RecordingMemory::default());
     let security = Arc::new(SecurityPolicy::default());
 
     assert_eq!(FacetClass::parse(" Tooling "), Some(FacetClass::Tooling));
@@ -3247,7 +3178,7 @@ async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges
         "[pinned] (class=style) verbosity: terse"
     );
 
-    let remember = RememberPreferenceTool::new(memory.clone(), security.clone());
+    let remember = RememberPreferenceTool::new(security.clone());
     assert_eq!(remember.permission_level().to_string(), "Write");
     let remember_missing = remember
         .execute(json!({ "class": "style", "key": "verbosity" }))
@@ -3266,23 +3197,16 @@ async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges
         .expect("bad key is handled");
     assert!(remember_bad_key.output().contains("invalid characters"));
 
-    let remembered = remember
-        .execute(json!({
-            "class": "style",
-            "key": "verbosity",
-            "value": "  terse\nanswers only  "
-        }))
-        .await
-        .expect("remember preference");
-    assert!(!remembered.is_error);
-    assert!(remembered.output().contains("Preference saved"));
-    let stored = memory.stored.lock().expect("stored").clone();
-    assert!(stored.iter().any(|record| {
-        record.namespace == PINNED_PREFERENCES_NAMESPACE
-            && record.key == "pinned/style/verbosity"
-            && record.content == "[pinned] (class=style) verbosity: terse answers only"
-            && record.category == MemoryCategory::Core
-    }));
+    // The success path is deliberately not asserted here any more. Since the
+    // module port the tool resolves the *bound* driver instead of being handed
+    // a memory handle, so a write no longer lands in the stub above — and with
+    // no driver bound in an integration test it cannot succeed at all. The
+    // argument-validation paths above still run, because they fail before
+    // touching memory.
+    //
+    // Storage behaviour is covered by the tool's own tests in
+    // `agent/tools/remember_preference.rs`, which carry the same
+    // OPENHUMAN_MODULE_PATH gate as the rest of the module-dependent suite.
 
     assert_eq!(PrefScope::parse("GENERAL"), Some(PrefScope::General));
     assert_eq!(
@@ -3296,7 +3220,7 @@ async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges
         PrefScope::General.other_namespace()
     );
 
-    let save = SavePreferenceTool::new(memory.clone(), security);
+    let save = SavePreferenceTool::new(security);
     assert_eq!(save.permission_level().to_string(), "Write");
     let bad_category = save
         .execute(json!({
@@ -3328,18 +3252,9 @@ async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges
         .expect("secret-like preference is rejected");
     assert!(secret_like.output().contains("looks like a secret"));
 
-    let saved = save
-        .execute(json!({
-            "topic": "reply_style",
-            "value": "Use concise release notes.",
-            "category": "general"
-        }))
-        .await
-        .expect("save preference");
-    assert!(!saved.is_error);
-    assert!(saved.output().contains("Saved general preference"));
-    let forgotten = memory.forgotten.lock().expect("forgotten").clone();
-    assert!(forgotten.iter().any(|(_, key)| key == "reply_style"));
+    // Success path omitted for the same reason as `remember_preference` above:
+    // the tool resolves the bound driver, so the write never reaches this
+    // stub and cannot succeed without one bound.
 
     let envelope = TriggerEnvelope::from_external(
         "triage-public-events",
@@ -3965,6 +3880,10 @@ async fn agent_debug_prompt_dump_and_identity_rendering_cover_file_layouts() {
             workspace_dir: workspace.path().join("ws"),
             text: "# planner\nbody\n".to_string(),
             tool_names: vec!["todo".to_string(), "delegate".to_string()],
+            tool_specs: vec![
+                json!({"name": "todo", "description": "manage todos", "parameters": {}}),
+                json!({"name": "delegate", "description": "delegate a task", "parameters": {}}),
+            ],
             skill_tool_count: 0,
         },
         DumpedPrompt {
@@ -3975,6 +3894,11 @@ async fn agent_debug_prompt_dump_and_identity_rendering_cover_file_layouts() {
             workspace_dir: workspace.path().join("ws"),
             text: "# integrations\nbody\n".to_string(),
             tool_names: vec!["GMAIL_SEND_EMAIL".to_string()],
+            tool_specs: vec![json!({
+                "name": "GMAIL_SEND_EMAIL",
+                "description": "send an email",
+                "parameters": {},
+            })],
             skill_tool_count: 1,
         },
     ];
@@ -4009,6 +3933,32 @@ async fn agent_debug_prompt_dump_and_identity_rendering_cover_file_layouts() {
     let summary_text = std::fs::read_to_string(summary.summary_path).expect("summary");
     assert!(summary_text.contains("planner/coverage"));
     assert!(summary_text.contains("integrations_agent@gmail+calendar"));
+
+    // Each per-dump tools sidecar carries the rendered tool schemas verbatim,
+    // one entry per tool in `tool_names` order — compare the full payload
+    // (name, description and parameters), not just count and names.
+    let planner_tools: Vec<Value> = serde_json::from_str(
+        &std::fs::read_to_string(
+            workspace.path().join("1_planner_coverage.tools.json"),
+        )
+        .expect("planner tools sidecar"),
+    )
+    .expect("planner tools json");
+    assert_eq!(planner_tools.as_slice(), dumps[0].tool_specs.as_slice());
+
+    let integrations_tools: Vec<Value> = serde_json::from_str(
+        &std::fs::read_to_string(
+            workspace
+                .path()
+                .join("2_integrations_agent_gmail_calendar.tools.json"),
+        )
+        .expect("integrations tools sidecar"),
+    )
+    .expect("integrations tools json");
+    assert_eq!(
+        integrations_tools.as_slice(),
+        dumps[1].tool_specs.as_slice()
+    );
 
     let identities = openhuman_core::openhuman::agent::prompts::render_connected_identities();
     assert_eq!(identities, "");

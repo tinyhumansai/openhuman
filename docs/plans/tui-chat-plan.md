@@ -76,9 +76,9 @@ gated behind a Cargo feature `tui`.
   (assert error contains "tui feature disabled" and NOT "unknown namespace").
 - Builds (Apple Silicon: prefix `GGML_NATIVE=OFF`):
   - `cargo check --manifest-path Cargo.toml`
-  - `cargo check --no-default-features --features tokenjuice-treesitter` (disabled build)
+  - `cargo check --no-default-features` (disabled build)
   - `cargo test --lib core::cli` and the tui module tests, both feature directions:
-    `cargo test --lib --no-default-features --features tokenjuice-treesitter core::`
+    `cargo test --lib --no-default-features core::`
 - `node scripts/ci/check-feature-forwarding.mjs` passes with the allowlist entry.
 - `cargo fmt` clean.
 

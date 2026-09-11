@@ -108,7 +108,7 @@ describe('useMascotManifest', () => {
 
   // The fetch-failure path is covered end-to-end in manifestService.test.ts
   // ("rejects when the network fails and there is no snapshot") and the
-  // entry:null fallback render is covered in HumanPage.test.tsx, so the hook's
+  // entry:null fallback render is covered in ChatMascotOverlay.test.tsx, so the hook's
   // catch branch is exercised without re-triggering a vitest-v4 quirk where
   // awaiting into a settling (but handled) rejection surfaces as a test error.
 });

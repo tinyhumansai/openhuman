@@ -83,7 +83,7 @@ The agent never sees the choice; it just calls into `Sandbox::run(...)` and the 
 | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `policy.rs`, `policy_tests.rs`                                | `SecurityPolicy`, `AutonomyLevel`, risk classification, action tracking.  |
 | `traits.rs`                                                   | `Sandbox` trait + `NoopSandbox` fallback.                                 |
-| `detect.rs`                                                   | `create_sandbox`: best-available-backend selection.                      |
+| `detect.rs`                                                   | `create_sandbox`: best-available-backend selection.                       |
 | `docker.rs` / `bubblewrap.rs` / `firejail.rs` / `landlock.rs` | Per-backend `Sandbox` implementations.                                    |
 | `core.rs`                                                     | `redact()` + small shared helpers (has its own `#[cfg(test)] mod tests`). |
 | `audit.rs`                                                    | Append-only audit log types.                                              |

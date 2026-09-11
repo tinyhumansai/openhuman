@@ -11,7 +11,7 @@
 //!    inherits the parent's tools verbatim).
 //! 4. Builds a narrow system prompt that strips the sections the
 //!    definition asks to omit (`omit_identity`, `omit_memory_context`,
-//!    `omit_safety_preamble`, `omit_skills_catalog`).
+//!    `omit_safety_preamble`).
 //! 5. Runs the child turn on the TinyAgents harness (`ops::graph` →
 //!    [`crate::openhuman::agent::tinyagents::run_turn_via_tinyagents_shared`]) using
 //!    the parent's [`crate::openhuman::inference::provider::Provider`], then
@@ -21,9 +21,15 @@
 //! This module is the OpenHuman **build pipeline** around that TinyAgents
 //! run: definition lookup/allowlists, archetype prompt assembly, toolkit
 //! filtering, sandbox/action-root narrowing, checkpoint/handback, and
-//! worker-thread transcript mirroring. Mapping it onto TinyAgents
-//! `SubAgent`/`SubAgentSession`/subgraph primitives is tracked in WP-5 of
-//! `docs/tinyagents-migration-plan-2026-07-22.md`.
+//! worker-thread transcript mirroring.
+//!
+//! It **stays host-owned**. The generic contract it would map onto already
+//! exists as `tinyagents_harness::host::HostCapabilities` — `ContextComposer`,
+//! `DefinitionRegistry`, `SecurityGate`, `ModelResolver` are exactly the phases
+//! named above. So the open question is not whether to relocate this pipeline
+//! into the crate (that would push product policy across the GPL boundary) but
+//! whether OpenHuman should implement those four traits and let the crate
+//! drive. That is its own design-gated package, not part of WP-5.
 //!
 //! ## Layout
 //!
@@ -49,6 +55,7 @@ mod types;
 pub use autonomous::{
     autonomous_iter_cap, subagent_iter_cap_with_autonomous_lift, with_autonomous_iter_cap,
 };
+pub(crate) use ops::is_safe_task_id;
 pub use ops::run_subagent;
 pub use types::{
     SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,

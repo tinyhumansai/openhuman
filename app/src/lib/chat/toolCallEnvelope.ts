@@ -57,11 +57,52 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * non-envelope shape (including malformed JSON, or JSON with unexpected
  * top-level keys) passes `raw` straight through unchanged.
  */
+/**
+ * Memo cache for `unwrapToolCallEnvelope`, keyed on the raw message string.
+ *
+ * WHY: `ChatThreadView` calls this for every agent message inside a `.map()` in
+ * its render body, and that component re-renders on every streamed token. The
+ * work is therefore O(transcript) per token. Worse, the common case is the
+ * expensive one: ordinary prose is not JSON, so `JSON.parse` THROWS and is
+ * caught, once per message per token.
+ *
+ * A settled message's content string never changes again, so it hits this cache
+ * forever. The streaming tail's string changes with every token and will always
+ * miss — that is correct and costs one parse, the same as before.
+ *
+ * BOUNDED because the key is message text: an unbounded map would retain every
+ * message of every thread for the life of the session. Insertion-ordered `Map`
+ * eviction of the oldest entry gives LRU-ish behaviour for the access pattern
+ * that matters here (a transcript is re-read front-to-back), without the
+ * bookkeeping of a true LRU.
+ */
+const UNWRAP_CACHE_LIMIT = 512;
+const unwrapCache = new Map<string, UnwrappedToolCallMessage>();
+
 export function unwrapToolCallEnvelope(raw: string): UnwrappedToolCallMessage {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     return { text: raw ?? '', toolNames: [] };
   }
 
+  const cached = unwrapCache.get(raw);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const result = computeUnwrapToolCallEnvelope(raw);
+
+  if (unwrapCache.size >= UNWRAP_CACHE_LIMIT) {
+    // Insertion-ordered Map: the first key is the oldest inserted.
+    const oldest = unwrapCache.keys().next();
+    if (!oldest.done) {
+      unwrapCache.delete(oldest.value);
+    }
+  }
+  unwrapCache.set(raw, result);
+  return result;
+}
+
+function computeUnwrapToolCallEnvelope(raw: string): UnwrappedToolCallMessage {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

@@ -1,20 +1,35 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use log::{debug, warn};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use log::debug;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::model_ids;
 use crate::openhuman::inference::paths::{
-    config_root_dir, resolve_piper_binary, resolve_stt_model_path, resolve_tts_voice_path,
-    resolve_whisper_binary,
+    config_root_dir, resolve_piper_binary, resolve_tts_voice_path,
 };
 use crate::openhuman::inference::types::{LocalAiSpeechResult, LocalAiTtsResult};
+use crate::openhuman::voice::{create_stt_provider, effective_stt_provider};
 
-use super::whisper_engine;
 use super::LocalAiService;
 
 const LOG_PREFIX: &str = "[speech]";
+
+/// MIME hint sent to the backend for a given file extension. The backend
+/// forwards the blob to its STT provider, which sniffs the container; a wrong
+/// hint only costs a re-sniff, so an unknown extension falls back to WAV.
+fn mime_for_extension(ext: &str) -> &'static str {
+    match ext {
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "m4a" | "mp4" => "audio/mp4",
+        "ogg" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
+        "flac" => "audio/flac",
+        _ => "audio/wav",
+    }
+}
 
 impl LocalAiService {
     pub async fn transcribe(
@@ -25,11 +40,18 @@ impl LocalAiService {
         self.transcribe_with_prompt(config, audio_path, None).await
     }
 
-    /// Transcribe audio with an optional initial_prompt for vocabulary bias.
+    /// Transcribe an audio file on disk.
     ///
-    /// The `initial_prompt` is passed to whisper.cpp's `initial_prompt` parameter,
-    /// biasing the decoder toward the supplied words/phrases. Used for custom
-    /// dictionary support and conversational continuity.
+    /// **No longer local.** The bundled whisper.cpp engine (in-process
+    /// `whisper-rs` and the `whisper-cli` subprocess) was removed along with
+    /// its model downloader. Dispatch through the configured hosted STT engine
+    /// (`voice_server.stt_engine` or an explicit provider override), so every
+    /// dictation entry point honors the user's selected provider.
+    ///
+    /// `initial_prompt` (the custom-dictionary vocabulary bias) is accepted for
+    /// signature compatibility and **ignored**: the backend transcription
+    /// endpoint exposes no prompt field. It is logged so a user wondering why
+    /// their dictionary stopped biasing results can find the reason.
     pub async fn transcribe_with_prompt(
         &self,
         config: &Config,
@@ -37,163 +59,53 @@ impl LocalAiService {
         initial_prompt: Option<&str>,
     ) -> Result<LocalAiSpeechResult, String> {
         let started = Instant::now();
-        if !config.local_ai.runtime_enabled {
-            return Err("local ai is disabled".to_string());
+        if let Some(prompt) = initial_prompt.filter(|p| !p.trim().is_empty()) {
+            debug!(
+                "{LOG_PREFIX} initial_prompt ({} chars) ignored — the hosted STT endpoint has no \
+                 prompt/vocabulary-bias parameter",
+                prompt.len()
+            );
         }
 
-        // Lazily load in-process whisper engine when enabled. Serialize load attempts
-        // so concurrent requests do not spawn duplicate heavy contexts.
-        if config.local_ai.whisper_in_process && !whisper_engine::is_loaded(&self.whisper) {
-            let lazy_load_started = Instant::now();
-            let _load_guard = self.whisper_load_lock.lock().await;
-            if !whisper_engine::is_loaded(&self.whisper) {
-                if let Ok(model_path) = resolve_stt_model_path(config) {
-                    let handle = self.whisper.clone();
-                    let model = std::path::PathBuf::from(model_path);
-                    debug!(
-                        "{LOG_PREFIX} whisper in-process enabled but unloaded; loading model lazily"
-                    );
-                    // Detect GPU at lazy-load time so whisper can use acceleration.
-                    let device = crate::openhuman::inference::device::detect_device_profile();
-                    let gpu = device.has_gpu;
-                    let gpu_desc = device.gpu_description.clone();
-                    let load_result = tokio::task::spawn_blocking(move || {
-                        whisper_engine::load_engine(&handle, &model, gpu, gpu_desc.as_deref())
-                    })
-                    .await
-                    .map_err(|e| format!("whisper load task join error: {e}"))?;
-                    if let Err(e) = load_result {
-                        warn!("{LOG_PREFIX} lazy in-process whisper load failed: {e}");
-                    } else {
-                        debug!(
-                            "{LOG_PREFIX} lazy in-process whisper load complete (elapsed_ms={})",
-                            lazy_load_started.elapsed().as_millis()
-                        );
-                    }
-                } else {
-                    debug!(
-                        "{LOG_PREFIX} lazy in-process load skipped: STT model path not resolved"
-                    );
-                }
-            }
-        }
-
-        // Try in-process whisper engine first (offloaded to a blocking thread).
-        if whisper_engine::is_loaded(&self.whisper) {
-            debug!("{LOG_PREFIX} using in-process whisper engine for {audio_path}");
-            let handle = self.whisper.clone();
-            let path = audio_path.to_string();
-            let prompt_owned = initial_prompt.map(String::from);
-            let in_process_started = Instant::now();
-            let result = tokio::task::spawn_blocking(move || {
-                Self::transcribe_in_process_inner(&handle, &path, prompt_owned.as_deref())
-            })
-            .await
-            .map_err(|e| format!("whisper task join error: {e}"))?;
-            match result {
-                Ok(text) => {
-                    debug!(
-                        "{LOG_PREFIX} in-process transcription complete (elapsed_ms={}, total_elapsed_ms={})",
-                        in_process_started.elapsed().as_millis(),
-                        started.elapsed().as_millis()
-                    );
-                    self.status.lock().stt_state = "ready".to_string();
-                    return Ok(LocalAiSpeechResult {
-                        text,
-                        model_id: model_ids::effective_stt_model_id(config),
-                    });
-                }
-                Err(e) => {
-                    warn!("{LOG_PREFIX} in-process transcription failed, falling back to CLI: {e}");
-                }
-            }
-        }
-
-        // Fallback: subprocess per call (original behavior).
-        debug!("{LOG_PREFIX} using whisper-cli subprocess for {audio_path}");
-        let subprocess_started = Instant::now();
-        let result = self.transcribe_subprocess(config, audio_path).await;
-        debug!(
-            "{LOG_PREFIX} subprocess transcription finished (elapsed_ms={}, total_elapsed_ms={})",
-            subprocess_started.elapsed().as_millis(),
-            started.elapsed().as_millis()
-        );
-        result
-    }
-
-    /// Transcribe using the in-process whisper-rs engine. Runs on a blocking
-    /// thread — takes the engine handle directly so it can be `Send`.
-    fn transcribe_in_process_inner(
-        handle: &whisper_engine::WhisperEngineHandle,
-        audio_path: &str,
-        initial_prompt: Option<&str>,
-    ) -> Result<String, String> {
         let path = std::path::Path::new(audio_path);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
+        let mime = mime_for_extension(&ext);
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("audio.wav")
+            .to_string();
 
-        let result = if ext == "wav" {
-            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)?
-        } else {
-            warn!(
-                "{LOG_PREFIX} non-WAV input ({ext}), attempting WAV decode anyway \
-                 (may fail — use ffmpeg conversion for best results)"
-            );
-            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)?
-        };
-
+        let provider_name = effective_stt_provider(config);
         debug!(
-            "{LOG_PREFIX} in-process result: avg_logprob={:.3}, segments={}/{}",
-            result.avg_logprob.unwrap_or(0.0),
-            result.segments_accepted,
-            result.segments_total
+            "{LOG_PREFIX} configured STT dispatch provider={provider_name} path={audio_path} mime={mime}"
         );
-        Ok(result.text)
-    }
-
-    /// Original subprocess-based transcription via whisper-cli.
-    async fn transcribe_subprocess(
-        &self,
-        config: &Config,
-        audio_path: &str,
-    ) -> Result<LocalAiSpeechResult, String> {
-        let whisper_bin = resolve_whisper_binary().ok_or_else(|| {
-            "whisper.cpp binary not found. Set WHISPER_BIN or install whisper-cli.".to_string()
-        })?;
-        let model_path = resolve_stt_model_path(config)?;
-        let output = tokio::process::Command::new(whisper_bin)
-            .args(["-m", &model_path, "-f", audio_path])
-            .output()
+        let bytes = tokio::fs::read(path)
             .await
-            .map_err(|e| format!("failed to run whisper.cpp: {e}"))?;
-        if !output.status.success() {
-            let exit_code = output.status.code();
-            // Windows-specific: STATUS_DLL_NOT_FOUND means the system VC++
-            // runtime is missing. Surface an actionable message instead of a
-            // cryptic exit code, with backoff to avoid Sentry floods.
-            if crate::openhuman::inference::paths::is_dll_not_found_exit(exit_code) {
-                let maybe_msg =
-                    crate::openhuman::inference::paths::report_dll_not_found(LOG_PREFIX);
-                let display_msg = maybe_msg.unwrap_or_else(|| {
-                    format!("{LOG_PREFIX} whisper-cli unavailable (STATUS_DLL_NOT_FOUND — check VC++ Redistributable)")
-                });
-                return Err(display_msg);
-            }
-            return Err(format!(
-                "whisper.cpp failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+            .map_err(|e| format!("failed to read audio file {audio_path}: {e}"))?;
+        if bytes.is_empty() {
+            return Err(format!("audio file {audio_path} is empty"));
         }
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if text.is_empty() {
-            return Err("whisper.cpp returned empty transcript".to_string());
-        }
+        let audio_base64 = BASE64.encode(&bytes);
+
+        let provider =
+            create_stt_provider(&provider_name, "", config).map_err(|error| error.to_string())?;
+        let outcome = provider
+            .transcribe(config, &audio_base64, Some(mime), Some(&file_name), None)
+            .await?;
+        debug!(
+            "{LOG_PREFIX} configured STT complete (provider={} bytes={} elapsed_ms={})",
+            outcome.value.provider,
+            bytes.len(),
+            started.elapsed().as_millis()
+        );
         self.status.lock().stt_state = "ready".to_string();
         Ok(LocalAiSpeechResult {
-            text,
+            text: outcome.value.text,
             model_id: model_ids::effective_stt_model_id(config),
         })
     }

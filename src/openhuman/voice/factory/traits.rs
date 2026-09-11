@@ -16,8 +16,8 @@ use crate::rpc::RpcOutcome;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SttResult {
     pub text: String,
-    /// Lowercase provider id (`"cloud"`, `"whisper"`) — exposed on the wire
-    /// so the renderer can show the user which path actually ran.
+    /// Lowercase provider id (`"cloud"`, or the third-party slug) — exposed on
+    /// the wire so the renderer can show which engine actually ran.
     pub provider: String,
 }
 
@@ -25,12 +25,12 @@ pub struct SttResult {
 // Provider traits
 // ---------------------------------------------------------------------------
 
-/// Speech-to-text provider abstraction. Cloud (backend proxy) and Whisper
-/// (local subprocess / in-process) both implement this; the factory hands
-/// the caller a boxed trait object.
+/// Speech-to-text provider abstraction. The backend proxy and every
+/// third-party engine implement this; the factory hands the caller a boxed
+/// trait object.
 #[async_trait]
 pub trait SttProvider: Send + Sync {
-    /// Stable identifier used in logs and config (`"cloud"`, `"whisper"`).
+    /// Stable identifier used in logs and config (`"cloud"`, `"external"`).
     fn name(&self) -> &'static str;
 
     /// Transcribe a single base64-encoded audio blob.
@@ -46,6 +46,16 @@ pub trait SttProvider: Send + Sync {
         file_name: Option<&str>,
         language: Option<&str>,
     ) -> Result<RpcOutcome<SttResult>, String>;
+
+    /// The model selected when the provider was constructed.
+    ///
+    /// Test-only: factory tests use this to ensure an empty external-provider
+    /// model defers to the registry default rather than inheriting the cloud
+    /// proxy's model id.
+    #[cfg(test)]
+    fn configured_model(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Text-to-speech provider abstraction. Cloud returns rich viseme alignment
@@ -64,4 +74,18 @@ pub trait TtsProvider: Send + Sync {
         text: &str,
         voice: Option<&str>,
     ) -> Result<RpcOutcome<ReplySpeechResult>, String>;
+
+    /// The voice this provider was constructed with, or `None` when it defers
+    /// to a downstream default (cloud omits `voice_id` so the backend picks).
+    ///
+    /// Test-only, and deliberately so: the factory hands back a
+    /// `Box<dyn TtsProvider>`, so the voice a provider actually carries is
+    /// otherwise unobservable without a live synthesis call. That blind spot is
+    /// how a Piper voice id reached the cloud proxy unnoticed (#5355) — the
+    /// pre-existing factory tests asserted only [`TtsProvider::name`], which
+    /// stayed green throughout.
+    #[cfg(test)]
+    fn configured_voice(&self) -> Option<&str> {
+        None
+    }
 }

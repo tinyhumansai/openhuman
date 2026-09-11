@@ -30,7 +30,7 @@ interface Route {
 
 // Phase 2/3/6 IA revamp:
 //   /home        → /chat        (Phase 6 — /home is now the merged chat surface)
-//   /human       → /chat        (Phase 6 — back-compat redirect)
+//   /human       → renders the Human surface (first-class tab)
 //   /skills      → /connections (Phase 2 — back-compat redirect)
 //   /intelligence → /settings/notifications (Phase 3 — back-compat redirect)
 //   /activity     → /settings/notifications (back-compat redirect)
@@ -43,7 +43,6 @@ const ROUTES: Route[] = [
   { hash: '/connections' },
   { hash: '/rewards' },
   { hash: '/settings' },
-  { hash: '/agent-world' },
   { hash: '/flows' },
   // Orchestration folded under Brain; `/orchestration` now redirects to
   // `/brain?tab=orchestration`, so we assert the Brain destination instead

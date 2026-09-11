@@ -15,7 +15,7 @@ The iOS Companion lets you reach your desktop OpenHuman from your phone: you sca
 
 The desktop core is always the source of truth. The phone is a thin client. It does not run its own agent, it relays requests to the core and renders the results.
 
-***
+---
 
 ## What it is
 
@@ -23,7 +23,7 @@ Pairing is brokered by the Rust `devices` domain in the core. The core registers
 
 Once paired, the device shows up in **Settings → Devices** on the desktop with an online/offline dot, and can be revoked at any time.
 
-***
+---
 
 ## Pairing via QR code
 
@@ -52,43 +52,43 @@ Desktop core                         Backend relay              iOS app
 
 The QR payload (carried as an `openhuman://pair?...` deep link) contains the channel id (`cid`), a single-use pairing token (`pt`), the core's public key (`cpk`), an optional LAN URL (`rpc`), and an expiry (`exp`). The pairing token is single-use, hashed at rest on the backend, and the QR is rejected client-side once `exp` has passed (the backend enforces the real ~10 minute TTL).
 
-***
+---
 
 ## The end-to-end tunnel
 
 Confidentiality and integrity live entirely on the two endpoints. The exact primitives, from `src/openhuman/security/devices/crypto.rs`:
 
-* **Key agreement:** X25519 Diffie-Hellman. Each side has a long-term static keypair (the core's is in the QR; the device's is minted at scan time) plus an ephemeral keypair minted per session for forward secrecy.
-* **Session-key derivation:** HKDF-SHA256 over `ikm = static_dh || eph_dh`, salted with `client_eph_pub || server_eph_pub`. Two **directional** 32-byte subkeys are expanded with distinct info tags (`openhuman-tunnel/v1/c2s` and `openhuman-tunnel/v1/s2c`), so a frame one side seals can never decrypt under its own opener (closes the cross-direction reflection attack class).
-* **Frame cipher:** XChaCha20-Poly1305 (AEAD, 192-bit nonce). Wire format is `version(0x02) || nonce(24) || ciphertext+tag`, with a random nonce per frame.
-* **Replay protection:** a sliding window over the last 128 nonces seen per opener.
+- **Key agreement:** X25519 Diffie-Hellman. Each side has a long-term static keypair (the core's is in the QR; the device's is minted at scan time) plus an ephemeral keypair minted per session for forward secrecy.
+- **Session-key derivation:** HKDF-SHA256 over `ikm = static_dh || eph_dh`, salted with `client_eph_pub || server_eph_pub`. Two **directional** 32-byte subkeys are expanded with distinct info tags (`openhuman-tunnel/v1/c2s` and `openhuman-tunnel/v1/s2c`), so a frame one side seals can never decrypt under its own opener (closes the cross-direction reflection attack class).
+- **Frame cipher:** XChaCha20-Poly1305 (AEAD, 192-bit nonce). Wire format is `version(0x02) || nonce(24) || ciphertext+tag`, with a random nonce per frame.
+- **Replay protection:** a sliding window over the last 128 nonces seen per opener.
 
 Static DH authenticates the peer via the QR-code provenance; ephemeral DH means a later static-key leak cannot decrypt past traffic. The legacy single-key `version=0x01` frame shape is rejected with an explicit "re-pair required" error, so peers must re-pair after an upgrade. Outbound frames are capped at 64 KB.
 
-***
+---
 
 ## Transport strategies
 
 The phone may reach the core three ways. `TransportManager` (`app/src/services/transport/`) picks one from the saved `ConnectionProfile`; for a paired device it **races LAN against the tunnel** (2 s LAN timeout) and uses whichever answers `openhuman.ping` first.
 
-| Strategy | Class | When it's used | Trade-offs |
-| --- | --- | --- | --- |
-| **LAN HTTP** (`LanHttpTransport`) | Direct HTTP to the core's LAN `rpc_url` | Phone and desktop on the same network | Fastest, lowest latency. Requires same LAN; not encrypted by this layer (relies on local network trust). |
-| **Tunnel** (`TunnelTransport`) | E2E encrypted frames over the backend Socket.IO relay | Anywhere with internet; default fallback | Works across networks; X25519 + XChaCha20-Poly1305 end to end. Higher latency (relayed); depends on backend availability. |
-| **Cloud HTTP** (`CloudHttpTransport`) | HTTP to a cloud-hosted core endpoint | Profile `kind: "cloud"`, when LAN and tunnel are unreachable | Reachable from anywhere; depends on a hosted core and its own auth. |
+| Strategy                              | Class                                                 | When it's used                                               | Trade-offs                                                                                                                |
+| ------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **LAN HTTP** (`LanHttpTransport`)     | Direct HTTP to the core's LAN `rpc_url`               | Phone and desktop on the same network                        | Fastest, lowest latency. Requires same LAN; not encrypted by this layer (relies on local network trust).                  |
+| **Tunnel** (`TunnelTransport`)        | E2E encrypted frames over the backend Socket.IO relay | Anywhere with internet; default fallback                     | Works across networks; X25519 + XChaCha20-Poly1305 end to end. Higher latency (relayed); depends on backend availability. |
+| **Cloud HTTP** (`CloudHttpTransport`) | HTTP to a cloud-hosted core endpoint                  | Profile `kind: "cloud"`, when LAN and tunnel are unreachable | Reachable from anywhere; depends on a hosted core and its own auth.                                                       |
 
-***
+---
 
 ## Device management & revocation
 
 Paired devices are persisted by the core in SQLite (`{workspace_dir}/devices/devices.db`, table `paired_devices`): channel id, label, the device's public key, a SHA-256 hash of the core session token, and timestamps. The core's X25519 private key is stored encrypted at rest (via the OS keyring `SecretStore`) so handshakes survive a restart.
 
-* **List**: `devices_list` returns non-revoked devices, overlaying a live `peer_online` flag sourced from `tunnel:peer-status` (online status is never persisted).
-* **Revoke**: `devices_revoke` soft-deletes the device, tears down all in-memory and tunnel state for the channel, and publishes a `DeviceRevoked` event. Today revocation is local-side: the backend channel is left to expire via its pairing-token TTL (a backend revoke endpoint is a follow-up).
+- **List**: `devices_list` returns non-revoked devices, overlaying a live `peer_online` flag sourced from `tunnel:peer-status` (online status is never persisted).
+- **Revoke**: `devices_revoke` soft-deletes the device, tears down all in-memory and tunnel state for the channel, and publishes a `DeviceRevoked` event. Today revocation is local-side: the backend channel is left to expire via its pairing-token TTL (a backend revoke endpoint is a follow-up).
 
-***
+---
 
 ## See also
 
-* [Privacy & Security](privacy-and-security.md): how OpenHuman handles your data and keys.
-* [Voice](native-tools/voice.md): push-to-talk and dictation, the headline use case for a phone companion.
+- [Privacy & Security](privacy-and-security.md): how OpenHuman handles your data and keys.
+- [Voice](native-tools/voice.md): push-to-talk and dictation, the headline use case for a phone companion.

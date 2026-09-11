@@ -194,7 +194,16 @@ impl Tool for McpRegistryStatusTool {
 }
 
 /// List the tools advertised by a connected MCP server (discovery).
-pub struct McpRegistryListToolsTool;
+pub struct McpRegistryListToolsTool {
+    config: Arc<Config>,
+}
+impl McpRegistryListToolsTool {
+    /// Builds the tool over `config`.
+    #[must_use]
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
 #[async_trait]
 impl Tool for McpRegistryListToolsTool {
     fn name(&self) -> &str {
@@ -217,7 +226,7 @@ impl Tool for McpRegistryListToolsTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sid = req_str(&args, "server_id")?;
         emit!(
-            ops::mcp_clients_list_tools(sid).await,
+            ops::mcp_clients_list_tools(&self.config, sid).await,
             "mcp_registry_list_tools"
         )
     }
@@ -264,7 +273,16 @@ impl Tool for McpRegistryConnectTool {
 }
 
 /// Disconnect an MCP server.
-pub struct McpRegistryDisconnectTool;
+pub struct McpRegistryDisconnectTool {
+    config: Arc<Config>,
+}
+impl McpRegistryDisconnectTool {
+    /// Builds the tool over `config`.
+    #[must_use]
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
 #[async_trait]
 impl Tool for McpRegistryDisconnectTool {
     fn name(&self) -> &str {
@@ -286,14 +304,23 @@ impl Tool for McpRegistryDisconnectTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sid = req_str(&args, "server_id")?;
         emit!(
-            ops::mcp_clients_disconnect(sid).await,
+            ops::mcp_clients_disconnect(&self.config, sid).await,
             "mcp_registry_disconnect"
         )
     }
 }
 
 /// Call a tool on a connected MCP server.
-pub struct McpRegistryToolCallTool;
+pub struct McpRegistryToolCallTool {
+    config: Arc<Config>,
+}
+impl McpRegistryToolCallTool {
+    /// Builds the tool over `config`.
+    #[must_use]
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
 #[async_trait]
 impl Tool for McpRegistryToolCallTool {
     fn name(&self) -> &str {
@@ -322,7 +349,7 @@ impl Tool for McpRegistryToolCallTool {
         let tool_name = req_str(&args, "tool_name")?;
         let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
         emit!(
-            ops::mcp_clients_tool_call(sid, tool_name, arguments).await,
+            ops::mcp_clients_tool_call(&self.config, sid, tool_name, arguments).await,
             "mcp_registry_tool_call"
         )
     }
@@ -455,74 +482,5 @@ impl Tool for McpRegistryUninstallTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::tools::traits::ToolScope;
-
-    fn cfg() -> Arc<Config> {
-        Arc::new(Config::default())
-    }
-
-    #[test]
-    fn names_and_levels() {
-        assert_eq!(
-            McpRegistrySearchTool::new(cfg()).name(),
-            "mcp_registry_search"
-        );
-        assert_eq!(
-            McpRegistrySearchTool::new(cfg()).permission_level(),
-            PermissionLevel::ReadOnly
-        );
-        assert_eq!(
-            McpRegistryConnectTool::new(cfg()).permission_level(),
-            PermissionLevel::Execute
-        );
-        assert_eq!(
-            McpRegistryToolCallTool.permission_level(),
-            PermissionLevel::Execute
-        );
-        // Discovery tool: read-only, names match.
-        assert_eq!(McpRegistryListToolsTool.name(), "mcp_registry_list_tools");
-        assert_eq!(
-            McpRegistryListToolsTool.permission_level(),
-            PermissionLevel::ReadOnly
-        );
-        assert_eq!(
-            McpRegistryInstallTool::new(cfg()).permission_level(),
-            PermissionLevel::Write
-        );
-        assert_eq!(McpRegistrySearchTool::new(cfg()).scope(), ToolScope::All);
-    }
-
-    #[tokio::test]
-    async fn get_requires_qualified_name() {
-        let err = McpRegistryGetTool::new(cfg())
-            .execute(json!({}))
-            .await
-            .expect_err("missing qualified_name");
-        assert!(err.to_string().contains("qualified_name"));
-    }
-
-    #[tokio::test]
-    async fn list_tools_requires_server_id() {
-        let err = McpRegistryListToolsTool
-            .execute(json!({}))
-            .await
-            .expect_err("missing server_id");
-        assert!(err.to_string().contains("server_id"));
-    }
-
-    #[tokio::test]
-    async fn list_tools_errors_for_unconnected_server() {
-        // A server_id that is not in the live connection map surfaces a
-        // "connect first" hint rather than an empty success.
-        let err = McpRegistryListToolsTool
-            .execute(json!({ "server_id": "definitely-not-connected-uuid" }))
-            .await
-            .expect_err("unconnected server must error");
-        assert!(
-            err.to_string().contains("not connected"),
-            "expected connect-first hint, got: {err}"
-        );
-    }
-}
+#[path = "tools_tests.rs"]
+mod tests;

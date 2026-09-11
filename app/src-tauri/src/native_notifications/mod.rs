@@ -98,6 +98,7 @@ pub fn show_native_notification(
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::path::Path;
     use std::ptr::NonNull;
     use std::sync::mpsc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -114,6 +115,7 @@ mod macos {
     /// Read authorization status synchronously by blocking on
     /// `getNotificationSettingsWithCompletionHandler:`.
     pub(super) fn permission_state() -> Result<String, String> {
+        ensure_bundled_app()?;
         let center = UNUserNotificationCenter::currentNotificationCenter();
         let (tx, rx) = mpsc::channel::<String>();
         let completion = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
@@ -129,6 +131,7 @@ mod macos {
     /// `granted` if the user accepted (or had previously accepted),
     /// `denied` otherwise.
     pub(super) fn request_permission() -> Result<String, String> {
+        ensure_bundled_app()?;
         let center = UNUserNotificationCenter::currentNotificationCenter();
         let (tx, rx) = mpsc::channel::<bool>();
         let options = UNAuthorizationOptions::Alert
@@ -150,6 +153,7 @@ mod macos {
     /// call but the OS would drop the banner, which is exactly the
     /// "reports success but nothing appears" failure mode of #1152.
     pub(super) fn show(title: String, body: String, tag: Option<String>) -> Result<(), String> {
+        ensure_bundled_app()?;
         let state = permission_state()?;
         if !is_granted(&state) {
             log::warn!("[notify] show aborted: permission state={state}");
@@ -221,6 +225,38 @@ mod macos {
         matches!(state, "granted" | "provisional" | "ephemeral")
     }
 
+    /// `UNUserNotificationCenter` aborts an unbundled macOS process rather
+    /// than returning an error. `cargo tauri dev` runs exactly that shape, so
+    /// reject it before touching the Objective-C API.
+    fn ensure_bundled_app() -> Result<(), String> {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("could not determine macOS executable path: {error}"))?;
+        if is_bundled_app_executable(&executable) {
+            Ok(())
+        } else {
+            Err(
+                "native notifications are unavailable in an unbundled macOS dev process"
+                    .to_string(),
+            )
+        }
+    }
+
+    fn is_bundled_app_executable(executable: &Path) -> bool {
+        executable.parent().is_some_and(|macos_dir| {
+            macos_dir.file_name().is_some_and(|name| name == "MacOS")
+                && macos_dir.parent().is_some_and(|contents_dir| {
+                    contents_dir
+                        .file_name()
+                        .is_some_and(|name| name == "Contents")
+                        && contents_dir.parent().is_some_and(|bundle_dir| {
+                            bundle_dir
+                                .extension()
+                                .is_some_and(|extension| extension == "app")
+                        })
+                })
+        })
+    }
+
     fn status_to_str(status: UNAuthorizationStatus) -> &'static str {
         if status == UNAuthorizationStatus::Authorized {
             "granted"
@@ -269,6 +305,20 @@ mod macos {
                 "provisional"
             );
             assert_eq!(status_to_str(UNAuthorizationStatus::Ephemeral), "ephemeral");
+        }
+
+        #[test]
+        fn bundled_app_layout_is_accepted() {
+            assert!(is_bundled_app_executable(Path::new(
+                "/Applications/OpenHuman.app/Contents/MacOS/OpenHuman"
+            )));
+        }
+
+        #[test]
+        fn unbundled_executable_is_rejected() {
+            assert!(!is_bundled_app_executable(Path::new(
+                "/tmp/openhuman/target/debug/OpenHuman"
+            )));
         }
     }
 }

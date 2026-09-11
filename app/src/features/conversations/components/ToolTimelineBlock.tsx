@@ -1,181 +1,34 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import WorktreeActions from '../../../components/worktree/WorktreeActions';
+import {
+  CollapsibleContent,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '../../../components/ui/Collapsible';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type {
   ProcessingTranscriptItem,
   SubagentActivity,
-  ToolFailureExplanation,
   ToolTimelineEntry,
-  ToolTimelineEntryStatus,
 } from '../../../store/chatRuntimeSlice';
-import { basename } from '../../../utils/pathUtils';
-import {
-  formatTimelineEntry,
-  formatToolName,
-  stripToolCallEnvelopes,
-} from '../../../utils/toolTimelineFormatting';
+import { formatTimelineEntry, stripToolCallEnvelopes } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
-import { BubbleMarkdown } from './AgentMessageBubble';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
+import { AssistantUiSubagentCall, isActiveSubagentStatus } from './AssistantUiSubagentCall';
 import { ProcessingTranscriptView } from './ProcessingTranscriptView';
-import { ToolFailureLines } from './ToolFailureLines';
-import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
-
-/**
- * Map a parent timeline entry's status to the worker-thread lifecycle
- * phase rendered on `WorkerThreadRefCard`. The parent entry is what the
- * subagent_spawned / subagent_completed / subagent_failed socket events
- * mutate, so reading from it keeps the badge and the surrounding
- * `<details>` status pill in lockstep without a second source of truth.
- *
- * Returns `undefined` for the rare ambiguous case so the card stays
- * label-only rather than render a misleading state.
- */
-function workerStatusFromEntry(
-  status: ToolTimelineEntry['status']
-): WorkerThreadStatus | undefined {
-  if (status === 'running') return 'running';
-  if (status === 'success') return 'completed';
-  if (status === 'error') return 'failed';
-  return undefined;
-}
-
-/** Tone classes for a child tool-call row keyed by its lifecycle status. */
-function toolCallTone(status: ToolTimelineEntryStatus): string {
-  if (status === 'running') return 'text-amber-700 dark:text-amber-300';
-  if (status === 'success') return 'text-sage-700 dark:text-sage-300';
-  return 'text-coral-700 dark:text-coral-300';
-}
-
-/**
- * Status pill for a tool-call row — a tinted "Done" / "Failed" / "Running"
- * tag instead of a bare ✓/✕ glyph, so the outcome reads at a glance.
- */
-function StatusTag({ status }: { status: ToolTimelineEntryStatus }) {
-  const { t } = useT();
-  const { label, classes } =
-    status === 'error'
-      ? {
-          label: t('conversations.agentTaskInsights.failed'),
-          classes: 'bg-coral-100 text-coral-700 dark:bg-coral-500/15 dark:text-coral-300',
-        }
-      : status === 'running'
-        ? {
-            label: t('conversations.agentTaskInsights.running'),
-            classes: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-          }
-        : status === 'cancelled'
-          ? {
-              label: t('conversations.agentTaskInsights.cancelled'),
-              classes: 'bg-surface-subtle text-content-muted',
-            }
-          : status === 'awaiting_user'
-            ? {
-                label: t('conversations.agentTaskInsights.awaitingUser'),
-                classes: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-              }
-            : {
-                label: t('conversations.agentTaskInsights.done'),
-                classes: 'bg-sage-100 text-sage-700 dark:bg-sage-500/15 dark:text-sage-300',
-              };
-  return (
-    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${classes}`}>{label}</span>
-  );
-}
-
-/**
- * One child tool-call row in a sub-agent's inline activity. Shared by the
- * ordered transcript (interleaved with {@link ThoughtBlock}) and the flat
- * `toolCalls` fallback, so the row markup lives in exactly one place.
- */
-function ToolCallRow({
-  call,
-}: {
-  call: {
-    callId: string;
-    toolName: string;
-    status: ToolTimelineEntryStatus;
-    elapsedMs?: number;
-    iteration?: number;
-    /** Server-computed human label; preferred over the client formatter. */
-    displayName?: string;
-    /** Server-computed contextual detail (path / recipient / query). */
-    detail?: string;
-    /** Structured why/next explanation for a FAILED child tool call (#4459). */
-    failure?: ToolFailureExplanation;
-  };
-}) {
-  const tone = toolCallTone(call.status);
-  return (
-    <div className="min-w-0" data-testid="subagent-tool-call">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span aria-hidden className={`shrink-0 text-[11px] ${tone}`}>
-          •
-        </span>
-        <span className="shrink-0 text-[12px] whitespace-nowrap text-content-secondary">
-          {call.displayName ?? formatToolName(call.toolName)}
-        </span>
-        {/* The contextual arg (path / recipient / query) can be long, so it
-          truncates to a single line and absorbs the row's spare width — the
-          full value stays available on hover — instead of wrapping into a
-          multi-line box that knocks the name and status out of alignment. */}
-        {call.detail ? (
-          <span
-            title={call.detail}
-            className="min-w-0 truncate rounded bg-surface-subtle px-1 py-px font-mono text-[11px] text-content-muted">
-            {call.detail}
-          </span>
-        ) : null}
-        {/* Status reads as a tinted "Done" / "Failed" / "Running" tag. */}
-        <span className="shrink-0">
-          <StatusTag status={call.status} />
-        </span>
-        {call.elapsedMs != null && call.status !== 'running' ? (
-          <span className="shrink-0 text-[11px] text-content-faint">
-            {call.elapsedMs >= 1000
-              ? `${(call.elapsedMs / 1000).toFixed(1)}s`
-              : `${call.elapsedMs}ms`}
-          </span>
-        ) : null}
-      </div>
-      {call.status === 'error' && call.failure ? <ToolFailureLines failure={call.failure} /> : null}
-    </div>
-  );
-}
-
-/**
- * The agent's reasoning or visible narration, surfaced inline in the timeline
- * as quoted/italic prose at the position it streamed — so a thought shows up
- * wherever it occurred between tool calls. Shown directly (no "Thoughts"
- * heading, no collapse). Both `thinking` and `text` transcript items render
- * through here. Renders nothing for an all-whitespace delta so a half-streamed
- * item never flashes an empty quote.
- */
-function ThoughtBlock({ text }: { text: string }) {
-  // Drop any inline `<tool_call>…</tool_call>` envelope the model emitted as
-  // text — the call already shows as its own row. Keep the original newlines
-  // (only trim the ends) so the markdown renderer can see headings, lists,
-  // code fences and emphasis instead of flattening them to one plain line.
-  const clean = stripToolCallEnvelopes(text).trim();
-  if (!clean) return null;
-  // Rendered through the shared `BubbleMarkdown` so a thought formats markdown
-  // (bold, code, lists) — but scaled back to the original quiet thought look:
-  // small (12px) and light/muted, not the larger, darker agent-bubble prose.
-  // Descendant overrides on `.prose` beat the typography plugin's base sizing;
-  // code keeps its accent colour so inline `tool_names` still read clearly.
-  return (
-    <div
-      data-testid="subagent-thought"
-      className="my-0.5 break-words [&_.prose]:text-[12px] [&_.prose]:leading-relaxed [&_.prose]:text-content-muted [&_.prose_strong]:text-content-muted [&_.prose_:is(h1,h2,h3,h4,h5,h6)]:text-[12px] [&_.prose_:is(h1,h2,h3,h4,h5,h6)]:text-content-muted">
-      <BubbleMarkdown content={clean} />
-    </div>
-  );
-}
+import {
+  coalesceTimelineEntries,
+  normalizeToolBody,
+  RepeatCount,
+  workerStatusFromEntry,
+} from './toolTimelineRows';
+import { WorkerThreadRefCard } from './WorkerThreadRefCard';
 
 /** Tail of the parent's in-flight response shown in the processing panel. */
 const RESPONSE_PREVIEW_CHARS = 320;
+
+const log = createDebug('app:conversations:tool-timeline');
 
 /**
  * The parent agent's live response, surfaced inside the processing panel while
@@ -184,6 +37,10 @@ const RESPONSE_PREVIEW_CHARS = 320;
  * final answer still lands in the message bubble once the turn settles.
  * Collapsible + accented apart from the stone-toned sub-agent Thoughts so the
  * parent's own voice reads as the primary thread.
+ *
+ * The disclosure is the shared Radix {@link CollapsibleRoot}, which gives the
+ * trigger real `aria-expanded` / `aria-controls` wiring that the hand-rolled
+ * `<details>`/`<summary>` pair never had.
  */
 function LiveResponseBlock({ text }: { text: string }) {
   const { t } = useT();
@@ -193,241 +50,41 @@ function LiveResponseBlock({ text }: { text: string }) {
   const shown = clean.slice(-RESPONSE_PREVIEW_CHARS);
   if (!shown.trim()) return null;
   return (
-    <details
-      open
+    <CollapsibleRoot
+      defaultOpen
       data-testid="agent-live-response"
       className="group/resp mt-1.5 border-l-2 border-primary-300 pl-2 dark:border-primary-500/50">
-      <summary className="flex cursor-pointer list-none items-center gap-1 select-none marker:hidden">
+      <CollapsibleTrigger
+        size="sm"
+        className="justify-start gap-1 px-0 py-0 hover:bg-transparent"
+        aria-label={t('conversations.agentTaskInsights.response')}>
         <span aria-hidden className="text-[11px] leading-none">
           💬
         </span>
         <span className="text-[11px] font-semibold tracking-wide text-primary-500 uppercase dark:text-primary-300">
           {t('conversations.agentTaskInsights.response')}
         </span>
-        <span className="text-[10px] text-content-faint transition-transform group-open/resp:rotate-90 dark:text-neutral-600">
+        <span
+          aria-hidden
+          className="text-[10px] text-content-faint transition-transform group-data-[state=open]:rotate-90">
           ▶
         </span>
-      </summary>
-      <p className="mt-0.5 text-[12px] leading-snug break-words whitespace-pre-wrap text-content-secondary">
-        {clean.length > RESPONSE_PREVIEW_CHARS ? (
-          <span className="text-content-faint">…</span>
-        ) : null}
-        {shown}
-        <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-primary-400 align-middle" />
-      </p>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsibleContent size="sm" className="px-0 pb-0">
+        <p className="mt-0.5 text-[12px] leading-snug wrap-break-word whitespace-pre-wrap text-content-secondary">
+          {clean.length > RESPONSE_PREVIEW_CHARS ? (
+            <span className="text-content-faint">…</span>
+          ) : null}
+          {shown}
+          <span
+            aria-hidden
+            className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-primary-400 align-middle"
+          />
+        </p>
+      </CollapsibleContent>
+    </CollapsibleRoot>
   );
 }
-
-/**
- * Render the live activity of one running (or completed) sub-agent inside its
- * parent timeline row — the mode/dedicated-thread badge, the child iteration
- * counter, the final-run statistics, and the ordered transcript of child tool
- * calls interleaved with the agent's "Thoughts" (reasoning + narration).
- *
- * Kept as a sibling of the existing worker-thread / detail block so the
- * surrounding `<details>` chevron + status pill behaviour is unaffected — this
- * component only renders when `subagent` is present on the entry, which is true
- * for any row produced by the `subagent_*` socket events from a current core.
- */
-export function SubagentActivityBlock({
-  subagent,
-  onView,
-}: {
-  subagent: SubagentActivity;
-  /** Opens the full-transcript drawer for this subagent. Omitted in
-   * read-only contexts (e.g. a completed snapshot with no live driver). */
-  onView?: () => void;
-}) {
-  const { t } = useT();
-  const headerBits: string[] = [];
-  if (subagent.mode) headerBits.push(subagent.mode);
-  if (subagent.dedicatedThread) headerBits.push(t('conversations.toolTimeline.workerThread'));
-  if (subagent.childIteration != null) {
-    if (subagent.childMaxIterations != null) {
-      headerBits.push(
-        `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
-      );
-    } else {
-      headerBits.push(`${t('conversations.toolTimeline.step')} ${subagent.childIteration}`);
-    }
-  } else if (subagent.iterations != null) {
-    headerBits.push(
-      subagent.iterations === 1
-        ? `${subagent.iterations} ${t('chat.turn')}`
-        : `${subagent.iterations} ${t('chat.turns')}`
-    );
-  }
-  if (subagent.elapsedMs != null) {
-    headerBits.push(
-      subagent.elapsedMs >= 1000
-        ? `${(subagent.elapsedMs / 1000).toFixed(1)}s`
-        : `${subagent.elapsedMs}ms`
-    );
-  }
-
-  // The ordered transcript drives the inline activity: child tool-call rows
-  // and the agent's "Thoughts" (reasoning + visible narration) render in the
-  // exact order they streamed, so each thought appears wherever it occurred
-  // between tool calls. Falls back to the flat tool-call list when the prose
-  // transcript is absent (e.g. a rehydrated/interrupted snapshot).
-  const transcript = subagent.transcript ?? [];
-
-  return (
-    <div
-      className="mt-1 space-y-0.5 text-[12px] text-content-muted"
-      data-testid="subagent-activity">
-      {headerBits.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {headerBits.map(bit => (
-            <span
-              key={bit}
-              className="rounded-full bg-surface-subtle px-1.5 py-0.5 font-medium text-content-secondary">
-              {bit}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {transcript.length > 0 ? (
-        <div className="ml-1 space-y-0.5" data-testid="subagent-transcript">
-          {transcript.map((item, i) =>
-            item.kind === 'tool' ? (
-              <ToolCallRow key={item.callId} call={item} />
-            ) : (
-              <ThoughtBlock key={`thought-${i}`} text={item.text} />
-            )
-          )}
-        </div>
-      ) : subagent.toolCalls.length > 0 ? (
-        <div className="ml-1 space-y-0.5">
-          {subagent.toolCalls.map(call => (
-            <ToolCallRow key={call.callId} call={call} />
-          ))}
-        </div>
-      ) : null}
-      {subagent.worktreePath ? (
-        <div
-          className="mt-1 space-y-1 rounded-md border border-line bg-surface-muted/70 p-1.5 dark:bg-surface/50"
-          data-testid="subagent-worktree">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-medium text-content-secondary">{t('worktree.label')}</span>
-            <span
-              className="truncate font-mono text-[12px] text-content-muted"
-              title={subagent.worktreePath}>
-              {basename(subagent.worktreePath)}
-            </span>
-            {subagent.isDirty ? (
-              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                {t('worktree.dirty')}
-              </span>
-            ) : (
-              <span className="rounded-full bg-sage-100 px-1.5 py-0.5 text-[11px] font-medium text-sage-700 dark:bg-sage-500/15 dark:text-sage-300">
-                {t('worktree.clean')}
-              </span>
-            )}
-            {subagent.changedFiles && subagent.changedFiles.length > 0 ? (
-              <span className="text-[11px] text-content-faint">
-                {subagent.changedFiles.length}{' '}
-                {subagent.changedFiles.length === 1
-                  ? t('worktree.changedFile')
-                  : t('worktree.changedFiles')}
-              </span>
-            ) : null}
-          </div>
-          <WorktreeActions path={subagent.worktreePath} isDirty={subagent.isDirty} compact />
-        </div>
-      ) : null}
-      {onView ? (
-        <button
-          type="button"
-          onClick={onView}
-          data-testid="subagent-view-processing"
-          className="mt-0.5 rounded-full px-1.5 py-0.5 text-[12px] font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-300 dark:hover:bg-primary-500/15">
-          {t('conversations.subagent.viewProcessing')} →
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function normalizeToolBody(value?: string): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return undefined;
-  if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null') return undefined;
-  return value;
-}
-
-/**
- * Whether a timeline entry carries any unique body worth its own row — a
- * sub-agent's live activity, a returned result, a prompt/detail bubble, or a
- * structured failure. A row with none of these renders as a bare label + status
- * and is therefore indistinguishable from any sibling with the same title, so it
- * is safe to coalesce (see {@link coalesceTimelineEntries}). Mirrors the
- * `expandable` predicate in the row renderer so the two never disagree.
- */
-function entryHasUniqueBody(entry: ToolTimelineEntry): boolean {
-  const formatted = formatTimelineEntry(entry);
-  const detailContent = normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
-  const resultContent = normalizeToolBody(entry.result);
-  return (
-    detailContent != null ||
-    resultContent != null ||
-    entry.subagent != null ||
-    entry.failure != null
-  );
-}
-
-/** A rendered timeline row: a representative entry plus how many identical,
- * body-less entries it stands in for (`count === 1` for an ordinary row). */
-interface CoalescedRow {
-  entry: ToolTimelineEntry;
-  count: number;
-}
-
-/**
- * Collapse runs of consecutive, identical, body-less rows into a single row
- * carrying an `×N` count. A retry loop (e.g. the orchestrator re-spawning the
- * integrations agent 25×, each surfacing the same "Checking your connected app"
- * label with no distinguishing detail) would otherwise flood the timeline with
- * indistinguishable nodes. Only truly interchangeable rows merge: same title,
- * same status, no unique body (result/detail/sub-agent/failure), and never the
- * live `running` row — so no information is lost, only duplication.
- */
-function coalesceTimelineEntries(entries: ToolTimelineEntry[]): CoalescedRow[] {
-  const rows: CoalescedRow[] = [];
-  for (const entry of entries) {
-    const mergeable = entry.status !== 'running' && !entryHasUniqueBody(entry);
-    const previous = rows[rows.length - 1];
-    if (
-      mergeable &&
-      previous != null &&
-      previous.entry.status === entry.status &&
-      !entryHasUniqueBody(previous.entry) &&
-      previous.entry.status !== 'running' &&
-      formatTimelineEntry(previous.entry).title === formatTimelineEntry(entry).title
-    ) {
-      previous.count += 1;
-      continue;
-    }
-    rows.push({ entry, count: 1 });
-  }
-  return rows;
-}
-
-/** Compact "×N" badge appended to a coalesced row's label. */
-function RepeatCount({ count }: { count: number }) {
-  if (count <= 1) return null;
-  return (
-    <span
-      className="shrink-0 rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-content-muted"
-      data-testid="timeline-repeat-count">
-      ×{count}
-    </span>
-  );
-}
-
-const log = createDebug('app:conversations:tool-timeline');
 
 /**
  * Neutral surface tones for an expanded row's body (worker-thread card,
@@ -438,17 +95,6 @@ const log = createDebug('app:conversations:tool-timeline');
  */
 const BODY_SURFACE = 'bg-surface-muted';
 
-/**
- * The agent-run timeline rendered above an assistant answer — the
- * "Agentic task insights" surface from the Figma Chat design.
- *
- * Each {@link ToolTimelineEntry} is a row on a shared vertical timeline
- * rail ({@link AgentTimelineRail}); the agent name carries the run state
- * (pulsing while in flight, solid when done) and expands in place to show
- * its detail/code/sub-agent activity. The whole group sits under a
- * collapsible "⚙️ Working… / Agentic task insights" header so the user can
- * fold the live activity away.
- */
 /**
  * Height of the in-flight timeline viewport. While a turn is active the row
  * list is windowed to this height and auto-follows the newest activity, so a
@@ -461,6 +107,78 @@ const TIMELINE_VIEWPORT_CLASS = 'max-h-64 overflow-y-auto overscroll-contain';
 /** Distance from the bottom (px) still treated as "pinned to the live edge". */
 const STICK_TO_BOTTOM_SLACK_PX = 24;
 
+/**
+ * One expandable timeline row's disclosure.
+ *
+ * Replaces the previous `<details open={autoExpand}>`, whose semantics this
+ * reproduces exactly rather than approximately: the row follows `autoExpand`
+ * whenever THAT value changes (running → settled collapses it again), but a
+ * manual toggle in between sticks until the next such change. A plain
+ * `defaultOpen` would have dropped the first half; a fully controlled
+ * `open={autoExpand}` would have dropped the second.
+ *
+ * `forceMount` keeps the body in the DOM while collapsed, which is what
+ * `<details>` did — the rows are never "wiped", only hidden.
+ */
+function TimelineRowDisclosure({
+  autoExpand,
+  title,
+  titleClassName,
+  count,
+  children,
+}: {
+  autoExpand: boolean;
+  title: string;
+  titleClassName: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(autoExpand);
+  // Render-time adjustment (React's documented "reset state on prop change"
+  // pattern) rather than an effect, so the corrected frame is the first one
+  // painted.
+  const [prevAuto, setPrevAuto] = useState(autoExpand);
+  if (prevAuto !== autoExpand) {
+    setPrevAuto(autoExpand);
+    setOpen(autoExpand);
+  }
+  return (
+    <CollapsibleRoot
+      open={open}
+      onOpenChange={next => {
+        log('timeline-row: user toggled open=%s (auto would be %s)', next, autoExpand);
+        setOpen(next);
+      }}
+      className="group/row">
+      <CollapsibleTrigger
+        size="sm"
+        className="justify-start gap-1.5 px-0 py-0 font-normal hover:bg-transparent">
+        <span className={`text-[13px] font-medium ${titleClassName}`}>{title}</span>
+        <RepeatCount count={count} />
+        <span
+          aria-hidden
+          className="text-[11px] text-content-faint transition-transform group-data-[state=open]:rotate-90">
+          ▶
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent forceMount size="sm" className="px-0 pb-0">
+        {children}
+      </CollapsibleContent>
+    </CollapsibleRoot>
+  );
+}
+
+/**
+ * The agent-run timeline rendered above an assistant answer — the
+ * "Agentic task insights" surface from the Figma Chat design.
+ *
+ * Each {@link ToolTimelineEntry} is a row on a shared vertical timeline
+ * rail ({@link AgentTimelineRail}); the agent name carries the run state
+ * (pulsing while in flight, solid when done) and expands in place to show
+ * its detail/code/sub-agent activity. The whole group sits under a
+ * collapsible "Agentic task insights" header so the user can fold the live
+ * activity away.
+ */
 export function ToolTimelineBlock({
   entries,
   onViewSubagent,
@@ -519,7 +237,7 @@ export function ToolTimelineBlock({
   // Sticky override for the outer "Agentic task insights" group: `null` means
   // the user hasn't explicitly toggled it on THIS mount yet, so the group
   // falls back to the auto rule below (open while running, collapsed once
-  // settled). Once the user clicks the summary, this pins their choice —
+  // settled). Once the user clicks the trigger, this pins their choice —
   // including across later turns that stream onto the SAME mounted block
   // (e.g. the workflow copilot's dedicated thread, whose `ToolTimelineBlock`
   // stays mounted for the life of the conversation while `entries` keeps
@@ -663,21 +381,16 @@ export function ToolTimelineBlock({
   // wrong step stays expanded/linked in compact chat mode.
   const latestRunningEntryId = [...ordered].reverse().find(entry => entry.status === 'running')?.id;
 
-  const titleLabel = (
-    <span className="text-[13px] font-medium text-content-muted">
-      {t('conversations.agentTaskInsights.title')}
-    </span>
-  );
-
-  // Whole-run "View full agent process Source →" link — sits in the header
-  // beside the title, in both the collapsible and the static layout.
+  // Whole-run "View full agent process Source →" link — a SIBLING of the
+  // disclosure trigger, not a child of it. Nesting one button inside another
+  // is invalid HTML; as siblings the link needs no `stopPropagation` to avoid
+  // toggling the group, and it stays outside the collapsible body so it is
+  // reachable while the group is collapsed.
   const wholeRunLink = onViewWholeRun ? (
     <button
       type="button"
-      // Stop the click from toggling the collapse when nested in <summary>.
-      onClick={e => {
-        e.preventDefault();
-        e.stopPropagation();
+      onClick={() => {
+        log('agent-task-insights: opening whole-run process source');
         onViewWholeRun();
       }}
       data-testid="view-process-source"
@@ -693,7 +406,7 @@ export function ToolTimelineBlock({
   const body = (
     <>
       {/* Viewport wrapper. Stays in the tree in both modes so the row list is
-          never remounted (and its <details> state never reset) when a turn
+          never remounted (and its disclosure state never reset) when a turn
           settles — only the height/scroll classes toggle. */}
       <div
         ref={attachViewport}
@@ -706,8 +419,9 @@ export function ToolTimelineBlock({
             transcript={transcript}
             entries={ordered}
             renderSubagent={subagent => (
-              <SubagentActivityBlock
-                subagent={subagent}
+              <AssistantUiSubagentCall
+                activity={subagent}
+                running={isActiveSubagentStatus(subagent.status)}
                 onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
               />
             )}
@@ -779,18 +493,14 @@ export function ToolTimelineBlock({
                       ) : null}
                     </div>
                   ) : expandable ? (
-                    <details open={shouldAutoExpand} className="group/row">
-                      <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
-                        <span className={`text-[13px] font-medium ${nameTone}`}>
-                          {formatted.title}
-                        </span>
-                        <span className="text-[11px] text-content-faint transition-transform group-open/row:rotate-90 dark:text-neutral-600">
-                          ▶
-                        </span>
-                      </summary>
+                    <TimelineRowDisclosure
+                      autoExpand={shouldAutoExpand}
+                      title={formatted.title}
+                      titleClassName={nameTone}
+                      count={count}>
                       {workerRef ? (
                         <div
-                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
+                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap wrap-break-word text-content-secondary ${BODY_SURFACE}`}>
                           {workerRef.before}
                           <WorkerThreadRefCard
                             ref={workerRef.ref}
@@ -800,7 +510,7 @@ export function ToolTimelineBlock({
                         </div>
                       ) : formatted.detail ? (
                         <div
-                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap break-words text-content-secondary ${BODY_SURFACE}`}>
+                          className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[13px] whitespace-pre-wrap wrap-break-word text-content-secondary ${BODY_SURFACE}`}>
                           {formatted.detail}
                         </div>
                       ) : detailContent ? (
@@ -820,12 +530,13 @@ export function ToolTimelineBlock({
                         </pre>
                       ) : null}
                       {subagent ? (
-                        <SubagentActivityBlock
-                          subagent={subagent}
+                        <AssistantUiSubagentCall
+                          activity={subagent}
+                          running={entry.status === 'running' || entry.status === 'awaiting_user'}
                           onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
                         />
                       ) : null}
-                    </details>
+                    </TimelineRowDisclosure>
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <span className={`text-[13px] font-medium ${nameTone}`}>
@@ -850,11 +561,11 @@ export function ToolTimelineBlock({
   // run is in flight so the live activity is visible; collapsed once it
   // settles so a finished run (which can be dozens of steps) never dominates
   // the conversation. The full "Agent Process Source" panel forces every row
-  // open via `expandAllRows`. Once the user has explicitly toggled the group
-  // (see `userOverrideOpen` above), THAT choice wins over the auto rule —
-  // otherwise a new turn streaming onto an already-mounted block (settling,
-  // or starting a fresh run) would silently flip `open` out from under the
-  // user's manual choice on every turn.
+  // open via `expandAllRows`. Once the user has explicitly toggled the group,
+  // THAT choice wins over the auto rule — otherwise a new turn streaming onto
+  // an already-mounted block (settling, or starting a fresh run) would
+  // silently flip `open` out from under the user's manual choice on every
+  // turn.
   //
   // Driven by `settleSignal` (i.e. `turnActive` when the caller supplies it),
   // NOT by `isRunning`. `isRunning` means "a tool is executing *this instant*",
@@ -869,33 +580,38 @@ export function ToolTimelineBlock({
   const autoOpen = settleSignal || expandAllRows;
   const open = userOverrideOpen ?? autoOpen;
 
-  // Fully own the disclosure via React state rather than letting the browser
-  // toggle the native `open` attribute itself — `preventDefault` stops the
-  // native toggle so there is exactly one source of truth (`open` above),
-  // never a race between the DOM's own uncontrolled state and the next
-  // render's `open` prop.
-  const handleSummaryClick = (event: React.MouseEvent<HTMLElement>) => {
-    event.preventDefault();
-    const next = !open;
-    log('agent-task-insights: user toggled open=%s (auto would be %s)', next, autoOpen);
-    setUserOverrideOpen(next);
-  };
-
   return (
-    <details
+    // Radix `Collapsible`, fully controlled off `open` above: one source of
+    // truth, plus the `aria-expanded`/`aria-controls` wiring the hand-rolled
+    // `<details>`/`<summary>` pair never had. `forceMount` on the content keeps
+    // the rows in the DOM while collapsed, exactly as `<details>` did — the
+    // activity is hidden, never wiped.
+    <CollapsibleRoot
       open={open}
+      onOpenChange={next => {
+        log('agent-task-insights: user toggled open=%s (auto would be %s)', next, autoOpen);
+        setUserOverrideOpen(next);
+      }}
       className="group/insights mb-2 px-1 py-0"
       data-testid="agent-task-insights">
-      <summary
-        onClick={handleSummaryClick}
-        className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
-        {titleLabel}
-        <span className="text-[11px] text-content-faint transition-transform group-open/insights:rotate-90">
-          ▶
-        </span>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <CollapsibleTrigger
+          size="sm"
+          className="w-auto justify-start gap-1.5 px-0 py-0 font-normal hover:bg-transparent">
+          <span className="text-[13px] font-medium text-content-muted">
+            {t('conversations.agentTaskInsights.title')}
+          </span>
+          <span
+            aria-hidden
+            className="text-[11px] text-content-faint transition-transform group-data-[state=open]:rotate-90">
+            ▶
+          </span>
+        </CollapsibleTrigger>
         {wholeRunLink}
-      </summary>
-      {body}
-    </details>
+      </div>
+      <CollapsibleContent forceMount size="sm" className="px-0 pb-0">
+        {body}
+      </CollapsibleContent>
+    </CollapsibleRoot>
   );
 }

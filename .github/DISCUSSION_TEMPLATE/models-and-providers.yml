@@ -1,0 +1,48 @@
+title: ""
+labels: ["models"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Which models work, how they behave under this harness, and providers —
+        hosted, self-hosted, and local.
+
+        Say whether the same thing happens on a second model. It is the fastest
+        way to tell a harness bug from a model one.
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Exact model id.
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: Hosted service, self-hosted server (name and version), or a local runner.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What goes wrong?
+      description: Include the request or tool call if you have it, with keys removed.
+    validations:
+      required: true
+  - type: dropdown
+    id: others
+    attributes:
+      label: Does it happen on another model?
+      options:
+        - "Yes, on other models too"
+        - "No, only this one"
+        - "Have not tried"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenHuman version
+    validations:
+      required: true

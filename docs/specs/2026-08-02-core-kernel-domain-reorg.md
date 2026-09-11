@@ -128,11 +128,10 @@ Verification that a family-move PR must reproduce:
 
 ```bash
 GGML_NATIVE=OFF cargo check --all-targets
-GGML_NATIVE=OFF cargo check --lib --no-default-features --features tokenjuice-treesitter
+GGML_NATIVE=OFF cargo check --lib --no-default-features
 GGML_NATIVE=OFF cargo check --manifest-path app/src-tauri/Cargo.toml
 GGML_NATIVE=OFF cargo test --lib core::                                             # gates on
-GGML_NATIVE=OFF cargo test --lib --no-default-features \
-  --features tokenjuice-treesitter core::                                           # gates off
+GGML_NATIVE=OFF cargo test --lib --no-default-features core::                       # gates off
 cargo fmt --check
 bash scripts/check-kernel-floor.sh --verbose      # must not move
 node scripts/ci/check-feature-forwarding.mjs
@@ -173,7 +172,7 @@ renames.
 | --- | --- |
 | `memory/` | ✅ **landed** — `memory_store→store`, `memory_sync→sync`, `memory_tree→tree`, `memory_search→search`, `memory_sources→sources`, `memory_queue→queue`, `memory_diff→diff`, `memory_goals→goals`, `memory_conversations→conversations`, `memory_tools→tool_memory`, `tinycortex`, `agent_memory→agent`, `people`; parent stays put (kernel, ungated) — `memory/sync.rs` renamed to `memory/sync_events.rs` first to free the name, and `memory_tools` lands as `tool_memory` to dodge the pre-existing `memory/tools/` |
 | `agent/` | ✅ **landed** — `agent_experience→experience`, `agent_orchestration→orchestration`, `agent_registry→registry`, `agentbox`, `harness_init`, `session_db`, `session_import`, `context`, `profiles`, `learning`, `plan_review`, `file_state`, `artifacts`, `tinyagents`; parent stays ungated (kernel) and keeps its own name — no `agent/core` rename |
-| `inference/` | ✅ **landed** — `embeddings`, `tokenjuice`; parent stays ungated (kernel). NB the `inference` Cargo feature gates only `local/service/whisper_engine` + the cpal probe, *not* this directory |
+| `inference/` | ✅ **landed** — `embeddings`, `tokenjuice`; parent stays ungated (kernel). NB the `inference` Cargo feature gates only the cpal capture stack + microphone probe, *not* this directory |
 | `skills/` | ✅ **landed** — `skill_registry→catalog` (not `registry` — `skills/registry.rs` and the stub's inner `pub mod registry` both already own that name), `skill_runtime→runtime`, `webhooks`; parent stays ungated (three facades, two with `stub.rs`), and `webhooks` is a permanently-ungated child |
 | `flows/` | ✅ **landed** — `tinyflows`, `rhai_workflows→rhai`; parent is leaf-gated on `flows` (no stub — every external site is a registration site) |
 | `mcp/` *(new)* | ✅ **landed** — `mcp_server→server`, `mcp_registry→registry`, `mcp_audit→audit`, `mcp_client::{registry,stdio,spawn_env,setup_agent}→config_servers` *(leaf-gated)*, `mcp_client::{client,client_helpers}→http_client` *(ungated carve-out)*, `mcp_client::sanitize→util/sanitize`; parent stays ungated (three facades with `stub.rs` + the always-compiled `http_client`) |
@@ -266,7 +265,7 @@ the reorg:
 | Native crate | Owner | Gate | Status |
 | --- | --- | --- | --- |
 | `libgit2-sys` (via `git2`) | `memory_store/content/wiki_git` **and** `tinycortex/git-diff` | `memory-git` | **cross-repo** — see below |
-| `lzma-sys` (via `xz2`) | `runtime_node/extractor.rs` only | `runtime-node` | ready; do with the `runtime/` move |
+| `lzma-sys` (via `xz2`) | *(none — removed)* | — | ✅ **done**, and better than planned: extraction moved into the `tinyruntime` module, so `xz2` left the manifest for **every** configuration rather than only for builds that opted out of `runtime-node` |
 | `libz-sys` | shared (`flate2`/`zip`/`git2`) | — | partly falls out of the above |
 | `aws-lc-sys` | TLS stack | — | needs a rustls-provider decision, own slice |
 | `libsqlite3-sys`, `ring` | kernel | — | **target keeps these** |

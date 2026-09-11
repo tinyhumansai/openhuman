@@ -72,6 +72,18 @@ function makeFlow(overrides: Partial<Flow> = {}): Flow {
   };
 }
 
+/**
+ * Opens a row's "⋯" overflow menu. `FlowRowMenu` is now Radix `DropdownMenu`
+ * (issue: UI library adoption), whose trigger opens on `pointerdown` rather
+ * than `click` (so a press-and-drag select onto an item keeps working) — a
+ * plain `fireEvent.click` never dispatches that event.
+ */
+function openRowMenu(rowId = 'flow-1') {
+  const trigger = screen.getByTestId(`flow-menu-${rowId}`);
+  fireEvent.pointerDown(trigger);
+  fireEvent.click(trigger);
+}
+
 describe('FlowsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -206,7 +218,7 @@ describe('FlowsPage', () => {
 
     // "View runs" is a secondary action behind the row's overflow menu now.
     await waitFor(() => expect(screen.getByTestId('flow-menu-flow-1')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
+    openRowMenu();
     fireEvent.click(screen.getByTestId('flow-view-runs-flow-1'));
 
     expect(await screen.findByTestId('flow-runs-drawer')).toBeInTheDocument();
@@ -300,7 +312,8 @@ describe('FlowsPage', () => {
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     // Export now lives behind the row's "⋯" overflow menu.
-    fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
+    await screen.findByTestId('flow-menu-flow-1');
+    openRowMenu();
     fireEvent.click(await screen.findByTestId('flow-export-flow-1'));
 
     expect(downloadFlowGraph).toHaveBeenCalledWith('Daily digest', { nodes: [], edges: [] });
@@ -313,7 +326,8 @@ describe('FlowsPage', () => {
 
     // Delete now lives behind the row's "⋯" overflow menu, alongside
     // Export/Duplicate, rather than a standalone icon button.
-    fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
+    await screen.findByTestId('flow-menu-flow-1');
+    openRowMenu();
     fireEvent.click(await screen.findByTestId('flow-delete-flow-1'));
 
     // Confirm dialog gates the destructive call.
@@ -328,7 +342,8 @@ describe('FlowsPage', () => {
     duplicateFlow.mockResolvedValue(makeFlow({ id: 'flow-2', name: 'Daily digest copy' }));
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
-    fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
+    await screen.findByTestId('flow-menu-flow-1');
+    openRowMenu();
     fireEvent.click(await screen.findByTestId('flow-duplicate-flow-1'));
 
     await waitFor(() => expect(duplicateFlow).toHaveBeenCalledWith('flow-1'));

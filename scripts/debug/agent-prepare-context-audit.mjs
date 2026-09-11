@@ -527,7 +527,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
-omit_skills_catalog = true
 omit_profile = false
 omit_memory_md = false
 
@@ -656,7 +655,7 @@ function printCase(opts, caseInfo, scout, root, ms) {
       "  ⚠ no context_scout transcript found — prepared context did not run.",
     );
     console.log(
-      "    (Is the core built from this branch? Is super context enabled?)",
+      "    (Is the core built from this branch?)",
     );
     return;
   }

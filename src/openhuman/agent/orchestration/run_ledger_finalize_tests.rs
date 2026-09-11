@@ -5,10 +5,10 @@ use super::*;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::core::event_bus::EventHandler;
-use crate::openhuman::agent::session_db::run_ledger::{
+use tinyagents_session::run_ledger::{
     get_agent_run, upsert_agent_run, AgentRunKind, AgentRunStatus, AgentRunUpsert,
 };
+use tinybus::EventHandler;
 
 fn test_config(dir: &TempDir) -> Config {
     let mut config = Config::default();
@@ -19,13 +19,13 @@ fn test_config(dir: &TempDir) -> Config {
 
 fn seed_running(config: &Config, id: &str) {
     upsert_agent_run(
-        config,
+        &config.workspace_dir,
         AgentRunUpsert {
             id: id.into(),
             kind: AgentRunKind::Subagent,
             parent_run_id: Some("parent-turn".into()),
             parent_thread_id: Some("thread-1".into()),
-            agent_id: Some("tinyplace_agent".into()),
+            agent_id: Some("crypto_agent".into()),
             status: AgentRunStatus::Running,
             prompt_ref: None,
             worker_thread_id: None,
@@ -55,14 +55,14 @@ async fn settles_running_run_on_subagent_completed() {
     sub.handle(&DomainEvent::SubagentCompleted {
         parent_session: "session-1".into(),
         task_id: "sub-1".into(),
-        agent_id: "tinyplace_agent".into(),
+        agent_id: "crypto_agent".into(),
         elapsed_ms: 1234,
         output_chars: 760,
         iterations: 3,
     })
     .await;
 
-    let run = get_agent_run(&config, "sub-1")
+    let run = get_agent_run(&config.workspace_dir, "sub-1")
         .unwrap()
         .expect("run present");
     assert_eq!(run.status, AgentRunStatus::Completed);
@@ -81,12 +81,12 @@ async fn settles_running_run_on_subagent_failed_with_error() {
     sub.handle(&DomainEvent::SubagentFailed {
         parent_session: "session-1".into(),
         task_id: "sub-2".into(),
-        agent_id: "tinyplace_agent".into(),
+        agent_id: "crypto_agent".into(),
         error: "boom".into(),
     })
     .await;
 
-    let run = get_agent_run(&config, "sub-2")
+    let run = get_agent_run(&config.workspace_dir, "sub-2")
         .unwrap()
         .expect("run present");
     assert_eq!(run.status, AgentRunStatus::Failed);
@@ -105,12 +105,12 @@ async fn settles_running_run_on_subagent_awaiting_user() {
     sub.handle(&DomainEvent::SubagentAwaitingUser {
         parent_session: "session-1".into(),
         task_id: "sub-3".into(),
-        agent_id: "tinyplace_agent".into(),
+        agent_id: "crypto_agent".into(),
         question: "Need a decision".into(),
     })
     .await;
 
-    let run = get_agent_run(&config, "sub-3")
+    let run = get_agent_run(&config.workspace_dir, "sub-3")
         .unwrap()
         .expect("run present");
     assert_eq!(run.status, AgentRunStatus::AwaitingUser);
@@ -130,11 +130,13 @@ async fn ignores_unrelated_events_and_missing_runs() {
     sub.handle(&DomainEvent::SubagentCompleted {
         parent_session: "session-1".into(),
         task_id: "ghost".into(),
-        agent_id: "tinyplace_agent".into(),
+        agent_id: "crypto_agent".into(),
         elapsed_ms: 1,
         output_chars: 0,
         iterations: 1,
     })
     .await;
-    assert!(get_agent_run(&config, "ghost").unwrap().is_none());
+    assert!(get_agent_run(&config.workspace_dir, "ghost")
+        .unwrap()
+        .is_none());
 }

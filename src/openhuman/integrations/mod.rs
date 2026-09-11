@@ -9,7 +9,6 @@
 pub mod client;
 pub mod composio;
 pub mod file_storage;
-pub mod recall_calendar;
 pub mod task_sources;
 pub mod tools;
 pub mod types;

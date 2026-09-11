@@ -27,8 +27,8 @@ const ChoiceCard = ({
 }: ChoiceCardProps) => {
   const selectedClasses =
     accent === 'sage'
-      ? '!border-sage-500 bg-sage-50 dark:bg-sage-500/10 shadow-sm'
-      : '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 shadow-sm';
+      ? 'border-sage-500! bg-sage-50 dark:bg-sage-500/10 shadow-xs'
+      : 'border-primary-500! bg-primary-50 dark:bg-primary-500/15 shadow-xs';
   return (
     <button
       type="button"
@@ -36,10 +36,10 @@ const ChoiceCard = ({
       disabled={disabled}
       aria-pressed={selected}
       data-testid={testId}
-      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${
+      className={`flex h-full w-full flex-col rounded-2xl border-2 p-5 text-left transition-colors focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-60 ${
         selected
           ? selectedClasses
-          : '!border-stone-200 dark:!border-neutral-700 bg-surface hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-surface-hover'
+          : 'border-line! bg-surface hover:border-line-strong! dark:hover:border-line-strong! hover:bg-surface-hover'
       }`}>
       <h3 className="text-base font-semibold text-content">{title}</h3>
       <p className="mt-1 text-xs text-content-secondary leading-relaxed">{description}</p>

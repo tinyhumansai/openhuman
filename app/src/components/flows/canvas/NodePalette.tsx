@@ -19,6 +19,7 @@ import {
   type PaletteEntry,
 } from '../../../lib/flows/nodeKindMeta';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { Button } from '../../ui';
 
 /** dataTransfer MIME key for a palette drag — read by the canvas `onDrop`. */
 export const PALETTE_DND_MIME = 'application/tinyflows-node';
@@ -33,7 +34,7 @@ function NodePalette({ onAdd }: NodePaletteProps) {
 
   return (
     <aside
-      className="pointer-events-auto absolute right-3 top-14 z-10 flex max-h-[calc(100%-4rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-sm backdrop-blur"
+      className="pointer-events-auto absolute right-3 top-14 z-10 flex max-h-[calc(100%-4rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-xs backdrop-blur"
       data-testid="flow-node-palette"
       aria-label={t('flows.palette.title')}>
       <div className="flex flex-col gap-2 overflow-y-auto p-2">
@@ -45,9 +46,10 @@ function NodePalette({ onAdd }: NodePaletteProps) {
             {PALETTE_ENTRIES_BY_GROUP[group].map(entry => {
               const label = t(entry.labelKey, entry.kind);
               return (
-                <button
+                <Button
                   key={entry.key}
                   type="button"
+                  variant="secondary"
                   draggable
                   data-testid={`flow-palette-item-${entry.key}`}
                   data-node-kind={entry.kind}
@@ -57,12 +59,12 @@ function NodePalette({ onAdd }: NodePaletteProps) {
                     event.dataTransfer.effectAllowed = 'copy';
                   }}
                   title={t('flows.palette.addNode').replace('{kind}', label)}
-                  className="flex items-center gap-2 rounded-lg border border-line px-2 py-1.5 text-left text-xs text-content transition-colors hover:border-primary-500/40 hover:bg-surface-hover">
+                  className="h-auto justify-start gap-2 px-2 py-1.5 text-left text-xs font-normal">
                   {/* Same tile as the canvas card, scaled down — the swatch the
                       user picks here is the swatch that lands on the graph. */}
                   <NodeKindTile kind={entry.kind} size="sm" />
                   <span className="truncate">{label}</span>
-                </button>
+                </Button>
               );
             })}
           </div>

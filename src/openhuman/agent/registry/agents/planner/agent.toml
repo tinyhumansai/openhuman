@@ -10,7 +10,6 @@ sandbox_mode = "read_only"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
-omit_skills_catalog = true
 # Memory is no longer pre-fetched eagerly before every turn. The planner
 # keeps `omit_memory_context = false`, so it still receives the cheap
 # per-turn memory recall; deep memory-tree walks are the orchestrator's

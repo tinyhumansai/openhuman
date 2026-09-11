@@ -112,6 +112,7 @@ set -e
 # Enforce scoped cmd-* tokens in components/commands/
 set +e
 run_check pnpm --dir app run lint:commands-tokens
+run_check pnpm --dir app run lint:ui-tokens
 CMD_TOKENS_EXIT=$?
 set -e
 

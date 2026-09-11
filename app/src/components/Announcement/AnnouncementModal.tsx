@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { Announcement, AnnouncementSeverity } from '../../services/announcementService';
+import Button from '../ui/Button';
 
 interface AnnouncementModalProps {
   announcement: Announcement;
@@ -40,7 +41,7 @@ export default function AnnouncementModal({ announcement, onDismiss }: Announcem
 
   return (
     <div
-      className="fixed inset-0 z-[9998] flex items-center justify-center bg-stone-950/90 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-9998 flex items-center justify-center bg-stone-950/90 p-4 backdrop-blur-sm"
       data-testid="announcement-overlay">
       <div
         role="dialog"
@@ -58,21 +59,18 @@ export default function AnnouncementModal({ announcement, onDismiss }: Announcem
         <p className="mt-2 whitespace-pre-wrap text-sm text-stone-300">{announcement.body}</p>
 
         <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onDismiss}
             data-testid="announcement-dismiss"
-            className="rounded-lg border border-stone-700 px-3 py-1.5 text-sm text-stone-300 hover:bg-stone-800 hover:text-white">
+            className="border-stone-700 bg-transparent text-stone-300 hover:bg-stone-800 hover:text-white">
             {t('announcement.gotIt')}
-          </button>
+          </Button>
           {announcement.cta && (
-            <button
-              type="button"
-              onClick={openCta}
-              data-testid="announcement-cta"
-              className="rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-500/90">
+            <Button size="sm" onClick={openCta} data-testid="announcement-cta">
               {announcement.cta.label}
-            </button>
+            </Button>
           )}
         </div>
       </div>

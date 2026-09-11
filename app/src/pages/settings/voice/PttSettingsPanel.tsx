@@ -194,7 +194,7 @@ const PttSettingsPanel = () => {
                 aria-label={t('pttSettings.shortcutLabel')}
                 onKeyDown={handleShortcutKeyDown}
                 onFocus={() => setCaptureError(null)}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
+                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder:text-content-faint focus:outline-hidden focus:ring-1 focus:ring-primary-400"
               />
               {!shortcut && !captureError && (
                 <p

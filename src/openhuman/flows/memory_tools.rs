@@ -32,10 +32,13 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
-use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, MemoryTaint, RecallOpts};
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use tinymemory_api::provider::{MemoryCore, MemoryRecall};
+use tinymemory_api::recall::OwnedRecallOpts;
+use tinymemory_api::types::{MemoryCategory, MemoryEntry, MemoryTaint};
 
 /// Returns the flow id the *run itself* is scoped under, when the current
 /// agent turn is executing inside a saved-flow run
@@ -143,23 +146,28 @@ const FLOW_MEMORY_NAMESPACE_LISTED_PREFIX: &str = FLOW_MEMORY_NAMESPACE_PREFIX;
 /// so one corrupt/unavailable flow namespace can't blank out every other
 /// flow's results.
 pub async fn cross_flow_recall(
-    memory: &Arc<dyn Memory>,
+    memory: &Arc<crate::openhuman::memory::guard::MemoryGuard>,
     query: &str,
     limit: usize,
     min_score: Option<f64>,
 ) -> anyhow::Result<Vec<MemoryEntry>> {
-    let summaries = memory.namespace_summaries().await?;
+    use tinymemory_api::provider::{MemoryCore, MemoryRecall};
+    // `namespaces()` is the contract's name for what the engine trait called
+    // `namespace_summaries()` — identical signature and return type.
+    let summaries = memory.namespaces().await?;
     let mut merged: Vec<MemoryEntry> = Vec::new();
     for summary in summaries
         .iter()
         .filter(|s| s.namespace.starts_with(FLOW_MEMORY_NAMESPACE_LISTED_PREFIX))
     {
-        let opts = RecallOpts {
-            namespace: Some(summary.namespace.as_str()),
+        let opts = tinymemory_api::recall::OwnedRecallOpts {
+            namespace: Some(summary.namespace.clone()),
             min_score,
-            ..RecallOpts::default()
+            ..Default::default()
         };
-        match memory.recall(query, limit, opts).await {
+        // `None` scope: the guard intersects it with the ambient per-turn
+        // allowlist, so this can only narrow.
+        match memory.recall(query, limit, &opts, None).await {
             Ok(entries) => merged.extend(entries),
             Err(e) => {
                 log::warn!(
@@ -185,13 +193,19 @@ pub async fn cross_flow_recall(
 /// `scope: "flows"` is intentionally still read-only and still confined to
 /// `flow_*` namespaces — it can never see the user's personal/global memory,
 /// only other flows' own automation output.
-pub struct FlowMemoryRecallTool {
-    memory: Arc<dyn Memory>,
-}
+pub struct FlowMemoryRecallTool;
 
 impl FlowMemoryRecallTool {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
-        Self { memory }
+    /// Holds no memory handle — the guarded driver is resolved per call.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for FlowMemoryRecallTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -317,21 +331,29 @@ impl Tool for FlowMemoryRecallTool {
         match scope {
             "flow" => {
                 let namespace = flow_namespace(flow_id);
-                let opts = RecallOpts {
-                    namespace: Some(namespace.as_str()),
-                    ..RecallOpts::default()
+                let opts = OwnedRecallOpts {
+                    namespace: Some(namespace.clone()),
+                    ..Default::default()
                 };
-                match self.memory.recall(query, limit, opts).await {
+                let guard = active_memory_guard()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("flow_memory_recall: {e}"))?;
+                match guard.recall(query, limit, &opts, None).await {
                     Ok(entries) => Ok(ToolResult::success(render_entries(&entries))),
                     Err(e) => Ok(ToolResult::error(format!("Flow memory recall failed: {e}"))),
                 }
             }
-            "flows" => match cross_flow_recall(&self.memory, query, limit, None).await {
-                Ok(merged) => Ok(ToolResult::success(render_entries(&merged))),
-                Err(e) => Ok(ToolResult::error(format!(
-                    "Failed to list flow memory namespaces: {e}"
-                ))),
-            },
+            "flows" => {
+                let guard = active_memory_guard()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("flow_memory_recall: {e}"))?;
+                match cross_flow_recall(&guard, query, limit, None).await {
+                    Ok(merged) => Ok(ToolResult::success(render_entries(&merged))),
+                    Err(e) => Ok(ToolResult::error(format!(
+                        "Failed to list flow memory namespaces: {e}"
+                    ))),
+                }
+            }
             other => Ok(ToolResult::error(format!(
                 "Unknown scope '{other}': expected 'flow' or 'flows'"
             ))),
@@ -347,13 +369,14 @@ impl Tool for FlowMemoryRecallTool {
 /// own. See the module doc for the security invariant this tool exists to
 /// preserve.
 pub struct FlowMemoryRememberTool {
-    memory: Arc<dyn Memory>,
     security: Arc<SecurityPolicy>,
 }
 
 impl FlowMemoryRememberTool {
-    pub fn new(memory: Arc<dyn Memory>, security: Arc<SecurityPolicy>) -> Self {
-        Self { memory, security }
+    /// Holds no memory handle — the guarded driver is resolved per call.
+    #[must_use]
+    pub fn new(security: Arc<SecurityPolicy>) -> Self {
+        Self { security }
     }
 }
 
@@ -474,7 +497,7 @@ impl Tool for FlowMemoryRememberTool {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
 
-        if crate::openhuman::memory::store::safety::has_likely_secret(content) {
+        if crate::openhuman::memory::safety::has_likely_secret(content) {
             log::warn!(
                 "[flows:memory:safety] flow_memory_remember rejected secret-like content flow_id_chars={} key_chars={} content_chars={}",
                 flow_id.chars().count(),
@@ -492,9 +515,14 @@ impl Tool for FlowMemoryRememberTool {
         // or another flow's namespace.
         let namespace = flow_namespace(flow_id);
         let display_key = format!("{namespace}/{key}");
-        match self
-            .memory
-            .store_with_taint(
+        let guard = active_memory_guard()
+            .await
+            .map_err(|e| anyhow::anyhow!("flow_memory_remember: {e}"))?;
+        // `store` carries the taint on the contract, so the engine trait's
+        // separate `store_with_taint` door is unnecessary. `ExternalSync` is
+        // the honest request: a flow wrote this, not the user.
+        match guard
+            .store(
                 &namespace,
                 key,
                 content,
@@ -515,410 +543,5 @@ impl Tool for FlowMemoryRememberTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::inference::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::store::UnifiedMemory;
-    use crate::openhuman::security::AutonomyLevel;
-    use tempfile::TempDir;
-
-    fn test_security() -> Arc<SecurityPolicy> {
-        Arc::new(SecurityPolicy::default())
-    }
-
-    fn test_mem() -> (TempDir, Arc<dyn Memory>) {
-        let tmp = TempDir::new().unwrap();
-        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-        (tmp, Arc::new(mem))
-    }
-
-    // ── flow_namespace / FLOW_MEMORY_NAMESPACE_PREFIX ───────────────
-    // (relocated from `flows::mod` — see that module's re-export comment)
-
-    #[test]
-    fn flow_namespace_uses_the_shared_root_prefix() {
-        assert_eq!(flow_namespace("abc-123"), "flow_abc-123");
-        assert!(flow_namespace("abc-123").starts_with(FLOW_MEMORY_NAMESPACE_PREFIX));
-    }
-
-    #[test]
-    fn flow_namespace_is_distinct_per_flow() {
-        assert_ne!(flow_namespace("a"), flow_namespace("b"));
-    }
-
-    // ── FlowMemoryRecallTool ────────────────────────────────────────
-
-    #[test]
-    fn recall_name_and_schema() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRecallTool::new(mem);
-        assert_eq!(tool.name(), "flow_memory_recall");
-        let schema = tool.parameters_schema();
-        assert!(schema["properties"]["query"].is_object());
-        assert!(schema["properties"]["flow_id"].is_object());
-        assert!(schema["properties"]["scope"].is_object());
-    }
-
-    #[tokio::test]
-    async fn recall_empty_returns_no_results() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"query": "anything", "flow_id": "f1"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("No memories found"));
-    }
-
-    #[tokio::test]
-    async fn store_then_recall_matches() {
-        let (_tmp, mem) = test_mem();
-        mem.store_with_taint(
-            &flow_namespace("f1"),
-            "sent_item_42",
-            "Sent newsletter item 42 to subscribers",
-            MemoryCategory::Core,
-            None,
-            MemoryTaint::ExternalSync,
-        )
-        .await
-        .unwrap();
-
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"query": "newsletter item 42", "flow_id": "f1"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("newsletter item 42") || result.output().contains("42"));
-        assert!(result.output().contains("Found 1"));
-    }
-
-    #[tokio::test]
-    async fn scope_flow_isolates_to_own_namespace() {
-        let (_tmp, mem) = test_mem();
-        mem.store_with_taint(
-            &flow_namespace("f1"),
-            "k",
-            "shared keyword hit",
-            MemoryCategory::Core,
-            None,
-            MemoryTaint::ExternalSync,
-        )
-        .await
-        .unwrap();
-        mem.store_with_taint(
-            &flow_namespace("f2"),
-            "k",
-            "shared keyword hit",
-            MemoryCategory::Core,
-            None,
-            MemoryTaint::ExternalSync,
-        )
-        .await
-        .unwrap();
-
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"query": "shared keyword", "flow_id": "f1", "scope": "flow"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        // Only f1's own entry, not f2's.
-        assert!(result.output().contains("Found 1"));
-    }
-
-    #[tokio::test]
-    async fn scope_flows_crosses_namespaces() {
-        let (_tmp, mem) = test_mem();
-        mem.store_with_taint(
-            &flow_namespace("f1"),
-            "k",
-            "shared keyword hit from f1",
-            MemoryCategory::Core,
-            None,
-            MemoryTaint::ExternalSync,
-        )
-        .await
-        .unwrap();
-        mem.store_with_taint(
-            &flow_namespace("f2"),
-            "k",
-            "shared keyword hit from f2",
-            MemoryCategory::Core,
-            None,
-            MemoryTaint::ExternalSync,
-        )
-        .await
-        .unwrap();
-
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"query": "shared keyword", "flow_id": "f1", "scope": "flows"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        // Both f1's and f2's namespaces are visible under scope="flows".
-        assert!(result.output().contains("Found 2"));
-    }
-
-    // T-m5: a missing/invalid input param reports via `ToolResult::error`
-    // (an `Ok(..)` the model can read and react to in-turn), never
-    // `Err(anyhow!)` (a hard tool-invocation failure) — matching every other
-    // input-validation problem on this belt (see the scope/empty-value
-    // tests above, which already used this channel before the fix).
-    #[tokio::test]
-    async fn recall_missing_query_errs() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool.execute(json!({"flow_id": "f1"})).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Missing 'query'"));
-    }
-
-    #[tokio::test]
-    async fn recall_missing_flow_id_errs() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRecallTool::new(mem);
-        let result = tool.execute(json!({"query": "anything"})).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Missing 'flow_id'"));
-    }
-
-    // ── FlowMemoryRememberTool ──────────────────────────────────────
-
-    #[test]
-    fn remember_name_and_schema() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem, test_security());
-        assert_eq!(tool.name(), "flow_memory_remember");
-        let schema = tool.parameters_schema();
-        assert!(schema["properties"]["flow_id"].is_object());
-        assert!(schema["properties"]["key"].is_object());
-        assert!(schema["properties"]["content"].is_object());
-        // No `namespace` parameter exists — the security invariant that a
-        // flow can never target another namespace.
-        assert!(schema["properties"]["namespace"].is_null());
-        assert_eq!(tool.permission_level(), PermissionLevel::Write);
-    }
-
-    /// Helper: a trusted `TrustedAutomation { Workflow }` origin scoped to
-    /// `job_id`, the only source `flow_memory_remember` will act on since the
-    /// T-M2 fix.
-    fn trusted_workflow_origin(job_id: &str) -> AgentTurnOrigin {
-        AgentTurnOrigin::TrustedAutomation {
-            job_id: job_id.to_string(),
-            source: TrustedAutomationSource::Workflow {
-                require_approval: false,
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn remember_stores_with_external_sync_taint() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem.clone(), test_security());
-        let result = turn_origin::with_origin(
-            trusted_workflow_origin("f1"),
-            tool.execute(
-                json!({"flow_id": "f1", "key": "sent_item_42", "content": "Sent item 42"}),
-            ),
-        )
-        .await
-        .unwrap();
-        assert!(!result.is_error);
-
-        let entry = mem
-            .get(&flow_namespace("f1"), "sent_item_42")
-            .await
-            .unwrap()
-            .expect("entry should be stored");
-        assert_eq!(entry.content, "Sent item 42");
-        assert_eq!(entry.taint, MemoryTaint::ExternalSync);
-    }
-
-    #[tokio::test]
-    async fn remember_writes_only_to_own_flow_namespace() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem.clone(), test_security());
-        turn_origin::with_origin(
-            trusted_workflow_origin("f1"),
-            tool.execute(json!({"flow_id": "f1", "key": "k", "content": "f1 content"})),
-        )
-        .await
-        .unwrap();
-
-        // Never lands in another flow's namespace, the shared "flows" scope
-        // namespace, or global/user memory.
-        assert!(mem.get(&flow_namespace("f2"), "k").await.unwrap().is_none());
-        assert!(mem.get("global", "k").await.unwrap().is_none());
-        assert!(mem
-            .get("f1", "k") // raw flow_id, not the derived namespace
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    /// SECURITY (T-M2): the primary fix under test — a chat/orchestrator turn
-    /// (no trusted `Workflow` run origin) must be refused outright, never
-    /// routed to the model-supplied `flow_id`. This is the exact
-    /// prompt-injection scenario: an attacker-controlled chat turn calling
-    /// `flow_memory_remember` with another flow's id to poison its dedup
-    /// memory (e.g. mark an item as already-sent so a digest flow skips it
-    /// forever).
-    #[tokio::test]
-    async fn remember_refuses_outside_a_trusted_workflow_run() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem.clone(), test_security());
-
-        // No `turn_origin::with_origin` wrapper — this call has no trusted
-        // Workflow run origin, exactly like every chat/orchestrator turn.
-        let result = tool
-            .execute(json!({
-                "flow_id": "digest-flow-victim",
-                "key": "sent_item_42",
-                "content": "Sent newsletter item 42 to subscribers"
-            }))
-            .await
-            .unwrap();
-
-        assert!(result.is_error);
-        assert!(result
-            .output()
-            .contains("only available inside a workflow run"));
-        // Nothing was written to the targeted namespace — or anywhere else.
-        assert!(mem
-            .get(&flow_namespace("digest-flow-victim"), "sent_item_42")
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    /// SECURITY (Fix 1): a running flow's own id — carried by the run's
-    /// `TrustedAutomation { Workflow }` origin — is authoritative. A
-    /// mismatched, model-supplied `flow_id` arg must be silently ignored,
-    /// never allowed to redirect the write into a different flow's
-    /// namespace.
-    #[tokio::test]
-    async fn remember_ignores_mismatched_flow_id_arg_inside_trusted_workflow_run() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem.clone(), test_security());
-
-        let origin = AgentTurnOrigin::TrustedAutomation {
-            job_id: "f-real".to_string(),
-            source: TrustedAutomationSource::Workflow {
-                require_approval: false,
-            },
-        };
-        let result = turn_origin::with_origin(
-            origin,
-            tool.execute(json!({
-                "flow_id": "f-other",
-                "key": "sent_item_1",
-                "content": "Sent item 1"
-            })),
-        )
-        .await
-        .unwrap();
-        assert!(!result.is_error);
-
-        // Landed in the trusted run's own namespace...
-        assert!(mem
-            .get(&flow_namespace("f-real"), "sent_item_1")
-            .await
-            .unwrap()
-            .is_some());
-        // ...and NOT the mismatched, model-supplied namespace.
-        assert!(mem
-            .get(&flow_namespace("f-other"), "sent_item_1")
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn remember_blocked_in_readonly_autonomy() {
-        let (_tmp, mem) = test_mem();
-        let readonly = Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::ReadOnly,
-            ..SecurityPolicy::default()
-        });
-        let tool = FlowMemoryRememberTool::new(mem.clone(), readonly);
-        let result = tool
-            .execute(json!({"flow_id": "f1", "key": "k", "content": "blocked"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("read-only mode"));
-        assert!(mem.get(&flow_namespace("f1"), "k").await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn remember_rejects_secret_like_content() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem.clone(), test_security());
-        let result = turn_origin::with_origin(
-            trusted_workflow_origin("f1"),
-            tool.execute(json!({
-                "flow_id": "f1",
-                "key": "api",
-                "content": "api_key=sk-123456789012345678901234567890"
-            })),
-        )
-        .await
-        .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("looks like a secret"));
-        assert!(mem
-            .get(&flow_namespace("f1"), "api")
-            .await
-            .unwrap()
-            .is_none());
-    }
-
-    /// Outside a trusted run, `flow_id` no longer matters — the T-M2 refusal
-    /// fires regardless of whether it was supplied. (Inside a trusted run the
-    /// arg is informational only and ignored either way — see
-    /// `remember_ignores_mismatched_flow_id_arg_inside_trusted_workflow_run`.)
-    #[tokio::test]
-    async fn remember_missing_flow_id_outside_trusted_run_is_refused() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem, test_security());
-        let result = tool
-            .execute(json!({"key": "k", "content": "c"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result
-            .output()
-            .contains("only available inside a workflow run"));
-    }
-
-    // T-m5 (retained through the T-M2 merge): the missing-param checks run
-    // BEFORE the trusted-origin resolution, so they are still reachable outside
-    // a run and still assert the `ToolResult::error` channel rather than `Err`.
-    #[tokio::test]
-    async fn remember_missing_key_errs() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem, test_security());
-        let result = tool
-            .execute(json!({"flow_id": "f1", "content": "c"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Missing 'key'"));
-    }
-
-    #[tokio::test]
-    async fn remember_missing_content_errs() {
-        let (_tmp, mem) = test_mem();
-        let tool = FlowMemoryRememberTool::new(mem, test_security());
-        let result = tool
-            .execute(json!({"flow_id": "f1", "key": "k"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Missing 'content'"));
-    }
-}
+#[path = "memory_tools_tests.rs"]
+mod tests;

@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
+import { cn } from '../../../../lib/cn';
 import {
   buildCron,
   type CronFreq,
@@ -27,7 +28,14 @@ import {
   weekdayShortLabel,
 } from '../../../../lib/flows/cron';
 import { useT } from '../../../../lib/i18n/I18nContext';
-import { Field, INPUT_CLASS, MONO_CLASS } from './nodeConfigFields';
+import {
+  Button,
+  NativeSelect,
+  ToggleGroupItem,
+  ToggleGroupRoot,
+  Input as UiInput,
+} from '../../../ui';
+import { Field, MONO_CLASS } from './nodeConfigFields';
 
 interface ScheduleFieldProps {
   /** The cron string stored on `config.schedule`. */
@@ -90,10 +98,11 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
         </div>
 
         {advanced ? (
-          <input
+          <UiInput
             id={id}
             type="text"
-            className={`${INPUT_CLASS} ${MONO_CLASS}`}
+            inputSize="sm"
+            className={cn('w-full', MONO_CLASS)}
             value={value}
             placeholder="0 9 * * 1"
             aria-label={t('flows.nodeConfig.trigger.scheduleCronLabel')}
@@ -104,8 +113,9 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
           <div className="space-y-2.5">
             {/* Frequency + interval / time row. */}
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className={`${INPUT_CLASS} w-auto flex-none`}
+              <NativeSelect
+                inputSize="sm"
+                className="w-auto flex-none"
                 value={spec.freq}
                 aria-label={t('flows.nodeConfig.trigger.scheduleFreqLabel')}
                 data-testid={testId ? `${testId}-freq` : undefined}
@@ -115,16 +125,17 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
                     {t(`flows.nodeConfig.trigger.scheduleFreq_${f}`)}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
 
               {(spec.freq === 'minutes' || spec.freq === 'hours') && (
                 <label className="flex items-center gap-1.5 text-xs text-content-muted">
                   {t('flows.nodeConfig.trigger.scheduleEvery')}
-                  <input
+                  <UiInput
                     type="number"
+                    inputSize="sm"
                     min={1}
                     max={spec.freq === 'minutes' ? 59 : 23}
-                    className={`${INPUT_CLASS} w-16`}
+                    className="w-16"
                     value={spec.interval}
                     aria-label={t('flows.nodeConfig.trigger.scheduleInterval')}
                     data-testid={testId ? `${testId}-interval` : undefined}
@@ -137,9 +148,10 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
               {spec.freq === 'daily' && (
                 <label className="flex items-center gap-1.5 text-xs text-content-muted">
                   {t('flows.nodeConfig.trigger.scheduleAt')}
-                  <input
+                  <UiInput
                     type="time"
-                    className={`${INPUT_CLASS} w-auto`}
+                    inputSize="sm"
+                    className="w-auto"
                     value={formatTime(spec.hour, spec.minute)}
                     aria-label={t('flows.nodeConfig.trigger.scheduleTime')}
                     data-testid={testId ? `${testId}-time` : undefined}
@@ -157,42 +169,50 @@ export function ScheduleField({ value, onChange, testId }: ScheduleFieldProps) {
               <span className="block text-[11px] text-content-faint">
                 {t('flows.nodeConfig.trigger.scheduleDays')}
               </span>
-              <div className="flex gap-1" data-testid={testId ? `${testId}-weekdays` : undefined}>
+              <ToggleGroupRoot
+                type="multiple"
+                variant="secondary"
+                size="xs"
+                iconOnly
+                value={spec.weekdays.map(String)}
+                onValueChange={values => {
+                  const set = new Set(values.map(Number));
+                  for (const day of WEEKDAYS) {
+                    const active = spec.weekdays.includes(day);
+                    if (set.has(day) !== active) toggleWeekday(day);
+                  }
+                }}
+                data-testid={testId ? `${testId}-weekdays` : undefined}>
                 {WEEKDAYS.map(day => {
-                  const active = spec.weekdays.includes(day);
                   const label = weekdayShortLabel(day, locale);
                   return (
-                    <button
+                    <ToggleGroupItem
                       key={day}
-                      type="button"
-                      aria-pressed={active}
+                      value={String(day)}
                       aria-label={label}
                       title={label}
                       data-testid={testId ? `${testId}-day-${day}` : undefined}
-                      onClick={() => toggleWeekday(day)}
-                      className={`h-7 w-7 rounded-full text-[11px] font-semibold transition-colors ${
-                        active
-                          ? 'bg-primary-500 text-content-inverted'
-                          : 'border border-line-strong text-content-muted hover:bg-surface-hover'
-                      }`}>
+                      className="h-7 w-7 rounded-full">
                       {weekdayNarrowLabel(day, locale)}
-                    </button>
+                    </ToggleGroupItem>
                   );
                 })}
-              </div>
+              </ToggleGroupRoot>
             </div>
           </div>
         )}
 
-        <button
+        <Button
           type="button"
-          className="text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400"
+          variant="tertiary"
+          size="xs"
+          className="h-auto px-0 text-[11px] font-medium text-primary-600 hover:underline hover:bg-transparent dark:text-primary-400"
           data-testid={testId ? `${testId}-advanced-toggle` : undefined}
           onClick={advanced ? exitAdvanced : enterAdvanced}>
           {advanced
             ? t('flows.nodeConfig.trigger.scheduleSimple')
             : t('flows.nodeConfig.trigger.scheduleAdvanced')}
-        </button>
+        </Button>
       </div>
     </Field>
   );

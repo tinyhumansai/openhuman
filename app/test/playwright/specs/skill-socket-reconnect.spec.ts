@@ -15,6 +15,6 @@ test.describe('Socket reconnect skill sync smoke', () => {
     await bootAuthenticatedPage(page, 'pw-skill-socket-reconnect', '/home');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
-    await expect(page.locator('[data-walkthrough="home-card"]')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 });

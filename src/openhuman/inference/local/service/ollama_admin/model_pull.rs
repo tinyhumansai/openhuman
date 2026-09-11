@@ -66,10 +66,6 @@ impl LocalAiService {
             self.status.lock().embedding_state = "ready".to_string();
         }
 
-        if config.local_ai.preload_stt_model {
-            self.ensure_stt_asset_available(config).await?;
-        }
-
         if config.local_ai.preload_tts_voice {
             self.ensure_tts_asset_available(config).await?;
         }

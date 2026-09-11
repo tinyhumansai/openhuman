@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::sync::composio::providers::NormalizedTask;
+use crate::openhuman::integrations::composio::providers::NormalizedTask;
 
 use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,

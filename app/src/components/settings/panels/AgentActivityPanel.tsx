@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
+import Badge from '../../ui/Badge';
+import Button from '../../ui/Button';
+import { CenteredLoadingState } from '../../ui/LoadingState';
 import { SettingsStatusLine } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 
@@ -97,52 +100,48 @@ export default function AgentActivityPanel() {
     }
   }, []);
 
-  if (status === 'loading' && !settings) {
-    return <div className="p-4 text-sm text-content-muted">{t('common.loading')}</div>;
-  }
-
   return (
     <SettingsPanel description={t('activityLevel.description')}>
-      <div className="flex flex-col gap-4">
-        {monthlyCost && monthlyCost.total_cost_usd > 0 && (
-          <div className="px-3 py-2 rounded-md bg-surface-subtle text-sm">
-            <span className="font-medium text-content">
-              {t('activityLevel.currentMonth').replace(
-                '{amount}',
-                monthlyCost.total_cost_usd.toFixed(2)
-              )}
-            </span>
-          </div>
-        )}
+      {status === 'loading' && !settings ? (
+        <CenteredLoadingState label={t('common.loading')} className="py-12" />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {monthlyCost && monthlyCost.total_cost_usd > 0 && (
+            <div className="px-3 py-2 rounded-md bg-surface-subtle text-sm">
+              <span className="font-medium text-content">
+                {t('activityLevel.currentMonth').replace(
+                  '{amount}',
+                  monthlyCost.total_cost_usd.toFixed(2)
+                )}
+              </span>
+            </div>
+          )}
 
-        {/* Level selection cards — intentional bespoke card UI; kept as-is. */}
-        <div className="flex flex-col gap-2">
-          {LEVELS.map(({ key, value }) => {
-            const isSelected = settings?.level === value;
-            const apiKey = key === 'alwaysOn' ? 'always_on' : (key as string);
-            const costMin = getCostMin(value);
-            const costMax = getCostMax(value);
-            return (
-              <button
-                key={key}
-                onClick={() => handleLevelChange(apiKey)}
-                disabled={status === 'saving'}
-                className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
-                  isSelected
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-line bg-surface hover:border-line-strong dark:hover:border-line-strong'
-                } ${status === 'saving' ? 'opacity-50' : ''}`}>
-                <div className="flex items-center justify-between">
+          {/* Level selection cards — intentional bespoke card UI; kept as-is. */}
+          <div className="flex flex-col gap-2">
+            {LEVELS.map(({ key, value }) => {
+              const isSelected = settings?.level === value;
+              const apiKey = key === 'alwaysOn' ? 'always_on' : (key as string);
+              const costMin = getCostMin(value);
+              const costMax = getCostMax(value);
+              return (
+                <Button
+                  key={key}
+                  variant="secondary"
+                  onClick={() => handleLevelChange(apiKey)}
+                  disabled={status === 'saving'}
+                  data-testid={`activity-level-${key}`}
+                  className={`h-auto w-full items-center justify-between rounded-lg px-4 py-3 text-left font-normal ${
+                    isSelected
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-line bg-surface hover:border-line-strong dark:hover:border-line-strong'
+                  }`}>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-content">
                         {t(`activityLevel.${key as LevelKey}`)}
                       </span>
-                      {value === 2 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-surface-strong dark:bg-neutral-700 text-content-secondary dark:text-content-muted">
-                          {t('activityLevel.default')}
-                        </span>
-                      )}
+                      {value === 2 && <Badge variant="neutral">{t('activityLevel.default')}</Badge>}
                     </div>
                     <p className="text-xs text-content-muted mt-0.5">
                       {t(`activityLevel.${key as LevelKey}Desc`)}
@@ -155,19 +154,19 @@ export default function AgentActivityPanel() {
                           .replace('{min}', String(costMin))
                           .replace('{max}', String(costMax))}
                   </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                </Button>
+              );
+            })}
+          </div>
 
-        <SettingsStatusLine
-          saving={status === 'saving'}
-          savedNote={status === 'saved' ? t('activityLevel.saved') : null}
-          error={error}
-          savingLabel={t('autonomy.statusSaving')}
-        />
-      </div>
+          <SettingsStatusLine
+            saving={status === 'saving'}
+            savedNote={status === 'saved' ? t('activityLevel.saved') : null}
+            error={error}
+            savingLabel={t('autonomy.statusSaving')}
+          />
+        </div>
+      )}
     </SettingsPanel>
   );
 }

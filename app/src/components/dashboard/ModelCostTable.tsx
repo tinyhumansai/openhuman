@@ -12,14 +12,13 @@ const PROVIDER_PALETTE: Record<string, string> = {
     'bg-[#D97757]/15 text-[#D97757] dark:bg-[#D97757]/20 dark:text-[#F5A584] ring-[#D97757]/30',
   openai: 'bg-sage-500/15 text-sage-700 dark:bg-sage-500/20 dark:text-sage-300 ring-sage-500/30',
   google:
-    'bg-ocean-500/15 text-ocean-700 dark:bg-ocean-500/20 dark:text-ocean-300 ring-ocean-500/30',
+    'bg-primary-500/15 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300 ring-primary-500/30',
   fireworks:
     'bg-coral-500/15 text-coral-700 dark:bg-coral-500/20 dark:text-coral-300 ring-coral-500/30',
   groq: 'bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 ring-amber-500/30',
 };
 
-const PROVIDER_FALLBACK =
-  'bg-surface-strong text-content-secondary ring-stone-300 dark:ring-neutral-700';
+const PROVIDER_FALLBACK = 'bg-surface-strong text-content-secondary ring-line-strong';
 
 function providerChipClass(provider: string | null): string {
   if (!provider) return PROVIDER_FALLBACK;
@@ -92,7 +91,7 @@ const ModelCostTable = ({ models, currency }: ModelCostTableProps) => {
                       aria-hidden
                       className="h-1 w-12 rounded-full bg-surface-strong overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-ocean-500"
+                        className="h-full rounded-full bg-primary-500"
                         style={{ width: `${sharePct}%` }}
                       />
                     </div>

@@ -103,7 +103,6 @@ None. The module publishes/subscribes no `DomainEvent`s and has no `bus.rs`. Cha
 ## Used by
 
 - `src/openhuman/tools/mod.rs` & `src/openhuman/tools/ops.rs` — register the three wallet agent tools.
-- `src/openhuman/tools/impl/network/polymarket.rs` — uses `secret_material`, `status`, and `WalletChain` to derive an EVM signer for Polymarket CLOB.
 - `src/openhuman/agent/agents/loader.rs` — references the wallet tools when assembling agent toolsets.
 - `src/core/all.rs` — wires controllers/schemas/capability description.
 - `src/openhuman/test_support/introspect.rs` — introspection in tests.

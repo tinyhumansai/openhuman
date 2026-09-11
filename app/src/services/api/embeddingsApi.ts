@@ -27,10 +27,25 @@ export interface EmbeddingProviderEntry {
 }
 
 export interface EmbeddingsSettings {
+  /** The picker's own setting (`config.memory.embedding_provider`). */
   provider: string;
+  /**
+   * The embedder ingestion will **actually** use, resolved core-side by the
+   * memory-tree provider ladder (#5402). Ask this — not `provider` — when the
+   * question is "do these embeddings bill against the managed budget?": the
+   * Local AI "Memory embeddings" toggle and the `memory_tree.embedding_endpoint`
+   * override both route to local Ollama without rewriting `provider`.
+   *
+   * One of `ollama` | `custom` | `cloud` | `none` | `unconfigured` | `unknown`.
+   * Optional so an older core (or a stubbed test payload) degrades to `provider`
+   * rather than throwing.
+   */
+  effective_provider?: string;
   model: string;
   dimensions: number;
   rate_limit_per_min: number;
+  /** Last verified Custom profile, retained even while another provider is active. */
+  custom_settings?: { endpoint: string; model: string; dimensions: number } | null;
   providers: EmbeddingProviderEntry[];
   vector_search_enabled: boolean;
 }

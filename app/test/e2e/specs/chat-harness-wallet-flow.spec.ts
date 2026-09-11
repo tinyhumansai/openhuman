@@ -121,13 +121,6 @@ describe('Chat harness — wallet flow', () => {
     // so the crypto sub-agent run starts from a clean signed-in state (a
     // polluted session was the source of the intermittent quote-store failures).
     await resetApp(USER_ID, { clearAuthSession: true });
-    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
-      value: false,
-    });
-    expect(superContext.ok).toBe(true);
-    console.log(
-      '[chat-harness-wallet-flow] Disabled super context for deterministic scripted LLM calls'
-    );
   });
 
   after(async () => {

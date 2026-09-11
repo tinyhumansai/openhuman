@@ -4,18 +4,19 @@ use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::handlers::{
-    handle_overlay_stt_notify, handle_voice_cloud_transcribe, handle_voice_list_models,
-    handle_voice_reply_synthesize, handle_voice_server_start, handle_voice_server_status,
-    handle_voice_server_stop, handle_voice_set_providers, handle_voice_status,
-    handle_voice_stt_dispatch, handle_voice_test_provider, handle_voice_transcribe,
-    handle_voice_transcribe_bytes, handle_voice_tts, handle_voice_tts_dispatch,
-    handle_voice_update_provider_settings,
+    handle_overlay_stt_notify, handle_voice_agent_signed_url, handle_voice_cloud_transcribe,
+    handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_server_start,
+    handle_voice_server_status, handle_voice_server_stop, handle_voice_set_providers,
+    handle_voice_status, handle_voice_stt_dispatch, handle_voice_test_provider,
+    handle_voice_transcribe, handle_voice_transcribe_bytes, handle_voice_tts,
+    handle_voice_tts_dispatch, handle_voice_update_provider_settings,
 };
 use super::helpers::{json_output, optional_bool, optional_string, required_string};
 
 pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         voice_schemas("voice_status"),
+        voice_schemas("voice_agent_signed_url"),
         voice_schemas("voice_transcribe"),
         voice_schemas("voice_transcribe_bytes"),
         voice_schemas("voice_tts"),
@@ -39,6 +40,10 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_status"),
             handler: handle_voice_status,
+        },
+        RegisteredController {
+            schema: voice_schemas("voice_agent_signed_url"),
+            handler: handle_voice_agent_signed_url,
         },
         RegisteredController {
             schema: voice_schemas("voice_transcribe"),
@@ -108,21 +113,31 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
         "voice_status" => ControllerSchema {
             namespace: "voice",
             function: "status",
-            description: "Check availability of STT/TTS binaries and models.",
+            description: "Check whether the configured STT engine resolves and whether the local TTS binary/voice are installed.",
             inputs: vec![],
             outputs: vec![json_output("status", "Voice availability status.")],
+        },
+        "voice_agent_signed_url" => ControllerSchema {
+            namespace: "voice",
+            function: "agent_signed_url",
+            description: "Mint a short-lived signed URL for a realtime voice-agent session.",
+            inputs: vec![],
+            outputs: vec![
+                json_output("signed_url", "Signed WebSocket URL for the voice-agent session."),
+                json_output("agent_id", "The voice agent the URL was minted for."),
+            ],
         },
         "voice_transcribe" => ControllerSchema {
             namespace: "voice",
             function: "transcribe",
             description:
-                "Transcribe audio from a file path using whisper.cpp, with optional LLM cleanup.",
+                "Transcribe audio from a file path through the configured STT engine, with optional LLM cleanup.",
             inputs: vec![
                 required_string("audio_path", "Path to the audio file."),
                 optional_string("context", "Conversation context for LLM post-processing."),
                 optional_bool(
                     "skip_cleanup",
-                    "Skip LLM cleanup, return raw whisper output.",
+                    "Skip LLM cleanup, return the raw engine output.",
                 ),
             ],
             outputs: vec![json_output(
@@ -134,7 +149,7 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             namespace: "voice",
             function: "transcribe_bytes",
             description:
-                "Transcribe audio from raw bytes using whisper.cpp, with optional LLM cleanup.",
+                "Transcribe audio from raw bytes through the configured STT engine, with optional LLM cleanup.",
             inputs: vec![
                 FieldSchema {
                     name: "audio_bytes",
@@ -146,7 +161,7 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 optional_string("context", "Conversation context for LLM post-processing."),
                 optional_bool(
                     "skip_cleanup",
-                    "Skip LLM cleanup, return raw whisper output.",
+                    "Skip LLM cleanup, return the raw engine output.",
                 ),
             ],
             outputs: vec![json_output(
@@ -188,9 +203,9 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             namespace: "voice",
             function: "stt_dispatch",
             description:
-                "Factory-dispatched speech-to-text. Routes to the cloud Whisper proxy or the \
-                 local whisper.cpp binary based on `provider` (or `config.local_ai.stt_provider` \
-                 when unspecified). Returns the same `{ text }` payload either way.",
+                "Factory-dispatched speech-to-text. Routes to the OpenHuman backend proxy or a \
+                 third-party provider based on `provider` (or, when unspecified, the resolved \
+                 `voice_server.stt_engine`). Returns the same `{ text }` payload either way.",
             inputs: vec![
                 required_string(
                     "audio_base64",
@@ -198,9 +213,9 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_string(
                     "provider",
-                    "Override provider: 'cloud' or 'whisper'. Defaults to config.local_ai.stt_provider.",
+                    "Override provider: 'cloud' or '<slug>[:<model>]'. Defaults to the resolved voice_server.stt_engine.",
                 ),
-                optional_string("model", "Whisper model id (whisper branch only)."),
+                optional_string("model", "Model id for the selected engine (e.g. 'scribe_v1', 'whisper-1')."),
                 optional_string("mime_type", "Audio MIME type (default: audio/webm)."),
                 optional_string("file_name", "Filename hint (default: audio.webm)."),
                 optional_string("language", "BCP-47 language hint, e.g. 'en'."),
@@ -243,13 +258,13 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 optional_string(
                     "stt_provider",
-                    "STT provider id ('cloud' or 'whisper'). Omitted = unchanged.",
+                    "STT provider id ('cloud' or '<slug>[:<model>]'). Omitted = unchanged.",
                 ),
                 optional_string(
                     "tts_provider",
                     "TTS provider id ('cloud' or 'piper'). Omitted = unchanged.",
                 ),
-                optional_string("stt_model", "Whisper model id (e.g. 'whisper-large-v3-turbo')."),
+                optional_string("stt_model", "STT model id (e.g. 'whisper-1', 'scribe_v1')."),
                 optional_string("tts_voice", "Piper voice id (e.g. 'en_US-lessac-medium')."),
             ],
             outputs: vec![json_output(
@@ -272,7 +287,7 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 },
                 optional_string(
                     "stt_provider",
-                    "STT routing string ('cloud', 'whisper', or '<slug>:<model>').",
+                    "STT routing string ('cloud' or '<slug>:<model>').",
                 ),
                 optional_string(
                     "tts_provider",
@@ -307,7 +322,9 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             function: "test_provider",
             description:
                 "Test a voice provider endpoint without saving. STT transcribes a \
-                 silent audio clip; TTS synthesizes 'Hello' and discards.",
+                 silent audio clip; TTS synthesizes 'Hello' and discards. With \
+                 `validate_only` it is a dry run: a lightweight authenticated GET, \
+                 no inference call and nothing persisted.",
             inputs: vec![
                 required_string("workload", "Workload to test: 'stt' or 'tts'."),
                 required_string(
@@ -316,7 +333,14 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_bool(
                     "validate_only",
-                    "When true, only validate the API key without synthesizing/transcribing.",
+                    "When true, only validate the API key without synthesizing/transcribing. \
+                     Honoured for both workloads.",
+                ),
+                optional_string(
+                    "api_key",
+                    "Candidate API key to validate without storing it, so a key can be \
+                     checked before the user commits to saving it. Omit to use the stored \
+                     credential. Only read when `validate_only` is true.",
                 ),
             ],
             outputs: vec![json_output(

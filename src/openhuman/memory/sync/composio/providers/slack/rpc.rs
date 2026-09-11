@@ -4,11 +4,34 @@
 //! entire Slack integration lives under `composio::providers::slack`.
 //!
 //! Public JSON-RPC surface:
-//! - `openhuman.slack_memory_sync_trigger` — run `SlackProvider::sync()`
-//!   once for each active Slack connection (or just one, if
-//!   `connection_id` is supplied).
-//! - `openhuman.slack_memory_sync_status` — list the per-connection
-//!   sync cursors + last-synced timestamps.
+//! - `openhuman.slack_memory_sync_trigger` — read each active Slack
+//!   connection through the `tinyconnectors` module and ingest what it
+//!   returns (or just one connection, if `connection_id` is supplied).
+//! - `openhuman.slack_memory_sync_status` — list the connections a trigger
+//!   would act on.
+//!
+//! # Where the sync actually happens now
+//!
+//! tinymemory v1.13.4 deleted the in-process `SlackProvider` along with the
+//! rest of the Composio pipeline: `MemorySourceSync::run_connection_sync` and
+//! `::source_sync_state` now unconditionally refuse for every toolkit,
+//! because reaching a connected account needs a credential the engine must
+//! not hold. `sync_trigger_rpc` below reads through the connector module and
+//! writes into the bound memory driver via `MemorySourceSink::accept_source_items`
+//! instead — the same `run_sync_pass` helper
+//! `integrations::composio::ops::composio_sync` uses (through
+//! `run_sync_within_budget`, which repeats it within one call's item budget),
+//! called synchronously here rather than fired into a background task,
+//! because this RPC's contract is "return the outcome", not "return that a
+//! run started".
+//!
+//! `sync_status_rpc` genuinely lost capability it cannot honestly recover:
+//! the module keeps its sync cursor and daily-request budget internally and
+//! exposes neither outside of a `Sync` call, so the per-connection detail
+//! `ConnectionStatus` used to report (cursor JSON, synced-id count, requests
+//! used today) has no source any more. The rows below still report which
+//! connections a trigger would act on, with the detail fields at their zero
+//! value rather than removed from the wire shape.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +39,9 @@ use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::client::{
     create_composio_client, direct_list_connections, ComposioClientKind,
 };
+use crate::openhuman::integrations::composio::ops::run_sync_within_budget;
+use crate::openhuman::integrations::composio::providers::SyncOutcome;
 use crate::openhuman::integrations::composio::types::ComposioConnectionsResponse;
-use crate::openhuman::memory::sync::composio::providers::SyncOutcome;
 use crate::rpc::RpcOutcome;
 
 /// Optional connection-id override for the trigger. When absent, all
@@ -93,25 +117,28 @@ pub async fn sync_trigger_rpc(
 
     for conn in candidates {
         let started_at_ms = now_ms();
-        match crate::openhuman::memory::tinycortex::run_composio_connection(
-            "slack", &conn.id, config,
-        )
-        .await
+        // Reads through the `tinyconnectors` module and ingests through the
+        // bound driver's `MemorySourceSink` — see the module doc comment for
+        // why this no longer goes through `MemorySourceSync::run_connection_sync`.
+        match run_sync_within_budget(config, "slack", &conn.id, "manual")
+            .await
+            .map_err(|error| error.to_string())
         {
-            Ok(outcome) => outcomes.push(SyncOutcome {
+            Ok(pass) => outcomes.push(SyncOutcome {
                 toolkit: "slack".to_string(),
                 connection_id: Some(conn.id.clone()),
                 reason: "manual".to_string(),
-                items_ingested: outcome.records_ingested as usize,
+                items_ingested: pass.records_read,
                 started_at_ms,
                 finished_at_ms: now_ms(),
-                summary: outcome
-                    .note
-                    .unwrap_or_else(|| "Slack sync completed".to_string()),
+                summary: format!(
+                    "Slack sync completed ({} written, {} already ingested)",
+                    pass.written, pass.already_ingested
+                ),
                 details: serde_json::json!({
-                    "more_pending": outcome.more_pending,
-                    "actions_called": outcome.actions_called,
-                    "provider_cost_usd": outcome.provider_cost_usd,
+                    "more_pending": pass.more_pending,
+                    "written": pass.written,
+                    "already_ingested": pass.already_ingested,
                 }),
             }),
             Err(err) => {
@@ -165,8 +192,19 @@ pub struct ConnectionStatus {
     pub daily_request_limit: u32,
 }
 
-/// Report one row per active Slack Composio connection, pulled from
-/// the Composio sync-state KV store.
+/// List every active Slack Composio connection a trigger would act on.
+///
+/// **Degraded read, and honestly so.** This used to pull the per-connection
+/// cursor/dedup/budget snapshot the engine's `SlackProvider` kept in the
+/// sync-state KV, through `MemorySourceSync::source_sync_state`. That member
+/// now unconditionally refuses for every toolkit (tinymemory v1.13.4 deleted
+/// the in-process pipeline it read), and the `tinyconnectors` module keeps its
+/// cursor and daily-request budget internally — neither crosses the bus
+/// outside of an actual `Sync` call, so there is nothing left to poll for a
+/// passive status read. Rather than dropping the fields (a wire-shape change
+/// every existing caller of `slack_memory_sync_status` would have to handle),
+/// this reports the connections a trigger would consider with the
+/// once-populated detail fields at their zero value.
 pub async fn sync_status_rpc(
     config: &Config,
     _req: SyncStatusRequest,
@@ -184,32 +222,22 @@ pub async fn sync_status_rpc(
         if !conn.is_active() {
             continue;
         }
-        let state =
-            match crate::openhuman::memory::tinycortex::load_composio_sync_state("slack", &conn.id)
-                .await
-            {
-                Ok(s) => s,
-                Err(err) => {
-                    log::warn!(
-                        "[slack_ingest] load_state connection={} failed: {err:#}",
-                        conn.id
-                    );
-                    continue;
-                }
-            };
         rows.push(ConnectionStatus {
             connection_id: conn.id.clone(),
-            per_channel_cursors: state.cursor.clone().unwrap_or_else(|| "{}".to_string()),
-            synced_ids_count: state.synced_ids.len(),
-            requests_used_today: state.daily_budget.requests_used,
-            daily_request_limit: state.daily_budget.limit,
+            per_channel_cursors: "{}".to_string(),
+            synced_ids_count: 0,
+            requests_used_today: 0,
+            daily_request_limit: 0,
         });
     }
 
     let count = rows.len();
     Ok(RpcOutcome::single_log(
         SyncStatusResponse { connections: rows },
-        format!("slack_ingest: status connections={count}"),
+        format!(
+            "slack_ingest: status connections={count} (per-connection sync detail is no \
+             longer available — the connector module keeps its cursor internally)"
+        ),
     ))
 }
 
@@ -230,100 +258,5 @@ pub async fn sync_status_rpc(
 // direct-mode-toggle test in `action_tool.rs`.
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unsigned_in_config() -> Config {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        std::mem::forget(tmp);
-        config
-    }
-
-    fn direct_mode_no_key_config() -> Config {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
-        std::mem::forget(tmp);
-        config
-    }
-
-    #[tokio::test]
-    async fn list_slack_connections_errors_with_slack_ingest_prefix_when_no_credentials() {
-        // Pre-Option-C `sync_trigger_rpc` / `sync_status_rpc` returned
-        // the literal string "[slack_ingest] Composio client unavailable
-        // (user not signed in?)" because the gate was
-        // `build_composio_client(...).is_none()`. Post-Option-C the
-        // gate is the factory, so the error surfaces the *factory's*
-        // "no backend session" message wrapped with the domain prefix.
-        // We exercise the shared helper directly so the test doesn't
-        // depend on the SlackProvider being registered in the test
-        // global registry (that registration is a runtime concern
-        // owned by `init_default_providers`, not relevant to the
-        // factory wiring under test here).
-        let config = unsigned_in_config();
-        let err = list_slack_connections(&config).await.unwrap_err();
-        assert!(
-            err.starts_with("[slack_ingest] list_connections:"),
-            "factory-routed error should keep the [slack_ingest] domain prefix, got: {err}"
-        );
-        assert!(
-            err.contains("no backend session"),
-            "backend-mode failure path should surface the factory's session-missing message, \
-             got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn list_slack_connections_in_direct_mode_without_api_key_surfaces_direct_mode_error() {
-        // Confirms the factory is exercised in direct mode too — when
-        // mode=direct but no api_key is stored, the error message
-        // surfaces the direct-mode key-missing hint, not the backend
-        // session message. Pre-Option-C this returned the backend-only
-        // "user not signed in?" message regardless of mode.
-        let config = direct_mode_no_key_config();
-        let err = list_slack_connections(&config).await.unwrap_err();
-        assert!(
-            err.starts_with("[slack_ingest] list_connections:"),
-            "domain prefix preserved through the factory route, got: {err}"
-        );
-        assert!(
-            err.contains("direct mode") || err.contains("api key"),
-            "direct-mode key-missing should surface the direct-mode-specific hint, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn list_slack_connections_resolves_direct_variant_when_mode_is_direct() {
-        // Pin the factory routing: with a direct-mode config + inline
-        // api_key, `list_slack_connections` must reach
-        // `direct_list_connections` (which then attempts a network
-        // call). We can't assert the success path without a mock
-        // backend.composio.dev, but we *can* assert the error message
-        // identifies the direct arm — proving the factory picked the
-        // right branch.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
-        config.composio.api_key = Some("test-direct-key".to_string());
-        std::mem::forget(tmp);
-
-        let result = list_slack_connections(&config).await;
-        // The network call will fail (test environment has no upstream
-        // mock). We only care that the failure label says "direct" —
-        // that's the load-bearing evidence the factory routed through
-        // the new branch instead of the old backend-only path.
-        if let Err(err) = result {
-            assert!(
-                err.contains("(direct)") || err.contains("direct"),
-                "factory must route to the direct arm for mode=direct configs, got: {err}"
-            );
-        }
-        // If the network call somehow succeeds (e.g. CI gateway returns
-        // a valid empty envelope), that's also acceptable — the
-        // factory still routed correctly.
-    }
-}
+#[path = "rpc_tests.rs"]
+mod tests;

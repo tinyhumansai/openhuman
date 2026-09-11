@@ -20,11 +20,11 @@ openhuman-core rpc openhuman.inference_update_model_settings \
   --json '{"chat_provider":"claude-code:claude-sonnet-4-5"}'
 ```
 
-| Role string | Field updated |
-| --- | --- |
-| `chat_provider`       | foreground chat replies                  |
-| `reasoning_provider`  | long-context reasoning workloads         |
-| `agentic_provider`    | multi-step agentic loops                 |
+| Role string          | Field updated                    |
+| -------------------- | -------------------------------- |
+| `chat_provider`      | foreground chat replies          |
+| `reasoning_provider` | long-context reasoning workloads |
+| `agentic_provider`   | multi-step agentic loops         |
 
 A workload set to `claude-code:<model>` always spawns a fresh `claude` child per turn; concurrency is capped at `MAX_CONCURRENT_TURNS = 4` per `ClaudeCodeProvider` instance.
 

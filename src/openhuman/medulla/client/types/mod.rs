@@ -12,7 +12,7 @@ mod reward;
 mod run;
 mod session;
 
-pub use event::{EventEnvelope, EventKind};
+pub use event::{EventKind, WireEventEnvelope};
 pub use reward::{
     HistoryRewardBreakdown, HistoryRewardClaim, HistoryRewardStatus, HistoryUploadResult,
 };

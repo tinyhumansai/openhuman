@@ -207,7 +207,7 @@ export function ShareCardModal({ content, agentName, threadId, onClose }: ShareC
           rows={3}
           disabled={drafting}
           placeholder={t('share.captionPlaceholder')}
-          className="w-full resize-none rounded-xl border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-content-faint focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+          className="w-full resize-none rounded-xl border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-content-faint focus:outline-hidden focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
         />
       </div>
 

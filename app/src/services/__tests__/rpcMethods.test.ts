@@ -123,50 +123,52 @@ describe('rpcMethods catalog', () => {
   });
 
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
+    // Read a schema file PLUS every `*_part_*.rs` sibling in its directory.
+    //
+    // The repo's 750-line layout limit keeps splitting schema files into
+    // `include!`-stitched parts (schema_defs.rs → schemas_schema_part_01.rs,
+    // inference/schemas.rs → schemas_part_01.rs, …), and each split silently
+    // moved the `function: "…"` literals this guard greps out of the file it
+    // was reading. Sweeping the siblings makes the corpus follow the splits.
+    // Over-inclusion is harmless — the guard only searches for substrings —
+    // and `readFileSync` still throws if a listed base file moves entirely,
+    // which is the loud failure we want.
+    const readWithParts = (relFile: string): string => {
+      const abs = path.resolve(__dirname, relFile);
+      const dir = path.dirname(abs);
+      const parts = fs
+        .readdirSync(dir)
+        .filter(name => name.endsWith('.rs') && name.includes('_part_'))
+        .sort()
+        .map(name => fs.readFileSync(path.join(dir, name), 'utf8'));
+      return [fs.readFileSync(abs, 'utf8'), ...parts].join('\n');
+    };
+
     const schemaSources = [
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/config/schemas/schema_defs.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/inference/provider/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/inference/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/inference/local/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/inference/embeddings/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/mcp/registry/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/tools/registry/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/platform/health/schemas.rs'),
-        'utf8'
-      ),
-      fs.readFileSync(
-        path.resolve(__dirname, '../../../../src/openhuman/channels/controllers/schemas.rs'),
-        'utf8'
-      ),
+      readWithParts('../../../../src/openhuman/config/schemas/schema_defs.rs'),
+      readWithParts('../../../../src/openhuman/inference/provider/schemas.rs'),
+      readWithParts('../../../../src/openhuman/inference/schemas.rs'),
+      readWithParts('../../../../src/openhuman/inference/local/schemas.rs'),
+      readWithParts('../../../../src/openhuman/inference/embeddings/schemas.rs'),
+      readWithParts('../../../../src/openhuman/mcp/registry/schemas.rs'),
+      readWithParts('../../../../src/openhuman/tools/registry/schemas.rs'),
+      readWithParts('../../../../src/openhuman/platform/health/schemas.rs'),
+      readWithParts('../../../../src/openhuman/channels/controllers/schemas.rs'),
       // The channels_* namespace/function literals now live in the vendored
-      // tinychannels crate (`ChannelControllerSchema`), not in the thin
+      // tinychannels workspace (`ChannelControllerSchema`), not in the thin
       // `src/openhuman/channels/controllers/schemas.rs` adapter above, which
       // only converts from it (#4557 "Use tinychannels provider
       // implementations") — read both so this drift guard still sees them.
+      //
+      // Controller metadata is contract, so it lives in the `tinychannels-bus`
+      // crate rather than the implementation crate. `readFileSync` throws on a
+      // missing path, which is what we want: if this file moves again the guard
+      // fails loudly instead of silently checking a shorter corpus and passing.
       fs.readFileSync(
-        path.resolve(__dirname, '../../../../vendor/tinychannels/src/controllers/schemas.rs'),
+        path.resolve(
+          __dirname,
+          '../../../../vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs'
+        ),
         'utf8'
       ),
     ].join('\n');

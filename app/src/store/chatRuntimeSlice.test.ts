@@ -27,8 +27,8 @@ function makeRun(id: string, status: AgentRunStatus): AgentRun {
     id,
     kind: 'subagent',
     status,
-    agentId: 'tinyplace_agent',
-    metadata: { displayName: 'Tinyplace Agent' },
+    agentId: 'research_agent',
+    metadata: { displayName: 'Research Agent' },
     startedAt: '2026-06-23T00:00:00Z',
     updatedAt: '2026-06-23T00:00:00Z',
   };
@@ -338,35 +338,30 @@ describe('chatRuntimeSlice queue status', () => {
       hydrateRuntimeFromSnapshot({
         snapshot: makeInterruptedSnapshot('t1', [
           {
-            id: 't1:subagent:s1:tinyplace_agent',
-            name: 'subagent:tinyplace_agent',
+            id: 't1:subagent:s1:research_agent',
+            name: 'subagent:research_agent',
             round: 1,
             status: 'running',
-            subagent: {
-              taskId: 's1',
-              agentId: 'tinyplace_agent',
-              status: 'running',
-              toolCalls: [],
-            },
+            subagent: { taskId: 's1', agentId: 'research_agent', status: 'running', toolCalls: [] },
           },
           {
-            id: 't1:subagent:s2:tinyplace_agent',
-            name: 'subagent:tinyplace_agent',
+            id: 't1:subagent:s2:research_agent',
+            name: 'subagent:research_agent',
             round: 1,
             status: 'success',
             subagent: {
               taskId: 's2',
-              agentId: 'tinyplace_agent',
+              agentId: 'research_agent',
               status: 'completed',
               toolCalls: [],
             },
           },
           {
-            id: 't1:subagent:s3:tinyplace_agent',
-            name: 'subagent:tinyplace_agent',
+            id: 't1:subagent:s3:research_agent',
+            name: 'subagent:research_agent',
             round: 1,
             status: 'error',
-            subagent: { taskId: 's3', agentId: 'tinyplace_agent', status: 'failed', toolCalls: [] },
+            subagent: { taskId: 's3', agentId: 'research_agent', status: 'failed', toolCalls: [] },
           },
         ]),
       })
@@ -415,11 +410,11 @@ describe('chatRuntimeSlice queue status', () => {
         entries: [
           {
             id: 't-dup:subagent:run-1:spawn_subagent',
-            name: 'subagent:tinyplace_agent',
+            name: 'subagent:research_agent',
             round: 1,
             seq: 0,
             status: 'running',
-            subagent: { taskId: 'run-1', agentId: 'tinyplace_agent', toolCalls: [] },
+            subagent: { taskId: 'run-1', agentId: 'research_agent', toolCalls: [] },
           },
         ],
       })

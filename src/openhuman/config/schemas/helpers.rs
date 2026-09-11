@@ -103,26 +103,6 @@ pub(super) struct AnalyticsSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct MeetSettingsUpdate {
-    pub(super) auto_orchestrator_handoff: Option<bool>,
-    /// Calendar auto-join policy as a string: `ask_each_time` | `always` | `never`.
-    pub(super) auto_join_policy: Option<String>,
-    /// Post-call summary policy as a string: `ask` | `always` | `never`.
-    pub(super) auto_summarize_policy: Option<String>,
-    pub(super) listen_only_default: Option<bool>,
-    pub(super) ingest_backend_transcripts: Option<bool>,
-    /// Per-platform policy overrides. Keys: "gmeet", "zoom", "teams", "webex".
-    /// Values: `ask_each_time` | `always` | `never`.
-    pub(super) platform_auto_join_policies: Option<std::collections::HashMap<String, String>>,
-    /// Master switch for calendar-driven auto-join / ask-to-join.
-    pub(super) watch_calendar: Option<bool>,
-    /// Calendar detection source as a string: `composio` | `recall`.
-    pub(super) calendar_provider: Option<String>,
-    /// User's meeting display name, reused as the bot's reply anchor.
-    pub(super) reply_display_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct SearchSettingsUpdate {
     pub(super) engine: Option<String>,
     pub(super) max_results: Option<usize>,
@@ -131,6 +111,7 @@ pub(super) struct SearchSettingsUpdate {
     pub(super) brave_api_key: Option<String>,
     pub(super) querit_api_key: Option<String>,
     pub(super) exa_api_key: Option<String>,
+    pub(super) tavily_api_key: Option<String>,
     pub(super) allowed_domains: Option<Vec<String>>,
     pub(super) allow_all: Option<bool>,
 }
@@ -177,11 +158,6 @@ pub(super) struct OnboardingCompletedSetParams {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct SuperContextSetParams {
-    pub(super) value: bool,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct DictationSettingsUpdate {
     pub(super) enabled: Option<bool>,
     pub(super) hotkey: Option<String>,
@@ -202,6 +178,7 @@ pub(super) struct VoiceServerSettingsUpdate {
     pub(super) custom_dictionary: Option<Vec<String>>,
     pub(super) always_on_enabled: Option<bool>,
     pub(super) wake_word: Option<String>,
+    pub(super) stt_engine: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

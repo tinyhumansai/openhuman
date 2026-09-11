@@ -20,11 +20,18 @@ use crate::core::types::HostKind;
 /// Flags:
 ///   * `--thread <id>` — attach to an existing thread.
 ///   * `--new` — force a brand-new thread (default when `--thread` is absent).
+///   * `--last` / `--resume` — resume the newest thread, optionally opening the picker.
+///   * `--no-alt-screen` — render in the current terminal buffer.
+///   * a positional prompt — send immediately after startup.
 ///   * `-v` / `--verbose` — debug-level file logging.
 pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
     let mut thread_id: Option<String> = None;
     let mut force_new = false;
     let mut verbose = false;
+    let mut resume_picker = false;
+    let mut use_last = false;
+    let mut no_alt_screen = false;
+    let mut prompt_parts = Vec::new();
 
     let mut i = 0usize;
     while i < args.len() {
@@ -41,6 +48,18 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
                 force_new = true;
                 i += 1;
             }
+            "--resume" => {
+                resume_picker = true;
+                i += 1;
+            }
+            "--last" => {
+                use_last = true;
+                i += 1;
+            }
+            "--no-alt-screen" => {
+                no_alt_screen = true;
+                i += 1;
+            }
             "-v" | "--verbose" => {
                 verbose = true;
                 i += 1;
@@ -49,7 +68,13 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
                 print_help();
                 return Ok(());
             }
-            other => return Err(anyhow::anyhow!("unknown tui arg: {other}")),
+            other if other.starts_with('-') => {
+                return Err(anyhow::anyhow!("unknown tui arg: {other}"));
+            }
+            prompt => {
+                prompt_parts.push(prompt.to_string());
+                i += 1;
+            }
         }
     }
 
@@ -71,10 +96,25 @@ pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
         .thread_stack_size(AGENT_WORKER_STACK_BYTES)
         .max_blocking_threads(MAX_BLOCKING_THREADS)
         .build()?;
-    rt.block_on(async_main(thread_id, force_new))
+    let options = super::app::LaunchOptions {
+        initial_prompt: (!prompt_parts.is_empty()).then(|| prompt_parts.join(" ")),
+        resume_picker,
+        no_alt_screen,
+    };
+    rt.block_on(async_main(
+        thread_id,
+        force_new,
+        use_last || resume_picker,
+        options,
+    ))
 }
 
-async fn async_main(thread_flag: Option<String>, force_new: bool) -> anyhow::Result<()> {
+async fn async_main(
+    thread_flag: Option<String>,
+    force_new: bool,
+    prefer_existing: bool,
+    options: super::app::LaunchOptions,
+) -> anyhow::Result<()> {
     // In-process core: full domains (channel.web_chat needs DomainGroup::Channels,
     // so harness() is not enough), no transport, no background services.
     let runtime = Arc::new(
@@ -86,14 +126,20 @@ async fn async_main(thread_flag: Option<String>, force_new: bool) -> anyhow::Res
     );
     log::info!("[tui] core built (DomainSet::full, ServiceSet::none)");
 
+    // ServiceSet::none intentionally skips channel startup. The TUI is itself
+    // an interactive surface, so bridge approval, plan-review, artifact, and
+    // agent progress events onto the same in-process web-channel stream.
+    crate::openhuman::web_chat::register_approval_surface_subscriber();
+    crate::openhuman::web_chat::register_artifact_surface_subscriber();
+
     let client_id = format!("tui-{}", short_hex());
-    let thread_id = resolve_thread(&runtime, thread_flag, force_new).await?;
+    let thread_id = resolve_thread(&runtime, thread_flag, force_new, prefer_existing).await?;
     log::info!("[tui] resolved thread={thread_id} client_id={client_id}");
 
     // Subscribe BEFORE the first turn so no streamed event is missed.
     let web_rx = crate::openhuman::web_chat::subscribe_web_channel_events();
 
-    super::app::run(runtime, client_id, thread_id, web_rx).await
+    super::app::run(runtime, client_id, thread_id, web_rx, options).await
 }
 
 /// Resolve the thread to open: the `--thread` id (unless `--new`), otherwise a
@@ -102,10 +148,28 @@ async fn resolve_thread(
     runtime: &CoreRuntime,
     thread_flag: Option<String>,
     force_new: bool,
+    prefer_existing: bool,
 ) -> anyhow::Result<String> {
     if let (Some(id), false) = (thread_flag.as_ref(), force_new) {
         log::debug!("[tui] attaching to existing thread {id}");
         return Ok(id.clone());
+    }
+
+    if prefer_existing && !force_new {
+        match runtime.invoke("openhuman.threads_list", json!({})).await {
+            Ok(listed) => {
+                if let Some(id) = super::cockpit::array_at(&listed, &["threads", "items"])
+                    .first()
+                    .and_then(|thread| thread.get("id").or_else(|| thread.get("thread_id")))
+                    .and_then(Value::as_str)
+                {
+                    return Ok(id.to_string());
+                }
+            }
+            Err(error) => {
+                log::warn!("[tui] openhuman.threads_list failed: {error} — starting a new thread")
+            }
+        }
     }
 
     let created = runtime
@@ -151,18 +215,21 @@ fn short_hex() -> String {
 }
 
 fn print_help() {
-    println!("Usage: openhuman tui [--thread <id>] [--new] [-v|--verbose]");
-    println!("       openhuman chat [--thread <id>] [--new] [-v|--verbose]");
+    println!("Usage: openhuman tui [OPTIONS] [PROMPT]");
+    println!("       openhuman chat [OPTIONS] [PROMPT]");
     println!();
     println!("Open the tabbed terminal UI for core logs, orchestrator chat, configuration,");
     println!("and account settings. Runs the core in-process — no server, no ports.");
     println!();
     println!("  --thread <id>   Attach to an existing conversation thread.");
     println!("  --new           Force a new thread (default when --thread is omitted).");
+    println!("  --resume        Open the saved-thread picker (starts on the latest thread).");
+    println!("  --last          Resume the most recent thread.");
+    println!("  --no-alt-screen Draw in the current terminal buffer.");
     println!("  -v, --verbose   Debug-level logging (written to the log file, never the UI).");
     println!();
-    println!("Keys: Tab/Shift+Tab or Alt+1-4 switch tabs · arrows navigate · Enter select ·");
-    println!("      Ctrl+C / Ctrl+D quit.");
+    println!("Keys: Ctrl+Tab or Alt+1-4 switch tabs · Enter send · Shift+Enter newline ·");
+    println!("      / opens commands · Ctrl+C / Ctrl+D quit.");
 }
 
 #[cfg(test)]
@@ -210,11 +277,28 @@ mod tests {
     /// these three are in that table, so the short form never resolves.
     #[test]
     fn tui_invokes_use_canonical_registered_rpc_method_names() {
-        for method in [
+        #[allow(unused_mut)]
+        let mut methods = vec![
             "openhuman.channel_web_chat",
             "openhuman.channel_web_cancel",
+            "openhuman.channel_web_queue_status",
             "openhuman.threads_create_new",
+            "openhuman.threads_list",
+            "openhuman.threads_transcript_get",
+            "openhuman.threads_update_title",
+            "openhuman.threads_delete",
+            "openhuman.threads_task_board_get",
+            "openhuman.threads_token_usage",
+            "openhuman.thread_goals_get",
+            "openhuman.thread_goals_set",
+            "openhuman.profiles_list",
+            "openhuman.profiles_select",
+            "openhuman.ai_list_artifacts",
+            "openhuman.approval_list_pending",
+            "openhuman.approval_decide",
+            "openhuman.plan_review_decide",
             "openhuman.config_get_client_config",
+            "openhuman.config_get_agent_paths",
             "openhuman.config_update_model_settings",
             "openhuman.config_get_autonomy_settings",
             "openhuman.config_update_autonomy_settings",
@@ -225,7 +309,12 @@ mod tests {
             "openhuman.auth_consume_login_token",
             "openhuman.auth_store_session",
             "openhuman.auth_clear_session",
-        ] {
+        ];
+        #[cfg(feature = "skills")]
+        methods.push("openhuman.skills_list");
+        #[cfg(feature = "mcp")]
+        methods.push("openhuman.mcp_clients_installed_list");
+        for method in methods {
             assert!(
                 crate::core::all::schema_for_rpc_method(method).is_some(),
                 "TUI invokes `{method}`, but it is not a registered RPC method — \

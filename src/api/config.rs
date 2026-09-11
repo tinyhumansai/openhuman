@@ -700,7 +700,7 @@ fn non_empty_str(s: &Option<String>) -> Option<&str> {
 /// (`::ffff:127.0.0.1`), the bare IPv6 loopback (`::1`), and all three
 /// IPv4 loopback forms classify correctly.
 #[inline]
-fn host_is_local(parsed: &url::Url) -> bool {
+pub(crate) fn host_is_local(parsed: &url::Url) -> bool {
     match parsed.host() {
         Some(url::Host::Ipv4(addr)) => {
             addr.is_loopback() || addr.is_unspecified() || addr.is_private()

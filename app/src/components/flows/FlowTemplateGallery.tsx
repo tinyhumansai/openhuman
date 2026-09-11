@@ -20,6 +20,7 @@ import {
   templateNameKey,
 } from '../../lib/flows/templates';
 import { useT } from '../../lib/i18n/I18nContext';
+import { Badge, Button } from '../ui';
 
 const log = createDebug('app:flows:templates');
 
@@ -50,9 +51,10 @@ export default function FlowTemplateGallery({ onSelect, busyId }: FlowTemplateGa
         const busy = busyId === template.id;
         const anyBusy = Boolean(busyId);
         return (
-          <button
+          <Button
             key={template.id}
             type="button"
+            variant="secondary"
             role="listitem"
             data-testid={`flow-template-${template.id}`}
             disabled={anyBusy}
@@ -60,10 +62,10 @@ export default function FlowTemplateGallery({ onSelect, busyId }: FlowTemplateGa
               log('template selected: id=%s', template.id);
               onSelect(template);
             }}
-            className="flex flex-col items-start gap-1.5 rounded-2xl border border-line bg-surface p-4 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-primary-500/10">
-            <span className="inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
+            className="h-auto flex-col items-start gap-1.5 rounded-2xl p-4 text-left font-normal hover:border-primary-300 hover:bg-primary-50/40 dark:hover:bg-primary-500/10">
+            <Badge variant="primary" className="rounded-full">
               {t(templateCategoryKey(template.category))}
-            </span>
+            </Badge>
             <span className="text-sm font-semibold text-content">
               {t(templateNameKey(template.id))}
             </span>
@@ -73,7 +75,7 @@ export default function FlowTemplateGallery({ onSelect, busyId }: FlowTemplateGa
             <span className="mt-1 text-xs font-medium text-primary-600 dark:text-primary-400">
               {busy ? t('flows.chooser.creating') : t('flows.templates.use')}
             </span>
-          </button>
+          </Button>
         );
       })}
     </div>

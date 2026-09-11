@@ -189,7 +189,7 @@ const LocalAIDownloadSnackbar = () => {
   // Collapsed: small pill
   if (collapsed) {
     return createPortal(
-      <div className="fixed bottom-4 right-4 z-[9998] animate-fade-up">
+      <div className="fixed bottom-14 right-2 z-9998 animate-fade-up">
         <button
           onClick={handleToggleCollapse}
           className="flex items-center gap-2 bg-stone-900 border border-stone-700/50 rounded-full px-3 py-2 shadow-large hover:border-stone-600 transition-colors"
@@ -212,7 +212,7 @@ const LocalAIDownloadSnackbar = () => {
 
   // Expanded: full snackbar
   return createPortal(
-    <div className="fixed bottom-4 right-4 z-[9998] w-[320px] animate-fade-up">
+    <div className="fixed bottom-14 right-2 z-9998 w-[320px] animate-fade-up">
       <div className="bg-stone-900 border border-stone-700/50 rounded-2xl shadow-large overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 pt-3 pb-1">
@@ -261,7 +261,7 @@ const LocalAIDownloadSnackbar = () => {
         <div className="px-4 py-2">
           <div className="h-1.5 w-full rounded-full bg-stone-800 overflow-hidden">
             <div
-              className={`h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-500 ${
+              className={`h-full rounded-full bg-linear-to-r from-primary-500 to-primary-400 transition-all duration-500 ${
                 isInstallingPhase ? 'animate-pulse' : ''
               }`}
               style={{ width: isInstallingPhase ? '100%' : `${percent ?? 0}%` }}

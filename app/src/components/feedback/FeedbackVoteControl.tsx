@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../services/api/feedbackApi';
 import type { FeedbackItem, FeedbackVoteValue } from '../../types/feedback';
+import { Button } from '../ui';
 
 const log = debugFactory('feedback:vote');
 
@@ -63,7 +64,7 @@ export default function FeedbackVoteControl({ item, onVoted }: FeedbackVoteContr
     ? 'bg-orange-500/10'
     : downActive
       ? 'bg-indigo-500/10'
-      : 'bg-surface-subtle dark:bg-white/[0.04]';
+      : 'bg-surface-subtle dark:bg-surface-strong';
   const countColor = error
     ? 'text-coral-500'
     : upActive
@@ -74,44 +75,48 @@ export default function FeedbackVoteControl({ item, onVoted }: FeedbackVoteContr
 
   return (
     <div
-      className={`flex w-9 flex-shrink-0 flex-col items-center gap-0.5 rounded-full py-1 transition-colors ${pillTint}`}>
-      <button
-        type="button"
+      className={`flex w-9 shrink-0 flex-col items-center gap-0.5 rounded-full py-1 transition-colors ${pillTint}`}>
+      <Button
+        iconOnly
+        variant="tertiary"
+        size="xs"
         onClick={() => castVote(1)}
         disabled={pending}
         aria-pressed={upActive}
         aria-label={t('feedback.vote.up')}
         title={t('feedback.vote.up')}
-        className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        className={`rounded-full ${
           upActive
-            ? 'text-orange-500'
+            ? 'text-orange-500 hover:bg-transparent'
             : 'text-content-faint hover:bg-orange-500/10 hover:text-orange-500'
         }`}>
         <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
           <path d="M10 3.5a1 1 0 01.78.375l5.5 6.5A1 1 0 0115.5 12H13v4a1 1 0 01-1 1H8a1 1 0 01-1-1v-4H4.5a1 1 0 01-.78-1.625l5.5-6.5A1 1 0 0110 3.5z" />
         </svg>
-      </button>
+      </Button>
 
       <span className={`text-sm font-bold tabular-nums ${countColor}`} aria-live="polite">
         {item.score}
       </span>
 
-      <button
-        type="button"
+      <Button
+        iconOnly
+        variant="tertiary"
+        size="xs"
         onClick={() => castVote(-1)}
         disabled={pending}
         aria-pressed={downActive}
         aria-label={t('feedback.vote.down')}
         title={t('feedback.vote.down')}
-        className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        className={`rounded-full ${
           downActive
-            ? 'text-indigo-400'
+            ? 'text-indigo-400 hover:bg-transparent'
             : 'text-content-faint hover:bg-indigo-500/10 hover:text-indigo-400'
         }`}>
         <svg className="h-4 w-4 rotate-180" fill="currentColor" viewBox="0 0 20 20">
           <path d="M10 3.5a1 1 0 01.78.375l5.5 6.5A1 1 0 0115.5 12H13v4a1 1 0 01-1 1H8a1 1 0 01-1-1v-4H4.5a1 1 0 01-.78-1.625l5.5-6.5A1 1 0 0110 3.5z" />
         </svg>
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,0 +1,130 @@
+# GENERATED — do not hand-edit.
+# Derived from tests/fixtures/memory_golden/workspace/**.db by
+# memory::store_golden::schema_manifest. Regenerate both together with
+# scripts/regen-memory-golden-fixture.sh.
+# 125 schema objects across 2 db file(s).
+memory/memory.db	index	idx_episodic_session	CREATE INDEX idx_episodic_session ON episodic_log(session_id, timestamp)
+memory/memory.db	index	idx_event_embeddings_model	CREATE INDEX idx_event_embeddings_model ON event_embeddings(model_signature)
+memory/memory.db	index	idx_events_namespace	CREATE INDEX idx_events_namespace ON event_log(namespace, created_at DESC)
+memory/memory.db	index	idx_events_segment	CREATE INDEX idx_events_segment ON event_log(segment_id)
+memory/memory.db	index	idx_events_type	CREATE INDEX idx_events_type ON event_log(event_type, namespace)
+memory/memory.db	index	idx_graph_global_subject	CREATE INDEX idx_graph_global_subject ON graph_global(subject, predicate)
+memory/memory.db	index	idx_graph_namespace_ns	CREATE INDEX idx_graph_namespace_ns ON graph_namespace(namespace)
+memory/memory.db	index	idx_graph_namespace_subject	CREATE INDEX idx_graph_namespace_subject ON graph_namespace(namespace, subject, predicate)
+memory/memory.db	index	idx_kv_namespace_ns	CREATE INDEX idx_kv_namespace_ns ON kv_namespace(namespace)
+memory/memory.db	index	idx_kv_ns	CREATE INDEX idx_kv_ns ON kv_namespace(namespace)
+memory/memory.db	index	idx_memory_docs_ns_updated	CREATE INDEX idx_memory_docs_ns_updated ON memory_docs(namespace, updated_at DESC)
+memory/memory.db	index	idx_profile_key	CREATE INDEX idx_profile_key ON user_profile(key)
+memory/memory.db	index	idx_profile_state_stability	CREATE INDEX idx_profile_state_stability ON user_profile(state, stability DESC)
+memory/memory.db	index	idx_profile_state_user_stability	CREATE INDEX idx_profile_state_user_stability ON user_profile(state, user_state, stability)
+memory/memory.db	index	idx_profile_type	CREATE INDEX idx_profile_type ON user_profile(facet_type)
+memory/memory.db	index	idx_segment_embeddings_model	CREATE INDEX idx_segment_embeddings_model ON segment_embeddings(model_signature)
+memory/memory.db	index	idx_segments_namespace	CREATE INDEX idx_segments_namespace ON conversation_segments(namespace, updated_at DESC)
+memory/memory.db	index	idx_segments_session	CREATE INDEX idx_segments_session ON conversation_segments(session_id, start_timestamp)
+memory/memory.db	index	idx_segments_status	CREATE INDEX idx_segments_status ON conversation_segments(status, session_id)
+memory/memory.db	index	idx_vector_chunks_ns_doc	CREATE INDEX idx_vector_chunks_ns_doc ON vector_chunks(namespace, document_id)
+memory/memory.db	index	sqlite_autoindex_conversation_segments_1	
+memory/memory.db	index	sqlite_autoindex_event_embeddings_1	
+memory/memory.db	index	sqlite_autoindex_event_log_1	
+memory/memory.db	index	sqlite_autoindex_graph_global_1	
+memory/memory.db	index	sqlite_autoindex_graph_namespace_1	
+memory/memory.db	index	sqlite_autoindex_kv_global_1	
+memory/memory.db	index	sqlite_autoindex_kv_namespace_1	
+memory/memory.db	index	sqlite_autoindex_memory_docs_1	
+memory/memory.db	index	sqlite_autoindex_memory_docs_2	
+memory/memory.db	index	sqlite_autoindex_segment_embeddings_1	
+memory/memory.db	index	sqlite_autoindex_user_profile_1	
+memory/memory.db	index	sqlite_autoindex_user_profile_2	
+memory/memory.db	index	sqlite_autoindex_vector_chunks_1	
+memory/memory.db	pragma	user_version	0
+memory/memory.db	table	conversation_segments	CREATE TABLE conversation_segments ( segment_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, namespace TEXT NOT NULL DEFAULT 'global', start_episodic_id INTEGER NOT NULL, end_episodic_id INTEGER, start_timestamp REAL NOT NULL, end_timestamp REAL, turn_count INTEGER NOT NULL DEFAULT 0, summary TEXT, embedding BLOB, topic_keywords TEXT, status TEXT NOT NULL DEFAULT 'open', created_at REAL NOT NULL, updated_at REAL NOT NULL, -- Per-session sequence numbers from crate::engine::backend::archivist::store, populated -- alongside start_episodic_id / end_episodic_id during the FTS5 -> md -- migration. Once STM recall switches its segment-span dedup to use -- (session_id, seq) the legacy episodic_id columns can be dropped. start_seq INTEGER, end_seq INTEGER )
+memory/memory.db	table	episodic_fts	CREATE VIRTUAL TABLE episodic_fts USING fts5( session_id, role, content, lesson, content=episodic_log, content_rowid=id, tokenize='porter unicode61' )
+memory/memory.db	table	episodic_fts_config	CREATE TABLE 'episodic_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID
+memory/memory.db	table	episodic_fts_data	CREATE TABLE 'episodic_fts_data'(id INTEGER PRIMARY KEY, block BLOB)
+memory/memory.db	table	episodic_fts_docsize	CREATE TABLE 'episodic_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)
+memory/memory.db	table	episodic_fts_idx	CREATE TABLE 'episodic_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID
+memory/memory.db	table	episodic_log	CREATE TABLE episodic_log ( id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, timestamp REAL NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, lesson TEXT, tool_calls_json TEXT, cost_microdollars INTEGER DEFAULT 0 )
+memory/memory.db	table	event_embeddings	CREATE TABLE event_embeddings ( event_id TEXT NOT NULL REFERENCES event_log(event_id) ON DELETE CASCADE, model_signature TEXT NOT NULL, vector BLOB NOT NULL, dim INTEGER NOT NULL, created_at REAL NOT NULL, PRIMARY KEY (event_id, model_signature) )
+memory/memory.db	table	event_fts	CREATE VIRTUAL TABLE event_fts USING fts5( content, subject, event_type, content=event_log, content_rowid=rowid, tokenize='porter unicode61' )
+memory/memory.db	table	event_fts_config	CREATE TABLE 'event_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID
+memory/memory.db	table	event_fts_data	CREATE TABLE 'event_fts_data'(id INTEGER PRIMARY KEY, block BLOB)
+memory/memory.db	table	event_fts_docsize	CREATE TABLE 'event_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)
+memory/memory.db	table	event_fts_idx	CREATE TABLE 'event_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID
+memory/memory.db	table	event_log	CREATE TABLE event_log ( event_id TEXT PRIMARY KEY, segment_id TEXT NOT NULL, session_id TEXT NOT NULL, namespace TEXT NOT NULL DEFAULT 'global', event_type TEXT NOT NULL, content TEXT NOT NULL, subject TEXT, timestamp_ref TEXT, confidence REAL NOT NULL, embedding BLOB, source_turn_ids TEXT, created_at REAL NOT NULL )
+memory/memory.db	table	graph_global	CREATE TABLE graph_global ( subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT NOT NULL, attrs_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(subject, predicate, object) )
+memory/memory.db	table	graph_namespace	CREATE TABLE graph_namespace ( namespace TEXT NOT NULL, subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT NOT NULL, attrs_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(namespace, subject, predicate, object) )
+memory/memory.db	table	kv_global	CREATE TABLE kv_global ( key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at REAL NOT NULL )
+memory/memory.db	table	kv_namespace	CREATE TABLE kv_namespace ( namespace TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(namespace, key) )
+memory/memory.db	table	memory_docs	CREATE TABLE memory_docs ( document_id TEXT PRIMARY KEY, namespace TEXT NOT NULL, key TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, source_type TEXT NOT NULL, priority TEXT NOT NULL, tags_json TEXT NOT NULL, metadata_json TEXT NOT NULL, category TEXT NOT NULL, session_id TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL, markdown_rel_path TEXT NOT NULL, taint TEXT NOT NULL DEFAULT 'internal', logical_namespace TEXT, UNIQUE(namespace, key) )
+memory/memory.db	table	segment_embeddings	CREATE TABLE segment_embeddings ( segment_id TEXT NOT NULL REFERENCES conversation_segments(segment_id) ON DELETE CASCADE, model_signature TEXT NOT NULL, vector BLOB NOT NULL, dim INTEGER NOT NULL, created_at REAL NOT NULL, PRIMARY KEY (segment_id, model_signature) )
+memory/memory.db	table	sqlite_sequence	CREATE TABLE sqlite_sequence(name,seq)
+memory/memory.db	table	user_profile	CREATE TABLE user_profile ( facet_id TEXT PRIMARY KEY, facet_type TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, confidence REAL NOT NULL DEFAULT 0.5, evidence_count INTEGER NOT NULL DEFAULT 1, source_segment_ids TEXT, first_seen_at REAL NOT NULL, last_seen_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'active', stability REAL NOT NULL DEFAULT 0.0, user_state TEXT NOT NULL DEFAULT 'auto', evidence_refs_json TEXT, class TEXT, cue_families_json TEXT, UNIQUE(facet_type, key) )
+memory/memory.db	table	vector_chunks	CREATE TABLE vector_chunks ( namespace TEXT NOT NULL, document_id TEXT NOT NULL, chunk_id TEXT NOT NULL, text TEXT NOT NULL, embedding BLOB, metadata_json TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL, model_signature TEXT, dim INTEGER, PRIMARY KEY(namespace, chunk_id) )
+memory/memory.db	trigger	episodic_ad	CREATE TRIGGER episodic_ad AFTER DELETE ON episodic_log BEGIN INSERT INTO episodic_fts(episodic_fts, rowid, session_id, role, content, lesson) VALUES ('delete', old.id, old.session_id, old.role, old.content, old.lesson); END
+memory/memory.db	trigger	episodic_ai	CREATE TRIGGER episodic_ai AFTER INSERT ON episodic_log BEGIN INSERT INTO episodic_fts(rowid, session_id, role, content, lesson) VALUES (new.id, new.session_id, new.role, new.content, new.lesson); END
+memory/memory.db	trigger	episodic_au	CREATE TRIGGER episodic_au AFTER UPDATE ON episodic_log BEGIN INSERT INTO episodic_fts(episodic_fts, rowid, session_id, role, content, lesson) VALUES ('delete', old.id, old.session_id, old.role, old.content, old.lesson); INSERT INTO episodic_fts(rowid, session_id, role, content, lesson) VALUES (new.id, new.session_id, new.role, new.content, new.lesson); END
+memory/memory.db	trigger	event_ad	CREATE TRIGGER event_ad AFTER DELETE ON event_log BEGIN INSERT INTO event_fts(event_fts, rowid, content, subject, event_type) VALUES ('delete', old.rowid, old.content, old.subject, old.event_type); END
+memory/memory.db	trigger	event_ai	CREATE TRIGGER event_ai AFTER INSERT ON event_log BEGIN INSERT INTO event_fts(rowid, content, subject, event_type) VALUES (new.rowid, new.content, new.subject, new.event_type); END
+memory/memory.db	trigger	event_au	CREATE TRIGGER event_au AFTER UPDATE ON event_log BEGIN INSERT INTO event_fts(event_fts, rowid, content, subject, event_type) VALUES ('delete', old.rowid, old.content, old.subject, old.event_type); INSERT INTO event_fts(rowid, content, subject, event_type) VALUES (new.rowid, new.content, new.subject, new.event_type); END
+memory_tree/chunks.db	index	idx_mcp_writes_client	CREATE INDEX idx_mcp_writes_client ON mcp_writes(client_info)
+memory_tree/chunks.db	index	idx_mcp_writes_timestamp	CREATE INDEX idx_mcp_writes_timestamp ON mcp_writes(timestamp_ms DESC)
+memory_tree/chunks.db	index	idx_mcp_writes_tool	CREATE INDEX idx_mcp_writes_tool ON mcp_writes(tool_name)
+memory_tree/chunks.db	index	idx_mem_tree_buffers_oldest	CREATE INDEX idx_mem_tree_buffers_oldest ON mem_tree_buffers(oldest_at_ms)
+memory_tree/chunks.db	index	idx_mem_tree_chunk_embeddings_model	CREATE INDEX idx_mem_tree_chunk_embeddings_model ON mem_tree_chunk_embeddings(model_signature)
+memory_tree/chunks.db	index	idx_mem_tree_chunk_reembed_skipped_model	CREATE INDEX idx_mem_tree_chunk_reembed_skipped_model ON mem_tree_chunk_reembed_skipped(model_signature)
+memory_tree/chunks.db	index	idx_mem_tree_chunks_lifecycle	CREATE INDEX idx_mem_tree_chunks_lifecycle ON mem_tree_chunks(lifecycle_status)
+memory_tree/chunks.db	index	idx_mem_tree_chunks_owner	CREATE INDEX idx_mem_tree_chunks_owner ON mem_tree_chunks(owner)
+memory_tree/chunks.db	index	idx_mem_tree_chunks_source	CREATE INDEX idx_mem_tree_chunks_source ON mem_tree_chunks(source_kind, source_id)
+memory_tree/chunks.db	index	idx_mem_tree_chunks_source_seq	CREATE INDEX idx_mem_tree_chunks_source_seq ON mem_tree_chunks(source_kind, source_id, seq_in_source)
+memory_tree/chunks.db	index	idx_mem_tree_chunks_timestamp	CREATE INDEX idx_mem_tree_chunks_timestamp ON mem_tree_chunks(timestamp_ms)
+memory_tree/chunks.db	index	idx_mem_tree_entity_edges_a	CREATE INDEX idx_mem_tree_entity_edges_a ON mem_tree_entity_edges(entity_a)
+memory_tree/chunks.db	index	idx_mem_tree_entity_edges_b	CREATE INDEX idx_mem_tree_entity_edges_b ON mem_tree_entity_edges(entity_b)
+memory_tree/chunks.db	index	idx_mem_tree_entity_hotness_score	CREATE INDEX idx_mem_tree_entity_hotness_score ON mem_tree_entity_hotness(last_hotness)
+memory_tree/chunks.db	index	idx_mem_tree_entity_index_entity	CREATE INDEX idx_mem_tree_entity_index_entity ON mem_tree_entity_index(entity_id)
+memory_tree/chunks.db	index	idx_mem_tree_entity_index_node	CREATE INDEX idx_mem_tree_entity_index_node ON mem_tree_entity_index(node_id)
+memory_tree/chunks.db	index	idx_mem_tree_entity_index_timestamp	CREATE INDEX idx_mem_tree_entity_index_timestamp ON mem_tree_entity_index(timestamp_ms)
+memory_tree/chunks.db	index	idx_mem_tree_jobs_dedupe_active	CREATE UNIQUE INDEX idx_mem_tree_jobs_dedupe_active ON mem_tree_jobs(dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('ready', 'running')
+memory_tree/chunks.db	index	idx_mem_tree_jobs_kind	CREATE INDEX idx_mem_tree_jobs_kind ON mem_tree_jobs(kind)
+memory_tree/chunks.db	index	idx_mem_tree_jobs_ready	CREATE INDEX idx_mem_tree_jobs_ready ON mem_tree_jobs(status, available_at_ms)
+memory_tree/chunks.db	index	idx_mem_tree_score_dropped	CREATE INDEX idx_mem_tree_score_dropped ON mem_tree_score(dropped)
+memory_tree/chunks.db	index	idx_mem_tree_score_total	CREATE INDEX idx_mem_tree_score_total ON mem_tree_score(total)
+memory_tree/chunks.db	index	idx_mem_tree_summaries_deleted	CREATE INDEX idx_mem_tree_summaries_deleted ON mem_tree_summaries(deleted)
+memory_tree/chunks.db	index	idx_mem_tree_summaries_doc_version	CREATE INDEX idx_mem_tree_summaries_doc_version ON mem_tree_summaries(tree_id, doc_id, version_ms)
+memory_tree/chunks.db	index	idx_mem_tree_summaries_parent	CREATE INDEX idx_mem_tree_summaries_parent ON mem_tree_summaries(parent_id)
+memory_tree/chunks.db	index	idx_mem_tree_summaries_sealed_at	CREATE INDEX idx_mem_tree_summaries_sealed_at ON mem_tree_summaries(sealed_at_ms)
+memory_tree/chunks.db	index	idx_mem_tree_summaries_tree_level	CREATE INDEX idx_mem_tree_summaries_tree_level ON mem_tree_summaries(tree_id, level)
+memory_tree/chunks.db	index	idx_mem_tree_summary_embeddings_model	CREATE INDEX idx_mem_tree_summary_embeddings_model ON mem_tree_summary_embeddings(model_signature)
+memory_tree/chunks.db	index	idx_mem_tree_summary_reembed_skipped_model	CREATE INDEX idx_mem_tree_summary_reembed_skipped_model ON mem_tree_summary_reembed_skipped(model_signature)
+memory_tree/chunks.db	index	idx_mem_tree_trees_kind_scope	CREATE UNIQUE INDEX idx_mem_tree_trees_kind_scope ON mem_tree_trees(kind, scope)
+memory_tree/chunks.db	index	idx_mem_tree_trees_status	CREATE INDEX idx_mem_tree_trees_status ON mem_tree_trees(status)
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_buffers_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_chunk_embeddings_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_chunk_reembed_skipped_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_chunks_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_entity_edges_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_entity_hotness_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_entity_index_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_ingested_sources_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_jobs_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_score_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_summaries_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_summary_embeddings_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_summary_reembed_skipped_1	
+memory_tree/chunks.db	index	sqlite_autoindex_mem_tree_trees_1	
+memory_tree/chunks.db	pragma	user_version	2
+memory_tree/chunks.db	table	mcp_writes	CREATE TABLE mcp_writes ( id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp_ms INTEGER NOT NULL, client_info TEXT NOT NULL, tool_name TEXT NOT NULL, args_summary TEXT, resulting_chunk_id TEXT, success INTEGER NOT NULL, error_message TEXT )
+memory_tree/chunks.db	table	mem_tree_buffers	CREATE TABLE mem_tree_buffers ( tree_id TEXT NOT NULL, level INTEGER NOT NULL, item_ids_json TEXT NOT NULL DEFAULT '[]', token_sum INTEGER NOT NULL DEFAULT 0, oldest_at_ms INTEGER, updated_at_ms INTEGER NOT NULL, PRIMARY KEY (tree_id, level), FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id) )
+memory_tree/chunks.db	table	mem_tree_chunk_embeddings	CREATE TABLE mem_tree_chunk_embeddings ( chunk_id TEXT NOT NULL REFERENCES mem_tree_chunks(id) ON DELETE CASCADE, model_signature TEXT NOT NULL, vector BLOB NOT NULL, dim INTEGER NOT NULL, created_at REAL NOT NULL, PRIMARY KEY (chunk_id, model_signature) )
+memory_tree/chunks.db	table	mem_tree_chunk_reembed_skipped	CREATE TABLE mem_tree_chunk_reembed_skipped ( chunk_id TEXT NOT NULL REFERENCES mem_tree_chunks(id) ON DELETE CASCADE, model_signature TEXT NOT NULL, reason TEXT NOT NULL, skipped_at_ms INTEGER NOT NULL, PRIMARY KEY (chunk_id, model_signature) )
+memory_tree/chunks.db	table	mem_tree_chunks	CREATE TABLE mem_tree_chunks ( id TEXT PRIMARY KEY, source_kind TEXT NOT NULL, source_id TEXT NOT NULL, path_scope TEXT, source_ref TEXT, owner TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, time_range_start_ms INTEGER NOT NULL, time_range_end_ms INTEGER NOT NULL, tags_json TEXT NOT NULL DEFAULT '[]', content TEXT NOT NULL, token_count INTEGER NOT NULL, seq_in_source INTEGER NOT NULL, created_at_ms INTEGER NOT NULL , embedding BLOB, parent_summary_id TEXT, lifecycle_status TEXT NOT NULL DEFAULT 'admitted', content_path TEXT, content_sha256 TEXT, raw_refs_json TEXT)
+memory_tree/chunks.db	table	mem_tree_entity_edges	CREATE TABLE mem_tree_entity_edges ( entity_a TEXT NOT NULL, entity_b TEXT NOT NULL, weight INTEGER NOT NULL DEFAULT 1, updated_ms INTEGER NOT NULL, PRIMARY KEY (entity_a, entity_b) )
+memory_tree/chunks.db	table	mem_tree_entity_hotness	CREATE TABLE mem_tree_entity_hotness ( entity_id TEXT PRIMARY KEY, mention_count_30d INTEGER NOT NULL DEFAULT 0, distinct_sources INTEGER NOT NULL DEFAULT 0, last_seen_ms INTEGER, query_hits_30d INTEGER NOT NULL DEFAULT 0, graph_centrality REAL, ingests_since_check INTEGER NOT NULL DEFAULT 0, last_hotness REAL, last_updated_ms INTEGER NOT NULL )
+memory_tree/chunks.db	table	mem_tree_entity_index	CREATE TABLE mem_tree_entity_index ( entity_id TEXT NOT NULL, node_id TEXT NOT NULL, node_kind TEXT NOT NULL, entity_kind TEXT NOT NULL, surface TEXT NOT NULL, score REAL NOT NULL, timestamp_ms INTEGER NOT NULL, tree_id TEXT, is_user INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (entity_id, node_id) )
+memory_tree/chunks.db	table	mem_tree_ingested_sources	CREATE TABLE mem_tree_ingested_sources ( source_kind TEXT NOT NULL, source_id TEXT NOT NULL, ingested_at_ms INTEGER NOT NULL, PRIMARY KEY (source_kind, source_id) )
+memory_tree/chunks.db	table	mem_tree_jobs	CREATE TABLE mem_tree_jobs ( id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, dedupe_key TEXT, status TEXT NOT NULL DEFAULT 'ready', attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, available_at_ms INTEGER NOT NULL, locked_until_ms INTEGER, last_error TEXT, created_at_ms INTEGER NOT NULL, started_at_ms INTEGER, completed_at_ms INTEGER, failure_reason TEXT, failure_class TEXT )
+memory_tree/chunks.db	table	mem_tree_score	CREATE TABLE mem_tree_score ( chunk_id TEXT PRIMARY KEY, total REAL NOT NULL, token_count_signal REAL NOT NULL, unique_words_signal REAL NOT NULL, metadata_weight REAL NOT NULL, source_weight REAL NOT NULL, interaction_weight REAL NOT NULL, entity_density REAL NOT NULL, dropped INTEGER NOT NULL DEFAULT 0, reason TEXT, computed_at_ms INTEGER NOT NULL , llm_importance REAL, llm_importance_reason TEXT)
+memory_tree/chunks.db	table	mem_tree_summaries	CREATE TABLE mem_tree_summaries ( id TEXT PRIMARY KEY, tree_id TEXT NOT NULL, tree_kind TEXT NOT NULL, level INTEGER NOT NULL, parent_id TEXT, child_ids_json TEXT NOT NULL DEFAULT '[]', content TEXT NOT NULL, token_count INTEGER NOT NULL, entities_json TEXT NOT NULL DEFAULT '[]', topics_json TEXT NOT NULL DEFAULT '[]', time_range_start_ms INTEGER NOT NULL, time_range_end_ms INTEGER NOT NULL, score REAL NOT NULL DEFAULT 0.0, sealed_at_ms INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, embedding BLOB, content_path TEXT, content_sha256 TEXT, doc_id TEXT, version_ms INTEGER, FOREIGN KEY (tree_id) REFERENCES mem_tree_trees(id) )
+memory_tree/chunks.db	table	mem_tree_summary_embeddings	CREATE TABLE mem_tree_summary_embeddings ( summary_id TEXT NOT NULL REFERENCES mem_tree_summaries(id) ON DELETE CASCADE, model_signature TEXT NOT NULL, vector BLOB NOT NULL, dim INTEGER NOT NULL, created_at REAL NOT NULL, PRIMARY KEY (summary_id, model_signature) )
+memory_tree/chunks.db	table	mem_tree_summary_reembed_skipped	CREATE TABLE mem_tree_summary_reembed_skipped ( summary_id TEXT NOT NULL REFERENCES mem_tree_summaries(id) ON DELETE CASCADE, model_signature TEXT NOT NULL, reason TEXT NOT NULL, skipped_at_ms INTEGER NOT NULL, PRIMARY KEY (summary_id, model_signature) )
+memory_tree/chunks.db	table	mem_tree_trees	CREATE TABLE mem_tree_trees ( id TEXT PRIMARY KEY, kind TEXT NOT NULL, scope TEXT NOT NULL, root_id TEXT, max_level INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', created_at_ms INTEGER NOT NULL, last_sealed_at_ms INTEGER, ask TEXT )
+memory_tree/chunks.db	table	sqlite_sequence	CREATE TABLE sqlite_sequence(name,seq)

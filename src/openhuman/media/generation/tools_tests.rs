@@ -247,3 +247,90 @@ async fn list_models_tool_returns_backend_catalog() {
     let res = tool.execute(json!({})).await.unwrap();
     assert!(!res.is_error, "expected success, got {res:?}");
 }
+
+#[tokio::test]
+async fn deadline_without_terminal_status_errors_without_persisting() {
+    let server = MockServer::start().await;
+    // Submit is accepted but the request never reaches a terminal state. With a
+    // zero-second wait budget the poll deadline is hit immediately, so nothing is
+    // ever downloaded — the tool must surface an error, not a false success.
+    Mock::given(method("POST"))
+        .and(path("/agent-integrations/media-generation/images"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "success": true, "data": {
+            "requestId": "req-timeout",
+            "status": "queued",
+            "model": "seedream-4-0-250828",
+            "media": []
+        } }),
+        ))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let client = client_for(&server);
+    let res = super::generate_and_persist(
+        &client,
+        tmp.path(),
+        super::IMAGES_PATH,
+        json!({ "prompt": "a fox", "wait": false }),
+        0,
+    )
+    .await;
+
+    assert!(
+        res.is_error,
+        "deadline with no terminal status must error, got {res:?}"
+    );
+    let dir = tmp.path().join("generated-media");
+    assert!(
+        !dir.exists() || std::fs::read_dir(&dir).unwrap().count() == 0,
+        "no artifact should be persisted on a timeout"
+    );
+}
+
+#[tokio::test]
+async fn deadline_after_poll_errors_still_errors() {
+    let server = MockServer::start().await;
+    // Submit is accepted but stays non-terminal, and every status poll fails.
+    // Transient poll errors must not abort the paid generation, but once the wait
+    // budget elapses the tool must surface an error (never a false success),
+    // remembering the last poll failure. The 1s budget caps the first sleep to the
+    // remaining time (not the full 4s interval), so exactly one failing poll runs
+    // before the deadline fires.
+    Mock::given(method("POST"))
+        .and(path("/agent-integrations/media-generation/images"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({ "success": true, "data": {
+            "requestId": "req-pollerr",
+            "status": "queued",
+            "model": "seedream-4-0-250828",
+            "media": []
+        } }),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(
+            r"^/agent-integrations/media-generation/requests/.+",
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let client = client_for(&server);
+    let res = super::generate_and_persist(
+        &client,
+        tmp.path(),
+        super::IMAGES_PATH,
+        json!({ "prompt": "a fox", "wait": false }),
+        1,
+    )
+    .await;
+
+    assert!(
+        res.is_error,
+        "deadline after failing polls must error, got {res:?}"
+    );
+}

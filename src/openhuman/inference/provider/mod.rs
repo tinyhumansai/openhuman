@@ -18,7 +18,7 @@ pub mod error_code;
 pub mod factory;
 /// Actionable diagnostics for background-workload provider fallback (#5146 §2.1).
 pub(crate) mod fallback_diagnostics;
-mod openai_codex;
+pub(crate) mod openai_codex;
 /// Crate-native managed OpenHuman backend as a host `ChatModel` (issue #4727).
 pub mod openhuman_backend_model;
 pub mod ops;

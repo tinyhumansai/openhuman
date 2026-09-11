@@ -9,7 +9,6 @@ use std::net::{SocketAddr, TcpListener as StdTcpListener};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
-use axum::http::header::AUTHORIZATION;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
@@ -104,6 +103,20 @@ fn ensure_rpc_auth() {
     });
 }
 
+/// The bearer this process actually validates.
+///
+/// `core::auth::RPC_TOKEN` is a process-global `OnceLock` and `init_rpc_token`
+/// returns early once it is set — deliberately, so a second call cannot 401 live
+/// clients. Since `tests/raw_coverage/` is one aggregated binary, only the first
+/// suite to reach `ensure_rpc_auth` pins its own `TEST_RPC_TOKEN`; every other
+/// suite sending its literal gets a 401 and trips its own `assert_eq!` (#6112).
+/// Ask the auth module what it settled on instead of assuming we won the race.
+fn rpc_bearer() -> &'static str {
+    ensure_rpc_auth();
+    openhuman_core::core::auth::get_rpc_token()
+        .expect("ensure_rpc_auth initialises the token subsystem on the line above")
+}
+
 async fn serve_rpc() -> (
     SocketAddr,
     tokio::task::JoinHandle<Result<(), std::io::Error>>,
@@ -169,8 +182,7 @@ async fn rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> Value {
         .expect("client");
     let response = client
         .post(rpc_base)
-        .bearer_auth(TEST_RPC_TOKEN)
-        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
+        .bearer_auth(rpc_bearer())
         .json(&json!({
             "jsonrpc": "2.0",
             "id": id,

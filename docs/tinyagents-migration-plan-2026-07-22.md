@@ -268,8 +268,7 @@ force).
 1. Bump `vendor/tinyagents` submodule to tag `v2.1.0` (fast-forward; picks up
    `BarrierRelief` #62 and the bytes bump). Regenerate root and
    `app/src-tauri` lockfiles. `cargo check` both worlds +
-   the slim disabled build (`--no-default-features --features
-   tokenjuice-treesitter`) per repo convention.
+   the slim disabled build (`--no-default-features`) per repo convention.
 2. Update `tinyagents-drift-ledger.md` Anchors (pin row → v2.1.0; add rows
    closing out #4780/#4782/#4783/#4784 which the ledger still lists as
    pending/deferred; mark the Phase-3 "compatible*.rs remains" text CLOSED).
@@ -432,8 +431,7 @@ changes remain gated on explicit approval of that proposal.
 
 - Full suite: `scripts/test-rust-with-mock.sh` (all targets incl.
   `raw_coverage_all`), `cargo test --all-features` in `vendor/tinyagents`,
-  slim disabled build + `cargo test --lib --no-default-features --features
-  tokenjuice-treesitter core::` (repo standing rule), `pnpm rust:check`.
+  slim disabled build + `cargo test --lib --no-default-features core::` (repo standing rule), `pnpm rust:check`.
 - Deletion ledger totals reconciled against the port-plan's projection
   (~30k deleted / ~12–15k upstreamed).
 - Docs: `inference/README.md`, `gitbooks/developing/architecture/

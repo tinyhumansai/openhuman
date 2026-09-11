@@ -18,6 +18,7 @@ import {
   updateMemorySource,
 } from '../../services/memorySourcesService';
 import Button from '../ui/Button';
+import Input from '../ui/Input';
 
 // Which limit fields are relevant per kind. Order determines display order.
 // Only caps that are actually enforced at sync time are surfaced — the
@@ -51,27 +52,13 @@ type LimitFields = Pick<
 // Item-count caps where a "Maxed" badge is meaningful (synced count vs cap).
 // Time-window (sync_depth_days/since_days) and budget (tokens/cost) caps don't
 // map to a chunk count, so they never show "Maxed".
-const COUNT_FIELDS = new Set<keyof LimitFields>([
-  'max_items',
-  'max_prs',
-  'max_issues',
-  'max_commits',
-]);
-
 interface SourceSettingsPanelProps {
   source: MemorySourceEntry;
-  /** Chunks already synced for this source — drives the "Maxed" badge. */
-  syncedCount?: number;
   onSaved: (updated: MemorySourceEntry) => void;
   onToast?: (toast: { type: 'success' | 'error'; title: string; message?: string }) => void;
 }
 
-export function SourceSettingsPanel({
-  source,
-  syncedCount,
-  onSaved,
-  onToast,
-}: SourceSettingsPanelProps) {
+export function SourceSettingsPanel({ source, onSaved, onToast }: SourceSettingsPanelProps) {
   const { t } = useT();
   const fields = KIND_FIELDS[source.kind] ?? [];
 
@@ -145,25 +132,17 @@ export function SourceSettingsPanel({
       </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {fields.map(field => {
-          const cap = Number(values[field]);
           const isUnlimited = (values[field] ?? '') === '';
-          const isMaxed =
-            COUNT_FIELDS.has(field) &&
-            !isUnlimited &&
-            Number.isFinite(cap) &&
-            typeof syncedCount === 'number' &&
-            syncedCount >= cap;
+          // No "Maxed" badge. The only count a row has is *chunks*, and a cap
+          // is *items* (emails, issues, commits); one email is several
+          // chunks, so the badge lit long before the cap was reached. It
+          // comes back when the status carries an item count (openhuman#6012).
           return (
             <div key={field}>
               <label
                 htmlFor={`src-setting-${source.id}-${field}`}
                 className="mb-0.5 flex items-center gap-1.5 text-xs font-medium text-content-secondary">
                 {t(FIELD_LABEL_KEYS[field])}
-                {isMaxed && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                    {t('memorySources.settings.maxed')}
-                  </span>
-                )}
                 {isUnlimited && (
                   <span
                     className="inline-flex cursor-help text-content-faint"
@@ -173,19 +152,17 @@ export function SourceSettingsPanel({
                   </span>
                 )}
               </label>
-              <input
+              <Input
                 id={`src-setting-${source.id}-${field}`}
                 type="number"
+                inputSize="sm"
+                monospace
                 min={0}
                 step={1}
                 value={values[field] ?? ''}
                 onChange={e => handleChange(field, e.target.value)}
                 placeholder={t('memorySources.settings.unlimited')}
-                className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs font-mono
-                           text-content placeholder:text-stone-400
-                           dark:border-neutral-600 dark:bg-surface dark:text-neutral-200
-                           dark:placeholder:text-neutral-500
-                           focus:outline-none focus:ring-2 focus:ring-primary-200"
+                className="text-xs"
               />
             </div>
           );

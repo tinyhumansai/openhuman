@@ -10,6 +10,7 @@
 import { useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import Button from '../../ui/Button';
 import type { McpTool } from './types';
 
 interface McpToolListProps {
@@ -30,34 +31,36 @@ const McpToolList = ({ tools, onTryTool }: McpToolListProps) => {
 
   return (
     <div className="space-y-1">
-      <button
-        type="button"
+      <Button
+        variant="tertiary"
+        size="xs"
         onClick={() => setExpanded(prev => !prev)}
-        className="flex items-center gap-1.5 text-xs font-medium text-content-secondary hover:text-content">
+        className="h-auto gap-1.5 p-0 text-xs font-medium text-content-secondary hover:text-content">
         <span className={`transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden="true">
           ▶
         </span>
         {t(
           safeTools.length === 1 ? 'mcp.toolList.availableSingular' : 'mcp.toolList.availablePlural'
         ).replace('{count}', String(safeTools.length))}
-      </button>
+      </Button>
 
       {expanded && (
         <ul className="mt-2 space-y-1 pl-4 border-l-2 border-line-subtle">
           {safeTools.map(tool => (
             <li key={tool.name} className="space-y-0.5">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs font-mono font-medium text-content break-words min-w-0">
+                <p className="text-xs font-mono font-medium text-content wrap-break-word min-w-0">
                   {tool.name}
                 </p>
                 {onTryTool && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="tertiary"
+                    size="xs"
                     onClick={() => onTryTool(tool)}
                     aria-label={t('mcp.toolList.tryToolAria').replace('{name}', tool.name)}
-                    className="shrink-0 text-[10px] font-medium text-primary-600 dark:text-primary-300 hover:underline">
+                    className="h-auto shrink-0 p-0 text-[10px] font-medium text-primary-600 hover:underline dark:text-primary-300">
                     {t('mcp.toolList.tryTool')}
-                  </button>
+                  </Button>
                 )}
               </div>
               {tool.description && (

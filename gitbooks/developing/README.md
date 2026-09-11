@@ -9,7 +9,7 @@ OpenHuman is open source under GPLv3 at [github.com/tinyhumansai/openhuman](http
 
 If you just want to use the app, head to [Getting Started](../overview/getting-started.md). If you're here to read the architecture, hack on a feature, or land a PR, you're in the right place.
 
-***
+---
 
 ## Where things live
 
@@ -22,7 +22,7 @@ If you just want to use the app, head to [Getting Started](../overview/getting-s
 
 `CLAUDE.md` at the repo root is the source of truth for AI agents working on the codebase. Same rules apply to humans.
 
-***
+---
 
 ## Start here
 
@@ -34,42 +34,42 @@ If it's your first time pulling the repo:
 4. [**Frontend**](architecture/frontend.md) and [**Tauri Shell**](architecture/tauri-shell.md). The React app and the desktop host that wraps it.
 5. [**MCP Server**](mcp-server.md). Opt-in stdio MCP mode for exposing read-only OpenHuman memory tools to local clients.
 
-***
+---
 
 ## Testing
 
 OpenHuman ships with three test layers. Know which one your change belongs in:
 
-* [**Testing Strategy**](testing-strategy.md). When to write Vitest vs cargo tests vs WDIO.
-* [**E2E Testing**](e2e-testing.md). WDIO/Appium specs, dual-platform setup (Linux tauri-driver, macOS Appium Mac2), and how to run a single spec locally.
-* [**Agent Observability**](agent-observability.md). The artifact-capture layer that makes E2E and agent runs debuggable after the fact.
+- [**Testing Strategy**](testing-strategy.md). When to write Vitest vs cargo tests vs WDIO.
+- [**E2E Testing**](e2e-testing.md). WDIO/Appium specs, dual-platform setup (Linux tauri-driver, macOS Appium Mac2), and how to run a single spec locally.
+- [**Agent Observability**](agent-observability.md). The artifact-capture layer that makes E2E and agent runs debuggable after the fact.
 
 PRs must clear the **≥ 80% coverage on changed lines** gate. Add tests for new behavior, not just the happy path.
 
-***
+---
 
 ## Shipping
 
-* [**Release Policy**](release-policy.md). Version policy, release cadence, OAuth + installer rules.
-* [**Cloud Deploy**](../features/cloud-deploy.md). Backend/cloud-side deployment when a change crosses the desktop boundary.
+- [**Release Policy**](release-policy.md). Version policy, release cadence, OAuth + installer rules.
+- [**Cloud Deploy**](../features/cloud-deploy.md). Backend/cloud-side deployment when a change crosses the desktop boundary.
 
-***
+---
 
 ## Going deeper
 
-* [**Agent Harness**](architecture/agent-harness.md). The tinyagents-based turn loop (checkpointing, circuit breakers, sub-agent handback, journals/replay) and how to extend the tool surface.
-* [**Workflows**](../features/workflows.md). The tinyflows-backed `flows` domain: triggers, trust origins, approval-gated runs, and the `flows_*` RPC surface.
-* [**Chromium Embedded Framework**](cef.md). How embedded provider webviews work, why they don't run injected JS, and what the per-provider scanners do instead.
+- [**Agent Harness**](architecture/agent-harness.md). The tinyagents-based turn loop (checkpointing, circuit breakers, sub-agent handback, journals/replay) and how to extend the tool surface.
+- [**Workflows**](../features/workflows.md). The tinyflows-backed `flows` domain: triggers, trust origins, approval-gated runs, and the `flows_*` RPC surface.
+- [**Chromium Embedded Framework**](cef.md). How embedded provider webviews work, why they don't run injected JS, and what the per-provider scanners do instead.
 
-For features still being built, the [Subconscious Loop](../features/subconscious.md) page covers the background task evaluation system end-to-end.
+For features still being built, the Subconscious Loop page covers the background task evaluation system end-to-end.
 
-***
+---
 
 ## Contributing
 
-* Open issues and PRs at [tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman).
-* PRs target `main`. Push to your fork, not upstream.
-* Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and the issue/PR templates.
-* Keep changes focused. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.
+- Open issues and PRs at [tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman).
+- PRs target `main`. Push to your fork, not upstream.
+- Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and the issue/PR templates.
+- Keep changes focused. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.
 
 Help building toward AGI doesn't have to mean shipping a kernel - bugfixes, docs, integrations, and tests all move the bar.

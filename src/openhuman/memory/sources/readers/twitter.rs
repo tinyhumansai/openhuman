@@ -12,10 +12,15 @@ use crate::openhuman::memory::sources::types::{
     MemorySourceEntry, SourceContent, SourceItem, SourceKind,
 };
 
-use super::SourceReader;
+use crate::openhuman::memory::sources::readers::SourceReader;
 
 const DEFAULT_SINCE_DAYS: u32 = 7;
 
+/// Reads `twitter_query` sources.
+///
+/// Unimplemented: the Twitter API v2 search endpoint needs a bearer token and
+/// that credential wiring has not landed, so both methods validate the source
+/// and return an error naming what is missing.
 pub struct TwitterReader;
 
 #[async_trait]
@@ -68,42 +73,5 @@ impl SourceReader for TwitterReader {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn twitter_source() -> MemorySourceEntry {
-        MemorySourceEntry {
-            id: "src_tw".into(),
-            kind: SourceKind::TwitterQuery,
-            label: "AI tweets".into(),
-            enabled: true,
-            toolkit: None,
-            connection_id: None,
-            path: None,
-            glob: None,
-            url: None,
-            branch: None,
-            paths: Vec::new(),
-            query: Some("AI safety".into()),
-            since_days: Some(3),
-            max_items: None,
-            max_commits: None,
-            max_issues: None,
-            max_prs: None,
-            selector: None,
-            max_tokens_per_sync: None,
-            max_cost_per_sync_usd: None,
-            sync_depth_days: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn list_items_returns_not_configured_error() {
-        let reader = TwitterReader;
-        let result = reader
-            .list_items(&twitter_source(), &Config::default())
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not yet configured"));
-    }
-}
+#[path = "twitter_tests.rs"]
+mod tests;

@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 1
           submodules: recursive
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:

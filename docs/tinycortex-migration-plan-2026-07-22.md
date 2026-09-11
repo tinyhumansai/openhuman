@@ -345,9 +345,9 @@ re-export except deliberate facades recorded in the spec.
 - Full suite: `scripts/test-rust-with-mock.sh` (incl. the 15
   `raw_coverage/memory_*` modules), vendor suite
   `cargo test --manifest-path vendor/tinycortex/Cargo.toml --features
-  git-diff,sync,persona`, slim disabled build (`--no-default-features
-  --features tokenjuice-treesitter` — memory domains are ungated but the
-  standing repo rule applies), `pnpm rust:check`.
+  git-diff,sync,persona`, slim disabled build (`--no-default-features`
+  — memory domains are ungated but the standing repo rule applies),
+  `pnpm rust:check`.
 - Drift ledger: D4 CLOSED; new rows for every WP-1/WP-2 deletion; the spec's
   §2 deletion-ledger skeleton filled in with actuals.
 - Docs: the five tinycortex docs + `src/openhuman/memory*/README.md` files +
@@ -363,7 +363,7 @@ re-export except deliberate facades recorded in the spec.
 | WP-2 | The live default path was already TinyCortex-backed. D4 is CLOSED; dead Gmail duplicate removed; remaining provider task/profile projections explicitly classified as product policy. Provider tests pass (301). |
 | WP-3 | Concrete provider transports deduplicated into TinyAgents. The memory tree now uses a thin `ProviderEmbedder`; Ollama's 8k context/batch and missing-model guidance moved upstream before the host client was deleted. TinyAgents embedding tests pass (38); host library check passes. |
 | WP-4 | Archivist, search scoring/MMR, tool-memory type/store, tree-tool, jobs-alias, and unused seam type facades retired. Direct crate imports are canonical. Seam production code is 2,229 LOC (below the 2.5k exit target). |
-| WP-5 | Local focused validation is recorded above; the slim `--no-default-features --features tokenjuice-treesitter` build also passes. [CI Full run 29925645209](https://github.com/senamakel/openhuman/actions/runs/29925645209) is green: core quality and full tests, TinyCortex, Tauri, frontend, mock-backend Rust E2E, Playwright, three desktop builds, every launched desktop shard, and the final gate. Two first-attempt Linux jobs ended without uploaded logs; rerunning only failed jobs passed the Linux build, Rust integration suite, and all eight Linux shards. |
+| WP-5 | Local focused validation is recorded above; the slim `--no-default-features` build also passes. [CI Full run 29925645209](https://github.com/senamakel/openhuman/actions/runs/29925645209) is green: core quality and full tests, TinyCortex, Tauri, frontend, mock-backend Rust E2E, Playwright, three desktop builds, every launched desktop shard, and the final gate. Two first-attempt Linux jobs ended without uploaded logs; rerunning only failed jobs passed the Linux build, Rust integration suite, and all eight Linux shards. |
 
 ---
 

@@ -6,7 +6,7 @@
 //! - openhuman `ChatMessage` is `{ role: String, content: String }` — tool
 //!   calls and tool-result correlation ids are not first-class fields; the
 //!   legacy loop threads them through provider-native encoding instead.
-//! - `tinyagents::harness::message::Message` is a typed enum
+//! - `tinyinference::message::Message` is a typed enum
 //!   (`System`/`User`/`Assistant`/`Tool`) whose `Assistant` arm carries
 //!   structured `tool_calls` and whose `Tool` arm carries a `tool_call_id`.
 //!
@@ -14,10 +14,10 @@
 //! resulting transcript back out, so a turn can run on the `tinyagents`
 //! agent-loop while callers keep speaking openhuman's `ChatMessage` vocabulary.
 
-use tinyagents::harness::message::{
-    AssistantMessage, ContentBlock, Message, SystemMessage, ToolMessage, UserMessage,
+use tinyinference::message::{
+    AssistantMessage, ContentBlock, ImageRef, Message, SystemMessage, ToolMessage, UserMessage,
 };
-use tinyagents::harness::tool::ToolCall as TaToolCall;
+use tinyinference::tool::ToolCall as TaToolCall;
 
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage, ToolResultMessage};
 
@@ -115,14 +115,114 @@ pub(crate) fn chat_message_to_message(msg: &ChatMessage) -> Message {
                 tool_call_id,
                 content: vec![ContentBlock::Text(content)],
                 trusted_verbatim: false,
+                artifact: None,
             })
         }
         // "user" and any unrecognized role default to a user turn — the safest
         // mapping for a free-form inbound message.
         _ => Message::User(UserMessage {
-            content: vec![ContentBlock::Text(text)],
+            content: user_content_blocks(text),
         }),
     }
+}
+
+/// Build the content blocks for a user turn, lifting any `[IMAGE:…]` markers out
+/// of the text into typed [`ContentBlock::Image`] blocks.
+///
+/// By the time a user message reaches this bridge the multimodal pipeline has
+/// already rehydrated and normalized every attachment into an inline
+/// `[IMAGE:data:<mime>;base64,…]` marker (see
+/// [`crate::openhuman::agent::multimodal::prepare_messages_for_provider`]).
+/// Leaving those buried in a single [`ContentBlock::Text`] ships the base64 to
+/// the model as literal text, so vision models never actually see the image —
+/// PNG screenshots fail outright and JPEGs get guessed at (#5359). Splitting the
+/// markers into [`ContentBlock::Image`] lets the provider layer serialize them
+/// as real `image_url` parts. The crate forwards [`ImageRef::url`] verbatim, so
+/// the marker payload (already a `data:` URI here) is exactly what it needs.
+///
+/// Blocks are emitted in **source order** — prose and images interleave as the
+/// user wrote them, so a caption stays next to its image. A marker whose payload
+/// is not a provider-ready reference (a `data:` URI or an `http(s)` URL) is kept
+/// verbatim as text rather than sent as an image the provider would reject.
+fn user_content_blocks(text: String) -> Vec<ContentBlock> {
+    const PREFIX: &str = "[IMAGE:";
+    // Fast path: no markers → unchanged single text block (byte-for-byte).
+    if !text.contains(PREFIX) {
+        return vec![ContentBlock::Text(text)];
+    }
+
+    fn flush_text(pending: &mut String, blocks: &mut Vec<ContentBlock>) {
+        let trimmed = pending.trim();
+        if !trimmed.is_empty() {
+            blocks.push(ContentBlock::Text(trimmed.to_string()));
+        }
+        pending.clear();
+    }
+
+    let mut blocks: Vec<ContentBlock> = Vec::new();
+    let mut pending = String::new();
+    let mut images = 0usize;
+    let mut rest = text.as_str();
+
+    while let Some(start) = rest.find(PREFIX) {
+        pending.push_str(&rest[..start]);
+        let after = &rest[start + PREFIX.len()..];
+        let Some(end) = after.find(']') else {
+            // Unterminated marker — keep the remainder verbatim as text.
+            pending.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        let payload = after[..end].trim();
+        if is_provider_ready_image_reference(payload) {
+            // Preserve source order: flush the prose seen so far, then the image.
+            flush_text(&mut pending, &mut blocks);
+            blocks.push(ContentBlock::Image(ImageRef {
+                url: payload.to_string(),
+                mime_type: data_uri_mime(payload),
+            }));
+            images += 1;
+        } else {
+            // Not provider-ready (bare path / un-normalized marker) — keep the
+            // whole `[IMAGE:…]` marker verbatim as text.
+            pending.push_str(&rest[start..start + PREFIX.len() + end + 1]);
+        }
+        rest = &after[end + 1..];
+    }
+    pending.push_str(rest);
+    flush_text(&mut pending, &mut blocks);
+
+    if images > 0 {
+        log::debug!(
+            "[agent][message_convert] lifted {images} image attachment(s) from user text into content blocks"
+        );
+    }
+    // A whitespace-only, image-less remainder still needs a block to stay a
+    // valid user turn.
+    if blocks.is_empty() {
+        blocks.push(ContentBlock::Text(text));
+    }
+    blocks
+}
+
+/// Whether an `[IMAGE:…]` payload is a reference the provider can serialize as an
+/// image: an inline `data:` URI or an `http(s)` URL. Anything else (a bare
+/// filesystem path, an un-normalized marker) is left as text.
+fn is_provider_ready_image_reference(reference: &str) -> bool {
+    reference.starts_with("data:")
+        || reference.starts_with("http://")
+        || reference.starts_with("https://")
+}
+
+/// Extract the MIME type from a `data:<mime>;base64,…` URI, if present.
+///
+/// Best-effort: the provider layer also reads the type straight from the `data:`
+/// URI, so a non-`data:` reference (e.g. an `http(s)` URL) simply carries
+/// `None` and is forwarded as-is.
+fn data_uri_mime(reference: &str) -> Option<String> {
+    let rest = reference.strip_prefix("data:")?;
+    let mime = rest.split([';', ',']).next()?.trim();
+    (!mime.is_empty()).then(|| mime.to_string())
 }
 
 /// Parse a native assistant tool-call envelope (`{ "content", "tool_calls" }`, as
@@ -407,231 +507,5 @@ pub(crate) fn ta_call_to_oh_call(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seeded_native_tool_round_recovers_structure_and_round_trips() {
-        use crate::openhuman::inference::provider::ToolCall as OhToolCall;
-        // The native dispatcher seeds an assistant tool round as a
-        // {content, tool_calls} envelope followed by {tool_call_id, content} rows.
-        let oh_call = OhToolCall {
-            id: "call-1".into(),
-            name: "echo".into(),
-            arguments: r#"{"msg":"hi"}"#.into(),
-            extra_content: None,
-        };
-        let assistant_cm = ChatMessage::assistant(
-            serde_json::json!({ "content": "calling echo", "tool_calls": [oh_call] }).to_string(),
-        );
-        let tool_cm = ChatMessage::tool(
-            serde_json::json!({ "tool_call_id": "call-1", "content": "echoed:hi" }).to_string(),
-        );
-
-        // Inbound: the envelopes are recovered into structured harness messages.
-        let a = chat_message_to_message(&assistant_cm);
-        let Message::Assistant(am) = &a else {
-            panic!("expected Assistant, got {a:?}");
-        };
-        assert_eq!(am.tool_calls.len(), 1);
-        assert_eq!(am.tool_calls[0].id, "call-1");
-        assert_eq!(am.tool_calls[0].name, "echo");
-        assert_eq!(
-            am.tool_calls[0].arguments,
-            serde_json::json!({ "msg": "hi" })
-        );
-        assert_eq!(a.text(), "calling echo");
-
-        let t = chat_message_to_message(&tool_cm);
-        let Message::Tool(tm) = &t else {
-            panic!("expected Tool, got {t:?}");
-        };
-        assert_eq!(tm.tool_call_id, "call-1");
-        assert!(!tm.trusted_verbatim);
-        assert_eq!(t.text(), "echoed:hi");
-
-        // Outbound: re-serialized to a well-formed native tool round (assistant
-        // carries structured tool_calls, the tool row carries the matching id).
-        let a_native = message_to_native_chat_message(&a);
-        assert_eq!(a_native.role, "assistant");
-        let av: serde_json::Value = serde_json::from_str(&a_native.content).unwrap();
-        assert_eq!(av["tool_calls"][0]["id"], "call-1");
-        assert_eq!(av["content"], "calling echo");
-
-        let t_native = message_to_native_chat_message(&t);
-        assert_eq!(t_native.role, "tool");
-        let tv: serde_json::Value = serde_json::from_str(&t_native.content).unwrap();
-        assert_eq!(tv["tool_call_id"], "call-1");
-        assert_eq!(tv["content"], "echoed:hi");
-    }
-
-    #[test]
-    fn plain_assistant_prose_is_not_misread_as_a_tool_round() {
-        let a = chat_message_to_message(&ChatMessage::assistant("just a normal reply"));
-        let Message::Assistant(am) = &a else {
-            panic!("expected Assistant, got {a:?}");
-        };
-        assert!(am.tool_calls.is_empty());
-        assert_eq!(a.text(), "just a normal reply");
-    }
-
-    #[test]
-    fn reasoning_content_uses_typed_thinking_block_and_round_trips_metadata() {
-        let mut chat = ChatMessage::assistant("visible answer");
-        chat.extra_metadata = Some(serde_json::json!({ REASONING_EXT_KEY: "private thoughts" }));
-
-        let msg = chat_message_to_message(&chat);
-        let Message::Assistant(assistant) = &msg else {
-            panic!("expected Assistant, got {msg:?}");
-        };
-        assert_eq!(msg.text(), "visible answer");
-        assert!(assistant.content.iter().any(|block| {
-            matches!(
-                block,
-                ContentBlock::Thinking { text, signature: None } if text == "private thoughts"
-            )
-        }));
-        assert!(!assistant
-            .content
-            .iter()
-            .any(|block| matches!(block, ContentBlock::ProviderExtension(_))));
-
-        let back = message_to_chat_message(&msg);
-        assert_eq!(back.content, "visible answer");
-        assert_eq!(
-            back.extra_metadata
-                .as_ref()
-                .and_then(|meta| meta.get(REASONING_EXT_KEY))
-                .and_then(serde_json::Value::as_str),
-            Some("private thoughts")
-        );
-    }
-
-    #[test]
-    fn legacy_provider_extension_reasoning_still_round_trips() {
-        let msg = Message::Assistant(AssistantMessage {
-            id: None,
-            content: vec![
-                ContentBlock::Text("visible answer".into()),
-                ContentBlock::ProviderExtension(
-                    serde_json::json!({ REASONING_EXT_KEY: "legacy thoughts" }),
-                ),
-            ],
-            tool_calls: vec![],
-            usage: None,
-        });
-
-        let back = message_to_chat_message(&msg);
-        assert_eq!(back.content, "visible answer");
-        assert_eq!(
-            back.extra_metadata
-                .as_ref()
-                .and_then(|meta| meta.get(REASONING_EXT_KEY))
-                .and_then(serde_json::Value::as_str),
-            Some("legacy thoughts")
-        );
-    }
-
-    #[test]
-    fn roles_round_trip_through_the_bridge() {
-        let history = vec![
-            ChatMessage::system("you are helpful"),
-            ChatMessage::user("hello"),
-            ChatMessage::assistant("hi there"),
-        ];
-        let messages = history_to_messages(&history);
-        assert!(matches!(messages[0], Message::System(_)));
-        assert!(matches!(messages[1], Message::User(_)));
-        assert!(matches!(messages[2], Message::Assistant(_)));
-
-        let back = messages_to_history(&messages);
-        assert_eq!(back.len(), 3);
-        assert_eq!(back[0].role, "system");
-        assert_eq!(back[1].content, "hello");
-        assert_eq!(back[2].role, "assistant");
-    }
-
-    #[test]
-    fn tool_message_preserves_correlation_id() {
-        let messages = vec![Message::Tool(ToolMessage {
-            tool_call_id: "call-7".into(),
-            content: vec![ContentBlock::Text("done".into())],
-            trusted_verbatim: false,
-        })];
-        let back = messages_to_history(&messages);
-        assert_eq!(back[0].role, "tool");
-        assert_eq!(back[0].content, "done");
-        assert_eq!(back[0].id.as_deref(), Some("call-7"));
-    }
-
-    #[test]
-    fn conversation_preserves_tool_call_structure() {
-        let messages = vec![
-            Message::User(UserMessage {
-                content: vec![ContentBlock::Text("do it".into())],
-            }),
-            Message::Assistant(AssistantMessage {
-                id: None,
-                content: vec![ContentBlock::Text("calling".into())],
-                tool_calls: vec![TaToolCall {
-                    id: "c1".into(),
-                    name: "echo".into(),
-                    arguments: serde_json::json!({"msg": "hi"}),
-                    invalid: None,
-                }],
-                usage: None,
-            }),
-            Message::Tool(ToolMessage {
-                tool_call_id: "c1".into(),
-                content: vec![ContentBlock::Text("echoed:hi".into())],
-                trusted_verbatim: false,
-            }),
-            Message::Assistant(AssistantMessage {
-                id: None,
-                content: vec![ContentBlock::Text("all done".into())],
-                tool_calls: vec![],
-                usage: None,
-            }),
-        ];
-
-        // Only the suffix after the last user turn is persisted.
-        let suffix = messages_since_last_user(&messages);
-        let convo = messages_to_conversation(suffix);
-        assert_eq!(convo.len(), 3);
-        match &convo[0] {
-            ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
-                assert_eq!(tool_calls[0].name, "echo");
-                assert_eq!(tool_calls[0].id, "c1");
-            }
-            other => panic!("expected AssistantToolCalls, got {other:?}"),
-        }
-        match &convo[1] {
-            ConversationMessage::ToolResults(results) => {
-                assert_eq!(results[0].tool_call_id, "c1");
-                assert_eq!(results[0].content, "echoed:hi");
-            }
-            other => panic!("expected ToolResults, got {other:?}"),
-        }
-        match &convo[2] {
-            ConversationMessage::Chat(c) => {
-                assert_eq!(c.role, "assistant");
-                assert_eq!(c.content, "all done");
-            }
-            other => panic!("expected Chat, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn tool_call_convert() {
-        let ta = TaToolCall {
-            id: "c1".into(),
-            name: "echo".into(),
-            arguments: serde_json::json!({"msg": "hi"}),
-            invalid: None,
-        };
-        let oh = ta_call_to_oh_call(&ta);
-        assert_eq!(oh.id, "c1");
-        assert_eq!(oh.name, "echo");
-        assert_eq!(oh.arguments, r#"{"msg":"hi"}"#);
-    }
-}
+#[path = "message_convert_tests.rs"]
+mod tests;

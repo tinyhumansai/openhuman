@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -49,7 +49,7 @@ describe('SubagentDrawer', () => {
     // thinking → text → tool → text — i.e. the tool sits between the two
     // text blocks, not in a separate section.
     const thinking = screen.getByTestId('subagent-transcript-thinking');
-    const tool = screen.getByTestId('subagent-drawer-tool-call');
+    const tool = screen.getByTestId('assistant-ui-tool-call');
     const texts = screen.getAllByTestId('subagent-transcript-text');
     expect(texts).toHaveLength(2);
 
@@ -60,7 +60,7 @@ describe('SubagentDrawer', () => {
     expect(order(tool)).toBeLessThan(order(texts[1]));
 
     expect(thinking.textContent).toContain('comparing the two sources');
-    expect(tool.textContent).toContain('web_search');
+    expect(tool.textContent).toContain('Searched the web');
     expect(tool.textContent).toContain('1.2s');
     expect(texts[1].textContent).toContain('The answer is');
   });
@@ -178,7 +178,7 @@ describe('SubagentDrawer', () => {
     await waitFor(() =>
       expect(screen.getByTestId('subagent-parent-prompt').textContent).toContain('Research Q3')
     );
-    expect(screen.getByTestId('subagent-drawer-tool-call').textContent).toContain('web_search');
+    expect(screen.getByTestId('assistant-ui-tool-call').textContent).toContain('Searched the web');
     expect(screen.getByTestId('subagent-transcript-text').textContent).toContain(
       'Revenue grew 18%'
     );
@@ -292,15 +292,15 @@ describe('SubagentDrawer', () => {
     );
 
     // Collapsed by default — neither input nor output is rendered yet.
-    expect(screen.queryByTestId('subagent-tool-call-input')).toBeNull();
-    expect(screen.queryByTestId('subagent-tool-call-output')).toBeNull();
+    expect(screen.queryByTestId('assistant-ui-tool-input')).toBeNull();
+    expect(screen.queryByTestId('assistant-ui-tool-output')).toBeNull();
 
-    await userEvent.click(screen.getByTestId('subagent-tool-call-toggle'));
+    await userEvent.click(within(screen.getByTestId('assistant-ui-tool-call')).getByRole('button'));
 
-    expect(screen.getByTestId('subagent-tool-call-input').textContent).toContain(
+    expect(screen.getByTestId('assistant-ui-tool-input').textContent).toContain(
       'Q3 revenue drivers'
     );
-    expect(screen.getByTestId('subagent-tool-call-output').textContent).toContain(
+    expect(screen.getByTestId('assistant-ui-tool-output').textContent).toContain(
       'Found 3 results about revenue.'
     );
   });
@@ -312,8 +312,8 @@ describe('SubagentDrawer', () => {
     render(
       <SubagentDrawer subagent={activity({ transcript })} status="success" onClose={() => {}} />
     );
-    await userEvent.click(screen.getByTestId('subagent-tool-call-toggle'));
-    expect(screen.getByTestId('subagent-tool-call-output').textContent?.toLowerCase()).toContain(
+    await userEvent.click(within(screen.getByTestId('assistant-ui-tool-call')).getByRole('button'));
+    expect(screen.getByTestId('assistant-ui-tool-output').textContent?.toLowerCase()).toContain(
       'no output'
     );
   });
@@ -326,7 +326,7 @@ describe('SubagentDrawer', () => {
     render(
       <SubagentDrawer subagent={activity({ transcript })} status="cancelled" onClose={() => {}} />
     );
-    const rows = screen.getAllByTestId('subagent-drawer-tool-call');
+    const rows = screen.getAllByTestId('assistant-ui-tool-call');
     expect(rows[0].textContent?.toLowerCase()).toContain('cancelled');
     expect(rows[0].textContent?.toLowerCase()).not.toContain('failed');
     expect(rows[1].textContent?.toLowerCase()).toContain('awaiting');
@@ -339,9 +339,31 @@ describe('SubagentDrawer', () => {
     render(
       <SubagentDrawer subagent={activity({ transcript })} status="success" onClose={() => {}} />
     );
-    const toggle = screen.getByTestId('subagent-tool-call-toggle') as HTMLButtonElement;
-    expect(toggle.disabled).toBe(true);
-    expect(screen.queryByTestId('subagent-tool-call-input')).toBeNull();
-    expect(screen.queryByTestId('subagent-tool-call-output')).toBeNull();
+    const toggle = within(screen.getByTestId('assistant-ui-tool-call')).getByRole('button');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('assistant-ui-tool-input')).toBeNull();
+    expect(screen.queryByTestId('assistant-ui-tool-output')).toBeNull();
+  });
+
+  it('derives a search label from the arguments when the server label degraded to "tool"', () => {
+    // A provider that hands back a generic `tool` name leaves the row with
+    // nothing better than "Tool" unless the arguments are there to read. Those
+    // arguments only survive a reload because the snapshot now carries them
+    // (#5987) — without them this row reads "Tool" again after a refresh.
+    const transcript: SubagentTranscriptItem[] = [
+      {
+        kind: 'tool',
+        iteration: 1,
+        callId: 'c1',
+        toolName: 'tool',
+        status: 'success',
+        displayName: 'tool',
+        args: { query: 'openhuman turn state' },
+      },
+    ];
+    render(
+      <SubagentDrawer subagent={activity({ transcript })} status="success" onClose={() => {}} />
+    );
+    expect(screen.getByTestId('assistant-ui-tool-call').textContent).toContain('Searched the web');
   });
 });

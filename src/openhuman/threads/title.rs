@@ -5,9 +5,33 @@
 
 use std::hash::{Hash, Hasher};
 
+use tinyinference::message::Message;
+use tinyinference::model::ModelRequest;
+
 pub const THREAD_TITLE_LOG_PREFIX: &str = "[threads:title]";
-pub const THREAD_TITLE_MODEL_HINT: &str = "hint:summarize";
-pub const THREAD_TITLE_SYSTEM_PROMPT: &str = "You generate short, specific chat thread titles from the first user message and the assistant reply. Return only the title text. Keep it under 8 words. No quotes. No markdown. No trailing punctuation unless it is part of a proper noun.";
+pub const THREAD_TITLE_SYSTEM_PROMPT: &str = "You name chat threads from the first user message and the assistant reply. Return only the name: at most 3 words, like Fix session handoff or Gmail OAuth retry. Lead with the verb or the subject and drop filler words. No quotes. No markdown. No punctuation.";
+
+/// Words a title carries at most. Three is the whole point of the shape: a
+/// thread list is scanned, not read, and a fourth word is always the one that
+/// pushes the specific words off the end of a narrow row.
+pub const THREAD_TITLE_MAX_WORDS: usize = 3;
+/// Hard character ceiling on a title, so one very long word cannot widen a row.
+pub const THREAD_TITLE_MAX_CHARS: usize = 48;
+
+/// Filler a title is better off without.
+///
+/// Prompts open with conversational scaffolding ("okay so can you please…"),
+/// and taking the first three words verbatim would spend the whole title on it.
+/// Only words that never identify a thread on their own are listed; a filtered
+/// title that comes out empty falls back to the unfiltered words, so a message
+/// made entirely of these still gets a name.
+const FILLER_WORDS: &[&str] = &[
+    "a", "about", "an", "and", "are", "as", "at", "be", "but", "by", "can", "could", "do", "does",
+    "for", "from", "hey", "hi", "how", "i", "if", "in", "into", "is", "it", "its", "just", "let",
+    "lets", "like", "me", "my", "of", "ok", "okay", "on", "or", "our", "please", "so", "thanks",
+    "that", "the", "their", "then", "there", "these", "they", "this", "to", "uh", "um", "us",
+    "was", "we", "well", "what", "when", "which", "will", "with", "would", "you", "your",
+];
 
 /// Stable 16-hex-char fingerprint of a title — safe for structured logs
 /// where we want to correlate events without leaking the raw title text.
@@ -80,32 +104,77 @@ pub fn collapse_whitespace(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Sanitises a raw LLM title completion into a single display-ready line.
+/// Reduces any text to the thread-title shape: at most
+/// [`THREAD_TITLE_MAX_WORDS`] words, e.g. `Fix session handoff`.
+///
+/// This is the shape enforcer, not a request: the model is asked for a short
+/// name in [`THREAD_TITLE_SYSTEM_PROMPT`], but a title that reaches storage as
+/// a whole sentence because one completion ignored the instruction is exactly
+/// the bug the shape is meant to remove, so every path runs through here.
 ///
 /// Rules applied (in order):
-/// - take the first non-empty line
-/// - strip wrapping quotes / backticks
-/// - drop trailing `. ! ? : ;`
-/// - collapse internal whitespace
-/// - truncate to 80 characters
+/// - split on anything that is not alphanumeric (punctuation, quotes, markdown,
+///   and whitespace all become word breaks)
+/// - drop [`FILLER_WORDS`], unless that would leave nothing
+/// - keep the first [`THREAD_TITLE_MAX_WORDS`] words, and stop early rather
+///   than exceed [`THREAD_TITLE_MAX_CHARS`]
+///
+/// A word's own spelling is left alone — `OAuth` and `Gmail` read wrong
+/// lowercased, and the model is the only thing here that knows which is which.
+///
+/// Returns `None` when no word survives.
+pub fn shorten_title(text: &str) -> Option<String> {
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let meaningful: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|word| !FILLER_WORDS.contains(&word.to_lowercase().as_str()))
+        .collect();
+    // All-filler input ("can you please") still names its thread, badly-but-
+    // stably, rather than leaving the placeholder title in place.
+    let source = if meaningful.is_empty() {
+        words
+    } else {
+        meaningful
+    };
+
+    let mut title = String::new();
+    for word in source.into_iter().take(THREAD_TITLE_MAX_WORDS) {
+        let separator = usize::from(!title.is_empty());
+        let room = THREAD_TITLE_MAX_CHARS.saturating_sub(title.chars().count() + separator);
+        if room == 0 {
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        // A single word longer than the ceiling is truncated rather than
+        // dropped: dropping it can empty an otherwise usable title.
+        title.extend(word.chars().take(room));
+    }
+    (!title.is_empty()).then_some(title)
+}
+
+/// Sanitises a raw LLM title completion into a stored thread title.
+///
+/// Takes the first non-empty line — a chatty model that adds a second line of
+/// commentary should not have it folded into the name — and shortens it with
+/// [`shorten_title`], which absorbs the quote/markdown/punctuation stripping
+/// the older sentence-shaped title needed done by hand.
 ///
 /// Returns `None` if the result is empty.
 pub fn sanitize_generated_title(raw: &str) -> Option<String> {
     let line = raw
         .lines()
         .find(|line| !line.trim().is_empty())
-        .unwrap_or(raw)
-        .trim();
-    let trimmed = line
-        .trim_matches(|c: char| matches!(c, '"' | '\'' | '`'))
-        .trim()
-        .trim_end_matches(['.', '!', '?', ':', ';'])
-        .trim();
-    let collapsed = collapse_whitespace(trimmed);
-    if collapsed.is_empty() {
-        return None;
-    }
-    Some(collapsed.chars().take(80).collect())
+        .unwrap_or(raw);
+    shorten_title(line)
 }
 
 /// Derives a stable display title directly from the first useful user message.
@@ -115,248 +184,58 @@ pub fn sanitize_generated_title(raw: &str) -> Option<String> {
 /// title meaningful without repeatedly renaming the thread later.
 pub fn title_from_user_message(message: &str) -> Option<String> {
     let collapsed = collapse_whitespace(message);
-    let stripped = collapsed
-        .trim_matches(|c: char| matches!(c, '"' | '\'' | '`'))
-        .trim()
-        .trim_start_matches(['/', '@', '#'])
-        .trim();
-    if stripped.is_empty() {
+    if collapsed.is_empty() {
         return None;
     }
 
-    let first_sentence = stripped
+    // Only the first sentence describes the ask; what follows is context the
+    // title has no room for anyway.
+    let first_sentence = collapsed
         .split(['.', '!', '?', '\n'])
         .find(|part| !part.trim().is_empty())
-        .unwrap_or(stripped)
-        .trim();
-    let words = first_sentence
-        .split_whitespace()
-        .take(8)
-        .collect::<Vec<_>>()
-        .join(" ");
-    sanitize_generated_title(&words)
+        .unwrap_or(&collapsed);
+    shorten_title(first_sentence)
 }
 
 /// Builds the user-visible prompt passed to the title-generation model.
 pub fn build_title_prompt(user_message: &str, assistant_message: &str) -> String {
     format!(
-        "First user message:\n{user_message}\n\nAssistant reply:\n{assistant_message}\n\nReturn the best thread title."
+        "First user message:\n{user_message}\n\nAssistant reply:\n{assistant_message}\n\nReturn the best thread name."
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── title_log_fingerprint ─────────────────────────────────────
-
-    #[test]
-    fn fingerprint_is_stable_for_same_input() {
-        assert_eq!(
-            title_log_fingerprint("hello"),
-            title_log_fingerprint("hello")
-        );
-    }
-
-    #[test]
-    fn fingerprint_differs_for_different_input() {
-        assert_ne!(
-            title_log_fingerprint("hello"),
-            title_log_fingerprint("world")
-        );
-    }
-
-    #[test]
-    fn fingerprint_is_sixteen_hex_chars() {
-        let fp = title_log_fingerprint("anything");
-        assert_eq!(fp.len(), 16);
-        // Lowercase hex specifically, so grep-friendly debug logs stay
-        // consistent (folded in from the former threads/ops_tests copy).
-        assert!(
-            fp.chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "fingerprint must be lowercase hex, got: {fp}"
-        );
-    }
-
-    // ── is_auto_generated_thread_title ────────────────────────────
-
-    #[test]
-    fn accepts_canonical_placeholder() {
-        assert!(is_auto_generated_thread_title("Chat Jan 1 1:23 AM"));
-        assert!(is_auto_generated_thread_title("Chat Dec 31 11:59 PM"));
-    }
-
-    #[test]
-    fn accepts_single_digit_day_and_hour() {
-        assert!(is_auto_generated_thread_title("Chat Mar 5 9:07 AM"));
-    }
-
-    #[test]
-    fn accepts_two_digit_day_and_hour() {
-        assert!(is_auto_generated_thread_title("Chat Feb 28 10:45 PM"));
-    }
-
-    #[test]
-    fn tolerates_surrounding_whitespace() {
-        assert!(is_auto_generated_thread_title("  Chat Jan 1 1:23 AM  "));
-    }
-
-    #[test]
-    fn rejects_empty_and_short_titles() {
-        assert!(!is_auto_generated_thread_title(""));
-        assert!(!is_auto_generated_thread_title("Chat"));
-        assert!(!is_auto_generated_thread_title("Chat Jan 1"));
-    }
-
-    #[test]
-    fn rejects_non_chat_prefix() {
-        assert!(!is_auto_generated_thread_title("Thread Jan 1 1:23 AM"));
-        assert!(!is_auto_generated_thread_title("chat Jan 1 1:23 AM")); // case matters
-    }
-
-    #[test]
-    fn rejects_numeric_month() {
-        assert!(!is_auto_generated_thread_title("Chat 01 1 1:23 AM"));
-    }
-
-    #[test]
-    fn rejects_missing_am_pm() {
-        assert!(!is_auto_generated_thread_title("Chat Jan 1 1:23"));
-        assert!(!is_auto_generated_thread_title("Chat Jan 1 1:23 XM"));
-    }
-
-    #[test]
-    fn rejects_user_renamed_titles() {
-        assert!(!is_auto_generated_thread_title("Planning the launch party"));
-        assert!(!is_auto_generated_thread_title(
-            "Chat with Alice about deploys"
-        ));
-    }
-
-    #[test]
-    fn rejects_malformed_minutes() {
-        // Minutes must be exactly two digits followed by a space.
-        assert!(!is_auto_generated_thread_title("Chat Jan 1 1:2 AM"));
-        assert!(!is_auto_generated_thread_title("Chat Jan 1 1:234 AM"));
-    }
-
-    // ── collapse_whitespace ────────────────────────────────────────
-
-    #[test]
-    fn collapse_whitespace_normalises_runs() {
-        assert_eq!(collapse_whitespace("  hello   world  "), "hello world");
-    }
-
-    #[test]
-    fn collapse_whitespace_handles_tabs_and_newlines() {
-        assert_eq!(collapse_whitespace("a\tb\nc  d"), "a b c d");
-    }
-
-    #[test]
-    fn collapse_whitespace_empty_returns_empty() {
-        assert_eq!(collapse_whitespace(""), "");
-        assert_eq!(collapse_whitespace("   "), "");
-    }
-
-    // ── sanitize_generated_title ──────────────────────────────────
-
-    #[test]
-    fn sanitize_strips_wrapping_quotes() {
-        assert_eq!(
-            sanitize_generated_title("\"Launch plan\"").unwrap(),
-            "Launch plan"
-        );
-        assert_eq!(
-            sanitize_generated_title("'Debugging deploys'").unwrap(),
-            "Debugging deploys"
-        );
-        assert_eq!(
-            sanitize_generated_title("`retro notes`").unwrap(),
-            "retro notes"
-        );
-    }
-
-    #[test]
-    fn sanitize_strips_trailing_punctuation() {
-        assert_eq!(
-            sanitize_generated_title("Planning session.").unwrap(),
-            "Planning session"
-        );
-        assert_eq!(
-            sanitize_generated_title("Where are we?").unwrap(),
-            "Where are we"
-        );
-    }
-
-    #[test]
-    fn sanitize_picks_first_nonempty_line() {
-        let raw = "\n\n  First real line  \nsecond line\n";
-        assert_eq!(sanitize_generated_title(raw).unwrap(), "First real line");
-    }
-
-    #[test]
-    fn sanitize_collapses_internal_whitespace() {
-        assert_eq!(
-            sanitize_generated_title("hello    world").unwrap(),
-            "hello world"
-        );
-    }
-
-    #[test]
-    fn sanitize_returns_none_for_empty_or_whitespace() {
-        assert!(sanitize_generated_title("").is_none());
-        assert!(sanitize_generated_title("   \n\t  ").is_none());
-        assert!(sanitize_generated_title("\"\"").is_none());
-    }
-
-    #[test]
-    fn sanitize_truncates_to_eighty_chars() {
-        let long = "a".repeat(200);
-        let out = sanitize_generated_title(&long).unwrap();
-        assert_eq!(out.chars().count(), 80);
-    }
-
-    #[test]
-    fn sanitize_truncates_by_char_count_not_byte_count() {
-        // Each ✨ is 3 bytes in UTF-8; ensure truncation counts chars, not bytes.
-        let long: String = std::iter::repeat('✨').take(90).collect();
-        let out = sanitize_generated_title(&long).unwrap();
-        assert_eq!(out.chars().count(), 80);
-    }
-
-    // ── title_from_user_message ──────────────────────────────────
-
-    #[test]
-    fn title_from_user_message_uses_first_specific_words() {
-        assert_eq!(
-            title_from_user_message("Can you retrieve my latest 5 emails and summarize them?")
-                .unwrap(),
-            "Can you retrieve my latest 5 emails and"
-        );
-    }
-
-    #[test]
-    fn title_from_user_message_removes_command_prefix_and_punctuation() {
-        assert_eq!(
-            title_from_user_message("/briefing Morning update, please. Then check email").unwrap(),
-            "briefing Morning update, please"
-        );
-    }
-
-    #[test]
-    fn title_from_user_message_returns_none_for_empty_context() {
-        assert!(title_from_user_message("   \n\t  ").is_none());
-        assert!(title_from_user_message("///").is_none());
-    }
-
-    // ── build_title_prompt ────────────────────────────────────────
-
-    #[test]
-    fn prompt_contains_both_messages_and_instruction() {
-        let prompt = build_title_prompt("hello", "hi there");
-        assert!(prompt.contains("First user message:\nhello"));
-        assert!(prompt.contains("Assistant reply:\nhi there"));
-        assert!(prompt.contains("Return the best thread title"));
-    }
+/// Builds the whole title-generation request.
+///
+/// # It deliberately sets no model
+///
+/// The caller has already resolved the model by building the provider for the
+/// `summarization` role, and the resolved model is the one that should
+/// dispatch. `ModelRequest::model` is a *per-request override* that the
+/// managed backend resolves verbatim, so anything set here replaces that
+/// correct model on the wire.
+///
+/// This used to override it with `"hint:summarize"`, which no lookup table in
+/// the tree defines — every hint-alias table spells the alias `summarization`.
+/// The string matched nothing, survived translation unchanged, and reached the
+/// backend as a literal model id, which answered
+/// `400 Model 'hint:summarize' is not available` on every call. Title
+/// generation then fell back to a keyword title for four months without
+/// anything escalating (#5637).
+///
+/// Leaving `model` unset is also the only form that is correct for **every**
+/// provider. `create_chat_model` resolves the `summarization` role to the
+/// managed backend, a Claude Agent SDK / Claude Code model, a local runtime,
+/// or a BYOK cloud slug; pinning any concrete tier id here would be wrong for
+/// the four non-managed branches. Unset means each provider uses its own
+/// construction-time default.
+pub fn build_title_request(user_message: &str, assistant_message: &str) -> ModelRequest {
+    ModelRequest::new(vec![
+        Message::system(THREAD_TITLE_SYSTEM_PROMPT),
+        Message::user(build_title_prompt(user_message, assistant_message)),
+    ])
+    .with_temperature(0.2)
 }
+
+#[cfg(test)]
+#[path = "title_tests.rs"]
+mod tests;

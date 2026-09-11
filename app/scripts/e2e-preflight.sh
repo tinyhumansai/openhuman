@@ -6,7 +6,7 @@
 #   1. The E2E app binary/bundle exists for the current platform.
 #   2. Node.js and pnpm are available.
 #   3. Appium is installed (and the chromium driver is registered).
-#   4. Ports 19222, 4723, and 18473 are not blocked by stale processes.
+#   4. Ports 4723 and 18473 are not blocked by stale processes.
 #
 # Exits 0 if all hard requirements are met.
 # Exits 1 if any hard requirement is missing.
@@ -59,7 +59,7 @@ case "$PLATFORM" in
     fi
     ;;
   Linux)
-    LINUX_BIN="$APP_DIR/src-tauri/target/debug/openhuman"
+    LINUX_BIN="$APP_DIR/src-tauri/target/debug/OpenHuman"
     LINUX_DEB="$APP_DIR/src-tauri/target/debug/bundle/deb"
     if [[ -f "$LINUX_BIN" ]]; then
       BINARY_FOUND=1
@@ -70,7 +70,7 @@ case "$PLATFORM" in
     fi
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows*)
-    WIN_BIN="$APP_DIR/src-tauri/target/debug/openhuman.exe"
+    WIN_BIN="$APP_DIR/src-tauri/target/debug/OpenHuman.exe"
     if [[ -f "$WIN_BIN" ]]; then
       BINARY_FOUND=1
       BINARY_PATH="$WIN_BIN"
@@ -176,7 +176,6 @@ _check_port() {
   fi
 }
 
-_check_port 19222 "CEF CDP"
 _check_port 4723  "Appium"
 _check_port 18473 "mock backend (can be pre-running — OK if deliberate)"
 

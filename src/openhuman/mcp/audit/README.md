@@ -42,7 +42,7 @@ From `mod.rs`:
 
 - `crate::openhuman::config::Config` — workspace location used to resolve the DB.
 - `crate::openhuman::config::rpc` (`load_config_with_timeout`) — loads config in the RPC handler.
-- `crate::openhuman::memory::store::chunks::store` — provides `with_connection`; the audit table is co-located in the chunk DB.
+- `tinymemory_core::store::chunks::store` — provides `with_connection`; the audit table is co-located in the chunk DB.
 - `crate::core::all` (`ControllerFuture`, `RegisteredController`) and `crate::core` (`ControllerSchema`, `FieldSchema`, `TypeSchema`) — controller/schema plumbing.
 - External crates: `rusqlite`, `serde`/`serde_json`, `anyhow`.
 

@@ -1,5 +1,7 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect } from 'react';
+import { LuChevronRight } from 'react-icons/lu';
 
+import { cn } from '../../lib/cn';
 import { useT } from '../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
@@ -10,17 +12,16 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../store/layoutSlice';
+import { IS_DEV } from '../../utils/config';
+import { Button } from '../ui';
+import { clampWidth, useResizableDivider } from './useResizableDivider';
 
 const namespace = 'two-panel-layout';
 
 function debug(message: string, payload?: Record<string, unknown>) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.debug(`[${namespace}] ${message}`, payload ?? {});
   }
-}
-
-function clampWidth(width: number, min: number, max: number): number {
-  return Math.min(Math.max(width, min), max);
 }
 
 /**
@@ -117,6 +118,41 @@ const DEFAULT_KEYBOARD_STEP = 16;
  * Resize: drag the divider between the panes (pointer) or focus it and use the
  * arrow keys. Width is clamped to [minSidebarWidth, maxSidebarWidth] and only
  * committed to the store on drag end to avoid thrashing redux-persist.
+ *
+ * ---
+ *
+ * CONVERGENCE DECISION (kept deliberately separate from `ui/Sidebar.tsx`):
+ * this stays its own panel system rather than being rebuilt on
+ * `SidebarProvider`/`Sidebar`/`SidebarRail`. Both are defensible in the
+ * abstract — the shell sidebar is app-level chrome, this is an in-page
+ * splitter — but the concrete reason is a real behavioral mismatch, not just
+ * "different enough to leave alone":
+ *
+ * 1. **Persistence cadence is opposite by contract.** `SidebarRail`'s
+ *    `onWidthChange` fires on every pointermove frame (its own doc comment
+ *    says so — the shell mirrors width into a live `--sidebar-width` CSS var
+ *    for chrome reflow). This component commits to Redux **once**, on
+ *    pointer-up or a keyboard step, specifically to avoid thrashing
+ *    redux-persist. Building this on `SidebarRail` as-is would mean
+ *    dispatching on every drag frame; keeping the current commit-on-release
+ *    contract would mean not using `SidebarRail`'s own callback at all —
+ *    either way the primitive isn't actually doing the persistence work.
+ * 2. **Visual grammar differs.** `Sidebar` assumes a single always-left
+ *    column composed with `SidebarInset` (a `m-3 rounded-2xl` inset card).
+ *    This component's default `seamless` mode joins BOTH panes into one
+ *    bordered card with a flush 1px hairline seam — there's no `Sidebar`
+ *    equivalent of that, and forcing it would mean reintroducing bespoke
+ *    layout around the primitive anyway.
+ * 3. **Extra affordances with no `Sidebar` counterpart**: `showCollapsedRail`
+ *    (a reopen button occupying the seam when collapsed) and `seamless`
+ *    itself aren't expressible through `Sidebar`'s `collapsible` variants.
+ *
+ * What IS shared: the clamp + pointer-drag + keyboard-step *mechanics* now
+ * live in `useResizableDivider` (this directory) rather than inline in this
+ * component, specifically so they're one named, independently readable unit
+ * instead of hand-rolled logic duplicated alongside `SidebarRail`'s own
+ * (different-contract) version. See that hook's doc comment for the full
+ * reasoning on why it isn't literally the same code as `SidebarRail`.
  */
 export default function TwoPanelLayout({
   id,
@@ -162,89 +198,34 @@ export default function TwoPanelLayout({
 
   const isOpen = forceSidebarVisible || layout.sidebarVisible;
 
-  // Live width while dragging is kept local (and applied via inline style) so
-  // we don't dispatch — and re-persist — on every pointer move.
-  const [dragWidth, setDragWidth] = useState<number | null>(null);
-  const dragWidthRef = useRef<number | null>(null);
   const persistedWidth = clampWidth(layout.sidebarWidth, minSidebarWidth, maxSidebarWidth);
-  const width = dragWidth ?? persistedWidth;
 
   const commitWidth = useCallback(
-    (next: number) => {
-      const clamped = clampWidth(Math.round(next), minSidebarWidth, maxSidebarWidth);
+    (clamped: number) => {
       dispatch(setSidebarWidth({ id, width: clamped }));
       debug('commit width', { id, width: clamped });
     },
-    [dispatch, id, minSidebarWidth, maxSidebarWidth]
+    [dispatch, id]
   );
 
-  // Active-drag teardown, stashed so an unmount mid-drag can detach the global
-  // listeners. Each drag installs locally-scoped `pointermove`/`pointerup`
-  // handlers (hoisted function declarations so they can reference each other),
-  // keeping the resize self-contained without inter-callback dependencies.
-  const dragCleanupRef = useRef<(() => void) | null>(null);
+  // Drag/keyboard mechanics (clamp + commit-on-release) live in a shared hook
+  // — see `useResizableDivider` for why this isn't the same code as the shell
+  // sidebar's `SidebarRail`.
+  const {
+    dragWidth,
+    onPointerDown,
+    onKeyDown: onDividerKeyDown,
+  } = useResizableDivider({
+    width: persistedWidth,
+    minWidth: minSidebarWidth,
+    maxWidth: maxSidebarWidth,
+    keyboardStep,
+    onCommit: commitWidth,
+  });
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startWidth = width;
-      dragWidthRef.current = startWidth;
-      setDragWidth(startWidth);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      function handleMove(ev: PointerEvent) {
-        const next = clampWidth(
-          startWidth + (ev.clientX - startX),
-          minSidebarWidth,
-          maxSidebarWidth
-        );
-        dragWidthRef.current = next;
-        setDragWidth(next);
-      }
-      function detach() {
-        window.removeEventListener('pointermove', handleMove);
-        window.removeEventListener('pointerup', stop);
-        document.body.style.removeProperty('cursor');
-        document.body.style.removeProperty('user-select');
-        dragCleanupRef.current = null;
-      }
-      function stop() {
-        detach();
-        const finalWidth = dragWidthRef.current;
-        dragWidthRef.current = null;
-        setDragWidth(null);
-        if (finalWidth != null) commitWidth(finalWidth);
-      }
-
-      dragCleanupRef.current = detach;
-      window.addEventListener('pointermove', handleMove);
-      window.addEventListener('pointerup', stop);
-      debug('drag start', { id, startWidth });
-    },
-    [width, minSidebarWidth, maxSidebarWidth, commitWidth, id]
-  );
-
-  // Detach global listeners if we unmount mid-drag.
-  useLayoutEffect(() => {
-    return () => {
-      dragCleanupRef.current?.();
-    };
-  }, []);
-
-  const onDividerKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        commitWidth(persistedWidth - keyboardStep);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        commitWidth(persistedWidth + keyboardStep);
-      }
-    },
-    [commitWidth, persistedWidth, keyboardStep]
-  );
+  // Live width while dragging is kept local (and applied via inline style) so
+  // we don't dispatch — and re-persist — on every pointer move.
+  const width = dragWidth ?? persistedWidth;
 
   // In seamless mode the card lives on the wrapper that holds both panes, so the
   // panes themselves carry no border/rounding and sit flush against the divider.
@@ -255,7 +236,7 @@ export default function TwoPanelLayout({
       {isOpen && (
         <>
           <div
-            className={`flex-shrink-0 min-w-0 overflow-hidden ${paneCard} ${sidebarClassName}`}
+            className={cn('shrink-0 min-w-0 overflow-hidden', paneCard, sidebarClassName)}
             style={{ width }}
             data-testid={`two-panel-sidebar-${id}`}>
             {sidebar}
@@ -278,11 +259,12 @@ export default function TwoPanelLayout({
               seamless
                 ? // Flush hairline seam: 1px visible line, wider invisible hit
                   // area, highlights on hover/focus.
-                  'group relative w-px flex-shrink-0 cursor-col-resize select-none self-stretch bg-surface-strong focus:outline-none'
-                : `group relative flex flex-shrink-0 cursor-col-resize select-none items-center justify-center self-stretch focus:outline-none ${
+                  'group relative w-px shrink-0 cursor-col-resize select-none self-stretch bg-surface-strong focus:outline-hidden'
+                : cn(
+                    'group relative flex shrink-0 cursor-col-resize select-none items-center justify-center self-stretch focus:outline-hidden',
                     // Tighter gutter between panes when there's no visible handle.
                     showDividerHandle ? 'mx-1 w-3' : 'mx-0 w-1.5'
-                  }`
+                  )
             }
             title={t('layout.resizeSidebar')}>
             {seamless ? (
@@ -298,9 +280,13 @@ export default function TwoPanelLayout({
                  centered vertically. When the handle is hidden it stays
                  transparent at rest and only surfaces on hover/focus. */
               <span
-                className={`h-10 w-1 rounded-full transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500 ${
-                  showDividerHandle ? 'bg-stone-400 dark:bg-neutral-500' : 'bg-transparent'
-                }`}
+                className={cn(
+                  'h-10 w-1 rounded-full transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500',
+                  // `line-strong` rather than a raw grey pair: the token
+                  // already carries the per-theme value the two palette classes
+                  // were hand-picking, so the handle tracks the theme.
+                  showDividerHandle ? 'bg-line-strong' : 'bg-transparent'
+                )}
               />
             )}
           </div>
@@ -308,30 +294,32 @@ export default function TwoPanelLayout({
       )}
 
       {!isOpen && showCollapsedRail && (
-        <button
-          type="button"
+        <Button
+          variant="tertiary"
+          iconOnly
           data-testid={`two-panel-reopen-${id}`}
-          data-analytics-id="two-panel-reopen-sidebar"
+          analyticsId="two-panel-reopen-sidebar"
           onClick={() => dispatch(setSidebarVisible({ id, visible: true }))}
           title={t('layout.showSidebar')}
           aria-label={t('layout.showSidebar')}
-          className="flex-shrink-0 w-6 self-stretch flex items-center justify-center text-content-faint hover:text-primary-500 hover:bg-surface-hover transition-colors">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
+          // A full-height 24px seam grip rather than a button footprint: the
+          // height, width and square corners are overridden, the focus ring and
+          // hover fill come from Button.
+          className="h-auto w-6 shrink-0 self-stretch rounded-none text-content-faint hover:text-primary-500">
+          <LuChevronRight className="w-4 h-4" aria-hidden />
+        </Button>
       )}
 
-      <div className={`flex-1 min-w-0 overflow-hidden ${paneCard} ${contentClassName}`}>
+      <div className={cn('flex-1 min-w-0 overflow-hidden', paneCard, contentClassName)}>
         {children}
       </div>
     </>
   );
 
   return (
-    <div className={`flex min-h-0 ${className}`}>
+    <div className={cn('flex min-h-0', className)}>
       {seamless ? (
-        <div className={`flex min-h-0 flex-1 overflow-hidden ${DEFAULT_PANE_CLASS}`}>{panes}</div>
+        <div className={cn('flex min-h-0 flex-1 overflow-hidden', DEFAULT_PANE_CLASS)}>{panes}</div>
       ) : (
         panes
       )}

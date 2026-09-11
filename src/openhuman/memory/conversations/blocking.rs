@@ -1,41 +1,57 @@
 //! Async wrappers that run the conversation store's **blocking** operations on
 //! tokio's blocking pool (#5156).
 //!
-//! Every `tinycortex::memory::conversations` entry point is synchronous, and
-//! each one takes the process-global `CONVERSATION_STORE_LOCK` — a
-//! `parking_lot::Mutex` — and then does fsync'd JSONL file IO while holding it.
-//! Calling one directly from an `async fn` therefore parks a tokio **worker**
-//! thread for the whole wait, and the wait is not short:
+//! # Why this lives here (#5560)
+//!
+//! It was `tinymemory_core::conversations::blocking`, and that crate's own
+//! module docs already called it *host-retained*: the conversation store is the
+//! engine's, but deciding which executor a host runs a blocking call on is the
+//! host's, and nothing inside `tinymemory` ever called these wrappers. So this
+//! is a move home rather than a re-routing — the same shape as
+//! `memory::rpc_models`, whose forty-five types were named only by this host.
+//!
+//! The store these wrappers address has since followed them home: `store` is
+//! now [`super`]'s own subtree rather than `tinycortex::memory::conversations`,
+//! and the import below is the only line that changed for it. The item set is
+//! the same one the engine exported, so function signatures, argument order,
+//! error strings and the `[conversations]` log prefix stay byte-identical —
+//! `web_chat::run_task` and the RPC layer read them.
+//!
+//! Every store entry point is synchronous and does fsync'd JSONL file IO. The
+//! store now coordinates lifecycle per conversation root, shared metadata per
+//! root, and message files per thread, so unrelated agents no longer queue
+//! behind one process-global mutex. Calling it directly from an `async fn`
+//! can still park a tokio **worker** thread for disk latency or a contended
+//! per-root lock, and the wait is not always short:
 //!
 //! * `threads.jsonl` is folded from scratch on nearly every operation
 //!   (`thread_index_unlocked`), and it grows by roughly two lines per appended
 //!   message and is never compacted — so the per-call fold cost grows with the
 //!   user's whole history;
-//! * `append_message` writes two fsync'd appends under the lock, and
-//!   `update_message` reads and rewrites a thread's entire message log under it,
-//!   so a live streaming turn holds the lock repeatedly;
+//! * `append_message` writes a message under its per-thread lock and serializes
+//!   the compact metadata append; `update_message` reads and rewrites an entire
+//!   thread log under that thread's lock;
 //! * `search_cross_thread_messages` reads every thread's transcript on a cold
 //!   index.
 //!
-//! Once more concurrent conversation operations than there are worker threads
-//! are parked on that mutex, the runtime stops polling **anything** — including
-//! the HTTP task that owes the client its response. That is how a create that
+//! Historically, once more concurrent conversation operations than there were
+//! worker threads parked on the global mutex, the runtime stopped polling
+//! **anything** — including the HTTP task that owed the client its response.
+//! That is how a create that
 //! only needs one append blows the frontend's 30 s RPC budget:
 //! `UnhandledRejection: Core RPC openhuman.threads_create_new timed out after
 //! 30000ms` (Sentry TAURI-REACT-10, #5156).
 //!
-//! Moving each call onto the blocking pool keeps the lock wait off the async
-//! workers. The work is just as serialized as before — the store's lock still
-//! decides who writes when — but the executor stays live, so the RPC server
-//! keeps answering while a slow conversation operation drains, and a queued
-//! create completes as soon as the lock frees instead of after the client has
-//! given up.
+//! Moving each call onto the blocking pool keeps disk and lock waits off the
+//! async workers. Sharded store locks additionally let independent agent
+//! threads perform their transcript IO concurrently; only their short shared
+//! metadata appends remain serialized per conversation root.
 //!
 //! Callers pass owned arguments because the closure must be `'static`.
 
 use std::path::PathBuf;
 
-use tinycortex::memory::conversations as store;
+use crate::openhuman::memory::conversations as store;
 
 use super::{
     ConversationMessage, ConversationMessagePatch, ConversationPurgeStats, ConversationStore,

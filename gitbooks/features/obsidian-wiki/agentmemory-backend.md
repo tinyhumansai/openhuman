@@ -73,11 +73,11 @@ unchanged.
 
 ## Config keys
 
-| Field | Default | Purpose |
-|---|---|---|
-| `agentmemory_url` | `http://localhost:3111` | Base URL for the agentmemory REST server |
-| `agentmemory_secret` | _none_ | Optional HMAC bearer token. Sent as `Authorization: Bearer <secret>` |
-| `agentmemory_timeout_ms` | `5000` | Per-request reqwest timeout |
+| Field                    | Default                 | Purpose                                                              |
+| ------------------------ | ----------------------- | -------------------------------------------------------------------- |
+| `agentmemory_url`        | `http://localhost:3111` | Base URL for the agentmemory REST server                             |
+| `agentmemory_secret`     | _none_                  | Optional HMAC bearer token. Sent as `Authorization: Bearer <secret>` |
+| `agentmemory_timeout_ms` | `5000`                  | Per-request reqwest timeout                                          |
 
 When `backend == "agentmemory"`, the following existing `MemoryConfig`
 fields are **ignored**, because agentmemory owns its own embedding stack
@@ -96,19 +96,19 @@ own embedder lifecycle.
 
 OpenHuman's `MemoryEntry` ↔ agentmemory wire row:
 
-| OpenHuman field | agentmemory field | Notes |
-|---|---|---|
-| `namespace` | `project` | Defaults to `"default"` when empty |
-| `key` | `title` | |
-| `content` | `content` | |
-| `id` | `id` | agentmemory-generated (`mem_<rand>`) |
-| `category: Core` | `type: "fact"` | |
-| `category: Daily` | `type: "conversation"` | |
-| `category: Conversation` | `type: "conversation"` | |
-| `category: Custom(s)` | `type: "fact"` + `concepts: [s]` | Custom tag rolled into the concepts array so it remains queryable |
-| `session_id` | `sessionIds: [...]` | OpenHuman exposes a single id; agentmemory persists an array |
-| `timestamp` | `updatedAt` (RFC3339) | Falls back to `createdAt` if `updatedAt` is absent |
-| `score` (recall hits only) | smart-search `score` | Populated on `recall` responses, `None` on `get` / `list` |
+| OpenHuman field            | agentmemory field                | Notes                                                             |
+| -------------------------- | -------------------------------- | ----------------------------------------------------------------- |
+| `namespace`                | `project`                        | Defaults to `"default"` when empty                                |
+| `key`                      | `title`                          |                                                                   |
+| `content`                  | `content`                        |                                                                   |
+| `id`                       | `id`                             | agentmemory-generated (`mem_<rand>`)                              |
+| `category: Core`           | `type: "fact"`                   |                                                                   |
+| `category: Daily`          | `type: "conversation"`           |                                                                   |
+| `category: Conversation`   | `type: "conversation"`           |                                                                   |
+| `category: Custom(s)`      | `type: "fact"` + `concepts: [s]` | Custom tag rolled into the concepts array so it remains queryable |
+| `session_id`               | `sessionIds: [...]`              | OpenHuman exposes a single id; agentmemory persists an array      |
+| `timestamp`                | `updatedAt` (RFC3339)            | Falls back to `createdAt` if `updatedAt` is absent                |
+| `score` (recall hits only) | smart-search `score`             | Populated on `recall` responses, `None` on `get` / `list`         |
 
 agentmemory carries additional fields that this backend leaves at
 defaults: `concepts` (auto-extracted), `files` (path tags), `strength`
@@ -118,16 +118,16 @@ round-trip through OpenHuman's trait.
 
 ## Trait method → endpoint
 
-| `Memory` method | agentmemory REST | Notes |
-|---|---|---|
-| `store` | `POST /agentmemory/remember` | `{project, title, content, type, concepts, sessionIds}` |
-| `recall` | `POST /agentmemory/smart-search` | Hybrid BM25 + vector + graph |
-| `get` | `POST /agentmemory/smart-search` | + client-side exact-title filter |
-| `list` | `GET /agentmemory/memories?latest=true&project=<ns>` | |
-| `forget` | `get(ns, key)` → `POST /agentmemory/forget` | Two-step: resolve id then forget |
-| `namespace_summaries` | `GET /agentmemory/projects` | Returns `[{name, count, lastUpdated}]` |
-| `count` | `GET /agentmemory/health` | Reads `memories` field |
-| `health_check` | `GET /agentmemory/livez` | |
+| `Memory` method       | agentmemory REST                                     | Notes                                                   |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `store`               | `POST /agentmemory/remember`                         | `{project, title, content, type, concepts, sessionIds}` |
+| `recall`              | `POST /agentmemory/smart-search`                     | Hybrid BM25 + vector + graph                            |
+| `get`                 | `POST /agentmemory/smart-search`                     | + client-side exact-title filter                        |
+| `list`                | `GET /agentmemory/memories?latest=true&project=<ns>` |                                                         |
+| `forget`              | `get(ns, key)` → `POST /agentmemory/forget`          | Two-step: resolve id then forget                        |
+| `namespace_summaries` | `GET /agentmemory/projects`                          | Returns `[{name, count, lastUpdated}]`                  |
+| `count`               | `GET /agentmemory/health`                            | Reads `memories` field                                  |
+| `health_check`        | `GET /agentmemory/livez`                             |                                                         |
 
 `RecallOpts.category`, `RecallOpts.session_id`, and `RecallOpts.min_score`
 are applied as **client-side filters** on the smart-search response.
@@ -161,15 +161,15 @@ recognise the same message on OpenHuman.
 
 ## Failure modes
 
-| Failure | Backend behaviour |
-|---|---|
-| Daemon unreachable at startup | `from_config` succeeds (URL parses), but `health_check()` returns false on first call. Trait methods bubble up `reqwest` transport errors |
-| Network timeout | `anyhow::Error` per trait contract; surfaces to caller |
-| 4xx / 5xx response | `anyhow::Error` with status + body snippet |
-| Bearer over plaintext non-loopback (no env) | One-time stderr warning, request proceeds |
-| Bearer over plaintext non-loopback + `AGENTMEMORY_REQUIRE_HTTPS=1` | Hard refusal at construction time |
-| Empty `agentmemory_url` | Hard refusal at construction time with hint to leave it unset for the default |
-| Invalid URL syntax | Hard refusal at construction time with the parser error |
+| Failure                                                            | Backend behaviour                                                                                                                         |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Daemon unreachable at startup                                      | `from_config` succeeds (URL parses), but `health_check()` returns false on first call. Trait methods bubble up `reqwest` transport errors |
+| Network timeout                                                    | `anyhow::Error` per trait contract; surfaces to caller                                                                                    |
+| 4xx / 5xx response                                                 | `anyhow::Error` with status + body snippet                                                                                                |
+| Bearer over plaintext non-loopback (no env)                        | One-time stderr warning, request proceeds                                                                                                 |
+| Bearer over plaintext non-loopback + `AGENTMEMORY_REQUIRE_HTTPS=1` | Hard refusal at construction time                                                                                                         |
+| Empty `agentmemory_url`                                            | Hard refusal at construction time with hint to leave it unset for the default                                                             |
+| Invalid URL syntax                                                 | Hard refusal at construction time with the parser error                                                                                   |
 
 **No automatic fallback to SQLite.** If the daemon is down at boot, the
 backend surfaces the transport error loudly. Operators flip back to
@@ -185,8 +185,8 @@ trait call. Practical implications:
 - `store` and `forget` are single-RTT.
 - `recall`, `get`, `list` are single-RTT.
 - `forget` against an unknown key is two-RTT (the implicit `get` lookup
-  + a no-op confirmation). Caller can short-circuit this by checking
-  the return value of a prior `list`.
+  - a no-op confirmation). Caller can short-circuit this by checking
+    the return value of a prior `list`.
 - agentmemory's REST is `127.0.0.1` by default, so same-host latency is
   sub-millisecond. Over a managed deploy with HTTPS termination, expect
   roughly 10 to 30ms per RTT.

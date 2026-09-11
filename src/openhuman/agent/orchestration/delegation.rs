@@ -8,7 +8,7 @@
 //! through [`run_subagent`] (the same dispatch path `spawn_subagent` uses), and
 //! the run is made durable/resumable by checkpointing the typed
 //! [`DelegationState`] through the crate
-//! [`SqliteCheckpointer`](tinyagents::graph::SqliteCheckpointer) at a dedicated
+//! [`SqliteCheckpointer`](tinyagents_graph::SqliteCheckpointer) at a dedicated
 //! `graph_checkpoints.db` under the workspace.
 //!
 //! Layering: the delegation *graph* lives in the `tinyagents` adapter seam; this
@@ -26,10 +26,10 @@ use crate::openhuman::agent::tinyagents::delegation::{
     DelegationState,
 };
 use crate::openhuman::config::Config;
-use tinyagents::graph::checkpoint::Checkpointer;
-use tinyagents::graph::SqliteCheckpointer;
-use tinyagents::harness::workspace::WorkspaceDescriptor;
-use tinyagents::CancellationToken;
+use tinyagents_graph::checkpoint::Checkpointer;
+use tinyagents_graph::SqliteCheckpointer;
+use tinyagents_harness::workspace::WorkspaceDescriptor;
+use tinyagents_harness::CancellationToken;
 
 const LOG_TARGET: &str = "agent_orchestration::delegation";
 

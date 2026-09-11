@@ -21,7 +21,17 @@ pub mod cron;
 pub mod desktop;
 #[cfg(feature = "flows")]
 pub mod flows;
+/// User-authored hooks — `hooks.json` scripts that observe and gate the agent.
+/// Kernel surface, never gated: the whole point is a policy seam a slim build
+/// still honours, and it costs nothing when nothing is configured.
+pub mod hooks;
 pub mod hosted;
+// Hosting: the `hosting_*` tools that put a workspace on a real hosting
+// provider, over the `tinyhosts` unified model. Leaf gate — when `hosting` is
+// off the domain is not compiled and the tools are absent from the registry
+// rather than degraded to an error (see `tools::ops`).
+#[cfg(feature = "hosting")]
+pub mod hosting;
 // The whole http_host domain is an axum static-directory server, so it is
 // exclusive to the `http-server` feature (#5048). Its only outside reference is
 // the controller-registration push in `core::all`, itself gated in lockstep, so
@@ -46,22 +56,18 @@ pub mod mcp;
 #[cfg(feature = "media")]
 pub mod media;
 pub mod medulla;
-// The `meet` family is a facade: the parent module is always compiled so the
-// always-on callers of `meet::backend_bot`'s stub keep resolving, and each
-// submodule carries its own `#[cfg(feature = "meet")]` (see `meet/mod.rs`).
-pub mod meet;
 pub mod memory;
+#[cfg(feature = "modules")]
+pub mod modules;
 pub mod platform;
 pub mod runtime;
 pub mod sandbox;
 pub mod search;
 pub mod security;
 pub mod skills;
-pub mod subconscious;
 #[cfg(feature = "e2e-test-support")]
 pub mod test_support;
 pub mod threads;
-pub mod tinyplace;
 pub mod tools;
 pub mod util;
 pub mod voice;

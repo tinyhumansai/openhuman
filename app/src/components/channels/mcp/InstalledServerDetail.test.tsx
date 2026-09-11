@@ -447,9 +447,12 @@ describe('InstalledServerDetail', () => {
   it('clears the playground when Disconnect is clicked (handler path)', async () => {
     mockDisconnect.mockResolvedValue({ server_id: 'srv-1', status: 'disconnected' });
     await setupOpenPlayground();
-    // Click Disconnect — handler calls setPlaygroundTool(null).
+    // Click Disconnect — handler calls setPlaygroundTool(null). The playground
+    // is now a real Radix `Dialog` (#radix-ui-foundation), so Radix correctly
+    // marks the rest of the page `aria-hidden` while it's open — query with
+    // `{ hidden: true }` to still reach the background button.
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Disconnect', hidden: true }));
     });
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

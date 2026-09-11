@@ -12,8 +12,8 @@ provision/manage members' assistants while every existing client
 ## Delivered (MVP)
 
 `src/bin/fleet.rs` — a self-contained binary (separate compile target, zero
-weight on the shipped desktop/lib build, matching the `slack-backfill` bin
-pattern):
+weight on the shipped desktop/lib build: it is gated behind the default-OFF
+`bin-tools` feature):
 
 - **Process-per-tenant MVP**: spawns `openhuman-core run --jsonrpc-only` per tenant
   with a per-user `OPENHUMAN_WORKSPACE`, a minted `OPENHUMAN_CORE_TOKEN`, and

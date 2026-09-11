@@ -126,11 +126,21 @@ pub async fn unregister_echo(
     tunnel_uuid: &str,
 ) -> Result<RpcOutcome<WebhookDebugRegistrationsResult>, String> {
     let router = get_router().map_err(|e| format!("webhooks.unregister_echo failed: {e}"))?;
-    router.unregister(tunnel_uuid, "echo")?;
+    let removed = router.unregister(tunnel_uuid, "echo")?;
     let registrations = router.list_all();
+    // The wire shape is unchanged (#6091 leaves that a separate contract call):
+    // the caller still gets the full registration list and can diff it. What
+    // changes is that the log no longer claims a removal that did not happen.
+    let log = if removed {
+        format!("webhooks.unregister_echo removed tunnel {tunnel_uuid}")
+    } else {
+        format!(
+            "webhooks.unregister_echo: no registration for tunnel {tunnel_uuid}, nothing removed"
+        )
+    };
     Ok(RpcOutcome::single_log(
         WebhookDebugRegistrationsResult { registrations },
-        format!("webhooks.unregister_echo removed tunnel {tunnel_uuid}"),
+        log,
     ))
 }
 
@@ -190,9 +200,15 @@ pub async fn trigger_agent(
 
     match outcome {
         crate::openhuman::agent::triage::TriageOutcome::Decision(run) => {
+            // Remote payload: a webhook body is attacker-influenceable, so the
+            // dispatch parks rather than running on a trust root (#5634).
+            let origin = crate::openhuman::agent::triage::remote_trigger_origin(&envelope);
             tokio::time::timeout(
                 std::time::Duration::from_secs(60),
-                crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope),
+                crate::openhuman::agent::turn_origin::with_origin(
+                    origin,
+                    crate::openhuman::agent::triage::apply_decision(run.clone(), &envelope),
+                ),
             )
             .await
             .map_err(|_| "apply_decision timed out after 60s".to_string())?

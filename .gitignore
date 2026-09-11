@@ -138,3 +138,7 @@ CHANGELOG.preview.md
 
 # Python bytecode from scripts/dep-sim.py
 __pycache__/
+
+# Coverage/diff-cover artifacts (generated locally, never shipped)
+lcov*.info
+diff-coverage.md

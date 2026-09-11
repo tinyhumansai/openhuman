@@ -1,102 +1,140 @@
-# runtime_node
+# runtime/node
 
-Managed **Node.js runtime** for the core, plus a thin **tool bridge** that lists and dispatches agent-callable tools through a `javascript` RPC namespace. The runtime half resolves or installs a pinned Node.js toolchain (reusing a compatible host `node` when present, otherwise downloading + SHA-256-verifying + extracting an official distribution from nodejs.org) so that `node_exec` / `npm_exec` / `shell` tools and Node-dependent skills have a trusted `node`/`npm` on a stable path. The bridge half exposes the full agent tool registry over JSON-RPC under `javascript.*` so callers (e.g. an embedded JS host) can enumerate and run tools by name. The public-facing language slot is the sibling [`javascript`](../javascript/) module, which re-exports this module's surface under `javascript`-prefixed names.
+Two unrelated things share this directory, and the difference is the first thing
+to understand about it.
+
+**The toolchain client** asks the `tinyruntime` module for a Node.js toolchain
+and adapts the answer onto `ResolvedNode`, so `node_exec`, `npm_exec`, `shell`,
+and Node-dependent skills have a trusted `node`/`npm` on a stable path.
+
+**The tool bridge** exposes the full agent tool registry over JSON-RPC under
+`javascript.*`, so an embedded JS host can enumerate and run tools by name. It
+has nothing to do with Node beyond being reachable from JavaScript, which is why
+it is not gated with the rest.
+
+The public-facing language slot is the sibling [`javascript`](../javascript/)
+module, which re-exports this module's surface under `javascript`-prefixed names.
+
+## What moved out
+
+Everything that used to make this the largest module in `runtime/`: system-node
+probing, distribution selection, `SHASUMS256.txt` fetching, streaming download
+with SHA-256 verification, `.tar.xz` / `.zip` extraction, atomic install, cache
+roots, and the guards against a workspace-vendored fake install tree.
+
+That is all in the `tinyruntime` module now, where one implementation serves
+every language, and it is reached through
+[`modules::runtime`](../../modules/runtime.rs). The visible consequence for this
+repository is that `xz2` and its static liblzma C build left the manifest
+entirely — the first native toolchain build removed rather than merely gated.
 
 ## Responsibilities
 
-- Detect a compatible system `node` on `PATH` (major-version match) and verify `npm` is also usable before reusing it.
-- Resolve/install a managed Node.js toolchain when no compatible system node exists: pick the host archive, fetch `SHASUMS256.txt`, download with streaming SHA-256 verification, extract (`.tar.xz` / `.zip`), and atomically install into a user-owned cache root.
-- Memoise the resolved toolchain behind a `tokio::sync::Mutex` so concurrent callers never race the download/extract/install pipeline; offer a non-blocking `try_cached()` peek for transparent `PATH` injection.
-- Build the full agent tool registry on demand and expose two RPC controllers: list tool metadata, and execute a named tool returning an MCP-style `ToolResult`.
-- Publish `ToolExecutionStarted` / `ToolExecutionCompleted` domain events around bridge tool execution.
+- Ask the module to resolve a Node toolchain, installing one when the host has
+  none, and adapt the reply onto `ResolvedNode` (`node_bin`, `npm_bin`,
+  `bin_dir`, `version`, `source`).
+- Memoise that answer locally so `try_cached()` can answer **without awaiting** —
+  the shell consults it on every command to decide whether to prepend a managed
+  `bin/` directory to `PATH`, and a blocking call there would make every
+  unrelated command wait on a bus round trip.
+- Build the full agent tool registry on demand and expose two RPC controllers:
+  list tool metadata, and execute a named tool returning an MCP-style
+  `ToolResult`.
+- Publish `ToolExecutionStarted` / `ToolExecutionCompleted` around bridge tool
+  execution.
 
 ## Key files
 
 | File | Role |
 | --- | --- |
-| `src/openhuman/runtime/node/mod.rs` | Export-focused: submodule decls + `pub use` re-exports, including `all_runtime_node_controller_schemas` / `all_runtime_node_registered_controllers`. |
-| `src/openhuman/runtime/node/resolver.rs` | Synchronous system-node probe. `detect_system_node`, `parse_node_version`, `SystemNode`. `PATH` walk with execute-bit filtering, `node --version` / `npm --version` probes with a 5s timeout. Major-version match only. |
-| `src/openhuman/runtime/node/bootstrap.rs` | Orchestrator. `NodeBootstrap` (serialised + memoised `resolve()`, `try_cached()`), `ResolvedNode`, `NodeSource`. Picks system vs managed, computes the cache root (user cache by default, never workspace-local unless forced), guards against cache-root escape / spoofed installs via canonicalised `starts_with`. |
-| `src/openhuman/runtime/node/downloader.rs` | `NodeDistribution` (host triple → archive name/URL), `fetch_shasums`, `download_distribution`. Streams to disk while hashing; **mandatory** SHA-256 match or the partial file is deleted. |
-| `src/openhuman/runtime/node/extractor.rs` | `extract_distribution` (`.tar.xz` via `xz2`+`tar`, `.zip` via `zip`, both in `spawn_blocking`), `atomic_install` (rename into place with backup/restore). Asserts a single top-level folder per archive. |
-| `src/openhuman/runtime/node/ops.rs` | Bridge logic: `build_runtime_tools` (assembles `SecurityPolicy`, audit logger, `NativeRuntime`, `Memory`, then `tools::all_tools_with_runtime`), `list_tools`, `execute_tool` (event publish + timing). |
-| `src/openhuman/runtime/node/rpc.rs` | RPC param structs (`ListToolsParams`, `ExecuteToolParams`) and `*_handler` fns; loads config via `config::rpc` and delegates through the `javascript` alias, wrapping results in `RpcOutcome`. |
-| `src/openhuman/runtime/node/schemas.rs` | Controller schemas + registered controllers for `javascript_list_tools` / `javascript_execute_tool`; `handle_*` deserialise params and call `rpc.rs`. |
-| `src/openhuman/runtime/node/types.rs` | `RuntimeToolSummary`, `ExecuteToolOutcome` serde types. |
+| `mod.rs` | Export-focused: submodule decls, the `runtime-node` gate, and `pub use` re-exports including the controller registry pair. |
+| `bootstrap.rs` | The toolchain client. `NodeBootstrap` (`resolve`, `probe_installed`, `try_cached`), `ResolvedNode`, `NodeSource`. Adapts a module `ResolvedRuntime`; derives `npm` when the provider does not report it. |
+| `stub.rs` | Type surface for `runtime-node`-less builds. `try_cached`/`probe_installed` return `None`; `resolve` errors with a build fact. |
+| `ops.rs` | Bridge logic: `build_runtime_tools`, `list_tools`, `execute_tool` (event publish + timing). |
+| `rpc.rs` | RPC param structs and `*_handler` fns; loads config and delegates through the `javascript` alias. |
+| `schemas.rs` | Controller schemas + registered controllers for `javascript_list_tools` / `javascript_execute_tool`. |
+| `types.rs` | `RuntimeToolSummary`, `ExecuteToolOutcome` serde types. |
 
 ## Public surface
 
-From `mod.rs` re-exports:
-
-- Bootstrap: `NodeBootstrap`, `NodeSource`, `ResolvedNode`.
-- Downloader: `download_distribution`, `fetch_shasums`, `NodeDistribution`.
-- Extractor: `atomic_install`, `extract_distribution`.
-- Resolver: `detect_system_node`, `parse_node_version`, `SystemNode`.
+- Client: `NodeBootstrap`, `NodeSource`, `ResolvedNode`.
 - Bridge ops: `execute_tool`, `list_tools`.
 - Types: `RuntimeToolSummary`, `ExecuteToolOutcome` (via `types`).
-- Controller registry pair: `all_runtime_node_controller_schemas`, `all_runtime_node_registered_controllers`.
+- Controller registry pair: `all_runtime_node_controller_schemas`,
+  `all_runtime_node_registered_controllers`.
 
 ## RPC / controllers
 
-Registered under namespace `javascript` (schemas wired into `src/core/all.rs` via the `javascript` module's `all_javascript_*` aliases, not under a `runtime_node` name):
+Registered under namespace `javascript` (schemas wired into `src/core/all.rs`
+via the `javascript` module's `all_javascript_*` aliases, not under a
+`runtime_node` name):
 
 | Method | Inputs | Output |
 | --- | --- | --- |
-| `javascript.list_tools` | none | `tools`: array of tool metadata (name, description, category, permission_level, scope, supports_markdown, parameters). |
-| `javascript.execute_tool` | `tool_name` (required), `args` (optional, defaults `{}`), `prefer_markdown` (optional bool) | `tool_name`, `elapsed_ms`, `result` (MCP-style `ToolResult`: `{content, is_error, markdownFormatted?}`). |
+| `javascript.list_tools` | none | `tools`: array of tool metadata. |
+| `javascript.execute_tool` | `tool_name` (required), `args` (optional, defaults `{}`), `prefer_markdown` (optional bool) | `tool_name`, `elapsed_ms`, `result`. |
 
-Handlers load config via `config::rpc::load_config_with_timeout`, return `RpcOutcome` (`into_cli_compatible_json`). Unknown tool name → error `unknown tool \`<name>\``.
+Unknown tool name → error ``unknown tool `<name>` ``.
 
 ## Agent tools
 
-This module owns **no** tools of its own. Instead it builds the *entire* agent tool registry on demand (`tools::all_tools_with_runtime`) to back the `javascript.execute_tool` / `javascript.list_tools` bridge. The actual `node_exec`, `npm_exec`, and `shell` tools live in `src/openhuman/tools/impl/system/` and consume this module's `NodeBootstrap` for binary resolution / `PATH` injection.
+This module owns **no** tools of its own. It builds the *entire* agent tool
+registry on demand (`tools::all_tools_with_runtime`) to back the bridge. The
+`node_exec`, `npm_exec`, and `shell` tools live in
+`src/openhuman/tools/impl/system/` and consume this module's `NodeBootstrap`.
 
 ## Events
 
-`ops::execute_tool` publishes (via `core::event_bus::publish_global`) around each bridge invocation, with `session_id = "javascript"`:
+`ops::execute_tool` publishes around each bridge invocation, with
+`session_id = "javascript"`:
 
 - `DomainEvent::ToolExecutionStarted`
 - `DomainEvent::ToolExecutionCompleted` (with `success`, `elapsed_ms`)
 
-No event-bus subscribers (`bus.rs`) are defined.
-
 ## Persistence
 
-No domain `store.rs`. The only on-disk state is the **managed Node.js install cache**, resolved by `NodeBootstrap::cache_root()` (first hit wins):
-
-1. Explicit `config.node.cache_dir` (honoured verbatim).
-2. `dirs::cache_dir()/openhuman/node-runtime` — the default, user-owned.
-3. `{workspace}/node-runtime/` — last-resort fallback (warned; less secure).
-
-Reads `NodeConfig` (`config.node`): `enabled`, `prefer_system`, `version`, `cache_dir` (env overrides like `OPENHUMAN_NODE_ENABLED`, `OPENHUMAN_NODE_VERSION` in config loader).
+**None here any more.** The managed install cache belongs to the `tinyruntime`
+module, which decides where it lives from the settings each request carries.
+This module reads `config.node` (`enabled`, `prefer_system`, `version`,
+`cache_dir`) only to build those requests.
 
 ## Dependencies
 
-- `crate::openhuman::config` (`Config`, `schema::NodeConfig`, `rpc`) — runtime config, version/cache settings, RPC config loading.
-- `crate::openhuman::tools` (`Tool`, `ToolCallOptions`, `ToolScope`, `all_tools_with_runtime`) — the registry the bridge enumerates/executes.
-- `crate::openhuman::security` (`SecurityPolicy`, workspace audit logger) — built per `build_runtime_tools` call to scope tool capability.
-- `crate::openhuman::agent::host_runtime` (`NativeRuntime`, `RuntimeAdapter`) — runtime adapter injected into tool construction.
-- `crate::openhuman::memory` / `memory_store` (`Memory`, `create_memory_with_local_ai`) — memory backend wired into memory-aware tools.
-- `crate::openhuman::skills::types::ToolResult` — result envelope returned by `execute_tool`.
-- `crate::openhuman::runtime::javascript` — the language-slot alias module the `rpc.rs` handlers call through (`list_tools` / `execute_tool`).
-- `crate::core::event_bus` (`publish_global`, `DomainEvent`) — tool execution events.
-- `crate::core::all` (`ControllerFuture`, `RegisteredController`) + `crate::core` (`ControllerSchema`, `FieldSchema`, `TypeSchema`) + `crate::rpc::RpcOutcome` — RPC controller plumbing.
+- `crate::openhuman::modules::runtime` — the module client this delegates to.
+- `crate::openhuman::config` — the settings each request carries.
+- `crate::openhuman::tools`, `security`, `agent::host_runtime`, `memory` — the
+  registry the bridge enumerates and executes.
+- `crate::core::event_bus`, `crate::core::all`, `crate::rpc` — events and RPC
+  plumbing.
 
-External crates: `reqwest`, `sha2`, `hex`, `xz2`, `tar`, `zip`, `tokio`, `wait_timeout`, `dirs`, `anyhow`, `serde`/`serde_json`, `tracing`, `async-trait`.
+External crates: `tinyruntime-bus`, `tokio`, `anyhow`, `serde`/`serde_json`,
+`tracing`, `async-trait`. No HTTP client, no archive crates, no digest crate —
+those went with the machinery.
 
 ## Used by
 
-- `src/openhuman/runtime/javascript/mod.rs` — re-exports this entire surface under `javascript`-prefixed names (the public language slot).
-- `src/openhuman/tools/impl/system/{node_exec,npm_exec,shell}.rs` — hold an `Arc<NodeBootstrap>`; `node_exec`/`npm_exec` call `resolve()`, `shell` uses non-blocking `try_cached()` for transparent `PATH` injection.
-- `src/openhuman/tools/ops.rs` and `src/openhuman/agent/tools/delegate_to_personality.rs` — reference the bootstrap/runtime surface.
-- `src/openhuman/runtime/python/bootstrap.rs` — a sibling runtime modeled on the same pattern.
-- `src/core/all.rs` — registers the `javascript.*` controllers via the `javascript` aliases.
+- `src/openhuman/runtime/javascript/mod.rs` — the public language slot.
+- `src/openhuman/tools/impl/system/{node_exec,npm_exec,shell}.rs` — hold an
+  `Arc<NodeBootstrap>`; the exec tools call `resolve()`, `shell` uses the
+  non-blocking `try_cached()`.
+- `src/openhuman/agent/harness_init/registry.rs` — the `node_runtime` init step
+  uses `probe_installed()` to decide whether provisioning is visible work.
+- `src/core/all.rs` — registers the `javascript.*` controllers.
 
 ## Notes / gotchas
 
-- **Naming asymmetry**: the module is `runtime_node` but its RPC namespace and public aliases are `javascript`. The `javascript` module is a deliberate language-slot indirection so a future backend (or `python`/`ruby`) can swap in without churning callers.
-- **`build_runtime_tools` is not cheap**: each `list_tools`/`execute_tool` call rebuilds the full tool registry (security policy, audit logger, memory backend) from `Config`. There is no caching at the bridge layer — the memoisation in `bootstrap.rs` is only for Node toolchain resolution, not for tool construction.
-- **Integrity is load-bearing, no opt-out**: downloads must match the official `SHASUMS256.txt` digest or the archive is deleted and the call fails. `probe_managed_install` canonicalises and requires the install to live under the resolved cache root to defeat a workspace-vendored fake `node-v*/` tree (PR #723 finding).
-- **System-node reuse requires npm**: a compatible `node` with a missing/broken `npm` is rejected so the managed path can supply a complete toolchain (distros that split `nodejs`/`npm`).
-- **Version match is major-only** (`parse_node_version`); point releases are accepted. Set `node.prefer_system = false` for strict pinning, or `node.enabled = false` to disable the runtime entirely (then `resolve()` bails).
-- **Self-healing cache**: a managed install missing `npm` (e.g. download interrupted after `node` extracted) is treated as unusable and reinstalled rather than reused forever.
+- **Naming asymmetry**: the directory is `node` but its RPC namespace and public
+  aliases are `javascript`. That indirection is what let the backend underneath
+  be replaced by a bus module without churning a single caller.
+- **`build_runtime_tools` is not cheap**: each bridge call rebuilds the full tool
+  registry from `Config`. There is no caching at the bridge layer — the
+  memoisation here is only for toolchain resolution.
+- **The local cache is not redundant with the module's.** The module memoises
+  too, but only this one can answer without awaiting, which is the entire reason
+  the shell can inject `PATH` without blocking.
+- **Version policy lives in the provider now.** Major-only matching, and the
+  `prefer_system = false` escape hatch for strict pinning, are decisions of
+  `tinyruntime-nodejs`; this module carries the setting rather than the rule.
+- **A toolchain without `npm` still resolves.** `npm_bin` is derived when the
+  provider does not report it: refusing would take `node_exec` down along with
+  `npm_exec`, for an install that runs `node` perfectly well.

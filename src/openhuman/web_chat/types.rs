@@ -74,6 +74,14 @@ pub(super) struct WebChatTaskResult {
     /// forwarded to the frontend on `chat_done`. `None` for synthetic results
     /// (e.g. budget-exhausted placeholders) that never ran a real turn.
     pub(super) usage: Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
+    /// The workspace this turn actually ran in, carried to delivery so the
+    /// reply is stored there before it is announced (#6034).
+    ///
+    /// Taken from the config the turn resolved rather than re-read at delivery
+    /// time: a sign-out or account switch moves `workspace_dir`, and a reply
+    /// re-resolved afterwards would be filed under whoever is signed in when
+    /// the turn happens to finish.
+    pub(super) workspace_dir: std::path::PathBuf,
 }
 
 /// Per-request metadata carried alongside a chat send. Currently used by the
@@ -89,24 +97,6 @@ pub struct ChatRequestMetadata {
     /// is resolved — used purely for trace attribution (Langfuse `agent.id` /
     /// `agent.turn:<id>` trace name), never for routing.
     pub agent_id: Option<String>,
-}
-
-impl ChatRequestMetadata {
-    /// Constructor for messages submitted via the AgentBox `/run` HTTP surface
-    /// (`OPENHUMAN_AGENTBOX_MODE=1`). These are background invocations driven
-    /// programmatically by a remote marketplace caller — no live UI is
-    /// attached to surface TTS or PTT signals — so `speak_reply` and
-    /// `session_id` stay `None` and the `source` tag identifies the origin
-    /// for analytics / log filtering downstream (mirrors the `"ptt"` /
-    /// `"dictation"` / `"type"` convention used by the desktop UI).
-    pub fn agentbox() -> Self {
-        Self {
-            speak_reply: None,
-            source: Some("agentbox".to_string()),
-            session_id: None,
-            agent_id: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]

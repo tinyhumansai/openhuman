@@ -1,14 +1,13 @@
 id = "scheduler_agent"
 display_name = "Scheduler Agent"
 delegate_name = "schedule_task"
-when_to_use = "Scheduling specialist — owns reminders, recurring jobs, cron listing/removal, relative-time grounding, and confirmation-before-create flows. Use ONLY for requests to remind, schedule, repeat, pause, remove, or inspect scheduled jobs/cron. Do NOT use to read or summarise existing calendar events, meetings, or availability, or to fetch a meeting/meet/video-call link — this agent has no calendar, email, or meeting access (its only tools are time + cron). Route any read of live calendar/meeting/meet-link data to the calendar/email integration instead."
+when_to_use = "Scheduling specialist: reminders, recurring jobs, cron listing/removal, and confirmation before creating any schedule. It has time and cron tools only — reading live calendar events, meetings, availability or meeting links belongs to the calendar/email integration."
 temperature = 0.2
 max_iterations = 8
 agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
 omit_profile = true
 omit_memory_md = true
 

@@ -131,7 +131,6 @@ pub(crate) fn extract_version(fm: &WorkflowFrontmatter, warnings: &mut Vec<Strin
         return v;
     }
     if let Some(v) = fm.extra.get("version").and_then(|v| v.as_str()) {
-        log::warn!("[skills] top-level 'version' is deprecated; move under 'metadata.version'");
         warnings
             .push("top-level 'version' is deprecated; move under 'metadata.version'".to_string());
         return v.to_string();
@@ -147,7 +146,6 @@ pub(crate) fn extract_author(
         return Some(v);
     }
     if let Some(v) = fm.extra.get("author").and_then(|v| v.as_str()) {
-        log::warn!("[skills] top-level 'author' is deprecated; move under 'metadata.author'");
         warnings.push("top-level 'author' is deprecated; move under 'metadata.author'".to_string());
         return Some(v.to_string());
     }
@@ -168,7 +166,6 @@ pub(crate) fn extract_tags(fm: &WorkflowFrontmatter, warnings: &mut Vec<String>)
         tags.extend(metadata_string_seq(hermes_tags));
     }
     if let Some(v) = fm.extra.get("tags") {
-        log::warn!("[skills] top-level 'tags' is deprecated; move under 'metadata.tags'");
         warnings.push("top-level 'tags' is deprecated; move under 'metadata.tags'".to_string());
         tags.extend(metadata_string_seq(v));
     }

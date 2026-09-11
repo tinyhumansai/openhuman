@@ -86,7 +86,7 @@ describe('seedSvgLayout — new nodes', () => {
     expect(dist).toBeLessThanOrEqual(25); // within the small offset of the parent
   });
 
-  it('falls back to the ring when a new node’s parent is also new (not in prev)', () => {
+  it('falls back to the ring-3 when a new node’s parent is also new (not in prev)', () => {
     const nodes = [sum('a', 's'), chunk('c', 'a')]; // neither in prev
     const r = seedSvgLayout(nodes, [], 'tree', NO_PREV);
     expect(r.positions[1].isNew).toBe(true);
@@ -95,7 +95,7 @@ describe('seedSvgLayout — new nodes', () => {
     expect(r.positions[1]).not.toEqual(r.positions[0]);
   });
 
-  it('falls back to the ring for a parent-less new node', () => {
+  it('falls back to the ring-3 for a parent-less new node', () => {
     const nodes = [src('s')];
     const r = seedSvgLayout(nodes, [], 'tree', NO_PREV);
     expect(r.positions[0].isNew).toBe(true);

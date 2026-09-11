@@ -200,6 +200,53 @@ test("streams reasoning deltas for reasoning-family models", async () => {
   assert.match(ctx.res.body, /data: \[DONE\]/);
 });
 
+test("keyword stream scripts preserve reasoning and tool-event order", async () => {
+  setMockBehaviors(
+    {
+      llmKeywordRules: JSON.stringify([
+        {
+          keyword: "trace this",
+          streamScript: [
+            { thinking: "first reason" },
+            { text: "then narrate" },
+            {
+              toolCall: {
+                id: "call_trace_1",
+                name: "web_search",
+                arguments: '{"q":"trace"}',
+              },
+            },
+            { finish: "tool_calls" },
+          ],
+        },
+      ]),
+      llmStreamChunkDelayMs: "0",
+    },
+    "replace",
+  );
+
+  const ctx = makeCtx({
+    parsedBody: {
+      model: "e2e-mock-model",
+      stream: true,
+      messages: [{ role: "user", content: "please trace this turn" }],
+    },
+  });
+
+  assert.equal(handleLlmCompletions(ctx), true);
+  // `safeDelayMs` deliberately normalizes zero to the default cadence, so
+  // wait for this tiny four-event script to finish rather than sampling it
+  // halfway through its SSE writes.
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  const thinking = ctx.res.body.indexOf("first reason");
+  const narration = ctx.res.body.indexOf("then narrate");
+  const tool = ctx.res.body.indexOf("call_trace_1");
+  assert.ok(thinking >= 0, "keyword stream script should emit reasoning_content");
+  assert.ok(narration > thinking, "narration should follow reasoning");
+  assert.ok(tool > narration, "tool call should follow narration");
+  assert.match(ctx.res.body, /data: \[DONE\]/);
+});
+
 test("returns tool calls for agentic models and resolves follow-up turns", () => {
   const first = makeCtx({
     parsedBody: {

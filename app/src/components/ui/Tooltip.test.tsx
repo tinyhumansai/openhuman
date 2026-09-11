@@ -55,7 +55,7 @@ describe('Tooltip', () => {
     expect(screen.queryByTestId('tooltip')).toBeNull();
   });
 
-  it('shows on keyboard focus and hides on blur', () => {
+  it('shows on keyboard focus and hides on blur-sm', () => {
     render(
       <Tooltip label="Home" delayMs={0}>
         <button type="button" aria-label="Home">

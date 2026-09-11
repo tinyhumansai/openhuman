@@ -9,9 +9,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use ratatui::Frame;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::state::{EntryKind, TranscriptState};
 use super::ui_state::{AppTab, SettingsAction, UiState};
@@ -40,6 +40,9 @@ pub fn draw(frame: &mut Frame, state: &TranscriptState, ui: &UiState) {
         AppTab::Settings => draw_settings(frame, chunks[1], ui),
     }
     draw_footer(frame, chunks[2], state, ui);
+    if let Some(overlay) = &ui.overlay {
+        draw_overlay(frame, overlay);
+    }
 }
 
 fn draw_tabs(frame: &mut Frame, area: Rect, ui: &UiState) {
@@ -65,9 +68,13 @@ fn draw_tabs(frame: &mut Frame, area: Rect, ui: &UiState) {
 }
 
 fn draw_chat(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiState) {
+    let width = area.width.saturating_sub(4).max(1) as usize;
+    let (rows, _, _) = ui.composer.display(width);
+    let suggestions = ui.composer.command_matches().len().min(6);
+    let composer_height = (rows.len().min(8) + suggestions + 2).max(3) as u16;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .constraints([Constraint::Min(1), Constraint::Length(composer_height)])
         .split(area);
     draw_transcript(frame, chunks[0], state, ui);
     draw_input(frame, chunks[1], ui);
@@ -245,21 +252,40 @@ fn draw_input(frame: &mut Frame, area: Rect, ui: &UiState) {
         .title(" Message ")
         .border_style(Style::default().fg(Color::DarkGray));
     let inner_width = block.inner(area).width.max(1) as usize;
-
-    // Keep the caret end of a long input visible.
-    let display = tail_to_width(&ui.input, inner_width.saturating_sub(1));
-    let line = Line::from(vec![
-        Span::styled(display, Style::default().fg(Color::White)),
-        Span::styled("▏", Style::default().fg(OCEAN)),
-    ]);
-    let paragraph = Paragraph::new(line).block(block);
+    let matches = ui.composer.command_matches();
+    let (mut rows, cursor_row, cursor_col) = ui.composer.display(inner_width.saturating_sub(1));
+    if let Some(row) = rows.get_mut(cursor_row) {
+        let byte = byte_at_display_column(row, cursor_col);
+        row.insert(byte, '▏');
+    }
+    let mut lines = matches
+        .iter()
+        .take(6)
+        .map(|(name, description)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("/{name:<13}"),
+                    Style::default().fg(OCEAN).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(*description, Style::default().fg(Color::DarkGray)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    lines.extend(
+        rows.into_iter()
+            .take(8)
+            .map(|row| Line::from(Span::styled(row, Style::default().fg(Color::White)))),
+    );
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiState) {
     let context = match ui.active_tab {
         AppTab::Logs => "PgUp/PgDn scroll",
-        AppTab::Chat => "Enter send · Esc cancel · Ctrl+N new · PgUp/PgDn scroll",
+        AppTab::Chat => "Enter send/steer · Shift+Enter newline · Tab queue · / commands",
         AppTab::Config => {
             if ui.config_edit.is_some() {
                 "Enter save · Esc cancel"
@@ -275,7 +301,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiSt
             }
         }
     };
-    let turn = if ui.active_tab == AppTab::Chat && state.is_streaming() {
+    let turn = if !ui.pending_approvals.is_empty() {
+        format!("{} approval(s)", ui.pending_approvals.len())
+    } else if ui.pending_plan_review.is_some() {
+        "plan review".to_string()
+    } else if ui.active_tab == AppTab::Chat && state.is_streaming() {
         let frame_ch = SPINNER_FRAMES[ui.spinner_tick % SPINNER_FRAMES.len()];
         format!("{frame_ch} streaming")
     } else {
@@ -289,14 +319,105 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TranscriptState, ui: &UiSt
     let navigation = if ui.is_editing() {
         "Finish or Esc before switching tabs"
     } else {
-        "Tab/Shift+Tab switch · Alt+1-4 tabs"
+        "Ctrl+Tab switch · Alt+1-4 tabs"
     };
+    let session = format!(
+        "{} · {}",
+        ui.model_override.as_deref().unwrap_or("default model"),
+        short_id(&ui.thread_id)
+    );
     let hints = Span::styled(
-        format!("  {navigation} · {context} · Ctrl+C quit"),
+        format!("  {session} · {navigation} · {context} · Ctrl+C quit"),
         Style::default().fg(Color::DarkGray),
     );
     let paragraph = Paragraph::new(Line::from(vec![left, hints]));
     frame.render_widget(paragraph, area);
+}
+
+fn short_id(id: &str) -> &str {
+    match id.char_indices().nth(12) {
+        Some((byte, _)) => &id[..byte],
+        None => id,
+    }
+}
+
+fn draw_overlay(frame: &mut Frame, overlay: &super::cockpit::Overlay) {
+    let area = centered_rect(84, 78, frame.area());
+    frame.render_widget(Clear, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(area);
+    let visible = overlay.visible_rows();
+    let items = visible
+        .iter()
+        .map(|row| {
+            let mut lines = vec![Line::from(Span::styled(
+                &row.label,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            if !row.detail.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    &row.detail,
+                    Style::default().fg(Color::Gray),
+                )));
+            } else if !row.payload.is_null() {
+                lines.push(Line::from(Span::styled(
+                    row.payload.to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            ListItem::new(lines)
+        })
+        .collect::<Vec<_>>();
+    let mut state =
+        ListState::default().with_selected((!visible.is_empty()).then_some(overlay.selected));
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" {} ", overlay.title))
+                    .border_style(Style::default().fg(OCEAN)),
+            )
+            .highlight_symbol("› ")
+            .highlight_style(Style::default().fg(OCEAN)),
+        chunks[0],
+        &mut state,
+    );
+    let prompt = if let Some(input) = &overlay.input {
+        format!("> {input}▏  {}", overlay.status)
+    } else if overlay.filter.is_empty() {
+        overlay.status.clone()
+    } else {
+        format!("Filter: {}▏  {}", overlay.filter, overlay.status)
+    };
+    frame.render_widget(
+        Paragraph::new(prompt)
+            .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)),
+        chunks[1],
+    );
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 /// Build the styled transcript body from the reducer state.
@@ -373,6 +494,17 @@ fn tail_to_width(s: &str, width: usize) -> String {
     out.into_iter().rev().collect()
 }
 
+fn byte_at_display_column(value: &str, target: usize) -> usize {
+    let mut column = 0usize;
+    for (byte, ch) in value.char_indices() {
+        if column >= target {
+            return byte;
+        }
+        column += ch.width().unwrap_or(0).max(1);
+    }
+    value.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,7 +512,7 @@ mod tests {
     use ratatui::Terminal;
 
     fn rendered(ui: &UiState) -> String {
-        let backend = TestBackend::new(100, 24);
+        let backend = TestBackend::new(180, 24);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         let transcript = TranscriptState::new("test-client");
         terminal
@@ -402,8 +534,8 @@ mod tests {
         for title in ["1 Logs", "2 Chat", "3 Config", "4 Settings"] {
             assert!(output.contains(title), "missing tab {title}");
         }
-        assert!(output.contains("Tab/Shift+Tab switch"));
-        assert!(output.contains("PgUp/PgDn scroll"));
+        assert!(output.contains("Ctrl+Tab switch"));
+        assert!(output.contains("Shift+Enter newline"));
     }
 
     #[test]
@@ -429,5 +561,18 @@ mod tests {
         assert_eq!(wrapped_line_count(&line, 10), 3);
         let empty = Line::from("");
         assert_eq!(wrapped_line_count(&empty, 10), 1);
+    }
+
+    #[test]
+    fn cursor_byte_lookup_handles_wide_unicode() {
+        assert_eq!(byte_at_display_column("界a", 2), "界".len());
+        assert_eq!(byte_at_display_column("界a", 3), "界a".len());
+    }
+
+    #[test]
+    fn short_id_truncates_non_ascii_at_a_character_boundary() {
+        let id = "12345678901界xyz";
+        assert_eq!(short_id(id), "12345678901界");
+        assert_eq!(short_id("abcdefghijklmnop"), "abcdefghijkl");
     }
 }
