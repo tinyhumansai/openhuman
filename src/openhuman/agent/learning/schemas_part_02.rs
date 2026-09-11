@@ -168,7 +168,7 @@ fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use tinymemory_api::provider::UserState;
+        use tinymemory_api::provider::{FacetState, UserState};
 
         let class_str = params
             .get("class")
