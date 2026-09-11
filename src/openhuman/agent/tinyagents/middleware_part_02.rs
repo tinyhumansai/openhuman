@@ -610,29 +610,10 @@ impl ToolPolicyMiddleware {
                 continue;
             }
             let name = tool.name().to_string();
-            // Uses `is_denied()`, and that is deliberate — it is the same
-            // predicate as the gate this hint points at.
-            //
-            // Spelled out, because two predicates live in this file and a
-            // sentence that does not name one has been misread three times:
-            //
-            //   * This hint names a tool for the model to call DIRECTLY.
-            //   * The direct-call gate is `channel_permission_block`'s first
-            //     check, `if decision.is_denied()` (this file, top of the fn).
-            //   * `is_denied()` is `!matches!(action, Allow)`, so it is TRUE for
-            //     `HideFromPrompt` — that check is what refuses a prompt-hidden
-            //     tool called by name.
-            //   * Therefore a prompt-hidden delegate is not a route, and
-            //     `is_denied()` here is exactly what keeps it out.
-            //
-            // `blocks_execution()` would be wrong here: it deliberately admits
-            // `HideFromPrompt` for the `use_skill` path below, where hiding is
-            // the disclosure mechanism rather than a refusal. Same tool, two
-            // call paths, two answers. A hint must use the predicate of the gate
-            // it points at — the hint and the gate disagreeing is how this whole
-            // class of bug started.
-            //
-            // Pinned by `a_prompt_hidden_delegate_is_not_offered_as_a_direct_route`.
+            // Direct routes use the same `is_denied()` predicate as the gate.
+            // Do not use `blocks_execution()`: that admits prompt-hidden tools
+            // for the separate `use_skill` path below. See the regression test
+            // `a_prompt_hidden_delegate_is_not_offered_as_a_direct_route`.
             if self.session.decision_for(&name).is_denied() || found.contains(&name) {
                 continue;
             }
