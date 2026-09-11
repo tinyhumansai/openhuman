@@ -11,20 +11,10 @@ impl Middleware<()> for ToolOutputMiddleware {
         _state: &(),
         result: &mut TaToolResult,
     ) -> TaResult<()> {
-        // Proposal-/persistence-emitting workflow tools return a self-describing
-        // `{ "type": "workflow_proposal", … }` JSON payload that `flows::ops`'
-        // `extract_workflow_proposal` (and the frontend's content-based
-        // recognition) parse structurally. Sampling tools (`get_tool_contract` /
-        // `get_tool_output_sample`) return a real API response the model reads
-        // to derive an exact array path/schema. All four stages below are
-        // content-*rewriting*: tokenjuice (steps 1+2) tabulates any uniform
-        // object-array of ≥3 rows over ~512 bytes into a `[json table: …]`
-        // marker (stripping the `"type"` field on graphs with enough nodes, or
-        // eliding the array a sample exists to reveal); the char cap and shared
-        // byte-budget backstop (steps 3+4) truncate at a UTF-8 boundary, which
-        // breaks the whole-string JSON parse both proposal consumers do. See
-        // [`is_compaction_exempt`]/[`is_truncation_exempt`] for which stages
-        // each tool family skips and why.
+        // Workflow proposals and sampling responses require intact JSON, while
+        // tokenjuice compaction and the output caps rewrite or truncate content.
+        // See [`is_compaction_exempt`]/[`is_truncation_exempt`] for tool-specific
+        // exceptions and why proposal consumers skip those stages.
         let compaction_exempt = is_compaction_exempt(&result.name);
         let truncation_exempt = is_truncation_exempt(&result.name);
         if compaction_exempt {
