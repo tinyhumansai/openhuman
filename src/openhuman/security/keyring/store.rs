@@ -42,11 +42,45 @@ pub fn init_workspace(workspace_dir: &Path) {
 }
 
 /// Returns the selected backend, initializing it on first call.
+///
+/// Production builds cache one backend process-wide in [`BACKEND`]: a process
+/// serves exactly one workspace, so the resolved path never changes and the
+/// `OnceLock` is a pure cache.
+#[cfg(not(test))]
 pub(super) fn backend() -> &'static dyn KeyringBackend {
     BACKEND.get_or_init(build_backend).as_ref()
 }
 
+/// Test builds resolve the backend **per workspace** instead of latching one
+/// process-wide.
+///
+/// A single `OnceLock` makes the whole test binary share one credential store,
+/// pinned to whatever workspace the first keyring call happened to observe. When
+/// that winner was a `TempDir` (a test holding an `OPENHUMAN_WORKSPACE` env
+/// guard), every other test's secrets were written into a directory that
+/// vanished at the end of that test — silently resetting the store to empty and
+/// making unrelated tests read back `None`. See `store_tests.rs`.
+///
+/// [`super::ops::force_backend_for_test`] still pins [`BACKEND`] process-wide
+/// and is honoured first.
+#[cfg(test)]
+pub(super) fn backend() -> &'static dyn KeyringBackend {
+    if let Some(existing) = BACKEND.get() {
+        return existing.as_ref();
+    }
+    test_scope::backend_for(&workspace_dir_for_file_backend())
+}
+
 pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
+    build_backend_at(&workspace_dir_for_file_backend())
+}
+
+/// Build a backend rooted at an explicit directory.
+///
+/// Split out of [`build_backend`] so test builds can construct one backend per
+/// workspace. Selection priority is unchanged.
+pub(super) fn build_backend_at(path: &Path) -> Box<dyn KeyringBackend> {
+    let path = path.to_path_buf();
     // Priority 1: explicit env var override.
     if let Ok(env_val) = std::env::var("OPENHUMAN_KEYRING_BACKEND") {
         match backend_kind_from_env_value(&env_val) {
@@ -55,7 +89,6 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
                 return Box::new(backend::OsBackend);
             }
             Some(BackendKind::File) => {
-                let path = workspace_dir_for_file_backend();
                 log::info!(
                     "[keyring] backend=file dir={} file={}/dev-keychain.json (OPENHUMAN_KEYRING_BACKEND override)",
                     path.display(),
@@ -64,7 +97,6 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
                 return Box::new(backend::FileBackend::new(&path));
             }
             Some(BackendKind::EncryptedFile) => {
-                let path = workspace_dir_for_file_backend();
                 log::info!(
                     "[keyring] backend=encrypted_file path={} (OPENHUMAN_KEYRING_BACKEND override)",
                     path.display()
@@ -84,14 +116,12 @@ pub(super) fn build_backend() -> Box<dyn KeyringBackend> {
 
     // Priority 2: unit tests → file backend for deterministic isolation.
     if cfg!(test) {
-        let path = workspace_dir_for_file_backend();
         log::info!("[keyring] backend=file path={} (cfg(test))", path.display());
         return Box::new(backend::FileBackend::new(&path));
     }
 
     // Priority 3: staging/production → encrypted file backend (master key in OS keychain).
     // Dev builds → plain file backend (no keychain interaction, avoids codesign prompts).
-    let path = workspace_dir_for_file_backend();
     if is_staging_or_production() {
         log::info!("[keyring] backend=encrypted_file path={}", path.display());
         Box::new(super::encrypted_file_backend::EncryptedFileBackend::new(
@@ -155,7 +185,35 @@ fn is_staging_or_production_value(app_env: Option<&str>) -> bool {
 /// Uses the registered value from [`init_workspace`] if set; otherwise falls
 /// back to the same env-var / home-dir logic as the config subsystem.
 /// Always resolves to a stable absolute path — never CWD.
+#[cfg(not(test))]
 pub fn workspace_dir_for_file_backend() -> PathBuf {
+    resolve_workspace_dir_from_process_state()
+}
+
+/// Test builds resolve the keyring directory from a **thread-scoped** override
+/// instead of process-global state.
+///
+/// `WORKSPACE_DIR` (a `OnceLock`) and `OPENHUMAN_WORKSPACE` (a process-wide env
+/// var that several tests mutate behind an RAII guard) are both shared by every
+/// concurrently-running test in the binary. Consulting them here meant a test's
+/// keyring writes and its later reads could resolve to *different* directories
+/// depending on which unrelated test happened to be mid-guard — and that a
+/// `TempDir` could become the whole binary's credential store and then be
+/// deleted. Test builds therefore ignore both and use
+/// [`test_scope::current_workspace`], which defaults to a stable per-process
+/// directory under the system temp dir and never touches the developer's real
+/// `~/.openhuman/dev-keychain.json`.
+///
+/// A test that needs its own private store binds one with
+/// [`test_scope::ScopedWorkspace`].
+#[cfg(test)]
+pub fn workspace_dir_for_file_backend() -> PathBuf {
+    test_scope::current_workspace()
+}
+
+/// The production resolution rule, kept compiled in test builds so it stays
+/// directly testable (see `store_tests.rs`).
+fn resolve_workspace_dir_from_process_state() -> PathBuf {
     if let Some(dir) = WORKSPACE_DIR.get() {
         return dir.clone();
     }
@@ -176,39 +234,19 @@ pub fn workspace_dir_for_file_backend() -> PathBuf {
     openhuman_dir
 }
 
+// ── Test-only workspace scoping ──────────────────────────────────────────────
+
+/// Thread-scoped keyring workspaces for test builds.
+///
+/// Compiled only under `cfg(test)`; production selection is untouched.
 #[cfg(test)]
-mod tests {
-    use super::{effective_backend_kind_for, BackendKind};
+#[path = "store_test_scope_tests.rs"]
+pub(crate) mod test_scope;
 
-    #[test]
-    fn explicit_file_backend_wins_over_staging_environment() {
-        assert_eq!(
-            effective_backend_kind_for(Some("staging"), Some("file"), false),
-            BackendKind::File
-        );
-    }
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod store_tests;
 
-    #[test]
-    fn explicit_encrypted_file_backend_wins_in_dev_environment() {
-        assert_eq!(
-            effective_backend_kind_for(Some("development"), Some("encrypted_file"), false),
-            BackendKind::EncryptedFile
-        );
-    }
-
-    #[test]
-    fn staging_defaults_to_encrypted_file_without_override() {
-        assert_eq!(
-            effective_backend_kind_for(Some(" staging "), None, false),
-            BackendKind::EncryptedFile
-        );
-    }
-
-    #[test]
-    fn unknown_backend_override_falls_back_to_environment_default() {
-        assert_eq!(
-            effective_backend_kind_for(Some("production"), Some("bogus"), false),
-            BackendKind::EncryptedFile
-        );
-    }
-}
+#[cfg(test)]
+#[path = "store_tests_2_tests.rs"]
+mod tests;

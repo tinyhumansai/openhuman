@@ -213,7 +213,7 @@ impl Agent {
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
-        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache();
+        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache().await;
         let standing =
             crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(

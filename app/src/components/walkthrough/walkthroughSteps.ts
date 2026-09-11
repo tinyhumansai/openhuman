@@ -141,16 +141,7 @@ export function createWalkthroughSteps(
       },
     },
 
-    // ── Step 8 — primary nav: Human ───────────────────────────────────────
-    {
-      target: '[data-walkthrough="tab-human"]',
-      title: t('walkthrough.steps.humanTab.title'),
-      content: t('walkthrough.steps.humanTab.content'),
-      placement: 'top',
-      skipBeacon: true,
-    },
-
-    // ── Step 9 — primary nav: Brain ───────────────────────────────────────
+    // ── Step 8 — primary nav: Brain ───────────────────────────────────────
     {
       target: '[data-walkthrough="tab-brain"]',
       title: t('walkthrough.steps.brainTab.title'),
@@ -159,16 +150,7 @@ export function createWalkthroughSteps(
       skipBeacon: true,
     },
 
-    // ── Step 10 — primary nav: Agent World ────────────────────────────────
-    {
-      target: '[data-walkthrough="tab-agent-world"]',
-      title: t('walkthrough.steps.agentWorldTab.title'),
-      content: t('walkthrough.steps.agentWorldTab.content'),
-      placement: 'top',
-      skipBeacon: true,
-    },
-
-    // ── Step 11 — primary nav: Connections ────────────────────────────────
+    // ── Step 9 — primary nav: Connections ────────────────────────────────
     {
       target: '[data-walkthrough="tab-connections"]',
       title: t('walkthrough.steps.connectionsTab.title'),
@@ -177,16 +159,14 @@ export function createWalkthroughSteps(
       skipBeacon: true,
     },
 
-    // ── Step 12 — primary nav: Feedback ───────────────────────────────────
-    {
-      target: '[data-walkthrough="tab-feedback"]',
-      title: t('walkthrough.steps.feedbackTab.title'),
-      content: t('walkthrough.steps.feedbackTab.content'),
-      placement: 'top',
-      skipBeacon: true,
-    },
+    // Step 10 was the sidebar's Feedback icon. That slot is the ⌘K command
+    // palette now and the feedback board moved to `/settings/feedback`, so the
+    // step's target element no longer exists — a step pointing at a missing
+    // selector is a stall in the middle of onboarding, not a skipped frame.
+    // Removed rather than re-pointed: nothing else in the header is the same
+    // subject, and `walkthrough.steps.feedbackTab.*` went with it.
 
-    // ── Step 13 — /chat (pre-seeded welcome message) ──────────────────────
+    // ── Step 11 — /chat (pre-seeded welcome message) ──────────────────────
     {
       target: '[data-walkthrough="chat-agent-panel"]',
       title: t('walkthrough.steps.allSet.title'),

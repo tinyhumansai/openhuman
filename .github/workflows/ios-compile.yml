@@ -44,7 +44,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.93.0"
+          toolchain: "1.96.1"
           targets: aarch64-apple-ios
 
       - name: Cache Rust build artifacts

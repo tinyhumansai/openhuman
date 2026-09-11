@@ -205,7 +205,7 @@ const ToolPolicyDiagnosticsPanel = () => {
               .replace('{recentRows}', recentRows)}
           </div>
           {d.mcp_write_audit.last_error && (
-            <div className="mt-2 text-xs text-coral-700 dark:text-coral-200 font-mono break-words">
+            <div className="mt-2 text-xs text-coral-700 dark:text-coral-200 font-mono wrap-break-word">
               {d.mcp_write_audit.last_error}
             </div>
           )}
@@ -235,7 +235,9 @@ const ToolPolicyDiagnosticsPanel = () => {
                       {entry.policy}:{entry.action}
                     </span>
                   </div>
-                  <div className="text-sage-700 dark:text-sage-300 break-words">{entry.reason}</div>
+                  <div className="text-sage-700 dark:text-sage-300 wrap-break-word">
+                    {entry.reason}
+                  </div>
                 </li>
               ))}
             </ul>

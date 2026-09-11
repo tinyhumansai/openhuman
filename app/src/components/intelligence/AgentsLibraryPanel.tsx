@@ -5,6 +5,7 @@ import { LuBot, LuClipboard, LuPlay, LuRefreshCw, LuSend } from 'react-icons/lu'
 import { useT } from '../../lib/i18n/I18nContext';
 import { type AgentDefinitionDisplay, agentLibraryApi } from '../../services/api/agentLibraryApi';
 import Button from '../ui/Button';
+import TextField from '../ui/TextField';
 
 const log = debug('intelligence:agents-library');
 
@@ -118,7 +119,7 @@ export default function AgentsLibraryPanel({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 truncate text-sm font-semibold text-content-secondary">
-            <LuBot className="h-4 w-4 text-ocean-500" />
+            <LuBot className="h-4 w-4 text-primary-600 dark:text-primary-400" />
             {t('intelligence.agents.title')}
           </h3>
           <p className="mt-1 text-xs text-content-faint">{t('intelligence.agents.subtitle')}</p>
@@ -134,7 +135,7 @@ export default function AgentsLibraryPanel({
 
       {loading && (
         <div className="flex items-center justify-center rounded-xl border border-line py-5 text-sm text-content-faint">
-          <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
+          <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
           {t('intelligence.agents.loading')}
         </div>
       )}
@@ -152,7 +153,7 @@ export default function AgentsLibraryPanel({
       )}
 
       {!loading && !error && visibleAgents.length > 0 && (
-        <ul className="divide-y divide-line-subtle rounded-xl border border-line bg-surface dark:divide-neutral-800">
+        <ul className="divide-y divide-line-subtle rounded-xl border border-line bg-surface">
           {visibleAgents.map(agent => {
             const draft = drafts[agent.id] ?? '';
             const running = runningAgentId === agent.id;
@@ -167,7 +168,7 @@ export default function AgentsLibraryPanel({
                       <span className="rounded-md bg-surface-subtle px-1.5 py-0.5 font-mono text-[10px] text-content-muted">
                         {agent.id}
                       </span>
-                      <span className="rounded-md bg-ocean-50 px-1.5 py-0.5 text-[10px] font-medium text-ocean-700 dark:bg-ocean-500/10 dark:text-ocean-200">
+                      <span className="rounded-md bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
                         {modelLabel(agent, t)}
                       </span>
                     </div>
@@ -206,7 +207,7 @@ export default function AgentsLibraryPanel({
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
+                  <TextField
                     type="text"
                     aria-label={t('intelligence.agents.taskPlaceholder')}
                     value={draft}
@@ -214,16 +215,17 @@ export default function AgentsLibraryPanel({
                       setDrafts(prev => ({ ...prev, [agent.id]: event.target.value }))
                     }
                     placeholder={t('intelligence.agents.taskPlaceholder')}
-                    className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 focus:border-ocean-400 focus:outline-none focus:ring-2 focus:ring-ocean-100 dark:bg-surface-canvas dark:placeholder:text-neutral-600"
+                    className="min-w-0 flex-1"
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="primary"
                     onClick={() => void handleRun(agent, draft)}
                     disabled={!draft.trim() || Boolean(runningAgentId)}
-                    className="inline-flex flex-none items-center justify-center gap-1.5 rounded-md bg-ocean-600 px-3 py-2 text-sm font-medium text-white hover:bg-ocean-700 disabled:opacity-50">
-                    <LuPlay className="h-4 w-4" />
+                    leadingIcon={<LuPlay className="h-4 w-4" />}
+                    className="flex-none">
                     {running ? t('intelligence.agents.running') : t('intelligence.agents.runTask')}
-                  </button>
+                  </Button>
                 </div>
               </li>
             );

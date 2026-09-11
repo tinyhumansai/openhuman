@@ -58,7 +58,7 @@ const KeyringConsentOverlay = () => {
   const failureReason = keyringStatus.failureReason;
 
   return (
-    <div className="fixed inset-0 z-[10000] bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-10000 bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -95,7 +95,7 @@ const KeyringConsentOverlay = () => {
         <button
           type="button"
           onClick={() => setShowDetails(!showDetails)}
-          className="mt-3 text-xs text-ocean-400 hover:text-ocean-300 underline">
+          className="mt-3 text-xs text-primary-400 hover:text-primary-300 underline">
           {showDetails ? t('keyring.consent.hideDetails') : t('keyring.consent.showDetails')}
         </button>
 
@@ -115,7 +115,7 @@ const KeyringConsentOverlay = () => {
             type="button"
             onClick={handleConsent}
             disabled={isConsenting || isRetrying}
-            className="rounded-lg bg-ocean-500 px-4 py-2 text-sm font-medium text-white hover:bg-ocean-600 disabled:opacity-60">
+            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
             {isConsenting ? t('common.loading') : t('keyring.consent.consentButton')}
           </button>
           <button

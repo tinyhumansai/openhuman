@@ -7,9 +7,9 @@
  * class (the class names aren't known at build time, so they'd be purged), so
  * the colour is resolved to a house-palette hex here and applied via inline
  * style at the call site — the same approach `memory-workspace.css` already
- * uses for the ocean accent.
+ * uses for the primary accent.
  *
- * The palette is drawn from the project's semantic tokens (ocean / sage / amber
+ * The palette is drawn from the project's semantic tokens (primary / sage / amber
  * / coral / sky / lavender) so the board never introduces an off-brand hue.
  * Assignment is stable per member id: the same id always maps to the same
  * colour, and ids spread across the palette before repeating.
@@ -17,7 +17,7 @@
 
 /** House-palette hues used to distinguish team members. Order is the cycle. */
 const MEMBER_PALETTE = [
-  '#4A83DD', // ocean
+  '#4A83DD', // primary (brand blue)
   '#34C759', // sage
   '#E8A728', // amber
   '#EF4444', // coral

@@ -9,7 +9,7 @@
 //! the same feature, so it vanishes alongside.
 //!
 //! The signatures here MUST match the real ones exactly. The disabled build
-//! (`cargo check --no-default-features --features tokenjuice-treesitter`) is
+//! (`cargo check --no-default-features`) is
 //! the only thing that catches drift.
 
 use crate::core::all::RegisteredController;

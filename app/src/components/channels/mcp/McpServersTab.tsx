@@ -14,6 +14,9 @@ import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import { openUrl } from '../../../utils/openUrl';
 import ChipTabs from '../../layout/ChipTabs';
 import Button from '../../ui/Button';
+import Separator from '../../ui/Separator';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/Table';
+import TextField from '../../ui/TextField';
 import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
@@ -131,13 +134,14 @@ const TransportBadge = ({ transport }: { transport: Transport }) => {
  * a server's website/repo never also triggers the row's install action.
  */
 const ExternalLink = ({ href, label }: { href: string; label: string }) => (
-  <button
-    type="button"
+  <Button
+    variant="tertiary"
+    size="xs"
     onClick={e => {
       e.stopPropagation();
       void openUrl(href).catch(() => {});
     }}
-    className="inline-flex items-center gap-0.5 text-[11px] text-primary-600 dark:text-primary-400 hover:underline">
+    className="h-auto gap-0.5 p-0 text-[11px] font-normal text-primary-600 hover:underline dark:text-primary-400">
     {label}
     <svg
       className="w-2.5 h-2.5"
@@ -152,7 +156,7 @@ const ExternalLink = ({ href, label }: { href: string; label: string }) => (
         d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
       />
     </svg>
-  </button>
+  </Button>
 );
 
 /**
@@ -173,8 +177,8 @@ const CatalogRow = memo(
     const repoUrl = deriveRepoUrl(server.qualified_name);
     const author = deriveAuthor(server.qualified_name);
     return (
-      <tr
-        className="hover:bg-surface-muted dark:hover:bg-surface-muted/40 cursor-pointer transition-colors"
+      <TableRow
+        className="cursor-pointer"
         tabIndex={0}
         role="button"
         aria-label={t('mcp.tab.aria.installServer').replace('{name}', server.display_name)}
@@ -189,7 +193,7 @@ const CatalogRow = memo(
             onInstall(server.qualified_name);
           }
         }}>
-        <td className="px-4 py-3">
+        <TableCell>
           <div className="flex items-center gap-2.5">
             {server.icon_url ? (
               <img
@@ -234,19 +238,19 @@ const CatalogRow = memo(
               )}
             </div>
           </div>
-        </td>
-        <td className="px-4 py-3 hidden sm:table-cell">
+        </TableCell>
+        <TableCell className="hidden sm:table-cell">
           <TransportBadge transport={transportOf(server)} />
-        </td>
-        <td className="px-4 py-3 hidden sm:table-cell">
+        </TableCell>
+        <TableCell className="hidden sm:table-cell">
           <span className="text-xs text-content-muted truncate block">{author ?? '—'}</span>
-        </td>
-        <td className="px-4 py-3 text-right">
+        </TableCell>
+        <TableCell className="text-right">
           <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
             {t('mcp.install.button')}
           </span>
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
     );
   }
 );
@@ -569,13 +573,13 @@ const McpServersTab = () => {
     <div className="space-y-3">
       {/* Search + filter chips */}
       <div className="flex items-center gap-3">
-        <input
+        <TextField
           type="search"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           placeholder={t('mcp.catalog.searchPlaceholder')}
           aria-label={t('mcp.catalog.searchAria')}
-          className="flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+          className="flex-1"
         />
         <Button
           variant="secondary"
@@ -593,7 +597,7 @@ const McpServersTab = () => {
           all). This avoids the duplicate-"All" confusion. */}
       <div className="flex flex-wrap items-center gap-2">
         <ChipTabs<FilterChip>
-          className="flex flex-wrap items-center gap-2"
+          className="flex flex-wrap items-center gap-1.5"
           value={activeChip}
           onChange={setActiveChip}
           items={[
@@ -611,7 +615,7 @@ const McpServersTab = () => {
 
         {showRegistry && (
           <>
-            <span className="hidden sm:block h-5 w-px bg-line-subtle" aria-hidden="true" />
+            <Separator orientation="vertical" className="hidden sm:block h-5 bg-line-subtle" />
             <span className="text-xs font-medium text-content-muted">
               {t('mcp.tab.transportFilter.label')}
             </span>
@@ -622,18 +626,15 @@ const McpServersTab = () => {
               {(['stdio', 'hosted'] as const).map(tp => {
                 const active = transportFilter === tp;
                 return (
-                  <button
+                  <Button
                     key={tp}
-                    type="button"
+                    variant={active ? 'primary' : 'secondary'}
+                    size="xs"
                     aria-pressed={active}
                     onClick={() => setTransportFilter(prev => (prev === tp ? 'all' : tp))}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                      active
-                        ? 'bg-content text-surface'
-                        : 'border border-line text-content-muted hover:bg-surface-muted'
-                    }`}>
+                    className={`rounded-full font-medium ${active ? 'bg-content text-surface' : ''}`}>
                     {t(tp === 'stdio' ? 'mcp.tab.transport.local' : 'mcp.tab.transport.hosted')}
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -664,89 +665,80 @@ const McpServersTab = () => {
           width (the wrapper was `overflow-hidden`, which cut them off with no
           way to scroll). `min-w` keeps the columns readable rather than
           crushing them. */}
-      <div className="rounded-lg border border-line overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="border-b border-line-subtle bg-surface-muted">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted">
-                {t('mcp.tab.column.name')}
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-28">
-                {t('mcp.tab.column.type')}
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-content-muted hidden sm:table-cell w-36">
-                {t('mcp.tab.column.author')}
-              </th>
-              <th className="text-right px-4 py-2.5 text-xs font-medium text-content-muted w-28">
-                {t('mcp.tab.column.action')}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-subtle dark:divide-neutral-800">
-            {/* Installed servers */}
-            {(activeChip === 'all' || activeChip === 'installed') &&
-              filteredInstalled.map(server => {
-                const status: ServerStatus =
-                  statusMap.get(server.server_id)?.status ?? 'disconnected';
-                return (
-                  <tr
-                    key={`installed-${server.server_id}`}
-                    className="hover:bg-surface-muted dark:hover:bg-surface-muted/40 cursor-pointer transition-colors"
-                    tabIndex={0}
-                    role="button"
-                    aria-label={t('mcp.tab.aria.viewDetails').replace(
-                      '{name}',
-                      server.display_name
-                    )}
-                    onClick={() => handleSelectServer(server.server_id)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleSelectServer(server.server_id);
-                      }
-                    }}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
-                          title={status}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-content truncate block">
-                            {server.display_name}
+      <Table className="min-w-[640px] rounded-lg border border-line">
+        <TableHeader>
+          <TableRow className="bg-surface-muted">
+            <TableHead>{t('mcp.tab.column.name')}</TableHead>
+            <TableHead className="hidden w-28 sm:table-cell">{t('mcp.tab.column.type')}</TableHead>
+            <TableHead className="hidden w-36 sm:table-cell">
+              {t('mcp.tab.column.author')}
+            </TableHead>
+            <TableHead className="w-28 text-right">{t('mcp.tab.column.action')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {/* Installed servers */}
+          {(activeChip === 'all' || activeChip === 'installed') &&
+            filteredInstalled.map(server => {
+              const status: ServerStatus =
+                statusMap.get(server.server_id)?.status ?? 'disconnected';
+              return (
+                <TableRow
+                  key={`installed-${server.server_id}`}
+                  className="cursor-pointer"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={t('mcp.tab.aria.viewDetails').replace('{name}', server.display_name)}
+                  onClick={() => handleSelectServer(server.server_id)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSelectServer(server.server_id);
+                    }
+                  }}>
+                  <TableCell>
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
+                        title={status}
+                      />
+                      <div className="min-w-0">
+                        <span className="font-medium text-content truncate block">
+                          {server.display_name}
+                        </span>
+                        {server.description && (
+                          <span className="text-xs text-content-faint line-clamp-4 block">
+                            {server.description}
                           </span>
-                          {server.description && (
-                            <span className="text-xs text-content-faint line-clamp-4 block">
-                              {server.description}
-                            </span>
-                          )}
-                        </div>
+                        )}
                       </div>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs text-content-faint">—</span>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs text-content-muted truncate block">
-                        {deriveAuthor(server.qualified_name) ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
-                        {t('mcp.tab.action.manage')}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <span className="text-xs text-content-faint">—</span>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <span className="text-xs text-content-muted truncate block">
+                      {deriveAuthor(server.qualified_name) ?? '—'}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <span className="text-xs text-primary-600 dark:text-primary-400 font-medium">
+                      {t('mcp.tab.action.manage')}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
 
-            {/* Registry servers — official first, then the registry's relevance
+          {/* Registry servers — official first, then the registry's relevance
                 order. Each row shows its transport, website/repo links, and the
                 real auth surfaces on install. */}
-            {showRegistry && catalogRows}
-          </tbody>
-        </table>
+          {showRegistry && catalogRows}
+        </TableBody>
+      </Table>
 
+      <div className="rounded-b-lg border border-t-0 border-line">
         {/* Registry fetch error — takes precedence over the empty state so a
             failed load reads as an error (with retry), not "no results". */}
         {showRegistry && catalogError && !catalogLoading && (

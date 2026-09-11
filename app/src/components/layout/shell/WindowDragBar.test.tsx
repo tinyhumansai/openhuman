@@ -23,6 +23,22 @@ describe('WindowDragBar', () => {
     const bar = container.querySelector('[data-tauri-drag-region]');
     expect(bar).not.toBeNull();
     expect((bar as HTMLElement).style.height).toBe(`${WINDOW_DRAG_BAR_HEIGHT}px`);
+    expect((bar as HTMLElement).className).toContain('absolute');
+  });
+
+  // Presence is what the assertions above cover, and presence is exactly what a
+  // regression keeps: `drag.js` drags a bare region only on a direct hit
+  // (`el === composedPath[0]`), so the attribute's *value* is the behaviour.
+  // Bare is right for this band only because it has no children — assert both
+  // halves, so giving it a child without switching to `"deep"` fails here
+  // rather than silently killing the drag the way it did in the sidebar.
+  it('marks the band bare, which is only correct because it has no children', () => {
+    isMac.mockReturnValue(true);
+    isTauri.mockReturnValue(true);
+    const { container } = render(<WindowDragBar />);
+    const bar = container.querySelector('[data-tauri-drag-region]') as HTMLElement;
+    expect(bar.getAttribute('data-tauri-drag-region')).toBe('true');
+    expect(bar.children).toHaveLength(0);
   });
 
   it('renders nothing on macOS outside Tauri (plain browser)', () => {

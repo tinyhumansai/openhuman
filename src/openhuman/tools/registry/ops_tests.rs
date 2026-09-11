@@ -321,6 +321,53 @@ fn capability_provider(
     }
 }
 
+/// The health probe must read the store the writer writes to.
+///
+/// This is the invariant that broke: the audit log moved to its own database
+/// and the probe kept querying the old table inside the memory engine's chunk
+/// store, which nothing writes any more. Nothing failed — it reported zero
+/// writes forever while the log underneath was healthy. Asserting a count
+/// alone would not have caught that (zero is what a quiet install reports
+/// too), so this writes a row first and requires the probe to see it.
+#[cfg(feature = "mcp")]
+#[test]
+fn the_write_audit_probe_reads_the_store_the_writer_wrote_to() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let config = Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        ..Config::default()
+    };
+
+    let before = diagnostics_for_config(&config)
+        .value
+        .mcp_write_audit
+        .recent_rows;
+    assert_eq!(before, Some(0), "a fresh workspace has recorded nothing");
+
+    crate::openhuman::mcp::audit::record_write(
+        &config,
+        crate::openhuman::mcp::audit::NewMcpWriteRecord {
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            client_info: "probe-test".to_string(),
+            tool_name: "memory_write".to_string(),
+            args_summary: serde_json::json!({}),
+            resulting_chunk_id: None,
+            success: true,
+            error_message: None,
+        },
+    )
+    .expect("record a write");
+
+    let after = diagnostics_for_config(&config).value.mcp_write_audit;
+    assert_eq!(
+        after.recent_rows,
+        Some(1),
+        "the probe must see a row the writer just recorded; last_error={:?}",
+        after.last_error
+    );
+    assert!(after.enabled, "the log is enabled when it is readable");
+}
+
 struct EnvRestore {
     key: &'static str,
     previous: Option<std::ffi::OsString>,

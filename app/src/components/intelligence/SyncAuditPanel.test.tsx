@@ -128,6 +128,36 @@ describe('<SyncAuditPanel />', () => {
     expect(failGlyph).toHaveTextContent('✗');
   });
 
+  it('renders the partial glyph when the fetch succeeded but tree ingest failed', async () => {
+    // openhuman#5820: fetched items with a failed memory-tree half must not
+    // read as plain failure (nothing fetched) and MUST not read as success.
+    mockAuditLog.mockResolvedValue([
+      entry({
+        success: false,
+        items_fetched: 250,
+        tree_ingest_failures: 250,
+        tree_error: '250 item(s) fetched but not ingested into the memory tree',
+        source_id: 'partial',
+      }),
+    ]);
+    render(<SyncAuditPanel />);
+
+    const partialGlyph = await screen.findByTitle(
+      '250 item(s) fetched but not ingested into the memory tree'
+    );
+    expect(partialGlyph).toHaveTextContent('⚠');
+  });
+
+  it('falls back to the partial label when the row has no tree_error text', async () => {
+    mockAuditLog.mockResolvedValue([
+      entry({ success: false, tree_ingest_failures: 3, source_id: 'partial-no-text' }),
+    ]);
+    render(<SyncAuditPanel />);
+
+    const partialGlyph = await screen.findByTitle('Fetched, memory ingest failed');
+    expect(partialGlyph).toHaveTextContent('⚠');
+  });
+
   it('renders the success glyph for successful runs', async () => {
     mockAuditLog.mockResolvedValue([entry({ success: true })]);
     render(<SyncAuditPanel />);

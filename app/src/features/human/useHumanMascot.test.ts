@@ -1266,4 +1266,49 @@ describe('useHumanMascot streaming TTS (#5358)', () => {
     });
     expect(playBase64Audio).toHaveBeenCalledTimes(1);
   });
+
+  it('turning speakReplies off mid-reply stops the active clip and drops the queue', async () => {
+    // `speakRef` is only consulted when a NEW reply arrives, so without an
+    // explicit cancel the mascot keeps talking after speech is switched off —
+    // which is what collapsing the chat mascot's voice stage does.
+    const fakes = mockSequentialPlaybacks();
+    const { result, rerender } = renderHook(
+      ({ speakReplies }: { speakReplies: boolean }) => useHumanMascot({ speakReplies }),
+      { initialProps: { speakReplies: true } }
+    );
+
+    await act(async () => {
+      capturedListeners?.onTextDelta?.(delta('Hello world. '));
+      capturedListeners?.onTextDelta?.(delta('How are you? '));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
+    expect(result.current.face).toBe('speaking');
+
+    const stopSpy = vi.spyOn(fakes[0].handle, 'stop');
+    act(() => {
+      rerender({ speakReplies: false });
+    });
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(result.current.face).toBe('idle');
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cancel anything when speech was already off', async () => {
+    // The effect runs on mount too; it must not disturb a silent mascot.
+    mockSequentialPlaybacks();
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(playBase64Audio).not.toHaveBeenCalled();
+    expect(result.current.face).toBe('idle');
+  });
 });

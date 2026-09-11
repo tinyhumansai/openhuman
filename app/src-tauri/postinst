@@ -1,0 +1,35 @@
+#!/bin/sh
+# Debian postinst maintainer script for OpenHuman (openhuman#5497).
+#
+# dpkg installs the bundled binary as /usr/bin/OpenHuman — capital O, from the
+# Cargo `[[bin]]` name. Users on non-bash shells (fish, zsh) and anyone typing
+# the lowercase form hit "command not found", because no lowercase launcher is
+# on PATH. Create a /usr/local/bin/openHuman symlink so the app resolves from
+# any POSIX shell without manual PATH setup; the capitalised name keeps working
+# through /usr/bin/OpenHuman.
+set -e
+
+# Paths are overridable only so the maintainer-script test can exercise this
+# logic in a sandbox (scripts/test-deb-maintainer-scripts.sh). dpkg invokes the
+# script with neither variable set, so production always uses the defaults.
+TARGET="${OPENHUMAN_DEB_BINARY:-/usr/bin/OpenHuman}"
+LINK="${OPENHUMAN_DEB_SYMLINK:-/usr/local/bin/openHuman}"
+
+case "$1" in
+  configure)
+    if [ -e "$TARGET" ]; then
+      mkdir -p "$(dirname "$LINK")"
+      # Manage only our own symlink; never clobber a real file a user placed here.
+      if [ -L "$LINK" ] || [ ! -e "$LINK" ]; then
+        # Remove our own symlink first, then recreate it. `ln -sf` would FOLLOW a
+        # symlink that already points at a directory and create the launcher
+        # *inside* that directory (CWE-59) rather than replacing the link; `rm -f`
+        # deletes the symlink itself, so the fresh `ln -s` always lands at $LINK.
+        rm -f "$LINK"
+        ln -s "$TARGET" "$LINK"
+      fi
+    fi
+    ;;
+esac
+
+exit 0

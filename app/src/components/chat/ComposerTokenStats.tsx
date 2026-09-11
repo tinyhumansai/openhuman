@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { emptySessionTokenUsage, type SubAgentUsage } from '../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../store/hooks';
+import { Button, PopoverContent, PopoverRoot, PopoverTrigger } from '../ui';
 import Tooltip from '../ui/Tooltip';
 
 /** Fallback context window when the core hasn't reported a real one yet. */
@@ -88,26 +89,10 @@ export default function ComposerTokenStats({ model, threadId }: ComposerTokenSta
       ? (state.chatRuntime.usageByThread[threadId] ?? EMPTY_USAGE)
       : state.chatRuntime.sessionTokenUsage
   );
+  // The breakdown is click-toggled (not hover). `PopoverRoot` below owns
+  // outside-click and Escape dismissal, and focus management, in place of the
+  // hand-rolled `mousedown`/`keydown` document listeners this used to carry.
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  // The breakdown is click-toggled (not hover). Dismiss on an outside click or
-  // Escape so it behaves like a popover rather than a sticky panel.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   const inTok = usage.inputTokens || 0;
   const outTok = usage.outputTokens || 0;
@@ -166,29 +151,31 @@ export default function ComposerTokenStats({ model, threadId }: ComposerTokenSta
   if (parts.length === 0) return null;
 
   return (
-    <div ref={rootRef} className="relative flex min-w-0 items-center">
-      {/* Hover hint that the compact row is interactive; click opens the full
-          breakdown. The hint is suppressed while the popover is already open. */}
-      <Tooltip label={open ? '' : t('token.clickForDetails')} side="top">
-        <button
-          type="button"
-          onClick={() => setOpen(o => !o)}
-          aria-expanded={open}
-          aria-label={t('token.sessionUsageTitle')}
-          className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1.5 border-0 bg-transparent p-0 text-[10px] font-mono text-content-faint select-none">
-          {parts.map((part, i) => (
-            <span key={i} className="contents">
-              {part}
-            </span>
-          ))}
-        </button>
-      </Tooltip>
-      {open && (
-        <div
+    <PopoverRoot open={open} onOpenChange={setOpen}>
+      <div className="relative flex min-w-0 items-center">
+        {/* Hover hint that the compact row is interactive; click opens the full
+            breakdown. The hint is suppressed while the popover is already open. */}
+        <Tooltip label={open ? '' : t('token.clickForDetails')} side="top">
+          <PopoverTrigger asChild>
+            <Button
+              variant="tertiary"
+              aria-label={t('token.sessionUsageTitle')}
+              className="h-auto! min-w-0 flex-wrap gap-1.5 p-0! text-[10px] font-mono text-content-faint hover:bg-transparent select-none">
+              {parts.map((part, i) => (
+                <span key={i} className="contents">
+                  {part}
+                </span>
+              ))}
+            </Button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent
           data-testid="composer-token-breakdown"
-          role="dialog"
           aria-label={t('token.sessionUsageTitle')}
-          className="absolute bottom-full left-0 z-50 mb-1.5 w-64 rounded-md border border-line-strong bg-surface p-2.5 text-[11px] shadow-lg">
+          side="top"
+          align="start"
+          sideOffset={6}
+          className="w-64 p-2.5 text-[11px] shadow-lg">
           <div className="mb-1.5 font-semibold text-content">{t('token.sessionUsageTitle')}</div>
           {model && (
             <div className="mb-1.5 truncate font-mono text-content-faint" title={model}>
@@ -242,8 +229,8 @@ export default function ComposerTokenStats({ model, threadId }: ComposerTokenSta
               <div className="mt-0.5 text-content-faint">{t('token.noSubAgents')}</div>
             )}
           </div>
-        </div>
-      )}
-    </div>
+        </PopoverContent>
+      </div>
+    </PopoverRoot>
   );
 }

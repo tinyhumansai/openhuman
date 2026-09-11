@@ -21,15 +21,12 @@ vi.mock('./pages/WebCallbackPage', () => ({
   ),
 }));
 
-vi.mock('./agentworld/AgentWorldShell', () => ({
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
-vi.mock('./agentworld/pages/AgentWorld', () => ({ default: () => <div /> }));
 vi.mock('./AppRoutesIOS', () => ({ default: () => <div /> }));
 vi.mock('./features/human/HumanPage', () => ({ default: () => <div /> }));
-vi.mock('./pages/Accounts', () => ({ default: () => <div /> }));
+vi.mock('./pages/Accounts', () => ({ default: () => <div data-testid="accounts-page" /> }));
 vi.mock('./pages/Brain', () => ({ default: () => <div /> }));
 vi.mock('./pages/dev/AgentInsightsPreview', () => ({ default: () => <div /> }));
+vi.mock('./pages/dev/UiGallery', () => ({ default: () => <div /> }));
 vi.mock('./pages/Invites', () => ({ default: () => <div /> }));
 vi.mock('./pages/Notifications', () => ({ default: () => <div /> }));
 vi.mock('./pages/onboarding/Onboarding', () => ({ default: () => <div /> }));
@@ -52,5 +49,15 @@ describe('AppRoutes auth callback aliases', () => {
 
     expect(screen.getByTestId('web-callback')).toHaveTextContent('auth');
     expect(screen.queryByTestId('default-redirect')).not.toBeInTheDocument();
+  });
+
+  it('redirects the retired accounts route to unified chat', () => {
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('accounts-page')).toBeInTheDocument();
   });
 });

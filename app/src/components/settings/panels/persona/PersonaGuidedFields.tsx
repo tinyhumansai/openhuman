@@ -1,4 +1,5 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
+import Button from '../../../ui/Button';
 import { SettingsRow, SettingsTextArea } from '../../controls';
 import { useSettingsNavigation } from '../../hooks/useSettingsNavigation';
 import { applyPersonaField, parsePersonaFields, type PersonaFieldKey } from './personaSections';
@@ -86,13 +87,14 @@ const PersonaGuidedFields = ({ value, onChange, disabled = false }: PersonaGuide
 
       <p className="text-xs text-content-muted leading-relaxed">
         {t('settings.persona.builder.securityNote')}{' '}
-        <button
-          type="button"
+        <Button
+          variant="tertiary"
+          size="xs"
           data-testid="persona-guided-agent-access"
-          className="text-primary-700 hover:underline dark:text-primary-300"
+          className="h-auto w-auto p-0 text-primary-700 hover:bg-transparent hover:underline dark:text-primary-300"
           onClick={() => navigateToSettings('agent-access')}>
           {t('settings.persona.builder.securityLink')}
-        </button>
+        </Button>
       </p>
     </div>
   );

@@ -11,7 +11,8 @@ use chrono::Utc;
 
 use super::registry;
 use super::types::{HarnessInitSnapshot, OverallState, StepState, StepStatus};
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 
 static STATE: OnceLock<Mutex<HarnessInitSnapshot>> = OnceLock::new();
 
@@ -76,7 +77,7 @@ pub fn update_step(id: &str, step_state: StepState, message: Option<String>, per
             return;
         }
     }
-    publish_global(DomainEvent::HarnessInitProgress {
+    BUS.publish(DomainEvent::HarnessInitProgress {
         step_id: id.to_string(),
         state: serde_json::to_value(step_state)
             .ok()
@@ -93,23 +94,12 @@ pub fn publish_completed(overall: OverallState, failed_required: bool) {
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()))
         .unwrap_or_default();
-    publish_global(DomainEvent::HarnessInitCompleted {
+    BUS.publish(DomainEvent::HarnessInitCompleted {
         overall: overall_str,
         failed_required,
     });
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seed_snapshot_starts_idle_with_pending_steps() {
-        let snap = seed_snapshot();
-        assert_eq!(snap.overall, OverallState::Idle);
-        assert!(!snap.steps.is_empty());
-        assert!(snap.steps.iter().all(|s| s.state == StepState::Pending));
-        assert!(snap.started_at.is_none());
-        assert!(snap.finished_at.is_none());
-    }
-}
+#[path = "store_tests.rs"]
+mod tests;

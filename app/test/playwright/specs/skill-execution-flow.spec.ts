@@ -10,8 +10,7 @@ test.describe('Skill discovery (UI + core RPC)', () => {
 
   test('lands the user on a logged-in shell', async ({ page }) => {
     await waitForAppReady(page);
-    const text = await page.locator('#root').innerText();
-    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
   test('core.ping responds over the same JSON-RPC URL the UI uses', async () => {

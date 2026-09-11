@@ -22,7 +22,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
-omit_skills_catalog = true
 # Keep PROFILE.md (onboarding enrichment — the user's stated goals) and
 # MEMORY.md (archivist-curated long-term memory) IN the prompt: this agent's
 # whole job is retrieving who the user is and what they want, so it must be
@@ -59,19 +58,14 @@ named = [
     # Enumerate known people/contacts (read-only) — the people-graph
     # counterpart to memory recall for "who is X" / "find the person who…"
     # steps.
-    "people_list",
     # Transcripts: recall what the user said/decided in earlier chats. Backed
     # by the cross-thread trigram index; read-only and workspace-scoped.
-    "transcript_search",
     # Thread metadata: enumerate / read titles+labels to locate the right past
     # conversation before pulling its transcript. Read-only (the create/
     # update/delete thread tools are deliberately excluded).
-    "thread_list",
-    "thread_read",
     # Read the messages of a located thread (read-only). Complements
     # `transcript_search` (content search) for title/label lookups where the
     # thread is found by metadata but its transcript still has to be pulled.
-    "thread_message_list",
     #
     # NOTE: `memory_tree` is intentionally NOT here, and must never be added.
     # It bundles a write mode (`ingest_document` → MemoryTreeIngestDocumentTool)

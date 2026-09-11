@@ -14,4 +14,5 @@ pub use types::{
 };
 
 #[cfg(test)]
+#[path = "feedback_tests.rs"]
 mod tests;

@@ -1,0 +1,49 @@
+title: ""
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Installing, updating, and the places OpenHuman has to survive: macOS
+        sandboxing and permissions, Linux distributions, Windows, Docker,
+        mobile builds.
+
+        Nearly every thread here is settled by the install method plus the log.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens?
+      description: Where in the process it fails, and what you see.
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How did you install it?
+      options:
+        - Release binary or app bundle
+        - Package manager
+        - Docker
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      description: For example "macOS 15.3, Apple silicon" or "Ubuntu 24.04, x86_64".
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: From launch to the failure.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: workspace
+    attributes:
+      label: Workspace path
+      description: Where the journal is being written, and whether that path is writable.

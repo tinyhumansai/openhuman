@@ -1,88 +1,94 @@
 //! Domain RPC handlers for people. Adapter handlers in `schemas.rs`
-//! parse params and delegate here. Tests can call these functions
-//! directly with a constructed `PeopleStore`.
+//! parse params and delegate here.
+//!
+//! # These take the driver's people family, not a store
+//!
+//! They used to take `&PeopleStore` and reach the engine in-process. The store
+//! lives behind the loaded module now, so each handler takes
+//! `&dyn MemoryPeople` — the guarded family off the bound driver — and the
+//! ranking, scoring and address-book work happens engine-side.
+//!
+//! What stays here is the **wire shape**: these payloads are a published RPC
+//! surface (`people.*`) and the field names below are a compatibility surface,
+//! so the JSON is assembled here rather than serialising contract types
+//! directly. `schemas_tests` pins it.
 
-use chrono::Utc;
 use serde_json::{json, Value};
 
-use crate::openhuman::memory::people::address_book::{AddressBookError, SystemContactsSource};
-use crate::openhuman::memory::people::resolver::HandleResolver;
-use crate::openhuman::memory::people::scorer::score;
-use crate::openhuman::memory::people::store::PeopleStore;
-use crate::openhuman::memory::people::types::{Handle, PersonId};
+use crate::openhuman::memory::api::provider::{MemoryPeople, PersonHandle, PersonRecord};
 use crate::rpc::RpcOutcome;
 
-/// List people ranked by composite score, highest first.
-pub async fn handle_list(store: &PeopleStore, limit: usize) -> Result<RpcOutcome<Value>, String> {
-    let limit = limit.clamp(1, 500);
-    let people = store.list().await.map_err(|e| format!("list: {e}"))?;
-    let now = Utc::now();
-    let person_ids: Vec<PersonId> = people.iter().map(|p| p.id).collect();
-    let interactions_by_person = store
-        .batch_interactions_for(&person_ids)
-        .await
-        .map_err(|e| format!("batch_interactions_for: {e}"))?;
+/// Render one person plus their score into the published `people.*` shape.
+fn person_json(
+    person: &PersonRecord,
+    score: &crate::openhuman::memory::api::provider::PersonScore,
+) -> Value {
+    let handles: Vec<Value> = person
+        .handles
+        .iter()
+        .map(|handle| {
+            let (kind, value) = match handle {
+                PersonHandle::IMessage(v) => ("imessage", v),
+                PersonHandle::Email(v) => ("email", v),
+                PersonHandle::DisplayName(v) => ("display_name", v),
+            };
+            json!({ "kind": kind, "value": value })
+        })
+        .collect();
+    json!({
+        "person_id": person.id,
+        "display_name": person.display_name,
+        "primary_email": person.primary_email,
+        "primary_phone": person.primary_phone,
+        "handles": handles,
+        "score": score.score,
+        "components": {
+            "recency": score.recency,
+            "frequency": score.frequency,
+            "reciprocity": score.reciprocity,
+            "depth": score.depth,
+        },
+        "interaction_count": score.interaction_count,
+    })
+}
 
-    let mut ranked: Vec<(Value, f32)> = Vec::with_capacity(people.len());
-    for p in people {
-        let interactions = interactions_by_person
-            .get(&p.id)
-            .cloned()
-            .unwrap_or_default();
-        let s = score(&interactions, now);
-        let handles: Vec<Value> = p
-            .handles
-            .iter()
-            .map(|h| {
-                let (kind, value) = h.as_key();
-                json!({ "kind": kind, "value": value })
-            })
-            .collect();
-        ranked.push((
-            json!({
-                "person_id": p.id.to_string(),
-                "display_name": p.display_name,
-                "primary_email": p.primary_email,
-                "primary_phone": p.primary_phone,
-                "handles": handles,
-                "score": s.score,
-                "components": {
-                    "recency": s.recency,
-                    "frequency": s.frequency,
-                    "reciprocity": s.reciprocity,
-                    "depth": s.depth,
-                },
-                "interaction_count": interactions.len(),
-            }),
-            s.score,
-        ));
-    }
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let people_json: Vec<Value> = ranked.into_iter().take(limit).map(|(v, _)| v).collect();
+/// List people ranked by composite score, highest first.
+///
+/// The ranking is the driver's — this no longer sorts. The engine holds the
+/// interactions the score is computed from, so ranking host-side would mean
+/// fetching every person's history across the bus to re-derive an order the
+/// driver already produced.
+pub async fn handle_list(
+    people: &dyn MemoryPeople,
+    limit: usize,
+) -> Result<RpcOutcome<Value>, String> {
+    let limit = limit.clamp(1, 500);
+    let ranked = people
+        .list_people(Some(limit))
+        .await
+        .map_err(|e| format!("list: {e}"))?;
+    let people_json: Vec<Value> = ranked
+        .iter()
+        .map(|entry| person_json(&entry.person, &entry.score))
+        .collect();
     Ok(RpcOutcome::new(json!({ "people": people_json }), vec![]))
 }
 
-/// Resolve a handle to a `PersonId`. Mints on first sight when
+/// Resolve a handle to a person id. Mints on first sight when
 /// `create_if_missing` is true.
 pub async fn handle_resolve(
-    store: &PeopleStore,
-    handle: Handle,
+    people: &dyn MemoryPeople,
+    handle: PersonHandle,
     create_if_missing: bool,
 ) -> Result<RpcOutcome<Value>, String> {
-    let resolver = HandleResolver::new(store);
-    let existing = resolver.resolve(&handle).await?;
-    let (result, created) = match (existing, create_if_missing) {
-        (Some(id), _) => (Some(id), false),
-        (None, true) => {
-            let (id, created) = resolver.resolve_or_create_with_status(&handle).await?;
-            (Some(id), created)
-        }
-        (None, false) => (None, false),
-    };
+    let resolved = people
+        .resolve_handle(&handle, create_if_missing)
+        .await
+        .map_err(|e| format!("resolve: {e}"))?;
     Ok(RpcOutcome::new(
         json!({
-            "person_id": result.map(|p| p.to_string()),
-            "created": created,
+            "person_id": resolved.as_ref().map(|r| r.id.clone()),
+            "created": resolved.as_ref().is_some_and(|r| r.created),
         }),
         vec![],
     ))
@@ -91,157 +97,63 @@ pub async fn handle_resolve(
 /// Seed the people store from the system address book (CNContactStore on
 /// macOS). Triggers the TCC Contacts permission prompt if not yet granted.
 ///
-/// Returns counts of seeded and skipped contacts, plus a `permission_denied`
-/// flag so callers can surface an actionable message to the user.
-pub async fn handle_refresh_address_book(store: &PeopleStore) -> Result<RpcOutcome<Value>, String> {
-    let resolver = HandleResolver::new(store);
-    let source = SystemContactsSource;
-    match resolver.seed_from_address_book(&source).await {
-        Ok((seeded, skipped)) => {
-            tracing::debug!(
-                "[people::rpc] refresh_address_book ok: seeded={seeded} skipped={skipped}"
-            );
-            Ok(RpcOutcome::new(
-                json!({
-                    "seeded": seeded,
-                    "skipped": skipped,
-                    "permission_denied": false,
-                }),
-                vec![],
-            ))
-        }
-        Err(AddressBookError::PermissionDenied) => {
-            tracing::warn!("[people::rpc] refresh_address_book: contacts permission denied");
-            Ok(RpcOutcome::new(
-                json!({
-                    "seeded": 0,
-                    "skipped": 0,
-                    "permission_denied": true,
-                }),
-                vec![],
-            ))
-        }
-        Err(AddressBookError::Other(e)) => Err(format!("address_book: {e}")),
-    }
+/// # `permission_denied` is always `false` now, and that is a real change
+///
+/// The contract deliberately reports a host without an address book — or
+/// without permission to read it — as `seeded: 0` rather than as a distinct
+/// error, because both mean the same thing to a caller and the alternative
+/// leaks a platform detail into an engine-neutral contract. The field is kept
+/// so the published shape does not change, but it can no longer become `true`.
+/// Surfacing "grant Contacts access" needs a host-side permission probe, not a
+/// memory-driver error.
+pub async fn handle_refresh_address_book(
+    people: &dyn MemoryPeople,
+) -> Result<RpcOutcome<Value>, String> {
+    let outcome = people
+        .seed_from_address_book()
+        .await
+        .map_err(|e| format!("address_book: {e}"))?;
+    log::debug!(
+        "[people::rpc] refresh_address_book ok: seeded={} skipped={}",
+        outcome.seeded,
+        outcome.skipped
+    );
+    Ok(RpcOutcome::new(
+        json!({
+            "seeded": outcome.seeded,
+            "skipped": outcome.skipped,
+            "permission_denied": false,
+        }),
+        vec![],
+    ))
 }
 
 /// Return the component-broken-down score for one person.
 pub async fn handle_score(
-    store: &PeopleStore,
-    person_id: PersonId,
+    people: &dyn MemoryPeople,
+    person_id: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    if store
-        .get(person_id)
+    let score = people
+        .score_person(person_id)
         .await
-        .map_err(|e| format!("get_person: {e}"))?
-        .is_none()
-    {
-        return Err(format!("person not found: {person_id}"));
-    }
-    let interactions = store
-        .interactions_for(person_id)
-        .await
-        .map_err(|e| format!("interactions_for: {e}"))?;
-    let s = score(&interactions, Utc::now());
+        .map_err(|e| format!("score: {e}"))?
+        .ok_or_else(|| format!("person not found: {person_id}"))?;
     Ok(RpcOutcome::new(
         json!({
-            "person_id": person_id.to_string(),
-            "score": s.score,
+            "person_id": person_id,
+            "score": score.score,
             "components": {
-                "recency": s.recency,
-                "frequency": s.frequency,
-                "reciprocity": s.reciprocity,
-                "depth": s.depth,
+                "recency": score.recency,
+                "frequency": score.frequency,
+                "reciprocity": score.reciprocity,
+                "depth": score.depth,
             },
-            "interaction_count": interactions.len(),
+            "interaction_count": score.interaction_count,
         }),
         vec![],
     ))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::memory::people::types::{Interaction, Person};
-    use chrono::Duration;
-
-    #[tokio::test]
-    async fn list_orders_by_score_desc() {
-        let store = PeopleStore::open_in_memory().unwrap();
-        let now = Utc::now();
-
-        // Person A: strong two-way conversation, recent.
-        let a = PersonId::new();
-        store
-            .insert_person(
-                &Person {
-                    id: a,
-                    display_name: Some("Alice".into()),
-                    primary_email: Some("a@x.z".into()),
-                    primary_phone: None,
-                    handles: vec![],
-                    created_at: now,
-                    updated_at: now,
-                },
-                &[Handle::Email("a@x.z".into())],
-            )
-            .await
-            .unwrap();
-        for i in 0..10 {
-            store
-                .record_interaction(Interaction {
-                    person_id: a,
-                    ts: now - Duration::hours(i),
-                    is_outbound: i % 2 == 0,
-                    length: 300,
-                })
-                .await
-                .unwrap();
-        }
-
-        // Person B: quiet, only one old outbound.
-        let b = PersonId::new();
-        store
-            .insert_person(
-                &Person {
-                    id: b,
-                    display_name: Some("Bob".into()),
-                    primary_email: Some("b@x.z".into()),
-                    primary_phone: None,
-                    handles: vec![],
-                    created_at: now,
-                    updated_at: now,
-                },
-                &[Handle::Email("b@x.z".into())],
-            )
-            .await
-            .unwrap();
-        store
-            .record_interaction(Interaction {
-                person_id: b,
-                ts: now - Duration::days(60),
-                is_outbound: true,
-                length: 20,
-            })
-            .await
-            .unwrap();
-
-        let outcome = handle_list(&store, 10).await.unwrap();
-        let arr = outcome.value["people"].as_array().unwrap();
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0]["display_name"], "Alice");
-        assert_eq!(arr[1]["display_name"], "Bob");
-        let alice_score = arr[0]["score"].as_f64().unwrap();
-        let bob_score = arr[1]["score"].as_f64().unwrap();
-        assert!(alice_score > bob_score);
-    }
-
-    #[tokio::test]
-    async fn resolve_without_create_returns_null_for_unknown() {
-        let store = PeopleStore::open_in_memory().unwrap();
-        let outcome = handle_resolve(&store, Handle::Email("x@y.z".into()), false)
-            .await
-            .unwrap();
-        assert!(outcome.value["person_id"].is_null());
-    }
-}
+#[path = "rpc_tests.rs"]
+mod tests;

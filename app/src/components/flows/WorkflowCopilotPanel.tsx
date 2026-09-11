@@ -31,15 +31,17 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChatThreadView } from '../../features/conversations/components/ChatThreadView';
+import { useChatSurfaceRegistration } from '../../features/conversations/hooks/useChatSurfaceRegistration';
 import { useWorkflowBuilderChat } from '../../hooks/useWorkflowBuilderChat';
 import { diffGraphs } from '../../lib/flows/graphDiff';
 import type { WorkflowGraph } from '../../lib/flows/types';
 import { useT } from '../../lib/i18n/I18nContext';
+import { AssistantUiRuntimeProvider } from '../../providers/AssistantUiRuntimeProvider';
 import type { WorkflowProposal } from '../../store/chatRuntimeSlice';
 import ApprovalRequestCard from '../chat/ApprovalRequestCard';
 import ChatComposer from '../chat/ChatComposer';
 import IntegrationConnectCard from '../chat/IntegrationConnectCard';
-import Button from '../ui/Button';
+import { Button } from '../ui';
 
 const log = createDebug('app:flows:copilot-panel');
 
@@ -88,7 +90,6 @@ interface Props {
   /** Reject the pending proposal (host reverts the overlay). */
   onReject: () => void;
   /** Close the panel. */
-  onClose: () => void;
   /**
    * Optional repair seed (from a failed run's "Fix with agent") — auto-sends a
    * repair turn once on mount so the copilot opens already diagnosing.
@@ -150,7 +151,6 @@ export default function WorkflowCopilotPanel({
   onProposal,
   onAccept,
   onReject,
-  onClose,
   repairSeed = null,
   buildSeed = null,
   onBuildSeedConsumed,
@@ -358,6 +358,35 @@ export default function WorkflowCopilotPanel({
     [text, sending, send, graph, flowId, updatePendingAsk]
   );
 
+  // Claim this thread's write path for assistant-ui's runtime.
+  //
+  // Step-4 decision (how the copilot's richer transport is bridged): NO
+  // widening of `ChatSurfaceHandlers` was needed, and no signal is discarded.
+  // The seam's `send` is not "the transport" — it is "whatever the surface's
+  // composer does", which for this panel is `submit` above. `submit` already
+  // has the exact `(text?: string) => Promise<void>` shape, and it is the ONLY
+  // place that may legitimately construct a `WorkflowBuilderSendParams`: the
+  // build mode is derived there from live panel state (a one-shot prefill
+  // `build`/`create`, else `revise`) together with the current `graph` +
+  // `flowId`, and the returned `WorkflowBuilderSendResult` is consumed there by
+  // `updatePendingAsk`, which is what keeps an unanswered clarifying question
+  // alive across turns. Handing the runtime a narrower `send` that rebuilt
+  // those params itself would be the fork this registry exists to prevent, and
+  // a widened seam that returned the raw result to the runtime would leave
+  // `pendingAskRef` unset — the copilot's actual carry-forward logic — so
+  // routing through `submit` is both the smaller and the correct change.
+  //
+  // The auto-send retry paths (`buildSeed` / `repairSeed`, which branch on
+  // `outcome === 'skipped'` vs `'failed'`) are deliberately NOT reachable from
+  // the runtime: they are seeded, once-per-mount effects rather than composer
+  // sends, and they keep calling `send` directly with their full structured
+  // request and their own outcome handling.
+  const submitRef = useRef<((text?: string) => Promise<void>) | null>(null);
+  submitRef.current = submit;
+  const stopRef = useRef<(() => void) | null>(null);
+  stopRef.current = stop;
+  useChatSurfaceRegistration(threadId, submitRef, stopRef);
+
   // (B34) One-click resume for a turn that hit the agent's tool-call budget
   // (`capped`, see `useWorkflowBuilderChat`'s doc) with no proposal yet.
   // Routes through the SAME `submit` path a typed follow-up would — the
@@ -462,20 +491,13 @@ export default function WorkflowCopilotPanel({
       className={`flex h-full w-full flex-col border-l border-line bg-surface ${
         fullWidth ? '' : 'max-w-sm'
       }`}>
-      <header className="flex items-start gap-2 border-b border-line px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-content">{t('flows.copilot.title')}</p>
-          <p className="text-[11px] text-content-muted">{t('flows.copilot.subtitle')}</p>
-        </div>
-        <button
-          type="button"
-          data-testid="workflow-copilot-close"
-          aria-label={t('flows.copilot.close')}
-          onClick={onClose}
-          className="shrink-0 rounded-full p-1.5 text-content-faint hover:bg-surface-hover hover:text-content-secondary">
-          ✕
-        </button>
-      </header>
+      {/* No header. It carried a "Workflow copilot" title, a subtitle
+          describing the proposal flow, and a close ✕ — none of which earned
+          permanent height above a transcript. The panel is opened from a
+          `Copilot | Manual` toggle in the canvas header that both names it and
+          closes it (clicking the active segment collapses the rail), so the
+          title restated the control the user just pressed and the ✕ duplicated
+          it. `onClose` went with the button; nothing else called it. */}
 
       {/* Full builder transcript — the SAME rich renderer the home composer
           chat uses (message bubbles, past-turn insights, the shared tool
@@ -486,23 +508,33 @@ export default function WorkflowCopilotPanel({
           copilot now reads like the real chat instead of a bespoke transcript.
           The empty hint, proposal preview, and capped card are the copilot's
           own authoring affordances, kept in the footer below. */}
-      <ChatThreadView
-        threadId={threadId}
-        variant="sidebar"
-        scrollResetKey="workflow-copilot"
-        shareAgentName={t('flows.copilot.title')}
-        emptyContent={
-          <div className="flex h-full items-center justify-center px-3">
-            <p className="text-xs text-content-muted" data-testid="workflow-copilot-empty">
-              {t('flows.copilot.emptyState')}
-            </p>
-          </div>
-        }
-      />
+      {/* A SECOND assistant-ui runtime, scoped to this copilot's dedicated
+          builder thread. The app-wide instance in `ChatRuntimeProvider`
+          follows `selectedThreadId`, which is the home chat's thread and never
+          this one; leaving the transcript under it would make every
+          assistant-ui primitive inside `ChatThreadView` render the home chat's
+          messages here. Nesting overrides the context for this subtree only. */}
+      <AssistantUiRuntimeProvider threadId={threadId}>
+        <ChatThreadView
+          threadId={threadId}
+          variant="sidebar"
+          scrollResetKey="workflow-copilot"
+          shareAgentName={t('flows.copilot.title')}
+          emptyContent={
+            <div className="flex h-full items-center justify-center px-3">
+              <p className="text-xs text-content-muted" data-testid="workflow-copilot-empty">
+                {t('flows.copilot.emptyState')}
+              </p>
+            </div>
+          }
+        />
+      </AssistantUiRuntimeProvider>
 
       <div className="space-y-3 border-t border-line px-3 py-2.5">
         {error && (
-          <p className="text-xs text-coral" data-testid="workflow-copilot-error">
+          <p
+            className="text-xs text-coral-600 dark:text-coral-400"
+            data-testid="workflow-copilot-error">
             {error === 'offline' ? t('flows.copilot.offline') : t('flows.copilot.error')}
           </p>
         )}
@@ -510,8 +542,8 @@ export default function WorkflowCopilotPanel({
         {proposal && diff && (
           <div
             data-testid="workflow-copilot-proposal"
-            className="rounded-xl border border-ocean-300 bg-surface p-3 dark:border-ocean-700">
-            <p className="text-xs font-semibold text-ocean-900 dark:text-ocean-100">
+            className="rounded-xl border border-primary-300 bg-surface p-3 dark:border-primary-700">
+            <p className="text-xs font-semibold text-primary-900 dark:text-primary-100">
               {proposal.name || t('flows.copilot.proposalTitle')}
             </p>
             <p className="mt-1 text-[11px] text-content-muted">{t('flows.copilot.previewHint')}</p>
@@ -572,7 +604,9 @@ export default function WorkflowCopilotPanel({
               </Button>
             </div>
             {acceptState === 'idle' && enableError && (
-              <p className="mt-2 text-xs text-coral" data-testid="workflow-copilot-enable-error">
+              <p
+                className="mt-2 text-xs text-coral-600 dark:text-coral-400"
+                data-testid="workflow-copilot-enable-error">
                 {t('flows.copilot.enableError')}
               </p>
             )}
@@ -636,29 +670,40 @@ export default function WorkflowCopilotPanel({
           </div>
         )}
 
-        <ChatComposer
-          inputValue={text}
-          setInputValue={setText}
-          onSend={submit}
-          textInputRef={textInputRef}
-          fileInputRef={fileInputRef}
-          composerInteractionBlocked={sending}
-          isSending={sending}
-          onStopGeneration={stop}
-          attachments={[]}
-          onAttachFiles={noopAttach}
-          onRemoveAttachment={noop}
-          attachError={null}
-          onSwitchToMicCloud={noop}
-          handleInputKeyDown={handleInputKeyDown}
-          inlineCompletionSuffix=""
-          isComposingTextRef={isComposingTextRef}
-          maxAttachments={0}
-          allowedMimeTypes={[]}
-          attachmentsEnabled={false}
-          micEnabled={false}
-          placeholder={t('flows.copilot.placeholder')}
-        />
+        {/* A runtime scoped to THIS copilot's builder thread. `ChatComposer` is
+            built on `ComposerPrimitive`, which resolves its runtime from React
+            context — and the panel's own provider above closes around the
+            transcript only, so without this the composer would resolve the
+            app-wide runtime in `ChatRuntimeProvider`, which is bound to
+            `selectedThreadId` (the HOME chat's thread, never this one). Nothing
+            here routes a send through the runtime, so the practical effect
+            today is the composer text store; scoping it correctly anyway is
+            what keeps that true as primitives are adopted. */}
+        <AssistantUiRuntimeProvider threadId={threadId}>
+          <ChatComposer
+            inputValue={text}
+            setInputValue={setText}
+            onSend={submit}
+            textInputRef={textInputRef}
+            fileInputRef={fileInputRef}
+            composerInteractionBlocked={sending}
+            isSending={sending}
+            onStopGeneration={stop}
+            attachments={[]}
+            onAttachFiles={noopAttach}
+            onRemoveAttachment={noop}
+            attachError={null}
+            onSwitchToMicCloud={noop}
+            handleInputKeyDown={handleInputKeyDown}
+            inlineCompletionSuffix=""
+            isComposingTextRef={isComposingTextRef}
+            maxAttachments={0}
+            allowedMimeTypes={[]}
+            attachmentsEnabled={false}
+            micEnabled={false}
+            placeholder={t('flows.copilot.placeholder')}
+          />
+        </AssistantUiRuntimeProvider>
       </div>
     </aside>
   );

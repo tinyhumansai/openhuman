@@ -6,7 +6,7 @@ mod providers;
 mod schemas;
 mod types;
 
-pub use ops::{get_tool, list_tools, registry_entries};
+pub use ops::{get_tool, list_tools, registry_entries, registry_entries_for_config};
 pub use providers::{
     capability_provider_by_id, capability_provider_diagnostics, capability_provider_registry,
     is_capability_provider_trusted_enabled, list_capability_providers,

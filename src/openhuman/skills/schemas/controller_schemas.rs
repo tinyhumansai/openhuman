@@ -275,9 +275,9 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
                 },
             ],
             outputs: vec![FieldSchema {
-                name: "skill",
+                name: "workflow",
                 ty: TypeSchema::Ref("WorkflowSummary"),
-                comment: "The newly created skill, re-discovered through the standard pipeline.",
+                comment: "The newly created workflow, re-discovered through the standard pipeline.",
                 required: true,
             }],
         },
@@ -328,9 +328,9 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 FieldSchema {
-                    name: "new_skills",
+                    name: "new_workflows",
                     ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                    comment: "Slugs of skills that appeared in the catalog as a result of the install.",
+                    comment: "Slugs of workflows that appeared in the catalog as a result of the install.",
                     required: true,
                 },
             ],

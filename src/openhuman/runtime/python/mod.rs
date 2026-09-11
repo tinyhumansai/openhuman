@@ -1,18 +1,16 @@
 //! Managed Python runtime for Python-backed integrations.
 //!
-//! The immediate use case is stdio MCP servers implemented in Python. This
-//! module owns interpreter discovery and process-launch primitives so callers
-//! do not need to care whether Python came from the host or a future managed
-//! distribution.
+//! [`bootstrap`] is the client for the `tinyruntime` module: it asks for an
+//! interpreter and adapts the answer. Discovery, selection, download, and
+//! install all live in the module now.
+//!
+//! [`process`] stays here because it is not runtime management. It launches the
+//! long-lived stdio children this core owns — the runtime Python server, and the
+//! stdio MCP servers — which outlive a single job and speak their own protocols.
+//! The module resolves the interpreter; this core decides what to run with it.
 
 pub mod bootstrap;
-pub mod downloader;
-pub mod extractor;
 pub mod process;
-pub mod resolver;
 
 pub use bootstrap::{PythonBootstrap, PythonSource, ResolvedPython};
-pub use downloader::{fetch_release_metadata, select_distribution, PythonDistribution};
-pub use extractor::{atomic_install, extract_distribution};
 pub use process::PythonLaunchSpec;
-pub use resolver::{detect_system_python, parse_python_version, PythonVersion, SystemPython};

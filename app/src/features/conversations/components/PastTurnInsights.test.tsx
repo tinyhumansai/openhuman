@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { describe, expect, it } from 'vitest';
 
@@ -53,6 +53,7 @@ describe('PastTurnInsights', () => {
     renderInStore(<PastTurnInsights entries={entries} transcript={transcript} />);
 
     const subagents = screen.getByTestId('past-turn-subagents');
+    fireEvent.click(screen.getByTestId('assistant-ui-subagent-call').querySelector('button')!);
     expect(subagents.textContent).toContain('child reasoning trail');
   });
 

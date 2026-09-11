@@ -1,84 +1,113 @@
-use super::*;
+//! Tests for the Node toolchain client.
+//!
+//! What is worth testing here is the adaptation, not the resolution: the module
+//! owns probing, downloading, verifying, and installing, and it has its own
+//! suite for all of it. These cover the seam — how a module answer becomes a
+//! [`ResolvedNode`], and what happens when the host has Node turned off.
 
-fn touch(path: &Path) {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+use std::sync::Arc;
+
+use tinyruntime_bus::{Language, ResolvedRuntime, RuntimeLayout, RuntimeSource};
+
+use super::{NodeBootstrap, NodeSource, ResolvedNode};
+use crate::openhuman::config::Config;
+
+/// A module resolution carrying `executables`.
+fn resolution(executables: &[(&str, &str)]) -> ResolvedRuntime {
+    let mut layout = RuntimeLayout::new("22.11.0", "/cache/node-v22.11.0/bin");
+    for (name, path) in executables {
+        layout = layout.with_executable(*name, *path);
     }
-    std::fs::write(path, b"#!/bin/sh\n").unwrap();
+    ResolvedRuntime::from_layout(Language::nodejs(), RuntimeSource::Managed, layout)
 }
 
-fn managed_config(cache_root: &Path) -> NodeConfig {
-    NodeConfig {
-        enabled: true,
-        version: NodeConfig::default().version,
-        cache_dir: cache_root.to_string_lossy().to_string(),
-        // Force the managed path so the probe never depends on a host node.
-        prefer_system: false,
-    }
+#[test]
+fn a_resolution_becomes_the_paths_callers_name() {
+    let adapted = ResolvedNode::from_module(&resolution(&[
+        ("node", "/cache/node-v22.11.0/bin/node"),
+        ("npm", "/cache/node-v22.11.0/bin/npm"),
+    ]))
+    .expect("a toolchain reporting node adapts");
+
+    assert_eq!(
+        adapted.node_bin,
+        std::path::Path::new("/cache/node-v22.11.0/bin/node")
+    );
+    assert_eq!(
+        adapted.npm_bin,
+        std::path::Path::new("/cache/node-v22.11.0/bin/npm")
+    );
+    assert_eq!(
+        adapted.bin_dir,
+        std::path::Path::new("/cache/node-v22.11.0/bin")
+    );
+    assert_eq!(adapted.version, "22.11.0");
+    assert_eq!(adapted.source, NodeSource::Managed);
 }
 
-/// GH-5047: a warm restart is a fresh process, so the in-memory
-/// `try_cached` memo is empty. The durable probe must still recover
-/// readiness from the on-disk managed install — otherwise `is_done` reports
-/// "not ready" every launch and the harness-init overlay re-appears.
+#[test]
+fn a_toolchain_without_npm_still_resolves() {
+    // Refusing here would take `node_exec` down along with `npm_exec`, for a
+    // toolchain that runs `node` perfectly well.
+    let adapted = ResolvedNode::from_module(&resolution(&[("node", "/usr/bin/node")]))
+        .expect("a toolchain without npm is still usable");
+    assert_eq!(adapted.node_bin, std::path::Path::new("/usr/bin/node"));
+    assert!(
+        adapted
+            .npm_bin
+            .ends_with(if cfg!(windows) { "npm.cmd" } else { "npm" }),
+        "npm was not derived: {}",
+        adapted.npm_bin.display()
+    );
+}
+
+#[test]
+fn a_toolchain_without_node_is_refused() {
+    // Deriving `node` too would turn a broken install into a spawn failure much
+    // later, with nothing pointing at the cause.
+    let error = ResolvedNode::from_module(&resolution(&[("npm", "/usr/bin/npm")]))
+        .expect_err("a toolchain with no node is not a toolchain");
+    assert!(error.to_string().contains("`node`"), "got `{error}`");
+}
+
+#[test]
+fn the_version_never_keeps_a_leading_v() {
+    // Callers render this and compare it; `v22.11.0` and `22.11.0` reaching
+    // different call sites is exactly the drift the normalisation prevents.
+    let mut resolved = resolution(&[("node", "/usr/bin/node")]);
+    resolved.version = "v22.11.0".to_string();
+    let adapted = ResolvedNode::from_module(&resolved).expect("adapts");
+    assert_eq!(adapted.version, "22.11.0");
+}
+
+#[test]
+fn a_system_toolchain_is_reported_as_one() {
+    let mut resolved = resolution(&[("node", "/usr/bin/node")]);
+    resolved.source = RuntimeSource::System;
+    assert_eq!(
+        ResolvedNode::from_module(&resolved).expect("adapts").source,
+        NodeSource::System
+    );
+}
+
 #[tokio::test]
-async fn probe_installed_true_from_disk_after_simulated_restart() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cache_root = tmp.path();
+async fn a_disabled_runtime_refuses_before_reaching_the_bus() {
+    let mut config = Config::default();
+    config.node.enabled = false;
+    let bootstrap = NodeBootstrap::new(Arc::new(config));
 
-    let config = managed_config(cache_root);
-    let dist = NodeDistribution::for_host(&config.version).expect("host arch supported");
-    let bootstrap = NodeBootstrap::new(config, tmp.path().join("ws"), Client::new());
-
-    // Lay down a managed install exactly where the bootstrap expects it.
-    let bin_dir = managed_bin_dir(&bootstrap.install_dir(&dist));
-    let (node_name, npm_name) = if cfg!(windows) {
-        ("node.exe", "npm.cmd")
-    } else {
-        ("node", "npm")
-    };
-    touch(&bin_dir.join(node_name));
-    touch(&bin_dir.join(npm_name));
-
-    // Simulated cold process: nothing memoised yet.
-    assert!(
-        bootstrap.try_cached().is_none(),
-        "precondition: process-local cache is empty right after a restart"
-    );
-
-    // The durable probe recovers readiness from disk (and never downloads).
-    assert!(
-        bootstrap.probe_installed().await.is_some(),
-        "durable probe should detect the on-disk managed node install"
-    );
-    assert!(
-        bootstrap.try_cached().is_some(),
-        "a probe hit should memoise into the shared cache for the rest of the process"
-    );
-}
-
-/// A fresh machine (empty cache, no install) must report "not installed" so
-/// a genuine first-run download still runs and the overlay still shows.
-#[tokio::test]
-async fn probe_installed_none_when_nothing_on_disk() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let bootstrap = NodeBootstrap::new(
-        managed_config(tmp.path()),
-        tmp.path().join("ws"),
-        Client::new(),
-    );
+    let error = bootstrap.resolve().await.expect_err("node is off");
+    assert!(error.to_string().contains("disabled"), "got `{error}`");
     assert!(
         bootstrap.probe_installed().await.is_none(),
-        "no on-disk install → provisioning still required"
+        "a disabled runtime has nothing provisioned"
     );
 }
 
-/// A disabled runtime is "nothing to provision", not "installed".
-#[tokio::test]
-async fn probe_installed_none_when_disabled() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = managed_config(tmp.path());
-    config.enabled = false;
-    let bootstrap = NodeBootstrap::new(config, tmp.path().join("ws"), Client::new());
-    assert!(bootstrap.probe_installed().await.is_none());
+#[test]
+fn nothing_is_cached_before_the_first_resolution() {
+    // The shell consults this on every command; answering with a stale or
+    // invented toolchain would put the wrong directory on PATH.
+    let bootstrap = NodeBootstrap::new(Arc::new(Config::default()));
+    assert!(bootstrap.try_cached().is_none());
 }

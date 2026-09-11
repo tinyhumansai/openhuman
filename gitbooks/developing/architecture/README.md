@@ -40,9 +40,9 @@ OpenHuman is a **React + Tauri v2 desktop app** with a **Rust core** that does t
 
 **Where logic lives:**
 
-* **Rust core**. all business logic. Memory Tree, integrations, model routing, tools, voice. Authoritative.
-* **Tauri shell**. windowing, process lifecycle, IPC. A delivery vehicle, not where features live.
-* **React frontend**. UI and orchestration. Calls into core via JSON-RPC.
+- **Rust core**. all business logic. Memory Tree, integrations, model routing, tools, voice. Authoritative.
+- **Tauri shell**. windowing, process lifecycle, IPC. A delivery vehicle, not where features live.
+- **React frontend**. UI and orchestration. Calls into core via JSON-RPC.
 
 ## Data flow
 
@@ -61,21 +61,21 @@ OpenHuman is a **React + Tauri v2 desktop app** with a **Rust core** that does t
 
 Stays on your machine:
 
-* The Memory Tree SQLite DB.
-* The Obsidian Markdown vault.
-* Audio capture buffers and any local model state.
+- The Memory Tree SQLite DB.
+- The Obsidian Markdown vault.
+- Audio capture buffers and any local model state.
 
 Goes through the OpenHuman backend (under one subscription):
 
-* LLM calls (model providers).
-* Web search proxy.
-* Integration OAuth and tool proxying.
-* TTS streaming.
+- LLM calls (model providers).
+- Web search proxy.
+- Integration OAuth and tool proxying.
+- TTS streaming.
 
 See [Privacy & Security](../../features/privacy-and-security.md) for the full picture.
 
 ## Open source
 
-* **Repo:** [github.com/tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman). GNU GPL3.
-* **Issues and PRs** are welcome. The project is in early beta.
-* For contributors, the canonical developer guide is [deep architecture reference](../architecture.md).
+- **Repo:** [github.com/tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman). GNU GPL3.
+- **Issues and PRs** are welcome. The project is in early beta.
+- For contributors, the canonical developer guide is [deep architecture reference](../architecture.md).

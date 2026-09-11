@@ -26,16 +26,27 @@ describe('CollapsedNavRail', () => {
       'nav.home',
       'shortcuts.title',
       'nav.chat',
-      'nav.human',
       'nav.brain',
       'nav.flows',
-      'nav.agentWorld',
       'nav.connections',
     ]) {
       expect(screen.getByRole('button', { name: key })).toBeInTheDocument();
     }
     // The wallet shortcut was removed from the rail.
     expect(screen.queryByRole('button', { name: 'nav.wallet' })).not.toBeInTheDocument();
+    // Human is reached from the chat composer's idle button, not a nav row.
+    expect(screen.queryByRole('button', { name: 'nav.human' })).not.toBeInTheDocument();
+    // Rewards is cloud-gated; this store has no resolved cloud session.
+    expect(screen.queryByRole('button', { name: 'nav.rewards' })).not.toBeInTheDocument();
+  });
+
+  it('renders rail icons as sidebar menu primitives', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/connections'] });
+    const connections = screen.getByRole('button', { name: 'nav.connections' });
+    expect(connections.dataset.slot).toBe('sidebar-menu-button');
+    expect(connections.dataset.active).toBe('true');
+    expect(connections.closest('[data-slot="sidebar-menu-item"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'nav.chat' }).dataset.active).toBe('false');
   });
 
   it('shortcuts button opens the keyboard-shortcuts help directory', () => {
@@ -68,8 +79,8 @@ describe('CollapsedNavRail', () => {
   });
 
   it('marks the active destination with aria-current', () => {
-    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/agent-world'] });
-    expect(screen.getByRole('button', { name: 'nav.agentWorld' })).toHaveAttribute(
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/connections'] });
+    expect(screen.getByRole('button', { name: 'nav.connections' })).toHaveAttribute(
       'aria-current',
       'page'
     );

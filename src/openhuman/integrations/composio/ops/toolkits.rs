@@ -1,10 +1,10 @@
 //! Toolkit and capability listing ops.
 
+use super::super::module_client::{self as connectors, methods};
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
-use super::super::client::{create_composio_client, ComposioClientKind};
-use super::super::providers::{agent_ready_toolkits, capability_matrix};
+use super::super::providers::agent_ready_toolkits;
 use super::super::types::{ComposioCapabilitiesResponse, ComposioToolkitsResponse};
 use super::error_utils::{report_composio_op_error, OpResult};
 
@@ -12,26 +12,24 @@ pub async fn composio_list_toolkits(
     config: &Config,
 ) -> OpResult<RpcOutcome<ComposioToolkitsResponse>> {
     tracing::debug!("[composio] rpc list_toolkits");
-    let kind =
-        create_composio_client(config).map_err(|e| format!("[composio] list_toolkits: {e}"))?;
-    match kind {
-        ComposioClientKind::Backend(client) => {
-            tracing::debug!("[composio] list_toolkits: backend variant");
-            let resp = client.list_toolkits().await.map_err(|e| {
-                report_composio_op_error("list_toolkits", &e);
-                format!("[composio] list_toolkits failed: {e:#}")
-            })?;
+
+    match connectors::call_bare::<ComposioToolkitsResponse>(config, methods::LIST_TOOLKITS).await {
+        Ok(resp) => {
             let count = resp.toolkits.len();
             Ok(RpcOutcome::new(
                 resp,
                 vec![format!("composio: {count} toolkit(s) enabled")],
             ))
         }
-        ComposioClientKind::Direct(_) => {
+        // Direct mode has no per-user allowlist to report, and the module says
+        // so by name rather than returning an empty list. The empty list is
+        // still the right *answer* for this surface — the user manages their
+        // toolkits at app.composio.dev — so the host renders it here, with the
+        // note it has always shown, instead of the module inventing it.
+        Err(error) if connectors::is_unsupported_by_route(&error) => {
             tracing::info!(
-                "[composio-direct] list_toolkits: direct mode active — no \
-                 server-side allowlist is enforced; returning empty toolkits \
-                 list. Users manage available toolkits via app.composio.dev."
+                "[composio] list_toolkits: the live route enforces no server-side allowlist; \
+                 returning an empty list"
             );
             Ok(RpcOutcome::new(
                 ComposioToolkitsResponse::default(),
@@ -40,16 +38,29 @@ pub async fn composio_list_toolkits(
                     .to_string()],
             ))
         }
+        Err(error) => {
+            report_composio_op_error("list_toolkits", &anyhow::anyhow!("{error}"));
+            Err(format!("[composio] list_toolkits failed: {error}"))
+        }
     }
 }
 
 pub async fn composio_list_capabilities(
-    _config: &Config,
+    config: &Config,
 ) -> OpResult<RpcOutcome<ComposioCapabilitiesResponse>> {
     tracing::debug!("[composio] rpc list_capabilities");
-    let resp = ComposioCapabilitiesResponse {
-        capabilities: capability_matrix(),
-    };
+    // Used to be built host-side from `tinymemory`'s engine provider
+    // registry via `capability_matrix()`, deleted with the rest of the
+    // in-process pipeline by tinymemory v1.13.4. The connector module now
+    // answers this directly — `ListCapabilities` already returns exactly
+    // this reply shape, so there is no host-side matrix or conversion left.
+    let resp =
+        connectors::call_bare::<ComposioCapabilitiesResponse>(config, methods::LIST_CAPABILITIES)
+            .await
+            .map_err(|error| {
+                report_composio_op_error("list_capabilities", &anyhow::anyhow!("{error}"));
+                format!("[composio] list_capabilities failed: {error}")
+            })?;
     let count = resp.capabilities.len();
     Ok(RpcOutcome::new(
         resp,

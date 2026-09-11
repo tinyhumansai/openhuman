@@ -16,25 +16,54 @@ use crate::openhuman::memory::{
 
 use super::{parse_params, to_json};
 
-pub(super) const FUNCTIONS: &[&str] = &[
+// ---------------------------------------------------------------------------
+// Capability partitions
+// ---------------------------------------------------------------------------
+//
+// This file is ONE RPC family by directory layout but THREE capability families
+// by contract (`crate::openhuman::memory::api::capabilities::Capability`), so M5.2 partitions
+// it rather than tagging the whole file with a single capability:
+//
+//   * core/recall — `Capability::Core` + `Capability::Recall`, both MANDATORY.
+//     Every bindable driver advertises them (`Capabilities::validate`), so
+//     against a driver's advertised set this gate never fires. It is registered
+//     tagged `Capability::Core` regardless, because one host decision answers
+//     below the driver: `CoreContext::memory_capabilities` returns the empty
+//     set for a deliberate `[subsystems.memory] driver = "null"`, and that is
+//     how these methods disappear when an operator turns memory off. Tagging
+//     the whole file `Documents` would instead have made
+//     `memory.recall_memories` vanish under a driver that merely lacks the
+//     document tier — gating a mandatory family on an optional one.
+//   * documents — `Capability::Documents`, the namespace-document tier.
+//   * ingest — `Capability::Ingest`, where the DRIVER owns chunking/embedding.
+//     `doc_ingest` is the whole of that surface; it lives in this file only
+//     because it shares the `memory` namespace.
+//
+// `schema()` and every handler below are shared and unpartitioned.
+
+/// Mandatory core + recall surface. Never capability-gated — see above.
+pub(super) const FUNCTIONS_CORE_RECALL: &[&str] = &[
     "init",
     "list_documents",
     "list_namespaces",
+    "namespace_summaries",
     "delete_document",
     "query_namespace",
     "recall_context",
     "recall_memories",
     "namespace_list",
-    "doc_put",
-    "doc_ingest",
-    "doc_list",
-    "doc_delete",
     "context_query",
     "context_recall",
     "clear_namespace",
 ];
 
-pub(super) fn controllers() -> Vec<RegisteredController> {
+/// The namespace-document tier — `Capability::Documents`.
+pub(super) const FUNCTIONS_DOCUMENTS: &[&str] = &["doc_put", "doc_list", "doc_delete"];
+
+/// Driver-owned ingestion — `Capability::Ingest`.
+pub(super) const FUNCTIONS_INGEST: &[&str] = &["doc_ingest"];
+
+pub(super) fn controllers_core_recall() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
             schema: schema("init").unwrap(),
@@ -47,6 +76,10 @@ pub(super) fn controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema("list_namespaces").unwrap(),
             handler: handle_list_namespaces,
+        },
+        RegisteredController {
+            schema: schema("namespace_summaries").unwrap(),
+            handler: handle_namespace_summaries,
         },
         RegisteredController {
             schema: schema("delete_document").unwrap(),
@@ -69,22 +102,6 @@ pub(super) fn controllers() -> Vec<RegisteredController> {
             handler: handle_namespace_list,
         },
         RegisteredController {
-            schema: schema("doc_put").unwrap(),
-            handler: handle_doc_put,
-        },
-        RegisteredController {
-            schema: schema("doc_ingest").unwrap(),
-            handler: handle_doc_ingest,
-        },
-        RegisteredController {
-            schema: schema("doc_list").unwrap(),
-            handler: handle_doc_list,
-        },
-        RegisteredController {
-            schema: schema("doc_delete").unwrap(),
-            handler: handle_doc_delete,
-        },
-        RegisteredController {
             schema: schema("context_query").unwrap(),
             handler: handle_context_query,
         },
@@ -97,6 +114,30 @@ pub(super) fn controllers() -> Vec<RegisteredController> {
             handler: handle_clear_namespace,
         },
     ]
+}
+
+pub(super) fn controllers_documents() -> Vec<RegisteredController> {
+    vec![
+        RegisteredController {
+            schema: schema("doc_put").unwrap(),
+            handler: handle_doc_put,
+        },
+        RegisteredController {
+            schema: schema("doc_list").unwrap(),
+            handler: handle_doc_list,
+        },
+        RegisteredController {
+            schema: schema("doc_delete").unwrap(),
+            handler: handle_doc_delete,
+        },
+    ]
+}
+
+pub(super) fn controllers_ingest() -> Vec<RegisteredController> {
+    vec![RegisteredController {
+        schema: schema("doc_ingest").unwrap(),
+        handler: handle_doc_ingest,
+    }]
 }
 
 pub(super) fn schema(function: &str) -> Option<ControllerSchema> {
@@ -146,6 +187,28 @@ pub(super) fn schema(function: &str) -> Option<ControllerSchema> {
                 comment: "Envelope with namespaces array and count.",
                 required: true,
             }],
+        },
+        "namespace_summaries" => ControllerSchema {
+            namespace: "memory",
+            function: "namespace_summaries",
+            description: "Per-namespace stored-document counts plus the grand total -- the \
+                          verification surface for whether a sync's items actually landed. \
+                          list_namespaces answers names alone; this carries the numbers.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "namespaces",
+                    ty: TypeSchema::Json,
+                    comment: "One row per namespace: namespace, count, last_updated.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "total_documents",
+                    ty: TypeSchema::U64,
+                    comment: "Sum of every namespace's stored-document count.",
+                    required: true,
+                },
+            ],
         },
         "delete_document" => ControllerSchema {
             namespace: "memory",
@@ -444,6 +507,10 @@ fn handle_list_namespaces(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::memory_list_namespaces(EmptyRequest {}).await?) })
 }
 
+fn handle_namespace_summaries(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::memory_namespace_summaries().await?) })
+}
+
 fn handle_delete_document(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = parse_params::<DeleteDocumentRequest>(params)?;
@@ -537,40 +604,5 @@ fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn documents_schema_exposes_all_functions() {
-        assert_eq!(controllers().len(), FUNCTIONS.len());
-        assert!(FUNCTIONS.contains(&"init"));
-        assert!(FUNCTIONS.contains(&"doc_ingest"));
-        assert!(FUNCTIONS.contains(&"clear_namespace"));
-    }
-
-    #[test]
-    fn unknown_document_schema_returns_none() {
-        assert!(schema("not_real").is_none());
-    }
-
-    #[test]
-    fn query_namespace_schema_requires_namespace_and_query() {
-        let schema = schema("query_namespace").unwrap();
-        let required: Vec<&str> = schema
-            .inputs
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name)
-            .collect();
-        assert!(required.contains(&"namespace"));
-        assert!(required.contains(&"query"));
-    }
-
-    #[test]
-    fn clear_namespace_schema_requires_namespace() {
-        let schema = schema("clear_namespace").unwrap();
-        assert_eq!(schema.inputs.len(), 1);
-        assert_eq!(schema.inputs[0].name, "namespace");
-        assert!(schema.inputs[0].required);
-    }
-}
+#[path = "documents_tests.rs"]
+mod tests;

@@ -6,7 +6,7 @@ icon: shield
 
 OpenHuman is designed so that the **memory of your life lives on your machine**. The local SQLite Memory Tree, the Markdown Obsidian vault, your audio buffers, all of that stays under your control. The OpenHuman backend handles things that have to be brokered (LLM calls, OAuth tokens, search proxying), and nothing more.
 
-***
+---
 
 ## Privacy by Design
 
@@ -20,7 +20,7 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 **Optional** [**Local AI**](model-routing/local-ai.md)**.** If you want embeddings and summary-tree building to stay on your machine, opt in. Heartbeat / learning / subconscious loops can be moved on-device the same way.
 
-***
+---
 
 ## What stays on your machine
 
@@ -33,14 +33,14 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 ## What the OpenHuman backend handles
 
-|                                    |                                                                                                                                                                            |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **LLM calls**                      | Proxied through the backend under one subscription, then forwarded to the underlying provider (Anthropic / OpenAI / Google / etc.) per the [model router](model-routing/). |
-| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) uses the backend proxy by default, currently powered by [Exa](https://exa.ai), so you don't carry a search API key. With your own Exa, Brave, or Querit key, queries go directly to that provider; Parallel remains routed through the OpenHuman backend. If you call the optional SearXNG tool, that query goes to your configured SearXNG instance instead. |
-| **Integration OAuth & tool proxy** | Token storage and rate-limited request brokering for [118+ integrations](integrations/README.md).                                                                                 |
-| **TTS streaming**                  | Hosted [text-to-speech](native-tools/voice.md) audio streams. Audio is generated and discarded - not retained.                                                                          |
+|                                    |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **LLM calls**                      | Proxied through the backend under one subscription, then forwarded to the underlying provider (Anthropic / OpenAI / Google / etc.) per the [model router](model-routing/).                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Web search proxy**               | The native [web search tool](native-tools/web-search.md) uses the backend proxy by default, currently powered by [Exa](https://exa.ai), so you don't carry a search API key. With your own Exa, Brave, Querit, or Tavily key, queries go directly to that provider; Parallel remains routed through the OpenHuman backend. With Tavily selected, the `tavily_extract` tool also sends extraction requests — including the URLs being extracted — directly to Tavily. If you call the optional SearXNG tool, that query goes to your configured SearXNG instance instead. |
+| **Integration OAuth & tool proxy** | Token storage and rate-limited request brokering for [118+ integrations](integrations/README.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **TTS streaming**                  | Hosted [text-to-speech](native-tools/voice.md) audio streams. Audio is generated and discarded - not retained.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
-***
+---
 
 ## Permissions and access control
 
@@ -48,13 +48,13 @@ OpenHuman accesses an integration only after you complete its OAuth flow. Each c
 
 [Auto-fetch](obsidian-wiki/auto-fetch.md) does run continuously while a connection is active, that is the whole point. But it is bound by:
 
-* The **OAuth scope** you granted that integration.
-* A **per-provider sync interval** (e.g. Gmail every 15 min by default).
-* A **daily budget** per connection that caps API usage.
+- The **OAuth scope** you granted that integration.
+- A **per-provider sync interval** (e.g. Gmail every 15 min by default).
+- A **daily budget** per connection that caps API usage.
 
 If you revoke a connection, the next tick stops syncing it; chunks already in your local Memory Tree remain there because they're yours.
 
-***
+---
 
 ## Why a local memory is privacy
 
@@ -78,7 +78,7 @@ Compression and locality together become the privacy architecture.
 
 **Short-lived tokens.** Authentication tokens between the app and the backend are time-limited.
 
-***
+---
 
 ## Trust & Risk Intelligence
 
@@ -90,7 +90,7 @@ OpenHuman includes an intelligence layer designed to help you reason about credi
 
 **Advisory, not enforcement.** Trust and risk outputs are advisory signals to inform your judgment. OpenHuman does not ban users, remove messages, or enforce moderation decisions.
 
-***
+---
 
 ## Shared environments
 

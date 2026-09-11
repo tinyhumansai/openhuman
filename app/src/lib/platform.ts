@@ -1,13 +1,13 @@
 /**
  * Platform detection utilities.
  *
- * Uses navigator.userAgent plus isTauri() from webviewAccountService to decide
+ * Uses navigator.userAgent plus isTauri() to decide
  * whether we are running inside the Tauri runtime on a phone (iOS or Android).
  *
  * For tests: override via setTestPlatform() / clearTestPlatform().
  * Production code must not call the override functions.
  */
-import { isTauri } from '../services/webviewAccountService';
+import { isTauri } from '../utils/tauriCommands/common';
 
 // -- test override -----------------------------------------------------------
 

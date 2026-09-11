@@ -46,9 +46,9 @@ Embeddings and summary-tree building can run **on-device via Ollama** if you tur
 
 ## Three trees, three scopes
 
-* **Source trees**, per-source rolling buffer (L0) that seals into L1 → L2 → … as it fills. One per Gmail label, one per Slack channel, one per uploaded document, etc.
-* **Topic trees**, per-entity summaries materialized lazily by _hotness_. The more an entity (person, project, ticker, repo) shows up, the more aggressively its topic tree is built and refreshed.
-* **Global tree**, one daily global digest across everything ingested that day.
+- **Source trees**, per-source rolling buffer (L0) that seals into L1 → L2 → … as it fills. One per Gmail label, one per Slack channel, one per uploaded document, etc.
+- **Topic trees**, per-entity summaries materialized lazily by _hotness_. The more an entity (person, project, ticker, repo) shows up, the more aggressively its topic tree is built and refreshed.
+- **Global tree**, one daily global digest across everything ingested that day.
 
 Retrieval can target any scope: search a single source, drill down a topic, or pull the global digest.
 
@@ -67,9 +67,9 @@ Everything is local. Nothing about your raw data leaves your machine unless you 
 
 Vector stores answer "what is similar to this query?" Memory needs to answer more than that:
 
-* **What happened today?** (global digest)
-* **What's the latest on this person?** (topic tree, hotness-driven)
-* **What did the Stripe webhook say last Tuesday at 3pm?** (source tree + provenance)
+- **What happened today?** (global digest)
+- **What's the latest on this person?** (topic tree, hotness-driven)
+- **What did the Stripe webhook say last Tuesday at 3pm?** (source tree + provenance)
 
 Trees give you compression _and_ navigation. Embeddings still live inside so semantic search keeps working, but the structure on top is what makes the memory feel like a brain instead of a bag of fragments.
 
@@ -83,9 +83,9 @@ A new chat / email / document arrives. The hot path canonicalizes it into Markdo
 
 Three properties matter here:
 
-* **Deterministic.** Chunk IDs are content-addressed, so re-running ingest on identical input never produces duplicates.
-* **Fast.** No LLM calls in this lane - only cheap heuristics.
-* **Bounded write.** Everything happens in one transaction so a partial ingest can't leave dangling rows.
+- **Deterministic.** Chunk IDs are content-addressed, so re-running ingest on identical input never produces duplicates.
+- **Fast.** No LLM calls in this lane - only cheap heuristics.
+- **Bounded write.** Everything happens in one transaction so a partial ingest can't leave dangling rows.
 
 ### 2. Queue
 
@@ -110,9 +110,9 @@ On startup, any job whose worker lease has expired (because of a crash or kill) 
 
 Three independent trees are built from the same leaf stream.
 
-* **Source tree** - one per source. New leaves land in the L0 buffer; when the buffer fills (or a stale-flush fires), a `seal` writes an L1 summary, and the cascade continues up.
-* **Topic tree** - one per high-hotness entity. The router checks whether an entity is hot enough to deserve its own tree and, if so, appends to its buffer.
-* **Global tree** - one tree, growing one node per UTC day, walked up the hierarchy as days accumulate.
+- **Source tree** - one per source. New leaves land in the L0 buffer; when the buffer fills (or a stale-flush fires), a `seal` writes an L1 summary, and the cascade continues up.
+- **Topic tree** - one per high-hotness entity. The router checks whether an entity is hot enough to deserve its own tree and, if so, appends to its buffer.
+- **Global tree** - one tree, growing one node per UTC day, walked up the hierarchy as days accumulate.
 
 ### 5. Scheduler
 
@@ -128,18 +128,18 @@ pending_extraction --> admitted --> buffered --> sealed
          --> dropped
 ```
 
-* Extraction decides `admitted` vs `dropped` based on the deep score.
-* Admitted leaves move into a buffer (`buffered`).
-* When the buffer seals, every leaf inside is marked `sealed`.
-* `dropped` leaves stop here. Their chunk row stays for provenance, but no buffer or summary references them.
+- Extraction decides `admitted` vs `dropped` based on the deep score.
+- Admitted leaves move into a buffer (`buffered`).
+- When the buffer seals, every leaf inside is marked `sealed`.
+- `dropped` leaves stop here. Their chunk row stays for provenance, but no buffer or summary references them.
 
 This is why retrieval can show provenance without re-running the pipeline: the chunk row plus its terminal lifecycle status is enough.
 
 ## Triggering ingest
 
-* **Automatic** - every active integration is auto-fetched every twenty minutes; see [Auto-fetch](auto-fetch.md).
-* **Manual** - the Memory tab in the desktop app exposes a "Run ingest" trigger per source.
-* **RPC** - `openhuman.memory_tree_ingest` for advanced workflows.
+- **Automatic** - every active integration is auto-fetched every twenty minutes; see [Auto-fetch](auto-fetch.md).
+- **Manual** - the Memory tab in the desktop app exposes a "Run ingest" trigger per source.
+- **RPC** - `openhuman.memory_tree_ingest` for advanced workflows.
 
 ## In the desktop app - the Intelligence tab
 

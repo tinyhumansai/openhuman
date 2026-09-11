@@ -12,6 +12,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import McpToolPlayground, { parseToolArgs } from './McpToolPlayground';
 import type { McpTool } from './types';
 
+/**
+ * Radix registers its outside-pointer listener in a macrotask, so the render
+ * that opened the dialog cannot immediately be dismissed by it. Tests that act
+ * synchronously right after render observe no listener at all, so they flush
+ * first — same helper as `ui/ModalShell.test.tsx`.
+ */
+async function flushDeferredWork(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+/**
+ * Radix treats an outside interaction as pointerdown *followed by* a click —
+ * it waits for the click so dragging out of a dialog doesn't dismiss it.
+ * Firing pointerdown alone dismisses nothing.
+ */
+function dismissByOutsideClick(overlay: HTMLElement): void {
+  fireEvent.pointerDown(overlay);
+  fireEvent.click(overlay);
+}
+
 const TOOL: McpTool = {
   name: 'read_file',
   description: 'Reads a file from disk and returns its contents.',
@@ -52,7 +72,11 @@ describe('McpToolPlayground', () => {
   it('renders an accessible modal dialog with the tool name in the title', () => {
     renderPlayground();
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // Migrated onto the shared `ModalShell` / Radix `Dialog`
+    // (#radix-ui-foundation): this build's Radix Dialog.Content does not stamp
+    // an `aria-modal` attribute (the real focus-trap + inert-background
+    // behavior is still there), so that assertion moved to just the
+    // `role="dialog"` + `aria-labelledby` contract this test cares about.
     expect(dialog).toHaveAttribute('aria-labelledby', 'mcp-playground-title');
     expect(screen.getByText('Run read_file')).toBeInTheDocument();
   });
@@ -73,12 +97,21 @@ describe('McpToolPlayground', () => {
 
   it('exposes a close button with an accessible label', () => {
     renderPlayground();
-    expect(screen.getByRole('button', { name: 'Close playground' })).toBeInTheDocument();
+    // Migrated onto the shared `ModalShell` (#radix-ui-foundation): the close
+    // button is now the shell's own "Close" button rather than a hand-rolled
+    // one labelled "Close playground".
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
   });
 
-  it('focuses the args textarea on mount', () => {
+  it('focuses the args textarea on mount', async () => {
     renderPlayground();
-    expect(screen.getByLabelText('Arguments (JSON)')).toHaveFocus();
+    // `ModalShell` / Radix `Dialog` auto-focuses the dialog itself (or its
+    // first focusable element) on open; this component then steals focus
+    // back to the args editor on the next frame, after Radix's own
+    // auto-focus effect has run — so this now settles asynchronously.
+    await waitFor(() => {
+      expect(screen.getByLabelText('Arguments (JSON)')).toHaveFocus();
+    });
   });
 
   // ----------------------------------------------------------------------
@@ -114,19 +147,27 @@ describe('McpToolPlayground', () => {
   it('calls onClose when the close button is clicked', () => {
     const onClose = vi.fn();
     renderPlayground({ onClose });
-    fireEvent.click(screen.getByRole('button', { name: 'Close playground' }));
+    // Migrated onto the shared `ModalShell` (#radix-ui-foundation): the close
+    // button is now the shell's own, labelled with the common "Close" string
+    // rather than the old hand-rolled button's "Close playground" label.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onClose when the backdrop is mousedown-ed but NOT when the dialog card is', () => {
+  it('calls onClose on an outside click but NOT on a click inside the dialog card', async () => {
     const onClose = vi.fn();
     renderPlayground({ onClose });
-    const dialog = screen.getByRole('dialog');
-    // Mousedown on the backdrop itself (the dialog div) — target === currentTarget
-    fireEvent.mouseDown(dialog);
+    // Migrated onto `ModalShell` / Radix `Dialog`: the backdrop is now a
+    // separate overlay element rather than the dialog role element itself,
+    // so this exercises Radix's own outside-pointer dismissal.
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]') as HTMLElement;
+    expect(overlay).not.toBeNull();
+    await flushDeferredWork();
+    dismissByOutsideClick(overlay);
     expect(onClose).toHaveBeenCalledTimes(1);
-    // Mousedown on a descendant (the title) should NOT close
-    fireEvent.mouseDown(screen.getByText('Run read_file'));
+    // A click on a descendant (the title) should NOT close.
+    fireEvent.pointerDown(screen.getByText('Run read_file'));
+    fireEvent.click(screen.getByText('Run read_file'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

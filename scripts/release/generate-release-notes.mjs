@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -103,6 +103,80 @@ function runGh(args, options = {}) {
   }).trim();
 }
 
+const RECORD_SEPARATOR = '\x1e';
+
+/**
+ * Split a byte stream into separator-delimited records without ever holding the
+ * whole stream in memory. Chunk boundaries land anywhere, including inside a
+ * record, so the tail of each chunk is carried into the next one.
+ */
+export function createRecordSplitter(separator, onRecord) {
+  let pending = '';
+  return {
+    push(chunk) {
+      pending += chunk;
+      let index = pending.indexOf(separator);
+      while (index !== -1) {
+        onRecord(pending.slice(0, index));
+        pending = pending.slice(index + separator.length);
+        index = pending.indexOf(separator);
+      }
+    },
+    end() {
+      if (pending) {
+        onRecord(pending);
+        pending = '';
+      }
+    },
+  };
+}
+
+/**
+ * Run git and hand each separator-delimited record to `onRecord` as it arrives.
+ *
+ * `execFileSync` buffers the child's entire stdout and dies with ENOBUFS once it
+ * passes Node's 1 MiB `maxBuffer` default. The release ranges this script walks
+ * grow with every unpublished tag, so a buffered read is a ratchet that is
+ * guaranteed to break again at some future span. Streaming has no such ceiling.
+ */
+function streamGitRecords(args, onRecord, options = {}) {
+  const separator = options.separator || RECORD_SEPARATOR;
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const splitter = createRecordSplitter(separator, onRecord);
+    let stderr = '';
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      try {
+        splitter.push(chunk);
+      } catch (error) {
+        child.kill();
+        reject(error);
+      }
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`git ${args.join(' ')} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+        return;
+      }
+      try {
+        splitter.end();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      resolvePromise();
+    });
+  });
+}
+
 export function parseGitHubRepoFromRemote(remoteUrl) {
   const cleaned = String(remoteUrl || '').trim().replace(/\.git$/, '');
   const sshMatch = cleaned.match(/github\.com[:/]([^/\s]+\/[^/\s]+)$/);
@@ -167,46 +241,53 @@ export function extractPullRequestNumbers(subject) {
   return [...new Set(matches.map((match) => Number(match[1])).filter(Number.isInteger))];
 }
 
+function parseCommitRecord(entry) {
+  const [sha, subject, authorName, authorEmail, authoredAt] = entry.split('\x1f');
+  const prNumbers = extractPullRequestNumbers(subject);
+  return {
+    sha,
+    shortSha: sha.slice(0, 9),
+    subject,
+    authorName,
+    authorEmail,
+    authoredAt,
+    prNumbers,
+    primaryPrNumber: prNumbers.at(-1) || null,
+  };
+}
+
 export function parseGitLog(logText) {
   if (!logText.trim()) {
     return [];
   }
 
   return logText
-    .split('\x1e')
+    .split(RECORD_SEPARATOR)
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .map((entry) => {
-      const [sha, subject, authorName, authorEmail, authoredAt] = entry.split('\x1f');
-      const prNumbers = extractPullRequestNumbers(subject);
-      return {
-        sha,
-        shortSha: sha.slice(0, 9),
-        subject,
-        authorName,
-        authorEmail,
-        authoredAt,
-        prNumbers,
-        primaryPrNumber: prNumbers.at(-1) || null,
-      };
-    });
+    .map(parseCommitRecord);
 }
 
-function collectCommits(from, to) {
+export async function collectCommits(from, to) {
   const format = '%H%x1f%s%x1f%an%x1f%ae%x1f%aI%x1e';
-  const output = runGit(['log', `${from}..${to}`, '--reverse', `--format=${format}`]);
-  return parseGitLog(output);
+  const commits = [];
+  await streamGitRecords(['log', `${from}..${to}`, '--reverse', `--format=${format}`], (entry) => {
+    const trimmed = entry.trim();
+    if (trimmed) {
+      commits.push(parseCommitRecord(trimmed));
+    }
+  });
+  return commits;
 }
 
-function priorAuthorKeys(from) {
-  const output = runGit(['log', from, '--format=%an%x1f%ae%x1e']);
+export async function priorAuthorKeys(from) {
   const keys = new Set();
-  for (const entry of output.split('\x1e')) {
+  await streamGitRecords(['log', from, '--format=%an%x1f%ae%x1e'], (entry) => {
     const [name, email] = entry.trim().split('\x1f');
     if (name || email) {
       keys.add(authorKey({ authorName: name, authorEmail: email }));
     }
-  }
+  });
   return keys;
 }
 
@@ -671,8 +752,8 @@ async function main() {
   assertRefExists(resolvedTo, 'End');
 
   console.error(`[release-notes] Collecting ${repo} changes from ${from} to ${resolvedTo}`);
-  const commits = collectCommits(from, resolvedTo);
-  const contributors = collectContributorStats(commits, priorAuthorKeys(from));
+  const commits = await collectCommits(from, resolvedTo);
+  const contributors = collectContributorStats(commits, await priorAuthorKeys(from));
   const pullRequests = collectPullRequests(repo, commits);
   const payload = buildReleasePayload({
     from,

@@ -139,8 +139,17 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
   // throw away the in-app "Choose core mode" acceptance the app shell has
   // already cleared, and end up wedged behind that modal on first launch.
   if (didWipe && supportsExecuteScript()) {
-    stepLog('Clearing renderer storage + reloading webview');
-    await browser.execute(() => {
+    // EdgeDriver can attach to WebView2 via its CDP port, but a full document
+    // reload discards that target and leaves the session attached to an empty
+    // document. Clear persisted storage everywhere, then reset the hash in
+    // place on Windows so the shared session remains attached to the app.
+    const reloadRenderer = process.platform !== 'win32';
+    stepLog(
+      reloadRenderer
+        ? 'Clearing renderer storage + reloading webview'
+        : 'Clearing renderer storage + resetting webview route in place (WebView2)'
+    );
+    await browser.execute((shouldReload: boolean) => {
       try {
         window.localStorage.clear();
         window.sessionStorage.clear();
@@ -148,14 +157,18 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
         console.warn('[resetApp] storage.clear failed', err);
       }
       window.location.replace('#/');
-      window.location.reload();
-    });
-    // window.location.reload() is asynchronous — give the browser time to
-    // start the reload before we poll readyState. Without this pause the
-    // subsequent waitForApp / waitForAppReady calls may find readyState:
-    // 'complete' on the OLD document (before the reload started) and return
-    // immediately, racing with the reload and producing a stale auth state.
-    await browser.pause(1_000);
+      if (shouldReload) {
+        window.location.reload();
+      }
+    }, reloadRenderer);
+    if (reloadRenderer) {
+      // window.location.reload() is asynchronous — give the browser time to
+      // start the reload before we poll readyState. Without this pause the
+      // subsequent waitForApp / waitForAppReady calls may find readyState:
+      // 'complete' on the OLD document (before the reload started) and return
+      // immediately, racing with the reload and producing a stale auth state.
+      await browser.pause(1_000);
+    }
   } else if (didWipe) {
     stepLog('execute() unsupported — skipping renderer reload (state may be stale)');
   } else {

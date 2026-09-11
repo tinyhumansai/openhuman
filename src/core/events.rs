@@ -1,0 +1,1897 @@
+//! The domain event catalog: every cross-module event OpenHuman emits.
+//!
+//! This is the vocabulary half of what used to be `core::bus`. The
+//! machinery half — the bus, the subscriber trait, the handle, the native
+//! request registry — now lives in the `tinybus` crate; what stays here is the
+//! part that is specific to OpenHuman and has no business in a generic bus.
+//!
+//! # Why these types are serializable now
+//!
+//! Events used to be delivered as Rust values inside one process. They now
+//! travel over tinybus, which means they cross a process boundary and are
+//! encoded as JSON. Two consequences worth knowing before adding a variant:
+//!
+//! - **Payloads must be plain data.** No `Arc`, no trait objects, no channels.
+//!   A cross-module call that needs those is a native request
+//!   (`tinybus::NativeRegistry`), not an event.
+//! - **Adding a variant or a field is compatible; renaming or removing one is
+//!   not.** A subscriber built before the change has to keep parsing what a
+//!   publisher built after it emits.
+//!
+//! `domain()` is the routing key: it becomes the last element of the object
+//! path the event is published at, so the broker can filter by domain and never
+//! wake a process for events it did not ask for.
+
+/// Voice-domain events.
+#[non_exhaustive]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum VoiceEvent {
+    /// A PTT session committed a transcript to a thread. Carries only
+    /// length/timing — never the raw text, per the PII-safe logging rule.
+    PttTranscriptCommitted {
+        thread_id: String,
+        session_id: u64,
+        text_len: usize,
+        held_ms: u64,
+        finalized_by_watchdog: bool,
+    },
+}
+
+/// Top-level domain event. Non-exhaustive so new variants can be added
+/// without breaking existing match arms.
+#[non_exhaustive]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum DomainEvent {
+    // ── Agent ───────────────────────────────────────────────────────────
+    /// An agent turn has started processing.
+    AgentTurnStarted { session_id: String, channel: String },
+    /// An agent turn completed with a final response.
+    AgentTurnCompleted {
+        session_id: String,
+        text_chars: usize,
+        iterations: usize,
+    },
+    /// An error occurred during agent processing.
+    AgentError {
+        session_id: String,
+        message: String,
+        recoverable: bool,
+    },
+    /// A sub-agent was dispatched via `spawn_subagent`.
+    SubagentSpawned {
+        /// Parent agent's session id.
+        parent_session: String,
+        /// Sub-agent definition id (e.g. `researcher`, `notion_specialist`, `fork`).
+        agent_id: String,
+        /// Spawn mode — `"typed"` or `"fork"`.
+        mode: String,
+        /// Per-spawn task id (UUID).
+        task_id: String,
+        /// Length of the prompt the parent passed in.
+        prompt_chars: usize,
+    },
+    /// A sub-agent finished successfully.
+    SubagentCompleted {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// A sub-agent failed (max iterations, provider error, missing
+    /// definition, etc.). The error string is suitable for logging
+    /// and surfacing to the parent model.
+    SubagentFailed {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        error: String,
+    },
+    /// A sub-agent called `ask_user_clarification` and paused, waiting
+    /// for the orchestrator to relay the user's answer via
+    /// `continue_subagent`.
+    SubagentAwaitingUser {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        question: String,
+    },
+    /// High-level orchestration accepted a child agent for execution.
+    AgentOrchestrationSpawned {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        parent_agent_id: Option<String>,
+    },
+    /// High-level orchestration observed a child agent completion.
+    AgentOrchestrationCompleted {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// High-level orchestration observed a child agent failure.
+    AgentOrchestrationFailed {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        error: String,
+    },
+    /// High-level orchestration closed or cancelled a child agent.
+    AgentOrchestrationClosed {
+        session_id: String,
+        orchestration_id: String,
+        reason: Option<String>,
+    },
+    // ── Subconscious orchestrator ───────────────────────────────────────
+    /// A subconscious trigger finished gate evaluation (promote or drop).
+    /// Observability only — lets dashboards see ingestion volume and the
+    /// gate's promote/drop ratio without reading logs.
+    SubconsciousTriggerProcessed {
+        /// Trigger source family (`cron` / `user_message` / …).
+        source: String,
+        /// Gate decision (`promote` / `drop`).
+        decision: String,
+        /// Whether the trigger was promoted into the long-lived session.
+        promoted: bool,
+        /// Gate evaluation latency in milliseconds.
+        latency_ms: u64,
+    },
+
+    // ── Run Queue ──────────────────────────────────────────────────────
+    /// A message was queued into the active-run queue instead of interrupting.
+    RunQueueMessageQueued {
+        thread_id: String,
+        mode: String,
+        queue_depth: usize,
+    },
+    /// A queued followup message was dispatched as a fresh turn after the
+    /// current turn completed.
+    RunQueueFollowupDispatched {
+        thread_id: String,
+        followup_count: usize,
+    },
+    /// The active turn was interrupted by a new message (default behavior).
+    RunQueueInterrupted {
+        thread_id: String,
+        cancelled_request_id: String,
+    },
+    /// One or more queued steer/collect messages were delivered into a running
+    /// turn's steering handle (the harness applies them at the next iteration
+    /// checkpoint). Restores the delivery visibility the legacy
+    /// `RunQueueMessageDelivered` event provided before the TinyAgents migration
+    /// (issue #4456). `mode` is `"steer"` or `"collect"`.
+    RunQueueMessageDelivered {
+        thread_id: String,
+        mode: String,
+        delivered: usize,
+    },
+    /// Residual steer messages that the turn ended or was cancelled before
+    /// applying were drained back into the session run queue so they become the
+    /// next turn's input instead of silently vanishing (issue #4456).
+    RunQueueSteerRequeued { thread_id: String, requeued: usize },
+
+    // ── Monitor ───────────────────────────────────────────────────────
+    /// A background monitor changed lifecycle state.
+    MonitorStatusChanged {
+        monitor_id: String,
+        status: String,
+        thread_id: Option<String>,
+        description: String,
+    },
+    /// A background monitor emitted one bounded stdout/stderr line.
+    MonitorLine {
+        monitor_id: String,
+        thread_id: Option<String>,
+        timestamp_ms: u64,
+        stream: String,
+        line: String,
+    },
+
+    // ── Memory ──────────────────────────────────────────────────────────
+    /// The configured embedding provider is unreachable or the requested model
+    /// is not installed, so the memory pipeline fell back to an alternative.
+    ///
+    /// Published by `memory_store::factories` (once per process via the
+    /// `OLLAMA_HEALTH_REPORTED` latch) so the UI can surface a user-visible
+    /// warning with an actionable fix hint. The `message` field is a
+    /// pre-formatted human-readable string safe to show in a notification.
+    EmbeddingModelUnhealthy {
+        /// Short provider slug, e.g. `"ollama"`.
+        provider: String,
+        /// The model that was intended but could not be reached / found,
+        /// e.g. `"bge-m3"`.
+        model: String,
+        /// The provider that will serve embeddings for this session instead,
+        /// e.g. `"cloud"`.
+        fallback_provider: String,
+        /// Human-readable explanation with an actionable fix,
+        /// e.g. `"Local embedding model unreachable — falling back to cloud
+        /// embeddings. Run \`ollama pull bge-m3\` to fix."`.
+        message: String,
+    },
+
+    /// A BYO (bring-your-own-key) chat provider rejected the configured API
+    /// key with `401` / `403` — the third-party key is invalid or revoked.
+    ///
+    /// Published by `inference::provider::ops::http_error::
+    /// log_byo_provider_auth_failure` (once per failure episode, via the
+    /// `auth_error_registry` latch — the underlying 401 repeats per retry).
+    /// The same rejection demotes the raw error from Sentry (it's
+    /// unactionable user-state), so this event is what keeps it visible to
+    /// the user: the notification bridge turns it into a core notification,
+    /// and the AI-settings panel reads the registry snapshot to render an
+    /// inline provider-error notice. The `message` field is a pre-formatted,
+    /// actionable string safe to show as-is.
+    ProviderApiKeyRejected {
+        /// Provider slug, e.g. `"openrouter"`.
+        provider: String,
+        /// Human-readable, actionable explanation (update the key in
+        /// Connections → API keys → LLM). See `auth_error_registry::auth_error_message`.
+        message: String,
+    },
+
+    /// A memory entry was stored.
+    MemoryStored {
+        key: String,
+        category: String,
+        namespace: String,
+    },
+    /// A memory recall query completed.
+    MemoryRecalled { query: String, hit_count: usize },
+    /// The configured memory driver could not be bound, and the kernel fell
+    /// back to the placeholder. Never silent — `docs/specs/kernel.md` §3.7.
+    ///
+    /// Carries driver *ids* and an operator-facing reason only: never an
+    /// endpoint, a `credential_ref`, or user memory content. See
+    /// `MemoryDriverConfig`'s manual redacting `Debug` impl for the same rule
+    /// on the config side.
+    MemoryDriverBindFailed {
+        /// The driver id asked for in `[subsystems.memory] driver`.
+        configured_driver: String,
+        /// What was bound instead (today always `"null"`).
+        bound_driver: String,
+        /// Why the configured driver was refused.
+        reason: String,
+    },
+    /// The memory policy guard refused a call before it reached the bound
+    /// driver (`docs/specs/kernel.md` §3.4).
+    ///
+    /// Carries the driver id, the contract method, and an operator-facing
+    /// reason — **never** a namespace key, a recall query, or memory content.
+    /// Same rule as [`Self::MemoryDriverBindFailed`] above, and the reason
+    /// [`Self::MemoryRecalled`] (which carries the raw query) is not reused for
+    /// this: the guard sits on the hot path and must not put user text on the
+    /// bus.
+    ///
+    /// Published on refusals only. A guard that published on success would emit
+    /// one event per memory read.
+    MemoryGuardDenied {
+        /// The bound driver the call was headed for.
+        driver_id: String,
+        /// The contract method that was refused, e.g. `"core.store"` or
+        /// `"tree.query_source"`.
+        method: String,
+        /// Why the guard refused it.
+        reason: String,
+    },
+    /// A memory sync was requested for a specific channel or all channels.
+    ///
+    /// Published by `openhuman.memory_sync_channel` (channel_id = Some(...)) and
+    /// `openhuman.memory_sync_all` (channel_id = None). No consumers exist yet —
+    /// this variant is a hook for future ingestion subscribers to react to pull
+    /// requests. See `src/openhuman/memory/ops.rs` for the RPC handlers.
+    MemorySyncRequested { channel_id: Option<String> },
+    /// A high-level memory sync orchestration stage changed.
+    ///
+    /// Emitted by the `memory` domain so the frontend can surface progress
+    /// across request → fetch → store → queue → ingest → complete.
+    ///
+    /// `source_id` is the originating memory-source id (from
+    /// `memory_sources`) when the event can be attributed to a specific
+    /// source row. The frontend prefers this over `connection_id` for
+    /// per-row indicator matching (see RC#2, issue #3295). Set to `None`
+    /// when the event originates from a non-memory-source sync path (e.g. a
+    /// channel-provider ingest) — `connection_id` remains unchanged for
+    /// those callers.
+    MemorySyncStageChanged {
+        trigger: String,
+        stage: String,
+        provider: Option<String>,
+        connection_id: Option<String>,
+        detail: Option<String>,
+        /// Originating memory-source id for frontend per-row indicator
+        /// matching. `None` when the event is not attributable to a
+        /// specific `MemorySourceEntry`.
+        source_id: Option<String>,
+    },
+    /// A memory ingestion job started running on the local extraction LLM.
+    /// Ingestion is singleton — this fires once, then a matching
+    /// [`Self::MemoryIngestionCompleted`] follows when the job finishes.
+    MemoryIngestionStarted {
+        document_id: String,
+        title: String,
+        namespace: String,
+        queue_depth: usize,
+    },
+    /// A memory ingestion job finished (successfully or with an error).
+    MemoryIngestionCompleted {
+        document_id: String,
+        namespace: String,
+        success: bool,
+        elapsed_ms: u64,
+        queue_depth: usize,
+    },
+
+    // ── Memory Diff ─────────────────────────────────────────────────────
+    /// A snapshot of a memory source's chunk state was captured.
+    MemoryDiffSnapshotTaken {
+        snapshot_id: String,
+        source_id: String,
+        source_kind: String,
+        item_count: usize,
+        trigger: String,
+    },
+    /// A diff was computed between two snapshots.
+    MemoryDiffComputed {
+        source_id: String,
+        from_snapshot_id: Option<String>,
+        to_snapshot_id: String,
+        added: usize,
+        removed: usize,
+        modified: usize,
+    },
+    /// Read markers were committed for one or more sources, acknowledging
+    /// their current diffs as consumed.
+    MemoryDiffMarkedRead {
+        source_ids: Vec<String>,
+        snapshot_ids: Vec<String>,
+    },
+
+    // ── Channels ────────────────────────────────────────────────────────
+    /// An inbound channel message from the transport layer, ready for processing.
+    ///
+    /// `sender`, `reply_target`, and `thread_ts` are carried alongside
+    /// `channel` so the agent loop can derive per-sender conversation keys
+    /// the same way `channels::context::conversation_history_key` does for
+    /// other inbound paths — keying on `channel` alone collapses distinct
+    /// senders inside a shared channel into one cached session.
+    ChannelInboundMessage {
+        event_name: String,
+        channel: String,
+        message: String,
+        #[doc = "Originating user/account id within the channel. `None` for legacy publishers that don't surface it."]
+        sender: Option<String>,
+        #[doc = "Direct-message peer or group thread the reply should go to. `None` when the channel does not distinguish."]
+        reply_target: Option<String>,
+        #[doc = "Slack/Discord thread anchor when the message is in-thread. `None` for top-level messages."]
+        thread_ts: Option<String>,
+        raw_data: serde_json::Value,
+    },
+    /// A message was received on a channel.
+    ChannelMessageReceived {
+        channel: String,
+        message_id: String,
+        sender: String,
+        reply_target: String,
+        content: String,
+        thread_ts: Option<String>,
+        /// Provider-neutral envelope projected from the inbound channel message.
+        /// Legacy publishers may omit it until they adopt TinyChannels.
+        inbound_envelope: Option<tinychannels_bus::ChannelInboundEnvelope>,
+        /// Workspace directory active when this event was published.
+        /// Subscribers that persist data must reject events whose
+        /// `workspace_dir` does not match their own workspace binding.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// A channel message was fully processed (LLM response sent or error).
+    ChannelMessageProcessed {
+        channel: String,
+        message_id: String,
+        sender: String,
+        reply_target: String,
+        content: String,
+        thread_ts: Option<String>,
+        response: String,
+        /// Provider route selected for the LLM turn.
+        provider: String,
+        /// Model route selected for the LLM turn.
+        model: String,
+        elapsed_ms: u64,
+        success: bool,
+        /// Workspace directory active when this event was published.
+        /// Subscribers that persist data must reject events whose
+        /// `workspace_dir` does not match their own workspace binding.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// A reaction event was received from a channel transport.
+    ChannelReactionReceived {
+        channel: String,
+        sender: String,
+        target_message_id: String,
+        emoji: String,
+    },
+    /// A reaction update was sent to a channel transport.
+    ChannelReactionSent {
+        channel: String,
+        target_message_id: String,
+        emoji: String,
+        success: bool,
+    },
+    /// A channel connected successfully.
+    ChannelConnected { channel: String },
+    /// A channel disconnected.
+    ChannelDisconnected { channel: String, reason: String },
+
+    // ── Cron ────────────────────────────────────────────────────────────
+    /// A cron job was triggered for execution.
+    CronJobTriggered {
+        job_id: String,
+        job_name: String,
+        job_type: String,
+    },
+    /// A cron job completed execution.
+    CronJobCompleted {
+        job_id: String,
+        success: bool,
+        output: String,
+    },
+    /// A cron job requests delivery of its output to a channel.
+    CronDeliveryRequested {
+        job_id: String,
+        channel: String,
+        target: String,
+        output: String,
+    },
+
+    /// A proactive message (morning briefing, welcome, cron output, etc.)
+    /// needs to be delivered to the user. The channels module routes it to
+    /// the user's active channel.
+    ProactiveMessageRequested {
+        /// Identifies the source (e.g. `"cron:morning_briefing"`, `"cron:welcome"`).
+        source: String,
+        /// The message content to deliver.
+        message: String,
+        /// Optional job name for display/threading purposes.
+        job_name: Option<String>,
+    },
+    /// A `flow`-type cron job fired its schedule tick (issue B2,
+    /// `my_docs/ohxtf/b2-triggers-trust/01-triggers-and-trust.md` §1).
+    /// Published by `cron::scheduler` when a `JobType::Flow` job comes due;
+    /// carries only the flow id (the trigger payload for a `schedule` flow is
+    /// always empty — `flows::ops::flows_run` seeds `{}`). Consumed by
+    /// `flows::bus::FlowTriggerSubscriber`, which loads the flow, checks it is
+    /// still enabled with a `schedule` trigger, and spawns a run.
+    FlowScheduleTick {
+        /// Identifier of the `flows::Flow` to run.
+        flow_id: String,
+    },
+    /// Live per-step progress of an in-flight `flows_run` / `flows_resume`
+    /// (issue G2, live run observation). Published from
+    /// `flows::observability::FlowRunObserver::on_step_finish` as each
+    /// non-trigger node settles, so the Workflows UI can show a run advancing
+    /// node-by-node instead of only polling the settled `flow_runs` row. The
+    /// durable `flow_runs` row (updated incrementally by the same observer and
+    /// finalized at settle) remains the source of truth — this event is a
+    /// best-effort progress feed (broadcast bridges drop on lag), which is why
+    /// the frontend keeps its 2s poller as a fallback.
+    FlowRunProgress {
+        /// The run's stable identifier (== the tinyflows checkpointer thread id).
+        run_id: String,
+        /// The node whose step just finished.
+        node_id: String,
+        /// Step outcome: `"success"` | `"error"`.
+        status: String,
+    },
+
+    /// A `flows_run` (or `flows_resume`) invocation just persisted its
+    /// `flow_runs` row, before execution begins (issue B35, runs-rail live
+    /// refresh). Published from `flows::ops::flows_run` right after
+    /// `start_flow_run_row` returns, so the UI can show "Running" immediately
+    /// instead of waiting for the blocking RPC to resolve or the first
+    /// `FlowRunProgress` step. Covers every run source (Rpc/Schedule/AppEvent/
+    /// Resume, incl. copilot live-run) since they all funnel through
+    /// `start_flow_run_row`.
+    FlowRunStarted {
+        /// The affected flow's id.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer thread id).
+        run_id: String,
+    },
+
+    /// The terminal companion to [`FlowRunStarted`] (issue B35 follow-up, runs
+    /// rail live finish). Published from `flows::ops::finish_flow_run_row`
+    /// right after `store::finish_flow_run` persists the terminal
+    /// `flow_runs` row, so the UI can flip a run to Completed/Failed live
+    /// instead of relying on a poll to notice the settled row.
+    FlowRunFinished {
+        /// The affected flow's id.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer thread id).
+        run_id: String,
+        /// Terminal status: `"completed"` | `"failed"` |
+        /// `"completed_with_warnings"` | `"cancelled"`.
+        status: String,
+    },
+
+    /// A saved flow's definition changed (created / updated / deleted /
+    /// enable-toggled). Bridged to a `flow:changed` socket event so an open
+    /// Workflows list or canvas refetches instead of silently showing stale
+    /// state — most importantly, so an agent `save_workflow` becomes visible in
+    /// a canvas the user has open (audit F6). Best-effort (broadcast bridges
+    /// drop on lag); the UI's own refetch-on-focus remains the backstop.
+    FlowChanged {
+        /// The affected flow's id.
+        flow_id: String,
+        /// What happened: `"created"` | `"updated"` | `"deleted"` |
+        /// `"enabled_changed"`.
+        kind: String,
+        /// Who made the change: `"agent"` | `"user"` | `"system"` — a coarse
+        /// hint for the UI banner ("an assistant edited this flow").
+        actor: String,
+    },
+
+    // ── Skills ──────────────────────────────────────────────────────────
+    /// A skill was loaded into the runtime.
+    WorkflowLoaded { skill_id: String, runtime: String },
+    /// A skill was stopped.
+    WorkflowStopped { skill_id: String },
+    /// A skill failed to start.
+    WorkflowStartFailed { skill_id: String, error: String },
+    /// A skill tool was executed.
+    WorkflowExecuted {
+        skill_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+        result: Option<String>,
+        success: bool,
+        elapsed_ms: u64,
+    },
+    /// The set of installed skills/workflows changed (install / uninstall /
+    /// create). Lets a live agent session refresh its `## Installed Skills`
+    /// catalogue mid-conversation instead of waiting for a restart. `reason`
+    /// is a short tag for logs (e.g. `"install"`, `"uninstall"`, `"create"`).
+    WorkflowsChanged { reason: String },
+
+    // ── Tools ───────────────────────────────────────────────────────────
+    /// A tool execution started.
+    ToolExecutionStarted {
+        tool_name: String,
+        session_id: String,
+    },
+    /// A tool execution completed.
+    ToolExecutionCompleted {
+        tool_name: String,
+        session_id: String,
+        success: bool,
+        elapsed_ms: u64,
+    },
+
+    // ── Workspace isolation ─────────────────────────────────────────────
+    /// A TinyAgents workspace descriptor was prepared for an isolated run.
+    WorkspacePrepared {
+        /// Audit identity of the policy that produced the workspace.
+        policy_id: String,
+        /// Allowed workspace root.
+        root: String,
+    },
+    /// A TinyAgents workspace descriptor blocked an out-of-root path.
+    WorkspaceViolation {
+        /// Path that failed the descriptor's allowed-root policy.
+        path: String,
+    },
+    /// A TinyAgents workspace descriptor was cleaned up.
+    WorkspaceCleanup {
+        /// Audit identity of the policy whose workspace was cleaned up.
+        policy_id: String,
+        /// Cleanup error, when cleanup failed.
+        error: Option<String>,
+    },
+
+    // ── Approval ────────────────────────────────────────────────────────
+    /// Agent attempted a tool call that produces an external side
+    /// effect; awaiting user approval. Published by `ApprovalGate`
+    /// before parking the tool-call future. Issue #1339.
+    ///
+    /// Note: this variant intentionally does not carry a `session_id`.
+    /// Session provenance is internal to `ApprovalGate`; downstream
+    /// surfaces (frontend approval card, audit log readers, web channel
+    /// bridge) only need the request correlation id plus optional chat
+    /// thread/client routing.
+    ApprovalRequested {
+        /// Unique id used to correlate the decision back to the
+        /// parked future.
+        request_id: String,
+        /// Tool name being gated (e.g. `"composio"`, `"pushover"`).
+        tool_name: String,
+        /// Short human-readable summary of the action, redacted of
+        /// PII/secrets/message bodies (counts/shape only).
+        action_summary: String,
+        /// Redacted JSON arguments — also stripped of raw user content.
+        args_redacted: serde_json::Value,
+        /// Chat thread the gated call belongs to, when the turn originated
+        /// from a chat channel — lets the web channel route a `yes`/`no`
+        /// reply back to this request. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the approval question to,
+        /// when known. `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+    /// User decided a pending approval. Published by `approval_decide`
+    /// RPC handler after the gate's parked future resolves.
+    ApprovalDecided {
+        request_id: String,
+        tool_name: String,
+        /// `"approve_once"`, `"approve_always_for_tool"`,
+        /// `"approve_always_for_flow"`, or `"deny"`.
+        decision: String,
+    },
+    /// A `Workflow`-origin tool call parked in the `ApprovalGate` (issue
+    /// flow-approval-surface, PR2/PR3). Unlike `ApprovalRequested`, this
+    /// event carries no `thread_id`/`client_id` — a flow run has neither, so
+    /// the generic chat-routed socket bridge
+    /// (`web_chat::event_bus::ApprovalSurfaceSubscriber`)
+    /// silently drops it (that gap was the original silent-deadlock bug).
+    /// Published by `ApprovalGate::intercept_audited` alongside the existing
+    /// `ApprovalRequested`, bridged by `core::socketio` directly to a
+    /// broadcast (not per-room) `flow_approval_request` Socket.IO event so
+    /// the Workflows UI can surface and resolve the park without polling.
+    FlowApprovalRequested {
+        /// Unique id used to correlate the decision back to the parked
+        /// future — pass to `approval_decide` unchanged.
+        request_id: String,
+        /// The `flows::Flow` id whose run parked this call.
+        flow_id: String,
+        /// The run's stable identifier (== the tinyflows checkpointer
+        /// thread id).
+        run_id: String,
+        /// Tool name being gated (e.g. `"composio"`).
+        tool_name: String,
+        /// Short human-readable summary of the action (redacted, same as
+        /// `ApprovalRequested::action_summary`).
+        summary: String,
+    },
+
+    // ── Egress (privacy spine) ──────────────────────────────────────────
+    /// An external data transfer is about to leave the device. Published by
+    /// [`crate::openhuman::security::egress::emit_external_transfer`] from every
+    /// external-egress point (LLM inference, Composio tool calls, backend
+    /// integrations, network-fetch tools, cloud embeddings) *before* the
+    /// transfer, carrying an [`EgressDescriptor`](crate::openhuman::security::egress::EgressDescriptor)
+    /// that answers "what leaves, to where, why". Privacy epic S2 (#4436).
+    ///
+    /// Bridged to the `external_transfer_pending` web-channel socket event by
+    /// `EgressSurfaceSubscriber` (defined in
+    /// `src/openhuman/web_chat/event_bus.rs`) when the emitting
+    /// turn carries chat routing. `thread_id` / `client_id` come from the
+    /// ambient `APPROVAL_CHAT_CONTEXT` and are `None` for CLI / cron /
+    /// background transfers (no chat surface to route to).
+    ///
+    /// Only external transfers fire this event — local-only inference
+    /// (Ollama / LM Studio / …) never leaves the device and is not published.
+    ExternalTransferPending {
+        /// What leaves, to where, and why (plus S5 identification-risk fields,
+        /// default-empty until the detector lands).
+        descriptor: crate::openhuman::security::egress::EgressDescriptor,
+        /// Chat thread the transfer belongs to, when the turn originated from a
+        /// chat channel. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the disclosure to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+
+    // ── Plan review (interactive plan-mode gate) ────────────────────────
+    /// An interactive turn parked on a thread-scoped plan the user must
+    /// review before execution. Published by
+    /// [`crate::openhuman::agent::plan_review::gate::PlanReviewGate::request_review`]
+    /// and bridged to the web channel as a `plan_review_request` socket event.
+    PlanReviewRequested {
+        /// Unique id correlating the decision back to the parked turn.
+        request_id: String,
+        /// Chat thread the parked turn belongs to (routing). `None` for
+        /// non-chat callers (which auto-approve and never park here).
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the review to, when known.
+        client_id: Option<String>,
+        /// One-line description of the plan.
+        summary: String,
+        /// Ordered plan steps shown in the review card.
+        steps: Vec<String>,
+    },
+    /// User resolved a parked plan review. Published after the gate's parked
+    /// future wakes. `decision` is `"approve"` / `"reject"` / `"revise"`
+    /// (revise feedback is user content and is intentionally omitted).
+    PlanReviewDecided {
+        request_id: String,
+        decision: String,
+    },
+
+    // ── Artifacts ───────────────────────────────────────────────────────
+    /// An artifact transitioned to [`ArtifactStatus::Ready`] — file
+    /// is on disk and ready to be downloaded. Published by
+    /// [`crate::openhuman::agent::artifacts::store::finalize_artifact`].
+    /// Bridged to the web channel as an `artifact_ready` socket event
+    /// when the publishing turn carries an `APPROVAL_CHAT_CONTEXT`
+    /// (see [`crate::openhuman::security::approval::ApprovalChatContext`]).
+    /// Sub-task #2779 of #1535.
+    ArtifactReady {
+        /// UUID of the artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Absolute workspace root the artifact belongs to (matches
+        /// the `workspace_dir` parameter passed to
+        /// `finalize_artifact`). Bound to the event so a subscriber
+        /// firing AFTER the user switched workspaces can detect the
+        /// mismatch and drop the surface — `path` is workspace-
+        /// relative and would otherwise resolve into the wrong
+        /// `<workspace>/artifacts/` tree.
+        workspace_dir: String,
+        /// Relative path under `<workspace>/artifacts/`, e.g.
+        /// `"<uuid>/deck.pptx"`. The absolute path is reachable via
+        /// `ai_get_artifact` so the renderer never needs the
+        /// workspace root.
+        path: String,
+        /// Final on-disk file size in bytes.
+        size_bytes: u64,
+        /// Chat thread the artifact belongs to, when the producing
+        /// turn carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI /
+        /// cron / sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when
+        /// known. `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+    /// An artifact transitioned to [`ArtifactStatus::Failed`] — the
+    /// producer surfaced a reason and the UI should render a
+    /// retry-hint card instead of a download. Bridged the same way
+    /// as [`Self::ArtifactReady`]. Sub-task #2779 of #1535.
+    ArtifactFailed {
+        artifact_id: String,
+        kind: String,
+        title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
+        /// Producer-supplied failure reason. Already truncated by the
+        /// producer (e.g. `PresentationError::truncate_stderr`).
+        error: String,
+        thread_id: Option<String>,
+        client_id: Option<String>,
+    },
+    /// An artifact record has been **created** (`ArtifactStatus::Pending`)
+    /// but no bytes are on disk yet — the producing tool has only just
+    /// reserved the row. Published by
+    /// [`crate::openhuman::agent::artifacts::store::create_artifact`].
+    /// Bridged to the web channel as an `artifact_pending` socket event
+    /// so the frontend can render an in-progress / "Generating…" card the
+    /// moment the tool dispatches, instead of waiting until the file
+    /// arrives via [`Self::ArtifactReady`]. The pending card is replaced
+    /// in place when the matching `ArtifactReady` / `ArtifactFailed`
+    /// event with the same `artifact_id` arrives. Sub-task #3162 of #1535.
+    ArtifactPending {
+        /// UUID of the freshly-created artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
+        /// Relative path under `<workspace>/artifacts/` where the file
+        /// *will* land. The frontend uses it to render a stable card key
+        /// so subsequent `ArtifactReady` can swap the same surface in
+        /// place without flicker.
+        path: String,
+        /// Chat thread the artifact belongs to, when the producing turn
+        /// carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI / cron /
+        /// sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+
+    // ── Webhooks ────────────────────────────────────────────────────────
+    /// An incoming webhook request from the transport layer, ready for routing.
+    WebhookIncomingRequest {
+        request: crate::openhuman::skills::webhooks::WebhookRequest,
+        raw_data: serde_json::Value,
+    },
+    /// A webhook was received and routed to a skill.
+    WebhookReceived {
+        tunnel_id: String,
+        skill_id: String,
+        method: String,
+        path: String,
+        correlation_id: String,
+    },
+    /// A webhook tunnel was registered to a skill.
+    WebhookRegistered {
+        tunnel_id: String,
+        skill_id: String,
+        tunnel_name: Option<String>,
+    },
+    /// A webhook tunnel was unregistered from a skill.
+    WebhookUnregistered { tunnel_id: String, skill_id: String },
+    /// A webhook request was fully processed (includes timing and status).
+    WebhookProcessed {
+        tunnel_id: String,
+        skill_id: String,
+        method: String,
+        path: String,
+        correlation_id: String,
+        status_code: u16,
+        elapsed_ms: u64,
+        error: Option<String>,
+    },
+
+    // ── Composio ────────────────────────────────────────────────────────
+    /// A Composio trigger webhook arrived via the backend socket.io bridge
+    /// and is ready for domain-specific dispatch.
+    ComposioTriggerReceived {
+        /// Toolkit slug, e.g. `"gmail"`.
+        toolkit: String,
+        /// Trigger slug, e.g. `"GMAIL_NEW_GMAIL_MESSAGE"`.
+        trigger: String,
+        /// Composio trigger event id (from backend metadata.id).
+        metadata_id: String,
+        /// Composio trigger UUID (from backend metadata.uuid).
+        metadata_uuid: String,
+        /// Provider-specific trigger payload.
+        payload: serde_json::Value,
+    },
+    /// A Composio connection OAuth handoff was initiated (connectUrl returned).
+    ComposioConnectionCreated {
+        toolkit: String,
+        connection_id: String,
+        connect_url: String,
+    },
+    /// A Composio connection was removed.
+    ComposioConnectionDeleted {
+        toolkit: String,
+        connection_id: String,
+    },
+    /// The connected Composio toolkit set changed (connect/revoke/config flip).
+    ///
+    /// `toolkits` is the currently-active, sanitised slug list that should
+    /// drive orchestrator delegation schema rebuilds.
+    ComposioIntegrationsChanged { toolkits: Vec<String> },
+    /// A Composio action was executed (success or failure) via the backend.
+    ComposioActionExecuted {
+        tool: String,
+        success: bool,
+        error: Option<String>,
+        cost_usd: f64,
+        elapsed_ms: u64,
+    },
+    /// The user changed the Composio routing configuration — either the
+    /// mode (`"backend"` ↔ `"direct"`) flipped, or the direct-mode API
+    /// key was stored / cleared. Subscribers should treat any cached
+    /// tenant-scoped Composio state (connections, toolkit allowlists,
+    /// tool catalogues) as stale and re-fetch on next access. Published
+    /// by `composio_set_api_key` / `composio_clear_api_key`.
+    ComposioConfigChanged {
+        /// New routing mode after the change (`"backend"` or `"direct"`).
+        mode: String,
+        /// Whether a direct-mode API key is now present in the encrypted
+        /// store. The key itself is never carried on the event.
+        api_key_set: bool,
+    },
+
+    // ── Triage ──────────────────────────────────────────────────────────
+    //
+    // Published by `crate::openhuman::agent::triage` when an external
+    // trigger (Composio webhook today, cron / webhook / other sources
+    // later) has been classified by the trigger-triage agent. The
+    // `source` field is a short slug like `"composio"` / `"cron"` so the
+    // events stay source-agnostic — any module that calls
+    // `agent::triage::run_triage` will publish these.
+    /// A trigger event was evaluated by the triage agent and assigned
+    /// one of the four actions (drop / acknowledge / react / escalate).
+    TriggerEvaluated {
+        /// Where the trigger came from — `"composio"`, `"cron"`, …
+        source: String,
+        /// Source-specific stable id for this trigger occurrence.
+        external_id: String,
+        /// Human-friendly label, e.g. `"composio/gmail/GMAIL_NEW_GMAIL_MESSAGE"`.
+        display_label: String,
+        /// The classifier's action as a short string
+        /// (`"drop"` / `"acknowledge"` / `"react"` / `"escalate"`).
+        decision: String,
+        /// `true` if the triage turn ran on the local LLM, `false` if it
+        /// ran on the remote default provider.
+        used_local: bool,
+        /// Wall-clock time from envelope receipt to published decision.
+        latency_ms: u64,
+    },
+    /// Triage decided to hand the trigger off to another agent
+    /// (`trigger_reactor` for `react`, `orchestrator` for `escalate`).
+    /// Only fires for `react` / `escalate` — `drop` / `acknowledge` get
+    /// only a [`Self::TriggerEvaluated`] event.
+    TriggerEscalated {
+        source: String,
+        external_id: String,
+        display_label: String,
+        /// Agent definition id the trigger was handed off to.
+        target_agent: String,
+    },
+    /// Triage failed entirely — both local and remote attempts errored,
+    /// or the classifier reply could not be parsed after retry. Hooks
+    /// ops dashboards and future alerting.
+    TriggerEscalationFailed {
+        source: String,
+        external_id: String,
+        reason: String,
+    },
+
+    // ── Tree Summarizer ──────────────────────────────────────────────────
+    /// An hour leaf was created from buffered data.
+    TreeSummarizerHourCompleted {
+        namespace: String,
+        node_id: String,
+        token_count: u32,
+    },
+    /// A tree node summary was updated during propagation.
+    TreeSummarizerPropagated {
+        namespace: String,
+        node_id: String,
+        level: String,
+        token_count: u32,
+    },
+    /// A full tree rebuild completed.
+    TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
+
+    /// Fine-grained progress during the memory tree build pipeline.
+    /// Emitted at each sub-phase so the frontend can show detailed status.
+    MemoryTreeBuildProgress {
+        /// Which phase: "extract", "append", "seal", "flush", "embed"
+        phase: String,
+        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
+        step: String,
+        /// Tree scope when available (e.g. "github:org/repo")
+        tree_scope: Option<String>,
+        /// Tree level being processed (0 = leaves, 1+ = summaries)
+        level: Option<u32>,
+        /// Number of items being processed in this step
+        item_count: Option<u32>,
+        /// Human-readable detail
+        detail: Option<String>,
+    },
+
+    // ── Notification ────────────────────────────────────────────────────
+    /// An integration notification was ingested from an embedded webview.
+    NotificationIngested {
+        id: String,
+        provider: String,
+        account_id: Option<String>,
+    },
+    /// An integration notification's triage scoring completed.
+    NotificationTriaged {
+        id: String,
+        provider: String,
+        /// One of: "drop", "acknowledge", "react", "escalate"
+        action: String,
+        importance_score: f32,
+        latency_ms: u64,
+        /// True when the triage result was actually routed to the orchestrator path.
+        routed: bool,
+    },
+
+    // ── Device pairing ──────────────────────────────────────────────────
+    /// A mobile device completed the X25519 handshake and is now paired.
+    DevicePaired {
+        channel_id: String,
+        device_pubkey: String,
+        label: Option<String>,
+    },
+    /// A paired device's tunnel session was revoked.
+    DeviceRevoked { channel_id: String },
+    /// The backend tunnel reported the peer (device) came online.
+    DevicePeerOnline { channel_id: String },
+    /// The backend tunnel reported the peer (device) went offline.
+    DevicePeerOffline { channel_id: String },
+    /// An encrypted tunnel frame arrived from the device.
+    DeviceTunnelFrame {
+        channel_id: String,
+        payload_b64: String,
+    },
+    // ── Memory tree ─────────────────────────────────────────────────────
+    /// A document (chat batch, email thread, or standalone document) was
+    /// fully canonicalised and its chunks written to the memory tree.
+    ///
+    /// Emitted by `tinymemory_core::tree::ingest::persist()` after the chunk upsert
+    /// and extract-job enqueue complete. Subscribers (Phase 2 producers such
+    /// as the email-signature parser) react to this to inspect the
+    /// canonicalised content.
+    DocumentCanonicalized {
+        /// The source identifier passed to the ingest call (e.g. `"gmail:abc"`,
+        /// `"conversations:agent"`).
+        source_id: String,
+        /// Kind of content — `"chat"`, `"email"`, `"document"`.
+        source_kind: String,
+        /// Number of chunks written to `vector_chunks` in this ingest.
+        chunks_written: usize,
+        /// IDs of the chunks that were written.
+        chunk_ids: Vec<String>,
+        /// Wall-clock seconds since epoch when canonicalisation completed.
+        canonicalized_at: f64,
+        /// Last ≤ 2 048 characters of the canonicalised markdown body.
+        ///
+        /// Populated for `email` and `document` sources so that lightweight
+        /// subscribers (e.g. the email-signature parser) can inspect trailing
+        /// content without hitting disk. `None` for `chat` sources where the
+        /// content is conversational and doesn't contain signature-style structure.
+        body_preview: Option<String>,
+    },
+
+    // ── Learning ─────────────────────────────────────────────────────────
+    /// The stability detector finished a full cache rebuild cycle.
+    ///
+    /// Emitted by `learning::stability_detector` (Phase 3) after writing
+    /// the new snapshot to `user_profile_facets`. Subscribers (Phase 4
+    /// `profile_md_renderer`) react to re-render the `PROFILE.md` managed
+    /// blocks.
+    CacheRebuilt {
+        /// Number of facets added in this cycle.
+        added: usize,
+        /// Number of facets evicted (below τ_evict threshold) in this cycle.
+        evicted: usize,
+        /// Number of facets unchanged / carried over.
+        kept: usize,
+        /// Total facets in the cache after the rebuild.
+        total_size: usize,
+        /// Wall-clock seconds since epoch when the rebuild completed.
+        rebuilt_at: f64,
+    },
+
+    // ── MCP Clients ─────────────────────────────────────────────────────
+    /// A new MCP server was installed from the Smithery registry.
+    McpServerInstalled {
+        server_id: String,
+        qualified_name: String,
+    },
+    /// An MCP server subprocess connected and completed the initialize handshake.
+    McpServerConnected { server_id: String, tool_count: u32 },
+    /// An MCP server subprocess was disconnected or terminated.
+    McpServerDisconnected {
+        server_id: String,
+        reason: Option<String>,
+    },
+    /// An MCP client tool was invoked.
+    McpClientToolExecuted {
+        server_id: String,
+        tool_name: String,
+        success: bool,
+        elapsed_ms: u64,
+    },
+    /// The MCP setup agent asked the user for a secret value. The UI
+    /// subscribes to this and renders a native prompt; on submit it calls
+    /// `openhuman.mcp_setup_submit_secret`. `ref_id` is the opaque handle
+    /// returned to the agent; the raw secret value never traverses this
+    /// event.
+    McpSetupSecretRequested {
+        ref_id: String,
+        key_name: String,
+        prompt: String,
+    },
+    /// A remote MCP server returned a tool whose `description` or
+    /// `title` failed the input-validation scan and was dropped from
+    /// the registry before reaching the agent LLM context. Surfaced for
+    /// audit / observability only; carries no payload content because
+    /// the rejected text could itself be a vector.
+    McpToolRejected {
+        /// Registered MCP server name the tool came from.
+        server: String,
+        /// Remote tool name as advertised by the server.
+        tool: String,
+        /// Short pattern / rule code from the validator (e.g.
+        /// `"override.ignore_previous"`). Never the rejected payload.
+        reason: String,
+    },
+
+    // ── MCP reconnect supervisor (#5931) ───────────────────────────────
+    //
+    // Published by `mcp::registry::supervisor_events` from the report
+    // `tinymcp::Supervisor::tick` hands back each minute. They are what puts
+    // a probe outcome on the developer Event Log, and what the notification
+    // bridge reads to tell the user about a server that stays down. An
+    // answered probe is deliberately not an event: one row per server per
+    // minute would bury everything else in the log.
+    /// A connected MCP server did not answer its liveness probe inside the
+    /// window, but the session was kept: a single slow answer is not
+    /// evidence of a drop. Only `teardown_after` consecutive timeouts end
+    /// the session, and that tick publishes
+    /// [`Self::McpServerTransportDropped`] instead of this.
+    McpServerProbeTimedOut {
+        server_id: String,
+        /// The registry's qualified name, e.g. `"ac.inference.sh/mcp"`.
+        qualified_name: String,
+        /// The probe window that elapsed, in seconds.
+        probe_timeout_secs: u64,
+        /// How many probes in a row have now timed out, this one included.
+        consecutive_timeouts: u32,
+        /// The streak length at which the session is torn down.
+        teardown_after: u32,
+        /// Workspace the supervised host belongs to.
+        ///
+        /// One process supervises every workspace it has opened over its life
+        /// (`mcp::host::all_hosts`), and a workspace switch leaves the old
+        /// host open and still supervised. A subscriber that persists one of
+        /// these must therefore address the store by *this* field rather than
+        /// by its own workspace binding: the two disagree after a switch, in
+        /// whichever direction, and using the binding files one account's
+        /// outage under another's.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor ended an MCP server's session because its liveness
+    /// probe found the transport unusable. A reconnect follows in the same
+    /// tick and reports as [`Self::McpServerReconnected`],
+    /// [`Self::McpServerReconnectFailed`] or [`Self::McpServerParked`].
+    McpServerTransportDropped {
+        server_id: String,
+        qualified_name: String,
+        /// What the probe observed: `"broken"` (the transport answered with
+        /// an error), `"timed_out"` (the timeout streak reached its limit)
+        /// or `"missing"` (the entry went away between the membership check
+        /// and the probe).
+        outcome: String,
+        /// The transport error, already rendered and endpoint-redacted by
+        /// `tinymcp`. `None` unless `outcome` is `"broken"`.
+        detail: Option<String>,
+        /// How long the failing probe took, or the window that elapsed for a
+        /// timeout, in milliseconds. `None` for `"missing"`.
+        elapsed_ms: Option<u64>,
+        /// The timeout streak that ended the session; zero unless `outcome`
+        /// is `"timed_out"`.
+        consecutive_timeouts: u32,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor connected an MCP server, either rebuilding a session
+    /// it had just ended or bringing back one that had stayed down.
+    McpServerReconnected {
+        server_id: String,
+        qualified_name: String,
+        tool_count: u32,
+        /// How many consecutive attempts had failed before this one. Zero
+        /// means the session was rebuilt within the tick that ended it and
+        /// nobody noticed; anything else means the server's tools had been
+        /// unavailable across at least one whole tick, which is what the
+        /// notification bridge keys off to announce a recovery.
+        after_failures: u32,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor failed to connect an MCP server and will retry after
+    /// a backoff. Until a retry succeeds the server's tools are unavailable
+    /// to the agent.
+    ///
+    /// Published once per attempt; the notification bridge notifies on the
+    /// first failure of an episode (`failures == 1`) only.
+    McpServerReconnectFailed {
+        server_id: String,
+        qualified_name: String,
+        /// The connection error, already rendered and endpoint-redacted.
+        error: String,
+        /// How many consecutive attempts have now failed, this one included.
+        failures: u32,
+        /// Seconds until the next attempt.
+        retry_in_secs: u64,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor gave up on an MCP server because the failure is one
+    /// retrying cannot fix — today, the launcher runtime (`npx` / `uvx`) is
+    /// not installed. The server stays parked until it is disabled and
+    /// re-enabled.
+    McpServerParked {
+        server_id: String,
+        qualified_name: String,
+        /// The failure, already rendered, including the install guidance
+        /// `tinymcp` attaches to a missing runtime.
+        error: String,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+
+    /// An `OPENHUMAN_APPROVAL_GATE=0` env override was observed but
+    /// IGNORED because the host is the Tauri desktop shell. The gate is
+    /// always installed under the desktop host; this event lets the UI
+    /// surface a one-shot info banner so the user sees the override was
+    /// rejected. Audit-only; carries no payload content.
+    ApprovalGateOverrideIgnored {
+        /// Host tag (currently always `"tauri-shell"` — added for forward
+        /// compatibility when more desktop hosts land).
+        host: String,
+    },
+    /// The approval gate was NOT installed because an
+    /// `OPENHUMAN_APPROVAL_GATE=0` env override was honored on a
+    /// standalone host (CLI / Docker). Surfaces the elevated-privilege
+    /// state so any connected dashboard can flag it; the desktop UI
+    /// banner subscribes to this variant.
+    ApprovalGateDisabled {
+        /// Host tag (`"cli"` or `"docker"`).
+        host: String,
+        /// Short reason code so downstream consumers can switch on the
+        /// cause without parsing free-text logs. Currently always
+        /// `"env-override"`.
+        reason: String,
+    },
+
+    // ── System lifecycle ────────────────────────────────────────────────
+    /// A system component started up.
+    SystemStartup { component: String },
+    /// A system component is shutting down.
+    SystemShutdown { component: String },
+    /// A restart of the current core process was requested.
+    SystemRestartRequested { source: String, reason: String },
+    /// A graceful shutdown of the current core process was requested.
+    /// Distinct from [`Self::SystemShutdown`] (per-component shutdown
+    /// notification) — this variant asks the running process to exit.
+    SystemShutdownRequested { source: String, reason: String },
+    /// The `[autonomy]` block (agent access mode / filesystem permissions) was
+    /// changed at runtime. Live sessions should rebuild their `SecurityPolicy`
+    /// from the persisted config before the next turn.
+    AutonomyConfigChanged,
+    /// The agent's filesystem roots (currently the `action_dir` sandbox) were
+    /// changed at runtime via `config.update_agent_paths`. The live
+    /// `SecurityPolicy` is hot-swapped in-band; this broadcast lets other
+    /// listeners observe the change.
+    AgentPathsChanged,
+    /// The process switched to a different workspace (#5966).
+    ///
+    /// One process serves more than one workspace over its life — desktop
+    /// login, logout and pending-session revalidation all re-resolve it — and
+    /// until now that happened silently. Long-lived consumers had no way to
+    /// learn about a switch other than to re-read the marker on a timer, and a
+    /// process-wide stream like the Event Log had no way at all: it would keep
+    /// presenting the previous workspace's rows as the current ones.
+    ///
+    /// Published by the config loader's cached-workspace write-through, and
+    /// only when the value actually changes — the loader itself runs on far
+    /// more than switches, and announcing every load would bury the real ones.
+    ///
+    /// `workspace_dir` is for in-process consumers. Anything crossing to a
+    /// client sends
+    /// [`workspace_handle`](crate::openhuman::config::workspace_handle)
+    /// instead, since the path is under the user's home directory.
+    ActiveWorkspaceChanged {
+        workspace_dir: std::path::PathBuf,
+        /// Monotonic revision of this transition.
+        ///
+        /// The connect-time snapshot a client is seeded with and this
+        /// broadcast travel on separate tasks, so a snapshot resolved before
+        /// a switch can be delivered after it. Carrying the revision lets a
+        /// client keep the highest it has seen and discard anything older,
+        /// rather than being talked back into the previous workspace.
+        revision: u64,
+    },
+    /// A component's health status changed.
+    HealthChanged {
+        component: String,
+        healthy: bool,
+        message: Option<String>,
+    },
+    /// A component restart was observed.
+    HealthRestarted { component: String },
+    /// A one-time harness-init step changed state (pending → running → done /
+    /// failed / skipped). Surfaced to the frontend initialization screen.
+    HarnessInitProgress {
+        step_id: String,
+        state: String,
+        message: Option<String>,
+        percent: Option<u8>,
+    },
+    /// The harness-init run reached a terminal state. `failed_required` is true
+    /// only when a *required* step failed (no required steps today).
+    HarnessInitCompleted {
+        overall: String,
+        failed_required: bool,
+    },
+
+    // ── Keyring ─────────────────────────────────────────────────────────
+    /// The OS keyring is unavailable and no user consent for local fallback
+    /// has been recorded. Published once (deduplicated) when a secret
+    /// operation hits the consent gate. The frontend surfaces a consent
+    /// dialog in response.
+    KeyringConsentRequired,
+    /// A secret field failed to decrypt (rotated master key, corrupted
+    /// ciphertext, keychain reset). Published so the frontend can surface
+    /// a recovery prompt instead of silently clearing the field.
+    KeyringDecryptFailed { field_name: String, reason: String },
+
+    // ── Auth ────────────────────────────────────────────────────────────
+    /// The local app session is no longer valid — typically detected when
+    /// the backend returns 401 to an LLM inference call or a JSON-RPC
+    /// method. Subscribers tear down the session and pause background
+    /// LLM-bound work until the user signs back in.
+    ///
+    /// `source` is a short slug (e.g. `"llm_provider.openhuman_backend"`,
+    /// `"jsonrpc.invoke_method"`) so subscribers and logs can attribute
+    /// the trigger. `reason` is the sanitized error message that caused
+    /// detection (already redacted by the call site) — surfaced to logs,
+    /// never to Sentry or the UI verbatim.
+    SessionExpired { source: String, reason: String },
+
+    // ── Voice ────────────────────────────────────────────────────────────
+    /// A voice domain event (PTT, transcription lifecycle, etc.).
+    Voice(VoiceEvent),
+
+    // ── Task sources ─────────────────────────────────────────────────────
+    /// A task source completed a fetch pass.
+    TaskSourceFetched {
+        source_id: String,
+        provider: String,
+        fetched: usize,
+        routed: usize,
+        skipped: usize,
+    },
+    /// A single external task was ingested and routed onto the board.
+    TaskSourceTaskIngested {
+        source_id: String,
+        provider: String,
+        external_id: String,
+        title: String,
+        urgency: f32,
+    },
+    /// A task source fetch pass failed.
+    TaskSourceFetchFailed {
+        source_id: String,
+        provider: String,
+        error: String,
+    },
+    /// A task-board card needs human plan approval before the dispatcher will
+    /// execute it (emitted when `autonomy.require_task_plan_approval` is on and
+    /// the dispatcher parks a `todo` card at `awaiting_approval`).
+    ///
+    /// Surfacing: the parked card is persisted with status `awaiting_approval`,
+    /// so the kanban board renders it with inline Approve/Reject on the next
+    /// board fetch/refresh — that is the current (poll-based) surface and the
+    /// reason this telemetry event has no dedicated subscriber yet. A realtime
+    /// socket bridge (à la `ApprovalRequested` → `approval_request`) is a
+    /// deliberate follow-up; emitting the event now lets that bridge attach
+    /// without a schema change.
+    TaskPlanAwaitingApproval { card_id: String, thread_id: String },
+    /// A stale or wedged task run was reclaimed — the card moved back to
+    /// `todo` (re-dispatchable) or `blocked` (max reclaim count exceeded).
+    TaskRunReclaimed {
+        run_id: String,
+        card_id: String,
+        thread_id: String,
+        reason: String,
+    },
+
+    // ── Thread goals ──────────────────────────────────────────────────
+    /// A thread's goal was created, replaced, or transitioned state
+    /// (active/paused/budget_limited/complete). Drives the desktop goal chip.
+    ThreadGoalUpdated {
+        thread_id: String,
+        goal_id: String,
+        status: String,
+    },
+    /// A thread's goal was cleared (deleted).
+    ThreadGoalCleared { thread_id: String },
+}
+
+/// Truncate to `max` characters, appending `…` when anything was dropped.
+///
+/// Counted in `char`s, so a multi-byte error cannot be split mid-character.
+/// The ellipsis is the point: without it a clipped provider error reads as if
+/// it ended where it was cut, and a reader cannot tell a complete message from
+/// a truncated one. Shared so the Event Log summary and the notification
+/// bodies cannot drift into three different truncation rules — they had.
+#[must_use]
+pub fn clip_to_chars(text: &str, max: usize) -> String {
+    let mut out: String = text.chars().take(max).collect();
+    if text.chars().nth(max).is_some() {
+        out.push('…');
+    }
+    out
+}
+
+impl DomainEvent {
+    /// Returns the domain name for routing and filtering.
+    pub fn domain(&self) -> &'static str {
+        match self {
+            Self::AgentTurnStarted { .. }
+            | Self::AgentTurnCompleted { .. }
+            | Self::AgentError { .. }
+            | Self::SubagentSpawned { .. }
+            | Self::SubagentCompleted { .. }
+            | Self::SubagentFailed { .. }
+            | Self::SubagentAwaitingUser { .. }
+            | Self::AgentOrchestrationSpawned { .. }
+            | Self::AgentOrchestrationCompleted { .. }
+            | Self::AgentOrchestrationFailed { .. }
+            | Self::AgentOrchestrationClosed { .. }
+            | Self::RunQueueMessageQueued { .. }
+            | Self::RunQueueFollowupDispatched { .. }
+            | Self::RunQueueInterrupted { .. }
+            | Self::RunQueueMessageDelivered { .. }
+            | Self::RunQueueSteerRequeued { .. } => "agent",
+
+            Self::MonitorStatusChanged { .. } | Self::MonitorLine { .. } => "monitor",
+
+            Self::EmbeddingModelUnhealthy { .. }
+            | Self::MemoryStored { .. }
+            | Self::MemoryRecalled { .. }
+            | Self::MemoryDriverBindFailed { .. }
+            | Self::MemoryGuardDenied { .. }
+            | Self::MemorySyncRequested { .. }
+            | Self::MemorySyncStageChanged { .. }
+            | Self::MemoryIngestionStarted { .. }
+            | Self::MemoryIngestionCompleted { .. }
+            | Self::DocumentCanonicalized { .. }
+            | Self::MemoryDiffSnapshotTaken { .. }
+            | Self::MemoryDiffComputed { .. }
+            | Self::MemoryDiffMarkedRead { .. } => "memory",
+
+            Self::CacheRebuilt { .. } => "learning",
+
+            Self::ChannelInboundMessage { .. }
+            | Self::ChannelMessageReceived { .. }
+            | Self::ChannelMessageProcessed { .. }
+            | Self::ChannelReactionReceived { .. }
+            | Self::ChannelReactionSent { .. }
+            | Self::ChannelConnected { .. }
+            | Self::ChannelDisconnected { .. } => "channel",
+
+            Self::CronJobTriggered { .. }
+            | Self::CronJobCompleted { .. }
+            | Self::CronDeliveryRequested { .. }
+            | Self::ProactiveMessageRequested { .. }
+            | Self::FlowScheduleTick { .. }
+            | Self::FlowRunProgress { .. }
+            | Self::FlowRunStarted { .. }
+            | Self::FlowRunFinished { .. }
+            | Self::FlowChanged { .. } => "cron",
+
+            Self::WorkflowLoaded { .. }
+            | Self::WorkflowStopped { .. }
+            | Self::WorkflowStartFailed { .. }
+            | Self::WorkflowExecuted { .. }
+            | Self::WorkflowsChanged { .. } => "workflow",
+
+            Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
+
+            Self::WorkspacePrepared { .. }
+            | Self::WorkspaceViolation { .. }
+            | Self::WorkspaceCleanup { .. } => "workspace",
+
+            Self::WebhookIncomingRequest { .. }
+            | Self::WebhookReceived { .. }
+            | Self::WebhookRegistered { .. }
+            | Self::WebhookUnregistered { .. }
+            | Self::WebhookProcessed { .. } => "webhook",
+
+            Self::ComposioTriggerReceived { .. }
+            | Self::ComposioConnectionCreated { .. }
+            | Self::ComposioConnectionDeleted { .. }
+            | Self::ComposioIntegrationsChanged { .. }
+            | Self::ComposioActionExecuted { .. }
+            | Self::ComposioConfigChanged { .. } => "composio",
+
+            Self::TriggerEvaluated { .. }
+            | Self::TriggerEscalated { .. }
+            | Self::TriggerEscalationFailed { .. } => "triage",
+
+            Self::TreeSummarizerHourCompleted { .. }
+            | Self::TreeSummarizerPropagated { .. }
+            | Self::TreeSummarizerRebuildCompleted { .. }
+            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
+
+            Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
+
+            Self::DevicePaired { .. }
+            | Self::DeviceRevoked { .. }
+            | Self::DevicePeerOnline { .. }
+            | Self::DevicePeerOffline { .. }
+            | Self::DeviceTunnelFrame { .. } => "device",
+
+            Self::SystemStartup { .. }
+            | Self::SystemShutdown { .. }
+            | Self::SystemRestartRequested { .. }
+            | Self::SystemShutdownRequested { .. }
+            | Self::AutonomyConfigChanged
+            | Self::AgentPathsChanged
+            | Self::ActiveWorkspaceChanged { .. }
+            | Self::HealthChanged { .. }
+            | Self::HealthRestarted { .. }
+            | Self::HarnessInitProgress { .. }
+            | Self::HarnessInitCompleted { .. } => "system",
+
+            Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
+
+            Self::SessionExpired { .. } | Self::ProviderApiKeyRejected { .. } => "auth",
+
+            Self::TaskSourceFetched { .. }
+            | Self::TaskSourceTaskIngested { .. }
+            | Self::TaskSourceFetchFailed { .. } => "task_sources",
+
+            Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
+
+            Self::ThreadGoalUpdated { .. } | Self::ThreadGoalCleared { .. } => "agent",
+
+            Self::SubconsciousTriggerProcessed { .. } => "subconscious",
+
+            Self::Voice(_) => "voice",
+
+            Self::ApprovalRequested { .. }
+            | Self::ApprovalDecided { .. }
+            | Self::ApprovalGateOverrideIgnored { .. }
+            | Self::ApprovalGateDisabled { .. }
+            | Self::FlowApprovalRequested { .. } => "approval",
+
+            Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
+
+            Self::ExternalTransferPending { .. } => "egress",
+
+            Self::ArtifactReady { .. }
+            | Self::ArtifactFailed { .. }
+            | Self::ArtifactPending { .. } => "artifact",
+
+            Self::McpServerInstalled { .. }
+            | Self::McpServerConnected { .. }
+            | Self::McpServerDisconnected { .. }
+            | Self::McpClientToolExecuted { .. }
+            | Self::McpSetupSecretRequested { .. }
+            | Self::McpToolRejected { .. }
+            | Self::McpServerProbeTimedOut { .. }
+            | Self::McpServerTransportDropped { .. }
+            | Self::McpServerReconnected { .. }
+            | Self::McpServerReconnectFailed { .. }
+            | Self::McpServerParked { .. } => "mcp_client",
+        }
+    }
+
+    /// Stable variant name without payload (avoids Debug format coupling).
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::AgentTurnStarted { .. } => "AgentTurnStarted",
+            Self::AgentTurnCompleted { .. } => "AgentTurnCompleted",
+            Self::AgentError { .. } => "AgentError",
+            Self::SubagentSpawned { .. } => "SubagentSpawned",
+            Self::SubagentCompleted { .. } => "SubagentCompleted",
+            Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::SubagentAwaitingUser { .. } => "SubagentAwaitingUser",
+            Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
+            Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
+            Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
+            Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
+            Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
+            Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
+            Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
+            Self::RunQueueInterrupted { .. } => "RunQueueInterrupted",
+            Self::RunQueueMessageDelivered { .. } => "RunQueueMessageDelivered",
+            Self::RunQueueSteerRequeued { .. } => "RunQueueSteerRequeued",
+            Self::MonitorStatusChanged { .. } => "MonitorStatusChanged",
+            Self::MonitorLine { .. } => "MonitorLine",
+            Self::MemoryStored { .. } => "MemoryStored",
+            Self::MemoryRecalled { .. } => "MemoryRecalled",
+            Self::MemoryDriverBindFailed { .. } => "MemoryDriverBindFailed",
+            Self::MemoryGuardDenied { .. } => "MemoryGuardDenied",
+            Self::MemorySyncRequested { .. } => "MemorySyncRequested",
+            Self::MemorySyncStageChanged { .. } => "MemorySyncStageChanged",
+            Self::MemoryIngestionStarted { .. } => "MemoryIngestionStarted",
+            Self::MemoryIngestionCompleted { .. } => "MemoryIngestionCompleted",
+            Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
+            Self::MemoryDiffSnapshotTaken { .. } => "MemoryDiffSnapshotTaken",
+            Self::MemoryDiffComputed { .. } => "MemoryDiffComputed",
+            Self::MemoryDiffMarkedRead { .. } => "MemoryDiffMarkedRead",
+            Self::CacheRebuilt { .. } => "CacheRebuilt",
+            Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
+            Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
+            Self::ChannelMessageProcessed { .. } => "ChannelMessageProcessed",
+            Self::ChannelReactionReceived { .. } => "ChannelReactionReceived",
+            Self::ChannelReactionSent { .. } => "ChannelReactionSent",
+            Self::ChannelConnected { .. } => "ChannelConnected",
+            Self::ChannelDisconnected { .. } => "ChannelDisconnected",
+            Self::CronJobTriggered { .. } => "CronJobTriggered",
+            Self::CronJobCompleted { .. } => "CronJobCompleted",
+            Self::CronDeliveryRequested { .. } => "CronDeliveryRequested",
+            Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
+            Self::FlowScheduleTick { .. } => "FlowScheduleTick",
+            Self::FlowRunProgress { .. } => "FlowRunProgress",
+            Self::FlowRunStarted { .. } => "FlowRunStarted",
+            Self::FlowRunFinished { .. } => "FlowRunFinished",
+            Self::FlowChanged { .. } => "FlowChanged",
+            Self::WorkflowLoaded { .. } => "WorkflowLoaded",
+            Self::WorkflowStopped { .. } => "WorkflowStopped",
+            Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",
+            Self::WorkflowExecuted { .. } => "WorkflowExecuted",
+            Self::WorkflowsChanged { .. } => "WorkflowsChanged",
+            Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+            Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+            Self::WorkspacePrepared { .. } => "WorkspacePrepared",
+            Self::WorkspaceViolation { .. } => "WorkspaceViolation",
+            Self::WorkspaceCleanup { .. } => "WorkspaceCleanup",
+            Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
+            Self::WebhookReceived { .. } => "WebhookReceived",
+            Self::WebhookRegistered { .. } => "WebhookRegistered",
+            Self::WebhookUnregistered { .. } => "WebhookUnregistered",
+            Self::WebhookProcessed { .. } => "WebhookProcessed",
+            Self::ComposioTriggerReceived { .. } => "ComposioTriggerReceived",
+            Self::ComposioConnectionCreated { .. } => "ComposioConnectionCreated",
+            Self::ComposioConnectionDeleted { .. } => "ComposioConnectionDeleted",
+            Self::ComposioIntegrationsChanged { .. } => "ComposioIntegrationsChanged",
+            Self::ComposioActionExecuted { .. } => "ComposioActionExecuted",
+            Self::ComposioConfigChanged { .. } => "ComposioConfigChanged",
+            Self::TriggerEvaluated { .. } => "TriggerEvaluated",
+            Self::TriggerEscalated { .. } => "TriggerEscalated",
+            Self::TriggerEscalationFailed { .. } => "TriggerEscalationFailed",
+            Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
+            Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
+            Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
+            Self::NotificationIngested { .. } => "NotificationIngested",
+            Self::NotificationTriaged { .. } => "NotificationTriaged",
+            Self::DevicePaired { .. } => "DevicePaired",
+            Self::DeviceRevoked { .. } => "DeviceRevoked",
+            Self::DevicePeerOnline { .. } => "DevicePeerOnline",
+            Self::DevicePeerOffline { .. } => "DevicePeerOffline",
+            Self::DeviceTunnelFrame { .. } => "DeviceTunnelFrame",
+            Self::SystemStartup { .. } => "SystemStartup",
+            Self::SystemShutdown { .. } => "SystemShutdown",
+            Self::SystemRestartRequested { .. } => "SystemRestartRequested",
+            Self::SystemShutdownRequested { .. } => "SystemShutdownRequested",
+            Self::AutonomyConfigChanged => "AutonomyConfigChanged",
+            Self::AgentPathsChanged => "AgentPathsChanged",
+            Self::ActiveWorkspaceChanged { .. } => "ActiveWorkspaceChanged",
+            Self::HealthChanged { .. } => "HealthChanged",
+            Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::HarnessInitProgress { .. } => "HarnessInitProgress",
+            Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
+            Self::KeyringConsentRequired => "KeyringConsentRequired",
+            Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
+            Self::SessionExpired { .. } => "SessionExpired",
+            Self::ApprovalRequested { .. } => "ApprovalRequested",
+            Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::FlowApprovalRequested { .. } => "FlowApprovalRequested",
+            Self::PlanReviewRequested { .. } => "PlanReviewRequested",
+            Self::PlanReviewDecided { .. } => "PlanReviewDecided",
+            Self::ExternalTransferPending { .. } => "ExternalTransferPending",
+            Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
+            Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
+            Self::ArtifactReady { .. } => "ArtifactReady",
+            Self::ArtifactFailed { .. } => "ArtifactFailed",
+            Self::ArtifactPending { .. } => "ArtifactPending",
+            Self::McpServerInstalled { .. } => "McpServerInstalled",
+            Self::McpServerConnected { .. } => "McpServerConnected",
+            Self::McpServerDisconnected { .. } => "McpServerDisconnected",
+            Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
+            Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
+            Self::McpToolRejected { .. } => "McpToolRejected",
+            Self::McpServerProbeTimedOut { .. } => "McpServerProbeTimedOut",
+            Self::McpServerTransportDropped { .. } => "McpServerTransportDropped",
+            Self::McpServerReconnected { .. } => "McpServerReconnected",
+            Self::McpServerReconnectFailed { .. } => "McpServerReconnectFailed",
+            Self::McpServerParked { .. } => "McpServerParked",
+            Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::ProviderApiKeyRejected { .. } => "ProviderApiKeyRejected",
+            Self::TaskSourceFetched { .. } => "TaskSourceFetched",
+            Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
+            Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
+            Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
+            Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::ThreadGoalUpdated { .. } => "ThreadGoalUpdated",
+            Self::ThreadGoalCleared { .. } => "ThreadGoalCleared",
+            Self::Voice(_) => "Voice",
+        }
+    }
+
+    /// Best-effort agent/session hint for display (not all events carry one).
+    pub fn agent_hint(&self) -> Option<&str> {
+        match self {
+            Self::AgentTurnStarted { session_id, .. }
+            | Self::AgentTurnCompleted { session_id, .. }
+            | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
+            Self::SubagentSpawned { agent_id, .. }
+            | Self::SubagentCompleted { agent_id, .. }
+            | Self::SubagentFailed { agent_id, .. }
+            | Self::SubagentAwaitingUser { agent_id, .. }
+            | Self::AgentOrchestrationSpawned { agent_id, .. }
+            | Self::AgentOrchestrationCompleted { agent_id, .. }
+            | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
+            Self::ChannelMessageReceived { channel, .. }
+            | Self::ChannelConnected { channel, .. }
+            | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
+            Self::ToolExecutionStarted { tool_name, .. }
+            | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
+            Self::WorkspacePrepared { policy_id, .. }
+            | Self::WorkspaceCleanup { policy_id, .. } => Some(policy_id.as_str()),
+            Self::WorkspaceViolation { path } => Some(path.as_str()),
+            Self::RunQueueMessageQueued { thread_id, .. }
+            | Self::RunQueueFollowupDispatched { thread_id, .. }
+            | Self::RunQueueInterrupted { thread_id, .. }
+            | Self::RunQueueMessageDelivered { thread_id, .. }
+            | Self::RunQueueSteerRequeued { thread_id, .. } => Some(thread_id.as_str()),
+            Self::MonitorStatusChanged { thread_id, .. } | Self::MonitorLine { thread_id, .. } => {
+                thread_id.as_deref()
+            }
+            // The Event Log's "agent" column is the only per-row context the
+            // stream carries, so an MCP row names its server there: the
+            // install id for the RPC-driven lifecycle, the registry name
+            // (`ac.inference.sh/mcp`) for the supervisor's verdicts, which is
+            // how a user knows the server and how the log lines name it.
+            Self::McpServerInstalled { server_id, .. }
+            | Self::McpServerConnected { server_id, .. }
+            | Self::McpServerDisconnected { server_id, .. } => Some(server_id.as_str()),
+            Self::McpServerProbeTimedOut { qualified_name, .. }
+            | Self::McpServerTransportDropped { qualified_name, .. }
+            | Self::McpServerReconnected { qualified_name, .. }
+            | Self::McpServerReconnectFailed { qualified_name, .. }
+            | Self::McpServerParked { qualified_name, .. } => Some(qualified_name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// A one-line summary for the developer Event Log, for the variants whose
+    /// name and [`Self::agent_hint`] are not enough to act on.
+    ///
+    /// The Event Log envelope (`GET /events/domain`) carries the domain, the
+    /// variant name, the agent hint and a timestamp — no payload. A variant
+    /// whose whole point is a failure *reason* would otherwise reach the UI
+    /// with the reason discarded: a transport that broke and one that timed
+    /// out are the same row (#5931). This is the opt-in escape hatch. A
+    /// variant with something a reader needs returns a short rendering of it;
+    /// every other variant returns `None` and its row is unchanged.
+    ///
+    /// What comes back is shown verbatim to anyone who can open the Event Log
+    /// and lands in the log's NDJSON download, so it carries no payload
+    /// content, no credentials and no un-redacted endpoint — the MCP arms
+    /// pass through strings `tinymcp` has already rendered and
+    /// endpoint-redacted — and no `workspace_dir`, which is on the event for
+    /// subscribers to filter on, not for a shared panel to print.
+    #[must_use]
+    pub fn log_detail(&self) -> Option<String> {
+        /// Long enough for a rendered transport error, short enough that one
+        /// row cannot push the rest of the log off the screen. Counted in
+        /// `char`s, so a multi-byte error cannot be split mid-character.
+        const MAX_DETAIL_CHARS: usize = 160;
+
+        let clip = |text: &str| clip_to_chars(text, MAX_DETAIL_CHARS);
+
+        match self {
+            Self::McpServerProbeTimedOut {
+                probe_timeout_secs,
+                consecutive_timeouts,
+                teardown_after,
+                ..
+            } => Some(format!(
+                "no answer in {probe_timeout_secs}s; timeout {consecutive_timeouts} of \
+                 {teardown_after} before teardown"
+            )),
+            Self::McpServerTransportDropped {
+                outcome,
+                detail,
+                elapsed_ms,
+                ..
+            } => {
+                let mut summary = format!("session ended: {outcome}");
+                if let Some(elapsed_ms) = elapsed_ms {
+                    summary.push_str(&format!(" after {elapsed_ms}ms"));
+                }
+                if let Some(detail) = detail {
+                    summary.push_str(" — ");
+                    summary.push_str(&clip(detail));
+                }
+                Some(summary)
+            }
+            Self::McpServerReconnected {
+                tool_count,
+                after_failures,
+                ..
+            } => Some(format!(
+                "connected with {tool_count} tools after {after_failures} failed attempt(s)"
+            )),
+            Self::McpServerReconnectFailed {
+                error,
+                failures,
+                retry_in_secs,
+                ..
+            } => Some(format!(
+                "attempt {failures} failed, retrying in {retry_in_secs}s — {}",
+                clip(error)
+            )),
+            Self::McpServerParked { error, .. } => {
+                Some(format!("parked, not retrying — {}", clip(error)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The workspace this event belongs to, for the variants bound to one.
+    ///
+    /// One process serves more than one workspace over its life, so a
+    /// process-wide consumer — the Event Log, the `core_notification`
+    /// broadcast — has to be able to ask which workspace a given event came
+    /// from. Three families already carry the answer and each used to be read
+    /// by whoever happened to need it: `desktop::notifications` matched the
+    /// MCP arms in a private helper of its own, and silently did not gate the
+    /// channel and artifact families that carry the same field. This is the
+    /// one place that question is answered, so a consumer cannot cover a
+    /// subset by accident and a new workspace-bound variant has one arm to
+    /// add rather than several to find (#5966).
+    ///
+    /// `None` means "not workspace-bound", which is the common case and is
+    /// **not** the same as "unknown workspace": a consumer filtering by
+    /// workspace should let these through rather than drop them.
+    ///
+    /// The value is an absolute path under the user's home directory. It is
+    /// for in-process comparison only — anything that reaches a client or an
+    /// export sends
+    /// [`workspace_handle`](crate::openhuman::config::workspace_handle)
+    /// instead.
+    #[must_use]
+    pub fn workspace_dir(&self) -> Option<&std::path::Path> {
+        match self {
+            // Channel — the workspace the inbound message was received under.
+            Self::ChannelMessageReceived { workspace_dir, .. }
+            | Self::ChannelMessageProcessed { workspace_dir, .. } => Some(workspace_dir.as_path()),
+
+            // Artifact — carried as a `String` because the producer takes it
+            // from a config field it already has as text; same meaning.
+            //
+            // An empty string reads back as "bound to the empty path", which
+            // matches no workspace and would therefore hide the event from
+            // every scoped consumer — a worse failure than not knowing. Today
+            // the producers pass a real `Path`, so this is a guard against a
+            // future one that does not, not a case that occurs.
+            Self::ArtifactReady { workspace_dir, .. }
+            | Self::ArtifactFailed { workspace_dir, .. }
+            | Self::ArtifactPending { workspace_dir, .. } => {
+                if workspace_dir.is_empty() {
+                    None
+                } else {
+                    Some(std::path::Path::new(workspace_dir))
+                }
+            }
+
+            // MCP reconnect supervisor (#5931).
+            Self::McpServerProbeTimedOut { workspace_dir, .. }
+            | Self::McpServerTransportDropped { workspace_dir, .. }
+            | Self::McpServerReconnected { workspace_dir, .. }
+            | Self::McpServerReconnectFailed { workspace_dir, .. }
+            | Self::McpServerParked { workspace_dir, .. } => Some(workspace_dir.as_path()),
+
+            // The switch itself is *about* a workspace rather than bound to
+            // one: it is what tells a consumer the active workspace changed,
+            // so filtering it out by the very rule it announces would hide
+            // the announcement from everyone who is not already up to date.
+            Self::ActiveWorkspaceChanged { .. } => None,
+
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;
+
+impl tinybus::Event for DomainEvent {
+    fn domain(&self) -> &str {
+        // Delegates to the inherent method, which every variant is already
+        // matched in. Keeping one implementation means a new variant cannot
+        // route correctly for subscribers and incorrectly for the bus.
+        DomainEvent::domain(self)
+    }
+}

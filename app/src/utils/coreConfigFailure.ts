@@ -57,3 +57,16 @@ export const isCoreConfigUnreadableError = (message: string | null | undefined):
  * another user" would send those users chasing the wrong remedy.
  */
 export const CORE_CONFIG_UNREADABLE_I18N_KEY = 'welcome.coreConfigUnreadable';
+
+/**
+ * i18n key for the gateway session-store failure copy.
+ *
+ * A gateway user's core is provisioned by this app, so the cloud-mode text
+ * (which points at an RPC token / URL in Settings) would send them chasing a
+ * configuration they never entered. The gateway copy instead tells them to
+ * restart, which re-activates the provisioned gateway — the correct remedy for
+ * a transient provisioning failure. Kept as a key constant, like
+ * [`CORE_CONFIG_UNREADABLE_I18N_KEY`], so this module decides *whether* the
+ * copy applies while the locale files own the wording.
+ */
+export const GATEWAY_SESSION_FAILURE_I18N_KEY = 'welcome.gatewaySessionErrorFallback';

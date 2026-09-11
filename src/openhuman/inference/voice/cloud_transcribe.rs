@@ -3,7 +3,8 @@
 //! mic input without shipping a provider API key. Mirrors the shape of
 //! `reply_speech.rs`, but uploads multipart form data instead of JSON.
 //!
-//! Used by the mascot's mic-only composer (`HumanPage`) — recording is
+//! Used by the mascot's mic composer (`ChatMascotStage` on the chat surface,
+//! and the mic-cloud composer variant) — recording is
 //! captured via `MediaRecorder` in the renderer, base64-encoded, then sent
 //! through this RPC. The transcribed text is fed straight into the agent's
 //! existing send pipeline.

@@ -2,15 +2,24 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn all_billing_controller_schemas_returns_15() {
+fn all_billing_controller_schemas_returns_16() {
     let schemas = all_billing_controller_schemas();
-    assert_eq!(schemas.len(), 15);
+    assert_eq!(schemas.len(), 16);
 }
 
 #[test]
-fn all_billing_registered_controllers_returns_15() {
+fn all_billing_registered_controllers_returns_16() {
     let controllers = all_billing_registered_controllers();
-    assert_eq!(controllers.len(), 15);
+    assert_eq!(controllers.len(), 16);
+}
+
+#[test]
+fn billing_schemas_get_summary() {
+    let s = billing_schemas("billing_get_summary");
+    assert_eq!(s.namespace, "billing");
+    assert_eq!(s.function, "get_summary");
+    assert!(s.inputs.is_empty());
+    assert!(!s.outputs.is_empty());
 }
 
 #[test]

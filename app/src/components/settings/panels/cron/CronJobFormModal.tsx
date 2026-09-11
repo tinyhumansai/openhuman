@@ -16,7 +16,17 @@ import type {
   CoreCronSchedule,
   CronAddParams,
 } from '../../../../utils/tauriCommands/cron';
-import Button from '../../../ui/Button';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  ModalShell,
+  NativeSelect,
+  RadioGroupItem,
+  RadioGroupRoot,
+  TextArea,
+  TextField,
+} from '../../../ui';
 
 const log = createDebug('app:settings:CronJobFormModal');
 
@@ -277,7 +287,12 @@ const CronJobFormModal = ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('[CronJobFormModal] save error: %s', msg);
-      setError(t('settings.cron.jobs.formError'));
+      // The core's reason (an invalid expression, an agent schedule tighter
+      // than the 5-minute floor, …) is the actionable part; the generic label
+      // alone would leave the user guessing what to change.
+      setError(
+        msg ? `${t('settings.cron.jobs.formError')}: ${msg}` : t('settings.cron.jobs.formError')
+      );
     } finally {
       setSaving(false);
     }
@@ -296,376 +311,15 @@ const CronJobFormModal = ({
       : t('settings.cron.jobs.formSave');
 
   return (
-    <div
-      data-testid="cron-form-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}>
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40 dark:bg-black/60"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-
-      {/* Card */}
-      <div className="relative z-10 w-full max-w-lg bg-surface rounded-2xl shadow-xl border border-line flex flex-col max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-line flex items-center justify-between">
-          <h2 className="text-base font-semibold text-content">{title}</h2>
-          <Button
-            type="button"
-            variant="tertiary"
-            iconOnly
-            size="sm"
-            aria-label={t('settings.cron.jobs.formCancel')}
-            data-testid="cron-form-cancel"
-            onClick={onClose}
-            className="text-xl leading-none text-content-faint hover:text-content-secondary">
-            &times;
-          </Button>
-        </div>
-
-        {/* Scrollable body */}
-        <div className="overflow-y-auto px-6 py-4 flex flex-col gap-4">
-          {/* Name */}
-          <div>
-            <label className="block text-xs font-medium text-content-secondary mb-1">
-              {t('settings.cron.jobs.formName')}
-            </label>
-            <input
-              data-testid="cron-form-name"
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder={t('settings.cron.jobs.formNamePlaceholder')}
-              disabled={saving}
-              className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
-            />
-          </div>
-
-          {/* Job type */}
-          <div>
-            <div className="text-xs font-medium text-content-secondary mb-1.5">
-              {t('settings.cron.jobs.formJobType')}
-            </div>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer">
-                <input
-                  data-testid="cron-form-job-type-agent"
-                  type="radio"
-                  name="cron-job-type"
-                  value="agent"
-                  checked={jobType === 'agent'}
-                  onChange={() => setJobType('agent')}
-                  disabled={mode === 'edit' || saving}
-                  className="accent-primary-600"
-                />
-                {t('settings.cron.jobs.formJobTypeAgent')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer">
-                <input
-                  data-testid="cron-form-job-type-shell"
-                  type="radio"
-                  name="cron-job-type"
-                  value="shell"
-                  checked={jobType === 'shell'}
-                  onChange={() => setJobType('shell')}
-                  disabled={mode === 'edit' || saving}
-                  className="accent-primary-600"
-                />
-                {t('settings.cron.jobs.formJobTypeShell')}
-              </label>
-            </div>
-          </div>
-
-          {/* Schedule type */}
-          <div>
-            <div className="text-xs font-medium text-content-secondary mb-1.5">
-              {t('settings.cron.jobs.formScheduleType')}
-            </div>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer">
-                <input
-                  data-testid="cron-form-schedule-cron"
-                  type="radio"
-                  name="cron-schedule-kind"
-                  value="cron"
-                  checked={scheduleKind === 'cron'}
-                  onChange={() => handleScheduleKindChange('cron')}
-                  disabled={saving}
-                  className="accent-primary-600"
-                />
-                {t('settings.cron.jobs.formScheduleCron')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer">
-                <input
-                  data-testid="cron-form-schedule-at"
-                  type="radio"
-                  name="cron-schedule-kind"
-                  value="at"
-                  checked={scheduleKind === 'at'}
-                  onChange={() => handleScheduleKindChange('at')}
-                  disabled={saving}
-                  className="accent-primary-600"
-                />
-                {t('settings.cron.jobs.formScheduleAt')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer">
-                <input
-                  data-testid="cron-form-schedule-every"
-                  type="radio"
-                  name="cron-schedule-kind"
-                  value="every"
-                  checked={scheduleKind === 'every'}
-                  onChange={() => handleScheduleKindChange('every')}
-                  disabled={saving}
-                  className="accent-primary-600"
-                />
-                {t('settings.cron.jobs.formScheduleEvery')}
-              </label>
-            </div>
-          </div>
-
-          {/* Cron schedule fields */}
-          {scheduleKind === 'cron' && (
-            <div className="flex flex-col gap-2">
-              {/* Preset dropdown */}
-              <div>
-                <label className="block text-xs font-medium text-content-secondary mb-1">
-                  {t('settings.cron.jobs.formCronPreset')}
-                </label>
-                <select
-                  data-testid="cron-form-cron-preset"
-                  value={SCHEDULE_PRESET_VALUES.has(cronPreset) ? cronPreset : ''}
-                  onChange={e => {
-                    const val = e.target.value;
-                    if (val) {
-                      setCronPreset(val);
-                      setCronCustom('');
-                    } else {
-                      setCronPreset('');
-                    }
-                  }}
-                  disabled={saving}
-                  className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50">
-                  <option value="">{t('settings.cron.jobs.custom')}</option>
-                  {SCHEDULE_PRESETS.map(p => (
-                    <option key={p.value} value={p.value}>
-                      {t(p.labelKey)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Custom expression — shown when no preset selected or user typed */}
-              {(!SCHEDULE_PRESET_VALUES.has(cronPreset) || cronCustom) && (
-                <div>
-                  <label className="block text-xs font-medium text-content-secondary mb-1">
-                    {t('settings.cron.jobs.formCronCustom')}
-                  </label>
-                  <input
-                    data-testid="cron-form-cron-custom"
-                    type="text"
-                    value={cronCustom}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setCronCustom(val);
-                      // Reset preset to custom sentinel
-                      if (!SCHEDULE_PRESET_VALUES.has(val.trim())) {
-                        setCronPreset('');
-                      } else {
-                        setCronPreset(val.trim());
-                      }
-                    }}
-                    placeholder={t('settings.cron.jobs.formCronCustomPlaceholder')}
-                    disabled={saving}
-                    className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm font-mono text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
-                  />
-                </div>
-              )}
-
-              {/* Live preview */}
-              {cronExpr && (
-                <p data-testid="cron-form-cron-preview" className="text-xs text-content-muted">
-                  {t('settings.cron.jobs.formCronPreview').replace(
-                    '{preview}',
-                    cronToHuman(cronExpr)
-                  )}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* At */}
-          {scheduleKind === 'at' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formAtLabel')}
-              </label>
-              <input
-                data-testid="cron-form-at"
-                type="datetime-local"
-                value={atValue}
-                onChange={e => setAtValue(e.target.value)}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
-              />
-            </div>
-          )}
-
-          {/* Every */}
-          {scheduleKind === 'every' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formEveryLabel')}
-              </label>
-              <input
-                data-testid="cron-form-every"
-                type="number"
-                min="1"
-                value={everyMs}
-                onChange={e => setEveryMs(e.target.value)}
-                disabled={saving}
-                placeholder={t('settings.cron.jobs.formEveryPlaceholder')}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
-              />
-            </div>
-          )}
-
-          {/* Prompt (agent only) */}
-          {jobType === 'agent' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formPrompt')}
-                <span className="text-coral-500 ml-0.5">*</span>
-              </label>
-              <textarea
-                data-testid="cron-form-prompt"
-                value={prompt}
-                onChange={e => setPrompt(e.target.value)}
-                placeholder={t('settings.cron.jobs.formPromptPlaceholder')}
-                rows={4}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 resize-y"
-              />
-            </div>
-          )}
-
-          {/* Command (shell only) */}
-          {jobType === 'shell' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formCommand')}
-                <span className="text-coral-500 ml-0.5">*</span>
-              </label>
-              <input
-                data-testid="cron-form-command"
-                type="text"
-                value={command}
-                onChange={e => setCommand(e.target.value)}
-                placeholder={t('settings.cron.jobs.formCommandPlaceholder')}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm font-mono text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
-              />
-            </div>
-          )}
-
-          {/* Session target (agent only) */}
-          {jobType === 'agent' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formSessionTarget')}
-              </label>
-              <select
-                data-testid="cron-form-session-target"
-                value={sessionTarget}
-                onChange={e => setSessionTarget(e.target.value as SessionTarget)}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50">
-                <option value="isolated">{t('settings.cron.jobs.formSessionIsolated')}</option>
-                <option value="main">{t('settings.cron.jobs.formSessionMain')}</option>
-              </select>
-            </div>
-          )}
-
-          {/* Agent profile attribution (agent only) */}
-          {jobType === 'agent' && (
-            <div>
-              <label
-                htmlFor="cron-form-profile"
-                className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formProfile')}
-              </label>
-              <select
-                id="cron-form-profile"
-                data-testid="cron-form-profile"
-                value={profileId}
-                onChange={e => setProfileId(e.target.value)}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50">
-                <option value="">{t('settings.cron.jobs.formProfileNone')}</option>
-                {profiles.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name || p.id}
-                  </option>
-                ))}
-                {profileId && !profiles.some(p => p.id === profileId) && (
-                  // The attributed profile was deleted — keep it selectable so
-                  // saving doesn't silently drop it, and surface the raw id.
-                  <option value={profileId}>{profileId}</option>
-                )}
-              </select>
-              <p className="text-xs text-content-muted mt-1">
-                {t('settings.cron.jobs.formProfileHint')}
-              </p>
-            </div>
-          )}
-
-          {/* Delivery mode (agent only) */}
-          {jobType === 'agent' && (
-            <div>
-              <label className="block text-xs font-medium text-content-secondary mb-1">
-                {t('settings.cron.jobs.formDelivery')}
-              </label>
-              <select
-                data-testid="cron-form-delivery"
-                value={delivery}
-                onChange={e => setDelivery(e.target.value as DeliveryMode)}
-                disabled={saving}
-                className="w-full rounded-md border border-line-strong bg-surface px-3 py-2 text-sm text-content focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50">
-                <option value="proactive">{t('settings.cron.jobs.formDeliveryProactive')}</option>
-                <option value="none">{t('settings.cron.jobs.formDeliveryNone')}</option>
-              </select>
-            </div>
-          )}
-
-          {/* Delete after run */}
-          <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer select-none">
-            <input
-              data-testid="cron-form-delete-after-run"
-              type="checkbox"
-              checked={deleteAfterRun}
-              onChange={e => setDeleteAfterRun(e.target.checked)}
-              disabled={saving}
-              className="accent-primary-600"
-            />
-            {t('settings.cron.jobs.formDeleteAfterRun')}
-          </label>
-
-          {/* Error */}
-          {error && (
-            <div
-              data-testid="cron-form-error"
-              className="px-3 py-2 rounded-md bg-coral-50 dark:bg-coral-500/10 border border-coral-200 dark:border-coral-500/30 text-xs text-coral-700 dark:text-coral-300">
-              {error}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-line flex items-center justify-end gap-3">
+    <ModalShell
+      titleId="cron-form-title"
+      title={title}
+      onClose={onClose}
+      maxWidthClassName="max-w-lg"
+      panelClassName="flex max-h-[90vh] flex-col"
+      contentClassName="overflow-y-auto px-5 py-4"
+      footer={
+        <div className="flex items-center justify-end gap-3">
           <Button
             type="button"
             variant="secondary"
@@ -682,8 +336,299 @@ const CronJobFormModal = ({
             {submitLabel}
           </Button>
         </div>
+      }>
+      <div data-testid="cron-form-modal" className="flex flex-col gap-4">
+        {/* Name */}
+        <div>
+          <label className="block text-xs font-medium text-content-secondary mb-1">
+            {t('settings.cron.jobs.formName')}
+          </label>
+          <TextField
+            data-testid="cron-form-name"
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder={t('settings.cron.jobs.formNamePlaceholder')}
+            disabled={saving}
+          />
+        </div>
+
+        {/* Job type */}
+        <div>
+          <div className="text-xs font-medium text-content-secondary mb-1.5">
+            {t('settings.cron.jobs.formJobType')}
+          </div>
+          <RadioGroupRoot
+            className="flex flex-row gap-4"
+            value={jobType}
+            onValueChange={value => setJobType(value as JobType)}
+            disabled={mode === 'edit' || saving}>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+              <RadioGroupItem data-testid="cron-form-job-type-agent" value="agent" />
+              {t('settings.cron.jobs.formJobTypeAgent')}
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+              <RadioGroupItem data-testid="cron-form-job-type-shell" value="shell" />
+              {t('settings.cron.jobs.formJobTypeShell')}
+            </label>
+          </RadioGroupRoot>
+        </div>
+
+        {/* Schedule type */}
+        <div>
+          <div className="text-xs font-medium text-content-secondary mb-1.5">
+            {t('settings.cron.jobs.formScheduleType')}
+          </div>
+          <RadioGroupRoot
+            className="flex flex-row gap-4"
+            value={scheduleKind}
+            onValueChange={value => handleScheduleKindChange(value as ScheduleKind)}
+            disabled={saving}>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+              <RadioGroupItem data-testid="cron-form-schedule-cron" value="cron" />
+              {t('settings.cron.jobs.formScheduleCron')}
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+              <RadioGroupItem data-testid="cron-form-schedule-at" value="at" />
+              {t('settings.cron.jobs.formScheduleAt')}
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+              <RadioGroupItem data-testid="cron-form-schedule-every" value="every" />
+              {t('settings.cron.jobs.formScheduleEvery')}
+            </label>
+          </RadioGroupRoot>
+        </div>
+
+        {/* Cron schedule fields */}
+        {scheduleKind === 'cron' && (
+          <div className="flex flex-col gap-2">
+            {/* Preset dropdown */}
+            <div>
+              <label className="block text-xs font-medium text-content-secondary mb-1">
+                {t('settings.cron.jobs.formCronPreset')}
+              </label>
+              <NativeSelect
+                data-testid="cron-form-cron-preset"
+                value={SCHEDULE_PRESET_VALUES.has(cronPreset) ? cronPreset : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val) {
+                    setCronPreset(val);
+                    setCronCustom('');
+                  } else {
+                    setCronPreset('');
+                  }
+                }}
+                disabled={saving}
+                className="w-full">
+                <option value="">{t('settings.cron.jobs.custom')}</option>
+                {SCHEDULE_PRESETS.map(p => (
+                  <option key={p.value} value={p.value}>
+                    {t(p.labelKey)}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+
+            {/* Custom expression — shown when no preset selected or user typed */}
+            {(!SCHEDULE_PRESET_VALUES.has(cronPreset) || cronCustom) && (
+              <div>
+                <label className="block text-xs font-medium text-content-secondary mb-1">
+                  {t('settings.cron.jobs.formCronCustom')}
+                </label>
+                <TextField
+                  data-testid="cron-form-cron-custom"
+                  mono
+                  type="text"
+                  value={cronCustom}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setCronCustom(val);
+                    // Reset preset to custom sentinel
+                    if (!SCHEDULE_PRESET_VALUES.has(val.trim())) {
+                      setCronPreset('');
+                    } else {
+                      setCronPreset(val.trim());
+                    }
+                  }}
+                  placeholder={t('settings.cron.jobs.formCronCustomPlaceholder')}
+                  disabled={saving}
+                />
+              </div>
+            )}
+
+            {/* Live preview */}
+            {cronExpr && (
+              <p data-testid="cron-form-cron-preview" className="text-xs text-content-muted">
+                {t('settings.cron.jobs.formCronPreview').replace(
+                  '{preview}',
+                  cronToHuman(cronExpr)
+                )}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* At */}
+        {scheduleKind === 'at' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formAtLabel')}
+            </label>
+            <TextField
+              data-testid="cron-form-at"
+              type="datetime-local"
+              value={atValue}
+              onChange={e => setAtValue(e.target.value)}
+              disabled={saving}
+            />
+          </div>
+        )}
+
+        {/* Every */}
+        {scheduleKind === 'every' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formEveryLabel')}
+            </label>
+            <TextField
+              data-testid="cron-form-every"
+              type="number"
+              min="1"
+              value={everyMs}
+              onChange={e => setEveryMs(e.target.value)}
+              disabled={saving}
+              placeholder={t('settings.cron.jobs.formEveryPlaceholder')}
+            />
+          </div>
+        )}
+
+        {/* Prompt (agent only) */}
+        {jobType === 'agent' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formPrompt')}
+              <span className="text-coral-500 ml-0.5">*</span>
+            </label>
+            <TextArea
+              data-testid="cron-form-prompt"
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder={t('settings.cron.jobs.formPromptPlaceholder')}
+              rows={4}
+              disabled={saving}
+              className="resize-y"
+            />
+          </div>
+        )}
+
+        {/* Command (shell only) */}
+        {jobType === 'shell' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formCommand')}
+              <span className="text-coral-500 ml-0.5">*</span>
+            </label>
+            <TextField
+              data-testid="cron-form-command"
+              mono
+              type="text"
+              value={command}
+              onChange={e => setCommand(e.target.value)}
+              placeholder={t('settings.cron.jobs.formCommandPlaceholder')}
+              disabled={saving}
+            />
+          </div>
+        )}
+
+        {/* Session target (agent only) */}
+        {jobType === 'agent' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formSessionTarget')}
+            </label>
+            <NativeSelect
+              data-testid="cron-form-session-target"
+              value={sessionTarget}
+              onChange={e => setSessionTarget(e.target.value as SessionTarget)}
+              disabled={saving}
+              className="w-full">
+              <option value="isolated">{t('settings.cron.jobs.formSessionIsolated')}</option>
+              <option value="main">{t('settings.cron.jobs.formSessionMain')}</option>
+            </NativeSelect>
+          </div>
+        )}
+
+        {/* Agent profile attribution (agent only) */}
+        {jobType === 'agent' && (
+          <div>
+            <label
+              htmlFor="cron-form-profile"
+              className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formProfile')}
+            </label>
+            <NativeSelect
+              id="cron-form-profile"
+              data-testid="cron-form-profile"
+              value={profileId}
+              onChange={e => setProfileId(e.target.value)}
+              disabled={saving}
+              className="w-full">
+              <option value="">{t('settings.cron.jobs.formProfileNone')}</option>
+              {profiles.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.id}
+                </option>
+              ))}
+              {profileId && !profiles.some(p => p.id === profileId) && (
+                // The attributed profile was deleted — keep it selectable so
+                // saving doesn't silently drop it, and surface the raw id.
+                <option value={profileId}>{profileId}</option>
+              )}
+            </NativeSelect>
+            <p className="text-xs text-content-muted mt-1">
+              {t('settings.cron.jobs.formProfileHint')}
+            </p>
+          </div>
+        )}
+
+        {/* Delivery mode (agent only) */}
+        {jobType === 'agent' && (
+          <div>
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('settings.cron.jobs.formDelivery')}
+            </label>
+            <NativeSelect
+              data-testid="cron-form-delivery"
+              value={delivery}
+              onChange={e => setDelivery(e.target.value as DeliveryMode)}
+              disabled={saving}
+              className="w-full">
+              <option value="proactive">{t('settings.cron.jobs.formDeliveryProactive')}</option>
+              <option value="none">{t('settings.cron.jobs.formDeliveryNone')}</option>
+            </NativeSelect>
+          </div>
+        )}
+
+        {/* Delete after run */}
+        <label className="flex items-center gap-2 text-sm text-content-secondary cursor-pointer select-none">
+          <Checkbox
+            data-testid="cron-form-delete-after-run"
+            checked={deleteAfterRun}
+            onCheckedChange={setDeleteAfterRun}
+            disabled={saving}
+          />
+          {t('settings.cron.jobs.formDeleteAfterRun')}
+        </label>
+
+        {/* Error */}
+        {error && (
+          <Alert variant="destructive" data-testid="cron-form-error" className="text-xs">
+            {error}
+          </Alert>
+        )}
       </div>
-    </div>
+    </ModalShell>
   );
 };
 

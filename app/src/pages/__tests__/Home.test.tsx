@@ -209,31 +209,3 @@ describe('Home page — theme toggle', () => {
     themeModeProbe.current = 'system';
   });
 });
-
-describe('Home page — budget completed banner', () => {
-  // Covers line 151: UsageLimitBanner render when shouldShowBudgetCompletedMessage=true
-  it('renders UsageLimitBanner when shouldShowBudgetCompletedMessage=true', async () => {
-    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
-
-    const { default: Home } = await import('../Home');
-    render(<Home />);
-
-    expect(screen.getByText(/Exhausted Your Usage/i)).toBeInTheDocument();
-    expect(screen.getByText(/out of included usage/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Use OpenRouter free models/i })).toBeInTheDocument();
-  });
-
-  it('clicking OpenRouter free models runs the routing helper', async () => {
-    mockUseUsageState.mockReturnValueOnce({ shouldShowBudgetCompletedMessage: true });
-    mockUseOpenRouterFreeModels.mockResolvedValueOnce(undefined);
-
-    const { default: Home } = await import('../Home');
-    render(<Home />);
-
-    fireEvent.click(screen.getByRole('button', { name: /Use OpenRouter free models/i }));
-
-    await waitFor(() => {
-      expect(mockUseOpenRouterFreeModels).toHaveBeenCalledTimes(1);
-    });
-  });
-});

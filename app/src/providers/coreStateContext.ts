@@ -8,7 +8,6 @@ export interface CoreStateContextValue extends CoreState {
   refreshTeamMembers: (teamId: string) => Promise<void>;
   refreshTeamInvites: (teamId: string) => Promise<void>;
   setAnalyticsEnabled: (enabled: boolean) => Promise<void>;
-  setMeetAutoOrchestratorHandoff: (enabled: boolean) => Promise<void>;
   setOnboardingCompletedFlag: (value: boolean) => Promise<void>;
   setEncryptionKey: (value: string | null) => Promise<void>;
   patchSnapshot: (patch: Partial<CoreAppSnapshot>) => void;

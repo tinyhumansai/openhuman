@@ -172,7 +172,7 @@ const Welcome = () => {
                     className="w-full">
                     {isClearingAppData ? (
                       <span className="flex items-center justify-center gap-2">
-                        <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
+                        <span className="h-3 w-3 animate-spin rounded-full border border-content-inverted border-t-transparent" />
                         {t('welcome.clearingAppData')}
                       </span>
                     ) : (
@@ -209,7 +209,7 @@ const Welcome = () => {
                     <OAuthProviderButton
                       key={provider.id}
                       provider={provider}
-                      className="!rounded-full !px-4 !py-2"
+                      className="rounded-full! px-4! py-2!"
                     />
                   ))}
               </div>

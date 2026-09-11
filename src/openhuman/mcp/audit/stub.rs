@@ -8,7 +8,7 @@
 //! As in the sibling `mcp::registry` stub, [`super::types`] is ungated, so this
 //! module defines no data types — only behaviour. The signatures MUST match
 //! the real ones exactly; the disabled build
-//! (`cargo check --no-default-features --features tokenjuice-treesitter`) is
+//! (`cargo check --no-default-features`) is
 //! the only thing that catches drift.
 
 use anyhow::Result;

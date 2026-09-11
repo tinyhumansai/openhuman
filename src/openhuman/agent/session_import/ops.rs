@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tinyagents::harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
+use tinyagents_harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
 
 use crate::openhuman::agent::harness::session::transcript::{
     read_transcript, read_transcript_legacy_md, SessionTranscript,

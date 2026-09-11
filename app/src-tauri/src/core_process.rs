@@ -156,7 +156,13 @@ impl CoreProcessHandle {
             }
         }
 
-        if is_port_open(self.preferred_port).await {
+        // A pre-existing listener cannot be used as a readiness signal for
+        // the embedded task we are about to spawn: it may be a foreign
+        // process, while the core selects and reports a fallback port.
+        // Record that distinction before entering recovery so the wait loop
+        // below only accepts socket-only readiness for a port that was free.
+        let preferred_port_was_occupied = is_port_open(self.preferred_port).await;
+        if preferred_port_was_occupied {
             // Idempotent fast-path: if we already own a running embedded
             // task, the listener on this port is us — not a stale external
             // process. Without this short-circuit, a second `ensure_running`
@@ -334,8 +340,22 @@ impl CoreProcessHandle {
                     }
                 }
 
-                if received_ready && self.is_rpc_port_open().await {
-                    log::info!("[core] core rpc became ready at {}", self.rpc_url());
+                if received_ready || (!preferred_port_was_occupied && self.is_rpc_port_open().await)
+                {
+                    if received_ready {
+                        log::info!("[core] core rpc became ready at {}", self.rpc_url());
+                    } else {
+                        // The task is ours (the preferred listener was checked
+                        // before spawning it), and the embedded server has a
+                        // live loopback listener. Treat that as readiness when
+                        // the one-shot notification is lost under desktop CI
+                        // startup contention; otherwise a healthy core is
+                        // aborted after the full timeout.
+                        log::warn!(
+                            "[core] core RPC listener became reachable before the embedded ready signal at {}; continuing",
+                            self.rpc_url()
+                        );
+                    }
                     return Ok(());
                 }
 
@@ -388,8 +408,15 @@ impl CoreProcessHandle {
                     received_ready = true;
                 }
             }
-            if received_ready && self.is_rpc_port_open().await {
-                log::info!("[core] core rpc became ready at {}", self.rpc_url());
+            if self.is_rpc_port_open().await {
+                if !received_ready {
+                    log::warn!(
+                        "[core] core RPC listener became reachable before the embedded ready signal at {}; continuing",
+                        self.rpc_url()
+                    );
+                } else {
+                    log::info!("[core] core rpc became ready at {}", self.rpc_url());
+                }
                 return Ok(());
             }
 
@@ -656,13 +683,47 @@ impl CoreProcessHandle {
 
     /// Synchronous-friendly shutdown for `RunEvent::ExitRequested`.
     ///
-    /// Aborts the embedded server task so any background tokio tasks the
-    /// server spawned stop driving I/O before CEF's teardown runs. Cheap
-    /// and non-blocking on the UI thread — `JoinHandle::abort` returns
-    /// immediately.
+    /// Cancels the embedded server's token, gives it a bounded moment to
+    /// drain, then aborts whatever is left so any background tokio tasks the
+    /// server spawned stop driving I/O before CEF's teardown runs.
+    ///
+    /// The moment is what makes the server's post-drain teardown real. The
+    /// memory engine releases its job leases there, and an immediate abort
+    /// skipped it on every normal quit, so every next launch waited the
+    /// leases out (tinymemory#133). The wait is the same shape as the gateway
+    /// shutdown beside it: short, bounded, and worth the last moment of the
+    /// UI thread. A server that does not finish in time is aborted as before.
     pub async fn send_terminate_signal(&self) {
         self.cancel_shutdown_token(" on app shutdown").await;
+        self.drain_task_briefly().await;
         self.abort_task(" on app shutdown").await;
+    }
+
+    /// Wait a bounded moment for the server task to finish on its own after
+    /// its token was cancelled, so the teardown inside it runs.
+    ///
+    /// The moment is sized from what that teardown is allowed to take, so the
+    /// abort below never lands in the middle of it: the memory exit budget
+    /// (`EXIT_BUDGET`, every driver and the hook registry on one deadline),
+    /// the ollama cleanup after it in `serve_http` (2 s), and half a second
+    /// for the drain itself. Typical quits finish in milliseconds; the budget
+    /// is only what a wedged store or daemon may cost.
+    async fn drain_task_briefly(&self) {
+        const AFTER_MEMORY: Duration = Duration::from_millis(2_500);
+        let budget = openhuman_core::openhuman::memory::exit::EXIT_BUDGET + AFTER_MEMORY;
+        let mut task_guard = self.task.lock().await;
+        let Some(task) = task_guard.as_mut() else {
+            return;
+        };
+        match timeout(budget, task).await {
+            Ok(_) => {
+                task_guard.take();
+                log::info!("[core] embedded core server task drained on app shutdown");
+            }
+            Err(_) => log::warn!(
+                "[core] embedded core server task did not drain within {budget:?}; aborting"
+            ),
+        }
     }
 }
 
@@ -974,6 +1035,7 @@ fn find_pid_on_port(port: u16) -> Option<u32> {
 }
 
 /// Pure parse of `lsof -t` output (one pid per line; first wins).
+#[cfg(unix)]
 fn parse_lsof_pid(stdout: &str) -> Option<u32> {
     stdout
         .lines()

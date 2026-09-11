@@ -71,6 +71,30 @@ Notes:
 - If you prefer package-oriented cargo commands for packager scripts, use `-p openhuman`.
 - The built binary lands at `target/debug/openhuman-core` or `target/release/openhuman-core`.
 
+### Faster local linking (optional)
+
+The `openhuman` core crate links a large single rlib, so the edit → `cargo
+check`/`cargo test` inner loop is frequently link-bound. A faster linker (mold
+on Linux, lld on macOS) can cut a large slice off every incremental relink.
+[`.cargo/config.toml`](../../.cargo/config.toml) documents the manual
+opt-in, but the easiest path is:
+
+```bash
+# installs mold/lld detection into $CARGO_HOME/config.toml — never the
+# repo's tracked .cargo/config.toml, so it's a per-machine opt-in
+scripts/dev-setup-linker.sh
+
+# preview the change first
+scripts/dev-setup-linker.sh --dry-run
+```
+
+Install the linker first (`apt install mold` / `brew install llvm`) — the
+script detects it and exits with instructions if it's missing. It's
+idempotent: re-running it after the linker is already configured is a no-op.
+CI enables the same flag directly via `RUSTFLAGS` in the Linux Rust jobs; this
+script exists so local `cargo` invocations get the same speedup without
+depending on a container.
+
 ## 4. macOS prerequisites
 
 Install:

@@ -13,21 +13,21 @@ Local AI is **opt-in** and ships **off**. Turning it on doesn't silently reroute
 
 For the config-level reference (every flag and provider field), see [Local AI (optional)](../features/model-routing/local-ai.md). This guide is the task-oriented version: get it running and confirm it works.
 
-***
+---
 
 ## Prerequisites
 
-* [**Ollama**](https://ollama.com) installed. OpenHuman talks to it at its default address `http://localhost:11434`. (LM Studio is also supported at `http://localhost:1234/v1`; see the [reference page](../features/model-routing/local-ai.md#lm-studio-troubleshooting).)
-* **8 GB+ RAM** to get real value. Machines with less than 8 GB fall back to cloud summarization by design, because a small local model won't have the headroom.
-* Disk for the weights: a small chat model plus an embedding model is a few GB. OpenHuman does not ship weights; Ollama pulls them on demand.
+- [**Ollama**](https://ollama.com) installed. OpenHuman talks to it at its default address `http://localhost:11434`. (LM Studio is also supported at `http://localhost:1234/v1`; see the [reference page](../features/model-routing/local-ai.md#lm-studio-troubleshooting).)
+- **8 GB+ RAM** to get real value. Machines with less than 8 GB fall back to cloud summarization by design, because a small local model won't have the headroom.
+- Disk for the weights: a small chat model plus an embedding model is a few GB. OpenHuman does not ship weights; Ollama pulls them on demand.
 
 ## Privacy implications
 
-* Workloads you route locally (embeddings, summary building, background loops, and, if you choose, chat/reasoning) run **entirely on-device**. Nothing about that work is sent out.
-* Anything you leave on the default route still goes through the OpenHuman [model router](../features/model-routing/). Local AI is additive; it doesn't change what you didn't move.
-* If the local provider becomes unreachable mid-session, requests **transparently fall back** to the remote provider. That means a crashed Ollama can send that data to the cloud path instead. If strict locality matters, watch the diagnostics (below).
+- Workloads you route locally (embeddings, summary building, background loops, and, if you choose, chat/reasoning) run **entirely on-device**. Nothing about that work is sent out.
+- Anything you leave on the default route still goes through the OpenHuman [model router](../features/model-routing/). Local AI is additive; it doesn't change what you didn't move.
+- If the local provider becomes unreachable mid-session, requests **transparently fall back** to the remote provider. That means a crashed Ollama can send that data to the cloud path instead. If strict locality matters, watch the diagnostics (below).
 
-***
+---
 
 ## Steps
 
@@ -60,16 +60,16 @@ ollama pull bge-m3
 
 Don't assume; verify. The Local AI settings expose a **test action** that sends a short prompt to the configured local provider and shows you the reply. If you get a coherent response back, the path is live end-to-end (detection → model loaded → inference).
 
-***
+---
 
 ## Success checks
 
 Local AI is operational when:
 
-* [ ] **Settings → AI & Skills → Local AI** shows Ollama as reachable and your selected models as available (not "downloading" or "missing").
-* [ ] The test action returns a real reply from the local model.
-* [ ] The inference status reads **`ready`** (not `degraded`, `downloading`, or `disabled`).
-* [ ] For an embeddings-only setup: after the next memory sync, new summaries keep appearing in the **Memory** tab with Ollama running. That confirms embeddings are being produced locally.
+- [ ] **Settings → AI & Skills → Local AI** shows Ollama as reachable and your selected models as available (not "downloading" or "missing").
+- [ ] The test action returns a real reply from the local model.
+- [ ] The inference status reads **`ready`** (not `degraded`, `downloading`, or `disabled`).
+- [ ] For an embeddings-only setup: after the next memory sync, new summaries keep appearing in the **Memory** tab with Ollama running. That confirms embeddings are being produced locally.
 
 {% hint style="info" %}
 **Where to look under the hood.** OpenHuman surfaces a live diagnostics view for the local runtime (Ollama reachable? runner OK? which models are installed vs expected? what issues?). If a check fails, the diagnostics name the specific problem. Start there before changing config.
@@ -79,23 +79,23 @@ Local AI is operational when:
 
 These are the actual failure states the runtime reports, and what each one means:
 
-| What you see | Meaning | Fix |
-| ------------ | ------- | --- |
-| **"Ollama server is not running or not reachable"** (status `degraded`) | The app can't reach Ollama at its base URL | Start Ollama; confirm `curl http://localhost:11434/api/tags` works; if you use a non-default port, set the base URL in Local AI settings |
-| **"…reachable but cannot execute models. Restart the external runtime and retry."** | Ollama is answering but its model runner is broken (a fork/exec failure) | Quit and relaunch Ollama itself, then retry |
-| **"Chat model '…' is not installed"** | The configured model isn't pulled yet | Let OpenHuman pull it, or run `ollama pull <model>` |
-| **"…not reachable after fresh install. Start `ollama serve` manually and retry."** | Ollama was just installed but the server isn't up | Run `ollama serve` (or launch the Ollama app) and retry |
-| Embedding model rejected for **context window too small** | The chosen embedding model can't hold enough tokens for the memory layer | Choose a larger-context embedding model such as **`bge-m3`** |
-| Status stuck at **`downloading`**, then a retry message | A model pull stream was interrupted | It retries automatically; if it keeps failing, check disk space and network, then pull manually |
-| It "works" but answers feel cloud-quality | The local provider was unreachable and OpenHuman **fell back to remote** | Fix reachability above; strict-local users should confirm status is `ready` before relying on it |
+| What you see                                                                        | Meaning                                                                  | Fix                                                                                                                                      |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **"Ollama server is not running or not reachable"** (status `degraded`)             | The app can't reach Ollama at its base URL                               | Start Ollama; confirm `curl http://localhost:11434/api/tags` works; if you use a non-default port, set the base URL in Local AI settings |
+| **"…reachable but cannot execute models. Restart the external runtime and retry."** | Ollama is answering but its model runner is broken (a fork/exec failure) | Quit and relaunch Ollama itself, then retry                                                                                              |
+| **"Chat model '…' is not installed"**                                               | The configured model isn't pulled yet                                    | Let OpenHuman pull it, or run `ollama pull <model>`                                                                                      |
+| **"…not reachable after fresh install. Start `ollama serve` manually and retry."**  | Ollama was just installed but the server isn't up                        | Run `ollama serve` (or launch the Ollama app) and retry                                                                                  |
+| Embedding model rejected for **context window too small**                           | The chosen embedding model can't hold enough tokens for the memory layer | Choose a larger-context embedding model such as **`bge-m3`**                                                                             |
+| Status stuck at **`downloading`**, then a retry message                             | A model pull stream was interrupted                                      | It retries automatically; if it keeps failing, check disk space and network, then pull manually                                          |
+| It "works" but answers feel cloud-quality                                           | The local provider was unreachable and OpenHuman **fell back to remote** | Fix reachability above; strict-local users should confirm status is `ready` before relying on it                                         |
 
 ## Recovery
 
-* **Back to cloud in one step:** turn Local AI back off in **Settings → AI & Skills → Local AI**. Workloads return to the default route immediately; no data is lost.
-* **Free up a stuck runtime:** quit Ollama fully and relaunch it, then re-open the Local AI settings so OpenHuman re-probes.
-* **Disk pressure:** interrupted pulls are usually low disk. Clear space and let the pull resume, or `ollama pull` the model by hand.
+- **Back to cloud in one step:** turn Local AI back off in **Settings → AI & Skills → Local AI**. Workloads return to the default route immediately; no data is lost.
+- **Free up a stuck runtime:** quit Ollama fully and relaunch it, then re-open the Local AI settings so OpenHuman re-probes.
+- **Disk pressure:** interrupted pulls are usually low disk. Clear space and let the pull resume, or `ollama pull` the model by hand.
 
-***
+---
 
 ## Notes on what stays cloud anyway
 
@@ -103,6 +103,6 @@ Even with "everything local", some workloads are cloud by default unless you exp
 
 ## See also
 
-* [Local AI (optional)](../features/model-routing/local-ai.md): the full config reference.
-* [Keep sensitive data private](privacy-sensitive-data.md): the plain-language version of local vs external.
-* [Automatic Model Routing](../features/model-routing/): how tasks get matched to models.
+- [Local AI (optional)](../features/model-routing/local-ai.md): the full config reference.
+- [Keep sensitive data private](privacy-sensitive-data.md): the plain-language version of local vs external.
+- [Automatic Model Routing](../features/model-routing/): how tasks get matched to models.

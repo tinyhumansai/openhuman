@@ -10,12 +10,9 @@ test.describe('Core port conflict recovery', () => {
 
   test('startup-integrity check reaches a usable screen', async ({ page }) => {
     await waitForAppReady(page);
-    const text = await page.locator('#root').innerText();
-    expect(
-      ['New Conversation', 'Threads', 'Welcome', 'Get Started'].some(marker =>
-        text.includes(marker)
-      )
-    ).toBe(true);
+    await expect(
+      page.locator('[data-testid="chat-message-input"], [data-testid="onboarding-welcome-step"]')
+    ).toBeVisible();
   });
 
   test.skip('second instance surfaces clear conflict dialog once a visible banner exists', async () => {});

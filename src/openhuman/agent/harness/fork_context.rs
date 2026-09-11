@@ -19,7 +19,7 @@ use crate::openhuman::tools::{Tool, ToolSpec};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tinyagents::harness::workspace::WorkspaceDescriptor;
+use tinyagents_harness::workspace::WorkspaceDescriptor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parent execution context
@@ -49,15 +49,26 @@ pub struct ParentExecutionContext {
     /// per-archetype before handing it to the sub-agent's tool loop.
     pub all_tools: Arc<Vec<Box<dyn Tool>>>,
 
-    /// Pre-serialised tool specs matching `all_tools`. Captured at
-    /// turn-start so sub-agents can pass byte-identical schemas to the
-    /// provider for prefix-cache reuse.
-    pub all_tool_specs: Arc<Vec<ToolSpec>>,
+    /// Pre-serialised tool specs matching `all_tools` index for index.
+    /// Captured at turn-start so sub-agents can pass byte-identical schemas to
+    /// the provider for prefix-cache reuse. The parent's synthesised
+    /// delegation specs are deliberately absent: a sub-agent is never handed a
+    /// `delegate_*` tool (#4452), so there is no instance here for one.
+    pub all_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Names of the tools the parent actually advertises and will execute this
     /// turn. Consumers that recommend or directly invoke parent tools consult
     /// this role-specific surface.
     pub visible_tool_names: std::collections::HashSet<String>,
+
+    /// The specs behind [`Self::visible_tool_names`]: the parent's own
+    /// provider-facing list this turn — policy-filtered, de-duplicated, and
+    /// including its synthesised `delegate_*` tools. For consumers that
+    /// describe what the *parent* can call (the scout's catalogue), never for
+    /// building a child's tool set — that is [`Self::all_tools`] +
+    /// [`Self::all_tool_specs`], which carry no delegate. Empty when the
+    /// builder does not know the parent's surface.
+    pub visible_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Explicit profile/channel ceiling inherited by child agents. This is not
     /// the parent's role-specific visible surface: an orchestrator may delegate
@@ -166,12 +177,7 @@ tokio::task_local! {
     /// Tools such as `agent_prepare_context` use this to avoid spawning a
     /// second context scout after the harness has already prepared context.
     ///
-    /// Behind an `Arc<Mutex<…>>` (not a plain `Arc<Vec<…>>`) so a source can be
-    /// **appended live** mid-turn — the graph's `SuperContextMiddleware` runs its
-    /// scout during the harness run (after the initial list is scoped) and
-    /// registers its source via [`push_agent_context_prepared_source`] so a later
-    /// `agent_prepare_context` call in the same turn still self-suppresses.
-    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<std::sync::Mutex<Vec<AgentContextPreparedSource>>>;
+    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<Vec<AgentContextPreparedSource>>;
 }
 
 /// Returns a clone of the current parent execution context, if one is set.
@@ -187,34 +193,22 @@ pub async fn with_parent_context<F, R>(ctx: ParentExecutionContext, future: F) -
 where
     F: std::future::Future<Output = R>,
 {
-    PARENT_CONTEXT.scope(ctx, future).await
+    // Box before `scope` so only a pointer moves into the task-local frame
+    // rather than the whole nested turn generator — see the measurements on
+    // `with_turn_collector` in `turn_subagent_usage.rs`.
+    PARENT_CONTEXT.scope(ctx, Box::pin(future)).await
 }
 
 /// Returns the one-shot context-preparation sources that have already run for
 /// the current parent turn (a snapshot of the live list).
 pub fn current_agent_context_prepared_sources() -> Vec<AgentContextPreparedSource> {
     AGENT_CONTEXT_PREPARED_SOURCES
-        .try_with(|sources| sources.lock().map(|s| s.clone()).unwrap_or_default())
+        .try_with(|sources| sources.as_ref().clone())
         .unwrap_or_default()
 }
 
-/// Append a source to the current turn's prepared-context list, live.
-///
-/// Used by the graph's `SuperContextMiddleware`, which prepares context *during*
-/// the harness run (after [`with_agent_context_prepared_sources`] scoped the
-/// initial list) so a later `agent_prepare_context` tool call in the same turn
-/// observes it and self-suppresses. No-op outside an agent turn.
-pub fn push_agent_context_prepared_source(source: AgentContextPreparedSource) {
-    let _ = AGENT_CONTEXT_PREPARED_SOURCES.try_with(|sources| {
-        if let Ok(mut guard) = sources.lock() {
-            guard.push(source);
-        }
-    });
-}
-
 /// Run `future` with the current turn's already-prepared context sources
-/// installed. The list is appendable mid-turn via
-/// [`push_agent_context_prepared_source`].
+/// installed.
 pub async fn with_agent_context_prepared_sources<F, R>(
     sources: Vec<AgentContextPreparedSource>,
     future: F,
@@ -222,7 +216,10 @@ pub async fn with_agent_context_prepared_sources<F, R>(
 where
     F: std::future::Future<Output = R>,
 {
+    // Box before `scope` so only a pointer moves into the task-local frame
+    // rather than the whole nested turn generator — see the measurements on
+    // `with_turn_collector` in `turn_subagent_usage.rs`.
     AGENT_CONTEXT_PREPARED_SOURCES
-        .scope(Arc::new(std::sync::Mutex::new(sources)), future)
+        .scope(Arc::new(sources), Box::pin(future))
         .await
 }

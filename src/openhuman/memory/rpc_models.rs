@@ -3,6 +3,25 @@
 //! This module defines the request and response structures used by the JSON-RPC
 //! interface to interact with the memory system. These models ensure type-safe
 //! communication between the frontend/client and the Rust backend.
+//!
+//! # Why these live here and not in the engine crate (#5560)
+//!
+//! They used to be `tinymemory_core::rpc_models`, re-exported into this module
+//! by a glob. Nothing in `tinymemory` ever referenced them — not the engine,
+//! not an adapter, not a test — while all forty-five types are named by this
+//! host, so the engine crate was carrying one host's JSON-RPC surface and
+//! every file that touched a request shape held the engine in the build for it.
+//!
+//! Moving them changes no bytes on the wire: the structs are verbatim, so the
+//! serde shapes, field names and defaults are identical, and the re-export
+//! below keeps every `memory::…` path resolving exactly as before. What it
+//! changes is who owns them — a request shape this host defines, deserializes
+//! and passes between its own functions (`memory_query_namespace`,
+//! `thread_create_new`) was never the engine's to define.
+//!
+//! The mirror in `tinymemory-core` is dead on arrival and should be deleted
+//! upstream; until it is, the two definitions cannot diverge in a way that
+//! matters, because nothing reads the engine's copy.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -586,10 +605,15 @@ pub struct WriteMemoryFileResponse {
 /// Default directory for memory operations. Empty string means the memory
 /// root itself (`<workspace>/memory`); the file-based memory RPCs resolve all
 /// relative paths under that directory.
-fn default_memory_relative_dir() -> String {
+pub(crate) fn default_memory_relative_dir() -> String {
     String::new()
 }
 
 #[cfg(test)]
 #[path = "rpc_models_tests.rs"]
 mod tests;
+
+// The document-ingestion wire shapes live in `ingestion_models.rs` (split for
+// the file-layout gate) and are re-exported here so `memory::…` paths keep
+// resolving.
+pub use super::ingestion_models::*;

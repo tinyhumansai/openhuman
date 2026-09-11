@@ -78,9 +78,9 @@ Do not paste real JWTs into public GitHub issues. Redact tokens and attach only 
 
 ## What to include in a bug report
 
-* App version and OS.
-* Whether the core mode is local or remote.
-* The RPC URL host, redacted token status, and `core.ping` result.
-* The OAuth provider used.
-* Whether an `openhuman://auth` URL appeared in the browser.
-* The first unauthorized log line, if present.
+- App version and OS.
+- Whether the core mode is local or remote.
+- The RPC URL host, redacted token status, and `core.ping` result.
+- The OAuth provider used.
+- Whether an `openhuman://auth` URL appeared in the browser.
+- The first unauthorized log line, if present.

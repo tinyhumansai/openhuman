@@ -1,30 +1,6 @@
-import { type ReactNode } from 'react';
-
-interface SettingsSectionProps {
-  title?: string;
-  description?: string;
-  children: ReactNode;
-  className?: string;
-}
-
-const SettingsSection = ({ title, description, children, className }: SettingsSectionProps) => {
-  const base = 'rounded-xl border border-line bg-surface overflow-hidden';
-
-  return (
-    <div className={[base, className ?? ''].filter(Boolean).join(' ')}>
-      {title && (
-        <div className="px-4 pt-4 pb-0">
-          {/* Real heading (h3, one level below SettingsHeader's h2) for a11y
-              and so getByRole('heading') keeps resolving section titles. */}
-          <h3 className="text-xs font-semibold tracking-wide text-content-muted">{title}</h3>
-          {description && (
-            <p className="mt-1 text-xs text-content-muted leading-relaxed">{description}</p>
-          )}
-        </div>
-      )}
-      <div className="divide-y divide-line-subtle dark:divide-neutral-800">{children}</div>
-    </div>
-  );
-};
-
-export default SettingsSection;
+/**
+ * Moved to `components/ui/Card`. This shim keeps the ~45 existing call sites
+ * compiling while they migrate to the shared name; delete it once
+ * `rg "settings/controls"` comes back empty.
+ */
+export { default, type CardProps as SettingsSectionProps } from '../../ui/Card';

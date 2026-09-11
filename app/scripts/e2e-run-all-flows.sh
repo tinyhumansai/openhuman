@@ -454,7 +454,7 @@ fi
 
 echo ""
 echo "──────────────────────────────────────────────────────────────────"
-echo "  Launching single shared WDIO session for ${#_spec_paths[@]} spec(s)"
+echo "  Launching WDIO for ${#_spec_paths[@]} spec(s)"
 echo "──────────────────────────────────────────────────────────────────"
 
 if [[ $BAIL -eq 1 ]]; then
@@ -462,8 +462,31 @@ if [[ $BAIL -eq 1 ]]; then
 fi
 
 set +e
-bash "$APP_DIR/scripts/e2e-run-session.sh" "${_spec_paths[@]}"
-_WDIO_EXIT_CODE=$?
+if [[ "$(uname -s)" == "Linux" && "${E2E_USE_TAURI_DRIVER:-}" == "1" ]]; then
+  # tauri-driver creates a new WebDriver session for every spec, even when
+  # WDIO serializes its workers. After a few sequential sessions the driver
+  # can stop accepting POST /session, so give each Linux spec a clean driver
+  # and app lifecycle. A retry has to restart that lifecycle too: retrying
+  # within the same driver only repeats a hung POST /session request.
+  for spec in "${_spec_paths[@]}"; do
+    status=1
+    for attempt in 1 2; do
+      bash "$APP_DIR/scripts/e2e-run-session.sh" "$spec"
+      status=$?
+      [[ $status -eq 0 ]] && break
+      if [[ $attempt -eq 1 ]]; then
+        echo "[e2e-run-all-flows] retrying ${spec} with a fresh Linux driver/app lifecycle" >&2
+      fi
+    done
+    if [[ $status -ne 0 ]]; then
+      _WDIO_EXIT_CODE=$status
+      [[ $BAIL -eq 1 ]] && break
+    fi
+  done
+else
+  bash "$APP_DIR/scripts/e2e-run-session.sh" "${_spec_paths[@]}"
+  _WDIO_EXIT_CODE=$?
+fi
 set -e
 
 # finish() trap will print the summary and exit with _WDIO_EXIT_CODE.

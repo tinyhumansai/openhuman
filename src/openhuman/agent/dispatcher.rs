@@ -1,12 +1,49 @@
+//! Tool dialects — OpenHuman's adapter over
+//! [`tinyagents_harness::tool_calling::dialect`].
+//!
+//! The dialects themselves moved to the crate: how a model is told to ask for a
+//! tool, how it is parsed when it does, how results are rendered back, and how
+//! a transcript is replayed onto the provider wire so the next iteration is
+//! well-formed. None of that is OpenHuman-specific, and keeping a second copy
+//! of it here is how a catalogue and its parser drift apart.
+//!
+//! # What stayed
+//!
+//! Two things, both of them vocabulary.
+//!
+//! First, the **types**. [`ParsedToolCall`] and [`ToolExecutionResult`] are
+//! named and shaped for ~190 call sites across the harness, and
+//! [`ConversationMessage`] is the durable JSONL record existing installations
+//! already have on disk. The crate speaks its own thin
+//! [`TranscriptEntry`](tinyagents_harness::tool_calling::dialect::TranscriptEntry)
+//! instead, so the conversions below are the seam — a handful of field-wise
+//! maps that keep the wire bytes identical while the logic lives upstream.
+//!
+//! Second, the **[`Tool`] trait object**. The crate takes
+//! [`ToolSchema`](tinyinference::tool::ToolSchema)s, never a host's tool
+//! type, for the reason the parse seam already documents: a crate that depended
+//! on OpenHuman's `Tool` could not be used by a second host. So
+//! [`ToolDispatcher::prompt_instructions`] reads names and schemas off the
+//! slice and hands the crate exactly what it needs.
+//!
+//! # What did not move, and will not
+//!
+//! Executing a tool. The security policy, the approval gate, the sandbox, the
+//! per-call timeout, the progress events — those are OpenHuman's, and a dialect
+//! never decides what is *allowed to happen*, only what the model reads and
+//! writes. That line is what keeps the policy auditable in one place.
+
 use crate::openhuman::agent::context::prompt::ToolCallFormat;
-use crate::openhuman::agent::harness::parse_tool_calls;
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage, ToolResultMessage};
-use crate::openhuman::agent::pformat::{self, PFormatRegistry};
-use crate::openhuman::inference::provider::ChatResponse;
+use crate::openhuman::agent::pformat::PFormatRegistry;
+use crate::openhuman::inference::provider::{ChatResponse, ToolCall};
 use crate::openhuman::tools::{Tool, ToolSpec};
 use serde_json::Value;
-use std::fmt::Write;
-use std::sync::Arc;
+use tinyagents_harness::tool_calling::dialect::{
+    DialectMessage, DialectResponse, DialectRole, NativeDialect, NativeToolCall, PFormatDialect,
+    ToolDialect, ToolOutcome, ToolResultEntry, TranscriptEntry, XmlDialect,
+};
+use tinyinference::tool::ToolSchema;
 
 /// A parsed tool call representation after being extracted from an LLM response.
 #[derive(Debug, Clone)]
@@ -37,6 +74,9 @@ pub struct ToolExecutionResult {
 /// Different LLMs have different "dialects" for calling tools. The dispatcher
 /// abstracts these differences, allowing the agent loop to remain agnostic of
 /// the specific formatting required by the provider.
+///
+/// Each implementation below is a thin projection of one
+/// [`ToolDialect`] into OpenHuman's own vocabulary.
 pub trait ToolDispatcher: Send + Sync {
     /// Parse the LLM response to extract narrative text and any tool calls.
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>);
@@ -67,6 +107,207 @@ pub trait ToolDispatcher: Send + Sync {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The seam: OpenHuman vocabulary ↔ crate vocabulary
+//
+// Every function here is field-wise and lossless in the direction it is used.
+// If one of them ever needs a judgement call, that judgement belongs in the
+// crate — a conversion that decides something is a second implementation
+// wearing a disguise.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Project a provider response into the shape a dialect reads.
+fn to_dialect_response(response: &ChatResponse) -> DialectResponse {
+    DialectResponse {
+        text: response.text.clone(),
+        tool_calls: response.tool_calls.iter().map(to_native_call).collect(),
+    }
+}
+
+fn to_native_call(call: &ToolCall) -> NativeToolCall {
+    NativeToolCall {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        extra_content: call.extra_content.clone(),
+    }
+}
+
+fn from_native_call(call: &NativeToolCall) -> ToolCall {
+    ToolCall {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        extra_content: call.extra_content.clone(),
+    }
+}
+
+fn from_parsed_calls(
+    calls: Vec<tinyagents_harness::tool_calling::ParsedToolCall>,
+) -> Vec<ParsedToolCall> {
+    calls
+        .into_iter()
+        .map(|call| ParsedToolCall {
+            name: call.name,
+            arguments: call.arguments,
+            tool_call_id: call.id,
+        })
+        .collect()
+}
+
+fn to_outcomes(results: &[ToolExecutionResult]) -> Vec<ToolOutcome> {
+    results
+        .iter()
+        .map(|result| ToolOutcome {
+            name: result.name.clone(),
+            output: result.output.clone(),
+            success: result.success,
+            tool_call_id: result.tool_call_id.clone(),
+        })
+        .collect()
+}
+
+/// Project one durable OpenHuman record onto the crate's transcript entry.
+fn to_transcript_entry(message: &ConversationMessage) -> TranscriptEntry {
+    match message {
+        ConversationMessage::Chat(chat) => TranscriptEntry::Chat(to_dialect_message(chat)),
+        ConversationMessage::AssistantToolCalls {
+            text,
+            tool_calls,
+            reasoning_content,
+            extra_metadata,
+        } => TranscriptEntry::AssistantToolCalls {
+            text: text.clone(),
+            tool_calls: tool_calls.iter().map(to_native_call).collect(),
+            reasoning_content: reasoning_content.clone(),
+            extra_metadata: extra_metadata.clone(),
+        },
+        ConversationMessage::ToolResults(results) => TranscriptEntry::ToolResults(
+            results
+                .iter()
+                .map(|result| ToolResultEntry {
+                    tool_call_id: result.tool_call_id.clone(),
+                    content: result.content.clone(),
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn to_transcript(history: &[ConversationMessage]) -> Vec<TranscriptEntry> {
+    history.iter().map(to_transcript_entry).collect()
+}
+
+fn from_transcript_entry(entry: TranscriptEntry) -> ConversationMessage {
+    match entry {
+        TranscriptEntry::Chat(message) => ConversationMessage::Chat(from_dialect_message(message)),
+        TranscriptEntry::AssistantToolCalls {
+            text,
+            tool_calls,
+            reasoning_content,
+            extra_metadata,
+        } => ConversationMessage::AssistantToolCalls {
+            text,
+            tool_calls: tool_calls.iter().map(from_native_call).collect(),
+            reasoning_content,
+            extra_metadata,
+        },
+        TranscriptEntry::ToolResults(results) => ConversationMessage::ToolResults(
+            results
+                .into_iter()
+                .map(|result| ToolResultMessage {
+                    tool_call_id: result.tool_call_id,
+                    content: result.content,
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn to_dialect_message(message: &ChatMessage) -> DialectMessage {
+    // `role` is a free-form string in the durable record; anything the crate
+    // does not model is a `user` turn, which is what every provider treats an
+    // unrecognized role as anyway.
+    let role = match message.role.as_str() {
+        "system" => DialectRole::System,
+        "assistant" => DialectRole::Assistant,
+        "tool" => DialectRole::Tool,
+        _ => DialectRole::User,
+    };
+    DialectMessage {
+        role,
+        content: message.content.clone(),
+        extra_metadata: message.extra_metadata.clone(),
+    }
+}
+
+fn from_dialect_message(message: DialectMessage) -> ChatMessage {
+    ChatMessage {
+        id: None,
+        role: message.role.as_str().to_string(),
+        content: message.content,
+        extra_metadata: message.extra_metadata,
+    }
+}
+
+fn to_schemas(specs: &[ToolSpec]) -> Vec<ToolSchema> {
+    specs
+        .iter()
+        .map(|spec| ToolSchema::new(&spec.name, &spec.description, spec.parameters.clone()))
+        .collect()
+}
+
+fn schemas_from_tools(tools: &[Box<dyn Tool>]) -> Vec<ToolSchema> {
+    tools
+        .iter()
+        .map(|tool| ToolSchema::new(tool.name(), tool.description(), tool.parameters_schema()))
+        .collect()
+}
+
+fn from_format(
+    format: tinyagents_harness::tool_calling::dialect::ToolCallFormat,
+) -> ToolCallFormat {
+    use tinyagents_harness::tool_calling::dialect::ToolCallFormat as Crate;
+    match format {
+        Crate::PFormat => ToolCallFormat::PFormat,
+        Crate::Json => ToolCallFormat::Json,
+        Crate::Native => ToolCallFormat::Native,
+    }
+}
+
+/// Shared body of every `ToolDispatcher` impl below: convert in, delegate,
+/// convert out. Written once as functions rather than repeated per dispatcher
+/// so a new dialect is a `impl ToolDispatcher` of five one-line forwards.
+fn dispatch_parse(
+    dialect: &dyn ToolDialect,
+    response: &ChatResponse,
+) -> (String, Vec<ParsedToolCall>) {
+    let (text, calls) = dialect.parse_response(&to_dialect_response(response));
+    (text, from_parsed_calls(calls))
+}
+
+fn dispatch_format_results(
+    dialect: &dyn ToolDialect,
+    results: &[ToolExecutionResult],
+) -> ConversationMessage {
+    from_transcript_entry(dialect.format_results(&to_outcomes(results)))
+}
+
+fn dispatch_provider_messages(
+    dialect: &dyn ToolDialect,
+    history: &[ConversationMessage],
+) -> Vec<ChatMessage> {
+    dialect
+        .to_provider_messages(&to_transcript(history))
+        .into_iter()
+        .map(from_dialect_message)
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The three dispatchers
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Legacy dispatcher using XML-style tags (`<tool_call>`) with JSON bodies.
 ///
 /// This is robust and works well with models that aren't natively trained for
@@ -75,54 +316,35 @@ pub trait ToolDispatcher: Send + Sync {
 pub struct XmlToolDispatcher;
 
 impl XmlToolDispatcher {
-    /// Internal helper to extract tool calls from a raw text string.
-    fn parse_tool_calls_from_text(response: &str) -> (String, Vec<ParsedToolCall>) {
-        let (text, calls) = parse_tool_calls(response);
-        let parsed_calls = calls
-            .into_iter()
-            .map(|call| ParsedToolCall {
-                name: call.name,
-                arguments: call.arguments,
-                tool_call_id: None,
-            })
-            .collect::<Vec<_>>();
-        (text, parsed_calls)
-    }
-
     /// Extract serializable specs for all tools in the registry.
     pub fn tool_specs(tools: &[Box<dyn Tool>]) -> Vec<ToolSpec> {
         tools.iter().map(|tool| tool.spec()).collect()
+    }
+
+    /// Render the protocol block plus the full-schema catalogue.
+    pub fn prompt_instructions_from_specs(specs: &[ToolSpec]) -> String {
+        XmlDialect::instructions(&to_schemas(specs))
+    }
+
+    /// Internal helper to extract tool calls from a raw text string.
+    #[cfg(test)]
+    pub(crate) fn parse_tool_calls_from_text(response: &str) -> (String, Vec<ParsedToolCall>) {
+        let (text, calls) = XmlDialect::parse_text(response);
+        (text, from_parsed_calls(calls))
     }
 }
 
 impl ToolDispatcher for XmlToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
-        let text = response.text_or_empty();
-        let (parsed_text, parsed_calls) = Self::parse_tool_calls_from_text(text);
-        tracing::debug!(
-            parse_mode = "text_fallback",
-            parsed_tool_calls = parsed_calls.len(),
-            "xml dispatcher parsed response"
-        );
-        (parsed_text, parsed_calls)
+        dispatch_parse(&XmlDialect, response)
     }
 
     fn format_results(&self, results: &[ToolExecutionResult]) -> ConversationMessage {
-        let mut content = String::new();
-        for result in results {
-            let status = if result.success { "ok" } else { "error" };
-            let _ = writeln!(
-                content,
-                "<tool_result name=\"{}\" status=\"{}\">\n{}\n</tool_result>",
-                result.name, status, result.output
-            );
-        }
-        ConversationMessage::Chat(ChatMessage::user(format!("[Tool results]\n{content}")))
+        dispatch_format_results(&XmlDialect, results)
     }
 
     fn prompt_instructions(&self, tools: &[Box<dyn Tool>]) -> String {
-        let specs = Self::tool_specs(tools);
-        Self::prompt_instructions_from_specs(&specs)
+        XmlDialect::instructions(&schemas_from_tools(tools))
     }
 
     fn prompt_instructions_for_specs(&self, specs: &[ToolSpec]) -> Option<String> {
@@ -130,61 +352,15 @@ impl ToolDispatcher for XmlToolDispatcher {
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
-        history
-            .iter()
-            .flat_map(|msg| match msg {
-                ConversationMessage::Chat(chat) => vec![chat.clone()],
-                ConversationMessage::AssistantToolCalls {
-                    text,
-                    extra_metadata,
-                    ..
-                } => {
-                    let mut msg = ChatMessage::assistant(text.clone().unwrap_or_default());
-                    msg.extra_metadata = extra_metadata.clone();
-                    vec![msg]
-                }
-                ConversationMessage::ToolResults(results) => {
-                    let mut content = String::new();
-                    for result in results {
-                        let _ = writeln!(
-                            content,
-                            "<tool_result id=\"{}\">\n{}\n</tool_result>",
-                            result.tool_call_id, result.content
-                        );
-                    }
-                    vec![ChatMessage::user(format!("[Tool results]\n{content}"))]
-                }
-            })
-            .collect()
+        dispatch_provider_messages(&XmlDialect, history)
     }
 
     fn should_send_tool_specs(&self) -> bool {
-        // XML dispatcher embeds tool schemas in prompt text instead of
-        // sending native tool specs through the provider API.
-        false
+        XmlDialect.should_send_tool_specs()
     }
-}
 
-impl XmlToolDispatcher {
-    pub fn prompt_instructions_from_specs(specs: &[ToolSpec]) -> String {
-        let mut instructions = String::new();
-        instructions.push_str("## Tool Use Protocol\n\n");
-        instructions
-            .push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-        instructions.push_str(
-            "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
-        );
-        instructions.push_str("### Available Tools\n\n");
-
-        for spec in specs {
-            let _ = writeln!(
-                instructions,
-                "- **{}**: {}\n  Parameters: `{}`",
-                spec.name, spec.description, spec.parameters
-            );
-        }
-
-        instructions
+    fn tool_call_format(&self) -> ToolCallFormat {
+        from_format(XmlDialect.tool_call_format())
     }
 }
 
@@ -193,413 +369,83 @@ impl XmlToolDispatcher {
 ///
 /// P-format is designed to significantly reduce token usage compared to JSON.
 /// It uses positional arguments based on an alphabetical sort of the tool's
-/// parameters.
-///
-/// On the parse side the dispatcher tries p-format **first** and falls
-/// back to the existing JSON-in-tag parser if the body doesn't match
-/// the bracket pattern. This keeps the dispatcher backwards-compatible
-/// with models that still emit JSON tool calls.
+/// parameters, and falls back to the JSON-in-tag parser per tag so a model that
+/// mixes the two forms is still understood.
 pub struct PFormatToolDispatcher {
-    /// Registry of tool parameter layouts used to reconstruct named arguments from positional ones.
-    registry: Arc<PFormatRegistry>,
+    dialect: PFormatDialect,
 }
 
 impl PFormatToolDispatcher {
     /// Create a new P-Format dispatcher with the given tool registry.
     pub fn new(registry: PFormatRegistry) -> Self {
         Self {
-            registry: Arc::new(registry),
+            dialect: PFormatDialect::new(registry),
         }
-    }
-
-    /// Convert the registry-driven positional parser output into the dispatcher's
-    /// `ParsedToolCall` shape. Always called inside a `<tool_call>` tag.
-    fn try_parse_pformat_body(&self, body: &str) -> Option<ParsedToolCall> {
-        let (name, args) = pformat::parse_call(body, self.registry.as_ref())?;
-        Some(ParsedToolCall {
-            name,
-            arguments: args,
-            tool_call_id: None,
-        })
     }
 }
 
 impl ToolDispatcher for PFormatToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
-        let text = response.text_or_empty();
-
-        // Run the JSON parser first — it gives us the narrative text
-        // and a Vec of JSON-parsed calls. We then walk the tags
-        // ourselves and resolve each one individually: if p-format
-        // succeeds, use that; otherwise keep the JSON entry. This
-        // per-tag selection means a response mixing p-format and JSON
-        // tags is handled correctly instead of the old all-or-nothing.
-        //
-        // `XmlToolDispatcher::parse_tool_calls_from_text` is the
-        // canonical adapter from the internal `harness::parse`
-        // `ParsedToolCall` to the dispatcher's `ParsedToolCall`.
-        let json_pass = XmlToolDispatcher::parse_tool_calls_from_text(text);
-
-        // Walk tags manually, building a combined list that prefers
-        // p-format but falls back to JSON per tag.
-        let mut combined_calls = Vec::new();
-        let mut json_idx: usize = 0; // index into json_pass.1
-        let mut remaining = text;
-        let tags: &[(&str, &str)] = &[
-            ("<tool_call>", "</tool_call>"),
-            ("<toolcall>", "</toolcall>"),
-            ("<tool-call>", "</tool-call>"),
-            ("<invoke>", "</invoke>"),
-        ];
-        while !remaining.is_empty() {
-            let next = tags
-                .iter()
-                .filter_map(|(open, close)| remaining.find(open).map(|i| (i, *open, *close)))
-                .min_by_key(|(i, _, _)| *i);
-
-            let Some((open_idx, open_tag, close_tag)) = next else {
-                break;
-            };
-
-            let after_open = &remaining[open_idx + open_tag.len()..];
-            let Some(close_idx) = after_open.find(close_tag) else {
-                break;
-            };
-
-            let body = &after_open[..close_idx];
-
-            // Try p-format first; if that fails, take the
-            // corresponding JSON entry (if one exists at this index).
-            if let Some(parsed) = self.try_parse_pformat_body(body) {
-                combined_calls.push(parsed);
-                // Advance the JSON index too — both parsers walk the
-                // same ordered set of tags, so they stay in lockstep.
-                json_idx += 1;
-            } else if let Some(json_call) = json_pass.1.get(json_idx) {
-                combined_calls.push(json_call.clone());
-                json_idx += 1;
-            }
-
-            remaining = &after_open[close_idx + close_tag.len()..];
-        }
-
-        if !combined_calls.is_empty() {
-            tracing::debug!(
-                parse_mode = "pformat_combined",
-                parsed_tool_calls = combined_calls.len(),
-                "pformat dispatcher parsed response (per-tag selection)"
-            );
-            return (json_pass.0, combined_calls);
-        }
-
-        // No tags found at all (or all tags failed both parsers) —
-        // return the full JSON pass which also handles markdown
-        // code-block and GLM fallbacks.
-        tracing::debug!(
-            parse_mode = "pformat_fallback_json",
-            parsed_tool_calls = json_pass.1.len(),
-            "pformat dispatcher fell back to JSON-in-tag path"
-        );
-        json_pass
+        dispatch_parse(&self.dialect, response)
     }
 
     fn format_results(&self, results: &[ToolExecutionResult]) -> ConversationMessage {
-        // Same wrapping format as XML dispatcher — `<tool_result>` tags
-        // are unaffected by the call-side syntax change.
-        let mut content = String::new();
-        for result in results {
-            let status = if result.success { "ok" } else { "error" };
-            let _ = writeln!(
-                content,
-                "<tool_result name=\"{}\" status=\"{}\">\n{}\n</tool_result>",
-                result.name, status, result.output
-            );
-        }
-        ConversationMessage::Chat(ChatMessage::user(format!("[Tool results]\n{content}")))
+        dispatch_format_results(&self.dialect, results)
     }
 
     fn prompt_instructions(&self, _tools: &[Box<dyn Tool>]) -> String {
-        // Protocol description ONLY — the tool catalogue is rendered by
-        // the upstream `ToolsSection` (which now reads
-        // `PromptContext::tool_call_format` and emits the same positional
-        // signatures we'd otherwise duplicate here). Keeping this string
-        // protocol-only avoids the wasteful "tools listed twice" pattern
-        // the legacy `XmlToolDispatcher` carries forward, and means
-        // adding a new tool only changes the prompt in one place.
-        let mut instructions = String::new();
-        instructions.push_str("## Tool Use Protocol\n\n");
-        instructions.push_str(
-            "Tool calls use **P-Format** (Parameter-Format): compact, positional, \
-             pipe-delimited syntax wrapped in `<tool_call>` tags. ~80% cheaper on tokens \
-             than JSON.\n\n",
-        );
-        instructions
-            .push_str("```\n<tool_call>\nget_weather[London|metric]\n</tool_call>\n```\n\n");
-        instructions.push_str(
-            "**Rules:**\n\
-             - Form: `name[arg1|arg2|...|argN]`. Arguments are positional and must match the \
-               order shown in each tool's `Call as:` signature in the `## Tools` section above \
-               (alphabetical by parameter name).\n\
-             - Empty calls: `name[]` for zero-arg tools.\n\
-             - Empty argument: `name[||value]` is three positional values, the first two empty.\n\
-             - Escapes inside argument values: `\\|` → `|`, `\\]` → `]`, `\\\\` → `\\`.\n\
-             - You may emit multiple `<tool_call>` blocks in a single response. Each tag holds \
-               exactly one call.\n\
-             - After tool execution, results appear in `<tool_result>` tags. Continue reasoning \
-               with the results until you can give a final answer.\n\
-             - If you genuinely need a complex nested argument that p-format can't express, \
-               you may fall back to the JSON form: \
-               `<tool_call>{\"name\":\"...\",\"arguments\":{...}}</tool_call>`. Prefer p-format \
-               for everything else.\n\n",
-        );
-
-        instructions
+        // Protocol description ONLY — the catalogue is rendered by the upstream
+        // `ToolsSection`, from the same schemas this dialect parses against.
+        PFormatDialect::instructions()
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
-        // Identical to XML dispatcher — history serialization is
-        // independent of the call-body format.
-        history
-            .iter()
-            .flat_map(|msg| match msg {
-                ConversationMessage::Chat(chat) => vec![chat.clone()],
-                ConversationMessage::AssistantToolCalls {
-                    text,
-                    extra_metadata,
-                    ..
-                } => {
-                    let mut msg = ChatMessage::assistant(text.clone().unwrap_or_default());
-                    msg.extra_metadata = extra_metadata.clone();
-                    vec![msg]
-                }
-                ConversationMessage::ToolResults(results) => {
-                    let mut content = String::new();
-                    for result in results {
-                        let _ = writeln!(
-                            content,
-                            "<tool_result id=\"{}\">\n{}\n</tool_result>",
-                            result.tool_call_id, result.content
-                        );
-                    }
-                    vec![ChatMessage::user(format!("[Tool results]\n{content}"))]
-                }
-            })
-            .collect()
+        dispatch_provider_messages(&self.dialect, history)
     }
 
     fn should_send_tool_specs(&self) -> bool {
-        // P-format is text-based — the model never receives a structured
-        // tool spec, only the catalogue inside the system prompt.
-        false
+        self.dialect.should_send_tool_specs()
     }
 
     fn tool_call_format(&self) -> ToolCallFormat {
-        ToolCallFormat::PFormat
+        from_format(self.dialect.tool_call_format())
     }
 }
 
 /// Dispatcher for models with native, structured tool-calling support (e.g., OpenAI, Anthropic).
 ///
 /// This dispatcher leverages the provider's built-in APIs for identifying and
-/// reporting tool calls, which is generally more reliable than text-based parsing.
-/// It still supports a text-based fallback for robustness against models that
-/// might "forget" to use the structured API.
+/// reporting tool calls, which is generally more reliable than text-based
+/// parsing. It still supports a text-based fallback for robustness against
+/// models that might "forget" to use the structured API, and drops half-finished
+/// tool cycles while serializing so a bisected transcript cannot trip the
+/// provider's 400 (TAURI-RUST-7) — see
+/// [`pair_tool_cycles`](tinyagents_harness::tool_calling::dialect::pair_tool_cycles).
 pub struct NativeToolDispatcher;
 
 impl ToolDispatcher for NativeToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
-        let text = response.text.clone().unwrap_or_default();
-        let calls: Vec<ParsedToolCall> = response
-            .tool_calls
-            .iter()
-            .map(|tc| ParsedToolCall {
-                name: tc.name.clone(),
-                arguments: serde_json::from_str(&tc.arguments).unwrap_or_else(|e| {
-                    tracing::warn!(
-                        tool = %tc.name,
-                        error = %e,
-                        "Failed to parse native tool call arguments as JSON; defaulting to empty object"
-                    );
-                    Value::Object(serde_json::Map::new())
-                }),
-                tool_call_id: Some(tc.id.clone()),
-            })
-            .collect();
-
-        if !calls.is_empty() {
-            tracing::debug!(
-                parse_mode = "native_structured",
-                parsed_tool_calls = calls.len(),
-                "native dispatcher parsed response"
-            );
-            return (text, calls);
-        }
-
-        if !text.is_empty() {
-            let (fallback_text, fallback_calls) =
-                XmlToolDispatcher::parse_tool_calls_from_text(&text);
-            if !fallback_calls.is_empty() {
-                let display_text = if fallback_text.is_empty() {
-                    text
-                } else {
-                    fallback_text
-                };
-                tracing::debug!(
-                    parse_mode = "text_fallback",
-                    parsed_tool_calls = fallback_calls.len(),
-                    "native dispatcher parsed response"
-                );
-                return (display_text, fallback_calls);
-            }
-        }
-
-        tracing::debug!(
-            parse_mode = "none",
-            parsed_tool_calls = 0,
-            "native dispatcher parsed response"
-        );
-        (text, calls)
+        dispatch_parse(&NativeDialect, response)
     }
 
     fn format_results(&self, results: &[ToolExecutionResult]) -> ConversationMessage {
-        let messages = results
-            .iter()
-            .map(|result| ToolResultMessage {
-                tool_call_id: result
-                    .tool_call_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                content: result.output.clone(),
-            })
-            .collect();
-        ConversationMessage::ToolResults(messages)
+        dispatch_format_results(&NativeDialect, results)
     }
 
     fn prompt_instructions(&self, _tools: &[Box<dyn Tool>]) -> String {
-        [
-            "## Tool Use Protocol",
-            "",
-            "When a tool is needed, emit tool calls directly via the model's native tool-calling output.",
-            "Do not only narrate intent (for example, avoid \"Let me check...\") without emitting the tool call.",
-            "After tool results are provided, continue reasoning and then produce the final answer.",
-            "",
-        ]
-        .join("\n")
+        NativeDialect.prompt_instructions(&[])
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {
-        // TAURI-RUST-7: providers (incl. the OpenHuman backend) reject any
-        // assistant `tool_calls` message that isn't immediately followed by
-        // `tool` messages responding to every `tool_call_id`, with
-        // `400 An assistant message with 'tool_calls' must be followed by
-        // tool messages responding to each 'tool_call_id'`. Cached transcript
-        // restores, mid-turn aborts, and history compaction can all produce a
-        // bisected tool cycle (assistant tool_calls preserved, ToolResults
-        // dropped or never persisted). Filter those out here, just before
-        // serialising to provider wire format, so a bisected pair never
-        // reaches the wire. Symmetric drop: a `ToolResults` whose preceding
-        // `AssistantToolCalls` was dropped is also stripped to keep the
-        // sequence well-formed.
-        // CodeRabbit follow-up: backend's 400 says "insufficient tool messages
-        // following tool_calls", which fires on either (a) zero following tool
-        // messages, or (b) a tool message set whose `tool_call_id`s don't
-        // cover every `tool_calls[].id` on the opener. Adjacency alone is
-        // not sufficient — require the full set of opener ids to equal the
-        // set of follower `tool_call_id`s.
-        let mut paired_indices: Vec<usize> = Vec::with_capacity(history.len());
-        for (i, msg) in history.iter().enumerate() {
-            match msg {
-                ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
-                    let Some(ConversationMessage::ToolResults(results)) = history.get(i + 1) else {
-                        log::debug!(
-                            "[agent][dispatcher] dropping unpaired AssistantToolCalls at index \
-                             {i} of {} (no immediately following ToolResults — would trip \
-                             provider 400 'tool_calls must be followed by tool messages')",
-                            history.len()
-                        );
-                        continue;
-                    };
-                    let opener_ids: std::collections::BTreeSet<&str> =
-                        tool_calls.iter().map(|tc| tc.id.as_str()).collect();
-                    let result_ids: std::collections::BTreeSet<&str> =
-                        results.iter().map(|r| r.tool_call_id.as_str()).collect();
-                    if !opener_ids.is_empty() && opener_ids == result_ids {
-                        paired_indices.push(i);
-                    } else {
-                        log::debug!(
-                            "[agent][dispatcher] dropping AssistantToolCalls at index {i}: \
-                             tool_call_id set mismatch between opener ({:?}) and ToolResults \
-                             ({:?})",
-                            opener_ids,
-                            result_ids
-                        );
-                    }
-                }
-                ConversationMessage::ToolResults(_) => {
-                    let preceded_by_kept_tool_calls = i > 0
-                        && matches!(
-                            history.get(i - 1),
-                            Some(ConversationMessage::AssistantToolCalls { .. })
-                        )
-                        && paired_indices.last() == Some(&(i - 1));
-                    if preceded_by_kept_tool_calls {
-                        paired_indices.push(i);
-                    } else {
-                        log::debug!(
-                            "[agent][dispatcher] dropping orphan ToolResults at index {i} \
-                             (no preceding AssistantToolCalls in the emitted sequence)"
-                        );
-                    }
-                }
-                ConversationMessage::Chat(_) => {
-                    paired_indices.push(i);
-                }
-            }
-        }
-
-        paired_indices
-            .into_iter()
-            .flat_map(|i| match &history[i] {
-                ConversationMessage::Chat(chat) => vec![chat.clone()],
-                ConversationMessage::AssistantToolCalls {
-                    text,
-                    tool_calls,
-                    reasoning_content,
-                    extra_metadata,
-                } => {
-                    let mut payload = serde_json::json!({
-                        "content": text,
-                        "tool_calls": tool_calls,
-                    });
-                    if let Some(rc) = reasoning_content {
-                        payload["reasoning_content"] = serde_json::Value::String(rc.clone());
-                    }
-                    let mut msg = ChatMessage::assistant(payload.to_string());
-                    msg.extra_metadata = extra_metadata.clone();
-                    vec![msg]
-                }
-                ConversationMessage::ToolResults(results) => results
-                    .iter()
-                    .map(|result| {
-                        ChatMessage::tool(
-                            serde_json::json!({
-                                "tool_call_id": result.tool_call_id,
-                                "content": result.content,
-                            })
-                            .to_string(),
-                        )
-                    })
-                    .collect(),
-            })
-            .collect()
+        dispatch_provider_messages(&NativeDialect, history)
     }
 
     fn should_send_tool_specs(&self) -> bool {
-        true
+        NativeDialect.should_send_tool_specs()
     }
 
     fn tool_call_format(&self) -> ToolCallFormat {
-        ToolCallFormat::Native
+        from_format(NativeDialect.tool_call_format())
     }
 }
 

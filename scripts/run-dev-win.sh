@@ -86,7 +86,7 @@ export LIBCLANG_PATH="/c/Program Files/LLVM/bin"
 # back into this bash session.
 #
 # Without this, the Ninja generator fails to find cl.exe and CMake-driven
-# native crates (whisper-rs-sys, etc.) error out at the C++ compilation step.
+# native crates (libgit2-sys, libsqlite3-sys, etc.) error out at the C compilation step.
 if ! command -v cl.exe >/dev/null 2>&1; then
   vswhere_exe="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
   if [[ ! -x "$vswhere_exe" ]]; then
@@ -214,7 +214,7 @@ if [[ -z "${WindowsSdkDir:-}" || "${WindowsSDKVersion:-}" == "\\" || -z "${Windo
       export INCLUDE="${INCLUDE:+$INCLUDE;}${sdk_inc_shared};${sdk_inc_um};${sdk_inc_ucrt};${sdk_inc_winrt}"
       # Prepend the SDK bin dir to PATH so `rc.exe` (Windows Resource
       # Compiler) is findable. CMake-driven native crates (cef-dll-sys
-      # via cmake-rs, whisper-rs-sys, etc.) invoke `rc` by bare name
+      # via cmake-rs, the *-sys crates, etc.) invoke `rc` by bare name
       # during their try-compile probe; vcvars usually adds this dir
       # but doesn't when its SDK detection degraded.
       sdk_bin_unix="$sdk_root_unix/bin/$sdk_version/x64"

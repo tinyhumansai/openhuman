@@ -1,4 +1,4 @@
-//! Local AI runtime — Ollama, LM Studio, Whisper, Piper sub-process management.
+//! Local AI runtime — Ollama, LM Studio, Piper sub-process management.
 //!
 //! This module was previously `src/openhuman/local_ai/`. It now lives under
 //! `inference/local/` so all inference concerns share a single domain root.
@@ -31,7 +31,6 @@ pub use super::types;
 
 pub mod install;
 pub(crate) mod install_piper;
-pub(crate) mod install_whisper;
 pub(crate) mod lm_studio;
 pub(crate) mod model_requirements;
 mod ollama;
@@ -52,6 +51,4 @@ pub use schemas::{
     all_controller_schemas as all_local_inference_controller_schemas,
     all_registered_controllers as all_local_inference_registered_controllers,
 };
-#[cfg(feature = "voice")]
-pub(crate) use service::whisper_engine;
 pub use service::LocalAiService;

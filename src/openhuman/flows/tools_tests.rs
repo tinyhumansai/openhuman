@@ -212,6 +212,67 @@ fn dedup_config_hint_is_truncated_for_a_long_key_expression() {
     );
 }
 
+#[test]
+fn approval_config_hint_prefers_the_review_title() {
+    let graph = WorkflowGraph {
+        nodes: vec![Node {
+            id: "review".to_string(),
+            kind: NodeKind::Approval,
+            type_version: 1,
+            name: "Review".to_string(),
+            config: json!({
+                "title": "Publish this draft?",
+                "prompt": "Approve publication"
+            }),
+            ports: Vec::new(),
+            position: None,
+        }],
+        ..Default::default()
+    };
+
+    let summary = build_summary(&graph);
+    assert_eq!(summary["steps"][0]["config_hint"], "Publish this draft?");
+}
+
+#[test]
+fn shell_config_hint_prefers_the_script_path_and_truncates_inline_source() {
+    let graph = WorkflowGraph {
+        nodes: vec![
+            Node {
+                id: "path".to_string(),
+                kind: NodeKind::Shell,
+                type_version: 1,
+                name: "Script file".to_string(),
+                config: json!({
+                    "script_path": "scripts/report.sh",
+                    "source": "ignored when a path is present"
+                }),
+                ports: Vec::new(),
+                position: None,
+            },
+            Node {
+                id: "inline".to_string(),
+                kind: NodeKind::Shell,
+                type_version: 1,
+                name: "Inline script".to_string(),
+                config: json!({ "source": "x".repeat(200) }),
+                ports: Vec::new(),
+                position: None,
+            },
+        ],
+        ..Default::default()
+    };
+
+    let summary = build_summary(&graph);
+    assert_eq!(
+        summary["steps"][0]["config_hint"],
+        "script: scripts/report.sh"
+    );
+    let inline_hint = summary["steps"][1]["config_hint"].as_str().unwrap();
+    assert_eq!(inline_hint.chars().count(), MAX_CONFIG_HINT_CHARS);
+    assert!(inline_hint.ends_with('…'));
+}
+
 #[tokio::test]
 async fn summary_trigger_describes_schedule() {
     let tmp = TempDir::new().unwrap();
@@ -317,10 +378,10 @@ fn display_label_humanizes_the_tool_name() {
 // ── enforcing binding-resolvability gate ────────────────────────────────────
 
 #[tokio::test]
-async fn propose_workflow_rejects_unschemad_agent_binding() {
-    // The proven live-failure graph: `summarize` has no `output_parser.schema`,
-    // so `post`'s `args.channel` binding is guaranteed to resolve null at
-    // runtime. Unlike the advisory dry-run check, propose_workflow must
+async fn propose_workflow_rejects_agent_binding_missing_declared_field() {
+    // A declared schema that omits `channel` proves `notify`'s binding resolves
+    // null at runtime. Unlike a schema-less agent (whose host-defined output is
+    // merely unverifiable), propose_workflow must
     // REJECT this outright rather than warn (warning_count would have been 0
     // here — nothing stopped this from reaching save_workflow before).
     let tmp = TempDir::new().unwrap();
@@ -330,10 +391,12 @@ async fn propose_workflow_rejects_unschemad_agent_binding() {
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "summarize", "kind": "agent", "name": "Summarize",
-              "config": { "agent_ref": "researcher", "prompt": "summarize" } },
+              "config": { "agent_ref": "researcher", "prompt": "summarize",
+                "output_parser": { "schema": { "type": "object",
+                  "properties": { "summary": { "type": "string" } } } } } },
             { "id": "notify", "kind": "tool_call", "name": "Notify",
               "config": { "slug": "SLACK_SEND_MESSAGE",
-                "args": { "channel": "=nodes.summarize.item.json.channel" } } }
+                "args": { "channel": "=nodes.summarize.item.json.channel", "text": "A notification" } } }
         ],
         "edges": [
             { "from_node": "t", "to_node": "summarize" },

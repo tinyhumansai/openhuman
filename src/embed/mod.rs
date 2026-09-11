@@ -50,18 +50,28 @@
 //! [`CoreError::Unavailable`] so a host can hide the surface instead of
 //! reporting a failure.
 
+mod agent;
+mod auth;
 mod call;
 mod config;
 mod error;
+mod harness;
 #[cfg(feature = "medulla")]
 mod medulla;
 
+pub use agent::{absolute, Agent, Route, Turn, TurnOutcome, TurnRequest};
+pub use auth::{Auth, AuthState, Session};
 pub use config::{Config, RuntimeFlags};
 pub use error::CoreError;
+pub use harness::{
+    Access, Harness, HarnessBuilder, HarnessCore, HarnessError, Provider, Workspace,
+};
+#[cfg(feature = "mcp")]
+pub use harness::{HttpHeader, McpAuthConfig, McpServer};
 #[cfg(feature = "medulla")]
 pub use medulla::{
-    AbortResult, EventEnvelope, Medulla, MedullaStatus, Message, RosterWorker, SendResult,
-    SessionCreated, SessionDetail, SessionSummary,
+    AbortResult, Medulla, MedullaStatus, Message, RosterWorker, SendResult, SessionCreated,
+    SessionDetail, SessionSummary, WireEventEnvelope,
 };
 
 use std::sync::Arc;
@@ -91,6 +101,28 @@ impl Core {
     /// Typed configuration access.
     pub fn config(&self) -> Config<'_> {
         Config(&self.rt)
+    }
+
+    /// Typed access to the session store.
+    ///
+    /// Use this when the embedded workload calls authenticated TinyHumans
+    /// backend services. A [`HostKind::Library`](crate::core::types::HostKind::Library)
+    /// runtime does not need an app session for caller-supplied inference.
+    pub fn auth(&self) -> Auth<'_> {
+        Auth(&self.rt)
+    }
+
+    /// Typed access to the agent harness — run a turn, get a reply.
+    ///
+    /// Requires the `inference` domain family at runtime; with it off the turn
+    /// returns [`CoreError::Unavailable`], because the routed chat entry point
+    /// is registered under that group. Note
+    /// [`DomainSet::harness`](crate::core::runtime::DomainSet::harness) leaves
+    /// `inference` **off** despite its name — use
+    /// [`DomainSet::embedded`](crate::core::runtime::DomainSet::embedded), or
+    /// set the field.
+    pub fn agent(&self) -> Agent<'_> {
+        Agent(&self.rt)
     }
 
     /// Typed access to the Medulla orchestration backend.

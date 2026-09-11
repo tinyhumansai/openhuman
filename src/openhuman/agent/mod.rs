@@ -17,8 +17,6 @@
 //!   in prompts and parsed from responses (XML, JSON, P-Format).
 //! - **[`harness::subagent_runner`]**: Logic for spawning "sub-agents" from
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
-
-pub mod agentbox;
 pub mod artifacts;
 pub mod bus;
 pub mod context;
@@ -28,6 +26,7 @@ pub mod dispatcher;
 pub mod error;
 pub mod experience;
 pub mod file_state;
+pub(crate) mod git_attribution;
 pub mod harness;
 pub mod harness_init;
 pub mod hooks;
@@ -47,6 +46,11 @@ pub mod plan_review;
 pub mod platform_shell;
 pub mod profiles;
 pub mod progress;
+/// Task-local [`progress::AgentProgress`] sink — how an in-process embedder
+/// observes a turn driven through an RPC that returns only a final string.
+/// Same shape as [`turn_origin`]; read by entry points that build the
+/// [`Agent`] internally (`inference::local::ops::agent_chat`).
+pub mod progress_sink;
 /// Structured tracing export off the [`progress`] channel: turns the
 /// real-time [`progress::AgentProgress`] stream into OpenTelemetry/
 /// Langfuse-style spans (turn → iteration → tool / subagent) correlated by
@@ -76,12 +80,19 @@ pub mod triage;
 /// origin-aware decisions rather than inferring trust from the absence of
 /// `APPROVAL_CHAT_CONTEXT`.
 pub mod turn_origin;
+/// Turn-workspace task-local — the per-turn filesystem root an embedder binds
+/// a single agent turn to. Read by the session builder (as the turn's default
+/// cwd) and by the path policy (as a read/write trusted root), so a host that
+/// runs one turn against a checkout it names does not have to mutate
+/// process-global state to do it.
+pub mod turn_workspace;
 pub use schemas::{
     all_controller_schemas as all_agent_controller_schemas,
     all_registered_controllers as all_agent_registered_controllers,
 };
 
 #[cfg(test)]
+#[path = "agent_tests.rs"]
 mod tests;
 
 #[allow(unused_imports)]

@@ -4,6 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -42,12 +43,28 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "sandbox",
             function: "status",
             description: "Return sandbox backend status and availability.",
-            inputs: vec![FieldSchema {
-                name: "backend",
-                ty: TypeSchema::String,
-                comment: "Backend kind to check: 'docker', 'local', or 'none'.",
-                required: false,
-            }],
+            inputs: vec![
+                FieldSchema {
+                    name: "backend",
+                    ty: TypeSchema::String,
+                    comment: "Sandbox MODE to resolve, not the backend that is \
+                              reported: 'docker'/'local' both map to the sandboxed \
+                              mode, 'none' to no sandbox. The ACTUAL backend is \
+                              resolved from the loaded runtime config (`[runtime] \
+                              kind`) plus `is_remote`, so it reflects what an agent \
+                              session would really get — e.g. 'docker' on a \
+                              native-config host reports the Local backend.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "is_remote",
+                    ty: TypeSchema::Bool,
+                    comment: "Whether this is a remote/channel session. When true, a \
+                              sandboxed session resolves to the Docker backend even if \
+                              the runtime is not configured for Docker. Defaults to false.",
+                    required: false,
+                },
+            ],
             outputs: vec![FieldSchema {
                 name: "status",
                 ty: TypeSchema::Json,
@@ -132,12 +149,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
+/// `sandbox.status` — report the backend an agent session would actually get.
+///
+/// The `backend` param selects the sandbox MODE to resolve, not the backend to
+/// report: `"docker"`/`"local"` both mean "resolve the sandboxed mode" and
+/// `"none"` means "no sandbox". The concrete backend is then derived from the
+/// loaded runtime config (`[runtime] kind`) plus `is_remote` — never from the
+/// requested name — so `backend:"docker"` on a native-config host reports Local,
+/// matching what a real session on that host would run. Reporting the requested
+/// backend instead was the conflation fixed in #6081.
 fn handle_status(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let backend_str = params
             .get("backend")
             .and_then(|v| v.as_str())
             .unwrap_or("none");
+        // `is_remote` is an explicit caller-supplied flag, matching
+        // `handle_resolve_policy`. It must NOT be inferred from `backend_str`:
+        // naming the docker backend to check its availability is not the same
+        // as running a remote/channel session, and conflating the two forced
+        // Docker resolution for a local status probe (#6081).
+        let is_remote = params
+            .get("is_remote")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let mode = match backend_str {
             "docker" | "local" => {
@@ -146,12 +181,23 @@ fn handle_status(params: Map<String, Value>) -> ControllerFuture {
             _ => crate::openhuman::agent::harness::definition::SandboxMode::None,
         };
 
-        let config = crate::openhuman::config::RuntimeConfig::default();
-        let is_remote = backend_str == "docker";
+        // Load the user's live config so the reported policy reflects the
+        // configured runtime (`[runtime] kind` + `[runtime.docker]` overrides)
+        // and the mounted workspace, not the compiled-in `RuntimeConfig::default()`
+        // (#6081). A failed config load surfaces to the caller rather than
+        // silently answering from defaults.
+        let config = match config_rpc::load_config_with_timeout().await {
+            Ok(config) => config,
+            Err(err) => {
+                log::warn!("[sandbox] handle_status config load failed error={err}");
+                return Err(err);
+            }
+        };
+
         let policy = super::ops::resolve_sandbox_policy(
             mode,
-            std::path::Path::new("/tmp"),
-            &config,
+            &config.workspace_dir,
+            &config.runtime,
             is_remote,
         );
         let handle = super::ops::create_sandbox_backend(&policy).await;
@@ -176,9 +222,32 @@ fn handle_resolve_policy(params: Map<String, Value>) -> ControllerFuture {
             _ => crate::openhuman::agent::harness::definition::SandboxMode::None,
         };
 
-        let config = crate::openhuman::config::RuntimeConfig::default();
-        let action_dir = crate::openhuman::config::default_action_dir();
-        let policy = super::ops::resolve_sandbox_policy(mode, &action_dir, &config, is_remote);
+        // Load the user's live config so the resolved policy honors the
+        // configured runtime (`[runtime] kind` + `[runtime.docker]` overrides)
+        // and the user's action dir, not the compiled-in `RuntimeConfig::default()`
+        // and `default_action_dir()` (#6081). A failed config load surfaces to
+        // the caller rather than silently answering from defaults.
+        let config = match config_rpc::load_config_with_timeout().await {
+            Ok(config) => config,
+            Err(err) => {
+                log::warn!("[sandbox] handle_resolve_policy config load failed error={err}");
+                return Err(err);
+            }
+        };
+
+        // Use the already-resolved `config.action_dir`. The loader fully
+        // resolves this field on every path: `load_or_init` sets it from the
+        // env `OPENHUMAN_ACTION_DIR` > persisted `action_dir_override` > default
+        // precedence (`resolve_action_dir` + `apply_env_overrides`), and an
+        // embedder-supplied config carries whatever `CoreBuilder::action_dir(..)`
+        // set directly. Re-deriving it here from `action_dir_override` alone
+        // would silently ignore an embedder's programmatic `action_dir` (#6081).
+        let policy = super::ops::resolve_sandbox_policy(
+            mode,
+            &config.action_dir,
+            &config.runtime,
+            is_remote,
+        );
         to_json(RpcOutcome::new(policy, vec![]))
     })
 }
@@ -215,88 +284,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_schemas_are_in_sandbox_namespace() {
-        for schema in all_controller_schemas() {
-            assert_eq!(schema.namespace, "sandbox");
-        }
-    }
-
-    #[test]
-    fn registered_controllers_match_schemas() {
-        let schemas = all_controller_schemas();
-        let controllers = all_registered_controllers();
-        assert_eq!(schemas.len(), controllers.len());
-        for (s, c) in schemas.iter().zip(controllers.iter()) {
-            assert_eq!(s.function, c.schema.function);
-        }
-    }
-
-    #[tokio::test]
-    async fn handle_status_returns_json() {
-        let result = handle_status(Map::new()).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn handle_resolve_policy_none() {
-        let mut params = Map::new();
-        params.insert("sandbox_mode".into(), Value::String("none".into()));
-        let result = handle_resolve_policy(params).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn handle_resolve_policy_sandboxed_remote() {
-        let mut params = Map::new();
-        params.insert("sandbox_mode".into(), Value::String("sandboxed".into()));
-        params.insert("is_remote".into(), Value::Bool(true));
-        let result = handle_resolve_policy(params).await;
-        assert!(result.is_ok());
-        let val = result.unwrap();
-        let backend = val.get("backend").and_then(|b| b.as_str());
-        assert_eq!(backend, Some("docker"));
-    }
-
-    #[tokio::test]
-    async fn handle_validate_policy_valid() {
-        let policy = super::super::types::SandboxPolicy {
-            backend: super::super::types::SandboxBackendKind::Docker,
-            workspace_root: std::path::PathBuf::from("/tmp/safe"),
-            read_only_mounts: vec![],
-            allow_network: false,
-            env_passthrough: vec![],
-            docker_overrides: None,
-        };
-        let mut params = Map::new();
-        params.insert("policy".into(), serde_json::to_value(&policy).unwrap());
-        let result = handle_validate_policy(params).await;
-        assert!(result.is_ok());
-        let val = result.unwrap();
-        assert_eq!(val.get("valid").and_then(|v| v.as_bool()), Some(true));
-    }
-
-    #[tokio::test]
-    async fn handle_validate_policy_dangerous() {
-        let policy = super::super::types::SandboxPolicy {
-            backend: super::super::types::SandboxBackendKind::Docker,
-            workspace_root: std::path::PathBuf::from("/"),
-            read_only_mounts: vec![],
-            allow_network: false,
-            env_passthrough: vec![],
-            docker_overrides: Some(super::super::types::DockerOverrides {
-                network: Some("host".into()),
-                ..Default::default()
-            }),
-        };
-        let mut params = Map::new();
-        params.insert("policy".into(), serde_json::to_value(&policy).unwrap());
-        let result = handle_validate_policy(params).await;
-        assert!(result.is_ok());
-        let val = result.unwrap();
-        assert_eq!(val.get("valid").and_then(|v| v.as_bool()), Some(false));
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

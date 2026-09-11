@@ -141,10 +141,9 @@ pub enum ExpectedErrorKind {
     ///
     MemoryStoreBreakerOpen,
     // (WhatsApp structured-ingest SQLite busy/corrupt classifiers were removed
-    // when the whatsapp_data store moved to the Tauri shell: the core no longer
-    // runs the ingest write path, so the `[whatsapp_data] ingest failed:`
-    // envelope these matched is never produced core-side. The shell store keeps
-    // its own once-per-episode corruption report + quarantine/rebuild recovery.)
+    // when that store moved to the Tauri shell; the store itself is gone now —
+    // its only writer was the CDP scanner deleted in #5478 — so no build
+    // produces the envelope these matched.)
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -328,7 +327,6 @@ pub enum ExpectedErrorKind {
     /// — `store::decide` updated 0 rows because `decided_at` was already set,
     /// and `store::get_decision` confirms a persisted decision exists. The
     /// inline-approvals design spec
-    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
     /// classifies "no pending approval found" as a **benign** outcome: the
     /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
     /// `approval_decide` without server-confirmed dedupe, so double-taps, two
@@ -344,7 +342,7 @@ pub enum ExpectedErrorKind {
     /// A remote MCP server answered the connect handshake with HTTP 401 — it
     /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
     /// (`src/openhuman/mcp/http_client/client.rs`) raises the typed
-    /// [`crate::openhuman::mcp::http_client::McpUnauthorizedError`], and
+    /// `tinymcp::Error::Unauthorized`, and
     /// `mcp::registry::connections::connect` already classifies it and stores a
     /// `needs_auth` flag so the UI prompts the user to authenticate (the
     /// `needs_auth` UX shipped in #3733 / #3719). But `mcp_clients_connect`
@@ -358,6 +356,32 @@ pub enum ExpectedErrorKind {
     /// (`"MCP unauthorized for "` + `"(HTTP 401"`) so an unrelated MCP transport
     /// failure still reaches Sentry.
     McpServerNeedsAuth,
+    /// The wallet has not been set up yet, and something that needs a
+    /// wallet-derived key said so.
+    ///
+    /// A wallet is an **optional** feature. Not having one is the default
+    /// state for every user who has not opted in, the UI already renders a
+    /// "set up wallet" prompt, and there is no local lever that makes the call
+    /// succeed until the user creates one — so this is user-state, not a
+    /// defect.
+    ///
+    /// `jsonrpc.rs` already demoted the *bare* message via
+    /// `is_wallet_not_configured_error`, but that predicate is exact equality,
+    /// so it stops matching the moment any caller adds context — and callers
+    /// do: `format!("{context}: {e}")` appears ~800 times in `src/`. One such
+    /// wrap (`self_identity key_status: {e}`) was enough to route an
+    /// expected state to Sentry 55 times in 72 minutes on an ordinary local
+    /// session, while a genuine turn-killing failure in the same session
+    /// emitted nothing (#5805 / #5804).
+    ///
+    /// Classifying it **here** rather than at the wrap site is deliberate:
+    /// this classifier is substring-based, so it holds for any wrapper, at any
+    /// nesting depth, on any reporting path that goes through
+    /// [`report_error_or_expected`] — not just the RPC boundary, and not just
+    /// the one method that happened to be observed. Matched against the shared
+    /// [`crate::openhuman::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE`]
+    /// constant so producer and classifier cannot drift.
+    WalletNotConfigured,
     /// The memory store refused a write because the caller-supplied
     /// **namespace / key** failed a boundary check — it carries secret-shaped
     /// text, or it trimmed to empty. The rejection is deterministic in the
@@ -371,7 +395,7 @@ pub enum ExpectedErrorKind {
     ///
     /// The PII half of the family no longer rejects at all: those identifiers
     /// are canonicalized on write and on read (see
-    /// [`crate::openhuman::memory::store::safety::canonical_identifier`]). This
+    /// [`tinymemory_core::store::safety::canonical_identifier`]). This
     /// arm covers the rejections that remain deliberate — a secret must never
     /// be persisted as a storage address (#4947), and an empty key has no row
     /// to address — and keeps their retry volume out of the error stream.
@@ -447,6 +471,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // with the generic matchers below. See `is_mcp_server_needs_auth_message`.
     if is_mcp_server_needs_auth_message(&lower) {
         return Some(ExpectedErrorKind::McpServerNeedsAuth);
+    }
+    // #5805 — a wallet-derived key was needed and the user has no wallet. An
+    // optional feature nobody enabled is not a defect. Placed beside the other
+    // highly-specific anchors: the needle is a full sentence produced by one
+    // constant, so it cannot collide with the generic matchers below, and
+    // ordering here is for clarity rather than precedence.
+    if is_wallet_not_configured_message(&lower) {
+        return Some(ExpectedErrorKind::WalletNotConfigured);
     }
     // TAURI-RUST-QWW (#5164) — the memory store rejected a write because the
     // caller's namespace/key failed a boundary check. Deterministic in the
@@ -1084,7 +1116,7 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 
 /// Detect a remote MCP server's connect-time 401 — the user must sign in to
 /// that server (OAuth), not a code defect. Anchored on the canonical
-/// [`crate::openhuman::mcp::http_client::McpUnauthorizedError`] `Display`
+/// `tinymcp::Error::Unauthorized` `Display`
 /// body, which renders as `"MCP unauthorized for \`<endpoint>\` (HTTP 401…)"`.
 ///
 /// Conjunctive match — both anchors must hit (input already lower-cased):
@@ -1101,6 +1133,22 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 /// [`ExpectedErrorKind::McpServerNeedsAuth`].
 fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
     lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
+}
+
+/// Detect the wallet's "not set up yet" sentinel, anywhere in the message.
+///
+/// Substring rather than equality **on purpose**: the same condition arrives
+/// bare from a direct RPC and context-wrapped from any caller that does
+/// `format!("{context}: {e}")`. Both are the same user-state and both must be
+/// demoted, so the predicate must not care how many layers wrapped it.
+///
+/// The needle is the shared producer constant, not a copy, so a wording change
+/// moves both sides at once. `wallet_not_configured_sentinel_is_ascii_lowercase`
+/// pins the remaining assumption — that the constant is already lowercase, so
+/// it can be compared against the pre-lowercased haystack without allocating.
+/// See [`ExpectedErrorKind::WalletNotConfigured`].
+fn is_wallet_not_configured_message(lower: &str) -> bool {
+    lower.contains(crate::openhuman::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE)
 }
 
 /// Detect a memory-store **identifier** rejection: the caller's namespace/key
@@ -2028,7 +2076,7 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             );
         }
         ExpectedErrorKind::LocalAiBinaryMissing => {
-            // User-state condition: piper / whisper.cpp / Ollama binary
+            // User-state condition: the piper or Ollama binary
             // isn't installed on this host. The error message itself is
             // the user-facing instruction ("Set PIPER_BIN or install
             // piper.") — Sentry has nothing to act on, since we can't
@@ -2086,6 +2134,37 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "mcp_server_needs_auth",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected MCP needs-auth (401) error: {message}"
+            );
+        }
+        ExpectedErrorKind::WalletNotConfigured => {
+            // The user has not set up a wallet. That is the default state of an
+            // optional feature, the UI already prompts for setup, and no
+            // core-side change makes the call succeed — so demote to info: the
+            // breadcrumb survives for correlation, no error event fires.
+            // See `ExpectedErrorKind::WalletNotConfigured` (#5805).
+            //
+            // The raw message is deliberately NOT logged, and that follows from
+            // how this kind is matched. The classifier accepts the sentinel
+            // anywhere in the string so the demotion survives context wrapping —
+            // which means everything *around* the sentinel is arbitrary
+            // caller-supplied text. Today's wrappers are tame (`self_identity
+            // key_status: …`), but nothing constrains a future one, and a
+            // wrapper is exactly where an id, a path or a pasted value ends up.
+            // The permissive matcher is the right trade for correctness; paying
+            // for it with a careful log is the other half of that trade.
+            //
+            // Nothing is lost: the only part of the body this arm can vouch for
+            // is the sentinel itself, and it is a constant. `domain` and
+            // `operation` carry the correlation, which is what a breadcrumb is
+            // for. Same reasoning as the param-validation skip in
+            // `jsonrpc.rs`, which redacts because its messages embed
+            // caller-supplied param names.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "wallet_not_configured",
+                "[observability] {domain}.{operation} skipped expected wallet-not-configured \
+                 error (message withheld: the wrapper around the sentinel is caller-supplied)"
             );
         }
         ExpectedErrorKind::MemoryIdentifierRejected => {
@@ -3772,19 +3851,20 @@ mod tests {
     /// preventable user-state (the server needs OAuth sign-in), already handled
     /// by the `needs_auth` UX (#3733 / #3719), so it must classify as
     /// `McpServerNeedsAuth` and stay out of Sentry. The canonical body comes
-    /// straight from the typed `McpUnauthorizedError` `Display` impl (both the
+    /// straight from `tinymcp::Error::Unauthorized`'s `Display` impl (both the
     /// bare and `resource metadata:` variants), plus the
     /// `mcp_clients_connect`-prefixed RPC re-report shape that actually reaches
     /// the dispatcher.
     #[test]
     fn classifies_mcp_connect_401_as_needs_auth() {
-        use crate::openhuman::mcp::http_client::McpUnauthorizedError;
-
-        let bare = McpUnauthorizedError {
+        // The 401 is a variant of `tinymcp`'s error now rather than a
+        // standalone type. What this test pins is unchanged: the *wording* the
+        // classifier keys on, which is what reaches the dispatcher.
+        let bare = tinymcp::Error::Unauthorized {
             endpoint: "https://youtube.run.tools".to_string(),
             resource_metadata: None,
         };
-        let with_meta = McpUnauthorizedError {
+        let with_meta = tinymcp::Error::Unauthorized {
             endpoint: "https://youtube.run.tools".to_string(),
             resource_metadata: Some(
                 "https://youtube.run.tools/.well-known/oauth-protected-resource".to_string(),
@@ -3809,6 +3889,82 @@ mod tests {
             "rpc",
             "openhuman.mcp_clients_connect",
             &[],
+        );
+    }
+
+    /// #5805 — an unconfigured wallet is the default state of an optional
+    /// feature, but every path that surfaced it reached Sentry as an error: 55
+    /// events in 72 minutes on one ordinary local session, while a genuine
+    /// turn-killing failure in the same session emitted zero (#5804).
+    ///
+    /// The bare message was already demoted at the RPC boundary by
+    /// `jsonrpc::is_wallet_not_configured_error`, which is exact equality — so
+    /// a single caller adding context defeated it. The observed wrap is
+    /// `self_identity key_status: {e}`, but nothing about the fix is specific
+    /// to that method: the classifier is substring-based, so it must hold for
+    /// any wrapper, at any nesting depth, on every path that reports through
+    /// `report_error_or_expected`. The cases below pin exactly that.
+    #[test]
+    fn classifies_wallet_not_configured_as_expected_however_it_is_wrapped() {
+        let sentinel = crate::openhuman::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE;
+        for msg in [
+            // Bare, as the wallet layer produces it.
+            sentinel.to_string(),
+            // The wrap that #5805 actually observed.
+            format!("wallet status: {sentinel}"),
+            // Two layers — a wrapper wrapping a wrapper. Exact equality and a
+            // single-prefix strip both fail here; substring matching does not.
+            format!("wallet transfer failed: wallet status: {sentinel}"),
+            // A different domain entirely, to show the fix is not scoped to the
+            // one call site the issue was found through.
+            format!("wallet balance failed: {sentinel}"),
+        ] {
+            assert_eq!(
+                expected_error_kind(&msg),
+                Some(ExpectedErrorKind::WalletNotConfigured),
+                "must classify an unconfigured wallet as expected, however wrapped: {msg}"
+            );
+        }
+        // Full demotion path (classifier -> report arm) must not panic.
+        report_error_or_expected(
+            &format!("wallet status: {sentinel}"),
+            "rpc",
+            "invoke_method",
+            &[],
+        );
+    }
+
+    /// The demotion must stay narrow: a real wallet fault still has to page.
+    /// The needle is a whole sentence, so merely mentioning a wallet — or
+    /// failing *after* one is configured — must not be swallowed.
+    #[test]
+    fn wallet_demotion_does_not_swallow_real_wallet_failures() {
+        for msg in [
+            "wallet keychain read failed: entry not found",
+            "no wallet account derived for chain 'solana'",
+            "wallet is not responding",
+            "failed to decrypt wallet mnemonic",
+        ] {
+            assert_ne!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::WalletNotConfigured),
+                "must NOT classify as WalletNotConfigured: {msg}"
+            );
+        }
+    }
+
+    /// `is_wallet_not_configured_message` compares the shared constant against
+    /// an already-lowercased haystack without allocating, which is only sound
+    /// while the constant itself is lowercase. If a future reword introduces a
+    /// capital, this fails here rather than silently ending the demotion.
+    #[test]
+    fn wallet_not_configured_sentinel_is_ascii_lowercase() {
+        let sentinel = crate::openhuman::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE;
+        assert_eq!(
+            sentinel,
+            sentinel.to_ascii_lowercase(),
+            "WALLET_NOT_CONFIGURED_MESSAGE must stay ASCII-lowercase, or \
+             is_wallet_not_configured_message must lowercase it before comparing"
         );
     }
 
@@ -6363,12 +6519,6 @@ mod tests {
         // identical (install / configure the binary).
         assert_eq!(
             expected_error_kind(
-                "whisper.cpp binary not found. Set WHISPER_BIN or install whisper-cli."
-            ),
-            Some(ExpectedErrorKind::LocalAiBinaryMissing)
-        );
-        assert_eq!(
-            expected_error_kind(
                 "Ollama binary not found at '/usr/local/bin/ollama'. Provide a valid path to the ollama executable."
             ),
             Some(ExpectedErrorKind::LocalAiBinaryMissing)
@@ -6399,7 +6549,7 @@ mod tests {
             None
         );
         assert_eq!(
-            expected_error_kind("whisper.cpp returned empty transcript"),
+            expected_error_kind("piper returned an empty audio file"),
             None
         );
     }

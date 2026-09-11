@@ -237,12 +237,52 @@ fn assert_no_rpc_error<'a>(v: &'a Value, ctx: &str) -> &'a Value {
 
 /// Returns `(rpc_base, tempdir, guards)`. The `guards` tuple keeps all
 /// `EnvVarGuard` values alive for the duration of the test.
+/// Publish the module host policy this target's core never publishes itself.
+///
+/// `wipe_all` reaches the bound driver, and a module-backed driver refuses to
+/// load until a policy names the workspace it should open — production does
+/// that at `modules::boot` and `core::runtime::context`, and
+/// `tests/memory_roundtrip_e2e.rs` does it explicitly for the same reason. This
+/// target builds only the RPC router, so nothing here did, and the two
+/// dimension-change tests failed with "the module host policy was never
+/// published".
+///
+/// Deliberately *not* fixed by degrading `wipe_all` when no policy exists. It
+/// is a destructive call: answering success when the store was never reached
+/// would tell a caller their data is gone when it is not, which is a worse
+/// failure than the error. The harness is the outlier, so the harness moves.
+///
+/// One workspace for the whole binary, behind a `OnceLock`, because
+/// `set_modules_policy` is a process-global whose first call wins. Publishing
+/// per test would let whichever test ran first silently own the workspace for
+/// all of them — the per-test `HOME` tempdirs below still isolate config, but
+/// the module can only ever open one.
+fn ensure_modules_policy() {
+    static MODULES_POLICY: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let root = MODULES_POLICY.get_or_init(|| tempdir().expect("modules policy tempdir"));
+    #[cfg(feature = "modules")]
+    {
+        let workspace = root.path().to_path_buf();
+        openhuman_core::openhuman::modules::memory::set_modules_policy(Arc::new(
+            openhuman_core::openhuman::config::Config {
+                workspace_dir: workspace.clone(),
+                action_dir: workspace.clone(),
+                config_path: workspace.join("config.toml"),
+                ..openhuman_core::openhuman::config::Config::default()
+            },
+        ));
+    }
+    let _ = root;
+}
+
 async fn setup_embeddings_test() -> (
     String,
     tempfile::TempDir,
     (EnvVarGuard, EnvVarGuard, EnvVarGuard, EnvVarGuard),
     tokio::task::JoinHandle<Result<(), std::io::Error>>,
 ) {
+    ensure_modules_policy();
+
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().to_path_buf();
     let openhuman_home = home.join(".openhuman");
@@ -840,5 +880,148 @@ async fn legacy_alias_inference_embed_resolves() {
     assert!(
         inner.get("vectors").is_some() || inner.get("count").is_some(),
         "legacy alias should resolve to embeddings_embed and return vector data: {inner}"
+    );
+}
+
+/// #4056 / #5859: a Custom endpoint whose NATIVE vector width differs from the
+/// width the user guessed must still verify, and the width that gets persisted
+/// must be the endpoint's, not the guess.
+///
+/// This is the half of the change no existing test could observe.
+/// `embeddings_embed_with_custom_openai_endpoint_round_trips_vectors_and_api_key`
+/// configures `dimensions: 3` against a mock that returns 3-wide vectors, so
+/// "honoured the guess" and "discovered the native width" produce the same
+/// number and its `dimensions == 3` assertion cannot tell them apart. Here the
+/// two are deliberately different: the guess is the product default (1024) and
+/// the endpoint returns 3.
+///
+/// Before the probe was made dimension-agnostic, the save-time verification
+/// enforced the guessed width, so every reachable, valid endpoint whose native
+/// size was not the guess failed verification — the whole of #4056. After it,
+/// `final_probe_dims` adopts the returned length for any model outside the
+/// `text-embedding-3-*` family (`mock-embedding-model` is one), which is also
+/// what keeps the live embed path's length guard from rejecting later embeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn embeddings_update_settings_adopts_custom_endpoint_native_dimension() {
+    let _lock = embeddings_e2e_env_lock();
+    let (rpc_base, _tmp, _guards, _join) = setup_embeddings_test().await;
+    let (mock_base, _mock_state, mock_join) = serve_mock_embeddings().await;
+
+    let update = post_json_rpc(
+        &rpc_base,
+        90,
+        "openhuman.embeddings_update_settings",
+        json!({
+            "provider": "custom",
+            "custom_endpoint": mock_base,
+            "model": "mock-embedding-model",
+            // The guess. The mock returns 3-wide vectors, so this is wrong on
+            // purpose — it is the product default a user would never edit.
+            "dimensions": 1024,
+            "confirm_wipe": true
+        }),
+    )
+    .await;
+    let update_result = assert_no_rpc_error(&update, "embeddings_update_settings native dims");
+    let update_inner = update_result.get("result").unwrap_or(update_result);
+
+    // 1. The save is NOT rejected. A mismatched guess used to fail verification.
+    assert_eq!(
+        update_inner.get("error").and_then(Value::as_str),
+        None,
+        "a reachable endpoint whose native width differs from the guess must \
+         still verify, not be refused: {update_inner}"
+    );
+    let expected_provider = format!("custom:{mock_base}");
+    assert_eq!(
+        update_inner.get("provider").and_then(Value::as_str),
+        Some(expected_provider.as_str()),
+        "the custom provider must be persisted: {update_inner}"
+    );
+
+    // 2. The width that survives is the endpoint's 3, not the guessed 1024.
+    let after = post_json_rpc(
+        &rpc_base,
+        91,
+        "openhuman.embeddings_get_settings",
+        json!({}),
+    )
+    .await;
+    let after_result = assert_no_rpc_error(&after, "get_settings after native-dim save");
+    let after_inner = after_result.get("result").unwrap_or(after_result);
+    assert_eq!(
+        after_inner.get("dimensions").and_then(Value::as_u64),
+        Some(3),
+        "the probe must adopt the endpoint's native vector width (3), not the \
+         guessed 1024: {after_inner}"
+    );
+
+    mock_join.abort();
+}
+
+/// The retained Custom profile must survive config loading and JSON-RPC
+/// serialization while another provider is active. The UI depends on this
+/// field to reopen the populated form after a reload in Disabled mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn embeddings_get_settings_returns_retained_custom_profile_while_disabled() {
+    let _lock = embeddings_e2e_env_lock();
+    let (rpc_base, tmp, _guards, _join) = setup_embeddings_test().await;
+    for config_path in [
+        tmp.path().join(".openhuman").join("config.toml"),
+        tmp.path()
+            .join(".openhuman")
+            .join("users")
+            .join("local")
+            .join("config.toml"),
+    ] {
+        let config = std::fs::read_to_string(&config_path).expect("read test config");
+        let config = config.replace(
+            "\n[secrets]",
+            r#"
+embeddings_provider = "none"
+
+[custom_embeddings]
+endpoint = "https://embeddings.example.com/v1"
+model = "remembered-embedding-model"
+dimensions = 2048
+
+[memory]
+embedding_provider = "none"
+embedding_model = "remembered-embedding-model"
+embedding_dimensions = 2048
+
+[secrets]"#,
+        );
+        std::fs::write(&config_path, config).expect("write retained Custom profile");
+    }
+
+    let get = post_json_rpc(
+        &rpc_base,
+        100,
+        "openhuman.embeddings_get_settings",
+        json!({}),
+    )
+    .await;
+    let get_result = assert_no_rpc_error(&get, "get settings after disabling custom");
+    let get_inner = get_result.get("result").unwrap_or(get_result);
+    let retained = get_inner
+        .get("custom_settings")
+        .unwrap_or_else(|| panic!("missing retained custom settings: {get_inner}"));
+
+    assert_eq!(
+        get_inner.get("provider").and_then(Value::as_str),
+        Some("none")
+    );
+    assert_eq!(
+        retained.get("endpoint").and_then(Value::as_str),
+        Some("https://embeddings.example.com/v1")
+    );
+    assert_eq!(
+        retained.get("model").and_then(Value::as_str),
+        Some("remembered-embedding-model")
+    );
+    assert_eq!(
+        retained.get("dimensions").and_then(Value::as_u64),
+        Some(2048)
     );
 }

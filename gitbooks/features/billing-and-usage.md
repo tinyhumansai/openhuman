@@ -11,7 +11,7 @@ OpenHuman keeps two related but separate ledgers. **Billing** is what you pay th
 
 The first lives in the cloud; the second never leaves your workspace.
 
-***
+---
 
 ## Part 1: Billing & Payments
 
@@ -23,11 +23,11 @@ Pre-HTTP, the adapter does light input validation only: non-empty plan/coupon/pa
 
 Three tiers are offered, each with a monthly and annual interval:
 
-| Tier | Monthly | Annual | Per-call discount vs pay-as-you-go |
-| --- | --- | --- | --- |
-| **Free** | $0 | $0 | None (pay-as-you-go baseline) |
-| **Basic** | $19.99 | $199 | 50% cheaper per call |
-| **Pro** | $199.99 | $1,799.99 | 90% cheaper per call |
+| Tier      | Monthly | Annual    | Per-call discount vs pay-as-you-go |
+| --------- | ------- | --------- | ---------------------------------- |
+| **Free**  | $0      | $0        | None (pay-as-you-go baseline)      |
+| **Basic** | $19.99  | $199      | 50% cheaper per call               |
+| **Pro**   | $199.99 | $1,799.99 | 90% cheaper per call               |
 
 Higher tiers do not unlock features so much as lower the **per-call margin** over the pay-as-you-go baseline. All tiers have "access to everything"; you are buying cheaper inference, not gated capabilities.
 
@@ -50,13 +50,13 @@ Coupon codes are redeemed against the backend (`POST /coupons/redeem`), and you 
 
 ### Where billing lives in the app
 
-The desktop **Settings → Billing** panel intentionally has no embedded payment UI. It links out to the hosted web **billing dashboard**, which is the single place to manage plans, cards and invoices. The agent can also read billing state through default-ON tools (plan, balance, transactions, cards, coupons, the Stripe portal link); every money-moving or payment-method mutator ships **default-OFF** behind a `billing_writes` toggle, and card deletion is flagged dangerous.
+The desktop **Settings → Billing** panel is read-only. It shows the current plan, promotional and top-up balances, total remaining funds, current-cycle spend, and usage breakdowns. Buttons link to the hosted web **billing dashboard**, which is the single place to manage plans, top-ups, coupons, cards, and invoices. Other clients can reach the same hosted billing operations through the authenticated RPC controllers described below; they are not exposed as agent tools.
 
 ### RPC surface
 
-Namespace `billing`, exposed as `openhuman.billing_*` (15 methods), e.g. `billing_get_current_plan`, `billing_get_balance`, `billing_get_transactions`, `billing_purchase_plan`, `billing_top_up`, `billing_create_coinbase_charge`, `billing_get_cards`, `billing_create_setup_intent`, `billing_update_auto_recharge`, `billing_redeem_coupon`.
+Namespace `billing`, exposed as `openhuman.billing_*` (16 methods), e.g. `billing_get_summary`, `billing_get_current_plan`, `billing_get_balance`, `billing_get_transactions`, `billing_purchase_plan`, `billing_top_up`, `billing_create_coinbase_charge`, `billing_get_cards`, `billing_create_setup_intent`, `billing_update_auto_recharge`, `billing_redeem_coupon`.
 
-***
+---
 
 ## Part 2: Cost & Usage Dashboard
 
@@ -70,14 +70,14 @@ For each call, per-call cost is computed from token counts and per-million-token
 
 Budget enforcement is configured under the `[cost]` config block:
 
-| Setting | Default | Role |
-| --- | --- | --- |
-| `enabled` | `true` | Gates **enforcement only**, not telemetry |
-| `daily_limit_usd` | `10.00` | Hard daily cap |
-| `monthly_limit_usd` | `100.00` | Hard monthly cap |
-| `warn_at_percent` | `80` | Warn threshold for `check_budget` |
+| Setting             | Default  | Role                                      |
+| ------------------- | -------- | ----------------------------------------- |
+| `enabled`           | `true`   | Gates **enforcement only**, not telemetry |
+| `daily_limit_usd`   | `10.00`  | Hard daily cap                            |
+| `monthly_limit_usd` | `100.00` | Hard monthly cap                          |
+| `warn_at_percent`   | `80`     | Warn threshold for `check_budget`         |
 
-`check_budget` returns `Allowed`, `Warning` (warn threshold reached) or `Exceeded` (over the daily or monthly cap). A crucial detail: **`enabled` controls enforcement, not capture.** When it is `false`, `check_budget` always returns `Allowed` and hard caps are off. The agent still records usage unconditionally, so your spend history accumulates and you can review it *before* opting into hard caps. To hide the panel set `dashboard.enabled = false`; to clear history delete the JSONL file (it is local and never leaves the workspace).
+`check_budget` returns `Allowed`, `Warning` (warn threshold reached) or `Exceeded` (over the daily or monthly cap). A crucial detail: **`enabled` controls enforcement, not capture.** When it is `false`, `check_budget` always returns `Allowed` and hard caps are off. The agent still records usage unconditionally, so your spend history accumulates and you can review it _before_ opting into hard caps. To hide the panel set `dashboard.enabled = false`; to clear history delete the JSONL file (it is local and never leaves the workspace).
 
 ### The 7-day dashboard
 
@@ -87,21 +87,21 @@ Settings → **Usage & Limits** hosts the cost dashboard (alongside background-a
 
 Namespace `cost`, exposed as `openhuman.cost_*`:
 
-| Method | Inputs | Output |
-| --- | --- | --- |
-| `cost_get_dashboard` | none | 7-day buckets, summary metrics, budget utilisation/status, per-model breakdown |
-| `cost_get_daily_history` | `days?` (default 7, clamped 1 to 366) | Ordered daily entries, oldest first, gaps zero-filled |
-| `cost_get_summary` | none | Live session / daily / monthly cost summary |
+| Method                   | Inputs                                | Output                                                                         |
+| ------------------------ | ------------------------------------- | ------------------------------------------------------------------------------ |
+| `cost_get_dashboard`     | none                                  | 7-day buckets, summary metrics, budget utilisation/status, per-model breakdown |
+| `cost_get_daily_history` | `days?` (default 7, clamped 1 to 366) | Ordered daily entries, oldest first, gaps zero-filled                          |
+| `cost_get_summary`       | none                                  | Live session / daily / monthly cost summary                                    |
 
 These are also exposed as read-only, default-ON agent tools so the agent can inspect its own spend.
 
-***
+---
 
 ## Cost & token compression
 
 Because cost tracks **real token counts**, anything that shrinks the prompt directly lowers spend. OpenHuman's [TokenJuice token compression](token-compression.md) reduces the tokens sent on each call, and [model routing](model-routing/README.md) sends work to the cheapest model that can handle it. Both show up as lower bars in the dashboard and slower budget burn.
 
-***
+---
 
 ## See also
 

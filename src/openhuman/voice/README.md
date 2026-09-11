@@ -17,7 +17,7 @@ Speech-to-text (STT) and text-to-speech (TTS) domain. Exposes the `openhuman.voi
 
 | File | Role |
 | --- | --- |
-| `mod.rs` | Module docstring + exports; re-exports inference-side voice submodules (`cloud_transcribe`, `hallucination`, `local_speech`, `local_transcribe`, `postprocess`, `streaming`); defines `cloud_transcribe_default_model()` (`"whisper-v1"`). |
+| `mod.rs` | Module docstring + exports; re-exports inference-side voice submodules (`cloud_transcribe`, `hallucination`, `local_speech`, `postprocess`, `streaming`); defines `cloud_transcribe_default_model()` (`"whisper-v1"`). |
 | `types.rs` | RPC DTOs: `VoiceSpeechResult`, `VoiceTtsResult`, `VoiceStatus` + `From<LocalAi*>` conversions. |
 | `ops.rs` | Business logic returning `RpcOutcome<T>`: `voice_status`, `voice_transcribe`, `voice_transcribe_bytes`, `voice_tts`, `normalize_extension`. |
 | `schemas.rs` | Controller schemas, registry exports, and all `handle_voice_*` / `handle_overlay_stt_notify` RPC handlers (param structs, provider-string validation, `voice_list_models` presets, `voice_test_provider`). |
@@ -37,7 +37,7 @@ Speech-to-text (STT) and text-to-speech (TTS) domain. Exposes the `openhuman.voi
 - Ops (`pub use ops::*`): `voice_status`, `voice_transcribe`, `voice_transcribe_bytes`, `voice_tts`.
 - Factory: `create_stt_provider`, `create_tts_provider`, `default_stt_provider`, `default_tts_provider`, `effective_stt_provider`, `effective_tts_provider`, traits `SttProvider` / `TtsProvider`, `SttResult`, `ExternalSttProvider`, `ExternalTtsProvider`, constants `DEFAULT_PIPER_VOICE`, `DEFAULT_WHISPER_MODEL`, `WHISPER_MODEL_PRESETS`.
 - Schemas: `all_voice_controller_schemas`, `all_voice_registered_controllers`, `voice_schemas`.
-- Re-exported inference submodules: `cloud_transcribe`, `hallucination`, `local_speech`, `local_transcribe`, `postprocess`, `streaming`.
+- Re-exported inference submodules: `cloud_transcribe`, `hallucination`, `local_speech`, `postprocess`, `streaming`.
 - Submodules `server`, `hotkey`, `dictation_listener`, `reply_speech`, `text_input`, `audio_capture`, `factory` are `pub`.
 
 ## RPC / controllers
@@ -57,7 +57,7 @@ Namespace `voice` (registered in `all_voice_registered_controllers`):
 | `voice.set_providers` | Persist STT/TTS provider + model/voice into `config.local_ai.*`. |
 | `voice.update_provider_settings` | Persist the voice provider registry + routing strings (mirrors inference model settings). |
 | `voice.list_models` | List models/voices for a provider (static presets for built-in slugs). |
-| `voice.test_provider` | Test/validate a provider endpoint (silent-WAV STT, "Hello" TTS, or key-only validate). |
+| `voice.test_provider` | Test/validate a provider endpoint (silent-WAV STT, "Hello" TTS, or key-only validate). `validate_only` is a dry run for **both** workloads and accepts an `api_key` to check a candidate credential without storing it. |
 | `voice.server_start` / `voice.server_stop` / `voice.server_status` | Control the global dictation server. |
 | `voice.overlay_stt_notify` | Bridge chat-button STT state transitions into the dictation/transcription buses. |
 
@@ -77,12 +77,12 @@ No dedicated `store.rs`. State is persisted into the shared TOML `Config` via th
 
 ## Dependencies
 
-- `crate::openhuman::inference` — local AI runtime (`local::global`, `whisper_engine`, model id/path resolution) and the relocated voice inference impls (`inference::voice::{cloud_transcribe, local_speech, local_transcribe, hallucination, postprocess, streaming}`); also `inference::provider::factory::lookup_key_for_slug` for provider API keys.
+- `crate::openhuman::inference` — local AI runtime (`local::global`, model id/path resolution) and the relocated voice inference impls (`inference::voice::{cloud_transcribe, local_speech, hallucination, postprocess, streaming}`); also `inference::provider::factory::lookup_key_for_slug` for provider API keys.
 - `crate::openhuman::config` — `Config`, `config::rpc::load_config_with_timeout`, voice-server / dictation config sections, and `config::schema::voice_providers` (`VoiceProviderCreds`, capability/auth/API-style enums).
 - `crate::openhuman::desktop::accessibility` (macOS only) — focused-text inspection (`focused_text_context_verbose`) and the Swift globe-key listener (`globe_listener_start` / `globe_listener_poll`) used in place of rdev for the Fn key.
 - `crate::api` — `BackendOAuthClient`, `effective_backend_api_url`, `get_session_token` for backend-proxied reply-speech.
 - `crate::core::all` (`ControllerFuture`, `RegisteredController`), `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`, `crate::core::logging` (CLI run init), and `crate::rpc::RpcOutcome`.
-- External crates: `cpal` + `hound` (capture/WAV), `rdev` (hotkeys), `enigo` + `arboard` (paste insertion), `reqwest` (external provider HTTP), `tokio`/`tokio-util`, `once_cell`.
+- External crates: `cpal` (capture), `rdev` (hotkeys), `enigo` + `arboard` (paste insertion), `reqwest` (external provider HTTP), `tokio`/`tokio-util`, `once_cell`.
 
 ## Used by
 
@@ -90,7 +90,7 @@ No dedicated `store.rs`. State is persisted into the shared TOML `Config` via th
 - `src/core/socketio.rs` — subscribes to the dictation/transcription broadcast buses; `streaming::handle_dictation_ws`.
 - `src/core/jsonrpc.rs` — wiring.
 - `src/openhuman/desktop_companion/pipeline.rs`, `src/openhuman/meet/agent/brain.rs`, `src/openhuman/voice/audio_toolkit/ops.rs`, `src/openhuman/security/credentials/ops.rs` — call factory / TTS / transcription helpers.
-- `src/openhuman/inference/local/{install_whisper,install_piper}.rs` — reference voice constants/presets.
+- `src/openhuman/inference/local/install_piper.rs` — references voice constants/presets.
 
 ## Notes / gotchas
 

@@ -54,6 +54,7 @@ describe('CodingSessionsCard', () => {
       observations: 6,
       remaining: 0,
       moreRemaining: false,
+      timedOut: false,
     });
     const onToast = vi.fn();
     renderWithProviders(<CodingSessionsCard onToast={onToast} />);
@@ -98,6 +99,7 @@ describe('CodingSessionsCard', () => {
         observations: 3,
         remaining: 25,
         moreRemaining: true,
+        timedOut: false,
       });
       return new Promise(resolve => {
         finishDrain = () =>
@@ -108,6 +110,7 @@ describe('CodingSessionsCard', () => {
             observations: 3,
             remaining: 25,
             moreRemaining: true,
+            timedOut: false,
           });
       });
     });
@@ -146,6 +149,7 @@ describe('CodingSessionsCard', () => {
       observations: 12000,
       remaining: 300,
       moreRemaining: true,
+      timedOut: false,
     });
     const onToast = vi.fn();
     renderWithProviders(<CodingSessionsCard onToast={onToast} />);
@@ -171,6 +175,7 @@ describe('CodingSessionsCard', () => {
       observations: 4,
       remaining: 0,
       moreRemaining: false,
+      timedOut: false,
     });
     const onToast = vi.fn();
     renderWithProviders(<CodingSessionsCard onToast={onToast} />);
@@ -192,6 +197,66 @@ describe('CodingSessionsCard', () => {
     renderWithProviders(<CodingSessionsCard />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('session scan failed');
+  });
+
+  it('does not report a deadline as a failure banner', async () => {
+    // The defect this test exists for (#5802): the import completes seconds
+    // after the caller stops waiting, and the user was shown a red "ingestion
+    // failed" banner over work that had succeeded — then invited to redo a
+    // 35-60s job. A deadline must read as "still running", never as a failure.
+    mockedDrain.mockResolvedValue({
+      passes: 1,
+      sessionsProcessed: 3,
+      sessionsFailed: 0,
+      observations: 15,
+      remaining: 419,
+      moreRemaining: true,
+      timedOut: true,
+    });
+    const onToast = vi.fn();
+    renderWithProviders(<CodingSessionsCard onToast={onToast} />);
+
+    fireEvent.click(await screen.findByTestId('coding-sessions-ingest'));
+
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'info',
+          title: 'Import still running',
+          message: expect.stringContaining('Sessions imported so far: 3'),
+        })
+      )
+    );
+    // No error toast and no inline alert — both would tell the user the import
+    // is over when it is not.
+    expect(onToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('leads with the deadline when a stale failure count is also present', async () => {
+    // `sessionsFailed` carries the last *completed* pass's count, so on a
+    // timeout it describes superseded work. Reporting it would tell the user to
+    // retry a run that has not finished.
+    mockedDrain.mockResolvedValue({
+      passes: 2,
+      sessionsProcessed: 4,
+      sessionsFailed: 2,
+      observations: 9,
+      remaining: 100,
+      moreRemaining: true,
+      timedOut: true,
+    });
+    const onToast = vi.fn();
+    renderWithProviders(<CodingSessionsCard onToast={onToast} />);
+
+    fireEvent.click(await screen.findByTestId('coding-sessions-ingest'));
+
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'info', title: 'Import still running' })
+      )
+    );
+    expect(onToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
   it('reports ingestion failures through the error toast', async () => {

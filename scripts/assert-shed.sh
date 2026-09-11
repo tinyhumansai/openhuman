@@ -17,7 +17,7 @@
 # counts, so a pass here means the floor metric really did drop.
 #
 # Usage: scripts/assert-shed.sh <profile> <crate>...
-#        scripts/assert-shed.sh tokenjuice-treesitter clap env_logger anstream
+#        scripts/assert-shed.sh flows clap env_logger anstream
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

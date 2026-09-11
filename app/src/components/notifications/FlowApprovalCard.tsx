@@ -160,7 +160,7 @@ const FlowApprovalCard = ({ notification: n }: Props) => {
       role="alertdialog"
       aria-label={t('notifications.flow.approveTitle')}
       data-testid="flow-approval-card"
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-sm dark:border-amber-700 dark:bg-amber-950">
+      className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm shadow-xs dark:border-amber-700 dark:bg-amber-950">
       <div className="flex items-start gap-2">
         <span aria-hidden className="text-base leading-none">
           ⚠️
@@ -170,7 +170,9 @@ const FlowApprovalCard = ({ notification: n }: Props) => {
             {t('notifications.flow.approveTitle')}
           </p>
           {n.body && (
-            <p className="mt-1 break-words text-amber-800/90 dark:text-amber-200/90">{n.body}</p>
+            <p className="mt-1 wrap-break-word text-amber-800/90 dark:text-amber-200/90">
+              {n.body}
+            </p>
           )}
           {gateCount > 0 && (
             <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/80">
@@ -178,7 +180,9 @@ const FlowApprovalCard = ({ notification: n }: Props) => {
             </p>
           )}
 
-          {error && <p className="mt-2 text-xs text-coral">{`⚠ ${error}`}</p>}
+          {error && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">{`⚠ ${error}`}</p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button

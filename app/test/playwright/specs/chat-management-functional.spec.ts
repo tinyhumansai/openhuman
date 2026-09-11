@@ -61,7 +61,7 @@ async function openChat(page: Page, userId: string): Promise<void> {
   await bootAuthenticatedPage(page, userId, '/chat');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await expect(page.getByTestId('send-message-button')).toBeVisible();
+  await expect(page.getByTestId('chat-message-input')).toBeVisible();
 }
 
 async function newThread(page: Page): Promise<string> {
@@ -112,12 +112,12 @@ test.describe('Chat management functional coverage', () => {
     await attachTxt();
     await expect(page.getByText('notes.txt')).toBeVisible();
 
-    await page.getByPlaceholder('How can I help you today?').fill('Summarize this file');
+    await page.getByTestId('chat-message-input').fill('Summarize this file');
     await page.getByTestId('send-message-button').click();
     await expect(page.getByText('Attachment received by the assistant.')).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByPlaceholder('How can I help you today?')).toBeEnabled();
+    await expect(page.getByTestId('chat-message-input')).toBeEnabled();
 
     await expect
       .poll(
@@ -169,24 +169,22 @@ test.describe('Chat management functional coverage', () => {
     await openChat(page, 'pw-chat-rename-delete');
     const threadId = await newThread(page);
     const title = `Playwright thread ${Date.now()}`;
+    const threadRow = page.getByTestId(`thread-row-${threadId}`);
+    await expect(threadRow).toBeVisible({ timeout: 10_000 });
 
     // Inline rename now lives on each sidebar thread row (moved off the
     // conversation header). Every row has its own "Edit thread title" button, so
     // scope to this thread's row to avoid a strict-mode multi-match.
-    await page
-      .getByTestId(`thread-row-${threadId}`)
-      .getByRole('button', { name: 'Edit thread title' })
-      .click({ force: true });
+    await threadRow.hover();
+    await threadRow.getByRole('button', { name: 'Edit thread title' }).click();
     await page.getByRole('textbox', { name: 'Edit thread title' }).fill(title);
     await page.keyboard.press('Enter');
     await expect(page.getByText(title).first()).toBeVisible({ timeout: 10_000 });
 
     // Deletion remains available from the thread row in the chat sidebar, which
     // is visible by default on the /chat surface.
-    await page
-      .getByTestId(`thread-row-${threadId}`)
-      .getByTitle('Delete thread')
-      .click({ force: true });
+    await threadRow.hover();
+    await threadRow.getByTitle('Delete thread').click();
     await expect(page.getByText(/delete/i).last()).toBeVisible();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByTestId(`thread-row-${threadId}`)).toHaveCount(0);

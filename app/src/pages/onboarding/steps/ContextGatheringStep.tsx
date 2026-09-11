@@ -430,7 +430,7 @@ const ContextGatheringStep = ({
     <div className="rounded-2xl border border-line bg-surface p-8 shadow-soft animate-fade-up">
       <div className="flex flex-col items-center justify-center gap-6 py-8">
         {/* Pulsing avatar silhouette */}
-        <div className="w-20 h-20 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
+        <div className="w-20 h-20 rounded-full bg-linear-to-r from-stone-300 via-stone-100 to-stone-300 bg-size-[200%_100%] animate-shimmer" />
 
         {/* Title */}
         <h1
@@ -446,9 +446,9 @@ const ContextGatheringStep = ({
 
         {/* Skeleton bars */}
         <div className="w-64 flex flex-col gap-3 mt-2">
-          <div className="h-3 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer" />
-          <div className="h-3 w-3/4 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:150ms]" />
-          <div className="h-3 w-1/2 rounded-full bg-gradient-to-r from-stone-300 via-stone-100 to-stone-300 bg-[length:200%_100%] animate-shimmer [animation-delay:300ms]" />
+          <div className="h-3 rounded-full bg-linear-to-r from-stone-300 via-stone-100 to-stone-300 bg-size-[200%_100%] animate-shimmer" />
+          <div className="h-3 w-3/4 rounded-full bg-linear-to-r from-stone-300 via-stone-100 to-stone-300 bg-size-[200%_100%] animate-shimmer [animation-delay:150ms]" />
+          <div className="h-3 w-1/2 rounded-full bg-linear-to-r from-stone-300 via-stone-100 to-stone-300 bg-size-[200%_100%] animate-shimmer [animation-delay:300ms]" />
         </div>
 
         {/* Alive indicator — only while still-working state is active AND

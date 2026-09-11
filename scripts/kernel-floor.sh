@@ -70,7 +70,7 @@ NAMES="$(printf '%s\n' "$TREE" | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
 # Native builds: crates known to invoke a C/C++/asm toolchain from build.rs.
 # Matched by name against the resolved graph rather than by parsing build
 # scripts, because the set is small, stable, and the parse is not worth it.
-NATIVE_CANDIDATES='^(libsqlite3-sys|libgit2-sys|libz-sys|lzma-sys|aws-lc-sys|ring|whisper-rs-sys|openssl-sys|zstd-sys|bzip2-sys|curl-sys|onig_sys|tree-sitter)$'
+NATIVE_CANDIDATES='^(libsqlite3-sys|libgit2-sys|libz-sys|lzma-sys|aws-lc-sys|ring|openssl-sys|zstd-sys|bzip2-sys|curl-sys|onig_sys|tree-sitter)$'
 NATIVE_LIST="$(printf '%s\n' "$TREE" | awk '{print $1}' | sort -u | grep -E "$NATIVE_CANDIDATES" || true)"
 NATIVE="$(printf '%s' "$NATIVE_LIST" | grep -c . || true)"
 

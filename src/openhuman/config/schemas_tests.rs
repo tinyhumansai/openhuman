@@ -41,8 +41,6 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "workspace_onboarding_flag_set",
         "update_analytics_settings",
         "get_analytics_settings",
-        "update_meet_settings",
-        "get_meet_settings",
         "update_autonomy_settings",
         "get_autonomy_settings",
         "get_agent_settings",
@@ -180,23 +178,6 @@ fn autonomy_settings_rpc_is_registered() {
         .collect();
     assert!(funcs.contains(&"get_autonomy_settings"));
     assert!(funcs.contains(&"update_autonomy_settings"));
-}
-
-#[test]
-fn super_context_rpc_is_registered() {
-    let funcs: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.function)
-        .collect();
-    assert!(funcs.contains(&"get_super_context_enabled"));
-    assert!(funcs.contains(&"set_super_context_enabled"));
-    // Handler registry must stay in lockstep with the schema list.
-    let handlers: Vec<&str> = all_registered_controllers()
-        .iter()
-        .map(|h| h.schema.function)
-        .collect();
-    assert!(handlers.contains(&"get_super_context_enabled"));
-    assert!(handlers.contains(&"set_super_context_enabled"));
 }
 
 #[test]

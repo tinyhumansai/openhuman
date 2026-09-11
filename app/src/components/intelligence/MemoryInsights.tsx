@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { GraphRelation } from '../../utils/tauriCommands';
+import { AccordionContent, AccordionItem, AccordionRoot, AccordionTrigger } from '../ui/Accordion';
 
 interface MemoryInsightsProps {
   relations: GraphRelation[];
@@ -123,9 +124,9 @@ function useInsightCategoryLabels() {
     opinions: {
       label: t('insights.opinions'),
       icon: 'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
-      color: 'text-lavender-600 dark:text-lavender-300',
-      bgColor: 'bg-lavender-50 dark:bg-lavender-500/10 ',
-      borderColor: 'border-lavender-200 dark:border-lavender-500/30',
+      color: 'text-violet-600 dark:text-violet-300',
+      bgColor: 'bg-violet-50 dark:bg-violet-500/10 ',
+      borderColor: 'border-violet-200 dark:border-violet-500/30',
     },
     other: {
       label: t('insights.other'),
@@ -140,7 +141,7 @@ function useInsightCategoryLabels() {
 /** Small inline badge that displays an entity type (e.g. "person", "project"). */
 function EntityTypeBadge({ type }: { type: string }) {
   return (
-    <span className="inline-block ml-1 px-1 py-px rounded text-[9px] leading-tight font-medium bg-surface/8 text-content-faint border border-white/6 uppercase tracking-wide">
+    <span className="inline-block ml-1 px-1 py-px rounded text-[9px] leading-tight font-medium bg-surface/8 text-content-faint border border-line uppercase tracking-wide">
       {type}
     </span>
   );
@@ -223,22 +224,38 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+      {/*
+       * Category cards are exclusive — expanding one collapses whatever else
+       * was open — so this is Accordion `type="single" collapsible`, not a
+       * plain grid of buttons. The first 3 items per category are always
+       * visible (a preview, not a disclosure), so only the *extra* items
+       * beyond that live inside `AccordionContent` and unmount when the card
+       * is collapsed; the preview + "+N more" hint stay outside it.
+       */}
+      <AccordionRoot
+        type="single"
+        collapsible
+        value={expandedCategory ?? ''}
+        onValueChange={value => setExpandedCategory((value || null) as InsightCategory | null)}
+        variant="card"
+        className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {groups.map(group => {
           const isExpanded = expandedCategory === group.category;
-          const displayItems = isExpanded ? group.items.slice(0, 20) : group.items.slice(0, 3);
+          const previewItems = group.items.slice(0, 3);
+          const extraItems = group.items.slice(3, 20);
 
           return (
-            <div
+            <AccordionItem
               key={group.category}
+              value={group.category}
               className={`rounded-lg border ${group.borderColor} ${group.bgColor} p-3 transition-all ${
                 isExpanded ? 'col-span-2 lg:col-span-3' : ''
               }`}>
-              <button
-                onClick={() => setExpandedCategory(isExpanded ? null : group.category)}
-                className="flex items-center gap-2 w-full text-left mb-2">
+              <AccordionTrigger
+                showChevron={false}
+                className="h-auto gap-2 p-0 font-normal mb-2 hover:bg-transparent">
                 <div
-                  className={`w-7 h-7 rounded-md ${group.bgColor} flex items-center justify-center flex-shrink-0`}>
+                  className={`w-7 h-7 rounded-md ${group.bgColor} flex items-center justify-center shrink-0`}>
                   <svg
                     className={`w-4 h-4 ${group.color}`}
                     fill="none"
@@ -270,41 +287,59 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                     d="M19 9l-7 7-7-7"
                   />
                 </svg>
-              </button>
+              </AccordionTrigger>
 
               <div className={`space-y-1.5 ${isExpanded ? 'max-h-80 overflow-y-auto pr-1' : ''}`}>
-                {displayItems.map((item, idx) => (
-                  <div
+                {previewItems.map((item, idx) => (
+                  <InsightItemRow
                     key={`${item.subject}-${item.predicate}-${item.object}-${idx}`}
-                    className="flex items-start gap-1.5 text-[11px] leading-relaxed">
-                    <span
-                      className="text-content font-medium shrink-0 max-w-[30%] truncate"
-                      title={item.subject}>
-                      {item.subject}
-                      {item.subjectType && <EntityTypeBadge type={item.subjectType} />}
-                    </span>
-                    <span className="text-content-muted shrink-0 italic">{item.predicate}</span>
-                    <span className="text-content-secondary truncate" title={item.object}>
-                      {item.object}
-                      {item.objectType && <EntityTypeBadge type={item.objectType} />}
-                    </span>
-                    {item.evidenceCount > 1 && (
-                      <span className="ml-auto text-[9px] text-content-secondary shrink-0 tabular-nums">
-                        x{item.evidenceCount}
-                      </span>
-                    )}
-                  </div>
+                    item={item}
+                  />
                 ))}
                 {!isExpanded && group.items.length > 3 && (
                   <div className="text-[10px] text-content-muted pt-0.5">
                     +{group.items.length - 3} {t('insights.more')}
                   </div>
                 )}
+                {extraItems.length > 0 && (
+                  <AccordionContent className="p-0">
+                    <div className="space-y-1.5">
+                      {extraItems.map((item, idx) => (
+                        <InsightItemRow
+                          key={`${item.subject}-${item.predicate}-${item.object}-${idx + 3}`}
+                          item={item}
+                        />
+                      ))}
+                    </div>
+                  </AccordionContent>
+                )}
               </div>
-            </div>
+            </AccordionItem>
           );
         })}
-      </div>
+      </AccordionRoot>
+    </div>
+  );
+}
+
+/** One subject/predicate/object row, shared between the always-visible preview and the expanded extra items. */
+function InsightItemRow({ item }: { item: InsightItem }) {
+  return (
+    <div className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+      <span className="text-content font-medium shrink-0 max-w-[30%] truncate" title={item.subject}>
+        {item.subject}
+        {item.subjectType && <EntityTypeBadge type={item.subjectType} />}
+      </span>
+      <span className="text-content-muted shrink-0 italic">{item.predicate}</span>
+      <span className="text-content-secondary truncate" title={item.object}>
+        {item.object}
+        {item.objectType && <EntityTypeBadge type={item.objectType} />}
+      </span>
+      {item.evidenceCount > 1 && (
+        <span className="ml-auto text-[9px] text-content-secondary shrink-0 tabular-nums">
+          x{item.evidenceCount}
+        </span>
+      )}
     </div>
   );
 }

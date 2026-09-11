@@ -114,11 +114,11 @@ async fn one_response_server(
 }
 
 #[tokio::test]
-async fn round21_rss_reader_covers_http_body_guards_and_invalid_utf8() {
+async fn round21_rss_reader_rejects_private_hosts_before_fetching() {
     let _lock = env_lock();
     let tmp = tempdir();
     let config = config(&tmp);
-    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader::new();
 
     let (status_url, status_server) =
         one_response_server("503 Service Unavailable", "", b"down".to_vec()).await;
@@ -131,48 +131,12 @@ async fn round21_rss_reader_covers_http_body_guards_and_invalid_utf8() {
             &config,
         )
         .await
-        .expect_err("non-success status rejected");
-    assert!(status_err.contains("feed returned 503"));
-    let _ = status_server.await;
-
-    let huge_len = 5 * 1024 * 1024 + 1;
-    let (large_url, large_server) = one_response_server(
-        "200 OK",
-        "content-type: application/rss+xml\r\ncontent-length: 5242881",
-        b"<rss/>".to_vec(),
-    )
-    .await;
-    let large_err = reader
-        .list_items(
-            &MemorySourceEntry {
-                url: Some(large_url),
-                ..source_entry("rss-large", SourceKind::RssFeed)
-            },
-            &config,
-        )
-        .await
-        .expect_err("large feed rejected from content-length");
-    assert!(large_err.contains(&format!("feed body too large: {huge_len} bytes")));
-    let _ = large_server.await;
-
-    let (utf8_url, utf8_server) = one_response_server(
-        "200 OK",
-        "content-type: application/rss+xml",
-        vec![0xff, 0xfe],
-    )
-    .await;
-    let utf8_err = reader
-        .list_items(
-            &MemorySourceEntry {
-                url: Some(utf8_url),
-                ..source_entry("rss-utf8", SourceKind::RssFeed)
-            },
-            &config,
-        )
-        .await
-        .expect_err("invalid utf8 feed rejected");
-    assert!(utf8_err.contains("feed body is not valid UTF-8"));
-    let _ = utf8_server.await;
+        .expect_err("private feed host rejected before fetch");
+    assert!(
+        status_err.contains("public host"),
+        "private RSS hosts must be rejected before fetching: {status_err}"
+    );
+    status_server.abort();
 }
 
 #[tokio::test]

@@ -33,5 +33,5 @@ pub use types::{
 };
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "image_tests.rs"]
 mod tests;

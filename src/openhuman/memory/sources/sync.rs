@@ -1,315 +1,39 @@
-//! Per-source sync dispatcher.
+//! Scope derivation for a configured source: which tree scope, and which
+//! raw-archive id, a registry entry maps onto.
 //!
-//! Thin routing layer: dispatches supported sources through tinycortex and
-//! retains the product-owned background lock, events, and reconcile shell.
-//! - Twitter → placeholder
+//! # What came home and what did not (#5560)
 //!
-//! Sync runs in a `tokio::spawn`-ed task so the RPC returns immediately.
-//! Progress is published as `MemorySyncStageChanged` events.
+//! `tinymemory_core::sources::sync` was the whole ingest pipeline — the source
+//! run, the tree rebuild, the re-embed queue and the Composio sync half — and
+//! exactly one item of it was reached from production here:
+//! [`derive_scopes`], called by `rpc::reconcile_rpc`. That one is not pipeline
+//! at all. It reads the registry entry's `kind` and `url`, formats them through
+//! `tinymemory_sources::readers::github` (an engine-neutral crate this host
+//! already depends on), and for a Gmail connector scans
+//! `<content root>/raw/gmail-*/_source.md` for the scope the archiver wrote.
+//! Registry fields, a filesystem scan under a path the host owns, and no store
+//! access — so it is host work that happened to live upstream, the same line
+//! [`super::reconcile`] came home along.
 //!
-//! A per-source mutex prevents duplicate concurrent syncs when the user
-//! presses the sync button multiple times.
-
-use std::collections::HashSet;
-use std::sync::Mutex;
+//! Everything else in that module stayed where it is. `sync_source` had no
+//! caller left in `src/` — the sync the product runs goes over the bus through
+//! `MemorySourceSync` — and porting the pipeline would move it *into* the host
+//! rather than behind the module, which is the opposite of the point.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::sources::types::{MemorySourceEntry, SourceKind};
-use crate::openhuman::memory::sync::composio::ComposioUsage;
-use crate::openhuman::memory::sync_events::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
 
-static ACTIVE_SYNCS: std::sync::LazyLock<Mutex<HashSet<String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
-
-/// Trigger a sync for one source. Spawns work in the background and
-/// returns immediately. Progress is published as `MemorySyncStageChanged`
-/// events with `connection_id = Some(source.id)`.
-pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<(), String> {
-    if !source.enabled {
-        return Err(format!("source '{}' is disabled", source.id));
-    }
-
-    // Per-source mutex: reject if this source is already syncing.
-    {
-        let mut active = ACTIVE_SYNCS.lock().unwrap_or_else(|e| e.into_inner());
-        if !active.insert(source.id.clone()) {
-            tracing::debug!(
-                source_id = %source.id,
-                "[memory_sources:sync] already syncing — skipping duplicate"
-            );
-            return Ok(());
-        }
-    }
-
-    let source_id = source.id.clone();
-    let kind_str = source.kind.as_str();
-
-    tracing::debug!(
-        source_id = %source_id,
-        kind = %kind_str,
-        "[memory_sources:sync] queueing sync"
-    );
-
-    emit_sync_stage(
-        MemorySyncTrigger::Manual,
-        MemorySyncStage::Requested,
-        Some(kind_str),
-        Some(&source_id),
-        Some(format!("sync requested for {} source", kind_str)),
-        Some(&source_id),
-    );
-
-    tokio::spawn(async move {
-        let source_id_for_panic = source.id.clone();
-        let kind_for_panic = source.kind.as_str();
-        let inner = tokio::spawn(async move {
-            // Retry any previously-failed pipeline jobs so the worker
-            // resumes processing through all documents.
-            if let Ok(retried) = crate::openhuman::memory::queue::store::retry_all_failed(&config) {
-                if retried > 0 {
-                    tracing::info!(
-                        retried = retried,
-                        "[memory_sources:sync] retried {retried} failed pipeline job(s)"
-                    );
-                }
-            }
-
-            tracing::debug!(
-                source_id = %source.id,
-                kind = %source.kind.as_str(),
-                "[memory_sources:sync] dispatching by kind"
-            );
-            let sync_start = std::time::Instant::now();
-            // Composio billable-action usage for this run, populated by
-            // `sync_composio` (#3111). Stays zero for non-Composio kinds.
-            let mut composio_usage = ComposioUsage::default();
-            let outcome = match source.kind {
-                SourceKind::Composio => {
-                    match crate::openhuman::memory::tinycortex::run_source_pipeline(
-                        &source, &config,
-                    )
-                    .await
-                    {
-                        Ok(outcome) => {
-                            composio_usage.actions_called = outcome.actions_called;
-                            composio_usage.cost_usd = outcome.provider_cost_usd;
-                            Ok(outcome.records_ingested as usize)
-                        }
-                        Err(error) => {
-                            composio_usage.actions_called = error.actions_called;
-                            composio_usage.cost_usd = error.provider_cost_usd;
-                            Err(format!("composio sync failed: {error}"))
-                        }
-                    }
-                }
-                SourceKind::Conversation | SourceKind::Folder => {
-                    crate::openhuman::memory::tinycortex::run_source_pipeline(&source, &config)
-                        .await
-                        .map(|outcome| outcome.records_ingested as usize)
-                        .map_err(|error| error.to_string())
-                }
-                SourceKind::GithubRepo => {
-                    crate::openhuman::memory::tinycortex::run_source_pipeline(&source, &config)
-                        .await
-                        .map(|outcome| outcome.records_ingested as usize)
-                        .map_err(|error| error.to_string())
-                }
-                SourceKind::RssFeed | SourceKind::WebPage => {
-                    crate::openhuman::memory::tinycortex::run_source_pipeline(&source, &config)
-                        .await
-                        .map(|outcome| outcome.records_ingested as usize)
-                        .map_err(|error| error.to_string())
-                }
-                SourceKind::TwitterQuery => Err(
-                    "Twitter sync not yet configured. Provide bearer token in settings."
-                        .to_string(),
-                ),
-            };
-            let duration_ms = sync_start.elapsed().as_millis() as u64;
-
-            match outcome {
-                Ok(items) => {
-                    tracing::debug!(
-                        source_id = %source.id,
-                        kind = %source.kind.as_str(),
-                        items = items,
-                        "[memory_sources:sync] completed"
-                    );
-                    emit_sync_stage(
-                        MemorySyncTrigger::Manual,
-                        MemorySyncStage::Completed,
-                        Some(source.kind.as_str()),
-                        Some(&source.id),
-                        Some(format!("ingested {items} item(s)")),
-                        Some(&source.id),
-                    );
-
-                    use crate::openhuman::memory::tinycortex::{
-                        append_audit_entry, SyncAuditEntry,
-                    };
-                    append_audit_entry(
-                        &config,
-                        &SyncAuditEntry {
-                            timestamp: chrono::Utc::now(),
-                            source_id: source.id.clone(),
-                            source_kind: source.kind.as_str().to_string(),
-                            scope: source
-                                .url
-                                .clone()
-                                .or(source.toolkit.clone())
-                                .unwrap_or_else(|| source.id.clone()),
-                            items_fetched: items as u32,
-                            batches: 0,
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            estimated_cost_usd: 0.0,
-                            composio_actions_called: composio_usage.actions_called,
-                            composio_cost_usd: composio_usage.cost_usd,
-                            actual_charged_usd: None,
-                            duration_ms,
-                            success: true,
-                            error: None,
-                        },
-                    );
-
-                    // Auto-rebuild: if raw files exist but the tree has
-                    // no summaries, build the tree now.
-                    check_and_rebuild_tree(&source, &config).await;
-
-                    // Auto-snapshot: capture post-sync state for diff tracking.
-                    if let Err(e) = crate::openhuman::memory::diff::ops::auto_snapshot_after_sync(
-                        &source, &config,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            source_id = %source.id,
-                            error = %e,
-                            "[memory_sources:sync] auto-snapshot failed (non-fatal)"
-                        );
-                    }
-                }
-                Err(error) => {
-                    // Audit failed syncs too.
-                    use crate::openhuman::memory::tinycortex::{
-                        append_audit_entry, SyncAuditEntry,
-                    };
-                    append_audit_entry(
-                        &config,
-                        &SyncAuditEntry {
-                            timestamp: chrono::Utc::now(),
-                            source_id: source.id.clone(),
-                            source_kind: source.kind.as_str().to_string(),
-                            scope: source
-                                .url
-                                .clone()
-                                .or(source.toolkit.clone())
-                                .unwrap_or_else(|| source.id.clone()),
-                            items_fetched: 0,
-                            batches: 0,
-                            input_tokens: 0,
-                            output_tokens: 0,
-                            estimated_cost_usd: 0.0,
-                            composio_actions_called: composio_usage.actions_called,
-                            composio_cost_usd: composio_usage.cost_usd,
-                            actual_charged_usd: None,
-                            duration_ms,
-                            success: false,
-                            error: Some(error.clone()),
-                        },
-                    );
-
-                    // Report internal failures to Sentry; known-expected
-                    // conditions (auth/network/rate-limit/missing config) are
-                    // classified by `expected_error_kind` and logged-not-reported
-                    // so we surface real bugs without Sentry-spamming routine
-                    // user/config errors (#3295). The reason is still shown to
-                    // the user via the Failed stage event regardless.
-                    crate::core::observability::report_error_or_expected(
-                        &error,
-                        "memory_sources",
-                        "sync",
-                        &[
-                            ("source_id", source.id.as_str()),
-                            ("kind", source.kind.as_str()),
-                        ],
-                    );
-
-                    emit_sync_stage(
-                        MemorySyncTrigger::Manual,
-                        MemorySyncStage::Failed,
-                        Some(source.kind.as_str()),
-                        Some(&source.id),
-                        Some(error.clone()),
-                        Some(&source.id),
-                    );
-                    tracing::warn!(
-                        source_id = %source.id,
-                        kind = %source.kind.as_str(),
-                        error = %error,
-                        "[memory_sources:sync] failed"
-                    );
-                }
-            }
-        });
-
-        if let Err(join_err) = inner.await {
-            if join_err.is_panic() {
-                tracing::error!(
-                    source_id = %source_id_for_panic,
-                    kind = %kind_for_panic,
-                    "[memory_sources:sync] sync task panicked"
-                );
-            }
-        }
-
-        // Release the per-source lock so future syncs can proceed.
-        if let Ok(mut active) = ACTIVE_SYNCS.lock() {
-            active.remove(&source_id_for_panic);
-        }
-    });
-
-    Ok(())
-}
-
-/// Reconcile raw files that are not yet covered by tree summaries.
-pub(crate) async fn check_and_rebuild_tree(source: &MemorySourceEntry, config: &Config) {
-    use crate::openhuman::memory::tinycortex::{needs_rebuild, rebuild_tree_from_raw};
-
-    for scope in derive_scopes(source, config) {
-        if !needs_rebuild(config, &scope.tree_scope, &scope.archive_source_id) {
-            continue;
-        }
-        tracing::info!(
-            source_id = %source.id,
-            scope = %scope.tree_scope,
-            archive = %scope.archive_source_id,
-            "[memory_sources:sync] reconciling uncovered raw files into tree"
-        );
-        match rebuild_tree_from_raw(config, &scope.tree_scope, &scope.archive_source_id).await {
-            Ok(outcome) => tracing::info!(
-                scope = %scope.tree_scope,
-                files = outcome.files_read,
-                batches = outcome.batches,
-                cost = %format!("${:.4}", outcome.actual_charged_usd.unwrap_or(outcome.estimated_cost_usd)),
-                cost_is_actual = outcome.actual_charged_usd.is_some(),
-                "[memory_sources:sync] reconcile complete"
-            ),
-            Err(error) => tracing::warn!(
-                scope = %scope.tree_scope,
-                error = %format!("{error:#}"),
-                "[memory_sources:sync] reconcile failed"
-            ),
-        }
-    }
-}
-
-/// A source's tree scope paired with its raw-archive source id. The two
-/// slugify to DIFFERENT directories for GitHub (`github:owner/repo` vs
-/// `github.com/owner/repo`) — conflating them makes reconcile scan an
-/// empty directory while the real archive sits uncovered.
+/// A source's tree scope paired with its raw-archive source id.
+///
+/// The two slugify to **different** directories for GitHub
+/// (`github:owner/repo` vs `github.com/owner/repo`); conflating them makes
+/// reconcile scan an empty directory while the real archive sits uncovered.
+///
+/// Not to be confused with `tinymemory_api::provider::types::SourceScope`,
+/// which is the recall allowlist that crosses the bus. Same name, unrelated
+/// shapes — check which one a call site means before moving it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SourceScope {
+pub struct SourceScope {
     /// Tree registry key, e.g. `"github:owner/repo"`.
     pub tree_scope: String,
     /// Raw-archive id whose slug names `raw/<slug>/`, e.g.
@@ -319,7 +43,11 @@ pub(crate) struct SourceScope {
 }
 
 /// Derive the tree scope(s) + raw-archive id(s) that a source maps to.
-pub(crate) fn derive_scopes(source: &MemorySourceEntry, config: &Config) -> Vec<SourceScope> {
+///
+/// A verbatim port of the engine's function: same match arms, same
+/// `gmail-` directory prefix, same `scope:` line parse, same empty answer for
+/// every kind that has no raw archive to reconcile yet.
+pub fn derive_scopes(source: &MemorySourceEntry, config: &Config) -> Vec<SourceScope> {
     use crate::openhuman::memory::sources::readers::github;
 
     match source.kind {
@@ -385,3 +113,7 @@ pub(crate) fn derive_scopes(source: &MemorySourceEntry, config: &Config) -> Vec<
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod tests;

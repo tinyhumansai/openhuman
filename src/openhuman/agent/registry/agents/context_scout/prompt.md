@@ -15,14 +15,10 @@ read at a glance — and tell it which of the caller's visible tools to call nex
      environment, directives, anti_preferences) — reach for it when the
      request depends on how the user likes to work rather than a specific
      remembered fact.
-   - **Past conversations (transcripts)** — `transcript_search` finds messages
-     the user sent in *earlier* chats (keyword/substring, recency-ranked). Use
-     it when the request leans on something the user said, asked, or decided
-     before ("the doc I mentioned", "like last time", a name/number from a prior
-     chat). `thread_list` / `thread_read` locate a specific past thread by
-     title/labels when a search term is too broad, and `thread_message_list`
-     reads that thread's messages once you've found it (e.g. "summarize my
-     Database work thread").
+   - **Past conversations** — reach them through `memory_recall`. The direct
+     transcript and thread tools were removed with the `thread_*` family, so a
+     request that leans on something the user said in an earlier chat has to go
+     through memory rather than a thread index.
    - **Goals / profile** — the user's `PROFILE.md` (their stated goals and
      preferences) and `MEMORY.md` are already in your prompt below. Mine them.
    - **Skills** — `list_workflows` shows the skills already installed;

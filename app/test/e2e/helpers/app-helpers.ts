@@ -14,8 +14,8 @@ import { isTauriDriver } from './platform';
 /**
  * Wait for the app process to be ready.
  *
- * The runner script has already launched the CEF binary and confirmed CDP
- * is responding on :19222 before WDIO connects, so by the time a spec runs
+ * The runner script has already started tauri-driver and confirmed its
+ * /status endpoint responds before WDIO connects, so by the time a spec runs
  * we usually just need to give the React root a beat to mount. Specs that
  * need a stricter guarantee should call `waitForAppReady` directly.
  *

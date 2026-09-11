@@ -9,12 +9,13 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use tinyagents::harness::steering::{SteeringCommand, SteeringHandle};
-use tinyagents::harness::tool::{
-    SandboxMode, Tool, ToolAccess, ToolCall as TaToolCall, ToolExecutionContext, ToolPolicy,
-    ToolResult as TaToolResult, ToolRuntime, ToolSchema, ToolSideEffects,
-    ToolTimeout as TaToolTimeout, WorkspaceAccess,
+use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
+use tinyagents_harness::tool::{
+    SandboxMode, Tool, ToolAccess, ToolExecutionContext, ToolPolicy, ToolResult as TaToolResult,
+    ToolRuntime, ToolSideEffects, ToolTimeout as TaToolTimeout, WorkspaceAccess,
 };
+use tinyinference::tool::{ToolCall as TaToolCall, ToolSchema};
+use tinytools::ToolRunContext;
 
 /// A captured early-exit: a sub-agent invoked an early-exit tool (e.g.
 /// `ask_user_clarification`), so the loop should pause and surface `question`
@@ -107,7 +108,11 @@ impl Tool<()> for ToolAdapter {
         tool_policy_from_openhuman_tool(self.inner.as_ref())
     }
 
-    async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
+    async fn call(
+        &self,
+        _state: &(),
+        call: TaToolCall,
+    ) -> tinyagents_harness::Result<TaToolResult> {
         Ok(execute_openhuman_tool(self.inner.as_ref(), call, None).await)
     }
 
@@ -116,7 +121,7 @@ impl Tool<()> for ToolAdapter {
         _state: &(),
         call: TaToolCall,
         context: ToolExecutionContext,
-    ) -> tinyagents::Result<TaToolResult> {
+    ) -> tinyagents_harness::Result<TaToolResult> {
         Ok(execute_openhuman_tool(self.inner.as_ref(), call, Some(&context)).await)
     }
 }
@@ -191,10 +196,10 @@ const TINYAGENTS_TOOL_SESSION: &str = "tinyagents";
 pub(crate) async fn execute_openhuman_tool(
     tool: &dyn crate::openhuman::tools::Tool,
     call: TaToolCall,
-    context: Option<&ToolExecutionContext>,
+    context: Option<&dyn ToolRunContext>,
 ) -> TaToolResult {
     let workspace_root = context
-        .and_then(|ctx| ctx.workspace.as_ref())
+        .and_then(|ctx| ctx.workspace())
         .map(|workspace| workspace.root.display().to_string());
     tracing::debug!(
         tool = %call.name,
@@ -210,12 +215,10 @@ pub(crate) async fn execute_openhuman_tool(
     // the `TaToolResult` below.
     let started = std::time::Instant::now();
     let tool_name = call.name.clone();
-    crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::ToolExecutionStarted {
-            tool_name: tool_name.clone(),
-            session_id: TINYAGENTS_TOOL_SESSION.to_string(),
-        },
-    );
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ToolExecutionStarted {
+        tool_name: tool_name.clone(),
+        session_id: TINYAGENTS_TOOL_SESSION.to_string(),
+    });
 
     // Approval (HITL) now runs in `ApprovalSecurityMiddleware`
     // (`tinyagents/middleware.rs`, a `wrap_tool` middleware) so a denial
@@ -248,8 +251,8 @@ pub(crate) async fn execute_openhuman_tool(
                     elapsed_ms,
                     "[tinyagents] tool timed out"
                 );
-                crate::core::event_bus::publish_global(
-                    crate::core::event_bus::DomainEvent::ToolExecutionCompleted {
+                crate::core::bus::BUS.publish(
+                    crate::core::events::DomainEvent::ToolExecutionCompleted {
                         tool_name: tool_name.clone(),
                         session_id: TINYAGENTS_TOOL_SESSION.to_string(),
                         success: false,
@@ -304,14 +307,12 @@ pub(crate) async fn execute_openhuman_tool(
     // Terminal per-tool telemetry (#4467, item 5): success is derived from the
     // rendered result's error channel so a tool-reported error surfaces as a
     // failed completion, mirroring the node-runtime bridge.
-    crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::ToolExecutionCompleted {
-            tool_name,
-            session_id: TINYAGENTS_TOOL_SESSION.to_string(),
-            success: result.error.is_none(),
-            elapsed_ms,
-        },
-    );
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ToolExecutionCompleted {
+        tool_name,
+        session_id: TINYAGENTS_TOOL_SESSION.to_string(),
+        success: result.error.is_none(),
+        elapsed_ms,
+    });
     result
 }
 
@@ -379,7 +380,11 @@ impl Tool<()> for SharedToolAdapter {
         self.policy.clone()
     }
 
-    async fn call(&self, _state: &(), call: TaToolCall) -> tinyagents::Result<TaToolResult> {
+    async fn call(
+        &self,
+        _state: &(),
+        call: TaToolCall,
+    ) -> tinyagents_harness::Result<TaToolResult> {
         self.call_openhuman_tool(call, None).await
     }
 
@@ -388,7 +393,7 @@ impl Tool<()> for SharedToolAdapter {
         _state: &(),
         call: TaToolCall,
         context: ToolExecutionContext,
-    ) -> tinyagents::Result<TaToolResult> {
+    ) -> tinyagents_harness::Result<TaToolResult> {
         self.call_openhuman_tool(call, Some(&context)).await
     }
 }
@@ -397,8 +402,8 @@ impl SharedToolAdapter {
     async fn call_openhuman_tool(
         &self,
         call: TaToolCall,
-        context: Option<&ToolExecutionContext>,
-    ) -> tinyagents::Result<TaToolResult> {
+        context: Option<&dyn ToolRunContext>,
+    ) -> tinyagents_harness::Result<TaToolResult> {
         let found = self
             .sets
             .iter()
@@ -433,88 +438,5 @@ impl SharedToolAdapter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::tools::traits::ToolTimeout;
-    use crate::openhuman::tools::ToolResult as OhToolResult;
-
-    /// A tool whose `execute_with_options` sleeps forever but declares a short
-    /// per-call timeout, so the adapter's deadline must fire.
-    struct HangingTool;
-
-    #[async_trait]
-    impl crate::openhuman::tools::Tool for HangingTool {
-        fn name(&self) -> &str {
-            "hang"
-        }
-        fn description(&self) -> &str {
-            "hangs"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({ "type": "object" })
-        }
-        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<OhToolResult> {
-            futures_util::future::pending::<()>().await;
-            Ok(OhToolResult::success("never"))
-        }
-        fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
-            ToolTimeout::Secs(1)
-        }
-    }
-
-    /// A fast tool that echoes an argument, to prove the normal path still runs.
-    struct EchoTool;
-
-    #[async_trait]
-    impl crate::openhuman::tools::Tool for EchoTool {
-        fn name(&self) -> &str {
-            "echo"
-        }
-        fn description(&self) -> &str {
-            "echoes"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({ "type": "object" })
-        }
-        async fn execute(&self, args: serde_json::Value) -> anyhow::Result<OhToolResult> {
-            let m = args.get("msg").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(OhToolResult::success(format!("echoed:{m}")))
-        }
-    }
-
-    fn call(name: &str, args: serde_json::Value) -> TaToolCall {
-        TaToolCall {
-            id: "c1".into(),
-            name: name.into(),
-            arguments: args,
-            invalid: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn tool_execution_respects_the_per_call_timeout() {
-        let result =
-            execute_openhuman_tool(&HangingTool, call("hang", serde_json::json!({})), None).await;
-        assert!(
-            result
-                .error
-                .as_deref()
-                .is_some_and(|e| e.contains("timed out")),
-            "a hanging tool must surface a timeout error, got {:?}",
-            result.error
-        );
-        assert!(result.content.contains("timed out"));
-    }
-
-    #[tokio::test]
-    async fn fast_tool_runs_to_completion() {
-        let result = execute_openhuman_tool(
-            &EchoTool,
-            call("echo", serde_json::json!({ "msg": "hi" })),
-            None,
-        )
-        .await;
-        assert!(result.error.is_none());
-        assert!(result.content.contains("echoed:hi"));
-    }
-}
+#[path = "tools_tests.rs"]
+mod tests;

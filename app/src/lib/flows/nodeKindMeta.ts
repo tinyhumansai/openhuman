@@ -137,18 +137,3 @@ export const PALETTE_ENTRIES_BY_GROUP: Record<NodeGroup, PaletteEntry[]> = {
   actions: PALETTE_ENTRIES.filter(e => e.group === 'actions'),
   logic: PALETTE_ENTRIES.filter(e => e.group === 'logic'),
 };
-
-/**
- * Fallback for any `kind` outside {@link NODE_KIND_META} — a saved graph is
- * `unknown` on the wire (cast in `FlowCanvasPage.tsx`), so a future 14th
- * tinyflows kind, or any other value the backend ever emits, can reach the
- * renderer at runtime even though TypeScript can't see it. Lookups fall back
- * here so an unrecognized kind renders as a plain neutral node instead of
- * crashing the whole canvas (there's no error boundary around `<ReactFlow>`).
- */
-const DEFAULT_NODE_META: NodeKindMeta = { group: 'actions' };
-
-/** Resolve a kind's metadata, falling back to {@link DEFAULT_NODE_META}. */
-export function nodeKindMeta(kind: NodeKind): NodeKindMeta {
-  return NODE_KIND_META[kind] ?? DEFAULT_NODE_META;
-}

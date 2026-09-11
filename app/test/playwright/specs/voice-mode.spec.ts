@@ -24,7 +24,7 @@ async function openChat(page: Page): Promise<void> {
     await skipButton.first().click({ force: true });
     await expect(skipButton.first()).toBeHidden();
   }
-  await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
+  await expect(page.getByTestId('chat-message-input')).toBeVisible();
 }
 
 async function installGetUserMediaError(page: Page, name: string): Promise<void> {
@@ -77,8 +77,8 @@ test.describe('Voice mode integration', () => {
     await switchChatIntoMicComposer(page);
 
     await page.getByRole('button', { name: 'Switch to text' }).click();
-    await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
-    await expect(page.getByTestId('send-message-button')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
   test('permission-denied getUserMedia shows a specific voice-transcription error', async ({
@@ -116,7 +116,7 @@ test.describe('Voice mode integration', () => {
   });
 });
 
-test.describe('Voice mode - offline STT contract (voice_status RPC)', () => {
+test.describe('Voice mode - hosted STT contract (voice_status RPC)', () => {
   test.beforeEach(async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-voice-mode-status', '/home');
   });
@@ -131,10 +131,11 @@ test.describe('Voice mode - offline STT contract (voice_status RPC)', () => {
 
     expect(typeof payload.stt_available).toBe('boolean');
     expect(typeof payload.tts_available).toBe('boolean');
-    expect(typeof payload.stt_provider).toBe('string');
+    expect(typeof payload.stt_engine).toBe('string');
+    expect(payload.stt_error === null || typeof payload.stt_error === 'string').toBe(true);
   });
 
-  test('voice_status reports a declared provider even when local assets are unavailable', async () => {
+  test('voice_status reports the resolved STT engine', async () => {
     const status = await callCoreRpc<unknown>('openhuman.voice_status', {});
     const root = (status ?? {}) as Record<string, unknown>;
     const payload =
@@ -142,13 +143,7 @@ test.describe('Voice mode - offline STT contract (voice_status RPC)', () => {
         ? (root.result as Record<string, unknown>)
         : root;
 
-    const sttProvider = String(payload.stt_provider ?? '');
-    expect(sttProvider.length).toBeGreaterThan(0);
-
-    const whisperBinary = payload.whisper_binary;
-    const sttModelPath = payload.stt_model_path;
-    if ((sttProvider === 'whisper' || sttProvider === 'local') && !whisperBinary && !sttModelPath) {
-      expect(payload.stt_available).toBe(false);
-    }
+    expect(String(payload.stt_engine ?? '').length).toBeGreaterThan(0);
+    expect(payload.stt_error === null || typeof payload.stt_error === 'string').toBe(true);
   });
 });

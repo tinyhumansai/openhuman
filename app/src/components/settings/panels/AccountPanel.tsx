@@ -1,5 +1,6 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
+import { AvatarFallback, AvatarRoot } from '../../ui/Avatar';
 import { SettingsSection } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import LogoutAndClearActions from '../LogoutAndClearActions';
@@ -25,9 +26,11 @@ const AccountPanel = () => {
       {(name || username) && (
         <SettingsSection>
           <div className="flex items-center gap-3 px-4 py-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-500/15 text-sm font-semibold text-primary-700 dark:text-primary-300">
-              {(name ?? username ?? '?').replace('@', '').slice(0, 1).toUpperCase()}
-            </div>
+            <AvatarRoot className="h-10 w-10 shrink-0 bg-primary-100 dark:bg-primary-500/15">
+              <AvatarFallback className="bg-primary-100 text-sm font-semibold text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
+                {(name ?? username ?? '?').replace('@', '').slice(0, 1).toUpperCase()}
+              </AvatarFallback>
+            </AvatarRoot>
             <div className="min-w-0">
               {name && <div className="truncate text-sm font-medium text-content">{name}</div>}
               {username && <div className="truncate text-xs text-content-muted">{username}</div>}

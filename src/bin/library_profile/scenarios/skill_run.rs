@@ -41,7 +41,6 @@
 //! per-child RSS), captured at the workload peak.
 
 use anyhow::{Context, Result};
-use openhuman_core::core::event_bus::init_global;
 use openhuman_core::openhuman::agent::harness::AgentDefinitionRegistry;
 use openhuman_core::openhuman::agent::Agent;
 use openhuman_core::openhuman::config::Config;
@@ -127,7 +126,7 @@ pub async fn run() -> Result<ProfileResult> {
     apply_pool_config(&mut fixture.config, pool_enabled, pool_workers);
     let _approval_env = EnvGuard::set("OPENHUMAN_APPROVAL_GATE", "0");
 
-    let _ = init_global(256);
+    openhuman_core::core::bus::init().await.expect("bus init");
     openhuman_core::openhuman::agent::bus::register_agent_handlers();
     let _ = AgentDefinitionRegistry::init_global_builtins();
 

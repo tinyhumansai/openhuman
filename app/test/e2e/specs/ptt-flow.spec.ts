@@ -47,7 +47,6 @@
  *        wire). We spy on `__TAURI_INTERNALS__.invoke` before the press to
  *        capture the call payload.
  *
- * Spec: docs/superpowers/specs/2026-06-02-global-ptt-design.md.
  *
  * Limitations / notes for follow-up sessions:
  *   - The OS-level global-shortcut emit can't be triggered by the Chromium

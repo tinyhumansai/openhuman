@@ -31,7 +31,7 @@ describe('<SettingsPanel />', () => {
       </SettingsPanel>
     );
     // The registry title key for the `privacy` route, rendered as the h2.
-    expect(getByRole('heading', { level: 2 })).toHaveTextContent('pages.settings.account.privacy');
+    expect(getByRole('heading', { level: 1 })).toHaveTextContent('pages.settings.account.privacy');
   });
 
   it('lets an explicit title override the registry default', () => {
@@ -41,7 +41,7 @@ describe('<SettingsPanel />', () => {
         <p>body</p>
       </SettingsPanel>
     );
-    expect(getByRole('heading', { level: 2 })).toHaveTextContent('Custom title');
+    expect(getByRole('heading', { level: 1 })).toHaveTextContent('Custom title');
   });
 
   it('renders the description and the header action', () => {

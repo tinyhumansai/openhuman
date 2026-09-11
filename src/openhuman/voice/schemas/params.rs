@@ -8,7 +8,7 @@ pub(super) struct TranscribeParams {
     /// Optional conversation context for LLM post-processing.
     #[serde(default)]
     pub(super) context: Option<String>,
-    /// Skip LLM cleanup and return raw whisper output.
+    /// Skip LLM cleanup and return the raw engine output.
     #[serde(default)]
     pub(super) skip_cleanup: bool,
 }
@@ -21,7 +21,7 @@ pub(super) struct TranscribeBytesParams {
     /// Optional conversation context for LLM post-processing.
     #[serde(default)]
     pub(super) context: Option<String>,
-    /// Skip LLM cleanup and return raw whisper output.
+    /// Skip LLM cleanup and return the raw engine output.
     #[serde(default)]
     pub(super) skip_cleanup: bool,
 }
@@ -47,7 +47,7 @@ pub(super) struct CloudTranscribeParams {
 }
 
 /// Factory-dispatched STT request. The caller can either pin a provider
-/// explicitly (`"cloud"` / `"whisper"`) or let the controller resolve the
+/// explicitly (`"cloud"` / `"<slug>[:<model>]"`) or let the controller resolve the
 /// effective provider from `config.local_ai.stt_provider`. Keeps the
 /// existing `voice_cloud_transcribe` RPC intact for back-compat — older
 /// renderers still pin the cloud path directly.
@@ -148,7 +148,11 @@ pub(super) struct VoiceListModelsParams {
 }
 
 /// Test a voice provider endpoint.
-#[derive(Debug, Deserialize)]
+///
+/// `Debug` is implemented by hand rather than derived: `api_key` carries a raw
+/// user credential, and a derived `Debug` would print it in full the first time
+/// anyone adds a `{:?}` of this struct to a log line.
+#[derive(Deserialize)]
 pub(super) struct VoiceTestProviderParams {
     pub(super) workload: String,
     pub(super) provider: String,
@@ -156,6 +160,23 @@ pub(super) struct VoiceTestProviderParams {
     /// synthesizing or transcribing. Used by the provider-enable modal.
     #[serde(default)]
     pub(super) validate_only: bool,
+    /// Candidate API key to validate **without storing it**, so the
+    /// provider-enable modal can check a key before the user commits to
+    /// saving it (#5896). Omitted means "use the stored credential for this
+    /// provider's slug". Only consulted when `validate_only` is set.
+    #[serde(default)]
+    pub(super) api_key: Option<String>,
+}
+
+impl std::fmt::Debug for VoiceTestProviderParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceTestProviderParams")
+            .field("workload", &self.workload)
+            .field("provider", &self.provider)
+            .field("validate_only", &self.validate_only)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]

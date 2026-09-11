@@ -42,12 +42,10 @@ interface StatTileProps {
 }
 
 const StatTile = ({ label, value, hint }: StatTileProps) => (
-  <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 bg-gradient-to-br from-white to-stone-50 dark:from-neutral-900 dark:to-neutral-950">
-    <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400">{label}</div>
-    <div className="mt-1 text-2xl font-semibold text-neutral-900 dark:text-neutral-50 tabular-nums">
-      {value}
-    </div>
-    {hint && <div className="mt-0.5 text-xs text-neutral-400 dark:text-neutral-500">{hint}</div>}
+  <div className="rounded-2xl border border-line p-4 bg-linear-to-br from-surface to-surface-subtle">
+    <div className="text-xs font-medium text-content-muted">{label}</div>
+    <div className="mt-1 text-2xl font-semibold text-content tabular-nums">{value}</div>
+    {hint && <div className="mt-0.5 text-xs text-content-faint">{hint}</div>}
   </div>
 );
 
@@ -82,12 +80,21 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
     let cancelled = false;
     const load = async () => {
       try {
-        const [s, v] = await Promise.all([getTokenjuiceSettings(), getTokenjuiceSavings()]);
+        const s = await getTokenjuiceSettings();
         if (cancelled) return;
         setSettings(s);
-        setSavings(v);
         setMinTokensInput(String(s.ccr_min_tokens));
         savedMinTokensRef.current = s.ccr_min_tokens;
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        // Settings failure disables all controls — don't bother loading savings.
+        return;
+      }
+      // Load savings independently: a savings failure must not prevent the
+      // configuration controls from becoming interactive.
+      try {
+        const v = await getTokenjuiceSavings();
+        if (!cancelled) setSavings(v);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
@@ -176,16 +183,16 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
 
         {savings && Object.keys(savings.byCompressor).length > 0 && (
           <div className="px-1 mt-3">
-            <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1.5">
+            <div className="text-xs font-medium text-content-muted mb-1.5">
               {t('settings.tokenUsage.byCompressor')}
             </div>
-            <div className="rounded-xl border border-stone-200 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800">
+            <div className="rounded-xl border border-line divide-y divide-line-subtle">
               {Object.entries(savings.byCompressor)
                 .sort((a, b) => b[1].tokensSaved - a[1].tokensSaved)
                 .map(([name, b]) => (
                   <div key={name} className="flex items-center justify-between px-3 py-2 text-sm">
-                    <span className="font-mono text-neutral-700 dark:text-neutral-300">{name}</span>
-                    <span className="tabular-nums text-neutral-500 dark:text-neutral-400">
+                    <span className="font-mono text-content-secondary">{name}</span>
+                    <span className="tabular-nums text-content-muted">
                       {formatInt(b.tokensSaved)} tok · {formatUsd(b.costSavedUsd)}
                     </span>
                   </div>
@@ -208,7 +215,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
       <SettingsSection
         title={t('settings.tokenUsage.compressionTitle')}
         description={t('settings.tokenUsage.compressionDesc')}>
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800">
+        <div className="rounded-xl border border-line divide-y divide-line-subtle">
           <SettingsRow
             label={t('settings.tokenUsage.routerEnabled')}
             description={t('settings.tokenUsage.routerEnabledDesc')}
@@ -216,6 +223,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-router-enabled"
                 checked={settings?.router_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ router_enabled: v })}
                 aria-label={t('settings.tokenUsage.routerEnabled')}
               />
@@ -228,6 +236,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-search-enabled"
                 checked={settings?.search_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ search_enabled: v })}
                 aria-label={t('settings.tokenUsage.search')}
               />
@@ -240,6 +249,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-code-enabled"
                 checked={settings?.code_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ code_enabled: v })}
                 aria-label={t('settings.tokenUsage.code')}
               />
@@ -252,6 +262,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-html-enabled"
                 checked={settings?.html_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ html_enabled: v })}
                 aria-label={t('settings.tokenUsage.html')}
               />
@@ -264,6 +275,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-ml-enabled"
                 checked={settings?.ml_compression_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ ml_compression_enabled: v })}
                 aria-label={t('settings.tokenUsage.ml')}
               />
@@ -276,7 +288,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
       <SettingsSection
         title={t('settings.tokenUsage.ccrTitle')}
         description={t('settings.tokenUsage.ccrDesc')}>
-        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800">
+        <div className="rounded-xl border border-line divide-y divide-line-subtle">
           <SettingsRow
             label={t('settings.tokenUsage.ccrEnabled')}
             description={t('settings.tokenUsage.ccrEnabledDesc')}
@@ -284,6 +296,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-ccr-enabled"
                 checked={settings?.ccr_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ ccr_enabled: v })}
                 aria-label={t('settings.tokenUsage.ccrEnabled')}
               />
@@ -302,6 +315,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
                 min={0}
                 max={1000000}
                 unit={t('settings.tokenUsage.tokensUnit')}
+                disabled={settings === null}
                 aria-label={t('settings.tokenUsage.ccrMinTokens')}
               />
             }
@@ -313,6 +327,7 @@ const TokenUsagePanel = ({ embedded = false }: TokenUsagePanelProps = {}) => {
               <SettingsSwitch
                 id="tj-ccr-disk"
                 checked={settings?.ccr_disk_enabled ?? false}
+                disabled={settings === null}
                 onCheckedChange={v => void patch({ ccr_disk_enabled: v })}
                 aria-label={t('settings.tokenUsage.ccrDisk')}
               />

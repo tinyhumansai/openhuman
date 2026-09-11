@@ -3,13 +3,36 @@
 //! Everything here is local: temp workspaces, loopback HTTP, and a fake `gh`
 //! binary. Run with `--test-threads=1` because config and PATH are process
 //! globals.
+//!
+//! # What changed here
+//!
+//! tinymemory v1.13.4 deleted the entire in-process Composio provider
+//! registry — `ComposioProvider`, `ProviderContext`, the concrete
+//! `GitHubProvider`/`ClickUpProvider`/`GmailProvider`/`SlackProvider` structs,
+//! `run_backfill_via_search`, and the registry functions
+//! (`init_default_composio_sync_providers`/`get_composio_sync_provider`/
+//! `all_composio_sync_providers`) — see
+//! `crate::openhuman::integrations::composio::providers`'s module docs. None
+//! of that moved anywhere reachable from this crate: fetching a profile,
+//! normalizing a task, and post-processing a toolkit's response now happen
+//! inside the separately-versioned `tinyconnectors` module, reachable only
+//! over the module bus (a real download + `dlopen`), which this file's own
+//! "everything here is local" design rules out.
+//! `composio_providers_fetch_profiles_tasks_and_cover_error_branches` tested
+//! exactly that deleted, now-relocated behaviour — genuinely untestable from
+//! here, reported as a gap rather than dropped.
+//!
+//! What *is* still real, current, and network-free: the curated catalog table
+//! (`NATIVE_PROVIDERS`/`has_native_provider`, unchanged, now re-exported from
+//! `integrations::composio::providers` instead of
+//! `memory::sync::composio::providers`) and the bus subscribers
+//! (`memory::sync::composio::bus::*`, untouched). Both are preserved below in
+//! `composio_provider_catalog_and_bus_subscribers_expose_stable_metadata`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use axum::extract::Request;
-use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{Json, Router};
 use serde_json::{json, Value};
@@ -19,29 +42,36 @@ use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
+use openhuman_core::openhuman::integrations::composio::providers::{
+    has_native_provider, SyncReason, NATIVE_PROVIDERS,
+};
 use openhuman_core::openhuman::memory::sources::readers::SourceReader;
+use openhuman_core::openhuman::memory::sources::registry::{
+    add_source, get_source, list_enabled_by_kind, remove_composio_source_by_connection_id,
+    remove_source, update_source,
+};
 use openhuman_core::openhuman::memory::sources::{
-    add_source, get_source, list_enabled_by_kind, list_sources,
-    remove_composio_source_by_connection_id, remove_source, update_source, upsert_composio_source,
-    MemorySourceEntry, MemorySourcePatch, SourceKind,
+    list_sources, upsert_composio_source, MemorySourceEntry, MemorySourcePatch, SourceKind,
 };
 use openhuman_core::openhuman::memory::sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
 };
-use openhuman_core::openhuman::memory::sync::composio::providers::clickup::ClickUpProvider;
-use openhuman_core::openhuman::memory::sync::composio::providers::github::GitHubProvider;
-use openhuman_core::openhuman::memory::sync::composio::providers::gmail::GmailProvider;
-use openhuman_core::openhuman::memory::sync::composio::providers::slack::{
-    run_backfill_via_search, SlackProvider,
-};
-use openhuman_core::openhuman::memory::sync::composio::providers::{
-    ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
-};
-use openhuman_core::openhuman::memory::sync::composio::{
-    all_composio_sync_providers, get_composio_sync_provider, init_default_composio_sync_providers,
-};
 
 static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
+static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
+
+fn ensure_memory_seams() {
+    MEMORY_SEAMS_INIT.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("memory-sync-sources-raw-coverage-seams".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+            })
+            .expect("spawn memory sync source seam installer")
+            .join()
+            .expect("memory sync source seam installer panicked");
+    });
+}
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK
@@ -83,6 +113,7 @@ impl Drop for EnvGuard {
 }
 
 fn config_in(tmp: &TempDir) -> Config {
+    ensure_memory_seams();
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
@@ -281,104 +312,23 @@ async fn remove_composio_source_by_connection_id_prunes_on_disconnect_and_surviv
 }
 
 #[tokio::test]
-async fn rss_reader_lists_reads_and_reports_feed_errors_from_loopback() {
+async fn rss_reader_rejects_private_hosts_before_fetching() {
     let _guard = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
-    let rss_xml = r#"<?xml version="1.0"?>
-    <rss version="2.0"><channel>
-      <item>
-        <title>First &amp; useful</title>
-        <link>https://example.test/first</link>
-        <description><![CDATA[<p>HTML body &amp; details</p>]]></description>
-        <pubDate>Fri, 29 May 2026 10:00:00 GMT</pubDate>
-      </item>
-      <item>
-        <title>Second</title>
-        <guid>guid-second</guid>
-        <description>Plain &lt;encoded&gt; body</description>
-      </item>
-    </channel></rss>"#;
-    let atom_xml = r#"<?xml version="1.0"?>
-    <feed><entry>
-      <title>Atom item</title>
-      <id>urn:round15:atom</id>
-      <summary>Atom summary</summary>
-      <link href="https://example.test/atom" />
-      <updated>2026-05-29T12:00:00Z</updated>
-    </entry></feed>"#;
-    let router = Router::new().route(
-        "/{feed}",
-        any(move |req: Request| {
-            let rss_xml = rss_xml.to_string();
-            let atom_xml = atom_xml.to_string();
-            async move {
-                match req.uri().path() {
-                    "/rss" => (
-                        [(axum::http::header::CONTENT_TYPE, "application/rss+xml")],
-                        rss_xml,
-                    )
-                        .into_response(),
-                    "/atom" => (
-                        [(axum::http::header::CONTENT_TYPE, "application/atom+xml")],
-                        atom_xml,
-                    )
-                        .into_response(),
-                    "/broken" => (axum::http::StatusCode::BAD_GATEWAY, "bad feed").into_response(),
-                    _ => (axum::http::StatusCode::NOT_FOUND, "missing").into_response(),
-                }
-            }
-        }),
-    );
-    let (base, server) = loopback_router(router).await;
 
-    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader;
+    let reader = openhuman_core::openhuman::memory::sources::readers::rss::RssReader::new();
     let mut entry = source(SourceKind::RssFeed, "rss-round15");
-    entry.url = Some(format!("{base}/rss"));
-    entry.max_items = Some(1);
+    entry.url = Some("http://127.0.0.1:9/rss".to_string());
 
-    let items = reader.list_items(&entry, &config).await.expect("list rss");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].title, "First & useful");
-
-    let content = reader
-        .read_item(&entry, "https://example.test/first", &config)
+    let error = reader
+        .list_items(&entry, &config)
         .await
-        .expect("read rss item");
-    assert_eq!(content.id, "https://example.test/first");
-    assert_eq!(
-        content.content_type,
-        openhuman_core::openhuman::memory::sources::ContentType::Html
+        .expect_err("private RSS host rejected before fetch");
+    assert!(
+        error.contains("public host"),
+        "private RSS hosts must be rejected before fetching: {error}"
     );
-    assert!(content.body.contains("HTML body"));
-
-    let mut atom = entry.clone();
-    atom.url = Some(format!("{base}/atom"));
-    let atom_content = reader
-        .read_item(&atom, "urn:round15:atom", &config)
-        .await
-        .expect("read atom item");
-    assert_eq!(atom_content.title, "Atom item");
-    assert_eq!(
-        atom_content.metadata.get("link").and_then(Value::as_str),
-        Some("https://example.test/atom")
-    );
-
-    let missing = reader
-        .read_item(&atom, "missing", &config)
-        .await
-        .expect_err("missing atom item");
-    assert!(missing.contains("not found"));
-
-    let mut broken = entry;
-    broken.url = Some(format!("{base}/broken"));
-    let err = reader
-        .list_items(&broken, &config)
-        .await
-        .expect_err("http status error");
-    assert!(err.contains("502"));
-
-    server.abort();
 }
 
 #[tokio::test]
@@ -467,30 +417,26 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     assert!(bad.contains("expected https://github.com/<owner>/<repo>"));
 }
 
+/// Was `composio_providers_fetch_profiles_tasks_and_cover_error_branches`,
+/// which built each deleted `ComposioProvider` (`GitHubProvider`,
+/// `ClickUpProvider`, `GmailProvider`, `SlackProvider`) directly and called
+/// `fetch_user_profile`/`fetch_tasks`/`on_trigger`/`run_backfill_via_search`
+/// against a loopback router simulating the Composio execute API. None of
+/// that construction or those methods exist any more — see the module doc
+/// comment for where the behaviour moved (the `tinyconnectors` module) and
+/// why it cannot be exercised from here without a live loaded module and real
+/// network. What survives as the honest current entry point for "fetch a
+/// connected account's profile" is `integrations::composio::ops::{
+/// composio_get_user_profile, composio_sync}`, module-mediated now instead of
+/// registry-mediated. With `modules.enabled = false` both refuse
+/// deterministically and without touching the network, which is what this
+/// test asserts in place of the deleted per-provider parsing coverage.
 #[tokio::test]
-async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
+async fn composio_ops_refuse_cleanly_without_a_loaded_connectors_module() {
     let _guard = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let mut config = config_in(&tmp);
-    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let router = {
-        let requests = Arc::clone(&requests);
-        Router::new().route(
-            "/agent-integrations/composio/execute",
-            any(move |Json(body): Json<Value>| {
-                let requests = Arc::clone(&requests);
-                async move {
-                    requests.lock().unwrap().push(body.clone());
-                    Json(json!({
-                        "success": true,
-                        "data": execute_response_for(&body),
-                    }))
-                }
-            }),
-        )
-    };
-    let (base, server) = loopback_router(router).await;
-    config.api_url = Some(base);
+    config.modules.enabled = false;
     persist_config(&config).await;
     let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
     let _home = EnvGuard::set_path("HOME", tmp.path());
@@ -504,125 +450,75 @@ async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
         )
         .expect("store session token");
 
-    let ctx = ProviderContext {
-        config: Arc::new(config.clone()),
-        toolkit: "github".to_string(),
-        connection_id: Some("conn-github".to_string()),
-        usage: Default::default(),
-        max_items: None,
-        sync_depth_days: None,
-    };
-    let github = GitHubProvider::new();
-    let github_profile = github
-        .fetch_user_profile(&ctx)
+    let profile_error =
+        openhuman_core::openhuman::integrations::composio::ops::composio_get_user_profile(
+            &config,
+            "conn-github",
+        )
         .await
-        .expect("github profile");
-    assert_eq!(github_profile.username.as_deref(), Some("octo-round15"));
-    assert_eq!(
-        github_profile.display_name.as_deref(),
-        Some("Round Fifteen")
+        .expect_err("profile fetch must refuse without a loaded connectors module");
+    assert!(
+        profile_error.contains("modules are disabled in configuration"),
+        "unexpected error: {profile_error}"
     );
 
-    let tasks = github
-        .fetch_tasks(
-            &ctx,
-            &TaskFetchFilter {
-                repo: Some("tinyhumansai/openhuman".to_string()),
-                labels: vec!["coverage".to_string()],
-                state: Some("open".to_string()),
-                max: 2,
-                ..TaskFetchFilter::default()
-            },
-        )
-        .await
-        .expect("github tasks");
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].provider, "github");
-    assert_eq!(tasks[0].labels, vec!["coverage"]);
-
-    let clickup_ctx = ProviderContext {
-        toolkit: "clickup".to_string(),
-        connection_id: Some("conn-clickup".to_string()),
-        ..ctx.clone()
-    };
-    let clickup = ClickUpProvider::new();
-    let clickup_profile = clickup
-        .fetch_user_profile(&clickup_ctx)
-        .await
-        .expect("clickup profile");
-    assert_eq!(clickup_profile.username.as_deref(), Some("9988"));
-    assert_eq!(clickup_profile.email.as_deref(), Some("click@example.test"));
-
-    let clickup_tasks = clickup
-        .fetch_tasks(
-            &clickup_ctx,
-            &TaskFetchFilter {
-                team_id: Some("team_1".to_string()),
-                list_id: Some("list_1".to_string()),
-                max: 3,
-                ..TaskFetchFilter::default()
-            },
-        )
-        .await
-        .expect("clickup tasks");
-    assert_eq!(clickup_tasks.len(), 1);
-    assert_eq!(clickup_tasks[0].provider, "clickup");
-    assert_eq!(clickup_tasks[0].priority.as_deref(), Some("high"));
-
-    let gmail = GmailProvider::new();
-    let gmail_err = gmail
-        .fetch_tasks(&ctx, &TaskFetchFilter::default())
-        .await
-        .expect_err("gmail has no task surface");
-    assert!(gmail_err.contains("no task-fetch surface"));
-
-    let slack = SlackProvider::new();
-    assert_eq!(slack.toolkit_slug(), "slack");
-    assert_eq!(slack.sync_interval_secs(), Some(15 * 60));
-    assert!(slack.curated_tools().is_some());
-    slack
-        .on_trigger(&ctx, "message.created", &json!({"event": "ignored"}))
-        .await
-        .expect("slack trigger path is defensive");
-
-    let bad_backfill = run_backfill_via_search(&ctx, 0)
-        .await
-        .expect_err("zero days rejected");
-    assert!(!bad_backfill.trim().is_empty());
-
-    assert!(!requests.lock().unwrap().is_empty());
-    server.abort();
+    let sync_error = openhuman_core::openhuman::integrations::composio::ops::composio_sync(
+        &config,
+        "conn-github",
+        None,
+    )
+    .await
+    .expect_err("sync must refuse without a loaded connectors module");
+    assert!(
+        sync_error.contains("modules are disabled in configuration"),
+        "unexpected error: {sync_error}"
+    );
 }
 
+/// Was `composio_provider_registry_and_bus_subscribers_expose_stable_metadata`,
+/// which asked the deleted engine's provider registry
+/// (`init_default_composio_sync_providers`/`get_composio_sync_provider`/
+/// `all_composio_sync_providers`) which toolkits it knew. The registry is
+/// gone; the six-toolkit fact it reported is now `NATIVE_PROVIDERS` (a pure
+/// contract table re-exported unchanged from
+/// `integrations::composio::providers`, see module doc comment), which this
+/// test checks instead. The bus-subscriber and `SyncReason` coverage is
+/// otherwise unchanged.
 #[test]
-fn composio_provider_registry_and_bus_subscribers_expose_stable_metadata() {
-    init_default_composio_sync_providers();
-    assert!(get_composio_sync_provider("slack").is_some());
-    assert!(get_composio_sync_provider("github").is_some());
-    assert!(get_composio_sync_provider("clickup").is_some());
-    assert!(get_composio_sync_provider("missing").is_none());
-    assert!(
-        all_composio_sync_providers().len() >= 6,
-        "default providers should include gmail/notion/slack/clickup/github/linear"
+fn composio_provider_catalog_and_bus_subscribers_expose_stable_metadata() {
+    assert!(has_native_provider("slack"));
+    assert!(has_native_provider("github"));
+    assert!(has_native_provider("clickup"));
+    assert!(!has_native_provider("missing"));
+    assert_eq!(
+        NATIVE_PROVIDERS.len(),
+        6,
+        "native providers should be exactly gmail/notion/slack/clickup/github/linear"
     );
+    for toolkit in ["gmail", "notion", "slack", "clickup", "github", "linear"] {
+        assert!(
+            has_native_provider(toolkit),
+            "{toolkit} should have a native provider"
+        );
+    }
 
     let trigger = ComposioTriggerSubscriber::new();
     let connection = ComposioConnectionCreatedSubscriber::new();
     let config_changed = ComposioConfigChangedSubscriber::new();
     assert_eq!(
-        openhuman_core::core::event_bus::EventHandler::name(&trigger),
+        tinybus::EventHandler::name(&trigger),
         "composio::trigger"
     );
     assert_eq!(
-        openhuman_core::core::event_bus::EventHandler::domains(&trigger),
+        tinybus::EventHandler::domains(&trigger),
         Some(&["composio"][..])
     );
     assert_eq!(
-        openhuman_core::core::event_bus::EventHandler::name(&connection),
+        tinybus::EventHandler::name(&connection),
         "composio::connection_created"
     );
     assert_eq!(
-        openhuman_core::core::event_bus::EventHandler::name(&config_changed),
+        tinybus::EventHandler::name(&config_changed),
         "composio::config_changed"
     );
 

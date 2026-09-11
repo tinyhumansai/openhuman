@@ -12,6 +12,7 @@ import {
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition } from '../../types/channels';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
+import { Spinner } from '../ui';
 import Button from '../ui/Button';
 import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
@@ -259,29 +260,7 @@ const YuanbaoConfig = ({ definition }: YuanbaoConfigProps) => {
             size="sm"
             disabled={busy}
             onClick={handleConnect}
-            leadingIcon={
-              busy ? (
-                <svg
-                  className="h-3 w-3 animate-spin"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-              ) : undefined
-            }>
+            leadingIcon={busy ? <Spinner className="h-3 w-3" /> : undefined}>
             {busy
               ? t('channels.yuanbao.connecting')
               : status === 'connected'

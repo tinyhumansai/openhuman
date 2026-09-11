@@ -36,17 +36,17 @@ clients can write as `mcp:<client>`.
 The MCP surface is deliberately read-only and routes through the existing
 controller registry plus the core security policy read gate:
 
-| MCP tool | Backing RPC | Purpose |
-| --- | --- | --- |
-| `searxng_search`* | `openhuman.tools_searxng_search` | Search a configured self-hosted SearXNG instance. |
-| `memory.search` | `openhuman.memory_tree_search` | Keyword search over memory-tree chunks. |
-| `memory.recall` | `openhuman.memory_tree_recall` | Semantic recall over memory-tree summaries/chunks. |
-| `tree.read_chunk` | `openhuman.memory_tree_get_chunk` | Read one chunk returned by search or recall. |
-| `tree.browse` | `openhuman.memory_tree_list_chunks` | Paginated chunk listing with source / entity / time filters. |
-| `tree.top_entities` | `openhuman.memory_tree_top_entities` | Most-referenced canonical entities, optionally filtered by kind. |
+| MCP tool            | Backing RPC                          | Purpose                                                                 |
+| ------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
+| `searxng_search`\*  | `openhuman.tools_searxng_search`     | Search a configured self-hosted SearXNG instance.                       |
+| `memory.search`     | `openhuman.memory_tree_search`       | Keyword search over memory-tree chunks.                                 |
+| `memory.recall`     | `openhuman.memory_tree_recall`       | Semantic recall over memory-tree summaries/chunks.                      |
+| `tree.read_chunk`   | `openhuman.memory_tree_get_chunk`    | Read one chunk returned by search or recall.                            |
+| `tree.browse`       | `openhuman.memory_tree_list_chunks`  | Paginated chunk listing with source / entity / time filters.            |
+| `tree.top_entities` | `openhuman.memory_tree_top_entities` | Most-referenced canonical entities, optionally filtered by kind.        |
 | `tree.list_sources` | `openhuman.memory_tree_list_sources` | Distinct ingest sources with chunk counts and last-activity timestamps. |
 
-* `searxng_search` is present only when SearXNG is enabled.
+- `searxng_search` is present only when SearXNG is enabled.
 
 `searxng_search` is added to the MCP catalog when SearXNG is enabled. It accepts
 `query`, optional `categories` (`web`, `news`, `images`), optional `language`,
@@ -97,11 +97,11 @@ The `initialize` response includes:
 
 ### URI scheme
 
-| URI | Content |
-| --- | --- |
-| `openhuman://prompts/identity` | `IDENTITY.md` (core agent identity) |
-| `openhuman://prompts/soul` | `SOUL.md` (core agent personality and values) |
-| `openhuman://prompts/user` | `USER.md` (user-profile context) |
+| URI                               | Content                                                |
+| --------------------------------- | ------------------------------------------------------ |
+| `openhuman://prompts/identity`    | `IDENTITY.md` (core agent identity)                    |
+| `openhuman://prompts/soul`        | `SOUL.md` (core agent personality and values)          |
+| `openhuman://prompts/user`        | `USER.md` (user-profile context)                       |
 | `openhuman://prompts/agents/<id>` | `<id>/prompt.md` for each of the 18 built-in subagents |
 
 All resources have `mimeType: "text/markdown"`.
@@ -138,11 +138,11 @@ The HTTP JSON-RPC server also exposes a read-only global tool registry for
 agents and dashboards that need discovery metadata without opening an MCP stdio
 session:
 
-| RPC method | Purpose |
-| --- | --- |
-| `openhuman.tool_registry_list` | List MCP stdio tools and controller-backed tools with stable `tool_id`, route, version, input/output schemas, allowed agents, tags, enabled state, and health. |
-| `openhuman.tool_registry_get` | Return one registry entry by `tool_id`, for example `memory.search` or `tools.web_search`. |
-| `openhuman.tool_registry_diagnostics` | Return redacted inventory counts, write-surface candidates, policy surfaces, and external capability-provider diagnostics. |
+| RPC method                            | Purpose                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openhuman.tool_registry_list`        | List MCP stdio tools and controller-backed tools with stable `tool_id`, route, version, input/output schemas, allowed agents, tags, enabled state, and health. |
+| `openhuman.tool_registry_get`         | Return one registry entry by `tool_id`, for example `memory.search` or `tools.web_search`.                                                                     |
+| `openhuman.tool_registry_diagnostics` | Return redacted inventory counts, write-surface candidates, policy surfaces, and external capability-provider diagnostics.                                     |
 
 The registry is discovery-only. It does not change tool dispatch or permission
 checks; MCP calls still go through `tools/call`, and controller-backed tools

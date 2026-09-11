@@ -5,7 +5,7 @@ icon: code
 
 # Coder
 
-The coder family is what makes OpenHuman a viable coding partner instead of a chat window that *pretends* to know the codebase.
+The coder family is what makes OpenHuman a viable coding partner instead of a chat window that _pretends_ to know the codebase.
 
 ## Tools in the family
 
@@ -26,12 +26,12 @@ The coder family is what makes OpenHuman a viable coding partner instead of a ch
 
 ## Why these are native, not shell-only
 
-A shell tool plus `cat`/`sed`/`awk` could *technically* do all of this. The native tools exist because:
+A shell tool plus `cat`/`sed`/`awk` could _technically_ do all of this. The native tools exist because:
 
-* Edits go through a uniqueness check, so the agent can't accidentally clobber the wrong line.
-* Reads come back with line numbers the agent can refer to in follow-ups.
-* Git operations parse output into structured data, instead of leaving the agent to scrape porcelain.
-* Lint and test runs are wired to the project's actual commands, not generic guesses.
+- Edits go through a uniqueness check, so the agent can't accidentally clobber the wrong line.
+- Reads come back with line numbers the agent can refer to in follow-ups.
+- Git operations parse output into structured data, instead of leaving the agent to scrape porcelain.
+- Lint and test runs are wired to the project's actual commands, not generic guesses.
 
 ## Workspace scoping
 
@@ -39,5 +39,5 @@ Filesystem tools respect a workspace boundary - the agent can't read or write ou
 
 ## See also
 
-* [System & Utilities](system-and-utilities.md) - `shell`, `node_exec`, `npm_exec`, `python_exec` for the rest of the dev loop.
-* [Agent Coordination](agent-coordination.md) - `todo_write`, `spawn_subagent` for larger refactors.
+- [System & Utilities](system-and-utilities.md) - `shell`, `node_exec`, `npm_exec`, `python_exec` for the rest of the dev loop.
+- [Agent Coordination](agent-coordination.md) - `todo_write`, `spawn_subagent` for larger refactors.

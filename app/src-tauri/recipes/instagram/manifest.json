@@ -1,7 +1,0 @@
-{
-  "id": "instagram",
-  "name": "Instagram",
-  "version": "0.1.0",
-  "serviceURL": "https://www.instagram.com/direct/inbox/",
-  "icon": "icon.svg"
-}

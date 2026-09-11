@@ -1,142 +1,49 @@
 //! Microphone audio capture using cpal.
 //!
 //! Records audio from the default input device and produces 16-kHz mono WAV
-//! bytes suitable for whisper transcription.
+//! bytes suitable for STT transcription.
 
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SampleRate, StreamConfig};
-use hound::{SampleFormat as HoundFormat, WavSpec, WavWriter};
 use log::{debug, error, info, warn};
+
+use crate::openhuman::config::Config;
 use tokio::sync::oneshot;
 
 const LOG_PREFIX: &str = "[voice_capture]";
 
-/// Target sample rate for whisper (16 kHz mono).
+/// Target sample rate for STT (16 kHz mono).
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 
-/// RMS threshold below which audio is considered silence.
-const SILENCE_RMS_THRESHOLD: f32 = 0.002;
+/// Samples per measurement frame — 20 ms at [`TARGET_SAMPLE_RATE`].
+///
+/// Matches the always-on loop's framing so a "peak RMS" means the same thing
+/// in both paths; a different window would make the same audio report a
+/// different peak depending on which recorder captured it.
+const FRAME_SAMPLES: u32 = TARGET_SAMPLE_RATE / 50;
 
-/// Duration of continuous silence before gating kicks in.
-const SILENCE_GATE_MS: usize = 500;
+/// Most raw samples one recording may accumulate.
+///
+/// Five minutes of 48 kHz stereo — the widest common device format — which is
+/// 57.6M `f32`, so the cap is expressed in samples and bounds memory at ~230
+/// MiB worst case and ~9.6 MiB for the 16 kHz mono case the streaming path
+/// already bounds the same way (`MAX_FULL_AUDIO_SAMPLES`, #1924).
+///
+/// This bound became load-bearing when the silence gate moved to the module.
+/// The gate used to run *inside* the capture callback and drop sustained
+/// silence, so an idle microphone added almost nothing; the callback now
+/// accumulates every raw interleaved sample, so a recording that is started
+/// and never stopped would grow without limit. Gating still happens — just at
+/// finalize, which is too late to bound what the callback collected.
+const MAX_RAW_SAMPLES: usize = 48_000 * 2 * 60 * 5;
 
-/// Look-ahead duration to preserve while gated, avoiding clipped speech onset.
-const LOOKAHEAD_MS: usize = 100;
-
-/// Tracks consecutive silent samples to gate silence from being sent to Whisper.
-/// When silence exceeds `SILENCE_GATE_SAMPLES`, new silent chunks are discarded
-/// but a look-ahead ring buffer is maintained so speech onset isn't clipped.
-struct SilenceGate {
-    /// Source sample rate used to convert ms thresholds to sample counts.
-    source_sample_rate: u32,
-    /// Number of consecutive silent samples required to activate gating.
-    gate_samples: usize,
-    /// Maximum number of samples to keep in the look-ahead ring buffer.
-    lookahead_samples: usize,
-    /// Count of consecutive silent mono samples observed.
-    silent_samples: usize,
-    /// Whether the gate is currently active (suppressing silence).
-    gating: bool,
-    /// Ring buffer holding the most recent ~100ms of audio for look-ahead.
-    lookahead: Vec<f32>,
-}
-
-impl SilenceGate {
-    fn new(source_sample_rate: u32) -> Self {
-        let gate_samples = ((source_sample_rate as usize * SILENCE_GATE_MS) / 1000).max(1);
-        let lookahead_samples = ((source_sample_rate as usize * LOOKAHEAD_MS) / 1000).max(1);
-        Self {
-            source_sample_rate,
-            gate_samples,
-            lookahead_samples,
-            silent_samples: 0,
-            gating: false,
-            lookahead: Vec::with_capacity(lookahead_samples),
-        }
-    }
-
-    /// Process a chunk of mono samples. Returns the samples that should be
-    /// appended to the main buffer (may be empty during gated silence).
-    fn process(&mut self, mono: &[f32]) -> Vec<f32> {
-        let rms = chunk_rms(mono);
-        let is_silent = rms < SILENCE_RMS_THRESHOLD;
-
-        if is_silent {
-            self.silent_samples += mono.len();
-            if self.silent_samples >= self.gate_samples {
-                if !self.gating {
-                    debug!(
-                        "{LOG_PREFIX} silence gate activated after {}ms of silence",
-                        self.silent_samples * 1000 / self.source_sample_rate as usize
-                    );
-                    self.gating = true;
-                }
-                // Update look-ahead ring buffer with latest silent audio.
-                self.lookahead.extend_from_slice(mono);
-                if self.lookahead.len() > self.lookahead_samples {
-                    let excess = self.lookahead.len() - self.lookahead_samples;
-                    self.lookahead.drain(..excess);
-                }
-                return Vec::new(); // Gate: don't append silence.
-            }
-            // Not yet past threshold — still accumulate normally.
-            return mono.to_vec();
-        }
-
-        // Speech detected — reset silence counter.
-        self.silent_samples = 0;
-        if self.gating {
-            debug!("{LOG_PREFIX} silence gate deactivated, flushing look-ahead buffer");
-            self.gating = false;
-            // Flush look-ahead buffer + current chunk so transition isn't clipped.
-            let mut result = std::mem::take(&mut self.lookahead);
-            result.extend_from_slice(mono);
-            return result;
-        }
-
-        mono.to_vec()
-    }
-}
-
-/// Encode already-16 kHz mono f32 samples to a 16-bit PCM WAV byte buffer.
-/// Shared by the one-shot recorder's finalize path and the always-on loop
-/// (`voice::always_on`), so both produce identical WAV that whisper accepts.
-pub(crate) fn encode_wav_16k(samples_16k: &[f32]) -> Result<Vec<u8>, String> {
-    let spec = WavSpec {
-        channels: 1,
-        sample_rate: TARGET_SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: HoundFormat::Int,
-    };
-    let mut buf = Cursor::new(Vec::new());
-    {
-        let mut writer =
-            WavWriter::new(&mut buf, spec).map_err(|e| format!("WAV writer error: {e}"))?;
-        for &sample in samples_16k {
-            let clamped = sample.clamp(-1.0, 1.0);
-            writer
-                .write_sample((clamped * 32767.0) as i16)
-                .map_err(|e| format!("WAV write error: {e}"))?;
-        }
-        writer
-            .finalize()
-            .map_err(|e| format!("WAV finalize error: {e}"))?;
-    }
-    Ok(buf.into_inner())
-}
-
-/// Compute RMS energy for a chunk of mono samples.
-pub(crate) fn chunk_rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
-    (sum_sq / samples.len() as f32).sqrt()
-}
+/// RMS below which the module's silence gate drops audio.
+///
+/// The value the in-process gate used before this moved to the module.
+const SILENCE_GATE_THRESHOLD: f32 = 0.002;
 
 /// Result of a completed recording.
 #[derive(Debug, Clone)]
@@ -155,33 +62,133 @@ pub struct RecordingResult {
 /// Handle to a recording in progress. Drop or call `stop()` to end recording.
 pub struct RecordingHandle {
     stop_flag: Arc<AtomicBool>,
-    result_rx: Option<oneshot::Receiver<Result<RecordingResult, String>>>,
+    result_rx: Option<oneshot::Receiver<Result<RawRecording, String>>>,
+    /// A finished result to hand back instead of preparing one.
+    ///
+    /// Test-only. `stop` now ends in module calls, so a test that wants to
+    /// exercise what the *pipeline* does with a result — the short-audio and
+    /// silence gates in `server` — would otherwise have to stand up a module
+    /// to assert something that has nothing to do with audio.
+    #[cfg(test)]
+    finalized: Option<Result<RecordingResult, String>>,
+}
+
+/// What the capture thread produces: the device's own samples, untouched.
+///
+/// The thread does no signal processing at all now — it converts the sample
+/// format and accumulates. Downmixing, resampling, silence gating and WAV
+/// framing all happen in [`RecordingHandle::stop`], through the `tinyvoice`
+/// module, off the audio thread.
+#[derive(Debug)]
+pub struct RawRecording {
+    /// Interleaved `f32` samples at the device's own rate.
+    pub samples: Vec<f32>,
+    /// Device sample rate.
+    pub source_rate: u32,
+    /// Interleaved channel count.
+    pub channels: usize,
 }
 
 impl RecordingHandle {
-    /// Signal the recording to stop and return the captured audio.
-    pub async fn stop(mut self) -> Result<RecordingResult, String> {
+    /// Signal the recording to stop, then turn the raw capture into a result.
+    ///
+    /// Takes `config` because everything after "stop the stream" is a module
+    /// call: downmix, resample, silence-gate and frame the audio. Doing that
+    /// here rather than on the capture thread is what keeps the audio callback
+    /// free of signal processing.
+    ///
+    /// # Errors
+    ///
+    /// The capture error if the recording itself failed, or the module error if
+    /// the audio cannot be prepared. Both are strings the caller surfaces.
+    pub async fn stop(mut self, config: &Config) -> Result<RecordingResult, String> {
         self.stop_flag.store(true, Ordering::SeqCst);
         debug!("{LOG_PREFIX} stop signal sent");
 
-        match self.result_rx.take() {
+        #[cfg(test)]
+        if let Some(finalized) = self.finalized.take() {
+            return finalized;
+        }
+
+        let raw = match self.result_rx.take() {
             Some(rx) => rx
                 .await
-                .map_err(|_| "recording task dropped before completing".to_string())?,
-            None => Err("recording already stopped".to_string()),
-        }
+                .map_err(|_| "recording task dropped before completing".to_string())??,
+            None => return Err("recording already stopped".to_string()),
+        };
+        finalize(config, &raw).await
     }
 
+    /// A handle whose `stop` yields `result` without touching audio or the bus.
     #[cfg(test)]
     pub(crate) fn from_test_result(result: Result<RecordingResult, String>) -> Self {
-        let (tx, rx) = oneshot::channel();
-        tx.send(result)
-            .expect("test recording result receiver should be open");
         Self {
             stop_flag: Arc::new(AtomicBool::new(false)),
-            result_rx: Some(rx),
+            result_rx: None,
+            finalized: Some(result),
         }
     }
+}
+
+/// Turn a raw capture into a WAV plus the metrics the caller gates on.
+///
+/// Three module calls rather than one, because the caller needs two different
+/// views of the same audio: the peak energy is measured on the *ungated*
+/// samples — silence detection has to see the silence — while the WAV is the
+/// gated version, which is what the STT engine should be billed for.
+async fn finalize(config: &Config, raw: &RawRecording) -> Result<RecordingResult, String> {
+    use crate::openhuman::modules::voice as tinyvoice;
+
+    let channels = u16::try_from(raw.channels)
+        .map_err(|_| format!("implausible channel count: {}", raw.channels))?;
+
+    // Ungated 16 kHz mono, for the energy measurement.
+    let mono = tinyvoice::prepare_frames(config, &raw.samples, raw.source_rate, channels)
+        .await
+        .map_err(|e| format!("could not prepare captured audio: {e}"))?;
+
+    // One frame's worth per measurement, matching the always-on loop's framing.
+    let peak_rms = tinyvoice::frame_energies(config, &mono, FRAME_SAMPLES)
+        .await
+        .map_err(|e| format!("could not measure captured audio: {e}"))?
+        .into_iter()
+        .fold(0.0f32, f32::max);
+
+    // Gated, framed as WAV — what actually gets uploaded.
+    let wav_bytes = tinyvoice::prepare_capture(
+        config,
+        &raw.samples,
+        raw.source_rate,
+        channels,
+        SILENCE_GATE_THRESHOLD,
+    )
+    .await
+    .map_err(|e| format!("could not encode captured audio: {e}"))?;
+
+    // Derived from the WAV that is actually returned, not from `mono`.
+    //
+    // `mono` is the UNGATED buffer — it exists to measure peak energy, which
+    // has to see the silence. `wav_bytes` is the gated one. Reporting `mono`'s
+    // length here would describe audio the caller does not have: `server.rs`
+    // gates on `duration_secs` against `min_duration_secs`, so a recording that
+    // is mostly silence would claim a long duration and pass a check it should
+    // fail. Before the gate moved to the module it ran in the capture callback,
+    // so the buffer this was derived from was already gated and the two agreed.
+    //
+    // 16-bit mono PCM after a 44-byte header, so two bytes per sample.
+    let sample_count = wav_bytes.len().saturating_sub(44) / 2;
+    let duration_secs = sample_count as f32 / TARGET_SAMPLE_RATE as f32;
+    info!(
+        "{LOG_PREFIX} recording finalized: {duration_secs:.1}s, {} bytes WAV, peak_rms={peak_rms:.6}",
+        wav_bytes.len()
+    );
+
+    Ok(RecordingResult {
+        wav_bytes,
+        duration_secs,
+        sample_count,
+        peak_rms,
+    })
 }
 
 /// Start recording from the default microphone.
@@ -214,6 +221,8 @@ pub fn start_recording() -> Result<RecordingHandle, String> {
             Ok(RecordingHandle {
                 stop_flag,
                 result_rx: Some(result_rx),
+                #[cfg(test)]
+                finalized: None,
             })
         }
         Ok(Err(e)) => Err(e),
@@ -221,11 +230,26 @@ pub fn start_recording() -> Result<RecordingHandle, String> {
     }
 }
 
+/// Append `samples` to `buffer`, stopping at [`MAX_RAW_SAMPLES`].
+///
+/// Truncates rather than dropping the whole chunk, so a recording that reaches
+/// the cap keeps its first five minutes instead of losing the chunk that
+/// crossed the line. Silent about it by design: this runs in the audio callback,
+/// where logging on every chunk past the cap would be its own problem.
+fn append_capped(buffer: &parking_lot::Mutex<Vec<f32>>, samples: &[f32]) {
+    let mut guard = buffer.lock();
+    let remaining = MAX_RAW_SAMPLES.saturating_sub(guard.len());
+    if remaining == 0 {
+        return;
+    }
+    guard.extend_from_slice(&samples[..samples.len().min(remaining)]);
+}
+
 /// Runs the entire recording lifecycle on a single thread (cpal requirement).
 fn record_on_thread(
     stop_flag: Arc<AtomicBool>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
-) -> Result<RecordingResult, String> {
+) -> Result<RawRecording, String> {
     // --- Cross-platform microphone permission pre-check ---
     use crate::openhuman::desktop::accessibility::{
         detect_microphone_permission, microphone_denied_message, request_microphone_access,
@@ -328,85 +352,54 @@ fn record_on_thread(
         Vec::with_capacity(TARGET_SAMPLE_RATE as usize * 30),
     ));
 
-    // Track peak RMS energy across the recording for silence detection.
-    let peak_rms: Arc<std::sync::atomic::AtomicU32> =
-        Arc::new(std::sync::atomic::AtomicU32::new(0));
-
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
 
     let stream = {
         let samples_writer = samples.clone();
-        let rms_tracker = peak_rms.clone();
-        // Shared silence gate — suppresses sustained silence to reduce Whisper hallucinations.
-        let silence_gate = Arc::new(parking_lot::Mutex::new(SilenceGate::new(
-            source_sample_rate,
-        )));
         match sample_format {
-            SampleFormat::F32 => {
-                let gate = silence_gate.clone();
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let mono = to_mono(data, source_channels);
-                            update_peak_rms(&rms_tracker, &mono);
-                            let gated = gate.lock().process(&mono);
-                            if !gated.is_empty() {
-                                samples_writer.lock().extend_from_slice(&gated);
-                            }
-                        },
-                        |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
-                        None,
-                    )
-                    .map_err(|e| format!("failed to build f32 input stream: {e}"))
-            }
-            SampleFormat::I16 => {
-                let rms_tracker = peak_rms.clone();
-                let gate = silence_gate.clone();
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                            let floats = i16_to_f32(data);
-                            let mono = to_mono(&floats, source_channels);
-                            update_peak_rms(&rms_tracker, &mono);
-                            let gated = gate.lock().process(&mono);
-                            if !gated.is_empty() {
-                                samples_writer.lock().extend_from_slice(&gated);
-                            }
-                        },
-                        |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
-                        None,
-                    )
-                    .map_err(|e| format!("failed to build i16 input stream: {e}"))
-            }
-            SampleFormat::U16 => {
-                let rms_tracker = peak_rms.clone();
-                let gate = silence_gate.clone();
-                device
-                    .build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                            let floats = u16_to_f32(data);
-                            let mono = to_mono(&floats, source_channels);
-                            update_peak_rms(&rms_tracker, &mono);
-                            let gated = gate.lock().process(&mono);
-                            if !gated.is_empty() {
-                                samples_writer.lock().extend_from_slice(&gated);
-                            }
-                        },
-                        |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
-                        None,
-                    )
-                    .map_err(|e| format!("failed to build u16 input stream: {e}"))
-            }
+            SampleFormat::F32 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        append_capped(&samples_writer, data);
+                    },
+                    |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
+                    None,
+                )
+                .map_err(|e| format!("failed to build f32 input stream: {e}")),
+            SampleFormat::I16 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        append_capped(&samples_writer, &i16_to_f32(data));
+                    },
+                    |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
+                    None,
+                )
+                .map_err(|e| format!("failed to build i16 input stream: {e}")),
+            SampleFormat::U16 => device
+                .build_input_stream(
+                    &stream_config,
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        append_capped(&samples_writer, &u16_to_f32(data));
+                    },
+                    |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
+                    None,
+                )
+                .map_err(|e| format!("failed to build u16 input stream: {e}")),
             other => Err(format!("unsupported sample format: {other:?}")),
         }
     };
 
     // If the preferred config failed, retry with the device's default config.
-    let (stream, source_sample_rate, _source_channels) = match stream {
+    //
+    // The channel count is bound here, not discarded. It used to be (`_source_channels`)
+    // because each callback closed over its own `ch` and downmixed in place. Now
+    // that downmixing happens at finalize against these values, a fallback stream
+    // with a different channel count would otherwise be de-interleaved as if it
+    // had the preferred config's — which turns stereo into garbage rather than mono.
+    let (stream, source_sample_rate, source_channels) = match stream {
         Ok(s) => (s, source_sample_rate, source_channels),
         Err(ref preferred_err) => {
             warn!(
@@ -419,20 +412,13 @@ fn record_on_thread(
                     let fmt = default_cfg.sample_format();
                     info!("{LOG_PREFIX} fallback config: rate={sr} channels={ch} format={fmt:?}");
                     let sc: StreamConfig = default_cfg.into();
-                    let gate = Arc::new(parking_lot::Mutex::new(SilenceGate::new(sr)));
                     let sw = samples.clone();
-                    let rt = peak_rms.clone();
                     let fallback_stream = match fmt {
                         SampleFormat::F32 => device
                             .build_input_stream(
                                 &sc,
                                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                                    let mono = to_mono(data, ch);
-                                    update_peak_rms(&rt, &mono);
-                                    let gated = gate.lock().process(&mono);
-                                    if !gated.is_empty() {
-                                        sw.lock().extend_from_slice(&gated);
-                                    }
+                                    append_capped(&sw, data);
                                 },
                                 |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
                                 None,
@@ -442,13 +428,7 @@ fn record_on_thread(
                             .build_input_stream(
                                 &sc,
                                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                                    let floats = i16_to_f32(data);
-                                    let mono = to_mono(&floats, ch);
-                                    update_peak_rms(&rt, &mono);
-                                    let gated = gate.lock().process(&mono);
-                                    if !gated.is_empty() {
-                                        sw.lock().extend_from_slice(&gated);
-                                    }
+                                    append_capped(&sw, &i16_to_f32(data));
                                 },
                                 |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
                                 None,
@@ -458,13 +438,7 @@ fn record_on_thread(
                             .build_input_stream(
                                 &sc,
                                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                                    let floats = u16_to_f32(data);
-                                    let mono = to_mono(&floats, ch);
-                                    update_peak_rms(&rt, &mono);
-                                    let gated = gate.lock().process(&mono);
-                                    if !gated.is_empty() {
-                                        sw.lock().extend_from_slice(&gated);
-                                    }
+                                    append_capped(&sw, &u16_to_f32(data));
                                 },
                                 |err| warn!("{LOG_PREFIX} audio stream error: {err}"),
                                 None,
@@ -511,10 +485,20 @@ fn record_on_thread(
     debug!("{LOG_PREFIX} stop flag detected, finalizing recording");
     drop(stream);
 
-    let raw_samples = samples.lock().clone();
-    let final_peak_rms = f32::from_bits(peak_rms.load(Ordering::Relaxed));
-    debug!("{LOG_PREFIX} peak_rms={final_peak_rms:.6}");
-    finalize_recording(raw_samples, source_sample_rate, final_peak_rms)
+    let samples = samples.lock().clone();
+    if samples.is_empty() {
+        warn!("{LOG_PREFIX} no audio samples captured");
+        return Err("no audio samples captured".to_string());
+    }
+    debug!(
+        "{LOG_PREFIX} captured {} raw interleaved samples at {source_sample_rate}Hz x{source_channels}",
+        samples.len()
+    );
+    Ok(RawRecording {
+        samples,
+        source_rate: source_sample_rate,
+        channels: source_channels,
+    })
 }
 
 /// List available input devices.
@@ -544,128 +528,6 @@ pub(crate) fn u16_to_f32(data: &[u16]) -> Vec<f32> {
     data.iter()
         .map(|&s| (s as f32 - 32768.0) / 32768.0)
         .collect()
-}
-
-/// Convert interleaved multi-channel samples to mono by averaging channels.
-pub(crate) fn to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
-    if channels <= 1 {
-        return samples.to_vec();
-    }
-
-    samples
-        .chunks_exact(channels)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-        .collect()
-}
-
-/// Resample mono f32 samples from `source_rate` to `TARGET_SAMPLE_RATE` using
-/// linear interpolation. Good enough for voice dictation quality.
-pub(crate) fn resample(samples: &[f32], source_rate: u32) -> Vec<f32> {
-    if source_rate == TARGET_SAMPLE_RATE {
-        return samples.to_vec();
-    }
-
-    let ratio = source_rate as f64 / TARGET_SAMPLE_RATE as f64;
-    let output_len = (samples.len() as f64 / ratio).ceil() as usize;
-    let mut output = Vec::with_capacity(output_len);
-
-    for i in 0..output_len {
-        let src_idx = i as f64 * ratio;
-        let idx0 = src_idx.floor() as usize;
-        let idx1 = (idx0 + 1).min(samples.len().saturating_sub(1));
-        let frac = (src_idx - idx0 as f64) as f32;
-        output.push(samples[idx0] * (1.0 - frac) + samples[idx1] * frac);
-    }
-
-    output
-}
-
-/// Compute RMS energy for a chunk of mono samples and update the peak tracker.
-/// Uses `AtomicU32` with `f32::to_bits`/`from_bits` for lock-free max tracking.
-fn update_peak_rms(peak: &std::sync::atomic::AtomicU32, mono_samples: &[f32]) {
-    if mono_samples.is_empty() {
-        return;
-    }
-    let sum_sq: f32 = mono_samples.iter().map(|s| s * s).sum();
-    let rms = (sum_sq / mono_samples.len() as f32).sqrt();
-    // Atomic max via compare-and-swap loop.
-    loop {
-        let current_bits = peak.load(Ordering::Relaxed);
-        let current = f32::from_bits(current_bits);
-        if rms <= current {
-            break;
-        }
-        if peak
-            .compare_exchange_weak(
-                current_bits,
-                rms.to_bits(),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-        {
-            break;
-        }
-    }
-}
-
-/// Finalize recorded samples into a 16-kHz mono WAV.
-fn finalize_recording(
-    raw_samples: Vec<f32>,
-    source_sample_rate: u32,
-    peak_rms: f32,
-) -> Result<RecordingResult, String> {
-    if raw_samples.is_empty() {
-        warn!("{LOG_PREFIX} no audio samples captured");
-        return Err("no audio samples captured".to_string());
-    }
-
-    let resampled = resample(&raw_samples, source_sample_rate);
-    let sample_count = resampled.len();
-    let duration_secs = sample_count as f32 / TARGET_SAMPLE_RATE as f32;
-
-    debug!(
-        "{LOG_PREFIX} finalizing: {sample_count} samples, {duration_secs:.1}s, \
-         resampled from {source_sample_rate} to {TARGET_SAMPLE_RATE}"
-    );
-
-    let spec = WavSpec {
-        channels: 1,
-        sample_rate: TARGET_SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: HoundFormat::Int,
-    };
-
-    let mut buf = Cursor::new(Vec::new());
-    {
-        let mut writer =
-            WavWriter::new(&mut buf, spec).map_err(|e| format!("WAV writer error: {e}"))?;
-
-        for &sample in &resampled {
-            let clamped = sample.clamp(-1.0, 1.0);
-            let i16_sample = (clamped * 32767.0) as i16;
-            writer
-                .write_sample(i16_sample)
-                .map_err(|e| format!("WAV write error: {e}"))?;
-        }
-
-        writer
-            .finalize()
-            .map_err(|e| format!("WAV finalize error: {e}"))?;
-    }
-
-    let wav_bytes = buf.into_inner();
-    info!(
-        "{LOG_PREFIX} recording finalized: {duration_secs:.1}s, {} bytes WAV",
-        wav_bytes.len()
-    );
-
-    Ok(RecordingResult {
-        wav_bytes,
-        duration_secs,
-        sample_count,
-        peak_rms,
-    })
 }
 
 /// Find the best input config — prefer 16 kHz mono, else closest match.

@@ -49,6 +49,11 @@ pub trait SttProvider: Send + Sync {
         file_name: Option<&str>,
         language: Option<&str>,
     ) -> Result<RpcOutcome<SttResult>, String>;
+
+    #[cfg(test)]
+    fn configured_model(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Resolve the effective STT provider string. With voice disabled the value is

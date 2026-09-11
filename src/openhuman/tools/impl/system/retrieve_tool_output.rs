@@ -68,8 +68,8 @@ impl Tool for RetrieveToolOutputTool {
             ));
         };
 
-        match crate::openhuman::inference::tokenjuice::cache::retrieve(hash) {
-            Some(original) => {
+        match crate::openhuman::inference::tokenjuice::retrieve(hash.to_string(), None).await {
+            Ok(Some(original)) => {
                 log::debug!(
                     "[compaction][ccr] retrieved hash={} bytes={}",
                     hash,
@@ -77,38 +77,27 @@ impl Tool for RetrieveToolOutputTool {
                 );
                 Ok(ToolResult::success(original))
             }
-            None => Ok(ToolResult::error(format!(
-                "retrieve_tool_output: no cached original for hash '{hash}' \
-                 (it may have been evicted; re-run the tool to regenerate it)"
+            // Deliberately does NOT say "re-run the tool". Re-running
+            // regenerates the same oversized result, which is compacted and
+            // offloaded again under a new hash that can be evicted just as fast
+            // — so a blind re-run turns one cache miss into an unbounded
+            // compact→retrieve→re-run loop (observed live: a parent agent
+            // re-delegated forever on an evicted subagent result). Tell the
+            // model to proceed with the compacted summary it already has.
+            Ok(None) => Ok(ToolResult::error(format!(
+                "retrieve_tool_output: the full original for hash '{hash}' is no longer \
+                 cached (evicted, or from an earlier session). Do NOT re-run the same tool \
+                 call to regenerate it — that produces the same oversized result and is \
+                 compacted again. Proceed using the compacted summary already shown above; \
+                 only if a specific missing detail is essential, retry with narrower \
+                 arguments (a tighter query, filter, or smaller limit) so the result is \
+                 small enough to keep in full."
             ))),
+            Err(error) => Ok(ToolResult::error(error)),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::inference::tokenjuice::cache::store;
-
-    #[tokio::test]
-    async fn retrieves_offloaded_original() {
-        let original = "ORIGINAL PAYLOAD ".repeat(20);
-        let hash = store::offload(&original);
-        let tool = RetrieveToolOutputTool::new();
-        let res = tool.execute(json!({ "hash": hash })).await.unwrap();
-        assert!(!res.is_error);
-        assert_eq!(res.output(), original);
-    }
-
-    #[tokio::test]
-    async fn missing_hash_is_error() {
-        let tool = RetrieveToolOutputTool::new();
-        let res = tool
-            .execute(json!({ "hash": "deadbeefcafe" }))
-            .await
-            .unwrap();
-        assert!(res.is_error);
-        let res2 = tool.execute(json!({})).await.unwrap();
-        assert!(res2.is_error);
-    }
-}
+#[path = "retrieve_tool_output_tests.rs"]
+mod tests;

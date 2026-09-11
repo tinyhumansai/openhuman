@@ -12,8 +12,10 @@
 //! spawned at all) up to a `ServiceSet` chosen by the embedder, while these
 //! functions keep their config gates (is it enabled for this user).
 
-use std::sync::Once;
-
+// `MemoryHostConfig` was imported here for `config.to_arc()`, the argument to
+// the engine's `queue::start`. That call left with the in-process engine
+// (openhuman#5560 — see `start_bootstrap_jobs`); every remaining `config.…` in
+// this file is plain field access on OpenHuman's own `Config`.
 use crate::core::runtime::ServiceSet;
 use crate::openhuman::config::Config;
 
@@ -47,22 +49,6 @@ pub fn spawn_login_gated_services(embedded_core: bool) {
                         &config,
                     )
                     .await;
-
-                    // Subconscious engine + heartbeat.
-                    if !config.heartbeat.enabled {
-                        log::info!("[subconscious] disabled by config (heartbeat.enabled = false)");
-                    } else {
-                        match crate::openhuman::subconscious::registry::bootstrap_after_login()
-                            .await
-                        {
-                            Ok(()) => {
-                                log::info!(
-                                    "[subconscious] bootstrapped on startup (existing session)"
-                                )
-                            }
-                            Err(e) => log::warn!("[subconscious] startup bootstrap failed: {e}"),
-                        }
-                    }
                 } else {
                     log::info!(
                         "[services] no active session — deferring service startup until login"
@@ -146,14 +132,6 @@ pub fn spawn_cron_service() {
                     return;
                 }
                 log::info!("[cron] spawning scheduler polling loop");
-                // Ensure proactive agent jobs (e.g. the autonomous bounty job)
-                // exist for already-onboarded users upgrading from a build that
-                // predates them — otherwise their Settings toggle stays hidden.
-                // Idempotent; no-op until onboarding is complete.
-                if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents_on_boot(&config)
-                {
-                    log::warn!("[cron] boot seed of proactive agent jobs failed: {e}");
-                }
                 // Re-register the cron job for every enabled, schedule-trigger
                 // flow (issue B2) — idempotent, so a flow whose binding
                 // predates this feature (or was otherwise lost) gets its
@@ -235,12 +213,12 @@ pub(crate) struct BootstrapJobPlan {
     /// Workspace memory-source periodic sync — repos, folders, RSS, web pages
     /// (`memory_sync::workspace::start_workspace_periodic_sync`).
     pub workspace_memory_sync: bool,
-    /// Orchestration relay-mailbox drain supervisor
-    /// (`orchestration::start_message_drain_supervisor`).
-    pub orchestration_drain: bool,
     /// Proactive task pollers (`task_sources::start_periodic_poll` +
     /// `agent::task_dispatcher::start_board_poller`).
     pub proactive_task_pollers: bool,
+    /// Eager native-module preload (`modules::boot::load_declared_modules`):
+    /// the memory module resolving at boot, off the request path.
+    pub module_preload: bool,
 }
 
 /// Pure flag→job mapping for [`start_bootstrap_jobs`]. No side effects.
@@ -254,8 +232,10 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
         memory_queue: services.memory_queue,
         composio_integration_sync: services.integrations,
         workspace_memory_sync: services.memory_sync,
-        orchestration_drain: services.orchestration,
         proactive_task_pollers: services.cron,
+        // The memory module is the only eager module, so its preload is memory
+        // background work and rides the same flag as the queue.
+        module_preload: services.memory_queue,
     }
 }
 
@@ -269,23 +249,76 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
 /// behind its own concern flag. The four non-channel jobs used to ride
 /// `services.channels` — a channels-off + memory/integrations-on embedder
 /// silently lost all of them (#5028) — so they now sit behind `integrations` /
-/// `memory_sync` / `orchestration` instead.
+/// `memory_sync` instead.
+///
+/// `config` feeds the native-module preload and nothing else here: the
+/// engine's `queue::start` was this function's other consumer of it, and the
+/// loaded TinyMemory module starts that pool itself now (openhuman#5560).
 pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     let plan = bootstrap_job_plan(&services);
     log::debug!("[runtime.bootstrap] starting bootstrap jobs with plan {plan:?}");
 
+    // Native modules the registry marks eager — today TinyMemory, when the
+    // memory driver is module-backed. Off the boot path: the first launch on a
+    // machine downloads the release, and becoming RPC-ready must not wait on
+    // the network. A warm launch maps the cached library in milliseconds, so
+    // the first memory call finds it serving instead of starting the load
+    // itself and waiting behind it.
+    if plan.module_preload {
+        spawn_module_preload(config);
+    } else {
+        log::debug!("[runtime.bootstrap] native module preload disabled by ServiceSet");
+    }
+
+    // ── The queue pool moved into the module, and must NOT be started here ──
+    //
+    // This block used to call `tinymemory_core::queue::start(config.to_arc())`,
+    // and it was the only caller of the engine's worker pool in any tree.
+    // openhuman#5560 deletes the host's second, in-process engine, so that call
+    // has no engine to drain — and `tinymemory` v1.5.0's module starts its own
+    // pool at load (`tinymemory-module/src/lib.rs`, `start_queue_pool`), which
+    // is what keeps ingest, `retry_failed` and `ensure_reembed_backfill` alive.
+    //
+    // **Restoring the call would not be a duplicate, it would be a second pool
+    // that cannot see the first.** The `cdylib` links its own copy of
+    // `tinymemory-core`, so the `Once` inside `queue::start` is a *different*
+    // static from the host's: two pools would claim jobs from one SQLite queue
+    // with neither aware of the other. That is why the line is gone rather than
+    // gated.
+    //
+    // `plan.memory_queue` is kept — it is `ServiceSet`'s statement of intent
+    // and other jobs may hang off it — but the host has no work to do for it.
     if plan.memory_queue {
-        log::debug!("[runtime.bootstrap] starting memory queue workers");
-        crate::openhuman::memory::queue::start(config.clone());
+        log::debug!(
+            "[runtime.bootstrap] memory queue workers are owned by the tinymemory module (start_queue_pool); host starts none"
+        );
     } else {
         log::debug!("[runtime.bootstrap] memory queue workers disabled by ServiceSet");
     }
 
-    // Integrations — Composio periodic connection sync + one-shot source
-    // reconcile. Both no-op without active Composio connections.
+    // Integrations — Composio source reconcile. No-ops without active
+    // connections.
+    //
+    // ── The periodic loops are NOT started here any more ────────────────────
+    //
+    // They were, and deleting them was blocked on upstream rather than on
+    // taste: `start_periodic_sync` is not host code, it re-exported through
+    // `integrations::composio` to `memory::sync::composio::periodic`, which was
+    // `pub use tinymemory_core::sync::composio::*` — engine code running in
+    // this process against the engine this host used to boot.
+    //
+    // tinymemory v1.6.0 moves both loops into the module and closes the three
+    // things that stopped them working there: the cadence, the Composio mode,
+    // and the module's client not being in the engine's global slot. The host
+    // now passes the first two in `ModuleConfig` (see `modules::ops`).
+    //
+    // Restoring either call would be worse than a duplicate. The cdylib carries
+    // its OWN copy of `tinymemory-core`, so each loop's `OnceLock` is a
+    // different static from this process's: a host that starts them while
+    // loading the module gets TWO pairs of loops over one store, and neither
+    // can see the other.
     if plan.composio_integration_sync {
-        log::debug!("[runtime.bootstrap] starting composio integration sync + source reconcile");
-        crate::openhuman::integrations::composio::start_periodic_sync();
+        log::debug!("[runtime.bootstrap] starting composio source reconcile");
         tokio::spawn(async {
             log::debug!("[runtime.bootstrap] composio source reconcile started");
             crate::openhuman::memory::sources::reconcile::ensure_composio_sources().await;
@@ -301,18 +334,18 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     // web pages) get their own cadence loop; the Composio scheduler above only
     // walks Composio connections.
     if plan.workspace_memory_sync {
-        log::debug!("[runtime.bootstrap] starting workspace memory-source periodic sync");
-        crate::openhuman::memory::sync::workspace::start_workspace_periodic_sync();
+        // Owned by the module for the same reason as the Composio loop above.
+        // The flag survives because `ServiceSet` is the host's declaration of
+        // which background work it wants running at all, and a host that turns
+        // this off should not have the module running it either — wiring that
+        // through is follow-up, and until then this logs the divergence rather
+        // than hiding it.
+        log::debug!(
+            "[runtime.bootstrap] workspace memory-source periodic sync is owned by the memory \
+             module; this process starts none"
+        );
     } else {
         log::debug!("[runtime.bootstrap] workspace periodic sync disabled by ServiceSet");
-    }
-
-    // Orchestration — relay-mailbox drain supervisor.
-    if plan.orchestration_drain {
-        log::debug!("[runtime.bootstrap] starting orchestration message drain supervisor");
-        crate::openhuman::hosted::orchestration::start_message_drain_supervisor();
-    } else {
-        log::debug!("[runtime.bootstrap] message drain supervisor disabled by ServiceSet");
     }
 
     if plan.proactive_task_pollers {
@@ -326,6 +359,23 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");
 }
 
+/// Resolve every eager native module in the background.
+#[cfg(feature = "modules")]
+fn spawn_module_preload(config: &Config) {
+    let config = config.clone();
+    tokio::spawn(async move {
+        log::debug!("[runtime.bootstrap] native module preload started");
+        crate::openhuman::modules::boot::load_declared_modules(&config).await;
+        log::debug!("[runtime.bootstrap] native module preload finished");
+    });
+}
+
+/// Without the module host compiled in there is nothing to preload.
+#[cfg(not(feature = "modules"))]
+fn spawn_module_preload(_config: &Config) {
+    log::debug!("[runtime.bootstrap] native module preload skipped: modules are compiled out");
+}
+
 /// Runs startup migrations, then starts one-shot boot background work selected
 /// by [`ServiceSet`].
 ///
@@ -334,6 +384,10 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
 /// publishes readiness.
 pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     run_legacy_migrations(config).await;
+
+    // The orphaned-run sweep does NOT live here. It runs in
+    // `CoreBuilder::build`, which every runtime goes through — these jobs only
+    // run from `serve()`, so a build-only embedder would never be swept.
 
     if services.harness_init {
         let cfg_for_init = config.clone();
@@ -351,11 +405,13 @@ pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     }
 
     if services.mcp_boot {
-        let cfg_for_mcp = config.clone();
-        tokio::spawn(async move {
-            crate::openhuman::mcp::registry::boot::spawn_installed_servers(&cfg_for_mcp).await;
-        });
-        spawn_mcp_reconnect_supervisor(config.clone());
+        // The MCP domain boots itself: service, installed-server reconnect
+        // pass, and reconnect supervisor are orchestrated there, and it is
+        // idempotent — normally a no-op, because `register_domain_subscribers`
+        // brings the domain up when it enables it. Repeated here because the
+        // two are gated separately: a `ServiceSet` that boots MCP is entitled
+        // to a service whether or not the RPC domain was turned on.
+        crate::openhuman::mcp::start_boot_jobs(config);
     } else {
         log::debug!("[runtime] MCP boot-spawn disabled by ServiceSet");
         log::debug!("[runtime] MCP reconnect supervisor disabled by ServiceSet");
@@ -363,6 +419,14 @@ pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
 }
 
 async fn run_legacy_migrations(config: &Config) {
+    match crate::openhuman::cron::seed::prune_retired_jobs(config) {
+        Ok(count) if count > 0 => {
+            log::info!("[cron] removed {count} retired autopilot job(s)");
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("[cron] failed to prune retired jobs: {e}"),
+    }
+
     // These used to run as detached tasks, allowing a user/API write to land
     // between a migration's `get(None)` check and its later `put`. Await each
     // copy in startup order so the crate stores are authoritative before
@@ -388,8 +452,8 @@ async fn run_legacy_migrations(config: &Config) {
     // Idempotent copy of any task boards left in the retired
     // `{workspace}/agent_task_boards/*.json` file-JSON tree into the crate
     // `graph.todos` store, which is now authoritative. Idempotent and returns
-    // fast on an empty/absent legacy dir (the `*.runs.json` ledger stays local).
-    // As above, each core boot must inspect its own workspace.
+    // fast on an empty/absent legacy dir. As above, each core boot must inspect
+    // its own workspace.
     match crate::openhuman::agent::tinyagents::todos::migrate_legacy_task_boards(
         &config.workspace_dir,
     )
@@ -406,15 +470,26 @@ async fn run_legacy_migrations(config: &Config) {
         Ok(_) => {}
         Err(e) => log::warn!("[todos] legacy→crate task-board migration failed: {e}"),
     }
-}
 
-fn spawn_mcp_reconnect_supervisor(config: Config) {
-    static SUPERVISOR_SPAWNED: Once = Once::new();
-    SUPERVISOR_SPAWNED.call_once(|| {
-        tokio::spawn(async move {
-            crate::openhuman::mcp::registry::supervisor::run(config).await;
-        });
-    });
+    // The `*.runs.json` claim/heartbeat ledgers that sat beside those boards
+    // move with them: run records now live in the crate `graph.todos.runs`
+    // store, so a board and its run log cannot drift apart across a restart.
+    // Left behind, an in-flight claim would be invisible to the reclaim sweep
+    // and its card would stay wedged at `in_progress` forever.
+    match crate::openhuman::threads::todos::runs::migrate_legacy_task_runs(&config.workspace_dir)
+        .await
+    {
+        Ok(report) if report.total > 0 => {
+            log::info!(
+                "[todos] legacy→crate run-ledger migration: total={} copied={} skipped={}",
+                report.total,
+                report.copied,
+                report.skipped
+            );
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("[todos] legacy→crate run-ledger migration failed: {e}"),
+    }
 }
 
 /// Auto-connect Socket.IO to the backend when enabled by the service selection.
@@ -434,7 +509,7 @@ pub fn spawn_socket_auto_connect(
                 }
             };
             let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
-            let _initial_token = match crate::api::jwt::get_session_token(&config) {
+            let initial_token = match crate::api::jwt::get_session_token(&config) {
                 Ok(Some(t)) => t,
                 Ok(None) => {
                     log::info!(
@@ -456,6 +531,27 @@ pub fn spawn_socket_auto_connect(
             // changed since CoreRuntime::build(), so the build-time Config is
             // not authoritative here.
             let _rebind = socket_mgr.lock_identity_rebind().await;
+            // The renderer's `socket_connect_with_session` RPC connects the same
+            // core to the same backend with the same token. Whichever path runs
+            // second used to tear the other's live socket down and redo the
+            // handshake (#6181); if it is already up for this identity there is
+            // nothing to rebind.
+            if socket_mgr.is_live_for(&api_url, &initial_token) {
+                // The socket is reusable, the bridge is not: it is pinned to the
+                // `Config` resolved above, which a workspace switch invalidates.
+                // `set_workflow_bridge` re-advertises over a live socket by
+                // design, so reinstall and skip only the handshake.
+                #[cfg(feature = "flows")]
+                if _flows_enabled {
+                    crate::openhuman::flows::medulla_bridge::install(std::sync::Arc::clone(
+                        &config,
+                    ));
+                }
+                log::info!(
+                    "[socket] Auto-connect: {api_url} already connected with this session — refreshed the workflow bridge, kept the socket"
+                );
+                return;
+            }
             if let Err(e) = socket_mgr.disconnect().await {
                 log::error!("[socket] Auto-connect could not stop the prior connection: {e}");
                 return;
@@ -507,8 +603,8 @@ mod tests {
                 memory_queue: true,
                 composio_integration_sync: true,
                 workspace_memory_sync: true,
-                orchestration_drain: true,
                 proactive_task_pollers: true,
+                module_preload: true,
             }
         );
     }
@@ -520,8 +616,8 @@ mod tests {
             memory_queue: false,
             composio_integration_sync: false,
             workspace_memory_sync: false,
-            orchestration_drain: false,
             proactive_task_pollers: false,
+            module_preload: false,
         };
         assert_eq!(bootstrap_job_plan(&ServiceSet::none()), empty);
         assert_eq!(bootstrap_job_plan(&ServiceSet::headless_api()), empty);
@@ -536,7 +632,6 @@ mod tests {
         let plan = bootstrap_job_plan(&integrations);
         assert!(plan.composio_integration_sync);
         assert!(!plan.workspace_memory_sync);
-        assert!(!plan.orchestration_drain);
         assert!(!plan.memory_queue);
         assert!(!plan.proactive_task_pollers);
 
@@ -545,14 +640,18 @@ mod tests {
         let plan = bootstrap_job_plan(&memory_sync);
         assert!(plan.workspace_memory_sync);
         assert!(!plan.composio_integration_sync);
-        assert!(!plan.orchestration_drain);
+        assert!(!plan.module_preload);
 
-        let mut orchestration = ServiceSet::none();
-        orchestration.orchestration = true;
-        let plan = bootstrap_job_plan(&orchestration);
-        assert!(plan.orchestration_drain);
-        assert!(!plan.composio_integration_sync);
+        // The module preload is memory background work: it follows the queue
+        // flag and no other.
+        let mut memory_queue = ServiceSet::none();
+        memory_queue.memory_queue = true;
+        let plan = bootstrap_job_plan(&memory_queue);
+        assert!(plan.module_preload);
+        assert!(plan.memory_queue);
         assert!(!plan.workspace_memory_sync);
+        assert!(!plan.composio_integration_sync);
+        assert!(!plan.proactive_task_pollers);
     }
 
     /// From desktop(), disabling exactly one concern flag disables only its job.
@@ -563,7 +662,6 @@ mod tests {
         let plan = bootstrap_job_plan(&services);
         assert!(!plan.composio_integration_sync);
         assert!(plan.workspace_memory_sync);
-        assert!(plan.orchestration_drain);
         assert!(plan.memory_queue);
         assert!(plan.proactive_task_pollers);
 
@@ -572,14 +670,6 @@ mod tests {
         let plan = bootstrap_job_plan(&services);
         assert!(!plan.workspace_memory_sync);
         assert!(plan.composio_integration_sync);
-        assert!(plan.orchestration_drain);
-
-        let mut services = ServiceSet::desktop();
-        services.orchestration = false;
-        let plan = bootstrap_job_plan(&services);
-        assert!(!plan.orchestration_drain);
-        assert!(plan.composio_integration_sync);
-        assert!(plan.workspace_memory_sync);
     }
 
     /// The #5028 regression: `channels` gates NO bootstrap job. Turning channels

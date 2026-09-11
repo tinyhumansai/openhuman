@@ -41,15 +41,16 @@ fn relay_bearer_header(token: Option<&str>) -> Option<String> {
 }
 
 /// Redact a relay URL before it lands in a log line or error string: drop the
-/// query, fragment, and any userinfo (which can carry tokens/credentials),
-/// keeping just `scheme://host[:port]/path` so transport diagnostics stay
-/// useful without persisting secrets. Falls back to a coarse sentinel when the
-/// URL can't be parsed.
-fn redact_url_for_log(url: &str) -> String {
+/// query, fragment, path, and any userinfo (which can carry tokens/credentials
+/// or PII in the path itself), keeping just `scheme://host[:port]` so transport
+/// diagnostics stay useful without persisting secrets. Falls back to a coarse
+/// sentinel when the URL can't be parsed.
+pub(crate) fn redact_url_for_log(url: &str) -> String {
     url.parse::<url::Url>()
         .map(|mut parsed| {
             parsed.set_query(None);
             parsed.set_fragment(None);
+            parsed.set_path("");
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
             parsed.to_string()
@@ -94,8 +95,30 @@ pub(crate) async fn post_json_rpc(
     token: Option<&str>,
     body: String,
 ) -> Result<RelayHttpResponse, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+    // Defense in depth behind `store::save`'s validation: never attach a
+    // bearer over plain HTTP to a non-loopback host, whatever the caller is.
+    // The local core (loopback) and any `https` endpoint keep working; a
+    // Remote gateway that slipped past persistence is still rejected here.
+    let relay_token = relay_bearer_header(token);
+    #[cfg(feature = "gateways")]
+    if relay_token.is_some()
+        && crate::gateway::types::validate_remote_transport(url, token).is_err()
+    {
+        return Err(format!(
+            "refusing to send a bearer to {} over an insecure transport",
+            redact_url_for_log(url)
+        ));
+    }
+
+    let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
+    if relay_token.is_some() {
+        // A bearer must never follow a redirect off the endpoint the user
+        // configured. reqwest strips Authorization on cross-origin redirects
+        // by default, but disabling redirects entirely for authenticated
+        // requests is the deterministic, fail-closed choice.
+        client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
+    }
+    let client = client_builder
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
@@ -104,15 +127,14 @@ pub(crate) async fn post_json_rpc(
         .header("Content-Type", "application/json")
         .body(body);
 
-    let bearer = relay_bearer_header(token);
-    if let Some(value) = bearer.as_deref() {
+    if let Some(value) = relay_token.as_deref() {
         builder = builder.header("Authorization", value);
     }
 
     let safe_url = redact_url_for_log(url);
     log::debug!(
         "[core_rpc][relay] POST {safe_url} (auth={})",
-        bearer.is_some()
+        relay_token.is_some()
     );
 
     let resp = builder
@@ -131,60 +153,9 @@ pub(crate) async fn post_json_rpc(
     Ok(RelayHttpResponse { status, body: text })
 }
 
-/// Invoke a core JSON-RPC method against the embedded local core, returning the
-/// inner result value. Handles building the JSON-RPC envelope, applying the
-/// per-launch bearer, and unwrapping the `{ "result": <v>, "logs": [...] }`
-/// `RpcOutcome` envelope some core handlers emit.
-pub(crate) async fn call_core_rpc(
-    method: &str,
-    params: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let url = core_rpc_url_value();
-    let token = crate::core_process::current_rpc_token();
-    let envelope = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params,
-    });
-    let resp = post_json_rpc(&url, token.as_deref(), envelope.to_string()).await?;
-    if !(200..300).contains(&resp.status) {
-        return Err(format!("core rpc {method} returned status {}", resp.status));
-    }
-    let parsed: serde_json::Value = serde_json::from_str(&resp.body)
-        .map_err(|e| format!("core rpc {method}: invalid JSON response: {e}"))?;
-    if let Some(err) = parsed.get("error") {
-        if !err.is_null() {
-            return Err(format!("core rpc {method} error: {err}"));
-        }
-    }
-    let result = parsed
-        .get("result")
-        .cloned()
-        .ok_or_else(|| format!("core rpc {method}: response has no result field"))?;
-    Ok(unwrap_rpc_outcome(result))
-}
-
-/// Unwrap the `{ "result": <value>, "logs": [...] }` `RpcOutcome` envelope that
-/// logged core handlers wrap their payload in; passes bare values through
-/// unchanged.
-fn unwrap_rpc_outcome(value: serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = value.as_object() {
-        if obj.len() == 2
-            && obj.contains_key("result")
-            && obj.get("logs").map(|l| l.is_array()).unwrap_or(false)
-        {
-            return obj
-                .get("result")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-        }
-    }
-    value
-}
-
 #[cfg(test)]
 mod tests {
+    use super::redact_url_for_log;
     use super::relay_bearer_header;
 
     #[test]
@@ -205,5 +176,55 @@ mod tests {
         assert_eq!(relay_bearer_header(None), None);
         assert_eq!(relay_bearer_header(Some("")), None);
         assert_eq!(relay_bearer_header(Some("   ")), None);
+    }
+
+    #[test]
+    fn redact_strips_credentials_query_and_path() {
+        // Userinfo, query, fragment, and path must not survive into logs; only
+        // the scheme://host[:port] surface is kept for transport diagnostics.
+        assert_eq!(
+            redact_url_for_log("http://user:pass@192.168.1.74:7788/rpc/secret?token=t0k#frag"),
+            "http://192.168.1.74:7788/"
+        );
+        assert_eq!(
+            redact_url_for_log("https://core.example.com/rpc"),
+            "https://core.example.com/"
+        );
+        // An unparseable URL degrades to the coarse sentinel.
+        assert_eq!(redact_url_for_log("not a url"), "<invalid relay url>");
+    }
+
+    /// A non-loopback `http` URL carrying a bearer must be refused, and the
+    /// surfaced error must carry the redacted `scheme://host[:port]` form —
+    /// never the raw secret-bearing userinfo, path, or query (CWE-532).
+    #[cfg(feature = "gateways")]
+    #[tokio::test]
+    async fn insecure_transport_refusal_redacts_url() {
+        let err = match super::post_json_rpc(
+            "http://user:pass@192.168.1.74:7788/rpc/secret?token=t0k",
+            Some("bearer-tok"),
+            "body".to_string(),
+        )
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("insecure non-loopback + bearer must be refused"),
+        };
+        assert!(
+            !err.contains("pass"),
+            "raw userinfo leaked into refusal error: {err}"
+        );
+        assert!(
+            !err.contains("t0k"),
+            "raw query token leaked into refusal error: {err}"
+        );
+        assert!(
+            !err.contains("/secret"),
+            "raw path leaked into refusal error: {err}"
+        );
+        assert!(
+            err.contains("http://192.168.1.74:7788/"),
+            "redacted host should remain for diagnostics: {err}"
+        );
     }
 }

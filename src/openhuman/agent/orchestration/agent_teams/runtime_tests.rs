@@ -18,14 +18,14 @@ use super::*;
 use crate::openhuman::agent::context::prompt::ToolCallFormat;
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
-use crate::openhuman::agent::session_db::run_ledger::{
+use crate::openhuman::config::{AgentConfig, Config};
+use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
+use crate::openhuman::tools::Tool;
+use tinyagents_session::run_ledger::{
     self, AgentTeamMemberStatus, AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTaskStatus,
     AgentTeamTaskUpsert, AgentTeamUpsert,
 };
-use crate::openhuman::config::{AgentConfig, Config};
-use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::tools::{Tool, ToolSpec};
-use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Mocks (mirror workflow_runs::engine_tests) ──────────────────────────────
 
@@ -97,9 +97,9 @@ impl ChatModel<()> for CannedModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         if self.fail {
-            return Err(tinyagents::TinyAgentsError::Model(
+            return Err(tinyinference::Error::Model(
                 "mock model forced failure".to_string(),
             ));
         }
@@ -114,7 +114,8 @@ fn mock_parent(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
-        all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".to_string(),
@@ -147,7 +148,7 @@ fn test_config() -> (tempfile::TempDir, Config) {
 
 fn seed_team(config: &Config, team_id: &str) {
     run_ledger::upsert_agent_team(
-        config,
+        &config.workspace_dir,
         AgentTeamUpsert {
             id: team_id.into(),
             parent_thread_id: None,
@@ -163,7 +164,7 @@ fn seed_team(config: &Config, team_id: &str) {
 
 fn seed_member(config: &Config, team_id: &str, member_id: &str, agent_id: Option<&str>) {
     run_ledger::upsert_agent_team_member(
-        config,
+        &config.workspace_dir,
         AgentTeamMemberUpsert {
             id: member_id.into(),
             team_id: team_id.into(),
@@ -188,7 +189,7 @@ fn seed_task(
     depends_on: Vec<String>,
 ) {
     run_ledger::upsert_agent_team_task(
-        config,
+        &config.workspace_dir,
         AgentTeamTaskUpsert {
             id: task_id.into(),
             team_id: team_id.into(),
@@ -225,9 +226,10 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
         vec![],
     );
     // Claim + mark running, mirroring what start_member_run does pre-spawn.
-    run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-x").unwrap();
+    run_ledger::claim_agent_team_task(&config.workspace_dir, "team-1", "task-a", "m1", "teamrun-x")
+        .unwrap();
     run_ledger::mark_agent_team_member_running(
-        &config,
+        &config.workspace_dir,
         "team-1",
         "m1",
         "task-a",
@@ -235,7 +237,7 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
         "teamrun-x",
     )
     .unwrap();
-    let task = run_ledger::get_agent_team_task(&config, "task-a")
+    let task = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
 
@@ -258,7 +260,7 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
     .await
     .expect("drive_member ok");
 
-    let done = run_ledger::get_agent_team_task(&config, "task-a")
+    let done = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
     assert_eq!(done.status, AgentTeamTaskStatus::Done);
@@ -266,7 +268,7 @@ async fn drive_member_completes_task_with_worker_output_as_evidence() {
     assert_eq!(done.evidence.len(), 1, "worker output captured as evidence");
     assert!(done.evidence[0].contains("teamrun-x"));
 
-    let member = run_ledger::get_agent_team_member(&config, "m1")
+    let member = run_ledger::get_agent_team_member(&config.workspace_dir, "m1")
         .unwrap()
         .unwrap();
     assert_eq!(member.member_status, AgentTeamMemberStatus::Idle);
@@ -292,9 +294,10 @@ async fn run_member_loop_drives_member_under_ambient_parent() {
         None,
         vec![],
     );
-    run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-y").unwrap();
+    run_ledger::claim_agent_team_task(&config.workspace_dir, "team-1", "task-a", "m1", "teamrun-y")
+        .unwrap();
     run_ledger::mark_agent_team_member_running(
-        &config,
+        &config.workspace_dir,
         "team-1",
         "m1",
         "task-a",
@@ -302,7 +305,7 @@ async fn run_member_loop_drives_member_under_ambient_parent() {
         "teamrun-y",
     )
     .unwrap();
-    let task = run_ledger::get_agent_team_task(&config, "task-a")
+    let task = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
 
@@ -324,7 +327,7 @@ async fn run_member_loop_drives_member_under_ambient_parent() {
     })
     .await;
 
-    let done = run_ledger::get_agent_team_task(&config, "task-a")
+    let done = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -348,9 +351,10 @@ async fn drive_member_releases_task_when_worker_fails() {
         None,
         vec![],
     );
-    run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m1", "teamrun-x").unwrap();
+    run_ledger::claim_agent_team_task(&config.workspace_dir, "team-1", "task-a", "m1", "teamrun-x")
+        .unwrap();
     run_ledger::mark_agent_team_member_running(
-        &config,
+        &config.workspace_dir,
         "team-1",
         "m1",
         "task-a",
@@ -358,7 +362,7 @@ async fn drive_member_releases_task_when_worker_fails() {
         "teamrun-x",
     )
     .unwrap();
-    let task = run_ledger::get_agent_team_task(&config, "task-a")
+    let task = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
 
@@ -382,13 +386,13 @@ async fn drive_member_releases_task_when_worker_fails() {
     .expect("drive_member handles worker failure without erroring");
 
     // Task released back to todo, claim cleared → reclaimable.
-    let released = run_ledger::get_agent_team_task(&config, "task-a")
+    let released = run_ledger::get_agent_team_task(&config.workspace_dir, "task-a")
         .unwrap()
         .unwrap();
     assert_eq!(released.status, AgentTeamTaskStatus::Todo);
     assert_eq!(released.claimed_by_member_id, None);
 
-    let member = run_ledger::get_agent_team_member(&config, "m1")
+    let member = run_ledger::get_agent_team_member(&config.workspace_dir, "m1")
         .unwrap()
         .unwrap();
     assert_eq!(member.member_status, AgentTeamMemberStatus::Idle);
@@ -443,7 +447,8 @@ async fn start_member_run_reports_already_claimed() {
         vec![],
     );
     // m2 already holds task-a.
-    run_ledger::claim_agent_team_task(&config, "team-1", "task-a", "m2", "tok").unwrap();
+    run_ledger::claim_agent_team_task(&config.workspace_dir, "team-1", "task-a", "m2", "tok")
+        .unwrap();
 
     let outcome = start_member_run(&config, "team-1", "m1", Some("task-a"), None)
         .await
@@ -486,7 +491,7 @@ async fn start_member_run_rejects_already_active_member_without_side_effects() {
     seed_team(&config, "team-1");
     // A member already mid-run (active), plus a fresh claimable task.
     run_ledger::upsert_agent_team_member(
-        &config,
+        &config.workspace_dir,
         AgentTeamMemberUpsert {
             id: "m1".into(),
             team_id: "team-1".into(),
@@ -516,12 +521,12 @@ async fn start_member_run_rejects_already_active_member_without_side_effects() {
 
     // No claim happened — the free task is untouched and the member still points
     // at its original run (no clobbered pointer).
-    let task = run_ledger::get_agent_team_task(&config, "t-free")
+    let task = run_ledger::get_agent_team_task(&config.workspace_dir, "t-free")
         .unwrap()
         .expect("task exists");
     assert_eq!(task.status, AgentTeamTaskStatus::Todo);
     assert!(task.claimed_by_member_id.is_none());
-    let member = run_ledger::get_agent_team_member(&config, "m1")
+    let member = run_ledger::get_agent_team_member(&config.workspace_dir, "m1")
         .unwrap()
         .expect("member exists");
     assert_eq!(member.current_task_id.as_deref(), Some("t-running"));
@@ -631,7 +636,7 @@ fn deliver_pending_messages_pages_past_first_event_page() {
     // Push the sequence far past the old 100-row cap with unrelated events.
     for i in 0..150 {
         run_ledger::append_run_event(
-            &config,
+            &config.workspace_dir,
             run_ledger::RunEventAppend {
                 run_id: "team-1".into(),
                 event_type: "noise".into(),

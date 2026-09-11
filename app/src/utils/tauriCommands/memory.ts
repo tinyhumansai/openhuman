@@ -2,7 +2,7 @@
  * Memory subsystem commands.
  */
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { isTauri, safeInvoke } from './common';
+import { isTauri } from './common';
 
 export interface MemoryDebugDocument {
   documentId: string;
@@ -350,65 +350,4 @@ export async function memoryLearnAll(namespaces?: string[]): Promise<MemoryLearn
   });
   console.debug('[memory.learn] memoryLearnAll: exit processed=%d', resp?.namespaces_processed);
   return resp;
-}
-
-/** A WhatsApp chat record from the local whatsapp_data store. */
-export interface WhatsAppChat {
-  chat_id: string;
-  display_name: string;
-  is_group: boolean;
-  account_id: string;
-  last_message_ts: number;
-  message_count: number;
-  updated_at: number;
-}
-
-/** A WhatsApp message record from the local whatsapp_data store. */
-export interface WhatsAppMessage {
-  message_id: string;
-  chat_id: string;
-  sender: string;
-  sender_jid?: string;
-  from_me: boolean;
-  body: string;
-  timestamp: number;
-  message_type?: string;
-  account_id: string;
-  source: string;
-}
-
-/**
- * List WhatsApp chats from the local store (scanner-populated).
- *
- * The whatsapp_data store lives in the Tauri shell (relocated from the Rust
- * core), so this reads it through the `whatsapp_data_list_chats` Tauri command
- * rather than a core RPC. The command returns the row array directly.
- */
-export async function whatsappListChats(params?: {
-  account_id?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<WhatsAppChat[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  const resp = await safeInvoke<WhatsAppChat[]>('whatsapp_data_list_chats', { req: params ?? {} });
-  return resp ?? [];
-}
-
-/**
- * List messages for a chat from the local shell-side store via the
- * `whatsapp_data_list_messages` Tauri command.
- */
-export async function whatsappListMessages(params: {
-  chat_id: string;
-  account_id?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<WhatsAppMessage[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  const resp = await safeInvoke<WhatsAppMessage[]>('whatsapp_data_list_messages', { req: params });
-  return resp ?? [];
 }

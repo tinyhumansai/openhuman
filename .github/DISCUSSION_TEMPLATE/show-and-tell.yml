@@ -1,0 +1,44 @@
+title: ""
+labels: ["show and tell"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Plugins, workflows, and setups built on OpenHuman. Posting one here is
+        how it gets found — the plugin index is built from this category.
+  - type: input
+    id: name
+    attributes:
+      label: What is it called?
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What does it do?
+      description: One paragraph, written for someone deciding whether to install it.
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Where can people get it?
+      description: Repository or install command. Leave blank if it is not published yet.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Plugin
+        - MCP server
+        - Workflow or skill
+        - A setup or configuration
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tested against
+      description: The OpenHuman version you have it working on.
+    validations:
+      required: true

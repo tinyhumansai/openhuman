@@ -3,6 +3,10 @@ use super::{
     is_unmatched_route_404, key_bytes_from_string, parse_message_path, sanitize_client_version,
     BackendApiError, BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
+use crate::api::product::{
+    product_identity_test_lock, reset_product_identity_for_test, set_product_identity,
+    ProductIdentity, DEFAULT_PRODUCT_IDENTITY, PRODUCT_IDENTITY_HEADER,
+};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
@@ -256,13 +260,10 @@ async fn authed_json_uses_sdk_transport_with_bearer_and_host_headers() {
 }
 
 #[tokio::test]
-async fn authed_json_cannot_bypass_sdk_admin_or_webhook_exclusions() {
+async fn authed_json_cannot_bypass_sdk_admin_exclusions() {
     let client = BackendOAuthClient::new("http://127.0.0.1:9").unwrap();
 
-    for (method, path) in [
-        (Method::POST, "/admin/announcements"),
-        (Method::GET, "/webhooks/core"),
-    ] {
+    for (method, path) in [(Method::POST, "/admin/announcements")] {
         let err = client
             .authed_json("token", method, path, None)
             .await
@@ -271,7 +272,6 @@ async fn authed_json_cannot_bypass_sdk_admin_or_webhook_exclusions() {
             err.chain().any(|source| {
                 let message = source.to_string();
                 message.contains("intentionally not exposed")
-                    || message.contains("webhook routes are not exposed")
             }),
             "{path} must be rejected locally by the SDK: {err:#}"
         );
@@ -355,6 +355,95 @@ async fn backend_raw_client_inherits_x_core_version_default_header() {
         version,
         sanitize_client_version(env!("CARGO_PKG_VERSION")).unwrap()
     );
+}
+
+#[tokio::test]
+async fn sdk_path_sends_the_default_product_identity() {
+    let _guard = product_identity_test_lock();
+    reset_product_identity_for_test();
+
+    let (base_url, captured) = spawn_header_capture_server().await;
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    client
+        .authed_json("session-token", Method::GET, "/probe", None)
+        .await
+        .unwrap();
+
+    let headers = captured.take();
+    let request_headers = headers.last().unwrap();
+    assert_eq!(
+        request_headers
+            .get(PRODUCT_IDENTITY_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(DEFAULT_PRODUCT_IDENTITY),
+        "a build that sets no product identity must still attribute itself"
+    );
+}
+
+#[tokio::test]
+async fn raw_client_sends_the_product_identity_alongside_the_version_headers() {
+    // `raw_client()` bypasses the SDK entirely (multipart STT upload), so the
+    // identity has to ride on the transport rather than only on the SDK.
+    let _guard = product_identity_test_lock();
+    reset_product_identity_for_test();
+
+    let (base_url, captured) = spawn_header_capture_server().await;
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+    let url = client.url_for("/probe").unwrap();
+
+    let response = client.raw_client().get(url).send().await.unwrap();
+    assert!(response.status().is_success());
+
+    let headers = captured.take();
+    let request_headers = headers.last().unwrap();
+    assert_eq!(
+        request_headers
+            .get(PRODUCT_IDENTITY_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(DEFAULT_PRODUCT_IDENTITY)
+    );
+    assert!(request_headers.get("x-core-version").is_some());
+}
+
+#[tokio::test]
+async fn an_embedding_product_can_override_the_product_identity() {
+    let _guard = product_identity_test_lock();
+    reset_product_identity_for_test();
+
+    // The identity is read when the client is built, so an embedding product
+    // sets it during startup, before it constructs any backend client.
+    set_product_identity(ProductIdentity::new("opencompany").unwrap());
+
+    let (base_url, captured) = spawn_header_capture_server().await;
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let sdk_result = client
+        .authed_json("session-token", Method::GET, "/probe", None)
+        .await;
+
+    let url = client.url_for("/probe").unwrap();
+    let raw_result = client.raw_client().get(url).send().await;
+
+    reset_product_identity_for_test();
+
+    sdk_result.unwrap();
+    assert!(raw_result.unwrap().status().is_success());
+
+    let headers = captured.take();
+    assert_eq!(
+        headers.len(),
+        2,
+        "both transports should have been observed"
+    );
+    for request_headers in headers {
+        assert_eq!(
+            request_headers
+                .get(PRODUCT_IDENTITY_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("opencompany")
+        );
+    }
 }
 
 #[tokio::test]
@@ -1148,6 +1237,56 @@ async fn channel_delete_404_still_means_the_message_is_gone() {
 // still classify expected backend states the same way — a route must not
 // change its Sentry or session-expiry behaviour just because it moved onto a
 // typed SDK method. These pin that equivalence.
+
+#[tokio::test]
+async fn sdk_backed_billing_summary_unwraps_data() {
+    let app = Router::new().route(
+        "/payments/summary",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": {
+                    "credits": { "totalUsd": 12.5 },
+                    "plan": { "plan": "PRO" },
+                    "links": { "manageUrl": "https://tinyhumans.ai/dashboard" }
+                }
+            }))
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let summary = client.fetch_billing_summary("mock-jwt").await.unwrap();
+
+    assert_eq!(summary["credits"]["totalUsd"], 12.5);
+    assert_eq!(summary["plan"]["plan"], "PRO");
+}
+
+#[tokio::test]
+async fn sdk_backed_billing_summary_surfaces_unauthorized_on_401() {
+    let app = Router::new().route(
+        "/payments/summary",
+        get(|| async { (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendOAuthClient::new(&format!("http://{addr}")).unwrap();
+    let err = client.fetch_billing_summary("mock-jwt").await.unwrap_err();
+
+    assert!(matches!(
+        err.downcast_ref::<BackendApiError>(),
+        Some(BackendApiError::Unauthorized { method, path })
+            if method == "GET" && path == "/payments/summary"
+    ));
+}
 
 #[tokio::test]
 async fn sdk_backed_channel_delete_surfaces_message_not_found_on_404() {

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import reducer, {
   DEFAULT_MASCOT_COLOR,
   isCustomMascotGifUrl,
+  MAX_CUSTOM_MASCOT_AVATAR_DATA_URL_LEN,
   MAX_CUSTOM_MASCOT_GIF_URL_LEN,
   MAX_MASCOT_VOICE_ID_LEN,
   MAX_MASCOT_VOICES,
@@ -227,23 +228,77 @@ describe('mascotSlice', () => {
       expect(state.customMascotGifUrl).toBe('https://example.com/avatar.gif?size=2');
     });
 
-    it('accepts local GIF paths and loopback HTTP URLs', () => {
+    it('accepts local image paths and loopback HTTP URLs', () => {
       expect(isCustomMascotGifUrl('/Users/me/avatar.gif')).toBe(true);
       expect(isCustomMascotGifUrl('~/Pictures/avatar.gif')).toBe(true);
       expect(isCustomMascotGifUrl('http://localhost/avatar.gif')).toBe(true);
       expect(isCustomMascotGifUrl('http://127.0.0.1/avatar.gif')).toBe(true);
     });
 
-    it('rejects unsafe or non-GIF avatar sources', () => {
+    it('accepts PNG, JPEG, and WebP sources, not just GIF (issue #5360)', () => {
+      expect(isCustomMascotGifUrl('https://example.com/avatar.png')).toBe(true);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.jpg')).toBe(true);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.jpeg')).toBe(true);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.webp')).toBe(true);
+      expect(isCustomMascotGifUrl('/Users/me/avatar.png')).toBe(true);
+      expect(isCustomMascotGifUrl('https://example.com/avatar.png?v=2')).toBe(true);
+    });
+
+    it('accepts base64 raster image data URLs (uploaded avatars)', () => {
+      // 1x1 transparent PNG / GIF — the shape FileReader.readAsDataURL emits.
+      const png =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+      const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      expect(isCustomMascotGifUrl(png)).toBe(true);
+      expect(isCustomMascotGifUrl(gif)).toBe(true);
+      const state = reducer(undefined, setCustomMascotGifUrl(png));
+      expect(state.customMascotGifUrl).toBe(png);
+    });
+
+    it('rejects data URLs whose base64 payload is structurally invalid', () => {
+      // Base64 encodes whole 4-character quartets, optionally ending in one
+      // padded group. A payload that can't decode would persist an avatar no
+      // decoder can render, so it is rejected at the reducer boundary too.
+      const malformed = [
+        'data:image/png;base64,', // empty payload
+        'data:image/png;base64,A', // 1 char — never a whole group
+        'data:image/png;base64,A=', // 1 char + 1 pad
+        'data:image/png;base64,AAAAA', // 5 chars — a stray trailing char
+        'data:image/png;base64,AAAA=', // padding on a complete quartet
+        'data:image/png;base64,A===', // over-padded
+        'data:image/png;base64,AA=A', // padding mid-payload
+        'data:image/png;base64,AA*A', // outside the base64 alphabet
+      ];
+      for (const value of malformed) {
+        expect(isCustomMascotGifUrl(value)).toBe(false);
+        expect(reducer(undefined, setCustomMascotGifUrl(value)).customMascotGifUrl).toBeNull();
+      }
+      // Both padded tail lengths stay valid.
+      expect(isCustomMascotGifUrl('data:image/png;base64,QQ==')).toBe(true);
+      expect(isCustomMascotGifUrl('data:image/png;base64,QUE=')).toBe(true);
+    });
+
+    it('rejects unsafe avatar sources', () => {
       expect(isCustomMascotGifUrl('javascript:alert(1)')).toBe(false);
+      // Non-loopback plain HTTP is still refused (no transport security).
       expect(isCustomMascotGifUrl('http://example.com/avatar.gif')).toBe(false);
+      // SVG can carry inline scripts — rejected as URL and as a data URL.
       expect(isCustomMascotGifUrl('https://example.com/avatar.svg')).toBe(false);
-      expect(isCustomMascotGifUrl('https://example.com/avatar.png')).toBe(false);
+      expect(isCustomMascotGifUrl('data:image/svg+xml;base64,PHN2Zy8+')).toBe(false);
+      // Non-image data URLs never qualify.
+      expect(isCustomMascotGifUrl('data:text/html;base64,PGgxPmhpPC9oMT4=')).toBe(false);
     });
 
     it('rejects oversize avatar sources', () => {
-      const tooLong = `https://example.com/${'x'.repeat(MAX_CUSTOM_MASCOT_GIF_URL_LEN)}.gif`;
+      const tooLong = `https://example.com/${'x'.repeat(MAX_CUSTOM_MASCOT_GIF_URL_LEN)}.png`;
       const state = reducer(undefined, setCustomMascotGifUrl(tooLong));
+      expect(state.customMascotGifUrl).toBeNull();
+    });
+
+    it('rejects an oversize data URL past the data-URL cap', () => {
+      const huge = `data:image/png;base64,${'A'.repeat(MAX_CUSTOM_MASCOT_AVATAR_DATA_URL_LEN)}`;
+      expect(isCustomMascotGifUrl(huge)).toBe(false);
+      const state = reducer(undefined, setCustomMascotGifUrl(huge));
       expect(state.customMascotGifUrl).toBeNull();
     });
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { useT } from '../lib/i18n/I18nContext';
 import { isAnalyticsEnabled } from '../services/analytics';
-import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL } from '../utils/config';
+import { LATEST_APP_DOWNLOAD_URL, SUPPORT_URL, SUPPORT_URL_ACCEPTS_REF } from '../utils/config';
 import { openUrl } from '../utils/openUrl';
 import { safeInvoke as invoke } from '../utils/tauriCommands/common';
 
@@ -71,6 +71,15 @@ export default function ErrorFallbackScreen({
 
   const openSupport = () => {
     if (!hasEventId) return;
+    // Only a configured support endpoint can consume the ref. The default
+    // destination is a Discord invite, which renders a join page and drops the
+    // query — appending one there would look like it carried the crash id
+    // while doing nothing (tinysweeper on #5953). The Error ID stays copyable
+    // above, which is how it reaches a Discord thread.
+    if (!SUPPORT_URL_ACCEPTS_REF) {
+      openUrl(SUPPORT_URL);
+      return;
+    }
     // `&` when SUPPORT_URL already carries a query (env override) so the ref
     // never produces a malformed double-`?` link.
     const sep = SUPPORT_URL.includes('?') ? '&' : '?';
@@ -78,7 +87,7 @@ export default function ErrorFallbackScreen({
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-gradient-to-b from-stone-950 to-stone-900">
+    <div className="fixed inset-0 flex items-center justify-center bg-linear-to-b from-stone-950 to-stone-900">
       <div className="w-full max-w-lg mx-4 bg-stone-900 border border-coral-500/30 rounded-2xl shadow-large overflow-hidden">
         {/* Accent bar */}
         <div className="h-1 bg-coral-500" />
@@ -137,13 +146,13 @@ export default function ErrorFallbackScreen({
           {/* Error details */}
           <div className="bg-stone-800/50 border border-stone-700/50 rounded-xl p-4 mb-6">
             <p className="text-sm font-medium text-coral-400 mb-1">{errorName}</p>
-            <p className="text-xs text-content-faint break-words">{errorMessage}</p>
+            <p className="text-xs text-content-faint wrap-break-word">{errorMessage}</p>
             {componentStack && (
               <details className="mt-3">
                 <summary className="text-xs text-content-muted cursor-pointer hover:text-content-faint transition-colors">
                   {t('app.errorFallback.componentStack')}
                 </summary>
-                <pre className="mt-2 text-[11px] text-content-muted whitespace-pre-wrap break-words max-h-[200px] overflow-auto">
+                <pre className="mt-2 text-[11px] text-content-muted whitespace-pre-wrap wrap-break-word max-h-[200px] overflow-auto">
                   {componentStack}
                 </pre>
               </details>

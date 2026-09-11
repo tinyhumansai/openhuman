@@ -7,3624 +7,385 @@
  * "Primary cloud" is an abstraction: any workload set to "Primary" inherits
  * whichever cloud provider is currently marked primary. Overrides are explicit
  * per row, so the resolved provider+model is always rendered inline.
+ *
+ * This file is a thin composition — every section lives in `./ai/*`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LuCheck, LuCircleAlert, LuKeyRound, LuPencil } from 'react-icons/lu';
+import { useCallback, useRef, useState } from 'react';
 
-import { listConnections as listComposioConnections } from '../../../lib/composio/composioApi';
-import type { ComposioConnection } from '../../../lib/composio/types';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
-  type AISettings as ApiAISettings,
-  type ProviderRef as ApiProviderRef,
-  classifyProviderVerificationFailure,
   clearCloudProviderKey,
-  type CloudProviderView,
-  describeProviderVerificationFailure,
-  flushCloudProviders,
-  importOpenAiCodexCliAuth,
-  listProviderModels,
-  loadAISettings,
-  loadLocalProviderSnapshot,
-  loadProviderAuthErrors,
-  type LocalProviderSnapshot,
-  type ModelInfo,
-  type ModelRegistryEntry,
-  modelRegistryVision,
-  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
-  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
-  type ProviderAuthError,
-  saveAISettings,
-  setCloudProviderKey,
-  testProviderModel,
   upsertModelRegistryVision,
 } from '../../../services/api/aiSettingsApi';
-import {
-  creditsApi,
-  type CreditTransaction,
-  type TeamUsage,
-} from '../../../services/api/creditsApi';
 import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
-import { openUrl } from '../../../utils/openUrl';
-import {
-  type AuthStyle,
-  openhumanUpdateLocalAiSettings,
-} from '../../../utils/tauriCommands/config';
-import {
-  type HeartbeatPlannerSummary,
-  type HeartbeatSettings,
-  type HeartbeatSettingsPatch,
-  openhumanHeartbeatSettingsGet,
-  openhumanHeartbeatSettingsSet,
-  openhumanHeartbeatTickNow,
-} from '../../../utils/tauriCommands/heartbeat';
-import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import PanelPage from '../../layout/PanelPage';
+import Alert from '../../ui/Alert';
 import Button from '../../ui/Button';
+import Card from '../../ui/Card';
+import { ModalShell } from '../../ui/ModalShell';
 import SettingsBackButton from '../components/SettingsBackButton';
-import { SettingsSelect, SettingsStatusLine, SettingsSwitch, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import { ClaudeCodeConnect } from './ai/ClaudeCodeStatusCard';
-import { ModelEntryField, useModelEntryMode } from './ai/ModelEntryField';
-import { routingWithProviderRemoved, toSelectableChatModels } from './aiRouting';
-import { isAzureFoundryEndpoint, isAzureV1BaseUrl } from './azureDeployment';
 import {
-  authStyleForBuiltinCloudProvider,
-  BUILTIN_CLOUD_PROVIDER_META,
-  BUILTIN_CLOUD_PROVIDER_SLUGS,
-  builtinCloudProvider,
-  defaultEndpointForBuiltinCloudProvider,
-} from './builtinCloudProviders';
-import { presentProviderSetupError, ProviderSetupErrorNotice } from './ProviderSetupErrorNotice';
+  buildRoutingDiffSummary,
+  BUILTIN_PROVIDER_META,
+  type CloudProvider,
+  defaultEndpointFor,
+  formatI18n,
+  inferRoutingMode,
+  inferSharedModelRef,
+  ROUTING_WORKLOAD_IDS,
+  routingWithAllWorkloads,
+  type WorkloadId,
+  WORKLOADS,
+} from './ai/aiPanelTypes';
+import { BackgroundLoopControls } from './ai/BackgroundLoopControls';
+import { CloudProviderEditor } from './ai/CloudProviderEditor';
+import { CustomRoutingDialog } from './ai/CustomRoutingDialog';
+import { GlobalOwnModelSelector } from './ai/GlobalOwnModelSelector';
+import { ProviderAuthSection } from './ai/ProviderAuthSection';
+import { ProviderKeyDialog } from './ai/ProviderConnectControls';
+import { RoutingModeCards } from './ai/RoutingModeCards';
+import { SaveBar } from './ai/SaveBar';
+import { useAISettings, useInstalledModels, useOllamaStatus } from './ai/useAISettingsState';
+import { useCloudProviderEditorSubmit } from './ai/useCloudProviderEditorSubmit';
+import { useProviderConnect } from './ai/useProviderConnect';
+import { WorkloadRow } from './ai/WorkloadRow';
+import { WorkloadTable } from './ai/WorkloadTable';
+import { routingWithProviderRemoved } from './aiRouting';
 import { useReembedBackfillModal } from './useReembedBackfillModal';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+export type { CloudProvider, ProviderRef, RoutingMap } from './ai/aiPanelTypes';
+export { buildRoutingDiffSummary, BackgroundLoopControls };
 
-export type CloudProvider = {
-  id: string;
-  slug: string;
-  label: string;
-  endpoint: string;
-  authStyle: AuthStyle;
-  maskedKey: string;
-};
-
-type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' | 'error';
-
-type OllamaModel = { id: string; sizeBytes: number; family: string };
-
-type WorkloadId =
-  | 'chat'
-  | 'reasoning'
-  | 'agentic'
-  | 'coding'
-  | 'vision'
-  | 'memory'
-  | 'heartbeat'
-  | 'learning'
-  | 'subconscious';
-
-type WorkloadGroup = 'chat' | 'background';
-
-export type ProviderRef =
-  | { kind: 'openhuman' }
-  | { kind: 'default' }
-  | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
-  | { kind: 'local'; model: string; temperature?: number | null }
-  | { kind: 'claude-code'; model: string; temperature?: number | null };
-
-type Workload = {
-  id: WorkloadId;
-  group: WorkloadGroup;
-  // i18n keys (resolved with `t()` at render) rather than literal English, so the
-  // workload labels/descriptions translate like the rest of the panel.
-  labelKey: string;
-  descriptionKey: string;
-};
-
-export type RoutingMap = Record<WorkloadId, ProviderRef>;
-type RoutingMode = 'managed' | 'own' | 'custom';
-const ROUTING_WORKLOAD_IDS: WorkloadId[] = [
-  'chat',
-  'reasoning',
-  'agentic',
-  'coding',
-  'vision',
-  'memory',
-  'heartbeat',
-  'learning',
-  'subconscious',
-];
-const BUILTIN_RESERVED_SLUGS = [
-  'cloud',
-  'openhuman',
-  'pid',
-  'custom',
-  'ollama',
-  'lmstudio',
-  'omlx',
-  // Claude Code is a CLI-backed peer provider surfaced via a dedicated
-  // connect button (not a chip), so reserve its slug so it never renders in
-  // the generic custom-provider chip list.
-  'claude-code',
-  ...BUILTIN_CLOUD_PROVIDER_SLUGS,
-];
-const KIMI_PLATFORM_URL = 'https://platform.kimi.ai?aff=openhuman';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Static catalog
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Slug-keyed display metadata for built-in provider slugs. Used only for
-// chip rendering (label, tone). Custom providers use `provider.label` directly.
-const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
-  openhuman: {
-    label: 'Managed',
-    tone: 'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
-  },
-  ...BUILTIN_CLOUD_PROVIDER_META,
-  custom: {
-    label: 'Advanced',
-    tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
-  },
-};
-
-const WORKLOADS: Workload[] = [
-  {
-    id: 'chat',
-    group: 'chat',
-    labelKey: 'settings.ai.routing.workload.chat.label',
-    descriptionKey: 'settings.ai.routing.workload.chat.description',
-  },
-  {
-    id: 'reasoning',
-    group: 'chat',
-    labelKey: 'settings.ai.routing.workload.reasoning.label',
-    descriptionKey: 'settings.ai.routing.workload.reasoning.description',
-  },
-  {
-    id: 'agentic',
-    group: 'chat',
-    labelKey: 'settings.ai.routing.workload.agentic.label',
-    descriptionKey: 'settings.ai.routing.workload.agentic.description',
-  },
-  {
-    id: 'coding',
-    group: 'chat',
-    labelKey: 'settings.ai.routing.workload.coding.label',
-    descriptionKey: 'settings.ai.routing.workload.coding.description',
-  },
-  {
-    id: 'vision',
-    group: 'chat',
-    labelKey: 'settings.ai.routing.workload.vision.label',
-    descriptionKey: 'settings.ai.routing.workload.vision.description',
-  },
-  {
-    id: 'memory',
-    group: 'background',
-    labelKey: 'settings.ai.routing.workload.memory.label',
-    descriptionKey: 'settings.ai.routing.workload.memory.description',
-  },
-  {
-    id: 'heartbeat',
-    group: 'background',
-    labelKey: 'settings.ai.routing.workload.heartbeat.label',
-    descriptionKey: 'settings.ai.routing.workload.heartbeat.description',
-  },
-  {
-    id: 'learning',
-    group: 'background',
-    labelKey: 'settings.ai.routing.workload.learning.label',
-    descriptionKey: 'settings.ai.routing.workload.learning.description',
-  },
-  {
-    id: 'subconscious',
-    group: 'background',
-    labelKey: 'settings.ai.routing.workload.subconscious.label',
-    descriptionKey: 'settings.ai.routing.workload.subconscious.description',
-  },
-];
-
-// i18n keys for the per-workload "Recommended: …" hints (resolved with `t()`).
-const WORKLOAD_MODEL_HINT_KEYS: Record<WorkloadId, string> = {
-  chat: 'settings.ai.routing.workload.chat.hint',
-  reasoning: 'settings.ai.routing.workload.reasoning.hint',
-  agentic: 'settings.ai.routing.workload.agentic.hint',
-  coding: 'settings.ai.routing.workload.coding.hint',
-  vision: 'settings.ai.routing.workload.vision.hint',
-  memory: 'settings.ai.routing.workload.memory.hint',
-  heartbeat: 'settings.ai.routing.workload.heartbeat.hint',
-  learning: 'settings.ai.routing.workload.learning.hint',
-  subconscious: 'settings.ai.routing.workload.subconscious.hint',
-};
-
-// Build the "pending routing changes" summary: one `"<label> → <target>"`
-// entry per workload whose draft route differs from the saved route. Extracted
-// as a pure, exported function so the (translated) formatting is unit-testable
-// without rendering the whole panel.
-export function buildRoutingDiffSummary(
-  saved: RoutingMap,
-  draft: RoutingMap,
-  t: (key: string) => string
-): string[] {
-  const describe = (r: ProviderRef): string => {
-    if (r.kind === 'openhuman') return 'openhuman';
-    if (r.kind === 'default') return 'cloud';
-    const tempSuffix = r.temperature != null ? `@${r.temperature.toFixed(2)}` : '';
-    if (r.kind === 'cloud') return `${r.providerSlug}:${r.model}${tempSuffix}`;
-    return `local:${r.model}${tempSuffix}`;
-  };
-  const out: string[] = [];
-  for (const w of WORKLOADS) {
-    const a = saved[w.id];
-    const b = draft[w.id];
-    if (JSON.stringify(a) !== JSON.stringify(b)) {
-      out.push(`${t(w.labelKey)} → ${describe(b)}`);
-    }
-  }
-  return out;
-}
-
-// TIER_PRESETS removed alongside the Local provider section.
-
-// ─────────────────────────────────────────────────────────────────────────────
-// API-adapter hooks
-//
-// The panel works in terms of `CloudProvider` (slug + maskedKey) and
-// `ProviderRef` (slug-keyed). The wire format is identical — this layer
-// just derives the `maskedKey` display string from `has_api_key`.
-// ─────────────────────────────────────────────────────────────────────────────
-
-type AISettings = {
-  cloudProviders: CloudProvider[];
-  routing: RoutingMap;
-  modelRegistry: ModelRegistryEntry[];
-};
-
-const EMPTY_ROUTING: RoutingMap = {
-  chat: { kind: 'default' },
-  reasoning: { kind: 'default' },
-  agentic: { kind: 'default' },
-  coding: { kind: 'default' },
-  vision: { kind: 'default' },
-  memory: { kind: 'default' },
-  heartbeat: { kind: 'default' },
-  learning: { kind: 'default' },
-  subconscious: { kind: 'default' },
-};
-
-const EMPTY_SETTINGS: AISettings = {
-  cloudProviders: [],
-  routing: EMPTY_ROUTING,
-  modelRegistry: [],
-};
-
-function maskKeyLabel(hasKey: boolean): string {
-  return hasKey ? '•••• configured' : 'Not configured';
-}
-
-/**
- * The live `/models` verification rejected. Distinguished from every other
- * submit failure (bad slug, key write failure, …) so the editor can offer to
- * add the provider without verifying: a provider that does not serve an
- * OpenAI-shaped `{base}/models` listing — Azure's classic `api-version`
- * surface, a chat-only gateway — is still usable for inference, and blocking
- * creation on the probe left those users with no way to reach the model /
- * deployment-name field at all (#5213).
- */
-class ProviderProbeError extends Error {
-  readonly probeFailed = true;
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'ProviderProbeError';
-  }
-}
-
-function slugifyCustomProviderName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/**
- * Default auth style for a slug. Built-in slugs map to their known styles;
- * everything else (custom + third-party slugs the user types in) defaults
- * to bearer, matching the OpenAI-compatible majority.
- */
-function authStyleForSlug(slug: string): AuthStyle {
-  if (slug === 'openhuman') return 'openhuman_jwt';
-  if (slug === 'lmstudio' || slug === 'ollama') return 'none';
-  if (slug === 'omlx') return 'bearer';
-  // Claude Code authenticates via the local CLI, never an HTTP key.
-  if (slug === 'claude-code') return 'none';
-  return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
-}
-
-function toPanelProvider(p: CloudProviderView): CloudProvider {
-  return {
-    id: p.id,
-    slug: p.slug,
-    label: p.label,
-    endpoint: p.endpoint,
-    authStyle: p.auth_style,
-    maskedKey: maskKeyLabel(p.has_api_key),
-  };
-}
-
-function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
-  const cloudProviders = api.cloudProviders.map(toPanelProvider);
-  // ApiProviderRef and ProviderRef share the same shape — pass through directly.
-  const liftRef = (r: ApiProviderRef): ProviderRef => r;
-  const routing: RoutingMap = {
-    chat: liftRef(api.routing.chat),
-    reasoning: liftRef(api.routing.reasoning),
-    agentic: liftRef(api.routing.agentic),
-    coding: liftRef(api.routing.coding),
-    vision: liftRef(api.routing.vision),
-    memory: liftRef(api.routing.memory),
-    heartbeat: liftRef(api.routing.heartbeat),
-    learning: liftRef(api.routing.learning),
-    subconscious: liftRef(api.routing.subconscious),
-  };
-  return { panel: { cloudProviders, routing, modelRegistry: api.modelRegistry } };
-}
-
-function toApiSettings(panel: AISettings): ApiAISettings {
-  return {
-    cloudProviders: panel.cloudProviders.map(p => ({
-      id: p.id,
-      slug: p.slug,
-      label: p.label,
-      endpoint: p.endpoint,
-      auth_style: p.authStyle,
-      has_api_key: p.maskedKey.startsWith('••••'),
-    })),
-    routing: {
-      chat: panel.routing.chat,
-      reasoning: panel.routing.reasoning,
-      agentic: panel.routing.agentic,
-      coding: panel.routing.coding,
-      vision: panel.routing.vision,
-      memory: panel.routing.memory,
-      heartbeat: panel.routing.heartbeat,
-      learning: panel.routing.learning,
-      subconscious: panel.routing.subconscious,
-    },
-    modelRegistry: panel.modelRegistry,
-  };
-}
-
-function useAISettings() {
-  const [saved, setSaved] = useState<AISettings>(EMPTY_SETTINGS);
-  const [draft, setDraft] = useState<AISettings>(EMPTY_SETTINGS);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const api = await loadAISettings();
-      const { panel } = toPanelRoutingFromApi(api);
-      setSaved(panel);
-      setDraft(panel);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load AI settings';
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void reload();
-  }, [reload]);
-
-  // Eagerly persist user-configured cloud providers whenever they diverge from
-  // the saved snapshot so listProviderModels can resolve by slug immediately
-  // after a provider is added, before the global Save.
-  //
-  // Reserved slugs ("openhuman", "cloud", "pid") are built-ins that Rust
-  // rejects as custom providers — filter them out before flushing. `ollama`
-  // and `lmstudio` are NOT filtered: the AI panel needs an `ollama` entry on
-  // disk for the model dropdown probe (`list_configured_models` looks up by
-  // slug). Chat routing is unaffected because the factory's `ollama:<model>`
-  // prefix branch fires before the `<slug>:<model>` cloud-provider lookup.
-  useEffect(() => {
-    if (loading) return;
-    const userProviders = draft.cloudProviders.filter(
-      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
-    );
-    const savedUserProviders = saved.cloudProviders.filter(
-      p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
-    );
-    if (JSON.stringify(userProviders) === JSON.stringify(savedUserProviders)) return;
-    const wire = userProviders.map(p => ({
-      id: p.id,
-      slug: p.slug,
-      label: p.label,
-      endpoint: p.endpoint,
-      auth_style: p.authStyle,
-    }));
-    flushCloudProviders(wire).catch(err =>
-      console.warn('[ai-settings] eager cloud_providers flush failed:', err)
-    );
-  }, [draft.cloudProviders, loading, saved.cloudProviders]);
-
-  const isDirty = JSON.stringify(saved) !== JSON.stringify(draft);
-
-  const persist = useCallback(
-    async (nextDraft: AISettings) => {
-      const prevApi = toApiSettings(saved);
-      const nextApi = toApiSettings(nextDraft);
-      await saveAISettings(prevApi, nextApi);
-      setSaved(nextDraft);
-      setDraft(nextDraft);
-      setError('');
-    },
-    [saved]
-  );
-
-  // Returns true only when persistence actually succeeded, so callers
-  // (e.g. the #1574 re-embed-status check) don't act on a failed save.
-  const save = useCallback(async (): Promise<boolean> => {
-    try {
-      // Defensive verification at global-Save time. Each provider that is new
-      // or whose endpoint changed since the last saved snapshot is re-probed
-      // through `openhuman.inference_list_models`. The chip / editor dialogs
-      // already probe at add-time; this is a belt-and-suspenders check that
-      // catches stale entries (endpoint flipped externally, daemon went
-      // unreachable between add-time and save-time, etc.) before they reach
-      // the saved config and start routing chat traffic to a dead host.
-      //
-      // OpenHuman is exempt (session JWT, no /models endpoint to hit).
-      const savedById = new Map(saved.cloudProviders.map(p => [p.id, p]));
-      const toProbe = draft.cloudProviders.filter(p => {
-        if (p.slug === 'openhuman') return false;
-        const prior = savedById.get(p.id);
-        return !prior || prior.endpoint !== p.endpoint;
-      });
-      for (const p of toProbe) {
-        try {
-          await listProviderModels(p.slug);
-        } catch (probeErr) {
-          const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-          setError(`Could not reach ${p.label}: ${msg}. Settings were not saved.`);
-          return false;
-        }
-      }
-
-      await persist(draft);
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save AI settings';
-      setError(message);
-      return false;
-    }
-  }, [saved, draft, persist]);
-
-  const discard = useCallback(() => setDraft(saved), [saved]);
-
-  return { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload };
-}
-
-function useOllamaStatus() {
-  const [snapshot, setSnapshot] = useState<LocalProviderSnapshot | null>(null);
-  const lastPollRef = useRef<number>(0);
-
-  const refresh = useCallback(async (): Promise<LocalProviderSnapshot | null> => {
-    try {
-      const s = await loadLocalProviderSnapshot();
-      setSnapshot(s);
-      lastPollRef.current = Date.now();
-      return s;
-    } catch {
-      // Swallow — keep last good snapshot, return null so callers can
-      // detect failure without a try/catch.
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-    const id = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
-
-  // Translate to the OllamaState the panel UI expects.
-  //
-  // `disabled` is the config-side master switch (user turned local AI off
-  // via the toggle). `missing` is "user wants local AI but the daemon
-  // isn't installed". Keep them distinct so the toggle's `checked` state
-  // and the Install/Retry button can render the right thing.
-  const state: OllamaState = useMemo(() => {
-    if (!snapshot) return 'stopped';
-    const stateStr = snapshot.status?.state ?? '';
-    if (stateStr === 'disabled') return 'disabled';
-    if (snapshot.diagnostics?.ollama_running) return 'running';
-    if (stateStr === 'missing') return 'missing';
-    if (stateStr === 'starting' || stateStr === 'downloading') return 'starting';
-    if (stateStr === 'error') return 'error';
-    return 'stopped';
-  }, [snapshot]);
-
-  const version = snapshot?.diagnostics?.ollama_binary_path
-    ? // Diagnostics doesn't surface a version string today; show the binary path tail.
-      (snapshot.diagnostics.ollama_binary_path.split(/[\\/]/).pop() ?? '')
-    : '';
-
-  return { state, version, snapshot, refresh };
-}
-
-function useInstalledModels(snapshot: LocalProviderSnapshot | null): OllamaModel[] {
-  // Hide embedding-only models (e.g. `bge-m3`) from every LLM/chat workload
-  // picker — both consumers of this hook (CustomRoutingDialog and
-  // GlobalOwnModelSelector) route a chat model, never the embedder (which is
-  // configured separately in EmbeddingsPanel). Selecting an embedding model as
-  // chat 400s every turn on Ollama (TAURI-RUST-4P6). Filter + map live in the
-  // pure, unit-tested `toSelectableChatModels` helper.
-  return useMemo(() => toSelectableChatModels(snapshot?.installedModels ?? []), [snapshot]);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Primitives
-// ─────────────────────────────────────────────────────────────────────────────
-
-// SectionLabel removed alongside its only call site (the old
-// "Cloud providers" / "Local provider" headings).
-
-// formatBytes / StatusDot / ProviderChip helpers removed alongside the
-// Local provider section + CloudProviderCard — no callers left.
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cloud provider card
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Local-runtime chip slugs (Ollama / LM Studio) that aren't actual slugs in
-// the cloud_providers list but need the same chip affordance.
-type LocalChipSlug = 'lmstudio' | 'ollama' | 'omlx';
-
-// Tints per local-runtime chip slug.
-const LOCAL_CHIP_TONE: Record<LocalChipSlug, string> = {
-  lmstudio: 'bg-cyan-50 dark:bg-cyan-500/10 ring-cyan-200 text-cyan-900 dark:text-cyan-100',
-  ollama: 'bg-violet-50 dark:bg-violet-500/10 ring-violet-200 text-violet-900 dark:text-violet-100',
-  omlx: 'bg-amber-50 dark:bg-amber-500/10 ring-amber-200 text-amber-900 dark:text-amber-100',
-};
-
-const LOCAL_CHIP_LABEL: Record<LocalChipSlug, string> = {
-  lmstudio: 'LM Studio',
-  ollama: 'Ollama',
-  omlx: 'OMLX',
-};
-
-function providerToggleAriaLabel(
-  t: (key: string, fallback?: string) => string,
-  enabled: boolean,
-  label: string
-): string {
-  return formatI18n(
-    enabled ? t('settings.ai.disconnectProvider') : t('settings.ai.connectProviderLabel'),
-    { label }
-  );
-}
-
-function formatI18n(template: string, vars: Record<string, string | number>): string {
-  return Object.entries(vars).reduce(
-    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
-    template
-  );
-}
-
-function slugTone(slug: string): string {
-  return BUILTIN_PROVIDER_META[slug]?.tone ?? 'bg-surface-subtle ring-neutral-300 text-content';
-}
-
-const ProviderToggleChip = ({
-  slug,
-  label,
-  enabled,
-  busy,
-  locked = false,
-  alwaysOn = false,
-  onToggle,
-}: {
-  slug: string;
-  label: string;
-  enabled: boolean;
-  busy?: boolean;
-  locked?: boolean;
-  // When true the provider is permanently available (e.g. Managed) and renders
-  // a static "Always on" indicator instead of a toggle. A locked toggle reads
-  // as switchable-but-broken (#3760); a badge has no affordance to fight.
-  alwaysOn?: boolean;
-  onToggle?: () => void;
-}) => {
-  const { t } = useT();
-  const tone = slugTone(slug);
-  return (
-    <div
-      className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors dark:ring-neutral-700 ${tone}`}>
-      <span>{label}</span>
-      {alwaysOn ? (
-        <span className="inline-flex items-center gap-1 opacity-80">
-          <LuCheck className="h-3 w-3" />
-          {t('settings.ai.routing.managedAlwaysOn')}
-        </span>
-      ) : (
-        <SettingsSwitch
-          id={`provider-toggle-${slug}`}
-          checked={enabled}
-          onCheckedChange={() => onToggle?.()}
-          disabled={busy || locked}
-          aria-label={providerToggleAriaLabel(t, enabled, label)}
-        />
-      )}
-    </div>
-  );
-};
-
-// Connect-provider dialog — shown when the user flips a provider toggle ON.
-//
-// Two modes:
-//   - apiKey: cloud providers (OpenAI, Anthropic, …). Collects a secret.
-//   - endpoint: local runtimes (Ollama, LM Studio). Collects an HTTP URL
-//     (and optionally an API key for OpenAI-compatible self-hosted setups).
-//
-// The parent decides how to persist: cloud → auth-profiles, local → both
-// the cloud_providers entry's `endpoint` (so /models discovery works) and
-// `local_ai.base_url` (so the Rust factory's Ollama branch routes to it).
-const ProviderKeyDialog = ({
-  slug,
-  label,
-  isLocalRuntime,
-  endpointKeyMode = false,
-  initialValue,
-  initialKeyValue,
-  oauthAction,
-  onCancel,
-  onSubmit,
-}: {
-  slug: string;
-  label: string;
-  /** When true, render an "Endpoint URL" field instead of API key. */
-  isLocalRuntime: boolean;
-  /**
-   * When true (OMLX), render BOTH an "Endpoint URL" field AND an "API key"
-   * field. `onSubmit` then receives the API key as `value` and the endpoint
-   * via the `endpoint` argument.
-   */
-  endpointKeyMode?: boolean;
-  /** Pre-populate the field when editing an existing provider's endpoint. */
-  initialValue?: string;
-  /** Pre-populate the API key field in `endpointKeyMode`. */
-  initialKeyValue?: string;
-  oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
-  onCancel: () => void;
-  /** Returns the entered value(s). For plain local runtimes this is the
-   *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
-   *  the API key is `value` and the endpoint URL is `endpoint`. */
-  onSubmit: (value: string, endpoint?: string) => Promise<void> | void;
-}) => {
-  const { t } = useT();
-  // In `endpointKeyMode`, `value` holds the endpoint URL and `keyValue` holds
-  // the API key. Otherwise `value` is either the endpoint (local) or key (cloud).
-  const [value, setValue] = useState<string>(
-    initialValue ?? (isLocalRuntime ? defaultEndpointFor(slug) : '')
-  );
-  const [keyValue, setKeyValue] = useState<string>(initialKeyValue ?? '');
-  const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const busy = phase !== 'idle';
-
-  const placeholder = isLocalRuntime
-    ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
-    : (builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key');
-  const keyPlaceholder = builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key';
-
-  const fieldLabel = isLocalRuntime
-    ? t('settings.ai.endpointUrlLabel')
-    : t('settings.ai.apiKeyFieldLabel');
-  const helper = isLocalRuntime
-    ? formatI18n(t('settings.ai.localRuntimeHelper'), { label })
-    : t('settings.ai.apiKeyStoredEncrypted');
-  const platformLinkUrl = slug === 'moonshot' && !isLocalRuntime ? KIMI_PLATFORM_URL : null;
-
-  const handleSave = async () => {
-    const trimmed = value.trim();
-    const trimmedKey = keyValue.trim();
-    if (!trimmed) {
-      setError(
-        isLocalRuntime ? t('settings.ai.endpointUrlRequired') : t('settings.ai.apiKeyRequired')
-      );
-      return;
-    }
-    if (isLocalRuntime && !/^https?:\/\//i.test(trimmed)) {
-      setError(t('settings.ai.endpointProtocolRequired'));
-      return;
-    }
-    if (endpointKeyMode && !trimmedKey) {
-      setError(t('settings.ai.apiKeyRequired'));
-      return;
-    }
-    setError(null);
-
-    // A provider credential is being saved. This adds/updates a `cloudProviders`
-    // entry only — it does NOT change the workload routing map, so routing is
-    // unchanged afterwards (see inferRoutingMode). Logged for routing diagnostics.
-    console.debug('[ai-settings][routing] saving provider credential', {
-      slug,
-      local_runtime: isLocalRuntime,
-      kind: endpointKeyMode ? 'endpointKey' : isLocalRuntime ? 'endpoint' : 'apiKey',
-    });
-
-    setPhase('saving');
-    try {
-      // In endpointKeyMode the API key is the primary value, endpoint is the
-      // second arg; otherwise the single field is the primary value.
-      if (endpointKeyMode) {
-        await onSubmit(trimmedKey, trimmed);
-      } else {
-        await onSubmit(trimmed);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[ai-settings] provider setup failed', {
-        slug,
-        local_runtime: isLocalRuntime,
-        summary: presentProviderSetupError(message, t).summary,
-      });
-      setError(message);
-      setPhase('idle');
-    }
-  };
-
-  const handleOAuth = async () => {
-    if (!oauthAction) return;
-    setError(null);
-    setPhase('oauth');
-    try {
-      await oauthAction.onClick();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[ai-settings] provider oauth failed', {
-        slug,
-        summary: presentProviderSetupError(message, t).summary,
-      });
-      setError(message);
-      setPhase('idle');
-    }
-  };
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={formatI18n(t('settings.ai.connectProviderDialog'), { label })}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="relative w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft">
-        {platformLinkUrl ? (
-          <a
-            href={platformLinkUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ insetInlineEnd: '1.5rem' }}
-            onClick={event => {
-              event.preventDefault();
-              void openUrl(platformLinkUrl).catch(err => {
-                console.warn('[ai-settings] provider platform link open failed', {
-                  slug,
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              });
-            }}
-            className="absolute top-6 text-xs font-medium leading-6 text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200">
-            {t('settings.ai.getProviderApiKey')}
-          </a>
-        ) : null}
-        <div className="mb-4" style={platformLinkUrl ? { paddingInlineEnd: '9rem' } : undefined}>
-          <h3 className="text-base font-semibold text-content">{`${t('settings.ai.connectProvider')} ${label}`}</h3>
-          <p className="mt-0.5 text-xs text-content-muted">{helper}</p>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="provider-key-input"
-            className="text-xs font-medium text-content-secondary">
-            {fieldLabel}
-          </label>
-          <SettingsTextField
-            id="provider-key-input"
-            type={isLocalRuntime ? 'url' : 'text'}
-            mono={isLocalRuntime}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            value={value}
-            placeholder={placeholder}
-            disabled={busy}
-            onChange={e => {
-              setValue(e.target.value);
-              setError(null);
-            }}
-          />
-          {/* OMLX (endpointKeyMode): render the API key field in addition to
-              the endpoint field above — the runtime is OpenAI-compatible but
-              gated behind a Bearer key. */}
-          {endpointKeyMode ? (
-            <>
-              <label
-                htmlFor="provider-key-input-key"
-                className="mt-3 text-xs font-medium text-content-secondary">
-                {t('settings.ai.apiKeyFieldLabel')}
-              </label>
-              <SettingsTextField
-                id="provider-key-input-key"
-                type="text"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                data-form-type="other"
-                data-lpignore="true"
-                data-1p-ignore="true"
-                value={keyValue}
-                placeholder={keyPlaceholder}
-                disabled={busy}
-                onChange={e => {
-                  setKeyValue(e.target.value);
-                  setError(null);
-                }}
-              />
-            </>
-          ) : null}
-          {error ? <ProviderSetupErrorNotice error={error} /> : null}
-        </div>
-
-        {oauthAction ? (
-          <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('settings.ai.or')}
-            </div>
-            <p className="mt-1 text-xs text-content-muted">
-              {oauthAction.description ?? t('settings.ai.openRouterOauthDescription')}
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void handleOAuth()}
-              disabled={busy}
-              className="mt-3">
-              {phase === 'oauth' ? t('settings.ai.connecting') : oauthAction.label}
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={() => void handleSave()}
-            disabled={busy}>
-            {phase === 'saving' ? t('settings.ai.saving') : t('common.save')}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Background loop controls + usage diagnostics
-// ─────────────────────────────────────────────────────────────────────────────
-
-const USD = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 4,
-  maximumFractionDigits: 6,
-});
-
-const WEEK_MINUTES = 7 * 24 * 60;
-const COMPOSIO_PERIODIC_TICK_MINUTES = 20;
-const LEARNING_REBUILD_MINUTES = 30;
-const MEMORY_WORKERS = 4;
-const MEMORY_POLL_SECONDS = 5;
-
-const formatUsd = (value: number): string => USD.format(Number.isFinite(value) ? value : 0);
-
-const spendAmount = (tx: CreditTransaction): number => {
-  const amount = Number(tx.amountUsd);
-  return Number.isFinite(amount) ? Math.abs(amount) : 0;
-};
-
-const formatCount = (value: number): string =>
-  new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(
-    Number.isFinite(value) ? value : 0
-  );
-
-const formatDateTime = (value: string | null | undefined): string => {
-  if (!value) return 'n/a';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'n/a';
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-};
-
-const activeConnection = (connection: ComposioConnection): boolean => {
-  const status = connection.status.toUpperCase();
-  return status === 'ACTIVE' || status === 'CONNECTED';
-};
-
-const normalizedToolkit = (connection: ComposioConnection): string =>
-  connection.toolkit.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-const isCalendarConnection = (connection: ComposioConnection): boolean => {
-  const toolkit = normalizedToolkit(connection);
-  return toolkit === 'googlecalendar' || toolkit === 'calendar';
-};
-
-function summarizeSpendByAction(
-  transactions: CreditTransaction[]
-): Array<[string, number, number]> {
-  const byAction = new Map<string, { count: number; total: number }>();
-  for (const tx of transactions) {
-    if (tx.type !== 'SPEND') continue;
-    const key = tx.action || 'SPEND';
-    const prev = byAction.get(key) ?? { count: 0, total: 0 };
-    prev.count += 1;
-    prev.total += spendAmount(tx);
-    byAction.set(key, prev);
-  }
-  return Array.from(byAction.entries())
-    .map(([action, value]) => [action, value.count, value.total] as [string, number, number])
-    .sort((a, b) => b[2] - a[2])
-    .slice(0, 4);
-}
-
-function summarizeSpendByHour(transactions: CreditTransaction[]): Array<[string, number]> {
-  const byHour = new Map<string, number>();
-  for (const tx of transactions) {
-    if (tx.type !== 'SPEND') continue;
-    const date = new Date(tx.createdAt);
-    if (Number.isNaN(date.getTime())) continue;
-    date.setMinutes(0, 0, 0);
-    const key = date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' });
-    byHour.set(key, (byHour.get(key) ?? 0) + spendAmount(tx));
-  }
-  return Array.from(byHour.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4);
-}
-
-function summarizeSpendSample(transactions: CreditTransaction[]) {
-  const rows = transactions
-    .filter(tx => tx.type === 'SPEND')
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const total = rows.reduce((sum, tx) => sum + spendAmount(tx), 0);
-  const avgRowUsd = rows.length > 0 ? total / rows.length : 0;
-  const times = rows
-    .map(tx => new Date(tx.createdAt).getTime())
-    .filter(time => !Number.isNaN(time))
-    .sort((a, b) => a - b);
-  const sampleHours =
-    times.length >= 2 ? Math.max((times[times.length - 1] - times[0]) / 3_600_000, 1 / 60) : 0;
-  const spendPerHour = sampleHours > 0 ? total / sampleHours : 0;
-  const rowsPerHour = sampleHours > 0 ? rows.length / sampleHours : 0;
-  return { rows, total, avgRowUsd, sampleHours, spendPerHour, rowsPerHour };
-}
-
-function describeProvider(ref: ProviderRef, providers: BackgroundLoopProviderView[]): string {
-  if (ref.kind === 'openhuman') return 'Managed · OpenHuman';
-  if (ref.kind === 'default') return 'Default route';
-  if (ref.kind === 'local') return `Local ${ref.model}`;
-  if (ref.kind === 'claude-code') return `Claude Code CLI ${ref.model || 'default model'}`;
-  const provider = providers.find(p => p.slug === ref.providerSlug);
-  return `${provider?.label ?? ref.providerSlug} ${ref.model || 'custom model'}`;
-}
-
-const LoopToggle = ({
-  label,
-  description,
-  checked,
-  busy,
-  onToggle,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  busy: boolean;
-  onToggle: () => void;
-}) => (
-  <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2">
-    <div className="min-w-0">
-      <div className="text-sm font-medium text-content">{label}</div>
-      <div className="text-xs text-content-muted">{description}</div>
-    </div>
-    <SettingsSwitch
-      id={`loop-toggle-${label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
-      checked={checked}
-      onCheckedChange={onToggle}
-      disabled={busy}
-      aria-label={label}
-    />
-  </div>
-);
-
-const MetricTile = ({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) => (
-  <div className="min-w-0 overflow-hidden rounded-md bg-surface-muted px-3 py-2">
-    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-content-faint">
-      {label}
-    </div>
-    <div className="mt-1 truncate text-sm font-semibold text-content">{value}</div>
-    {detail ? <div className="mt-0.5 truncate text-[11px] text-content-muted">{detail}</div> : null}
-  </div>
-);
-
-const FormulaRow = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
-  <div className="min-w-0 overflow-hidden rounded-md border border-line bg-surface px-3 py-2">
-    <div className="flex items-center justify-between gap-3">
-      <span className="min-w-0 truncate text-xs font-medium text-content">{label}</span>
-      <span className="shrink-0 font-mono text-xs text-content-secondary">{value}</span>
-    </div>
-    <div className="mt-1 truncate text-[11px] text-content-muted">{detail}</div>
-  </div>
-);
-
-type BackgroundLoopControlsView = 'all' | 'heartbeat' | 'ledger';
-
-/** Minimal cloud-provider shape consumed by the loop map's `describeProvider`
- *  helper — only slug/label/id are read. Accepting this narrower shape lets
- *  external panels (UsagePanel) feed in the API view
- *  (`CloudProviderView`) without copying the AIPanel-internal extras
- *  (`authStyle`, `maskedKey`). */
-type BackgroundLoopProviderView = { id: string; slug: string; label: string };
-
-export const BackgroundLoopControls = ({
-  routing,
-  cloudProviders,
-  view = 'all',
-  hideHeader = false,
-}: {
-  routing: RoutingMap;
-  cloudProviders: BackgroundLoopProviderView[];
-  view?: BackgroundLoopControlsView;
-  hideHeader?: boolean;
-}) => {
-  const { t } = useT();
-  const [settings, setSettings] = useState<HeartbeatSettings | null>(null);
-  const [usage, setUsage] = useState<TeamUsage | null>(null);
-  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
-  const [connections, setConnections] = useState<ComposioConnection[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
-  const [runningTick, setRunningTick] = useState(false);
-  const [plannerSummary, setPlannerSummary] = useState<HeartbeatPlannerSummary | null>(null);
-  const [error, setError] = useState<string>('');
-  const settingsRef = useRef<HeartbeatSettings | null>(null);
-  const patchRequestIdRef = useRef(0);
-
-  const commitSettings = useCallback((nextSettings: HeartbeatSettings | null) => {
-    settingsRef.current = nextSettings;
-    setSettings(nextSettings);
-  }, []);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    const [heartbeatResult, usageResult, transactionsResult, connectionsResult] =
-      await Promise.allSettled([
-        openhumanHeartbeatSettingsGet(),
-        creditsApi.getTeamUsage(),
-        creditsApi.getTransactions(200, 0),
-        listComposioConnections(),
-      ]);
-
-    if (heartbeatResult.status === 'fulfilled') {
-      commitSettings(heartbeatResult.value.result.settings);
-    } else {
-      setError(
-        heartbeatResult.reason instanceof Error ? heartbeatResult.reason.message : 'Load failed'
-      );
-    }
-
-    if (usageResult.status === 'fulfilled') {
-      setUsage(usageResult.value);
-    }
-
-    if (transactionsResult.status === 'fulfilled') {
-      setTransactions(transactionsResult.value.transactions ?? []);
-    }
-
-    if (connectionsResult.status === 'fulfilled') {
-      setConnections(connectionsResult.value.connections ?? []);
-    }
-    setLoading(false);
-  }, [commitSettings]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-  }, [refresh]);
-
-  const applyHeartbeatPatch = useCallback(
-    async (patch: HeartbeatSettingsPatch) => {
-      const requestId = patchRequestIdRef.current + 1;
-      patchRequestIdRef.current = requestId;
-      const savingKey = Object.keys(patch).join(',');
-      const previous = settingsRef.current;
-      setError('');
-      setSaving(savingKey);
-      if (!previous) {
-        // No baseline to patch against — abandon this request.
-        if (patchRequestIdRef.current === requestId) {
-          setSaving(null);
-        }
-        return;
-      }
-      commitSettings({ ...previous, ...patch });
-      try {
-        const response = await openhumanHeartbeatSettingsSet(patch);
-        // Stale response — a newer patch superseded us; drop this result.
-        if (patchRequestIdRef.current !== requestId) return;
-        commitSettings(response.result.settings);
-      } catch (err) {
-        if (patchRequestIdRef.current !== requestId) return;
-        commitSettings(previous);
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (patchRequestIdRef.current === requestId) {
-          setSaving(null);
-        }
-      }
-    },
-    [commitSettings]
-  );
-
-  const runPlannerNow = useCallback(async () => {
-    setRunningTick(true);
-    setError('');
-    try {
-      const response = await openhumanHeartbeatTickNow();
-      setPlannerSummary(response.result.summary);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRunningTick(false);
-    }
-  }, [refresh]);
-
-  const spendSample = summarizeSpendSample(transactions);
-  const spendRows = spendSample.rows;
-  const actionSummary = summarizeSpendByAction(transactions);
-  const hourSummary = summarizeSpendByHour(transactions);
-  const latestSpend = spendRows[0] ?? null;
-  const heartbeatIntervalMinutes = settings ? Math.max(settings.interval_minutes, 5) : 5;
-  const heartbeatTicksPerWeek = settings?.enabled
-    ? Math.ceil(WEEK_MINUTES / heartbeatIntervalMinutes)
-    : 0;
-  const activeConnections = connections.filter(activeConnection);
-  const activeCalendarConnections = activeConnections.filter(isCalendarConnection);
-  const maxCalendarConnectionsPerTick = settings
-    ? Math.max(settings.max_calendar_connections_per_tick ?? 2, 1)
-    : 2;
-  const calendarConnectionsPolled = settings?.notify_meetings
-    ? Math.min(activeCalendarConnections.length, maxCalendarConnectionsPerTick)
-    : 0;
-  const calendarConnectionsSkipped = settings?.notify_meetings
-    ? Math.max(activeCalendarConnections.length - calendarConnectionsPolled, 0)
-    : 0;
-  const calendarPlannerCallsPerTick = settings?.notify_meetings ? 1 + calendarConnectionsPolled : 0;
-  const calendarPlannerCallsPerWeek = heartbeatTicksPerWeek * calendarPlannerCallsPerTick;
-  const subconsciousModelCallsPerWeek =
-    settings?.enabled && settings.inference_enabled ? heartbeatTicksPerWeek : 0;
-  const composioPeriodicTicksPerWeek = Math.ceil(WEEK_MINUTES / COMPOSIO_PERIODIC_TICK_MINUTES);
-  const learningTicksPerWeek = Math.ceil(WEEK_MINUTES / LEARNING_REBUILD_MINUTES);
-  const memoryPollsPerWeek = Math.ceil((WEEK_MINUTES * 60 * MEMORY_WORKERS) / MEMORY_POLL_SECONDS);
-  const composioConnectionScansPerWeek = composioPeriodicTicksPerWeek * activeConnections.length;
-  const backgroundApiReadsPerWeek = calendarPlannerCallsPerWeek + composioConnectionScansPerWeek;
-  const backgroundWakeupsPerWeek =
-    heartbeatTicksPerWeek +
-    composioPeriodicTicksPerWeek +
-    learningTicksPerWeek +
-    memoryPollsPerWeek;
-  const scheduledCallsPerRemainingDollar =
-    usage && usage.remainingUsd > 0 ? backgroundApiReadsPerWeek / usage.remainingUsd : null;
-  const estimatedRowsLeft =
-    usage && spendSample.avgRowUsd > 0
-      ? Math.floor(usage.remainingUsd / spendSample.avgRowUsd)
-      : null;
-  const estimatedRowsPerBudget =
-    usage && spendSample.avgRowUsd > 0
-      ? Math.floor(usage.cycleBudgetUsd / spendSample.avgRowUsd)
-      : null;
-  const projectedHoursLeft =
-    usage && spendSample.spendPerHour > 0 ? usage.remainingUsd / spendSample.spendPerHour : null;
-  const projectionAnchorMs = latestSpend ? new Date(latestSpend.createdAt).getTime() : Number.NaN;
-  const projectedExhaustAt =
-    projectedHoursLeft !== null && Number.isFinite(projectionAnchorMs)
-      ? new Date(projectionAnchorMs + projectedHoursLeft * 3_600_000).toLocaleString([], {
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })
-      : 'n/a';
-
-  const loops = [
-    {
-      name: 'Heartbeat planner',
-      enabled: Boolean(settings?.enabled),
-      cadence: `${settings?.interval_minutes ?? 5} min`,
-      route: describeProvider(routing.heartbeat, cloudProviders),
-      work: 'Runs proactive collectors: cron reminders, calendar meetings, relevant notifications.',
-      risk: settings?.notify_meetings
-        ? `${calendarPlannerCallsPerTick} Composio read call(s)/tick; ${calendarConnectionsSkipped} calendar link(s) over cap skipped.`
-        : 'Calendar collector off; planner reads only local enabled categories.',
-    },
-    {
-      name: 'Subconscious tick',
-      enabled: Boolean(settings?.enabled && settings?.inference_enabled),
-      cadence: `${settings?.interval_minutes ?? 5} min`,
-      route: describeProvider(routing.subconscious, cloudProviders),
-      work: 'Evaluates subconscious tasks/reflections through kind=subconscious_tick.',
-      risk:
-        subconsciousModelCallsPerWeek > 0
-          ? `${formatCount(subconsciousModelCallsPerWeek)} model call(s)/week at current interval.`
-          : 'Inference off; no scheduled subconscious model calls.',
-    },
-    {
-      name: 'Memory tree workers',
-      enabled: true,
-      cadence: 'queue',
-      route: describeProvider(routing.memory, cloudProviders),
-      work: 'Extracts chunks, seals branches, runs daily digests, routes topics.',
-      risk: `${MEMORY_WORKERS} workers poll every ${MEMORY_POLL_SECONDS}s; LLM calls only when queue has extract/seal/digest/topic jobs.`,
-    },
-    {
-      name: 'Reflection rebuild',
-      enabled: true,
-      cadence: '30 min',
-      route: describeProvider(routing.learning, cloudProviders),
-      work: 'Refreshes reflection state after memory activity.',
-      risk: `${formatCount(learningTicksPerWeek)} wakeups/week; LLM work only when rebuild needs reflection.`,
-    },
-    {
-      name: 'Composio sync',
-      enabled: true,
-      cadence: '20 min',
-      route: 'Integration APIs',
-      work: 'Polls connected tools when provider sync is due.',
-      risk: `${formatCount(composioPeriodicTicksPerWeek)} wakeups/week; scans ${activeConnections.length} active connection(s).`,
-    },
-  ];
-
-  const showHeartbeat = view === 'all' || view === 'heartbeat';
-  const showLedger = view === 'all' || view === 'ledger';
-  const gridCols =
-    view === 'all' ? 'md:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]' : 'grid-cols-1';
-
-  return (
-    <div className="space-y-4">
-      {!hideHeader && (
-        <div className="border-b border-line pb-2">
-          <h2 className="text-base font-semibold text-content">
-            {t('settings.ai.backgroundLoops')}
-          </h2>
-          <p className="mt-0.5 text-xs text-content-muted">
-            {t('settings.ai.backgroundLoopsDesc')}
-          </p>
-        </div>
-      )}
-
-      {error && <SettingsStatusLine saving={false} error={error} savedNote={null} savingLabel="" />}
-
-      <section className={`grid gap-3 ${gridCols}`}>
-        {showHeartbeat && (
-          <div className="space-y-3">
-            <div className="rounded-lg border border-line bg-surface-muted p-3">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-content">
-                    {t('settings.ai.heartbeatControls')}
-                  </div>
-                  <div className="text-xs text-content-muted">
-                    {t('settings.ai.heartbeatControlsDesc')}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => void refresh()}
-                  disabled={loading}>
-                  {t('common.refresh')}
-                </Button>
-              </div>
-
-              {settings ? (
-                <div className="space-y-2">
-                  <LoopToggle
-                    label={t('settings.ai.heartbeatLoop')}
-                    description={t('settings.ai.heartbeatLoopDesc')}
-                    checked={settings.enabled}
-                    busy={saving === 'enabled'}
-                    onToggle={() => void applyHeartbeatPatch({ enabled: !settings.enabled })}
-                  />
-                  <LoopToggle
-                    label={t('settings.ai.subconsciousInference')}
-                    description={t('settings.ai.subconsciousInferenceDesc')}
-                    checked={settings.inference_enabled}
-                    busy={saving === 'inference_enabled'}
-                    onToggle={() =>
-                      void applyHeartbeatPatch({ inference_enabled: !settings.inference_enabled })
-                    }
-                  />
-                  <LoopToggle
-                    label={t('settings.ai.calendarMeetingChecks')}
-                    description={t('settings.ai.calendarMeetingChecksDesc')}
-                    checked={settings.notify_meetings}
-                    busy={saving === 'notify_meetings'}
-                    onToggle={() =>
-                      void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
-                    }
-                  />
-                  <div className="grid gap-2 rounded-lg border border-line bg-surface px-3 py-2 sm:grid-cols-3">
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
-                      <span className="whitespace-nowrap">{t('settings.ai.calendarCap')}</span>
-                      <SettingsSelect
-                        aria-label={t('settings.ai.calendarCap')}
-                        value={maxCalendarConnectionsPerTick}
-                        disabled={saving === 'max_calendar_connections_per_tick'}
-                        onChange={e =>
-                          void applyHeartbeatPatch({
-                            max_calendar_connections_per_tick: Number(e.target.value),
-                          })
-                        }
-                        className="w-full"
-                        inputSize="sm">
-                        {[1, 2, 3, 5, 10].map(count => (
-                          <option key={count} value={count}>
-                            {formatI18n(t('settings.ai.connectionsPerTick'), { count })}
-                          </option>
-                        ))}
-                      </SettingsSelect>
-                    </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
-                      <span className="whitespace-nowrap">{t('settings.ai.meetingLookahead')}</span>
-                      <SettingsSelect
-                        aria-label={t('settings.ai.meetingLookahead')}
-                        value={settings.meeting_lookahead_minutes}
-                        disabled={saving === 'meeting_lookahead_minutes'}
-                        onChange={e =>
-                          void applyHeartbeatPatch({
-                            meeting_lookahead_minutes: Number(e.target.value),
-                          })
-                        }
-                        className="w-full"
-                        inputSize="sm">
-                        {[15, 30, 60, 120, 240].map(minutes => (
-                          <option key={minutes} value={minutes}>
-                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
-                          </option>
-                        ))}
-                      </SettingsSelect>
-                    </label>
-                    <label className="min-w-0 space-y-1 text-xs font-medium text-content-secondary">
-                      <span className="whitespace-nowrap">
-                        {t('settings.ai.reminderLookahead')}
-                      </span>
-                      <SettingsSelect
-                        aria-label={t('settings.ai.reminderLookahead')}
-                        value={settings.reminder_lookahead_minutes}
-                        disabled={saving === 'reminder_lookahead_minutes'}
-                        onChange={e =>
-                          void applyHeartbeatPatch({
-                            reminder_lookahead_minutes: Number(e.target.value),
-                          })
-                        }
-                        className="w-full"
-                        inputSize="sm">
-                        {[5, 15, 30, 60, 120].map(minutes => (
-                          <option key={minutes} value={minutes}>
-                            {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
-                          </option>
-                        ))}
-                      </SettingsSelect>
-                    </label>
-                  </div>
-                  <LoopToggle
-                    label={t('settings.ai.cronReminderChecks')}
-                    description={t('settings.ai.cronReminderChecksDesc')}
-                    checked={settings.notify_reminders}
-                    busy={saving === 'notify_reminders'}
-                    onToggle={() =>
-                      void applyHeartbeatPatch({ notify_reminders: !settings.notify_reminders })
-                    }
-                  />
-                  <LoopToggle
-                    label={t('settings.ai.relevantNotificationChecks')}
-                    description={t('settings.ai.relevantNotificationChecksDesc')}
-                    checked={settings.notify_relevant_events}
-                    busy={saving === 'notify_relevant_events'}
-                    onToggle={() =>
-                      void applyHeartbeatPatch({
-                        notify_relevant_events: !settings.notify_relevant_events,
-                      })
-                    }
-                  />
-                  <LoopToggle
-                    label={t('settings.ai.externalDelivery')}
-                    description={t('settings.ai.externalDeliveryDesc')}
-                    checked={settings.external_delivery_enabled}
-                    busy={saving === 'external_delivery_enabled'}
-                    onToggle={() =>
-                      void applyHeartbeatPatch({
-                        external_delivery_enabled: !settings.external_delivery_enabled,
-                      })
-                    }
-                  />
-
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2">
-                    <label
-                      className="text-xs font-medium text-content-secondary"
-                      htmlFor="heartbeat-interval">
-                      {t('settings.ai.interval')}
-                    </label>
-                    <SettingsSelect
-                      id="heartbeat-interval"
-                      aria-label={t('settings.ai.interval')}
-                      value={settings.interval_minutes}
-                      disabled={saving === 'interval_minutes'}
-                      onChange={e =>
-                        void applyHeartbeatPatch({ interval_minutes: Number(e.target.value) })
-                      }
-                      inputSize="sm">
-                      {[5, 10, 15, 30, 60].map(minutes => (
-                        <option key={minutes} value={minutes}>
-                          {formatI18n(t('settings.ai.minutesShort'), { count: minutes })}
-                        </option>
-                      ))}
-                    </SettingsSelect>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="xs"
-                      onClick={() => void runPlannerNow()}
-                      disabled={runningTick}
-                      className="ml-auto">
-                      {runningTick ? t('settings.ai.running') : t('settings.ai.plannerTickNow')}
-                    </Button>
-                  </div>
-
-                  {plannerSummary && (
-                    <div className="rounded-md border border-primary-100 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-primary-900">
-                      {t('settings.ai.plannerSummary')
-                        .replace('{sourceEvents}', String(plannerSummary.source_events))
-                        .replace('{sent}', String(plannerSummary.deliveries_sent))
-                        .replace('{deduped}', String(plannerSummary.deliveries_skipped_dedup))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-xs text-content-muted">
-                  {loading
-                    ? t('settings.ai.loadingHeartbeatControls')
-                    : t('settings.ai.heartbeatControlsUnavailable')}
-                </div>
-              )}
-            </div>
-
-            <div className="overflow-hidden rounded-lg border border-line bg-surface-muted">
-              <div className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-content-faint">
-                {t('settings.ai.loopMap')}
-              </div>
-              <div className="divide-y divide-line dark:divide-neutral-800">
-                {loops.map(loop => (
-                  <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-content">{loop.name}</div>
-                      <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-content-muted">
-                        <span>{loop.enabled ? t('settings.ai.on') : t('settings.ai.off')}</span>
-                        <span>{loop.cadence}</span>
-                      </div>
-                    </div>
-                    <div className="min-w-0 text-xs text-content-secondary">
-                      <div>{loop.work}</div>
-                      <div className="mt-1 font-mono text-[11px] text-content-muted">
-                        {t('settings.ai.routeLabel').replace('{route}', loop.route)}
-                      </div>
-                      <div className="mt-1 text-content-muted">{loop.risk}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showLedger && (
-          <div className="rounded-lg border border-line bg-surface p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-content">
-                  {t('settings.ai.recentUsageLedger')}
-                </div>
-                <div className="text-xs text-content-muted">
-                  {t('settings.ai.recentUsageLedgerDesc')}
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                onClick={() => void refresh()}
-                disabled={loading}>
-                {t('common.reload')}
-              </Button>
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-              <MetricTile
-                label={t('settings.ai.weekBudget')}
-                value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
-                detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
-              />
-              <MetricTile
-                label={t('settings.ai.cycleRemaining')}
-                value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-                detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
-              />
-              <MetricTile
-                label={t('settings.ai.cycleTotalSpend')}
-                value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
-                detail={
-                  usage
-                    ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
-                    : undefined
-                }
-              />
-              <MetricTile
-                label={t('settings.ai.avgSpendRow')}
-                value={spendSample.avgRowUsd > 0 ? formatUsd(spendSample.avgRowUsd) : 'n/a'}
-                detail={`${spendRows.length} recent spend rows`}
-              />
-              <MetricTile
-                label={t('settings.ai.backgroundApiReads')}
-                value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-                detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
-              />
-              <MetricTile
-                label={t('settings.ai.backgroundWakeups')}
-                value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
-                detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
-              />
-            </div>
-
-            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
-                {t('settings.ai.budgetMath')}
-              </div>
-              <div className="mt-2 grid gap-2">
-                <FormulaRow
-                  label={t('settings.ai.rowsLeft')}
-                  value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
-                  detail={
-                    estimatedRowsLeft !== null
-                      ? `remaining / avg row = ${formatUsd(usage?.remainingUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
-                      : 'Need recent spend rows to estimate.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.rowsPerFullWeekBudget')}
-                  value={
-                    estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'
-                  }
-                  detail={
-                    estimatedRowsPerBudget !== null
-                      ? `cycle budget / avg row = ${formatUsd(usage?.cycleBudgetUsd ?? 0)} / ${formatUsd(spendSample.avgRowUsd)}`
-                      : 'Need recent spend rows to estimate.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.sampleBurnRate')}
-                  value={
-                    spendSample.spendPerHour > 0
-                      ? `${formatUsd(spendSample.spendPerHour)}/hr`
-                      : 'n/a'
-                  }
-                  detail={
-                    spendSample.sampleHours > 0
-                      ? `${formatCount(spendSample.rowsPerHour)} rows/hr across ${spendSample.sampleHours.toFixed(1)}h sample`
-                      : 'Need timestamps from at least two spend rows.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.projectedEmpty')}
-                  value={projectedExhaustAt}
-                  detail={
-                    projectedHoursLeft !== null
-                      ? `${projectedHoursLeft.toFixed(1)}h after latest spend at recent burn rate`
-                      : 'No projection without recent hourly spend.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.apiReadsPerDollarRemaining')}
-                  value={
-                    scheduledCallsPerRemainingDollar !== null
-                      ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
-                      : 'n/a'
-                  }
-                  detail={
-                    usage
-                      ? `background API reads/week / remaining = ${formatCount(backgroundApiReadsPerWeek)} / ${formatUsd(usage.remainingUsd)}`
-                      : 'Need usage response to estimate.'
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 rounded-lg border border-line bg-surface-muted p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
-                {t('settings.ai.loopCallBudget')}
-              </div>
-              <div className="mt-2 grid gap-2">
-                <FormulaRow
-                  label={t('settings.ai.heartbeatTicks')}
-                  value={`${formatCount(heartbeatTicksPerWeek)}/week`}
-                  detail={`10080 min/week / ${heartbeatIntervalMinutes} min interval`}
-                />
-                <FormulaRow
-                  label={t('settings.ai.calendarPlannerCalls')}
-                  value={`${formatCount(calendarPlannerCallsPerWeek)}/week`}
-                  detail={
-                    settings?.notify_meetings
-                      ? `ticks * (1 list_connections + ${calendarConnectionsPolled} GOOGLECALENDAR_EVENTS_LIST)`
-                      : 'Meeting collector disabled.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.calendarFanoutCap')}
-                  value={`${formatCount(calendarConnectionsPolled)}/${formatCount(activeCalendarConnections.length)} conn/tick`}
-                  detail={`max_calendar_connections_per_tick = ${maxCalendarConnectionsPerTick}; skipped now = ${calendarConnectionsSkipped}`}
-                />
-                <FormulaRow
-                  label={t('settings.ai.subconsciousModelCalls')}
-                  value={`${formatCount(subconsciousModelCallsPerWeek)}/week`}
-                  detail={
-                    settings?.enabled && settings.inference_enabled
-                      ? 'one kind=subconscious_tick model call per heartbeat tick'
-                      : 'Heartbeat inference disabled.'
-                  }
-                />
-                <FormulaRow
-                  label={t('settings.ai.composioSyncScans')}
-                  value={`${formatCount(composioConnectionScansPerWeek)}/week`}
-                  detail={`${activeConnections.length} active integration connection(s) scanned every ${COMPOSIO_PERIODIC_TICK_MINUTES} min`}
-                />
-                <FormulaRow
-                  label={t('settings.ai.totalBackgroundApiReadBudget')}
-                  value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-                  detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
-                />
-                <FormulaRow
-                  label={t('settings.ai.memoryWorkerPolls')}
-                  value={`${formatCount(memoryPollsPerWeek)}/week max`}
-                  detail={`${MEMORY_WORKERS} workers * ${MEMORY_POLL_SECONDS}s poll; LLM calls only for queued jobs`}
-                />
-              </div>
-            </div>
-
-            {latestSpend && (
-              <div className="mt-3 rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-content-secondary">
-                {t('settings.ai.latestSpend')
-                  .replace('{amount}', formatUsd(spendAmount(latestSpend)))
-                  .replace('{time}', new Date(latestSpend.createdAt).toLocaleString())
-                  .replace('{action}', latestSpend.action)}
-              </div>
-            )}
-
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
-                  {t('settings.ai.topActions')}
-                </div>
-                <div className="mt-1 space-y-1">
-                  {actionSummary.length > 0 ? (
-                    actionSummary.map(([action, count, total]) => (
-                      <div
-                        key={action}
-                        className="flex items-center justify-between gap-2 text-xs text-content-secondary">
-                        <span className="truncate font-mono">{action}</span>
-                        <span className="shrink-0 text-content-muted">
-                          {count} / {formatUsd(total)}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-xs text-content-muted">{t('settings.ai.noSpendRows')}</div>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
-                  {t('settings.ai.topHours')}
-                </div>
-                <div className="mt-1 space-y-1">
-                  {hourSummary.length > 0 ? (
-                    hourSummary.map(([hour, total]) => (
-                      <div
-                        key={hour}
-                        className="flex items-center justify-between gap-2 text-xs text-content-secondary">
-                        <span>{hour}</span>
-                        <span className="font-mono text-content-muted">{formatUsd(total)}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-xs text-content-muted">
-                      {t('settings.ai.noHourlySpend')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-};
-
-// CloudProviderCard was removed alongside the list-based auth UI. The new
-// chip layout (ProviderToggleChip) covers the same affordances with less
-// chrome. CloudProviderEditor still exists for the advanced add/edit flow,
-// although nothing currently mounts it.
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Workload row (stacked, narrow-friendly)
-// ─────────────────────────────────────────────────────────────────────────────
-
-type WorkloadRowProps = { workload: Workload; ref_: ProviderRef; cloudProviders: CloudProvider[] };
-
-const WorkloadRow = ({
-  workload,
-  ref_,
-  cloudProviders,
-  onCustomClick,
-}: WorkloadRowProps & { onCustomClick: () => void }) => {
-  const { t } = useT();
-  const selectedCloud =
-    ref_.kind === 'cloud' ? cloudProviders.find(c => c.slug === ref_.providerSlug) : undefined;
-  const isCustom = ref_.kind === 'cloud' || ref_.kind === 'local';
-
-  let resolved = '';
-  if (ref_.kind === 'cloud') {
-    resolved = selectedCloud
-      ? `${selectedCloud.label} · ${ref_.model}`
-      : `${ref_.providerSlug} · ${ref_.model}`;
-  } else if (ref_.kind === 'local') {
-    resolved = formatI18n(t('settings.ai.localModelResolved'), { model: ref_.model });
-  } else if (ref_.kind === 'openhuman') {
-    resolved = t('settings.ai.openhumanDefault');
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-3 py-3 transition-colors">
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="text-sm font-medium text-content">{t(workload.labelKey)}</div>
-        <div className="text-xs leading-5 text-content-muted">{t(workload.descriptionKey)}</div>
-        <div className="text-[11px] leading-5 text-content-muted">
-          {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
-        </div>
-        {resolved ? (
-          <div
-            className={`font-mono text-[11px] truncate ${
-              isCustom ? 'text-sky-700 dark:text-sky-200' : 'text-content-muted'
-            }`}>
-            {resolved}
-          </div>
-        ) : (
-          <div className="text-[11px] text-content-faint">{t('settings.ai.workload.noModel')}</div>
-        )}
-      </div>
-      <Button
-        type="button"
-        variant="secondary"
-        size="xs"
-        onClick={onCustomClick}
-        className={isCustom ? 'ring-1 ring-neutral-300 dark:ring-neutral-700' : ''}>
-        {isCustom ? t('settings.ai.workload.changeModel') : t('settings.ai.workload.chooseModel')}
-      </Button>
-    </div>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Custom-routing dialog — opened when the user clicks "Custom" on a workload.
-// Lets them pick a provider (cloud or local) and the specific model id.
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CustomRoutingDialogProps {
-  workload: Workload;
-  initial: ProviderRef;
-  cloudProviders: CloudProvider[];
-  localModels: OllamaModel[];
-  ollamaRunning: boolean;
-  /** Current per-model vision registry, used to prefill the vision checkbox. */
-  modelRegistry: ModelRegistryEntry[];
-  onClose: () => void;
-  /** Emits the chosen provider ref plus the user's vision flag for that model. */
-  onSubmit: (next: ProviderRef, vision: boolean) => void;
-}
-
-type CustomDialogSource =
-  | { kind: 'cloud'; providerSlug: string }
-  | { kind: 'local' }
-  | { kind: 'claude-code' };
-
-/** Default model identifier presented when the user first picks the Claude
- * Code CLI source. This string is passed verbatim to `claude --model`, so it
- * MUST be a value the CLI accepts — an alias (`sonnet`, `opus`, `fable`) or a
- * full name (`claude-sonnet-4-5`). NOT a marketing string like `sonnet-4-5`,
- * which the CLI rejects with "model may not exist". `sonnet` tracks the latest
- * Sonnet the signed-in account can run. */
-const CLAUDE_CODE_DEFAULT_MODEL = 'sonnet';
-
-function providerRefSignature(ref: ProviderRef): string {
-  switch (ref.kind) {
-    case 'openhuman':
-      return 'openhuman';
-    case 'default':
-      return 'default';
-    case 'cloud':
-      return `cloud:${ref.providerSlug}:${ref.model}:${ref.temperature ?? ''}`;
-    case 'local':
-      return `local:${ref.model}:${ref.temperature ?? ''}`;
-    case 'claude-code':
-      return `claude-code:${ref.model}:${ref.temperature ?? ''}`;
-  }
-}
-
-function inferRoutingMode(routing: RoutingMap): RoutingMode {
-  const refs = ROUTING_WORKLOAD_IDS.map(id => routing[id]);
-  if (refs.every(ref => ref.kind === 'openhuman' || ref.kind === 'default')) {
-    return 'managed';
-  }
-  const first = refs[0];
-  if (
-    first &&
-    (first.kind === 'cloud' || first.kind === 'local') &&
-    refs.every(ref => providerRefSignature(ref) === providerRefSignature(first))
-  ) {
-    return 'own';
-  }
-  return 'custom';
-}
-
-function inferSharedModelRef(routing: RoutingMap): ProviderRef | null {
-  const refs = ROUTING_WORKLOAD_IDS.map(id => routing[id]);
-  const first = refs[0];
-  if (!first) return null;
-  if (refs.every(ref => providerRefSignature(ref) === providerRefSignature(first))) {
-    return first.kind === 'openhuman' ? null : first;
-  }
-  return (
-    refs.find(ref => ref.kind === 'cloud' || ref.kind === 'local' || ref.kind === 'default') ?? null
-  );
-}
-
-function routingWithAllWorkloads(next: ProviderRef): RoutingMap {
-  return {
-    chat: next,
-    reasoning: next,
-    agentic: next,
-    coding: next,
-    vision: next,
-    memory: next,
-    heartbeat: next,
-    learning: next,
-    subconscious: next,
-  };
-}
-
-function humanizeModelId(id: string): string {
-  return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function appendTemperatureToProviderString(provider: string, temperature: number | null): string {
-  if (temperature == null || !Number.isFinite(temperature)) return provider;
-  const rounded = Math.round(temperature * 100) / 100;
-  return `${provider}@${String(rounded)}`;
-}
-
-const CustomRoutingDialog = ({
-  workload,
-  initial,
-  cloudProviders,
-  localModels,
-  ollamaRunning,
-  modelRegistry,
-  onClose,
-  onSubmit,
-}: CustomRoutingDialogProps) => {
-  const { t } = useT();
-  // Non-openhuman cloud providers + local-ollama (if available) are the
-  // "Custom" options. OpenHuman is its own Managed path; Default serializes
-  // to the backend's `cloud` sentinel. Claude Code is excluded here — it has
-  // its own dedicated `claude-code:` select option, not a generic cloud one.
-  const customCloud = cloudProviders.filter(
-    p => p.slug !== 'openhuman' && p.slug !== 'claude-code'
-  );
-  const localAvailable = ollamaRunning && localModels.length > 0;
-  // Claude Code CLI is offered as a routing source only when its peer chip is
-  // enabled (a cloud_providers entry exists).
-  const claudeCodeEnabled = cloudProviders.some(p => p.slug === 'claude-code');
-
-  const initialSource: CustomDialogSource | null =
-    initial.kind === 'cloud'
-      ? { kind: 'cloud', providerSlug: initial.providerSlug }
-      : initial.kind === 'local'
-        ? { kind: 'local' }
-        : initial.kind === 'claude-code'
-          ? { kind: 'claude-code' }
-          : customCloud[0]
-            ? { kind: 'cloud', providerSlug: customCloud[0].slug }
-            : localAvailable
-              ? { kind: 'local' }
-              : claudeCodeEnabled
-                ? { kind: 'claude-code' }
-                : null;
-
-  const [source, setSource] = useState<CustomDialogSource | null>(initialSource);
-  const [model, setModel] = useState<string>(() => {
-    if (initial.kind === 'cloud' || initial.kind === 'local' || initial.kind === 'claude-code')
-      return initial.model;
-    if (initialSource?.kind === 'cloud') {
-      const p = customCloud.find(c => c.slug === initialSource.providerSlug);
-      return p ? '' : '';
-    }
-    if (initialSource?.kind === 'claude-code') return CLAUDE_CODE_DEFAULT_MODEL;
-    return localModels[0]?.id ?? '';
-  });
-  const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
-  const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
-  const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
-  const [modelsKey, setModelsKey] = useState(0);
-  const [testBusy, setTestBusy] = useState(false);
-  const [testReply, setTestReply] = useState<string | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
-  const [testStartedAt, setTestStartedAt] = useState<string | null>(null);
-  const testRequestIdRef = useRef(0);
-  // Optional temperature override for this workload. `null` = use provider/global default;
-  // a finite number means "send `temperature: X` upstream for this workload only".
-  const [temperature, setTemperature] = useState<number | null>(
-    initial.kind === 'cloud' || initial.kind === 'local' || initial.kind === 'claude-code'
-      ? (initial.temperature ?? null)
-      : null
-  );
-
-  // Registry slug for the selected source — keys the per-model vision flag.
-  // Cloud uses the provider slug; local → `ollama`; claude-code → `claude-code`.
-  const registrySlug =
-    source?.kind === 'cloud'
-      ? source.providerSlug
-      : source?.kind === 'local'
-        ? 'ollama'
-        : source?.kind === 'claude-code'
-          ? 'claude-code'
-          : null;
-
-  // The Vision workload always feeds the multimodal `vision-v1` path, so any
-  // model routed here is treated as image-capable regardless of the per-model
-  // registry flag. Force the flag on and lock the checkbox for this workload.
-  const visionLocked = workload.id === 'vision';
-
-  // User-set vision flag for this (provider, model). Prefilled from the registry,
-  // re-prefilled whenever the selected provider/model changes. Always on (and
-  // not user-editable) for the Vision workload.
-  const [vision, setVision] = useState<boolean>(() =>
-    visionLocked
-      ? true
-      : registrySlug && model.trim()
-        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-        : false
-  );
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setVision(
-      visionLocked
-        ? true
-        : registrySlug && model.trim()
-          ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-          : false
-    );
-    // modelRegistry is stable for the dialog's lifetime (prop doesn't change mid-open).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registrySlug, model, visionLocked]);
-
-  const selectedCloud =
-    source?.kind === 'cloud' ? customCloud.find(c => c.slug === source.providerSlug) : undefined;
-  // Azure routes inference by deployment name, so the model field is relabelled
-  // and defaults to free text for these connections (#5213). Shared with the
-  // global "Use Your Own Models" card so the two pickers cannot drift.
-  const modelEntry = useModelEntryMode({
-    endpoint: selectedCloud?.endpoint,
-    model,
-    catalogIds: cloudModels.map(m => m.id),
-  });
-
-  // Fetch available models whenever the selected cloud provider changes.
-  const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
-  useEffect(() => {
-    if (!selectedSlug) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCloudModels([]);
-      setCloudModelsError(null);
-      return;
-    }
-    const provider = customCloud.find(c => c.slug === selectedSlug);
-    if (!provider) {
-      setCloudModels([]);
-      setCloudModelsError(null);
-      return;
-    }
-    let active = true;
-    setCloudModelsLoading(true);
-    setCloudModels([]);
-    setCloudModelsError(null);
-    console.debug('[ai-settings] fetching models for provider', provider.slug);
-    listProviderModels(provider.slug)
-      .then(ms => {
-        if (!active) return;
-        console.debug('[ai-settings] fetched', ms.length, 'models for', provider.slug);
-        setCloudModels(ms);
-        setCloudModelsLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[ai-settings] listProviderModels failed for', provider.slug, ':', msg);
-        setCloudModelsError(msg);
-        setCloudModelsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // customCloud is stable for the dialog's lifetime (prop doesn't change mid-open)
-    // modelsKey is the manual retry trigger
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSlug, modelsKey]);
-
-  const canSave = source !== null && model.trim().length > 0;
-  const canTest = canSave && !cloudModelsLoading;
-
-  const resetTestState = () => {
-    testRequestIdRef.current += 1;
-    setTestReply(null);
-    setTestError(null);
-    setTestStartedAt(null);
-    setTestBusy(false);
-  };
-
-  const currentProviderString =
-    source == null
-      ? null
-      : source.kind === 'cloud'
-        ? appendTemperatureToProviderString(
-            `${source.providerSlug}:${model.trim()}`,
-            temperature == null || !Number.isFinite(temperature) ? null : temperature
-          )
-        : appendTemperatureToProviderString(
-            `ollama:${model.trim()}`,
-            temperature == null || !Number.isFinite(temperature) ? null : temperature
-          );
-
-  const handleSave = () => {
-    if (!source || !canSave) return;
-    const temp = temperature == null || !Number.isFinite(temperature) ? null : temperature;
-    if (source.kind === 'cloud') {
-      onSubmit(
-        {
-          kind: 'cloud',
-          providerSlug: source.providerSlug,
-          model: model.trim(),
-          temperature: temp,
-        },
-        vision
-      );
-    } else if (source.kind === 'claude-code') {
-      onSubmit({ kind: 'claude-code', model: model.trim(), temperature: temp }, vision);
-    } else {
-      onSubmit({ kind: 'local', model: model.trim(), temperature: temp }, vision);
-    }
-  };
-
-  const handleTest = async () => {
-    if (!currentProviderString || !canTest) return;
-    const requestId = testRequestIdRef.current + 1;
-    testRequestIdRef.current = requestId;
-    setTestBusy(true);
-    setTestReply(null);
-    setTestError(null);
-    setTestStartedAt(new Date().toLocaleTimeString());
-    try {
-      const result = await testProviderModel(workload.id, currentProviderString, 'Hello world');
-      if (testRequestIdRef.current !== requestId) return;
-      setTestReply(result.reply);
-    } catch (err) {
-      if (testRequestIdRef.current !== requestId) return;
-      // #5146 §2.4: a raw upstream string ("401", "model_not_found", a bare
-      // 404) tells the user nothing about what to change. Map the common
-      // shapes onto a concrete next step; unrecognised errors pass through.
-      const raw = err instanceof Error ? err.message : String(err);
-      // The banner copy is deliberately generic (a provider error can echo
-      // request material), so keep the raw text on the console where it is
-      // still reachable for diagnosis.
-      console.error(`[ai-settings][test] provider test failed workload=${workload.id}`, raw);
-      // The bare slug, not `currentProviderString` — that is the composite
-      // `provider:model[@temp]` and would read as "'openai:gpt-4o' rejected it".
-      setTestError(describeProviderVerificationFailure(registrySlug ?? '', raw, t));
-    } finally {
-      if (testRequestIdRef.current === requestId) {
-        setTestBusy(false);
-      }
-    }
-  };
-
-  // Empty state only when there's genuinely nothing to route to: no custom
-  // cloud providers, no local Ollama, and the Claude Code peer chip is off.
-  const noProviders = customCloud.length === 0 && !localAvailable && !claudeCodeEnabled;
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={formatI18n(t('settings.ai.customRoutingForWorkload'), {
-        label: t(workload.labelKey),
-      })}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft">
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <h3 className="text-base font-semibold text-content">
-              {t('settings.ai.customRouting')}
-            </h3>
-            <p className="mt-0.5 text-xs text-content-muted">{t(workload.labelKey)}</p>
-            <p className="mt-2 max-w-md text-xs leading-5 text-content-muted">
-              {t(WORKLOAD_MODEL_HINT_KEYS[workload.id])}
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="tertiary"
-            size="xs"
-            onClick={onClose}
-            aria-label={t('common.close')}>
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </Button>
-        </div>
-
-        {noProviders ? (
-          <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-            {t('settings.ai.noCustomProviders')}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-content-secondary">
-                {t('settings.ai.providerLabel')}
-              </label>
-              <SettingsSelect
-                value={
-                  source
-                    ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
-                    : ''
-                }
-                onChange={e => {
-                  const colonIdx = e.target.value.indexOf(':');
-                  const kind = e.target.value.slice(0, colonIdx);
-                  const slug = e.target.value.slice(colonIdx + 1);
-                  resetTestState();
-                  if (kind === 'local') {
-                    setSource({ kind: 'local' });
-                    setModel(localModels[0]?.id ?? '');
-                    modelEntry.syncToEndpoint(undefined);
-                  } else if (kind === 'cloud') {
-                    setSource({ kind: 'cloud', providerSlug: slug });
-                    setModel('');
-                    // Azure connections need a deployment name, which the
-                    // catalog never lists — start on free text (#5213).
-                    modelEntry.syncToEndpoint(customCloud.find(c => c.slug === slug)?.endpoint);
-                  } else if (kind === 'claude-code') {
-                    setSource({ kind: 'claude-code' });
-                    setModel(CLAUDE_CODE_DEFAULT_MODEL);
-                    modelEntry.syncToEndpoint(undefined);
-                  }
-                }}
-                className="w-full">
-                {customCloud.map(p => (
-                  <option key={p.slug} value={`cloud:${p.slug}`}>
-                    {p.label}
-                  </option>
-                ))}
-                {localAvailable && <option value="local:">{t('settings.ai.localOllama')}</option>}
-                {/* Offered only when the peer chip is enabled — or when this
-                    workload is already pinned to it (keeps the select value
-                    valid). */}
-                {(claudeCodeEnabled || source?.kind === 'claude-code') && (
-                  <option value="claude-code:">{t('settings.ai.claudeCode.modalTitle')}</option>
-                )}
-              </SettingsSelect>
-            </div>
-
-            {source?.kind === 'local' ? (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-content-secondary">
-                  {t('settings.ai.modelLabel')}
-                </label>
-                <SettingsSelect
-                  value={model}
-                  onChange={e => {
-                    resetTestState();
-                    setModel(e.target.value);
-                  }}
-                  className="w-full">
-                  {localModels.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                </SettingsSelect>
-              </div>
-            ) : source?.kind === 'claude-code' ? (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-content-secondary">
-                  {t('settings.ai.modelLabel')}
-                </label>
-                <SettingsTextField
-                  type="text"
-                  mono
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  placeholder="sonnet"
-                />
-                <p className="text-[11px] text-content-muted">
-                  {t('settings.ai.claudeCode.modelHelp')}
-                </p>
-              </div>
-            ) : (
-              <ModelEntryField
-                mode={modelEntry}
-                model={model}
-                onModelChange={next => {
-                  resetTestState();
-                  setModel(next);
-                }}
-                catalog={cloudModels}
-                catalogLoading={cloudModelsLoading}
-                catalogError={cloudModelsError}
-                onRetry={() => setModelsKey(k => k + 1)}
-                label={t('settings.ai.modelLabel')}
-                placeholder={
-                  selectedCloud
-                    ? formatI18n(t('settings.ai.modelIdPlaceholderForProvider'), {
-                        slug: selectedCloud.slug,
-                      })
-                    : t('settings.ai.modelIdPlaceholder')
-                }
-                analyticsId="ai-model-entry-mode-toggle"
-                optionLabel={m => `${humanizeModelId(m.id)} — ${m.id}`}
-              />
-            )}
-
-            {/* Temperature override (optional). When unchecked, the workload
-                inherits the provider/global default temperature. */}
-            <div className="flex flex-col gap-1.5">
-              <label className="flex items-center justify-between gap-2 text-xs font-medium text-content-secondary">
-                <span className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={temperature != null}
-                    onChange={e => {
-                      resetTestState();
-                      setTemperature(e.target.checked ? 0.7 : null);
-                    }}
-                    className="h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500"
-                  />
-                  {t('settings.ai.temperatureOverride')}
-                </span>
-                {temperature != null && (
-                  <span className="font-mono text-[11px] text-content-muted">
-                    {temperature.toFixed(2)}
-                  </span>
-                )}
-              </label>
-              {temperature != null && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    aria-label={t('settings.ai.temperatureOverrideSlider')}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={temperature}
-                    onChange={e => {
-                      resetTestState();
-                      setTemperature(Number(e.target.value));
-                    }}
-                    className="flex-1 accent-primary-500"
-                  />
-                  <input
-                    type="number"
-                    aria-label={t('settings.ai.temperatureOverrideValue')}
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={temperature}
-                    onChange={e => {
-                      const v = Number(e.target.value);
-                      if (Number.isFinite(v)) {
-                        resetTestState();
-                        setTemperature(Math.max(0, Math.min(2, v)));
-                      }
-                    }}
-                    className="w-16 rounded-lg border border-line-strong bg-surface px-2 py-1 text-xs font-mono text-content focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                  />
-                </div>
-              )}
-              <p className="text-[11px] text-content-faint">
-                {t('settings.ai.temperatureOverrideDesc')}
-              </p>
-            </div>
-
-            {/* Vision capability (optional). Marks a custom/BYOK model as
-                accepting image input so the chat composer offers image
-                attachments for it. Only shown once a concrete model is chosen. */}
-            {registrySlug && model.trim().length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-content-secondary">
-                  <input
-                    type="checkbox"
-                    checked={visionLocked ? true : vision}
-                    onChange={e => setVision(e.target.checked)}
-                    disabled={visionLocked}
-                    className="h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500 disabled:opacity-60 disabled:cursor-not-allowed"
-                  />
-                  {t('settings.ai.modelVision')}
-                </label>
-                <p className="text-[11px] text-content-faint">{t('settings.ai.modelVisionDesc')}</p>
-              </div>
-            )}
-
-            {(testBusy || testReply || testError || testStartedAt) && (
-              <div
-                role={testError ? 'alert' : 'status'}
-                className={`rounded-lg border px-3 py-2 text-xs ${
-                  testError
-                    ? 'border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 text-coral-700 dark:text-coral-300'
-                    : testBusy
-                      ? 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-200'
-                      : 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-sage-800 dark:text-sage-200'
-                }`}>
-                <div className="font-semibold">
-                  {testError
-                    ? t('settings.ai.testFailed')
-                    : testBusy
-                      ? t('settings.ai.testingModel')
-                      : t('settings.ai.modelResponse')}
-                </div>
-                <div className="mt-1 space-y-1">
-                  <div className="font-mono text-[11px] text-current/80">
-                    {formatI18n(t('settings.ai.providerWithValue'), {
-                      value: currentProviderString ?? t('settings.ai.noneDash'),
-                    })}
-                  </div>
-                  <div className="font-mono text-[11px] text-current/80">
-                    {t('settings.ai.promptHelloWorld')}
-                  </div>
-                  {testStartedAt && (
-                    <div className="font-mono text-[11px] text-current/80">
-                      {formatI18n(t('settings.ai.startedAt'), { value: testStartedAt })}
-                    </div>
-                  )}
-                </div>
-                {testBusy ? (
-                  <div className="mt-2 rounded-md border border-current/15 bg-surface/50 px-3 py-2 text-[12px] dark:bg-black/10">
-                    {t('settings.ai.waitingForModelResponse')}
-                  </div>
-                ) : testError ? (
-                  <div className="mt-2 rounded-md border border-current/15 bg-surface/50 px-3 py-2 font-mono text-[11px] whitespace-pre-wrap break-words dark:bg-black/10">
-                    {testError}
-                  </div>
-                ) : (
-                  <div className="mt-3 space-y-1.5">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-current/80">
-                      {t('settings.ai.response')}
-                    </div>
-                    <div className="rounded-md border border-current/15 bg-surface/70 px-3 py-3 text-[13px] leading-relaxed text-content whitespace-pre-wrap break-words dark:bg-black/10">
-                      {testReply}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleTest()}
-            disabled={!canTest || testBusy}>
-            {testBusy ? t('settings.ai.testing') : t('settings.ai.test')}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={handleSave}
-            disabled={!canSave}>
-            {t('common.save')}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Save bar (sticky)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SaveBar = ({
-  diffSummary,
-  changeCount,
-  onSave,
-  onDiscard,
-}: {
-  diffSummary: string[];
-  changeCount: number;
-  onSave: () => void;
-  onDiscard: () => void;
-}) => {
-  const { t } = useT();
-  return (
-    <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center px-4">
-      <div className="pointer-events-auto flex w-full items-center gap-2 rounded-lg border border-line bg-surface/95 px-3 py-2 shadow-float backdrop-blur-md animate-fade-up">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300">
-          <LuCircleAlert className="h-3.5 w-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-content">
-            {changeCount === 1
-              ? t('settings.ai.unsavedChange')
-              : `${String(changeCount)} ${t('settings.ai.unsavedChanges')}`}
-          </div>
-          <div className="truncate font-mono text-[10px] text-content-muted">
-            {diffSummary.slice(0, 2).join(' · ')}
-            {diffSummary.length > 2 ? ` · +${diffSummary.length - 2}` : ''}
-          </div>
-        </div>
-        <Button variant="secondary" size="xs" onClick={onDiscard}>
-          {t('settings.ai.discard')}
-        </Button>
-        <Button
-          variant="primary"
-          size="xs"
-          onClick={onSave}
-          leadingIcon={<LuCheck className="h-3 w-3" />}>
-          {t('common.save')}
-        </Button>
-      </div>
-    </div>
-  );
-};
-
-const GlobalOwnModelSelector = ({
-  current,
-  saved,
-  cloudProviders,
-  localModels,
-  ollamaRunning,
-  modelRegistry,
-  onApply,
-}: {
-  current: ProviderRef | null;
-  saved: ProviderRef | null;
-  cloudProviders: CloudProvider[];
-  localModels: OllamaModel[];
-  ollamaRunning: boolean;
-  modelRegistry: ModelRegistryEntry[];
-  onApply: (next: ProviderRef, vision: boolean) => Promise<void>;
-}) => {
-  const { t } = useT();
-  // Claude Code is excluded from the generic cloud list — it has its own
-  // dedicated `claude-code:` option below (offered when connected).
-  const customCloud = cloudProviders.filter(
-    p => p.slug !== 'openhuman' && p.slug !== 'claude-code'
-  );
-  const localAvailable = ollamaRunning && localModels.length > 0;
-  const claudeCodeEnabled = cloudProviders.some(p => p.slug === 'claude-code');
-
-  const initialSource: CustomDialogSource | null =
-    current?.kind === 'cloud'
-      ? { kind: 'cloud', providerSlug: current.providerSlug }
-      : current?.kind === 'local'
-        ? { kind: 'local' }
-        : current?.kind === 'claude-code'
-          ? { kind: 'claude-code' }
-          : customCloud[0]
-            ? { kind: 'cloud', providerSlug: customCloud[0].slug }
-            : localAvailable
-              ? { kind: 'local' }
-              : claudeCodeEnabled
-                ? { kind: 'claude-code' }
-                : null;
-
-  const [source, setSource] = useState<CustomDialogSource | null>(initialSource);
-  const [model, setModel] = useState<string>(() => {
-    if (current?.kind === 'cloud' || current?.kind === 'local' || current?.kind === 'claude-code') {
-      return current.model;
-    }
-    if (initialSource?.kind === 'claude-code') return CLAUDE_CODE_DEFAULT_MODEL;
-    return '';
-  });
-  // Registry slug for the selected source — keys the per-model vision flag.
-  const registrySlug =
-    source?.kind === 'cloud'
-      ? source.providerSlug
-      : source?.kind === 'local'
-        ? 'ollama'
-        : source?.kind === 'claude-code'
-          ? 'claude-code'
-          : null;
-  const [vision, setVision] = useState<boolean>(() =>
-    registrySlug && model.trim()
-      ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-      : false
-  );
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setVision(
-      registrySlug && model.trim()
-        ? modelRegistryVision(modelRegistry, registrySlug, model.trim())
-        : false
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registrySlug, model]);
-  const [cloudModels, setCloudModels] = useState<ModelInfo[]>([]);
-  const [cloudModelsLoading, setCloudModelsLoading] = useState(false);
-  const [cloudModelsError, setCloudModelsError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const selectedSlug = source?.kind === 'cloud' ? source.providerSlug : null;
-  const selectedCloud = customCloud.find(c => c.slug === selectedSlug);
-  // Azure deployment names are never in the probed catalog, so free text is the
-  // only way to reach them (#5213). Same hook as CustomRoutingDialog — the two
-  // pickers deliberately share one implementation.
-  const modelEntry = useModelEntryMode({
-    endpoint: selectedCloud?.endpoint,
-    model,
-    catalogIds: cloudModels.map(m => m.id),
-  });
-
-  useEffect(() => {
-    if (!selectedSlug) {
-      setCloudModels([]);
-      setCloudModelsError(null);
-      return;
-    }
-    const provider = customCloud.find(c => c.slug === selectedSlug);
-    if (!provider) {
-      setCloudModels([]);
-      setCloudModelsError(null);
-      return;
-    }
-    let active = true;
-    setCloudModelsLoading(true);
-    setCloudModels([]);
-    setCloudModelsError(null);
-    listProviderModels(provider.slug)
-      .then(ms => {
-        if (!active) return;
-        setCloudModels(ms);
-        setCloudModelsLoading(false);
-        // Never auto-pick for Azure: the catalog holds base model ids, and
-        // silently seeding one is exactly what produced "Model not found"
-        // (#5213). Leave the field empty so the user supplies the deployment.
-        if (!model.trim() && ms[0]?.id && !isAzureFoundryEndpoint(provider.endpoint)) {
-          setModel(ms[0].id);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setCloudModelsError(err instanceof Error ? err.message : String(err));
-        setCloudModelsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSlug]);
-
-  useEffect(() => {
-    if (source?.kind === 'local' && !model.trim()) {
-      setModel(localModels[0]?.id ?? '');
-    }
-  }, [source, localModels, model]);
-
-  const canApply = source !== null && model.trim().length > 0;
-  const selectedRef =
-    !source || !model.trim()
-      ? null
-      : source.kind === 'local'
-        ? ({ kind: 'local', model: model.trim() } as const)
-        : source.kind === 'claude-code'
-          ? ({ kind: 'claude-code', model: model.trim() } as const)
-          : ({ kind: 'cloud', providerSlug: source.providerSlug, model: model.trim() } as const);
-  const isSaved =
-    selectedRef !== null &&
-    saved !== null &&
-    providerRefSignature(selectedRef) === providerRefSignature(saved);
-
-  const applySelection = async (nextSource: CustomDialogSource | null, nextModel: string) => {
-    if (!nextSource || !nextModel.trim()) return;
-    setSaving(true);
-    try {
-      if (nextSource.kind === 'local') {
-        await onApply({ kind: 'local', model: nextModel.trim() }, vision);
-      } else if (nextSource.kind === 'claude-code') {
-        await onApply({ kind: 'claude-code', model: nextModel.trim() }, vision);
-      } else {
-        await onApply(
-          { kind: 'cloud', providerSlug: nextSource.providerSlug, model: nextModel.trim() },
-          vision
-        );
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4 rounded-xl border border-line bg-surface p-4">
-      <div className="space-y-1">
-        <div className="text-sm font-medium text-content">{t('settings.ai.globalModel.title')}</div>
-        <p className="text-xs text-amber-700 dark:text-amber-200">
-          {t('settings.ai.globalModel.desc')}
-        </p>
-      </div>
-
-      {customCloud.length === 0 && !localAvailable && !claudeCodeEnabled ? (
-        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-          {t('settings.ai.globalModel.noProviders')}
-        </div>
-      ) : (
-        <>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-content-secondary">
-                {t('settings.ai.globalModel.provider')}
-              </label>
-              <SettingsSelect
-                value={
-                  source
-                    ? `${source.kind}:${source.kind === 'cloud' ? source.providerSlug : ''}`
-                    : ''
-                }
-                onChange={e => {
-                  const colonIdx = e.target.value.indexOf(':');
-                  const kind = e.target.value.slice(0, colonIdx);
-                  const slug = e.target.value.slice(colonIdx + 1);
-                  if (kind === 'local') {
-                    const nextSource = { kind: 'local' } as const;
-                    const nextModel = localModels[0]?.id ?? '';
-                    setSource(nextSource);
-                    setModel(nextModel);
-                    modelEntry.syncToEndpoint(undefined);
-                  } else if (kind === 'claude-code') {
-                    setSource({ kind: 'claude-code' });
-                    setModel(CLAUDE_CODE_DEFAULT_MODEL);
-                    modelEntry.syncToEndpoint(undefined);
-                  } else {
-                    const nextSource = { kind: 'cloud', providerSlug: slug } as const;
-                    setSource(nextSource);
-                    setModel('');
-                    modelEntry.syncToEndpoint(customCloud.find(c => c.slug === slug)?.endpoint);
-                  }
-                }}
-                className="w-full">
-                {customCloud.map(p => (
-                  <option key={p.slug} value={`cloud:${p.slug}`}>
-                    {p.label}
-                  </option>
-                ))}
-                {localAvailable ? (
-                  <option value="local:">{t('settings.ai.provider.ollama')}</option>
-                ) : null}
-                {(claudeCodeEnabled || source?.kind === 'claude-code') && (
-                  <option value="claude-code:">{t('settings.ai.claudeCode.modalTitle')}</option>
-                )}
-              </SettingsSelect>
-            </div>
-
-            {source?.kind === 'local' ? (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-content-secondary">
-                  {t('settings.ai.globalModel.model')}
-                </label>
-                <SettingsSelect
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="w-full">
-                  {localModels.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                </SettingsSelect>
-              </div>
-            ) : (
-              <ModelEntryField
-                mode={modelEntry}
-                model={model}
-                onModelChange={setModel}
-                catalog={cloudModels}
-                catalogLoading={cloudModelsLoading}
-                catalogError={cloudModelsError}
-                label={t('settings.ai.globalModel.model')}
-                placeholder={t('settings.ai.globalModel.enterModelId')}
-                analyticsId="ai-global-model-entry-mode-toggle"
-              />
-            )}
-          </div>
-          {registrySlug && model.trim().length > 0 && (
-            <label className="flex items-start gap-2 text-xs font-medium text-content-secondary">
-              <input
-                type="checkbox"
-                checked={vision}
-                onChange={e => setVision(e.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 rounded border-line-strong text-primary-500 focus:ring-primary-500"
-              />
-              <span>
-                {t('settings.ai.modelVision')}
-                <span className="block font-normal text-[11px] text-content-faint">
-                  {t('settings.ai.modelVisionDesc')}
-                </span>
-              </span>
-            </label>
-          )}
-
-          <div className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-content-muted">
-            {t('settings.ai.globalModel.appliesToAll')}
-          </div>
-
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              variant="primary"
-              size="xs"
-              disabled={!canApply || saving || isSaved}
-              onClick={() => void applySelection(source, model)}>
-              {saving
-                ? t('settings.ai.globalModel.saving')
-                : isSaved
-                  ? t('settings.ai.globalModel.saved')
-                  : t('common.save')}
-            </Button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main panel
-// ─────────────────────────────────────────────────────────────────────────────
+export type AIPanelTab = 'providers' | 'routing';
 
 interface AIPanelProps {
   /** When true, the panel is rendered embedded inside another flow (e.g. the
    *  onboarding custom wizard) and skips its own SettingsHeader chrome so the
    *  host frame's title/back controls aren't duplicated. */
   embedded?: boolean;
+  /** Selected section when the host owns the page-level chip tabs. */
+  tab?: AIPanelTab;
+  /** Called when the selected section changes. */
+  onTabChange?: (tab: AIPanelTab) => void;
+  /** Suppress PanelPage's internal tab chrome for a host-rendered chip row. */
+  hideTabChrome?: boolean;
 }
 
-const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
+const AIPanel = ({
+  embedded = false,
+  tab: controlledTab,
+  onTabChange,
+  hideTabChrome = false,
+}: AIPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack } = useSettingsNavigation();
   const { saved, draft, isDirty, save, persist, discard, loading, error, reload } = useAISettings();
   // #1574 §4b: advisory re-embed modal, driven by the backend status RPC.
-  // Logic lives in a unit-testable hook (see useReembedBackfillModal).
   const { reembed, handleSave, dismissReembed } = useReembedBackfillModal(save);
   const ollama = useOllamaStatus();
   const installed = useInstalledModels(ollama.snapshot);
   const [editing, setEditing] = useState<CloudProvider | 'new' | null>(null);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [codexAuthError, setCodexAuthError] = useState<string | null>(null);
   // Which workload's "Custom" dialog is currently open (null = closed).
-  const [customDialogFor, setCustomDialogFor] = useState<WorkloadId | null>(null);
+  const [pickerFor, setPickerFor] = useState<WorkloadId | null>(null);
   const [routingEditorMode, setRoutingEditorMode] = useState<'own' | 'custom' | null>(null);
   // Which provider slug's API-key dialog is currently open (null = closed).
   const [keyDialogFor, setKeyDialogFor] = useState<string | null>(null);
-  // When the user toggles LM Studio / Ollama (local runtimes), we
-  // need to remember which label to attach to the upserted provider so the
-  // chip can find it again. Cleared when the dialog closes.
+  // When the user toggles LM Studio / Ollama (local runtimes), we need to
+  // remember which label to attach to the upserted provider. Cleared when
+  // the dialog closes.
   const [pendingLocalLabel, setPendingLocalLabel] = useState<string | null>(null);
   const openRouterOauthAbortRef = useRef<AbortController | null>(null);
-  // BYO provider keys that the provider rejected at runtime (401/403). The
-  // raw error is demoted from Sentry as unactionable user-state, so this
-  // inline notice is how the user learns a key broke — most often in a silent
-  // background loop (memory summarization, TAURI-RUST-4RC) that never surfaces
-  // an error on its own. Re-fetched whenever settings reload (a key
-  // save/remove clears the matching entry core-side).
-  const [providerAuthErrors, setProviderAuthErrors] = useState<ProviderAuthError[]>([]);
-  // #5339: non-fatal "the key was saved, but the provider was unreachable"
-  // advisory. Set when an add-time reachability probe fails for a *non-auth*
-  // reason (timeout / unreachable / unknown): the key is plausibly valid, so it
-  // is kept and the provider saved rather than rolled back. Distinct from
-  // `providerAuthErrors` (runtime 401/403) and from a hard save error.
-  //
-  // Keyed by slug (#5341) so it is cleared only for the provider it belongs to —
-  // removing or reconnecting a *different* provider must not wipe it, and
-  // removing *this* provider must.
-  const [providerSaveNotice, setProviderSaveNotice] = useState<{
-    slug: string;
-    message: string;
-  } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void loadProviderAuthErrors()
-      .then(errs => {
-        if (!cancelled) {
-          setProviderAuthErrors(errs);
-        }
-      })
-      .catch(() => {
-        // Best-effort surface — a fetch failure must not break the panel.
-        // Drop any prior notice too: a key save/remove already cleared the
-        // entry core-side, so keeping a stale banner would misreport a
-        // rejection the user has resolved.
-        if (!cancelled) {
-          setProviderAuthErrors([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [saved]);
+  // Two orthogonal jobs on one page: WHICH providers exist, and WHICH one
+  // each workload uses. They were stacked, so the routing controls sat below
+  // a provider list whose length varies with the user's setup. Tabs give each
+  // the full pane and a stable position.
+  const [uncontrolledTab, setUncontrolledTab] = useState<AIPanelTab>('providers');
+  const tab = controlledTab ?? uncontrolledTab;
+  const handleTabChange = (nextTab: AIPanelTab) => {
+    if (controlledTab === undefined) setUncontrolledTab(nextTab);
+    onTabChange?.(nextTab);
+  };
 
-  const connectProvider = useCallback(
-    async ({
-      slug,
-      localLabel = null,
-      value,
-      endpoint: endpointOverride,
-      credentialMode,
-    }: {
-      slug: string;
-      localLabel?: string | null;
-      value: string;
-      /**
-       * For `endpoint_key` runtimes (OMLX): the endpoint URL. `value` carries
-       * the API key in that mode, so the endpoint comes in separately. Ignored
-       * for `endpoint` mode, where `value` IS the endpoint.
-       */
-      endpoint?: string | null;
-      credentialMode:
-        | 'api_key'
-        | 'oauth'
-        | 'codex_oauth'
-        | 'endpoint'
-        | 'endpoint_key'
-        | 'cli_login';
-    }) => {
-      const isLocalRuntime = credentialMode === 'endpoint' || credentialMode === 'endpoint_key';
-      // `endpoint_key` (OMLX) carries the API key in `value` and the endpoint
-      // separately; `endpoint` mode carries the endpoint URL in `value`.
-      const isEndpointKey = credentialMode === 'endpoint_key';
-      const isCodexOAuth = credentialMode === 'codex_oauth';
-      // CLI-backed login (Claude Code): no API key is written and no HTTP
-      // /models probe is made — auth + execution both go through the local
-      // `claude` CLI. Mirrors the Codex skip, but also skips model listing.
-      const isCliLogin = credentialMode === 'cli_login';
-      setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
-      // A fresh attempt on THIS provider clears only its own prior advisory —
-      // an advisory about a different provider must survive (#5341).
-      setProviderSaveNotice(prev => (prev?.slug === slug ? null : prev));
-
-      try {
-        const trimmed = value.trim();
-        // For `endpoint_key` (OMLX), the endpoint URL arrives via `endpointOverride`
-        // (the dialog's endpoint field) and `trimmed` is the API key. For plain
-        // `endpoint` runtimes, `trimmed` itself is the endpoint URL.
-        const rawEndpoint = isEndpointKey ? (endpointOverride ?? '').trim() : trimmed;
-        const endpoint = isLocalRuntime
-          ? (() => {
-              const url = new URL(rawEndpoint);
-              if (!/^https?:$/.test(url.protocol)) {
-                throw new Error('Endpoint must start with http:// or https://');
-              }
-              if (url.pathname === '' || url.pathname === '/') {
-                url.pathname = '/v1';
-              }
-              return url.toString().replace(/\/$/, '');
-            })()
-          : defaultEndpointFor(slug);
-
-        const upserted: CloudProvider = {
-          id: `p_${slug}_${Math.random().toString(36).slice(2, 7)}`,
-          slug,
-          label: localLabel ?? BUILTIN_PROVIDER_META[slug]?.label ?? slug,
-          endpoint,
-          authStyle: authStyleForSlug(slug),
-          // CLI-login providers hold no API key — reflect that honestly so
-          // the entry matches its reloaded (has_api_key === false) shape.
-          maskedKey: maskKeyLabel(!isCliLogin),
-        };
-
-        const priorWireProviders = saved.cloudProviders.map(p => ({
-          id: p.id,
-          slug: p.slug,
-          label: p.label,
-          endpoint: p.endpoint,
-          auth_style: p.authStyle,
-        }));
-
-        if (!isLocalRuntime && !isCodexOAuth && !isCliLogin && slug !== 'openhuman') {
-          await setCloudProviderKey(slug, trimmed);
-        } else if (isLocalRuntime && slug === 'ollama') {
-          const baseUrl = endpoint.replace(/\/v1\/?$/, '');
-          await openhumanUpdateLocalAiSettings({
-            base_url: baseUrl,
-            provider: 'ollama',
-            runtime_enabled: true,
-            opt_in_confirmed: true,
-          });
-        } else if (isLocalRuntime && slug === 'lmstudio') {
-          await openhumanUpdateLocalAiSettings({
-            base_url: endpoint,
-            provider: 'lm_studio',
-            runtime_enabled: true,
-            opt_in_confirmed: true,
-          });
-        } else if (isLocalRuntime && slug === 'omlx') {
-          // OMLX: OpenAI-compatible local runtime that also requires a Bearer
-          // key. Persist both the endpoint and the key into local_ai (the Rust
-          // factory's omlx branch reads `local_ai.api_key` as the Bearer token).
-          await openhumanUpdateLocalAiSettings({
-            base_url: endpoint,
-            api_key: trimmed,
-            provider: 'omlx',
-            runtime_enabled: true,
-            opt_in_confirmed: true,
-          });
-        }
-
-        if (slug !== 'openhuman') {
-          const nextWireProviders = [
-            ...priorWireProviders.filter(p => p.slug !== slug),
-            {
-              id: upserted.id,
-              slug: upserted.slug,
-              label: upserted.label,
-              endpoint: upserted.endpoint,
-              auth_style: upserted.authStyle,
-            },
-          ];
-          await flushCloudProviders(nextWireProviders);
-          if (!isCodexOAuth && !isCliLogin) {
-            try {
-              await listProviderModels(slug);
-            } catch (probeErr) {
-              const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-              const reason = classifyProviderVerificationFailure(msg);
-              // Only a cloud KEY provider (a key written to auth-profiles.json at
-              // `setCloudProviderKey` above) gets the non-fatal treatment. Local
-              // runtimes (ollama/lmstudio/omlx) keep the original reject-on-probe
-              // behaviour: an unreachable local runtime is a genuine setup error
-              // the user should fix, not route chat to a dead host.
-              //
-              // NOTE: OMLX (`endpoint_key`) IS a local runtime that *does* write a
-              // key — into `local_ai.api_key` via `openhumanUpdateLocalAiSettings`,
-              // not auth-profiles.json. That `local_ai` write is NOT rolled back
-              // here (pre-existing behaviour, unchanged by this branch); restoring
-              // it on a failed local probe is tracked as a separate follow-up.
-              const isKeyProvider = !isLocalRuntime && slug !== 'openhuman';
-              if (isKeyProvider && reason !== 'auth') {
-                // #5339: transient / unreachable / unknown — the key is plausibly
-                // valid, so do NOT discard it or block the save. Keep the key +
-                // provider entry, record a non-fatal advisory, and fall through to
-                // persist. Prevents a valid key being lost/orphaned over a momentary
-                // `/models` hiccup (the built-in key dialog has no "add anyway"
-                // escape hatch the custom-provider editor got in #5213).
-                console.warn(
-                  `[ai-settings] provider=${slug} add-time probe non-fatal reason=${reason}`
-                );
-                setProviderSaveNotice({
-                  slug,
-                  message: describeProviderVerificationFailure(slug, msg, t),
-                });
-              } else {
-                // Auth failure (wrong key), or a local runtime that isn't up:
-                // roll both stores back and reject so the user fixes it. Rollback
-                // failures are LOGGED, never swallowed — a silently failed
-                // key-clear is exactly what orphans a key on disk (#5339).
-                await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
-                  console.warn(`[ai-settings] rollback flush failed slug=${slug}`, rollbackErr)
-                );
-                if (isKeyProvider) {
-                  await clearCloudProviderKey(slug).catch(rollbackErr =>
-                    console.warn(
-                      `[ai-settings] rollback clearCloudProviderKey failed slug=${slug}`,
-                      rollbackErr
-                    )
-                  );
-                }
-                throw new Error(`Could not reach ${upserted.label}: ${msg}`);
-              }
-            }
-          }
-        }
-
-        const nextDraft = {
-          ...draft,
-          cloudProviders: [...draft.cloudProviders.filter(p => p.slug !== slug), upserted],
-        };
-        await persist(nextDraft);
-        if (isCodexOAuth && slug === 'openai') {
-          await clearCloudProviderKey(slug);
-        }
-        if (slug === 'openai') {
-          setCodexAuthError(null);
-        }
-        setKeyDialogFor(null);
-        setPendingLocalLabel(null);
-      } finally {
-        setBusyAction(null);
-      }
+  const {
+    busyAction,
+    setBusyAction,
+    codexAuthError,
+    providerAuthErrors,
+    providerSaveNotice,
+    setProviderSaveNotice,
+    connectProvider,
+    connectOpenAiViaCodexAuth,
+  } = useProviderConnect({
+    draft,
+    saved,
+    persist,
+    t,
+    onConnected: () => {
+      setKeyDialogFor(null);
+      setPendingLocalLabel(null);
     },
-    [draft, persist, saved.cloudProviders, t]
-  );
+  });
 
-  const connectOpenAiViaCodexAuth = useCallback(async () => {
-    setCodexAuthError(null);
-    setBusyAction('codex-auth');
+  const handleOpenAiOAuthCompleted = useCallback(async () => {
     try {
-      await importOpenAiCodexCliAuth();
       await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const localizedMessage =
-        message === OPENAI_CODEX_OAUTH_MISSING_AUTH_URL
-          ? t('settings.ai.codexOauthMissingAuthUrl')
-          : message === OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
-            ? t('settings.ai.codexOauthMissingCallbackUrl')
-            : message;
-      console.warn('[ai-settings] codex auth import failed', {
-        summary: presentProviderSetupError(localizedMessage, t).summary,
+      console.debug('[ai-settings:openai-oauth] provider registration succeeded', {
+        provider: 'openai',
       });
-      setCodexAuthError(localizedMessage);
-    } finally {
-      setBusyAction(null);
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider registration failed', {
+        provider: 'openai',
+      });
+      await reload();
+      throw err;
     }
-  }, [connectProvider, t]);
+  }, [connectProvider, reload]);
 
-  // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
-  // the new Default/Custom binary toggle handles routing per workload.
+  const handleOpenAiOAuthDisconnected = useCallback(async () => {
+    const existing = draft.cloudProviders.find(cp => cp.slug === 'openai');
+    if (!existing) return;
+    const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+    const nextRouting = routingWithProviderRemoved(
+      draft.routing,
+      { slug: existing.slug, isLocalRuntime: false },
+      remaining
+    );
+    try {
+      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+      console.debug('[ai-settings:openai-oauth] provider removal succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider removal failed', { provider: 'openai' });
+      await reload();
+      throw err;
+    }
+  }, [draft, persist, reload]);
 
-  const diffSummary = useMemo(
-    () => buildRoutingDiffSummary(saved.routing, draft.routing, t),
-    [saved, draft, t]
-  );
+  const submitCloudProviderEdit = useCloudProviderEditorSubmit({
+    editing,
+    draft,
+    saved,
+    persist,
+    t,
+    onDone: () => setEditing(null),
+  });
 
+  const diffSummary = buildRoutingDiffSummary(saved.routing, draft.routing, t);
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');
-  const inferredRoutingMode = useMemo(() => {
-    const mode = inferRoutingMode(draft.routing);
-    // Routing mode is derived purely from the workload routing map, not from the
-    // set of configured providers: saving a provider key only adds a
-    // `cloudProviders` entry, it does not rewrite `routing`. So "managed while a
-    // provider key is configured" is an expected state — the user must pick a
-    // route to actually use their provider. Surfaced for support diagnostics
-    // (the recurring "my key is added but not used" question).
-    const configuredWithKey = draft.cloudProviders.filter(p => p.maskedKey.startsWith('••••'));
-    console.debug('[ai-settings][routing] inferred mode', {
-      mode,
-      routing: ROUTING_WORKLOAD_IDS.map(id => `${id}:${draft.routing[id]?.kind}`),
-      configured_providers: draft.cloudProviders.map(p => p.slug),
-      configured_with_key: configuredWithKey.map(p => p.slug),
-      // A provider key is configured but routing is still managed → the provider
-      // is not used until the user selects a custom route.
-      configured_but_managed: mode === 'managed' && configuredWithKey.length > 0,
-    });
-    return mode;
-  }, [draft.routing, draft.cloudProviders]);
-  const effectiveRoutingMode: RoutingMode =
+  const inferredRoutingModeRaw = inferRoutingMode(draft.routing);
+  // Routing mode is derived purely from the workload routing map, not from the
+  // set of configured providers: saving a provider key only adds a
+  // `cloudProviders` entry, it does not rewrite `routing`. Surfaced for
+  // support diagnostics (the recurring "my key is added but not used" question).
+  const configuredWithKey = draft.cloudProviders.filter(p => p.maskedKey.startsWith('••••'));
+  console.debug('[ai-settings][routing] inferred mode', {
+    mode: inferredRoutingModeRaw,
+    routing: ROUTING_WORKLOAD_IDS.map(id => `${id}:${draft.routing[id]?.kind}`),
+    configured_providers: draft.cloudProviders.map(p => p.slug),
+    configured_with_key: configuredWithKey.map(p => p.slug),
+    configured_but_managed: inferredRoutingModeRaw === 'managed' && configuredWithKey.length > 0,
+  });
+  const effectiveRoutingMode =
     routingEditorMode === 'own'
       ? 'own'
       : routingEditorMode === 'custom'
         ? 'custom'
-        : inferredRoutingMode;
-  const sharedModelRef = useMemo(() => inferSharedModelRef(draft.routing), [draft.routing]);
+        : inferredRoutingModeRaw;
+  const sharedModelRef = inferSharedModelRef(draft.routing);
 
   return (
-    <PanelPage
-      className="z-10"
-      contentClassName=""
-      description={embedded ? undefined : t('pages.settings.ai.llmDesc')}
-      leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
-      <div className={embedded ? 'space-y-5' : 'space-y-5 p-4'}>
-        {/* ═══════════════════════════════════════════════════════════════
-            AUTH — provider authentication (cloud providers + local Ollama
-            setup). Everything the user needs to wire a model up.
-            ═══════════════════════════════════════════════════════════════ */}
-        <div className="space-y-5">
-          <div className="border-b border-line pb-2">
-            <h2 className="text-base font-semibold text-content">
-              {t('settings.ai.llmProviders')}
-            </h2>
-            <p className="text-xs text-content-muted mt-0.5">{t('settings.ai.llmProvidersDesc')}</p>
-          </div>
+    <>
+      <PanelPage
+        className="z-10"
+        contentClassName=""
+        description={embedded ? undefined : t('pages.settings.ai.llmDesc')}
+        leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}
+        tabsAriaLabel={t('pages.settings.ai.llm')}
+        tabsTestIdPrefix="ai-tab"
+        value={tab}
+        onChange={handleTabChange}
+        hideTabChrome={hideTabChrome}
+        scrollable={!hideTabChrome}
+        tabs={[
+          {
+            id: 'providers',
+            label: t('settings.ai.llmProviders'),
+            contentClassName: embedded || hideTabChrome ? '' : 'p-4',
+            content: (
+              <div className="flex w-full flex-col">
+                <ProviderAuthSection
+                  draft={draft}
+                  persist={persist}
+                  loading={loading}
+                  error={error}
+                  busyAction={busyAction}
+                  providerAuthErrors={providerAuthErrors}
+                  providerSaveNotice={providerSaveNotice}
+                  onDismissProviderSaveNotice={() => setProviderSaveNotice(null)}
+                  onProviderRemoved={slug =>
+                    setProviderSaveNotice(prev => (prev?.slug === slug ? null : prev))
+                  }
+                  codexAuthError={codexAuthError}
+                  onConnectCodex={() => void connectOpenAiViaCodexAuth()}
+                  onConnectProvider={connectProvider}
+                  onOpenKeyDialog={(slug, localLabel) => {
+                    setKeyDialogFor(slug);
+                    setPendingLocalLabel(localLabel);
+                  }}
+                  onAddCustomProvider={() => setEditing('new')}
+                  onEditCustomProvider={provider => setEditing(provider)}
+                />
+                {isDirty && (
+                  <SaveBar
+                    diffSummary={diffSummary}
+                    changeCount={diffSummary.length}
+                    onSave={() => void handleSave()}
+                    onDiscard={discard}
+                  />
+                )}
+              </div>
+            ),
+          },
+          {
+            id: 'routing',
+            label: t('settings.ai.routing'),
+            contentClassName: embedded || hideTabChrome ? '' : 'p-4',
+            content: (
+              <div className="flex w-full flex-col gap-4">
+                {/* ═══════════════════════════════════════════════════════════════
+              ROUTING — top-level routing mode. Managed = OpenHuman decides.
+              Own = one provider/model for everything. Custom = fine-grained
+              per-workload routing.
+              ═══════════════════════════════════════════════════════════════ */}
+                <>
+                  <RoutingModeCards
+                    effectiveRoutingMode={effectiveRoutingMode}
+                    onSelectManaged={() => {
+                      setRoutingEditorMode(null);
+                      void persist({
+                        ...draft,
+                        routing: routingWithAllWorkloads({ kind: 'openhuman' }),
+                      });
+                    }}
+                    onSelectOwn={() => setRoutingEditorMode('own')}
+                    onSelectCustom={() => setRoutingEditorMode('custom')}
+                  />
 
-          {/* ─── Rejected-key notices ─────────────────────────────────────────
-              A BYO key the provider rejected at runtime (401/403). Surfaced
-              here, next to the key editor, because the failing path is often a
-              silent background loop and the raw error is demoted from Sentry. */}
-          {providerAuthErrors.length > 0 && (
-            <div className="space-y-2">
-              {providerAuthErrors.map(err => (
-                <ProviderSetupErrorNotice key={err.provider} error={err.message} />
-              ))}
-            </div>
-          )}
+                  {effectiveRoutingMode === 'managed' ? (
+                    <Card className="w-full">
+                      <Alert variant="success">{t('settings.ai.routing.managedMsg')}</Alert>
+                    </Card>
+                  ) : null}
 
-          {/* #5339: non-fatal "key saved, but provider unreachable" advisory.
-              Amber (not coral): the save succeeded, only reachability is in
-              question. */}
-          {providerSaveNotice && (
-            <div
-              role="status"
-              className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-              <LuCircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-              <span className="flex-1">{providerSaveNotice.message}</span>
-              <button
-                type="button"
-                className="shrink-0 font-medium underline-offset-2 hover:underline"
-                onClick={() => setProviderSaveNotice(null)}>
-                {t('common.dismiss')}
-              </button>
-            </div>
-          )}
-
-          {/* ─── Provider chip-toggle list ────────────────────────────────── */}
-          <section className="space-y-3">
-            {loading && <div className="text-xs text-content-muted">{t('common.loading')}</div>}
-            {error && (
-              <SettingsStatusLine saving={false} error={error} savedNote={null} savingLabel="" />
-            )}
-
-            <div className="flex flex-wrap gap-1.5">
-              <ProviderToggleChip
-                key="openhuman"
-                slug="openhuman"
-                label={t('settings.ai.routing.managed')}
-                enabled
-                alwaysOn
-              />
-
-              {/* Built-in cloud providers */}
-              {BUILTIN_CLOUD_PROVIDER_SLUGS.map(slug => {
-                const meta = BUILTIN_PROVIDER_META[slug];
-                const label = meta?.label ?? slug;
-                const existing = draft.cloudProviders.find(cp => cp.slug === slug);
-                const enabled = !!existing;
-                return (
-                  <ProviderToggleChip
-                    key={slug}
-                    slug={slug}
-                    label={label}
-                    enabled={enabled}
-                    busy={busyAction === `toggle-${slug}`}
-                    onToggle={async () => {
-                      if (enabled && existing) {
-                        // Toggle OFF: remove the provider + scrub any
-                        // routing entries that pin to it. Drop its advisory too,
-                        // so a stale notice can't name a provider that is gone
-                        // (#5341) — but only if the advisory is about THIS one.
-                        setProviderSaveNotice(prev => (prev?.slug === existing.slug ? null : prev));
-                        const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                        const nextRouting = routingWithProviderRemoved(
-                          draft.routing,
-                          { slug: existing.slug, isLocalRuntime: false },
-                          remaining
-                        );
+                  {effectiveRoutingMode === 'own' ? (
+                    <GlobalOwnModelSelector
+                      current={sharedModelRef}
+                      saved={inferSharedModelRef(saved.routing)}
+                      cloudProviders={draft.cloudProviders}
+                      localModels={installed}
+                      ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
+                      modelRegistry={draft.modelRegistry}
+                      onApply={async (next, vision) => {
+                        const reg =
+                          next.kind === 'cloud'
+                            ? { slug: next.providerSlug, model: next.model }
+                            : next.kind === 'local'
+                              ? { slug: 'ollama', model: next.model }
+                              : next.kind === 'claude-code'
+                                ? { slug: 'claude-code', model: next.model }
+                                : null;
                         await persist({
                           ...draft,
-                          cloudProviders: remaining,
-                          routing: nextRouting,
+                          routing: routingWithAllWorkloads(next),
+                          modelRegistry: reg
+                            ? upsertModelRegistryVision(
+                                draft.modelRegistry,
+                                reg.slug,
+                                reg.model,
+                                vision
+                              )
+                            : draft.modelRegistry,
                         });
-                      } else {
-                        // Toggle ON: open the API-key popup. The chip
-                        // only flips after the dialog saves.
-                        setKeyDialogFor(slug);
-                      }
-                    }}
-                  />
-                );
-              })}
-
-              {draft.cloudProviders
-                .filter(cp => !BUILTIN_RESERVED_SLUGS.includes(cp.slug))
-                .map(existing => (
-                  <ProviderToggleChip
-                    key={existing.id}
-                    slug="custom"
-                    label={existing.label}
-                    enabled
-                    busy={busyAction === `toggle-${existing.slug}`}
-                    onToggle={async () => {
-                      // Removing this provider clears only its own advisory (#5341).
-                      setProviderSaveNotice(prev => (prev?.slug === existing.slug ? null : prev));
-                      const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                      const nextRouting = routingWithProviderRemoved(
-                        draft.routing,
-                        { slug: existing.slug, isLocalRuntime: false },
-                        remaining
-                      );
-                      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
-                    }}
-                  />
-                ))}
-
-              {/* LM Studio + Ollama — local runtimes stored with a slug of
-                  "lmstudio" / "ollama" so they're distinct from generic custom. */}
-              {(['lmstudio', 'ollama', 'omlx'] as const).map(localKind => {
-                const label = LOCAL_CHIP_LABEL[localKind];
-                const tone = LOCAL_CHIP_TONE[localKind];
-                const existing = draft.cloudProviders.find(cp => cp.slug === localKind);
-                const enabled = !!existing;
-                // Use a styled chip directly for local runtimes — they have
-                // non-standard tones not in BUILTIN_PROVIDER_META.
-                return (
-                  <div
-                    key={localKind}
-                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
-                    <span>{label}</span>
-                    {enabled && (
-                      <Button
-                        type="button"
-                        iconOnly
-                        variant="tertiary"
-                        size="xs"
-                        aria-label={t('settings.ai.editEndpoint')}
-                        title={t('settings.ai.editEndpoint')}
-                        onClick={() => {
-                          setKeyDialogFor(localKind);
-                          setPendingLocalLabel(label);
-                        }}>
-                        <LuPencil className="h-3 w-3" />
-                      </Button>
-                    )}
-                    <SettingsSwitch
-                      id={`local-runtime-toggle-${localKind}`}
-                      checked={enabled}
-                      onCheckedChange={async () => {
-                        if (enabled && existing) {
-                          const remaining = draft.cloudProviders.filter(
-                            cp => cp.id !== existing.id
-                          );
-                          const nextRouting = routingWithProviderRemoved(
-                            draft.routing,
-                            { slug: localKind, isLocalRuntime: true },
-                            remaining
-                          );
-                          await persist({
-                            ...draft,
-                            cloudProviders: remaining,
-                            routing: nextRouting,
-                          });
-                        } else {
-                          setKeyDialogFor(localKind);
-                          setPendingLocalLabel(label);
-                        }
                       }}
-                      disabled={busyAction === `toggle-${localKind}`}
-                      aria-label={providerToggleAriaLabel(t, enabled, label)}
                     />
-                  </div>
-                );
-              })}
-            </div>
+                  ) : null}
 
-            {/* #3760: Managed is always-on and can't be turned off; point users
-                who want a local model at the Routing card below instead of
-                letting them fight the (now badge, formerly locked) Managed chip. */}
-            <p className="text-xs text-content-muted">{t('settings.ai.routing.managedHint')}</p>
+                  {effectiveRoutingMode === 'custom' ? (
+                    <>
+                      <Card className="w-full">
+                        <WorkloadTable
+                          title={t('settings.ai.routing.chatAndConversations')}
+                          description={t('settings.ai.routing.chatDesc')}>
+                          {chatRows.map(w => (
+                            <WorkloadRow
+                              key={w.id}
+                              workload={w}
+                              ref_={draft.routing[w.id]}
+                              cloudProviders={draft.cloudProviders}
+                              onCustomClick={() => setPickerFor(w.id)}
+                            />
+                          ))}
+                        </WorkloadTable>
+                      </Card>
 
-            <div className="flex flex-col gap-2 pt-1">
-              {/* Codex — imports the existing Codex CLI login as an OpenAI credential. */}
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  leadingIcon={<LuKeyRound className="h-3.5 w-3.5" />}
-                  onClick={() => void connectOpenAiViaCodexAuth()}
-                  disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}>
-                  {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
-                    ? t('settings.ai.connecting')
-                    : t('settings.ai.codexAuthButton', 'Connect Codex')}
-                </Button>
-                <span className="text-xs text-content-muted">
-                  {t(
-                    'settings.ai.codexAuthHelper',
-                    'Uses the existing Codex CLI login from ~/.codex/auth.json.'
-                  )}
-                </span>
+                      <Card className="w-full">
+                        <WorkloadTable
+                          title={t('settings.ai.routing.backgroundTasks')}
+                          description={t('settings.ai.routing.bgTasksDesc')}>
+                          {bgRows.map(w => (
+                            <WorkloadRow
+                              key={w.id}
+                              workload={w}
+                              ref_={draft.routing[w.id]}
+                              cloudProviders={draft.cloudProviders}
+                              onCustomClick={() => setPickerFor(w.id)}
+                            />
+                          ))}
+                        </WorkloadTable>
+                      </Card>
+                    </>
+                  ) : null}
+                </>
+                {isDirty && (
+                  <SaveBar
+                    diffSummary={diffSummary}
+                    changeCount={diffSummary.length}
+                    onSave={() => void handleSave()}
+                    onDiscard={discard}
+                  />
+                )}
               </div>
-              {codexAuthError ? <ProviderSetupErrorNotice error={codexAuthError} /> : null}
-
-              {/* Claude Code CLI — connect control (peer of Codex). A "Claude
-                  Code" button + status text; the button opens a modal with the
-                  enable/sign-in/disconnect controls. No API key: routes chat
-                  through the local `claude` CLI using the CLI's own login. */}
-              <ClaudeCodeConnect
-                connected={draft.cloudProviders.some(cp => cp.slug === 'claude-code')}
-                busy={busyAction === 'toggle-claude-code'}
-                onConnect={() =>
-                  connectProvider({
-                    slug: 'claude-code',
-                    value: 'cli_login',
-                    credentialMode: 'cli_login',
-                  })
-                }
-                onDisconnect={async () => {
-                  const existing = draft.cloudProviders.find(cp => cp.slug === 'claude-code');
-                  if (!existing) return;
-                  const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                  const nextRouting = routingWithProviderRemoved(
-                    draft.routing,
-                    { slug: existing.slug, isLocalRuntime: false },
-                    remaining
-                  );
-                  await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
-                }}
-              />
-            </div>
-
-            <div className="pt-1">
-              <Button type="button" variant="primary" size="xs" onClick={() => setEditing('new')}>
-                {t('settings.ai.routing.addCustomProvider')}
+            ),
+          },
+        ]}
+      />
+      {/* Informational, not a decision: one acknowledging action and no
+        second choice. That rules out `AlertDialog`, whose own contract
+        requires rendering a Cancel — offering "Cancel" for a notice the user
+        can only acknowledge invents a branch that does not exist. `Dialog`
+        via `ModalShell` is the right primitive, and it still brings the focus
+        trap, scroll lock and Escape handling. */}
+      {reembed.open && (
+        <ModalShell
+          title={t('settings.ai.reindexingMemory')}
+          titleId="ai-reembed-dialog-title"
+          onClose={dismissReembed}
+          maxWidthClassName="max-w-sm"
+          footer={
+            <div className="flex justify-end">
+              <Button variant="primary" size="sm" onClick={dismissReembed}>
+                {t('common.ok')}
               </Button>
             </div>
-          </section>
-        </div>
-        {/* end of Auth section */}
-
-        {/* ═══════════════════════════════════════════════════════════════
-            ROUTING — top-level routing mode. Managed = OpenHuman decides.
-            Own = one provider/model for everything. Custom = fine-grained
-            per-workload routing.
-            ═══════════════════════════════════════════════════════════════ */}
-        <div className="space-y-5">
-          <div className="border-b border-line pb-2">
-            <h2 className="text-base font-semibold text-content">{t('settings.ai.routing')}</h2>
-            <p className="text-xs text-content-muted mt-0.5">{t('settings.ai.routingDesc')}</p>
+          }>
+          <div className="text-sm text-content-secondary">
+            {formatI18n(t('settings.ai.reindexingMemoryMessage'), { pending: reembed.pending })}
           </div>
-
-          <section className="space-y-3">
-            <div className="grid gap-3 md:grid-cols-3">
-              <button
-                type="button"
-                onClick={async () => {
-                  setRoutingEditorMode(null);
-                  await persist({
-                    ...draft,
-                    routing: routingWithAllWorkloads({ kind: 'openhuman' }),
-                  });
-                }}
-                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
-                  effectiveRoutingMode === 'managed'
-                    ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10'
-                    : 'border-line bg-surface hover:bg-surface-hover'
-                }`}>
-                <div className="text-sm font-semibold text-content">
-                  {t('settings.ai.routing.managed')}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-content-secondary">
-                  {t('settings.ai.routing.managedDesc')}
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRoutingEditorMode('own')}
-                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
-                  effectiveRoutingMode === 'own'
-                    ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-line bg-surface hover:bg-surface-hover'
-                }`}>
-                <div className="text-sm font-semibold text-content">
-                  {t('settings.ai.routing.useYourOwn')}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-content-secondary">
-                  {t('settings.ai.routing.useYourOwnDesc')}
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRoutingEditorMode('custom')}
-                className={`flex h-full min-h-[152px] flex-col rounded-2xl border p-4 text-left transition-colors ${
-                  effectiveRoutingMode === 'custom'
-                    ? 'border-sky-300 bg-sky-50 dark:border-sky-500/40 dark:bg-sky-500/10'
-                    : 'border-line bg-surface hover:bg-surface-hover'
-                }`}>
-                <div className="text-sm font-semibold text-content">
-                  {t('settings.ai.routing.advanced')}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-content-secondary">
-                  {t('settings.ai.routing.advancedDesc')}
-                </p>
-              </button>
-            </div>
-
-            {effectiveRoutingMode === 'managed' ? (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">
-                {t('settings.ai.routing.managedMsg')}
-              </div>
-            ) : null}
-
-            {effectiveRoutingMode === 'own' ? (
-              <GlobalOwnModelSelector
-                current={sharedModelRef}
-                saved={inferSharedModelRef(saved.routing)}
-                cloudProviders={draft.cloudProviders}
-                localModels={installed}
-                ollamaRunning={ollama.state === 'running'}
-                modelRegistry={draft.modelRegistry}
-                onApply={async (next, vision) => {
-                  const reg =
-                    next.kind === 'cloud'
-                      ? { slug: next.providerSlug, model: next.model }
-                      : next.kind === 'local'
-                        ? { slug: 'ollama', model: next.model }
-                        : next.kind === 'claude-code'
-                          ? { slug: 'claude-code', model: next.model }
-                          : null;
-                  await persist({
-                    ...draft,
-                    routing: routingWithAllWorkloads(next),
-                    modelRegistry: reg
-                      ? upsertModelRegistryVision(draft.modelRegistry, reg.slug, reg.model, vision)
-                      : draft.modelRegistry,
-                  });
-                }}
-              />
-            ) : null}
-
-            {effectiveRoutingMode === 'custom' ? (
-              <>
-                <div className="rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-sm text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100">
-                  {t('settings.ai.routing.customDesc')}
-                </div>
-
-                <div className="space-y-3">
-                  <div className="overflow-hidden rounded-lg border border-line bg-surface-muted px-3">
-                    <div className="border-b border-line py-3">
-                      <div className="text-sm font-semibold text-content">
-                        {t('settings.ai.routing.chatAndConversations')}
-                      </div>
-                      <div className="mt-1 text-xs text-content-muted">
-                        {t('settings.ai.routing.chatDesc')}
-                      </div>
-                    </div>
-                    <div className="divide-y divide-line dark:divide-neutral-800">
-                      {chatRows.map(w => (
-                        <WorkloadRow
-                          key={w.id}
-                          workload={w}
-                          ref_={draft.routing[w.id]}
-                          cloudProviders={draft.cloudProviders}
-                          onCustomClick={() => setCustomDialogFor(w.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="overflow-hidden rounded-lg border border-line bg-surface-muted px-3">
-                    <div className="border-b border-line py-3">
-                      <div className="text-sm font-semibold text-content">
-                        {t('settings.ai.routing.backgroundTasks')}
-                      </div>
-                      <div className="mt-1 text-xs text-content-muted">
-                        {t('settings.ai.routing.bgTasksDesc')}
-                      </div>
-                    </div>
-                    <div className="divide-y divide-line dark:divide-neutral-800">
-                      {bgRows.map(w => (
-                        <WorkloadRow
-                          key={w.id}
-                          workload={w}
-                          ref_={draft.routing[w.id]}
-                          cloudProviders={draft.cloudProviders}
-                          onCustomClick={() => setCustomDialogFor(w.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </section>
-        </div>
-        {/* end of Routing section */}
-      </div>
-
-      {isDirty && (
-        <SaveBar
-          diffSummary={diffSummary}
-          changeCount={diffSummary.length}
-          onSave={() => void handleSave()}
-          onDiscard={discard}
-        />
+        </ModalShell>
       )}
-
-      <ConfirmationModal
-        modal={{
-          isOpen: reembed.open,
-          title: t('settings.ai.reindexingMemory'),
-          message: formatI18n(t('settings.ai.reindexingMemoryMessage'), {
-            pending: reembed.pending,
-          }),
-          confirmText: t('common.ok'),
-          onConfirm: dismissReembed,
-          onCancel: dismissReembed,
-        }}
-        onClose={dismissReembed}
-      />
 
       {editing && (
         <CloudProviderEditor
@@ -3636,94 +397,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           onSubmit={async (next, apiKey, opts) => {
             setBusyAction('save-provider');
             try {
-              const id =
-                editing === 'new' || !editing.id
-                  ? `p_${next.slug}_${Math.random().toString(36).slice(2, 7)}`
-                  : editing.id;
-              const upserted: CloudProvider = {
-                ...next,
-                id,
-                maskedKey: maskKeyLabel(apiKey ? true : next.maskedKey.startsWith('••••')),
-              };
-
-              // Snapshot the prior persisted cloud_providers list so we can
-              // restore it if the live probe fails.
-              const priorWireProviders = saved.cloudProviders.map(p => ({
-                id: p.id,
-                slug: p.slug,
-                label: p.label,
-                endpoint: p.endpoint,
-                auth_style: p.authStyle,
-              }));
-
-              // Persist the credential BEFORE the probe so the factory has it
-              // available. Let setCloudProviderKey throw — the editor's
-              // button-click handler catches and surfaces the error inline.
-              if (apiKey && upserted.slug !== 'openhuman') {
-                await setCloudProviderKey(upserted.slug, apiKey);
-              }
-
-              // Live verification — flush the new cloud_providers list and
-              // call `/models` through the Rust controller. Skip for the
-              // OpenHuman backend (session JWT, no probe-able endpoint).
-              if (upserted.slug !== 'openhuman') {
-                const list =
-                  editing === 'new'
-                    ? [...draft.cloudProviders, upserted]
-                    : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
-                const nextWireProviders = list
-                  .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug))
-                  .map(p => ({
-                    id: p.id,
-                    slug: p.slug,
-                    label: p.label,
-                    endpoint: p.endpoint,
-                    auth_style: p.authStyle,
-                  }));
-                await flushCloudProviders(nextWireProviders);
-                // `skipProbe` is the user's explicit "add it anyway" after a
-                // failed verification. A provider whose `/models` listing is
-                // absent or auth-shaped differently (Azure's classic
-                // `api-version` surface is both) is still perfectly usable for
-                // inference — gating creation on the probe made the deployment
-                // name field unreachable for exactly those users (#5213).
-                if (!opts?.skipProbe) {
-                  try {
-                    await listProviderModels(upserted.slug);
-                  } catch (probeErr) {
-                    // Roll back both stores. Failures are LOGGED, never swallowed:
-                    // a silently failed key-clear orphans the key on disk (#5339).
-                    // The user can still "add anyway" (`skipProbe`) to keep it.
-                    await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
-                      console.warn(
-                        `[ai-settings] rollback flush failed slug=${upserted.slug}`,
-                        rollbackErr
-                      )
-                    );
-                    if (apiKey) {
-                      await clearCloudProviderKey(upserted.slug).catch(rollbackErr =>
-                        console.warn(
-                          `[ai-settings] rollback clearCloudProviderKey failed slug=${upserted.slug}`,
-                          rollbackErr
-                        )
-                      );
-                    }
-                    const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-                    console.warn('[ai-settings] provider /models probe failed', {
-                      slug: upserted.slug,
-                      summary: presentProviderSetupError(msg, t).summary,
-                    });
-                    throw new ProviderProbeError(`Could not reach ${upserted.label}: ${msg}`);
-                  }
-                }
-              }
-
-              const list =
-                editing === 'new'
-                  ? [...draft.cloudProviders, upserted]
-                  : draft.cloudProviders.map(p => (p.id === editing.id ? upserted : p));
-              await persist({ ...draft, cloudProviders: list });
-              setEditing(null);
+              await submitCloudProviderEdit(next, apiKey, opts);
             } finally {
               setBusyAction(null);
             }
@@ -3742,22 +416,22 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
         />
       )}
 
-      {customDialogFor &&
+      {pickerFor &&
         (() => {
-          const w = WORKLOADS.find(x => x.id === customDialogFor);
-          if (!w) return null;
+          const current = draft.routing[pickerFor];
+          const workload = WORKLOADS.find(candidate => candidate.id === pickerFor);
+          if (!workload) return null;
           return (
             <CustomRoutingDialog
-              workload={w}
-              initial={draft.routing[customDialogFor]}
+              workload={workload}
+              initial={current}
               cloudProviders={draft.cloudProviders}
               localModels={installed}
-              ollamaRunning={ollama.state === 'running'}
+              ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
               modelRegistry={draft.modelRegistry}
-              onClose={() => setCustomDialogFor(null)}
-              onSubmit={async (next, vision) => {
-                // (provider slug, model id) the vision flag keys on.
-                const reg =
+              onClose={() => setPickerFor(null)}
+              onSubmit={(next, vision) => {
+                const registryTarget =
                   next.kind === 'cloud'
                     ? { slug: next.providerSlug, model: next.model }
                     : next.kind === 'local'
@@ -3765,15 +439,19 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                       : next.kind === 'claude-code'
                         ? { slug: 'claude-code', model: next.model }
                         : null;
-                const nextDraft = {
+                void persist({
                   ...draft,
-                  routing: { ...draft.routing, [customDialogFor]: next },
-                  modelRegistry: reg
-                    ? upsertModelRegistryVision(draft.modelRegistry, reg.slug, reg.model, vision)
+                  routing: { ...draft.routing, [pickerFor]: next },
+                  modelRegistry: registryTarget
+                    ? upsertModelRegistryVision(
+                        draft.modelRegistry,
+                        registryTarget.slug,
+                        registryTarget.model,
+                        vision
+                      )
                     : draft.modelRegistry,
-                };
-                await persist(nextDraft);
-                setCustomDialogFor(null);
+                });
+                setPickerFor(null);
               }}
             />
           );
@@ -3816,6 +494,14 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 }
               : null
           }
+          openAiOAuth={
+            keyDialogFor === 'openai' && !pendingLocalLabel
+              ? {
+                  onCompleted: handleOpenAiOAuthCompleted,
+                  onDisconnected: handleOpenAiOAuthDisconnected,
+                }
+              : null
+          }
           onCancel={() => {
             openRouterOauthAbortRef.current?.abort();
             openRouterOauthAbortRef.current = null;
@@ -3840,268 +526,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           }
         />
       )}
-    </PanelPage>
+    </>
   );
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cloud provider editor modal
-// ─────────────────────────────────────────────────────────────────────────────
-
-const CloudProviderEditor = ({
-  initial,
-  existingSlugs,
-  onClose,
-  onSubmit,
-  onClearKey,
-}: {
-  initial: CloudProvider | null;
-  existingSlugs: string[];
-  onClose: () => void;
-  onSubmit: (
-    next: CloudProvider,
-    apiKey: string,
-    opts?: { skipProbe?: boolean }
-  ) => Promise<void> | void;
-  onClearKey: (slug: string) => Promise<void> | void;
-}) => {
-  const { t } = useT();
-  const [label, setLabel] = useState<string>(initial?.label ?? '');
-  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? '');
-  const [apiKey, setApiKey] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  // Set once the live `/models` verification has rejected, which unlocks the
-  // "add without verifying" path. Only a probe failure earns it — a bad slug or
-  // a failed key write must still block (#5213).
-  const [probeFailed, setProbeFailed] = useState(false);
-  const slug = initial?.slug ?? slugifyCustomProviderName(label);
-  const hasReservedSlugCollision = !initial && BUILTIN_RESERVED_SLUGS.includes(slug);
-  const slugError = !slug
-    ? t('settings.ai.slugMissingError')
-    : existingSlugs.includes(slug)
-      ? t('settings.ai.slugInUseError')
-      : hasReservedSlugCollision
-        ? t('settings.ai.slugReservedError')
-        : null;
-  const hasExistingKey = (initial?.maskedKey ?? '').startsWith('••••');
-  // Skipping verification is a bet that the provider works despite an
-  // unreadable listing. For an Azure host that is not the `/openai/v1` base
-  // that bet is already lost: `{base}/chat/completions` is not a route Azure
-  // serves there and the stored bearer auth is the wrong header, so the entry
-  // would be dead on arrival. Withhold the bypass and let the inline nudge do
-  // its job instead of manufacturing a broken provider (#5213).
-  const knownUnusableEndpoint =
-    isAzureFoundryEndpoint(endpoint) && !isAzureV1BaseUrl(endpoint.trim());
-
-  const submitProvider = async (opts?: { skipProbe?: boolean }) => {
-    setSaving(true);
-    setSubmitError(null);
-    // Cleared alongside the error: a later attempt that fails for an unrelated
-    // reason (slug collision, key write) must not still offer to skip
-    // verification, which is the distinction `ProviderProbeError` exists for.
-    setProbeFailed(false);
-    try {
-      if (slugError) {
-        throw new Error(slugError);
-      }
-      await onSubmit(
-        {
-          id: initial?.id ?? '',
-          slug,
-          label: label.trim() || slug,
-          endpoint: endpoint.trim(),
-          authStyle: initial?.authStyle ?? 'bearer',
-          maskedKey: maskKeyLabel(hasExistingKey || apiKey.length > 0),
-        },
-        apiKey.trim(),
-        opts
-      );
-    } catch (err) {
-      // Surface the failure inline and keep the dialog open so the user can fix
-      // the key/URL and retry. A rejected `/models` probe additionally unlocks
-      // the "add without verifying" button — the listing is a convenience for
-      // the model dropdown, not a precondition for inference.
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[ai-settings] cloud provider editor submit failed', {
-        slug,
-        probeFailure: err instanceof ProviderProbeError,
-        summary: presentProviderSetupError(message, t).summary,
-      });
-      setSubmitError(message);
-      if (err instanceof ProviderProbeError) {
-        setProbeFailed(true);
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/30 p-4">
-      <div className="w-full max-w-md rounded-lg border border-line bg-surface shadow-float">
-        <div className="border-b border-line px-4 py-3">
-          <div className="text-sm font-semibold text-content">
-            {initial
-              ? formatI18n(t('settings.ai.editProvider'), { label: initial.label })
-              : t('settings.ai.addCloudProvider')}
-          </div>
-          <div className="mt-0.5 text-xs text-content-muted">
-            {t('settings.ai.apiKeysEncrypted')}{' '}
-            <span className="font-mono">auth-profiles.json</span>.
-          </div>
-        </div>
-        <div className="space-y-3 px-4 py-3">
-          <div>
-            <label
-              htmlFor="cloud-provider-name"
-              className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('common.name')}
-            </label>
-            <SettingsTextField
-              id="cloud-provider-name"
-              value={label}
-              onChange={e => setLabel(e.target.value)}
-              className="mt-1"
-              placeholder={t('settings.ai.providerNamePlaceholder')}
-            />
-            <div className="mt-1 text-[11px] text-content-muted">
-              {t('settings.ai.slugLabel')}{' '}
-              <span className="font-mono text-content-secondary">
-                {slug || t('settings.ai.noneDash')}
-              </span>
-            </div>
-            {slugError ? (
-              <div className="mt-1 text-[11px] text-coral-600 dark:text-coral-300">{slugError}</div>
-            ) : null}
-          </div>
-          <div>
-            <label
-              htmlFor="cloud-provider-openai-url"
-              className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('settings.ai.openAiUrlLabel')}
-            </label>
-            <SettingsTextField
-              id="cloud-provider-openai-url"
-              mono
-              value={endpoint}
-              onChange={e => setEndpoint(e.target.value)}
-              className="mt-1"
-              placeholder={t('settings.ai.openAiUrlPlaceholder')}
-            />
-            {/* Azure routes by deployment name, which is set on the model
-                field rather than here — point the user at it (#5213). */}
-            {isAzureFoundryEndpoint(endpoint) && (
-              <div className="mt-1 text-[11px] text-content-muted">
-                {t('settings.ai.deploymentNameProviderHint')}
-              </div>
-            )}
-            {/* Only Azure's `/openai/v1` base is OpenAI-shaped: it serves a
-                `/models` listing and accepts the resource key as a bearer
-                token, which is the auth style every custom provider is stored
-                with. The older `api-version` surface wants an `api-key` header
-                and no `/models`, so a user who pastes the portal's bare
-                resource URL fails both the probe and inference (#5213). */}
-            {knownUnusableEndpoint && (
-              <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                {t('settings.ai.azureV1EndpointHint')}
-              </div>
-            )}
-          </div>
-          <div>
-            <label className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              <span>{t('settings.ai.apiKeyFieldLabel')}</span>
-              {hasExistingKey && (
-                <Button
-                  variant="tertiary"
-                  tone="danger"
-                  size="xs"
-                  className="text-[10px] font-medium normal-case"
-                  onClick={() => void onClearKey(slug)}>
-                  {t('settings.ai.clearStoredKey')}
-                </Button>
-              )}
-            </label>
-            <SettingsTextField
-              aria-label={t('settings.ai.apiKeyFieldLabel')}
-              type="text"
-              mono
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-form-type="other"
-              data-lpignore="true"
-              data-1p-ignore="true"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              className="mt-1"
-              placeholder={hasExistingKey ? t('settings.ai.keepExistingKeyPlaceholder') : 'sk-...'}
-            />
-          </div>
-          {submitError ? <ProviderSetupErrorNotice error={submitError} /> : null}
-          {/* A failed verification is not a failed provider. Explain what the
-              probe does and does not prove, then let the user proceed (#5213).
-              Withheld for an endpoint we already know cannot serve inference. */}
-          {probeFailed && !knownUnusableEndpoint ? (
-            <p className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
-              {t('settings.ai.probeFailedHint')}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <Button variant="secondary" size="xs" onClick={onClose} disabled={saving}>
-            {t('common.cancel')}
-          </Button>
-          {probeFailed && !knownUnusableEndpoint ? (
-            <Button
-              variant="secondary"
-              size="xs"
-              analyticsId="ai-provider-add-without-verifying"
-              disabled={saving || !endpoint.trim() || Boolean(slugError)}
-              onClick={() => void submitProvider({ skipProbe: true })}>
-              {t('settings.ai.probeFailedAddAnyway')}
-            </Button>
-          ) : null}
-          <Button
-            variant="primary"
-            size="xs"
-            disabled={saving || !endpoint.trim() || Boolean(slugError)}
-            onClick={() => void submitProvider()}>
-            {saving
-              ? t('settings.ai.saving')
-              : initial
-                ? t('settings.ai.saveChanges')
-                : t('settings.ai.addProvider')}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-function defaultEndpointFor(slug: string): string {
-  const builtinEndpoint = defaultEndpointForBuiltinCloudProvider(slug);
-  if (builtinEndpoint) return builtinEndpoint;
-
-  switch (slug) {
-    case 'openhuman':
-      return 'https://api.openhuman.ai/v1';
-    // Cosmetic only — the claude-code factory branch never makes HTTP calls.
-    case 'claude-code':
-      return 'cli://claude-code';
-    case 'ollama':
-      // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
-      // also accepted by the Rust factory (it appends /v1 internally for chat).
-      // For the /models probe we want the OpenAI-compat path.
-      return 'http://localhost:11434/v1';
-    case 'lmstudio':
-      return 'http://localhost:1234/v1';
-    case 'omlx':
-      return 'http://localhost:8000/v1';
-    default:
-      return '';
-  }
-}
 
 export default AIPanel;

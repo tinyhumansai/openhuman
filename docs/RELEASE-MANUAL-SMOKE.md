@@ -20,9 +20,17 @@ This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-M
 
 Applies to every release, all platforms.
 
+### Checkbox appearance
+
+- [ ] **Skill source filters show their selection** — In Connections → Skills, open the catalog source filter and toggle a source off and on. Verify that the rows filter correctly, the menu stays open, and the selected source has a visible checkmark. Repeat in light and dark themes, including Matrix, Ocean and Sepia dark; selected and indeterminate shared checkboxes must show a contrasting mark, while unchecked boxes remain empty.
+
 ### Public installer script
 
 - [ ] **`scripts/install.sh` downloads the latest asset on a proxy/VPN network** — From a clean checkout, run `bash scripts/install.sh --dry-run --verbose`, then run the public `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` flow on one macOS or Linux host. Expected: release metadata resolves, the asset downloads successfully, and transient GitHub/CDN HTTP/2 failures retry over HTTP/1.1 instead of surfacing `curl: (16) Error in the HTTP2 framing layer`.
+
+### Terminal agent cockpit
+
+- [ ] **`openhuman tui --last` completes an interactive agent turn and restores the terminal** — In a real PTY, first run `openhuman tui --new`, send `Remember marker TUI-SMOKE-42`, wait for completion, and exit with Ctrl+C. Run `openhuman tui --last`, verify that marker and its answer are restored, send a multiline prompt, steer the active turn with Enter, then type a follow-up and press Tab while streaming; verify the queued follow-up executes after the active turn. Open `/help` and `/status`, exit with Ctrl+C, and confirm shell echo/line editing still work. Repeat the resume, one turn, and exit flow with `openhuman tui --last --no-alt-screen`; confirm history renders in the current buffer and the shell is usable afterward.
 
 ### macOS
 
@@ -32,8 +40,6 @@ Applies to every release, all platforms.
 - [ ] **Accessibility permission prompt fires on first agent run** — Trigger an agent action that uses Accessibility (e.g. window-control skill). Expected: macOS prompts `OpenHuman would like to control this computer using accessibility features`. Granting it allows the action; denying it surfaces a clear in-app fallback.
 - [ ] **Input Monitoring prompt fires on first hotkey use** — Press the registered global hotkey for the first time. Expected: `Input Monitoring` prompt; granting it makes the hotkey trigger; denying it does not crash the app.
 - [ ] **Microphone prompt fires on first voice capture** — Start a voice session. Expected: standard mic prompt; granted → capture begins; denied → fallback message, no panic.
-- [ ] **Bluetooth prompt fires on first Gmeet call (regression watch — see #1288)** — Open the Google Meet webview account and join a meeting from a fresh install. Expected: macOS prompts `OpenHuman would like to use Bluetooth` the first time the device picker enumerates audio peripherals; granted → AirPods/headsets appear in the picker; denied → fallback to built-in mic, no crash. Hard fail mode (key absent) is a SIGABRT before the prompt can render.
-- [ ] **Location prompt does not crash on Gmeet room-finder probe** — If Gmeet surfaces nearby-room suggestions, the first probe should trigger `OpenHuman would like to use your current location`; granting or denying must NOT crash the app. (Probe path is webview-driven; only verify the no-crash invariant here.)
 - [ ] **File picker does not crash on Documents/Downloads/Desktop selections** — From an embedded app (Slack, Discord, Telegram), trigger a file upload and pick a file from `Documents`, `Downloads`, and `Desktop` in turn. Expected: macOS prompts `OpenHuman would like to access files in your <Folder> folder` the first time per folder; deny + retry must not crash.
 
 ### Windows
@@ -52,10 +58,13 @@ Applies to every release, all platforms.
 
 ### Cross-platform
 
+- [ ] **ChatGPT sign-in works after onboarding** — In desktop Settings > AI > Providers, add OpenAI and complete ChatGPT sign-in from its provider dialog. Expected: OpenAI is registered without an API key and existing workload routes are preserved. Reopen the provider dialog and disconnect. Expected: the connected badge clears, OpenAI is removed, and workloads no longer reference it. A failed callback shows a localized error without logging the redirect URL.
 - [ ] **First launch flow completes for a brand-new user** — Fresh OS user account, no `~/.openhuman` directory. Walk through onboarding to first agent reply. Expected: no crashes, no permission deadlocks, no stale-config errors.
+- [ ] **A background sub-agent result lands in Chat exactly once** — Ask for something that delegates to a background sub-agent (e.g. "how's my day looking?" with a calendar connected, or any `delegate_*` archetype), then wait for it to finish. Expected: the delivered reply appears once, as a normal agent message; no user-side (right-aligned) bubble showing raw `**markdown**`, and still one copy after switching to another thread and back (#5933).
 - [ ] **Auto-update download + relaunch succeeds** — Install the previous release, point the updater feed at this release, trigger an update check. Expected: download completes, relaunch installs the new binary, version string in `Settings > About` matches the release tag.
 - [ ] **GitHub Release notes are AI-generated from the previous release tag** — Before publishing the draft production release, inspect the GitHub Release body. Expected: notes start with a thematic H1 title, include high-level highlight sections with PR links and contributor thanks, omit a separate pull-request dump, include new-contributor thanks only when applicable, and the full compare URL is previous release tag → current release tag.
 - [ ] **Logging out + logging back in preserves nothing private** — Sign out, sign in as a different user. Expected: no leaked memory, threads, or skill state from the previous session (regression watch — see #900).
+- [ ] **A Docker core gateway connects, serves the app, and is torn down on switch-back** — Build `openhuman-core:local` (`docker compose build openhuman-core`). In `Settings > Core connection > Run the core somewhere else`, add a location running in a container and choose it. Expected: the status advances through its named steps and settles on Connected; chat, memory, and an agent run work against it; `docker ps` shows one `tinybox-*` container. Switch back to This computer. Expected: the local core answers again and the container is gone. Then relaunch the app while the gateway is selected. Expected: it re-provisions and reconnects rather than silently falling back to the local core — that fallback is the failure this row exists to catch, because everything keeps working against the wrong core.
 - [ ] **`memory_tree` migrates WAL→TRUNCATE on upgrade with memory intact** — Install a previous (WAL-era) build, use it enough to populate memory so a `chunks.db-wal`/`-shm` pair exists under `~/.openhuman/.../workspace/memory_tree/`, then upgrade to this build. Expected on first launch: `PRAGMA journal_mode` on `chunks.db` reports `truncate`, the `-wal`/`-shm` side-files are gone, previously-captured memories still surface in recall, and no `Failed to initialize memory_tree schema` errors appear.
 
 ---

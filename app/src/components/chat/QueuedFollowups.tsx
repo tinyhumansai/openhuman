@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { QueuedFollowup } from '../../store/chatRuntimeSlice';
+import { Button } from '../ui';
 
 interface QueuedFollowupsProps {
   /** Follow-ups queued for the current thread while a turn is streaming. */
@@ -27,13 +28,14 @@ export default function QueuedFollowups({ items, onClear }: QueuedFollowupsProps
         <span className="text-xs font-medium text-content-muted">
           {t('chat.queuedFollowups.label')} · {items.length}
         </span>
-        <button
-          type="button"
-          data-analytics-id="chat-queued-followups-clear"
+        <Button
+          variant="tertiary"
+          size="xs"
+          analyticsId="chat-queued-followups-clear"
           onClick={onClear}
-          className="text-xs font-medium text-content-muted hover:text-coral-500 dark:hover:text-coral-400 transition-colors">
+          className="h-auto p-0 font-medium text-content-muted hover:bg-transparent hover:text-coral-500">
           {t('chat.queuedFollowups.clear')}
-        </button>
+        </Button>
       </div>
       <ul className="flex flex-col gap-1">
         {items.map(item => (

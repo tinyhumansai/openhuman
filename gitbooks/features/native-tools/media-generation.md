@@ -9,13 +9,13 @@ icon: clapperboard
 
 # Image & Video Generation
 
-OpenHuman can *make* media, not just read it. Ask the assistant to "generate an image of…", "edit this screenshot to…", or "animate this photo into a short clip" and a dedicated media sub-agent takes over. No plugin, no API key, no separate billing.
+OpenHuman can _make_ media, not just read it. Ask the assistant to "generate an image of…", "edit this screenshot to…", or "animate this photo into a short clip" and a dedicated media sub-agent takes over. No plugin, no API key, no separate billing.
 
 ## What it can do
 
-* **Image generation & editing.** Text-to-image and image editing through hosted GMI models (**Seedream** for generation, **SeedEdit** for edits).
-* **Video generation.** Text-to-video, or animate a reference image into a clip (**Seedance** / **Veo**). Video is asynchronous: the agent kicks off the render and collects the clip when it's done.
-* **Model discovery.** The agent can list the currently available media models and pick the right one for the job.
+- **Image generation & editing.** Text-to-image and image editing through hosted GMI models (**Seedream** for generation, **SeedEdit** for edits).
+- **Video generation.** Text-to-video, or animate a reference image into a clip (**Seedance** / **Veo**). Video is asynchronous: the agent kicks off the render and collects the clip when it's done.
+- **Model discovery.** The agent can list the currently available media models and pick the right one for the job.
 
 ## How it works
 
@@ -29,6 +29,6 @@ Prompts and reference media for these tools are sent to the OpenHuman backend an
 
 ## See also
 
-* [Image Tools](image-tools.md) covers the *vision* side: reading and analyzing images.
-* [Available Tools](./) lists the full native toolbelt.
-* [Billing, Cost & Usage](../billing-and-usage.md) explains how media jobs are metered.
+- [Image Tools](image-tools.md) covers the _vision_ side: reading and analyzing images.
+- [Available Tools](./) lists the full native toolbelt.
+- [Billing, Cost & Usage](../billing-and-usage.md) explains how media jobs are metered.

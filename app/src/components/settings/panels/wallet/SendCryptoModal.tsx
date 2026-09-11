@@ -13,8 +13,13 @@ import {
   type PreparedTransaction,
   prepareTransfer,
 } from '../../../../services/walletApi';
+import { Alert, AlertDescription } from '../../../ui/Alert';
 import Button from '../../../ui/Button';
+import { CheckIcon, Spinner } from '../../../ui/icons';
+import { InputGroupAddon, InputGroupInput, InputGroupRoot } from '../../../ui/InputGroup';
+import Label from '../../../ui/Label';
 import { ModalShell } from '../../../ui/ModalShell';
+import TextField from '../../../ui/TextField';
 
 interface SendCryptoModalProps {
   balance: BalanceInfo;
@@ -115,9 +120,6 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
     onClose();
   }, [onSuccess, onClose]);
 
-  const fieldClass =
-    'w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500';
-
   return (
     <ModalShell
       onClose={onClose}
@@ -125,11 +127,9 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
       title={t('walletBalances.send')}
       subtitle={`${networkLabel} · ${balance.assetSymbol}`}>
       {error && (
-        <div
-          role="alert"
-          className="mb-3 rounded-lg bg-coral-50 dark:bg-coral-500/10 border border-coral-200 dark:border-coral-500/30 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-3 px-3 py-2 text-xs">
+          <AlertDescription className="text-xs opacity-100">{error}</AlertDescription>
+        </Alert>
       )}
 
       {step === 'form' && (
@@ -140,40 +140,36 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
               {balance.formatted} {balance.assetSymbol}
             </span>
           </div>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-content-secondary">
-              {t('walletSend.recipient')}
-            </span>
-            <input
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="send-recipient-input">{t('walletSend.recipient')}</Label>
+            <TextField
+              id="send-recipient-input"
               type="text"
               value={recipient}
               onChange={e => setRecipient(e.target.value)}
               placeholder={t('walletSend.recipientPlaceholder')}
               spellCheck={false}
               autoComplete="off"
-              className={`${fieldClass} font-mono`}
+              className="font-mono"
               data-testid="send-recipient"
             />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-content-secondary">
-              {t('walletSend.amount')}
-            </span>
-            <div className="relative">
-              <input
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="send-amount-input">{t('walletSend.amount')}</Label>
+            <InputGroupRoot>
+              <InputGroupInput
+                id="send-amount-input"
                 type="text"
                 inputMode="decimal"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
                 placeholder="0.0"
-                className={`${fieldClass} pr-16 font-mono`}
+                className="font-mono"
                 data-testid="send-amount"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-content-faint">
-                {balance.assetSymbol}
-              </span>
-            </div>
-          </label>
+              <InputGroupAddon className="font-medium">{balance.assetSymbol}</InputGroupAddon>
+            </InputGroupRoot>
+          </div>
           <Button
             type="button"
             onClick={() => void handleReview()}
@@ -190,7 +186,7 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
           <p className="text-xs text-content-muted leading-relaxed">
             {t('walletSend.confirmHint')}
           </p>
-          <dl className="rounded-xl border border-line divide-y divide-line-subtle dark:divide-neutral-800 text-xs">
+          <dl className="rounded-xl border border-line divide-y divide-line-subtle text-xs">
             <div className="flex items-center justify-between px-3 py-2">
               <dt className="text-content-muted">{t('walletSend.amount')}</dt>
               <dd className="font-mono font-medium text-content">
@@ -241,21 +237,7 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
 
       {step === 'sending' && (
         <div className="flex flex-col items-center gap-3 py-8 text-content-muted">
-          <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
+          <Spinner className="w-6 h-6" />
           <span className="text-sm">{t('walletSend.sending')}</span>
         </div>
       )}
@@ -263,14 +245,7 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
       {step === 'done' && result && (
         <div className="flex flex-col items-center gap-3 py-2 text-center">
           <div className="w-12 h-12 rounded-full bg-sage-100 dark:bg-sage-500/15 flex items-center justify-center">
-            <svg
-              className="w-6 h-6 text-sage-600 dark:text-sage-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
+            <CheckIcon className="w-6 h-6 text-sage-600 dark:text-sage-400" />
           </div>
           <p className="text-sm font-medium text-content">{t('walletSend.sent')}</p>
           <div className="w-full rounded-xl border border-line bg-surface-muted px-3 py-2">

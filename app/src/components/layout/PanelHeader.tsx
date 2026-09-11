@@ -1,10 +1,37 @@
+import { cva, type VariantProps } from 'class-variance-authority';
 import type { ReactNode } from 'react';
 
-interface PanelHeaderProps {
+import { cn } from '../../lib/cn';
+
+/**
+ * Fixed padding for the band — kept as a named export (rather than inlined
+ * into {@link panelHeaderVariants}) because callers historically imported it
+ * directly to restate the default when they also needed to add a class like
+ * `shrink-0`. `className` now merges through {@link cn} instead of
+ * replacing the band's own classes (see the fix below), so restating this is
+ * no longer necessary, but the export stays for anyone still doing it.
+ */
+export const DEFAULT_PANEL_HEADER_CLASS = 'px-4 pt-4 pb-3';
+export const DEFAULT_PANEL_HEADER_BG = 'bg-surface-muted';
+
+/**
+ * `tone` replaces the old free-form `bgClassName` escape hatch — nothing
+ * outside this file ever passed a background that wasn't one of these three,
+ * so the string prop was pure surface area for drift with no real callers
+ * exercising it.
+ */
+export const panelHeaderVariants = cva(DEFAULT_PANEL_HEADER_CLASS, {
+  variants: {
+    tone: { muted: DEFAULT_PANEL_HEADER_BG, surface: 'bg-surface', transparent: 'bg-transparent' },
+  },
+  defaultVariants: { tone: 'muted' },
+});
+
+export interface PanelHeaderProps extends VariantProps<typeof panelHeaderVariants> {
   /**
    * Primary title rendered as an `h2` in the control row, left of `action`.
    * Optional — generic panels stay title-less; the settings template
-   * ({@link SettingsPanel}) always supplies one for a consistent header.
+   * (`SettingsPanel`) always supplies one for a consistent header.
    */
   title?: ReactNode;
   /** Sub-title / hint, muted. Sits below the title. */
@@ -15,18 +42,14 @@ interface PanelHeaderProps {
   action?: ReactNode;
   /** Extra content rendered below the description (e.g. a chip row). */
   children?: ReactNode;
-  /** Padding/layout classes for the band. */
+  /**
+   * Merged (via `cn`, last-wins) onto the band's own padding + background —
+   * NOT a replacement. Pass `shrink-0` to opt into a flex-column parent
+   * without needing to restate the padding.
+   */
   className?: string;
-  /** Surface background for the band. */
-  bgClassName?: string;
+  'data-testid'?: string;
 }
-
-// Horizontal padding matches the canonical body padding (`p-4`) so the
-// description lines up with the content beneath it — no extra indent.
-export const DEFAULT_PANEL_HEADER_CLASS = 'px-4 pt-4 pb-3';
-// Slightly off the body surface so the fixed header reads as its own band
-// (paired with the body's hairline top border).
-export const DEFAULT_PANEL_HEADER_BG = 'bg-surface-muted';
 
 /**
  * The fixed header band shared by {@link PanelScaffold} (panel header) and
@@ -35,7 +58,7 @@ export const DEFAULT_PANEL_HEADER_BG = 'bg-surface-muted';
  * content below (e.g. chips) — presentational, no scroll of its own.
  *
  * Generic panels can stay title-less (the sidebar / chip row names the view);
- * the settings template ({@link SettingsPanel}) always passes a `title` so every
+ * the settings template (`SettingsPanel`) always passes a `title` so every
  * settings page reads the same: title + action, then description, then chips.
  */
 export default function PanelHeader({
@@ -44,13 +67,17 @@ export default function PanelHeader({
   leading,
   action,
   children,
-  className = DEFAULT_PANEL_HEADER_CLASS,
-  bgClassName = DEFAULT_PANEL_HEADER_BG,
+  tone,
+  className,
+  'data-testid': testId,
 }: PanelHeaderProps) {
   const hasControlRow = leading != null || action != null || title != null;
 
   return (
-    <div className={`${bgClassName} ${className}`}>
+    <div
+      data-slot="panel-header"
+      data-testid={testId}
+      className={cn(panelHeaderVariants({ tone }), className)}>
       {hasControlRow && (
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -59,7 +86,7 @@ export default function PanelHeader({
               <h2 className="truncate text-base font-semibold text-content">{title}</h2>
             )}
           </div>
-          {action != null && <div className="flex-shrink-0">{action}</div>}
+          {action != null && <div className="shrink-0">{action}</div>}
         </div>
       )}
 

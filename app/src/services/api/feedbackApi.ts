@@ -9,12 +9,29 @@ import type {
   FeedbackItem,
   FeedbackListParams,
   FeedbackListResult,
+  FeedbackQuality,
   FeedbackStatus,
   FeedbackVoteValue,
 } from '../../types/feedback';
 import { apiClient } from '../apiClient';
 
 const log = createDebug('feedback:api');
+
+/**
+ * The cause of a rejected `apiClient` call, for logging only.
+ *
+ * `apiClient` rejects with a plain `{ success, error }` object rather than an
+ * `Error`, so the `error` string is the branch that actually fires; the
+ * `Error` branch is there for a non-`apiClient` throw on the way in.
+ */
+function rejectionCause(err: unknown): string {
+  if (err && typeof err === 'object' && 'error' in err) {
+    const { error } = err as { error?: unknown };
+    if (typeof error === 'string' && error.trim()) return error;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return 'unknown rejection';
+}
 
 function buildListQuery(params: FeedbackListParams): string {
   const search = new URLSearchParams();
@@ -60,6 +77,36 @@ export const feedbackApi = {
     log('submitFeedback type=%s titleLen=%d', input.type, input.title.length);
     const response = await apiClient.post<ApiResponse<CreateFeedbackResult>>('/feedback', input);
     return response.data;
+  },
+
+  /**
+   * POST /feedback/validate — the quality tier for a draft, without submitting.
+   *
+   * Deterministic and local on the server: no moderation model call, nothing
+   * written, and it does not count against the daily submission limit, so the
+   * composer can call it as the user types.
+   */
+  validateFeedback: async (input: CreateFeedbackInput): Promise<FeedbackQuality> => {
+    log('validateFeedback start type=%s titleLen=%d', input.type, input.title.length);
+    try {
+      const response = await apiClient.post<ApiResponse<FeedbackQuality>>(
+        '/feedback/validate',
+        input
+      );
+      // The tier is the branch that decides what the composer does; the reason
+      // is the user's own draft turned into prose, so it stays out of the log.
+      log('validateFeedback ok type=%s tier=%s', input.type, response.data.tier);
+      return response.data;
+    } catch (err) {
+      // `apiClient` never rejects with an `Error` — every throw path in
+      // `apiClient.request` ends in a plain `{ success, error }` object — so
+      // reading only `.message` would log every failure, from a 404 on the
+      // unshipped route to a timeout, as the same "non-error rejection".
+      // A transport or server fault, never the user's draft, so it is safe to
+      // log. The composer swallows this failure; this line is its only trace.
+      log('validateFeedback failed type=%s error=%s', input.type, rejectionCause(err));
+      throw err;
+    }
   },
 
   /** POST /feedback/:id/vote — 1 upvote, -1 downvote, 0 retract. */

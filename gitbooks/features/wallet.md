@@ -13,22 +13,22 @@ It is intentionally minimal: key/account management plus the primitive on-chain 
 
 The most important property to understand: **signing and broadcast happen entirely in-core from the decrypted recovery phrase. No private keys ever leave the device or cross the network.** This is your money, so the wallet is conservative by design.
 
-***
+---
 
 ## Supported chains and token standards
 
 Setup derives **exactly one account per chain**. EVM is a single account reused across six networks. Only the standards listed below are supported for transfers. Anything else (swaps, arbitrary contract calls) is out of scope for the wallet.
 
-| Chain | Networks | Native | Token standard | Notes |
-| --- | --- | --- | --- | --- |
-| EVM | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain | ETH / BNB / etc. | ERC-20 (BEP-20 on BNB Chain) | One `Evm` account across all six; network selected per request, defaults to Ethereum mainnet. EIP-1559 / typed-tx signing. |
-| Bitcoin | Mainnet | BTC | None | P2WPKH (native SegWit). **Rejects token transfers.** Esplora REST for balance/broadcast. |
-| Solana | Mainnet / devnet (per RPC) | SOL | SPL | ed25519 signing; native + SPL token transfers. |
-| Tron | Mainnet | TRX | TRC-20 | TronGrid REST for native + TRC-20 transfers. |
+| Chain   | Networks                                               | Native           | Token standard               | Notes                                                                                                                      |
+| ------- | ------------------------------------------------------ | ---------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| EVM     | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain | ETH / BNB / etc. | ERC-20 (BEP-20 on BNB Chain) | One `Evm` account across all six; network selected per request, defaults to Ethereum mainnet. EIP-1559 / typed-tx signing. |
+| Bitcoin | Mainnet                                                | BTC              | None                         | P2WPKH (native SegWit). **Rejects token transfers.** Esplora REST for balance/broadcast.                                   |
+| Solana  | Mainnet / devnet (per RPC)                             | SOL              | SPL                          | ed25519 signing; native + SPL token transfers.                                                                             |
+| Tron    | Mainnet                                                | TRX              | TRC-20                       | TronGrid REST for native + TRC-20 transfers.                                                                               |
 
 Built-in asset catalogs include the native asset plus common stablecoins per chain (e.g. USDC/USDT as ERC-20/BEP-20, USDC as SPL on Solana, USDT as TRC-20 on Tron).
 
-***
+---
 
 ## Onboarding and the recovery phrase
 
@@ -36,7 +36,7 @@ Setup is a single, all-or-nothing operation: it persists a consent flag, the mne
 
 The recovery phrase is the only secret. The wallet stores the per-chain account **addresses** (safe to surface) separately from the secret material, and only the encrypted phrase can reconstruct private keys.
 
-***
+---
 
 ## Key custody and security
 
@@ -50,7 +50,7 @@ The wallet is **non-custodial and local**. There is no server-side key escrow.
 
 See [OS keyring & secret storage](os-keyring-and-secret-storage.md) for how secrets are stored across platforms, and [Privacy & security](privacy-and-security.md) for the broader model.
 
-***
+---
 
 ## Reading balances and chain info
 
@@ -63,7 +63,7 @@ Read-only surfaces require no confirmation:
 
 RPC endpoints are overridable per chain/network via `OPENHUMAN_WALLET_RPC_*` environment variables. URLs are redacted to scheme + host in logs.
 
-***
+---
 
 ## Sending transfers: prepare → confirm → execute
 
@@ -76,7 +76,7 @@ Every write is a two-step, intentional flow. The wallet never sends in one shot.
 
 Transfers are limited to **native sends and the token standards in the table above**. Bitcoin rejects token transfers. Swaps, bridges, and generic contract calls are not available here.
 
-***
+---
 
 ## Transaction status tracking
 
@@ -86,26 +86,26 @@ After broadcast, three read-only inspectors let the agent follow a transaction b
 - **`tx_receipt`**: receipt details (success, fee, block).
 - **`lookup_tx`**: the raw transaction payload.
 
-***
+---
 
 ## Agent tools and approval safety
 
 The agent reaches the wallet through six tools:
 
-| Tool | Purpose |
-| --- | --- |
-| `wallet_status` | Onboarding status + account addresses. |
-| `wallet_chain_status` | Per-chain readiness + active RPC. |
+| Tool                      | Purpose                                 |
+| ------------------------- | --------------------------------------- |
+| `wallet_status`           | Onboarding status + account addresses.  |
+| `wallet_chain_status`     | Per-chain readiness + active RPC.       |
 | `wallet_prepare_transfer` | Build a validated, fee-estimated quote. |
-| `wallet_tx_status` | Transaction lifecycle state by hash. |
-| `wallet_tx_receipt` | Transaction receipt by hash. |
-| `wallet_lookup_tx` | Raw transaction lookup by hash. |
+| `wallet_tx_status`        | Transaction lifecycle state by hash.    |
+| `wallet_tx_receipt`       | Transaction receipt by hash.            |
+| `wallet_lookup_tx`        | Raw transaction lookup by hash.         |
 
 Notice there is **no agent tool that executes a transfer.** The agent can prepare a quote, but actually moving funds (`execute_prepared`) goes through the RPC surface, where it must be explicitly confirmed and pass the owner-binding check. Combined with the prepare-then-confirm flow and the per-thread quote binding, this keeps the agent from silently spending funds.
 
 Because these are financial actions, they should be surfaced through the [approval gate](approval-gate.md) so a human confirms before money moves. Treat every transfer as a high-stakes action.
 
-***
+---
 
 ## See also
 

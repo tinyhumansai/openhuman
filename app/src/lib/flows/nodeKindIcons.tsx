@@ -137,32 +137,32 @@ export function NodeKindGlyph({
  */
 export const NODE_KIND_TILE: Record<NodeKind, string> = {
   // Start — the spark that begins a run.
-  trigger: 'bg-gradient-to-br from-amber-400 to-amber-600',
+  trigger: 'bg-linear-to-br from-amber-400 to-amber-600',
   // Intelligence — model-backed kinds.
-  agent: 'bg-gradient-to-br from-accent-lavender to-primary-600',
-  memory: 'bg-gradient-to-br from-accent-lavender to-primary-700',
+  agent: 'bg-linear-to-br from-accent-lavender to-primary-600',
+  memory: 'bg-linear-to-br from-accent-lavender to-primary-700',
   // Reaching outside the graph.
-  tool_call: 'bg-gradient-to-br from-primary-400 to-primary-600',
-  http_request: 'bg-gradient-to-br from-accent-sky to-primary-500',
-  sub_workflow: 'bg-gradient-to-br from-primary-500 to-primary-700',
+  tool_call: 'bg-linear-to-br from-primary-400 to-primary-600',
+  http_request: 'bg-linear-to-br from-accent-sky to-primary-500',
+  sub_workflow: 'bg-linear-to-br from-primary-500 to-primary-700',
   // Control flow that splits.
-  condition: 'bg-gradient-to-br from-amber-400 to-coral-500',
-  switch: 'bg-gradient-to-br from-amber-500 to-coral-600',
+  condition: 'bg-linear-to-br from-amber-400 to-coral-500',
+  switch: 'bg-linear-to-br from-amber-500 to-coral-600',
   // Control flow that recombines / fans out.
-  merge: 'bg-gradient-to-br from-sage-400 to-sage-600',
-  split_out: 'bg-gradient-to-br from-sage-500 to-sage-700',
+  merge: 'bg-linear-to-br from-sage-400 to-sage-600',
+  split_out: 'bg-linear-to-br from-sage-500 to-sage-700',
   // Data shaping — deliberately the quietest family.
-  code: 'bg-gradient-to-br from-slate-500 to-slate-700',
-  transform: 'bg-gradient-to-br from-accent-lavender to-accent-rose',
-  output_parser: 'bg-gradient-to-br from-slate-400 to-slate-600',
-  dedup: 'bg-gradient-to-br from-slate-500 to-slate-600',
+  code: 'bg-linear-to-br from-slate-500 to-slate-700',
+  transform: 'bg-linear-to-br from-accent-lavender to-accent-rose',
+  output_parser: 'bg-linear-to-br from-slate-400 to-slate-600',
+  dedup: 'bg-linear-to-br from-slate-500 to-slate-600',
   // Control flow that repeats — sage like the other recombining kinds, since a
   // loop head is where the body's output flows back in.
-  loop: 'bg-gradient-to-br from-sage-400 to-sage-700',
+  loop: 'bg-linear-to-br from-sage-400 to-sage-700',
 };
 
 /** Neutral tile for a kind this build does not recognise. See {@link nodeKindIcon}. */
-const UNKNOWN_KIND_TILE = 'bg-gradient-to-br from-stone-400 to-stone-600';
+const UNKNOWN_KIND_TILE = 'bg-linear-to-br from-stone-400 to-stone-600';
 
 /** Tile fill for a possibly-unknown kind. */
 export function nodeKindTile(kind: NodeKind | string): string {
@@ -217,7 +217,7 @@ export function NodeKindTile({
     <span
       aria-hidden="true"
       data-testid={testId}
-      className={`flex shrink-0 items-center justify-center text-white shadow-sm ring-1 ring-inset ring-white/15 ${tile} ${nodeKindTile(kind)} ${className}`}>
+      className={`flex shrink-0 items-center justify-center text-white shadow-xs ring-1 ring-inset ring-white/15 ${tile} ${nodeKindTile(kind)} ${className}`}>
       <NodeKindGlyph kind={kind} icon={icon} className={glyph} />
     </span>
   );

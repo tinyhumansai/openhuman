@@ -173,7 +173,7 @@ export const PairScreen: FC = () => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] text-white px-6 py-12">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0f1117] text-content-inverted px-6 py-12">
       <div className="flex flex-col items-center gap-8 max-w-sm w-full">
         {/* Logo / icon area */}
         <div className="w-20 h-20 rounded-2xl bg-[#4A83DD] flex items-center justify-center shadow-lg">
@@ -195,28 +195,32 @@ export const PairScreen: FC = () => {
 
         {/* Heading */}
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white mb-2">{t('iosPair.title')}</h1>
-          <p className="text-sm text-white/60 leading-relaxed">{t('iosPair.instructions')}</p>
+          <h1 className="text-2xl font-semibold text-content-inverted mb-2">
+            {t('iosPair.title')}
+          </h1>
+          <p className="text-sm text-content-inverted/60 leading-relaxed">
+            {t('iosPair.instructions')}
+          </p>
         </div>
 
         {/* State-specific content */}
         {state.kind === 'idle' && (
           <button
             onClick={() => void startScan()}
-            className="w-full py-4 rounded-xl bg-[#4A83DD] text-white font-medium text-base
+            className="w-full py-4 rounded-xl bg-[#4A83DD] text-content-inverted font-medium text-base
                        active:opacity-80 transition-opacity shadow-md">
             {t('iosPair.scanQrCode')}
           </button>
         )}
 
         {state.kind === 'scanning' && (
-          <p className="text-white/60 text-sm text-center animate-pulse">
+          <p className="text-content-inverted/60 text-sm text-center animate-pulse">
             {t('iosPair.scannerOpening')}
           </p>
         )}
 
         {state.kind === 'connecting' && (
-          <p className="text-white/60 text-sm text-center animate-pulse">
+          <p className="text-content-inverted/60 text-sm text-center animate-pulse">
             {t('iosPair.connecting')}
           </p>
         )}
@@ -230,7 +234,7 @@ export const PairScreen: FC = () => {
             <p className="text-amber-400 text-sm">{t('iosPair.expired')}</p>
             <button
               onClick={() => setState({ kind: 'idle' })}
-              className="w-full py-3 rounded-xl border border-white/20 text-white/80 text-sm
+              className="w-full py-3 rounded-xl border border-content-inverted/20 text-content-inverted/80 text-sm
                          active:opacity-70 transition-opacity">
               {t('common.retry')}
             </button>
@@ -242,13 +246,13 @@ export const PairScreen: FC = () => {
             <p className="text-red-400 text-sm">{state.message}</p>
             <button
               onClick={() => void startScan()}
-              className="w-full py-3 rounded-xl bg-[#4A83DD]/80 text-white text-sm
+              className="w-full py-3 rounded-xl bg-[#4A83DD]/80 text-content-inverted text-sm
                          active:opacity-70 transition-opacity">
               {t('iosPair.retryScan')}
             </button>
             <button
               onClick={() => setState({ kind: 'idle' })}
-              className="text-white/40 text-xs underline-offset-2 underline">
+              className="text-content-inverted/40 text-xs underline-offset-2 underline">
               {t('common.cancel')}
             </button>
           </div>
@@ -262,8 +266,8 @@ export const PairScreen: FC = () => {
               t('iosPair.step.openSettings'),
               t('iosPair.step.showQr'),
             ].map((step, i) => (
-              <div key={step} className="flex items-center gap-3 text-white/50 text-xs">
-                <span className="w-5 h-5 rounded-full border border-white/20 flex items-center justify-center text-[10px] shrink-0">
+              <div key={step} className="flex items-center gap-3 text-content-inverted/50 text-xs">
+                <span className="w-5 h-5 rounded-full border border-content-inverted/20 flex items-center justify-center text-[10px] shrink-0">
                   {i + 1}
                 </span>
                 {step}

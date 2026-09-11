@@ -270,6 +270,38 @@ fn type_name(value: &Value) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::ffi::OsString;
+
+    /// Holds the shared config-env lock while an RPC handler reads the active
+    /// workspace. The controller path loads and may initialize config, so it
+    /// cannot safely share another test's transient workspace.
+    struct WorkspaceEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::openhuman::config::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
 
     fn test_state() -> AppState {
         AppState {
@@ -335,6 +367,8 @@ mod tests {
     async fn dispatch_delegates_to_tier2_for_domain_method() {
         // Tier 2 dispatcher handles `openhuman.security_policy_info`, so
         // it must succeed and return a policy object.
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        let _workspace_env = WorkspaceEnvGuard::set(workspace.path());
         let out = dispatch(test_state(), "openhuman.security_policy_info", json!({}))
             .await
             .expect("security_policy_info should route via tier 2");
@@ -467,17 +501,14 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_legacy_alias_routes_to_registry() {
-        // openhuman.get_analytics_settings should rewrite to openhuman.config_get_analytics_settings.
-        // This is a read-only call and should succeed if the registry is wired up.
-        let out = dispatch(test_state(), "openhuman.get_analytics_settings", json!({}))
-            .await
-            .expect("openhuman.get_analytics_settings should be rewritten and succeed");
-
-        // The registry-wrapped payload has a "result" field.
+        // This alias targets a controller registered in the domain registry.
+        // Do not invoke it here: its implementation can persist default config,
+        // which makes this routing test depend on a filesystem workspace.
+        let method =
+            crate::core::legacy_aliases::resolve_legacy("openhuman.get_analytics_settings");
         assert!(
-            out.get("enabled").is_some() || out.get("result").is_some(),
-            "Payload should have 'enabled' or 'result', got: {}",
-            out
+            crate::core::all::schema_for_rpc_method(method).is_some(),
+            "legacy alias must resolve to a registered controller: {method}"
         );
     }
 }

@@ -22,14 +22,23 @@ import {
 const mockPipelineStatus = vi.fn();
 const mockSetEnabled = vi.fn();
 const mockSyncStatusList = vi.fn();
+const mockRetryFailed = vi.fn();
+const mockNamespaceSummaries = vi.fn();
 // #5324: the panel now navigates (budget CTA) and dispatches (escalating the
 // blocking cause to the shell-mounted UserErrorCenter). Stub both so the
 // suite keeps rendering the panel bare, without a Router or a Redux store.
 const mockNavigate = vi.fn();
 const mockDispatch = vi.fn();
+// Analytics is a consent-gated side effect that reaches into the core-state
+// snapshot; stub it so the panel renders bare and the retry-success path can be
+// asserted without a real analytics pipeline.
+const mockTrackAnalyticsEvent = vi.fn();
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
 vi.mock('../../store/hooks', () => ({ useAppDispatch: () => mockDispatch }));
+vi.mock('../analytics', () => ({
+  trackAnalyticsEvent: (...args: unknown[]) => mockTrackAnalyticsEvent(...args),
+}));
 
 vi.mock('../../utils/tauriCommands', async importOriginal => {
   // Inherit everything else (types, sibling wrappers) verbatim so the panel
@@ -41,6 +50,8 @@ vi.mock('../../utils/tauriCommands', async importOriginal => {
     memoryTreePipelineStatus: (...args: unknown[]) => mockPipelineStatus(...args),
     memoryTreeSetEnabled: (...args: unknown[]) => mockSetEnabled(...args),
     memorySyncStatusList: (...args: unknown[]) => mockSyncStatusList(...args),
+    memoryTreeRetryFailed: (...args: unknown[]) => mockRetryFailed(...args),
+    memoryNamespaceSummaries: (...args: unknown[]) => mockNamespaceSummaries(...args),
   };
 });
 
@@ -73,7 +84,13 @@ describe('<MemoryTreeStatusPanel />', () => {
     mockPipelineStatus.mockReset();
     mockSetEnabled.mockReset();
     mockSyncStatusList.mockReset();
+    mockRetryFailed.mockReset();
+    mockNamespaceSummaries.mockReset();
+    mockTrackAnalyticsEvent.mockReset();
     mockSyncStatusList.mockResolvedValue([]); // default: empty, harmless to existing tests
+    // Same default the inline stub used to hard-code, now re-programmable
+    // per test so the failure branch can be driven.
+    mockNamespaceSummaries.mockResolvedValue({ namespaces: [], total_documents: 0 });
   });
 
   afterEach(() => {
@@ -549,6 +566,161 @@ describe('<MemoryTreeStatusPanel />', () => {
     await waitFor(() => {
       expect(mockDispatch).toHaveBeenCalled();
     });
+  });
+
+  // ── Retry-failed affordance ─────────────────────────────────────────────
+
+  it('offers a retry when jobs are parked in failed', async () => {
+    mockPipelineStatus.mockResolvedValue(
+      payload({
+        status: 'error',
+        reason: '29 unrecoverable failure(s) need action',
+        pipeline_jobs: { ready: 0, running: 0, failed: 29 },
+      })
+    );
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-retry-failed')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The affordance keys off the failed-job counter, not off the blocking-cause
+   * banner. A failure the pipeline has already worked past no longer surfaces a
+   * remediation (the core withholds a superseded cause), but its rows still sit
+   * in `failed` and still need clearing — so the button must be reachable with
+   * no banner on screen. Without this the user is left in a permanent `error`
+   * state with no way out, which is the bug.
+   */
+  it('offers the retry even when no blocking cause is surfaced', async () => {
+    mockPipelineStatus.mockResolvedValue(
+      payload({
+        status: 'error',
+        reason: '29 unrecoverable failure(s) need action',
+        pipeline_jobs: { ready: 0, running: 0, failed: 29 },
+        first_blocking_cause: null,
+      })
+    );
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-retry-failed')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('memory-tree-blocking-cause')).not.toBeInTheDocument();
+  });
+
+  it('hides the retry when nothing has failed', async () => {
+    mockPipelineStatus.mockResolvedValue(payload({ status: 'running' }));
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/running/i);
+    });
+    expect(screen.queryByTestId('memory-tree-retry-failed')).not.toBeInTheDocument();
+  });
+
+  it('requeues the failed jobs, reports the count, and re-fetches', async () => {
+    mockPipelineStatus.mockResolvedValue(
+      payload({
+        status: 'error',
+        reason: '29 unrecoverable failure(s) need action',
+        pipeline_jobs: { ready: 0, running: 0, failed: 29 },
+      })
+    );
+    mockRetryFailed.mockResolvedValue({ requeued: 29 });
+    const onToast = vi.fn();
+    render(<MemoryTreeStatusPanel onToast={onToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-retry-failed')).toBeInTheDocument();
+    });
+    const callsBefore = mockPipelineStatus.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('memory-tree-retry-failed'));
+    });
+
+    expect(mockRetryFailed).toHaveBeenCalledTimes(1);
+    // Successful domain outcome is tracked with the privacy-safe count only.
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledWith('memory_tree_retry_succeeded', {
+      count: 29,
+    });
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', message: expect.stringContaining('29') })
+      );
+    });
+    // Successful domain outcome is tracked with a privacy-safe count only.
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledWith('memory_tree_retry_succeeded', {
+      count: 29,
+    });
+    await waitFor(() => {
+      expect(mockPipelineStatus.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  it('surfaces an error toast when the requeue fails', async () => {
+    mockPipelineStatus.mockResolvedValue(
+      payload({
+        status: 'error',
+        reason: '29 unrecoverable failure(s) need action',
+        pipeline_jobs: { ready: 0, running: 0, failed: 29 },
+      })
+    );
+    mockRetryFailed.mockRejectedValue(new Error('UNIQUE constraint failed'));
+    const onToast = vi.fn();
+    render(<MemoryTreeStatusPanel onToast={onToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-retry-failed')).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('memory-tree-retry-failed'));
+    });
+
+    await waitFor(() => {
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', message: 'UNIQUE constraint failed' })
+      );
+    });
+    // The button must stay usable so a transient failure is not a dead end.
+    expect(screen.getByTestId('memory-tree-retry-failed')).not.toBeDisabled();
+  });
+
+  // -- stored-items tile ----------------------------------------------------
+  // The stored-document total rides the same poll as the pipeline status but
+  // comes from a different store, and it is fetched on a detached promise so a
+  // failure there must NOT wipe the panel. These pin both halves of that.
+
+  it('renders the stored-items total from the namespace summaries', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockNamespaceSummaries.mockResolvedValue({
+      namespaces: [{ namespace: 'slack', count: 1500, last_updated: null }],
+      total_documents: 1500,
+    });
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-stored-items')).toHaveTextContent('1,500');
+    });
+  });
+
+  it('keeps the panel alive and shows the placeholder when the summaries call fails', async () => {
+    // Detached-promise failure path: `storedItems` falls back to null, which
+    // renders the skeleton rather than a number. The pipeline status still
+    // resolved, so nothing else on the panel may degrade — in particular the
+    // panel-wide error must stay clear, because only a pipeline failure owns it.
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockNamespaceSummaries.mockRejectedValue(new Error('namespace summaries down'));
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-total-chunks')).toHaveTextContent('1,234');
+    });
+    expect(screen.queryByTestId('memory-stored-items')).not.toBeInTheDocument();
+    expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/running/i);
   });
 });
 

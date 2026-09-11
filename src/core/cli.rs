@@ -46,23 +46,26 @@ Contribute & Star us on GitHub: https://github.com/tinyhumansai/openhuman
 pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     load_dotenv_for_cli()?;
 
+    let launch = parse_launch_options(args)?;
+    crate::openhuman::config::set_cli_inference_overrides(
+        launch.provider.as_deref(),
+        launch.model.as_deref(),
+    );
+
     let host = crate::core::types::HostKind::detect_standalone();
-    if args == ["--tui"]
+    if launch.args == ["--tui"]
         || should_auto_launch_tui(
-            args,
+            &launch.args,
             std::io::stdin().is_terminal(),
             std::io::stdout().is_terminal(),
             host,
             cfg!(feature = "tui"),
-        )
+        ) && !launch.no_tui
     {
         return run_tui_from_cli(&[]);
     }
 
-    // `--no-tui` is a global opt-out, not a synthetic subcommand. Strip it
-    // before normal dispatch so `openhuman --no-tui --help` and
-    // `openhuman --no-tui run ...` retain their ordinary CLI meaning.
-    let args = strip_no_tui(args);
+    let args = launch.args;
     // Print the welcome banner to stderr to keep stdout clean for JSON output.
     // `mcp`/`mcp-server` speak JSON-RPC on stdout; `tui`/`chat` own the whole
     // terminal (alternate screen + raw mode) — a banner on either would corrupt
@@ -95,9 +98,6 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
             )
         }
         "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
-        "subconscious" | "sub" => {
-            crate::core::subconscious_cli::run_subconscious_command(&args[1..])
-        }
         "agent" => {
             log::debug!(
                 "[cli] dispatching to agent subcommand, args={:?}",
@@ -109,6 +109,74 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         // Generic namespace dispatcher: `openhuman <namespace> <function> ...`
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CliLaunchOptions {
+    args: Vec<String>,
+    model: Option<String>,
+    provider: Option<String>,
+    no_tui: bool,
+}
+
+/// Parse launch-wide flags before the subcommand, matching the familiar
+/// `openhuman [global options] [command]` shape. Model/provider values are
+/// transient process overrides; they never rewrite the user's config file.
+fn parse_launch_options(args: &[String]) -> Result<CliLaunchOptions> {
+    let mut parsed = CliLaunchOptions::default();
+    let mut i = 0usize;
+
+    while i < args.len() {
+        let arg = args[i].as_str();
+        let (target, inline_value) = match arg {
+            "--model" | "--model-id" | "-m" => (Some("model"), None),
+            "--provider" | "--provider-id" | "-p" => (Some("provider"), None),
+            "--no-tui" => {
+                parsed.no_tui = true;
+                i += 1;
+                continue;
+            }
+            _ if arg.starts_with("--model=") => (Some("model"), arg.split_once('=').map(|v| v.1)),
+            _ if arg.starts_with("--model-id=") => {
+                (Some("model"), arg.split_once('=').map(|v| v.1))
+            }
+            _ if arg.starts_with("--provider=") => {
+                (Some("provider"), arg.split_once('=').map(|v| v.1))
+            }
+            _ if arg.starts_with("--provider-id=") => {
+                (Some("provider"), arg.split_once('=').map(|v| v.1))
+            }
+            _ => break,
+        };
+
+        let value = match inline_value {
+            Some(value) => value,
+            None => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .map(String::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing value for {arg}"))?;
+                if value.starts_with('-') {
+                    return Err(anyhow::anyhow!("missing value for {arg}"));
+                }
+                value
+            }
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(anyhow::anyhow!("empty value for {arg}"));
+        }
+        match target {
+            Some("model") => parsed.model = Some(value.to_string()),
+            Some("provider") => parsed.provider = Some(value.to_string()),
+            _ => unreachable!("launch option target is fixed above"),
+        }
+        i += 1;
+    }
+
+    parsed.args = args[i..].to_vec();
+    Ok(parsed)
 }
 
 #[cfg(feature = "tui")]
@@ -139,14 +207,6 @@ fn should_auto_launch_tui(
         && stdout_is_terminal
         && host == crate::core::types::HostKind::Cli
         && tui_compiled
-}
-
-fn strip_no_tui(args: &[String]) -> &[String] {
-    if args.first().map(String::as_str) == Some("--no-tui") {
-        &args[1..]
-    } else {
-        args
-    }
 }
 
 /// Handles the `sentry-test` subcommand used to verify Sentry wiring end-to-end.
@@ -423,6 +483,15 @@ fn run_call_command(args: &[String]) -> Result<()> {
     let method = method.ok_or_else(|| anyhow::anyhow!("--method is required"))?;
     let params = parse_json_params(&params).map_err(anyhow::Error::msg)?;
 
+    // Raw calls bypass namespace parsing, but not the configured memory-driver
+    // binding. Without this gate an absent capability could still reach a
+    // destructive embedded handler because plain CLI invocations have no
+    // ambient CoreContext to filter the registry.
+    crate::core::cli_capability::ensure_capability_blocking(
+        all::capability_for_rpc_method(&method).flatten(),
+        &format!("openhuman call --method {method}"),
+    )?;
+
     // `call` invokes a JSON-RPC method that may run an orchestrator turn
     // (e.g. `agent.chat`), so it needs the same roomy stack as the server.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -431,7 +500,20 @@ fn run_call_command(args: &[String]) -> Result<()> {
         .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
-        .block_on(async { invoke_method(default_state(), &method, params).await })
+        .block_on(async {
+            // A raw call is its own process: the server publishes the module
+            // host policy during boot, and a method that crosses the memory
+            // module binding (since the round-2 migration, most of them)
+            // fails with "the module host policy was never published"
+            // without this — the same per-process publish the memory and
+            // tree-summarizer subcommand families already do.
+            // One line by design: `src/core/` is transport, and the load-
+            // config-install-sink-publish-policy sequence lives with the
+            // module host in the openhuman layer (review finding on #5932).
+            #[cfg(feature = "modules")]
+            crate::openhuman::modules::memory::publish_cli_boot_policy().await?;
+            invoke_method(default_state(), &method, params).await
+        })
         .map_err(anyhow::Error::msg)?;
 
     // Output the result as pretty-printed JSON to stdout.
@@ -454,6 +536,20 @@ fn run_namespace_command(
     grouped: &BTreeMap<String, Vec<ControllerSchema>>,
 ) -> Result<()> {
     let Some(schemas) = grouped.get(namespace) else {
+        // Reachable only when `grouped` really was filtered — i.e. under
+        // `run`/`serve`/TUI, which build a `CoreContext`. On a plain CLI
+        // invocation there is no ambient context, so nothing is filtered and a
+        // gated namespace is still present; the per-function gate below is what
+        // fires there. Consult the UNFILTERED registry before reporting a typo:
+        // silence reads as a mistyped command and sends the user off debugging
+        // their own command line, which is exactly what `docs/specs/kernel.md`
+        // §3.3 carves the CLI out of. Same reasoning as the retained `mcp` and
+        // `tui` arms above. A namespace that does not exist at all yields `None`
+        // and still reports unknown.
+        crate::core::cli_capability::ensure_capability_blocking(
+            all::sole_capability_for_namespace(namespace),
+            &format!("openhuman {namespace}"),
+        )?;
         return Err(anyhow::anyhow!(
             "unknown namespace '{namespace}'. Run `openhuman --help` to see available namespaces."
         ));
@@ -469,6 +565,30 @@ fn run_namespace_command(
     }
 
     let function = args[0].as_str();
+
+    // Gate BEFORE resolving the schema, not in the not-found arm below.
+    //
+    // `grouped` comes from `all_controller_schemas()`, which filters through the
+    // ambient `CoreContext` — and no plain CLI subcommand builds one, since
+    // `DEFAULT_CONTEXT` is set only in `CoreContext::init` (reached by
+    // `run`/`serve` and the TUI). So on a real `openhuman <ns> <fn>` invocation
+    // *nothing* is filtered, a gated function is still found here, and a check
+    // placed only in the not-found arm would never execute — the command would
+    // simply run. Gating the resolved function instead makes this fire on the
+    // path users actually take, and it stays correct under `run`/`serve` where
+    // `grouped` genuinely is filtered.
+    //
+    // `capability_for_parts` consults the UNFILTERED registry and yields `None`
+    // for a function registered nowhere, so a genuine typo short-circuits the
+    // gate and falls through to the unknown-function message below. Keeping the
+    // two distinguishable is the point: collapsing them would make real typos
+    // harder to diagnose, which is the failure `docs/specs/kernel.md` §3.3
+    // carves the CLI out of.
+    crate::core::cli_capability::ensure_capability_blocking(
+        all::capability_for_parts(namespace, function).flatten(),
+        &format!("openhuman {namespace} {function}"),
+    )?;
+
     let Some(schema) = schemas.iter().find(|s| s.function == function).cloned() else {
         return Err(anyhow::anyhow!(
             "unknown function '{namespace} {function}'. Run `openhuman {namespace} --help`."
@@ -610,7 +730,7 @@ fn grouped_schemas() -> BTreeMap<String, Vec<ControllerSchema>> {
 fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("OpenHuman core CLI\n");
     println!("Usage:");
-    println!("  openhuman [--no-tui]                    (tabbed terminal UI on interactive hosts)");
+    println!("  openhuman [OPTIONS]                     (tabbed terminal UI on interactive hosts)");
     println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman call --method <name> [--params '<json>']");
     println!(
@@ -625,6 +745,11 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("  openhuman tree-summarizer <subcommand> [options]  (summary tree CLI)");
     println!("  openhuman sentry-test [--message <text>] [--panic]  (verify Sentry wiring)");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
+    println!("Global options (place before the command):");
+    println!("  -m, --model <id>       Override the model for this CLI session");
+    println!("  -p, --provider <id>    Override the provider id or slug for this CLI session");
+    println!("      --no-tui           Do not auto-open the terminal UI");
+    println!("                        (aliases: --model-id, --provider-id)\n");
     println!("Available namespaces:");
     for namespace in grouped.keys() {
         let description = all::namespace_description(namespace.as_str())

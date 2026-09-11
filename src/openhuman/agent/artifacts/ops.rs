@@ -207,7 +207,8 @@ async fn regenerate_presentation(
         &config.workspace_dir,
         &config.action_dir,
     ));
-    let tool = PresentationTool::new(config.workspace_dir.clone(), security);
+    let tool =
+        PresentationTool::with_config(config.workspace_dir.clone(), security, config.clone());
 
     let chat_ctx = ApprovalChatContext {
         thread_id: thread_id.to_string(),

@@ -18,7 +18,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use tokio::sync::watch;
 
-use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
+use tinybus::EventHandler;
+use tinybus::SubscriptionHandle;
 // Arc imported for detector sharing across async tasks
 use crate::openhuman::agent::learning::stability_detector::StabilityDetector;
 
@@ -89,7 +92,7 @@ struct RebuildTriggerHandler {
 }
 
 #[async_trait]
-impl EventHandler for RebuildTriggerHandler {
+impl EventHandler<DomainEvent> for RebuildTriggerHandler {
     fn name(&self) -> &str {
         "learning::rebuild_trigger"
     }
@@ -132,14 +135,14 @@ impl EventHandler for RebuildTriggerHandler {
 /// remain active. Callers should store it in a static `OnceLock` (same pattern
 /// as the `EmailSignatureSubscriber`).
 pub fn register_event_trigger(detector: Arc<StabilityDetector>) -> Option<SubscriptionHandle> {
-    subscribe_global(Arc::new(RebuildTriggerHandler { detector }))
+    BUS.subscribe(Arc::new(RebuildTriggerHandler { detector }))
 }
 
 // ── Shared rebuild runner ─────────────────────────────────────────────────────
 
 async fn run_rebuild_logged(detector: &StabilityDetector, source: &str) {
     let now = now_secs();
-    match detector.rebuild(now) {
+    match detector.rebuild(now).await {
         Ok(outcome) => {
             tracing::info!(
                 "[learning::scheduler] {source} rebuild complete: \

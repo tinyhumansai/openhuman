@@ -17,7 +17,8 @@
 //! Part of `docs/tinyagents-full-migration-plan/05-events/02-bridge-consolidation.md`
 //! step 3 (the lifecycle-publish sweep).
 
-use crate::core::event_bus::{publish_global, DomainEvent};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 
 /// A sub-agent was dispatched. Mirrors [`DomainEvent::SubagentSpawned`].
 pub(crate) fn publish_subagent_spawned(
@@ -35,7 +36,7 @@ pub(crate) fn publish_subagent_spawned(
         prompt_chars,
         "[subagent-events] spawned"
     );
-    publish_global(DomainEvent::SubagentSpawned {
+    BUS.publish(DomainEvent::SubagentSpawned {
         parent_session,
         agent_id,
         mode,
@@ -63,7 +64,7 @@ pub(crate) fn publish_subagent_completed(
         iterations,
         "[subagent-events] completed"
     );
-    publish_global(DomainEvent::SubagentCompleted {
+    BUS.publish(DomainEvent::SubagentCompleted {
         parent_session,
         task_id,
         agent_id,
@@ -87,7 +88,7 @@ pub(crate) fn publish_subagent_failed(
         error = %error,
         "[subagent-events] failed"
     );
-    publish_global(DomainEvent::SubagentFailed {
+    BUS.publish(DomainEvent::SubagentFailed {
         parent_session,
         task_id,
         agent_id,
@@ -109,7 +110,7 @@ pub(crate) fn publish_subagent_awaiting_user(
         agent_id = %agent_id,
         "[subagent-events] awaiting_user"
     );
-    publish_global(DomainEvent::SubagentAwaitingUser {
+    BUS.publish(DomainEvent::SubagentAwaitingUser {
         parent_session,
         task_id,
         agent_id,

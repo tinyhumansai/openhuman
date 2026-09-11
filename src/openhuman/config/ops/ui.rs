@@ -1,12 +1,9 @@
-//! UI-facing config operations: browser, analytics, meet,
+//! UI-facing config operations: browser, analytics,
 //! search, dictation, voice server, onboarding flags.
-
-use std::collections::HashMap;
 
 use serde_json::json;
 
-use crate::openhuman::config::schema::CalendarProvider;
-use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy, Config};
+use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
 use super::loader::{fallback_workspace_dir, load_config_with_timeout, snapshot_config_json};
@@ -23,32 +20,9 @@ pub struct AnalyticsSettingsPatch {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct MeetSettingsPatch {
-    pub auto_orchestrator_handoff: Option<bool>,
-    /// Calendar auto-join policy (issue #3511 settings UI).
-    pub auto_join_policy: Option<AutoJoinPolicy>,
-    /// Post-call auto-summarize policy.
-    pub auto_summarize_policy: Option<AutoSummarizePolicy>,
-    /// When `true`, the bot joins in listen-only mode (mic muted).
-    pub listen_only_default: Option<bool>,
-    /// When `true`, backend-bot transcripts are ingested into memory.
-    pub ingest_backend_transcripts: Option<bool>,
-    /// Per-platform auto-join policy overrides. Replaces the stored map wholesale
-    /// when present. Keys: "gmeet", "zoom", "teams", "webex".
-    pub platform_auto_join_policies: Option<HashMap<String, AutoJoinPolicy>>,
-    /// Master switch for calendar-driven meeting actions (auto-join / ask-to-join).
-    /// Decoupled from `heartbeat.notify_meetings` (plain reminder cards).
-    pub watch_calendar: Option<bool>,
-    /// Calendar detection source: `Composio` (default) or `Recall`. Flipped to
-    /// `Recall` when the user connects a calendar via Recall.ai.
-    pub calendar_provider: Option<CalendarProvider>,
-    /// User's meeting display name, reused as the bot's reply anchor on join.
-    pub reply_display_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` | `exa`.
+    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` |
+    /// `exa` | `tavily`.
     /// Empty/unknown values are rejected by `apply_search_settings`.
     /// Runtime fallback to `managed` applies only to persisted/legacy config
     /// values resolved by `SearchConfig::effective_engine()`.
@@ -65,6 +39,8 @@ pub struct SearchSettingsPatch {
     pub querit_api_key: Option<String>,
     /// Exa API key (BYOK). An empty string clears the stored key.
     pub exa_api_key: Option<String>,
+    /// Tavily API key (BYOK). An empty string clears the stored key.
+    pub tavily_api_key: Option<String>,
     /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
     /// host allowlist. Entries are exact hosts (`reuters.com`), which also
     /// match their subdomains, or `"*"` for all public sites. Empty list
@@ -97,6 +73,9 @@ pub struct VoiceServerSettingsPatch {
     pub custom_dictionary: Option<Vec<String>>,
     pub always_on_enabled: Option<bool>,
     pub wake_word: Option<String>,
+    /// Hosted STT engine name — `"backend"` / `"elevenlabs"` / `"openai"`
+    /// (the `"cloud"` / `"openhuman"` aliases also resolve to backend).
+    pub stt_engine: Option<String>,
 }
 
 /// Updates the browser-related settings in the configuration.
@@ -176,57 +155,6 @@ pub async fn load_and_apply_analytics_settings(
     apply_analytics_settings(&mut config, update).await
 }
 
-/// Updates the Google Meet integration settings in the configuration.
-pub async fn apply_meet_settings(
-    config: &mut Config,
-    update: MeetSettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if let Some(enabled) = update.auto_orchestrator_handoff {
-        config.meet.auto_orchestrator_handoff = enabled;
-    }
-    if let Some(policy) = update.auto_join_policy {
-        config.meet.auto_join_policy = policy;
-    }
-    if let Some(policy) = update.auto_summarize_policy {
-        config.meet.auto_summarize_policy = policy;
-    }
-    if let Some(listen_only) = update.listen_only_default {
-        config.meet.listen_only_default = listen_only;
-    }
-    if let Some(ingest) = update.ingest_backend_transcripts {
-        config.meet.ingest_backend_transcripts = ingest;
-    }
-    if let Some(policies) = update.platform_auto_join_policies {
-        config.meet.platform_auto_join_policies = policies;
-    }
-    if let Some(watch_calendar) = update.watch_calendar {
-        config.meet.watch_calendar = watch_calendar;
-    }
-    if let Some(provider) = update.calendar_provider {
-        config.meet.calendar_provider = provider;
-    }
-    if let Some(name) = update.reply_display_name {
-        config.meet.reply_display_name = name.trim().to_string();
-    }
-    config.save().await.map_err(|e| e.to_string())?;
-    let snapshot = snapshot_config_json(config)?;
-    Ok(RpcOutcome::new(
-        snapshot,
-        vec![format!(
-            "meet settings saved to {}",
-            config.config_path.display()
-        )],
-    ))
-}
-
-/// Loads the configuration, applies meet settings updates, and saves it.
-pub async fn load_and_apply_meet_settings(
-    update: MeetSettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_meet_settings(&mut config, update).await
-}
-
 /// Updates the search engine configuration. Empty API-key strings clear the
 /// stored value rather than treat empty-string as "credential present".
 pub async fn apply_search_settings(
@@ -236,12 +164,12 @@ pub async fn apply_search_settings(
     if let Some(engine) = update.engine {
         let trimmed = engine.trim();
         match trimmed {
-            "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" => {
+            "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" | "tavily" => {
                 config.search.engine = trimmed.to_string();
             }
             other => {
                 return Err(format!(
-                    "engine must be one of disabled/managed/parallel/brave/querit/exa (got {other:?})"
+                    "engine must be one of disabled/managed/parallel/brave/querit/exa/tavily (got {other:?})"
                 ));
             }
         }
@@ -287,6 +215,14 @@ pub async fn apply_search_settings(
     if let Some(raw) = update.exa_api_key {
         let trimmed = raw.trim();
         config.search.exa.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.tavily_api_key {
+        let trimmed = raw.trim();
+        config.search.tavily.api_key = if trimmed.is_empty() {
             None
         } else {
             Some(trimmed.to_string())
@@ -355,6 +291,7 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
             crate::openhuman::config::SearchEngine::Brave => "brave",
             crate::openhuman::config::SearchEngine::Querit => "querit",
             crate::openhuman::config::SearchEngine::Exa => "exa",
+            crate::openhuman::config::SearchEngine::Tavily => "tavily",
         },
         "max_results": config.search.max_results,
         "timeout_secs": config.search.timeout_secs,
@@ -362,6 +299,7 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
         "brave_configured": config.search.brave.has_key(),
         "querit_configured": config.search.querit.has_key(),
         "exa_configured": config.search.exa.has_key(),
+        "tavily_configured": config.search.tavily.has_key(),
         "allowed_domains": config.http_request.allowed_domains,
         "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
     });
@@ -493,35 +431,6 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
     ))
 }
 
-/// Reads the "super context" toggle (`context.super_context_enabled`).
-///
-/// When on, the agent harness runs a mandatory read-only context-collection
-/// pass on the first turn of a new thread before the orchestrator LLM runs.
-/// Surfaced as the toggle below the chat composer.
-pub async fn get_super_context_enabled() -> Result<RpcOutcome<bool>, String> {
-    let config = load_config_with_timeout().await?;
-    Ok(RpcOutcome::single_log(
-        config.context.super_context_enabled,
-        "super_context_enabled read from config",
-    ))
-}
-
-/// Updates and persists the "super context" toggle.
-///
-/// Read at thread/session construction, so the new value only takes effect
-/// for threads started after the change (matches the frozen turn-1 prefix
-/// contract).
-pub async fn set_super_context_enabled(value: bool) -> Result<RpcOutcome<bool>, String> {
-    tracing::debug!(value, "[super_context] set_super_context_enabled called");
-    let mut config = load_config_with_timeout().await?;
-    config.context.super_context_enabled = value;
-    config.save().await.map_err(|e| e.to_string())?;
-    Ok(RpcOutcome::single_log(
-        config.context.super_context_enabled,
-        "super_context_enabled saved to config",
-    ))
-}
-
 /// Returns the current dictation settings as a JSON object.
 pub async fn get_dictation_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
@@ -600,6 +509,7 @@ pub async fn get_voice_server_settings() -> Result<RpcOutcome<serde_json::Value>
         "custom_dictionary": config.voice_server.custom_dictionary,
         "always_on_enabled": config.voice_server.always_on_enabled,
         "wake_word": config.voice_server.wake_word,
+        "stt_engine": config.voice_server.stt_engine,
     });
     Ok(RpcOutcome::new(
         result,
@@ -652,6 +562,15 @@ pub async fn load_and_apply_voice_server_settings(
     }
     if let Some(wake_word) = update.wake_word {
         config.voice_server.wake_word = wake_word.trim().to_string();
+    }
+    if let Some(engine) = update.stt_engine {
+        // Reject rather than silently defaulting: an unknown engine name means
+        // the caller and the core disagree about what is available, and quietly
+        // routing to the backend proxy would bill the wrong account.
+        let parsed = crate::openhuman::config::SttEngine::parse(&engine).ok_or_else(|| {
+            format!("invalid stt_engine: {engine} (valid: backend, elevenlabs, openai)")
+        })?;
+        config.voice_server.stt_engine = parsed;
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(&config)?;

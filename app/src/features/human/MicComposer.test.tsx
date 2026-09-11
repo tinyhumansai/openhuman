@@ -167,6 +167,70 @@ describe('MicComposer', () => {
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
   });
 
+  describe('onRecordingChange', () => {
+    it('reports true on capture start and false on stop', async () => {
+      transcribeWithFactoryMock.mockResolvedValueOnce('hello');
+      const onRecordingChange = vi.fn();
+      render(
+        <MicComposer disabled={false} onSubmit={vi.fn()} onRecordingChange={onRecordingChange} />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await waitFor(() => expect(onRecordingChange).toHaveBeenCalledWith(true));
+
+      fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+      await waitFor(() => expect(onRecordingChange).toHaveBeenLastCalledWith(false));
+    });
+
+    it('reports false when unmounted mid-recording', async () => {
+      // Without this the caller stays pinned in a hot-mic state — the chat
+      // mascot would hold its `listening` pose forever after navigating away.
+      const onRecordingChange = vi.fn();
+      const { unmount } = render(
+        <MicComposer disabled={false} onSubmit={vi.fn()} onRecordingChange={onRecordingChange} />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await waitFor(() => expect(onRecordingChange).toHaveBeenCalledWith(true));
+      onRecordingChange.mockClear();
+
+      unmount();
+
+      expect(onRecordingChange).toHaveBeenCalledWith(false);
+    });
+
+    it('does not fire when capture never starts', async () => {
+      const err = Object.assign(new DOMException('', 'NotAllowedError'));
+      getUserMediaMock.mockRejectedValueOnce(err);
+      const onRecordingChange = vi.fn();
+      render(
+        <MicComposer
+          disabled={false}
+          onSubmit={vi.fn()}
+          onError={vi.fn()}
+          onRecordingChange={onRecordingChange}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+
+      expect(onRecordingChange).not.toHaveBeenCalled();
+    });
+
+    it('is optional — capture works without it', async () => {
+      transcribeWithFactoryMock.mockResolvedValueOnce('hi');
+      const onSubmit = vi.fn();
+      render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+      );
+      fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('hi'));
+    });
+  });
+
   it('forwards the language prop to transcribeCloud', async () => {
     transcribeWithFactoryMock.mockResolvedValueOnce('hi');
     render(<MicComposer disabled={false} onSubmit={vi.fn()} language="es" />);
@@ -744,17 +808,14 @@ describe('MicComposer', () => {
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
   });
 
-  it('skips native retries on a missing local binary and falls straight to WAV/in-process', async () => {
-    // On a no-binary macOS install (#3425) the native webm codec routes to the
-    // whisper-cli subprocess and errors "binary not found". That can never
-    // succeed on retry, and only 16kHz WAV can use the in-process engine — so
-    // the native codec must bail immediately (no backoff) and the WAV re-encode
-    // must run, where the in-process route transcribes with no external binary.
+  it('skips native retries on a "binary not found" failure and falls straight to WAV', async () => {
+    // A "binary not found" error means the engine could not run at all, so
+    // retrying the same webm payload just burns backoff. The native codec must
+    // bail immediately and the WAV re-encode must run — plain 16 kHz WAV is the
+    // format every engine accepts, so it is the one retry worth taking (#3425).
     transcribeWithFactoryMock
-      .mockRejectedValueOnce(
-        new Error('[voice-stt] whisper.cpp binary not found. Set WHISPER_BIN to the absolute path…')
-      )
-      .mockResolvedValueOnce('in-process ok');
+      .mockRejectedValueOnce(new Error('[voice-stt] tts binary not found on this host'))
+      .mockResolvedValueOnce('wav fallback ok');
     encodeBlobToWavMock.mockResolvedValueOnce(
       new Blob([new Uint8Array([0])], { type: 'audio/wav' })
     );
@@ -768,7 +829,7 @@ describe('MicComposer', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
 
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('in-process ok'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('wav fallback ok'));
     // Exactly 1 native attempt (no retries) + 1 WAV attempt — the missing
     // binary short-circuits the native backoff loop.
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2);

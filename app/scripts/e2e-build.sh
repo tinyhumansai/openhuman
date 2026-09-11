@@ -64,37 +64,25 @@ TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false},"build":{"befo
 # Tauri CLI maps env CI to --ci and only accepts true|false; some runners set CI=1.
 case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 
-# CEF runtime requires the vendored CEF-aware tauri-cli (the stock one produces
-# a bundle that panics at startup in cef::library_loader::LibraryLoader::new).
-# All other build scripts in app/package.json do `pnpm tauri:ensure` + use
-# `cargo tauri build`; the E2E build was the one outlier and we got the panic.
-pnpm tauri:ensure
-# ensure-tauri-cli.sh installs cargo-tauri into $INSTALL_ROOT/bin (default
-# <repo>/.cache/cargo-install/bin) and only exports PATH within its own
-# subshell. Replicate that PATH update here so `cargo tauri build` can find
-# the subcommand on fresh CI runners (macOS / Windows) where ~/.cargo/bin
-# does not already contain a cargo-tauri from a prior install.
-INSTALL_ROOT="${OPENHUMAN_CARGO_INSTALL_ROOT:-$REPO_ROOT/.cache/cargo-install}"
-export PATH="$HOME/.cargo/bin:$INSTALL_ROOT/bin:$PATH"
-export CEF_PATH="$HOME/Library/Caches/tauri-cef"
+# Use the standard Tauri CLI and native WebView runtime.
 
 OS="$(uname)"
 case "$OS" in
   Linux)
     # Linux: build debug binary only.
     echo "Building for Linux (debug binary, no bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
+    pnpm tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
     ;;
   Darwin)
     # macOS: build .app bundle (wdio.conf points at
     # src-tauri/target/debug/bundle/macos/OpenHuman.app).
     echo "Building for macOS (.app bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug --features e2e-test-support -- --bin OpenHuman
+    pnpm tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug --features e2e-test-support -- --bin OpenHuman
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
     # Windows: bare .exe at src-tauri/target/debug/OpenHuman.exe.
     echo "Building for Windows (.exe, no bundle)..."
-    cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
+    pnpm tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle --features e2e-test-support -- --bin OpenHuman
     ;;
   *)
     echo "ERROR: unsupported OS for e2e build: $OS" >&2

@@ -58,6 +58,65 @@ describe('threadApi', () => {
     expect(result).toEqual(message);
   });
 
+  it('folds the legacy `assistant` sender onto `agent` when listing messages (#5933)', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            id: 'user:1',
+            content: 'hi',
+            type: 'text',
+            extraMetadata: {},
+            sender: 'user',
+            createdAt: '2026-04-10T12:01:00Z',
+          },
+          {
+            // Written by an autonomous task run before the core switched its
+            // closing message to the `agent` vocabulary.
+            id: 'assistant:legacy',
+            content: 'done',
+            type: 'text',
+            extraMetadata: { scope: 'autonomous_task_result' },
+            sender: 'assistant',
+            createdAt: '2026-04-10T12:02:00Z',
+          },
+        ],
+        count: 2,
+      },
+    });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.getThreadMessages('default-thread');
+
+    expect(result.count).toBe(2);
+    expect(result.messages.map(m => m.sender)).toEqual(['user', 'agent']);
+    // Everything else on the row is untouched.
+    expect(result.messages[1]).toMatchObject({ id: 'assistant:legacy', content: 'done' });
+  });
+
+  it('folds the legacy `assistant` sender onto `agent` on append and update results', async () => {
+    const stored = {
+      id: 'agent:run-1',
+      content: 'done',
+      type: 'text',
+      extraMetadata: {},
+      sender: 'assistant',
+      createdAt: '2026-04-10T12:02:00Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: stored });
+    mockCallCoreRpc.mockResolvedValueOnce({ data: stored });
+
+    const { threadApi } = await import('./threadApi');
+    const appended = await threadApi.appendMessage('default-thread', {
+      ...stored,
+      sender: 'agent',
+    });
+    const updated = await threadApi.updateMessage('default-thread', 'agent:run-1', {});
+
+    expect(appended.sender).toBe('agent');
+    expect(updated.sender).toBe('agent');
+  });
+
   it('generates a thread title via threads RPC', async () => {
     const thread = {
       id: 'default-thread',

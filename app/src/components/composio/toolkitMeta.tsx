@@ -238,7 +238,7 @@ const PLATFORM_KEYWORDS = [
 
 function GenericIntegrationIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-subtle text-content-secondary shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-subtle text-content-secondary shadow-xs ring-1 ring-surface-overlay/5">
       <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" aria-hidden="true" fill="none">
         <path
           d="M8 8h8v8H8zM5 12h3m8 0h3M12 5v3m0 8v3"
@@ -270,7 +270,7 @@ function ComposioLogoBadge({
   }
 
   return (
-    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-surface shadow-xs ring-1 ring-surface-overlay/5">
       <img
         src={logoUrl}
         alt={`${name} logo`}
@@ -302,6 +302,25 @@ function guessCategory(slug: string, name: string): SkillCategory {
  * `"crm"`, `"developer-tools"`), so we match on substrings and return the
  * first hit. Returns `undefined` when nothing matches so the caller can
  * fall back to the slug/name keyword heuristic.
+ *
+ * ## This function has a twin. Edit both.
+ *
+ * The other copy is `mapComposioCategory` in
+ * `frontend/src/lib/composio-catalog.ts` in **tinyhumansai/opencompany**,
+ * where the operator console buckets the same Composio catalog off the same
+ * free-form strings (opencompany#600). Nothing mechanical detects a
+ * divergence: edit one and both consoles keep looking correct in isolation
+ * while bucketing the same provider differently.
+ *
+ * The branch **order** is as load-bearing as the substrings — both copies
+ * return on the first hit, so an entry carrying several categories depends on
+ * Chat → Social → Productivity → Platform. Reordering here alone is the
+ * subtlest way the two can drift.
+ *
+ * There is no shared package to hoist this into, so the guard is social and
+ * deliberately cheap: this notice, the matching one on the OpenCompany side,
+ * and that repository's `mapComposioCategory keeps the buckets its OpenHuman
+ * twin produces` test, which pins the table case-by-case.
  */
 function mapComposioCategory(categories?: string[]): SkillCategory | undefined {
   if (!categories || categories.length === 0) return undefined;

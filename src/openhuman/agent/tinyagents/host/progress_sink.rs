@@ -2,7 +2,7 @@
 //! OpenHuman's richer [`AgentProgress`] events.
 //!
 //! Adapts `crate::openhuman::agent::progress` (the `AgentProgress` UI contract)
-//! for `tinyagents::harness::host::ProgressSink`. This is Phase 4 of
+//! for `tinyagents_harness::host::ProgressSink`. This is Phase 4 of
 //! `docs/specs/plan-agents.md`.
 //!
 //! # Why this file is the boundary
@@ -61,14 +61,29 @@
 //!   the parent's iterations, and a child's `Finished` would tell the progress
 //!   bridge the whole request had completed while other runs were still
 //!   emitting.
-//! * **No `ToolCallCompleted` is ever emitted, and none can be.** The crate's
-//!   `ProgressEvent` has five variants and none of them reports a tool
-//!   *finishing* — there is no success flag, no output, no duration anywhere in
-//!   the coarse stream. `AgentProgress::ToolCallCompleted` requires all three.
-//!   Synthesising one would mean asserting `success: true` for a tool that may
-//!   have failed, which corrupts the timeline and the trace exporter rather than
-//!   merely leaving them incomplete. So tool rows stay `running` until the
-//!   crate grows a completion event; see the `TODO(phase4)` below.
+//! * **`ToolCallCompleted` is emitted from `ProgressEvent::ToolCallFinished`.**
+//!   This previously read "none is ever emitted, and none can be": the crate's
+//!   stream had no tool-completion milestone, so a row opened by `ToolCall`
+//!   could never be closed truthfully, and synthesising one would have asserted
+//!   `success: true` for a tool that may have failed — corrupting the timeline
+//!   and the trace exporter rather than merely leaving them incomplete. That
+//!   gap was filed as `tinyagents#88` and is now closed.
+//!
+//!   Two of the three fields `AgentProgress::ToolCallCompleted` needs still do
+//!   not travel on the closing event — the tool *name* and the *duration* — so
+//!   both are captured when the call opens (`RunState::open_calls`) and
+//!   recovered on close. The recorded iteration is used rather than the live
+//!   counter, because model output between a call and its result advances the
+//!   round and would otherwise file the tool under the wrong one.
+//!
+//!   A close with no matching open call is **dropped, not emitted**: without
+//!   the opening record there is no honest tool name or duration to report, and
+//!   the original reasoning still applies — a missing row is recoverable, a
+//!   fabricated one is not.
+//!
+//!   `arguments` stays `None`. The crate emits arguments on neither event, so
+//!   there is nothing to backfill the span input with, and `None` says "not
+//!   captured" rather than "there were none".
 //! * **`ProgressEvent::Error` has no `AgentProgress` counterpart.** The host
 //!   enum models a turn's failure through the turn's own `Err` return (which
 //!   `web_chat::ops` renders as `chat_error`), not through a progress event.
@@ -86,12 +101,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Sender;
 
-use tinyagents::harness::host::{ProgressEvent, ProgressSink};
+use tinyagents_harness::host::{ProgressEvent, ProgressSink};
 
 use crate::openhuman::agent::progress::AgentProgress;
 
@@ -103,7 +119,10 @@ use crate::openhuman::agent::progress::AgentProgress;
 const LIFECYCLE_SEND_GRACE: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Iteration bookkeeping for one run.
-#[derive(Debug, Default, Clone, Copy)]
+// No longer `Copy`: `open_calls` owns per-call state, so the struct is moved or
+// borrowed rather than duplicated. It is only ever touched through the `runs()`
+// mutex guard, which never needed a copy.
+#[derive(Debug, Default, Clone)]
 struct RunState {
     /// Model iterations observed so far, 0 before the first tool call.
     rounds: u32,
@@ -112,6 +131,26 @@ struct RunState {
     /// A model can request several tools in one response, and the runtime emits
     /// one event per tool — so consecutive calls are one iteration, not several.
     in_tool_batch: bool,
+    /// Tool calls opened but not yet closed, keyed by call id.
+    ///
+    /// `ProgressEvent::ToolCallFinished` carries neither the tool name nor a
+    /// duration, so both are captured when the call *opens* and recovered here.
+    /// Keyed by call id rather than kept as a single slot because a model can
+    /// request several tools in one response and they close in any order.
+    open_calls: HashMap<String, OpenToolCall>,
+}
+
+/// What the opening `ToolCall` knew and the closing event does not.
+#[derive(Debug, Clone)]
+struct OpenToolCall {
+    tool_name: String,
+    started_at: Instant,
+    /// Iteration the call was attributed to when it opened.
+    ///
+    /// Recorded rather than re-read at completion: model output between the
+    /// call and its result advances the counter, so reading it late would
+    /// report the tool under the wrong round.
+    iteration: u32,
 }
 
 /// Forwards crate progress into an OpenHuman [`AgentProgress`] channel.
@@ -372,6 +411,18 @@ impl ProgressSink for OpenHumanProgressSink {
                     tool,
                     iteration,
                 );
+                // Remember what the closing event will not carry: the tool name,
+                // a start instant, and the round this call belongs to.
+                if let Some(state) = self.runs().get_mut(run.as_str()) {
+                    state.open_calls.insert(
+                        call.as_str().to_string(),
+                        OpenToolCall {
+                            tool_name: tool.clone(),
+                            started_at: Instant::now(),
+                            iteration,
+                        },
+                    );
+                }
                 self.forward_lifecycle(AgentProgress::ToolCallStarted {
                     call_id: call.as_str().to_string(),
                     tool_name: tool,
@@ -392,6 +443,71 @@ impl ProgressSink for OpenHumanProgressSink {
                     // once the sink is constructed with a registry handle.
                     display_label: None,
                     display_detail: None,
+                })
+                .await;
+            }
+
+            ProgressEvent::ToolCallFinished {
+                run,
+                call,
+                success,
+                output,
+            } => {
+                // The tool name / duration / round come from the opening
+                // `ToolCall`; the crate's event carries none of them.
+                let opened = self
+                    .runs()
+                    .get_mut(run.as_str())
+                    .and_then(|state| state.open_calls.remove(call.as_str()));
+                let Some(opened) = opened else {
+                    // No matching open call: the run was torn down, or a close
+                    // arrived twice. Emitting anyway would invent a tool name
+                    // and a duration, so this is dropped and logged instead —
+                    // a missing row is recoverable, a fabricated one is not.
+                    log::debug!(
+                        "[tinyagents][progress] tool_call_finished with no open call \
+                         run={run} call={call} success={success}; dropping"
+                    );
+                    return;
+                };
+
+                let elapsed_ms = opened.started_at.elapsed().as_millis() as u64;
+                log::debug!(
+                    "[tinyagents][progress] tool_call_finished run={} call={} tool={} \
+                     success={} elapsed_ms={} output_chars={}",
+                    run,
+                    call,
+                    opened.tool_name,
+                    success,
+                    elapsed_ms,
+                    output.chars().count(),
+                );
+
+                // Classified only on failure, from the tool's own output — the
+                // same text `tools::status::classify` sees on the legacy path,
+                // so the timeline renders an identical cause/next-action.
+                // `timed_out: false` because the coarse stream does not
+                // distinguish a timeout from any other failure; claiming one
+                // would put a specific, wrong cause in front of a user.
+                let failure = if success {
+                    None
+                } else {
+                    Some(crate::openhuman::tools::status::classify(&output, false))
+                };
+
+                self.forward_lifecycle(AgentProgress::ToolCallCompleted {
+                    call_id: call.as_str().to_string(),
+                    tool_name: opened.tool_name,
+                    success,
+                    output_chars: output.chars().count(),
+                    output,
+                    // The crate emits no arguments on either event, so there is
+                    // nothing to backfill the span input with. `None` says
+                    // "not captured", which is what actually happened.
+                    arguments: None,
+                    elapsed_ms,
+                    iteration: opened.iteration,
+                    failure,
                 })
                 .await;
             }
@@ -462,376 +578,5 @@ impl ProgressSink for OpenHumanProgressSink {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use tinyagents::harness::ids::{CallId, RunId, ThreadId};
-    use tinyagents::harness::usage::Usage;
-    use tokio::sync::mpsc;
-
-    fn run() -> RunId {
-        RunId::new("run-1")
-    }
-
-    fn started() -> ProgressEvent {
-        ProgressEvent::Started {
-            run: run(),
-            thread: Some(ThreadId::new("thread-1")),
-            agent: "orchestrator".to_string(),
-        }
-    }
-
-    fn tool_call(name: &str) -> ProgressEvent {
-        ProgressEvent::ToolCall {
-            run: run(),
-            call: CallId::new("call-1"),
-            tool: name.to_string(),
-        }
-    }
-
-    fn sink(capacity: usize) -> (OpenHumanProgressSink, mpsc::Receiver<AgentProgress>) {
-        let (tx, rx) = mpsc::channel(capacity);
-        (OpenHumanProgressSink::new(tx), rx)
-    }
-
-    #[tokio::test]
-    async fn started_maps_to_turn_started() {
-        let (sink, mut rx) = sink(8);
-        sink.emit(started()).await;
-        assert!(matches!(
-            rx.try_recv().expect("event forwarded"),
-            AgentProgress::TurnStarted
-        ));
-    }
-
-    #[tokio::test]
-    async fn tool_call_maps_to_tool_call_started_with_null_arguments() {
-        let (sink, mut rx) = sink(8);
-        sink.emit(tool_call("search")).await;
-
-        match rx.try_recv().expect("event forwarded") {
-            AgentProgress::ToolCallStarted {
-                call_id,
-                tool_name,
-                arguments,
-                iteration,
-                display_label,
-                display_detail,
-            } => {
-                assert_eq!(call_id, "call-1");
-                assert_eq!(tool_name, "search");
-                // The crate keeps tool arguments off the progress side channel;
-                // a non-null value here would mean the adapter invented one.
-                assert!(arguments.is_null());
-                assert_eq!(iteration, 1, "iterations are 1-based");
-                assert!(display_label.is_none());
-                assert!(display_detail.is_none());
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn token_maps_to_text_delta_on_the_current_round() {
-        let (sink, mut rx) = sink(8);
-        sink.emit(ProgressEvent::Token {
-            run: run(),
-            text: "hello".to_string(),
-        })
-        .await;
-
-        match rx.try_recv().expect("event forwarded") {
-            AgentProgress::TextDelta { delta, iteration } => {
-                assert_eq!(delta, "hello");
-                assert_eq!(iteration, 1);
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn parallel_tool_calls_share_one_iteration() {
-        // A model that requests two tools in one response produces two
-        // consecutive `ToolCall` events belonging to the *same* LLM iteration.
-        // Counting one per call reported this turn as three iterations and
-        // mislabelled the second tool as iteration 2.
-        let (sink, mut rx) = sink(16);
-        sink.emit(tool_call("a")).await;
-        sink.emit(tool_call("b")).await;
-        sink.emit(ProgressEvent::Token {
-            run: run(),
-            text: "x".to_string(),
-        })
-        .await;
-
-        let iterations: Vec<u32> = std::iter::from_fn(|| rx.try_recv().ok())
-            .map(|ev| match ev {
-                AgentProgress::ToolCallStarted { iteration, .. } => iteration,
-                AgentProgress::TextDelta { iteration, .. } => iteration,
-                other => panic!("unexpected event: {other:?}"),
-            })
-            .collect();
-        // Both calls are iteration 1; the model's next reply is iteration 2.
-        assert_eq!(iterations, vec![1, 1, 2]);
-    }
-
-    /// The failure that matters most on a shared sink: a sub-run finishing must
-    /// not tell the bridge the whole request is done, or the turn is closed out
-    /// while other runs are still emitting.
-    #[tokio::test]
-    async fn a_sub_runs_lifecycle_is_not_the_requests_lifecycle() {
-        let (sink, mut rx) = sink(16);
-        let root = RunId::new("root");
-        let child = RunId::new("child");
-
-        sink.emit(ProgressEvent::Started {
-            run: root.clone(),
-            thread: None,
-            agent: "orchestrator".to_string(),
-        })
-        .await;
-        sink.emit(ProgressEvent::Started {
-            run: child.clone(),
-            thread: None,
-            agent: "worker".to_string(),
-        })
-        .await;
-        sink.emit(ProgressEvent::Finished {
-            run: child,
-            usage: None,
-        })
-        .await;
-
-        let events: Vec<AgentProgress> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-        assert_eq!(
-            events.len(),
-            1,
-            "only the root's start should surface, got {events:?}"
-        );
-        assert!(matches!(events[0], AgentProgress::TurnStarted));
-
-        // The root's own completion still lands.
-        sink.emit(ProgressEvent::Finished {
-            run: root,
-            usage: None,
-        })
-        .await;
-        assert!(matches!(
-            rx.try_recv().expect("root completion"),
-            AgentProgress::TurnCompleted { .. }
-        ));
-    }
-
-    /// A child's tool calls must not renumber the parent's iterations.
-    #[tokio::test]
-    async fn iteration_counters_are_scoped_per_run() {
-        let (sink, mut rx) = sink(16);
-        let root = RunId::new("root");
-
-        sink.emit(ProgressEvent::Started {
-            run: root.clone(),
-            thread: None,
-            agent: "orchestrator".to_string(),
-        })
-        .await;
-        let _ = rx.try_recv();
-
-        // Child does three rounds of work.
-        for i in 0..3 {
-            sink.emit(ProgressEvent::ToolCall {
-                run: RunId::new("child"),
-                call: CallId::new(format!("c{i}")),
-                tool: "grep".to_string(),
-            })
-            .await;
-            sink.emit(ProgressEvent::Token {
-                run: RunId::new("child"),
-                text: "x".to_string(),
-            })
-            .await;
-        }
-        while rx.try_recv().is_ok() {}
-
-        // The parent's first tool call is still its first iteration.
-        sink.emit(ProgressEvent::ToolCall {
-            run: root,
-            call: CallId::new("parent-1"),
-            tool: "shell".to_string(),
-        })
-        .await;
-
-        match rx.try_recv().expect("parent tool call") {
-            AgentProgress::ToolCallStarted { iteration, .. } => assert_eq!(
-                iteration, 1,
-                "the child's work must not advance the parent's iteration"
-            ),
-            other => panic!("unexpected event: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_tool_call_after_model_output_opens_a_new_iteration() {
-        let (sink, mut rx) = sink(16);
-        sink.emit(tool_call("a")).await;
-        sink.emit(ProgressEvent::Token {
-            run: run(),
-            text: "thinking".to_string(),
-        })
-        .await;
-        sink.emit(tool_call("b")).await;
-
-        let iterations: Vec<u32> = std::iter::from_fn(|| rx.try_recv().ok())
-            .map(|ev| match ev {
-                AgentProgress::ToolCallStarted { iteration, .. } => iteration,
-                AgentProgress::TextDelta { iteration, .. } => iteration,
-                other => panic!("unexpected event: {other:?}"),
-            })
-            .collect();
-        assert_eq!(iterations, vec![1, 2, 2]);
-    }
-
-    #[tokio::test]
-    async fn started_resets_the_round_counter_for_a_reused_sink() {
-        let (sink, mut rx) = sink(16);
-        sink.emit(tool_call("a")).await;
-        sink.emit(started()).await;
-        sink.emit(tool_call("b")).await;
-
-        let mut iterations = Vec::new();
-        while let Ok(ev) = rx.try_recv() {
-            if let AgentProgress::ToolCallStarted { iteration, .. } = ev {
-                iterations.push(iteration);
-            }
-        }
-        assert_eq!(iterations, vec![1, 1], "a new turn restarts at round 1");
-    }
-
-    #[tokio::test]
-    async fn finished_maps_to_turn_completed_carrying_the_round_count() {
-        let (sink, mut rx) = sink(16);
-        sink.emit(tool_call("a")).await;
-        let _ = rx.try_recv();
-
-        sink.emit(ProgressEvent::Finished {
-            run: run(),
-            usage: Some(Usage {
-                input_tokens: 12,
-                output_tokens: 3,
-                total_tokens: 15,
-                ..Usage::default()
-            }),
-        })
-        .await;
-
-        match rx.try_recv().expect("event forwarded") {
-            AgentProgress::TurnCompleted { iterations } => assert_eq!(iterations, 2),
-            other => panic!("unexpected event: {other:?}"),
-        }
-        // Usage is deliberately NOT projected onto TurnCostUpdated — see the
-        // module docs. A fabricated cost update would under-report in the UI.
-        assert!(rx.try_recv().is_err(), "no cost event is synthesised");
-    }
-
-    #[tokio::test]
-    async fn finished_without_usage_still_completes_the_turn() {
-        let (sink, mut rx) = sink(8);
-        sink.emit(ProgressEvent::Finished {
-            run: run(),
-            usage: None,
-        })
-        .await;
-        assert!(matches!(
-            rx.try_recv().expect("event forwarded"),
-            AgentProgress::TurnCompleted { iterations: 1 }
-        ));
-    }
-
-    #[tokio::test]
-    async fn error_forwards_nothing() {
-        let (sink, mut rx) = sink(8);
-        sink.emit(ProgressEvent::Error {
-            run: run(),
-            message: "provider unavailable".to_string(),
-        })
-        .await;
-        // Reporting a failure as a completion would corrupt both the run ledger
-        // and the chat timeline; the turn's own Err is the authoritative path.
-        assert!(rx.try_recv().is_err());
-        assert_eq!(sink.dropped(), 0, "not forwarding is not dropping");
-    }
-
-    #[tokio::test]
-    async fn a_permanently_full_channel_drops_instead_of_stalling_the_turn() {
-        let (sink, mut rx) = sink(1);
-        sink.emit(started()).await;
-        // Nothing ever drains, so the grace window expires and the events are
-        // dropped. The turn must still finish rather than park forever.
-        sink.emit(tool_call("a")).await;
-        sink.emit(tool_call("b")).await;
-
-        assert!(matches!(
-            rx.try_recv().expect("first event fits"),
-            AgentProgress::TurnStarted
-        ));
-        assert_eq!(sink.dropped(), 2);
-    }
-
-    #[tokio::test]
-    async fn a_lifecycle_event_survives_transient_backpressure_that_drops_a_delta() {
-        // The regression: a burst of deltas fills the channel, and a
-        // `ToolCallStarted` lost in that window leaves the tool row stuck in
-        // `running` forever. A delta lost in the same window costs one UI tick.
-        let (sink, mut rx) = sink(1);
-        sink.emit(started()).await;
-
-        // A delta finds the channel full and is dropped immediately.
-        sink.emit(ProgressEvent::Token {
-            run: run(),
-            text: "hi".to_string(),
-        })
-        .await;
-        assert_eq!(sink.dropped(), 1, "deltas never wait");
-
-        // Drive the blocked send and the consumer concurrently on one task, so
-        // the ordering comes from poll order rather than from wall-clock sleeps
-        // racing the grace window — the send registers as a waiter, then the
-        // first `recv` frees a slot and wakes it. No margin to lose under load.
-        let consumer = async {
-            let first = rx.recv().await;
-            let second = rx.recv().await;
-            (first, second)
-        };
-        let ((), (first, second)) = tokio::join!(sink.emit(tool_call("a")), consumer);
-        assert!(matches!(first, Some(AgentProgress::TurnStarted)));
-        assert!(
-            matches!(second, Some(AgentProgress::ToolCallStarted { .. })),
-            "the lifecycle event must ride out the transient window, got {second:?}"
-        );
-        assert_eq!(sink.dropped(), 1, "only the delta was dropped");
-    }
-
-    #[tokio::test]
-    async fn a_closed_channel_is_survivable() {
-        let (sink, rx) = sink(8);
-        drop(rx);
-        // A UI that hung up must not be able to fail the turn.
-        sink.emit(started()).await;
-        sink.emit(ProgressEvent::Finished {
-            run: run(),
-            usage: None,
-        })
-        .await;
-        assert_eq!(sink.dropped(), 2);
-    }
-
-    #[tokio::test]
-    async fn works_through_an_arc_trait_object() {
-        let (tx, mut rx) = mpsc::channel(8);
-        let dynamic: Arc<dyn ProgressSink> = Arc::new(OpenHumanProgressSink::new(tx));
-        dynamic.emit(started()).await;
-        assert!(matches!(
-            rx.try_recv().expect("event forwarded"),
-            AgentProgress::TurnStarted
-        ));
-    }
-}
+#[path = "progress_sink_tests.rs"]
+mod tests;

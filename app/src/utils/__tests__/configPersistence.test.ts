@@ -16,16 +16,19 @@ import {
   isLocalOrPrivateNetworkHost,
   isValidRpcUrl,
   normalizeRpcUrl,
+  peekStoredGatewayId,
   peekStoredRpcUrl,
   redactRpcUrlForLog,
   storeCoreMode,
   storeCoreToken,
+  storeGatewayId,
   storeRpcUrl,
 } from '../configPersistence';
 
 const STORAGE_KEY = 'openhuman_core_rpc_url';
 const TOKEN_STORAGE_KEY = 'openhuman_core_rpc_token';
 const MODE_STORAGE_KEY = 'openhuman_core_mode';
+const GATEWAY_ID_STORAGE_KEY = 'openhuman_core_gateway_id';
 
 describe('configPersistence', () => {
   beforeEach(() => {
@@ -33,6 +36,7 @@ describe('configPersistence', () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     localStorage.removeItem(MODE_STORAGE_KEY);
+    localStorage.removeItem(GATEWAY_ID_STORAGE_KEY);
   });
 
   afterEach(() => {
@@ -40,6 +44,7 @@ describe('configPersistence', () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     localStorage.removeItem(MODE_STORAGE_KEY);
+    localStorage.removeItem(GATEWAY_ID_STORAGE_KEY);
   });
 
   describe('getStoredRpcUrl', () => {
@@ -489,5 +494,52 @@ describe('configPersistence', () => {
         vi.resetModules();
       }
     });
+  });
+});
+
+describe('gateway id storage', () => {
+  beforeEach(() => {
+    localStorage.removeItem(GATEWAY_ID_STORAGE_KEY);
+    localStorage.removeItem(MODE_STORAGE_KEY);
+  });
+
+  it('round-trips the id the gateway mode refers to', () => {
+    storeGatewayId('builder');
+
+    expect(peekStoredGatewayId()).toBe('builder');
+    expect(localStorage.getItem(GATEWAY_ID_STORAGE_KEY)).toBe('builder');
+  });
+
+  it('reports nothing stored rather than an empty string', () => {
+    // `coreModeSlice` falls through to the picker on null; an empty string
+    // would be an id that resolves to no gateway.
+    expect(peekStoredGatewayId()).toBeNull();
+  });
+
+  it('treats a blank stored value as nothing stored', () => {
+    localStorage.setItem(GATEWAY_ID_STORAGE_KEY, '   ');
+
+    expect(peekStoredGatewayId()).toBeNull();
+  });
+
+  it('trims surrounding whitespace off a stored id', () => {
+    localStorage.setItem(GATEWAY_ID_STORAGE_KEY, '  builder  ');
+
+    expect(peekStoredGatewayId()).toBe('builder');
+  });
+
+  it('stores no credential beside the id', () => {
+    // The gateway's URL, bearer, SSH destination and identity path stay in the
+    // Tauri shell's own store; a renderer XSS can read anything kept here.
+    storeGatewayId('builder');
+
+    const everything = Object.keys(localStorage).map(k => localStorage.getItem(k) ?? '');
+    expect(everything.join(' ')).not.toMatch(/ssh|bearer|@/i);
+  });
+
+  it('accepts "gateway" as a core mode marker', () => {
+    storeCoreMode('gateway');
+
+    expect(getStoredCoreMode()).toBe('gateway');
   });
 });

@@ -207,9 +207,7 @@ describe('TaskKanbanBoard approval surface', () => {
     // "Manage sources" jumps to the merged Integrations settings page
     // (task-sources was folded into /settings/integrations).
     fireEvent.click(screen.getByText('conversations.taskKanban.sources.manage'));
-    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations', {
-      state: { backgroundLocation: expect.objectContaining({ pathname: '/chat' }) },
-    });
+    expect(navigateSpy).toHaveBeenCalledWith('/settings/integrations');
   });
 
   it('shows a "View work" button on a card with a session thread and calls onViewSession', () => {
