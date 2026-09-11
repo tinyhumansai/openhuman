@@ -247,8 +247,8 @@ export default function FacetsPanel() {
                       </div>
                       <div className="mt-0.5 text-[11px] text-content-muted">
                         {t('brain.profile.meta')
-                          .replace('{{state}}', facet.state)
-                          .replace('{{stability}}', facet.stability.toFixed(2))}
+                          .replace('{state}', facet.state)
+                          .replace('{stability}', facet.stability.toFixed(2))}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
