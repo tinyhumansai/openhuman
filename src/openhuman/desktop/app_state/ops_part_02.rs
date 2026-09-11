@@ -1,4 +1,3 @@
-
 async fn finish_revalidated_user_activation(
     target_config: &Config,
     user_id: &str,
@@ -31,9 +30,7 @@ async fn finish_revalidated_user_activation(
         target_config.workspace_dir.clone(),
     );
     if current_user_generation() != generation {
-        debug!(
-            "{LOG_PREFIX} skipping stale activation after pending session revalidation"
-        );
+        debug!("{LOG_PREFIX} skipping stale activation after pending session revalidation");
         return;
     }
     if let Some(source_config) = service_rebind_source {
@@ -276,7 +273,7 @@ async fn fetch_current_user_cached(
         }
     }
 
-refresh_current_user_now(config, token, generation, RefreshOrigin::Blocking).await
+    refresh_current_user_now(config, token, generation, RefreshOrigin::Blocking).await
 }
 
 /// The cached user for this identity and how old it is, if the cache holds one.
@@ -420,7 +417,7 @@ async fn refresh_current_user_now(
             return Err(error);
         }
     };
-// A detached refresh can land after the app has moved to another identity,
+    // A detached refresh can land after the app has moved to another identity,
     // and every write below is process-global. Committing then would regress
     // the cache to the previous user — and `peek_cached_current_user_identity`
     // reads that slot WITHOUT a key check (#926), so the regressed entry would
