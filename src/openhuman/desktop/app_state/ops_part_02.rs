@@ -472,15 +472,11 @@ async fn refresh_current_user_now(
         return Ok(fetched);
     }
 
-    clear_current_user_failure();
-    // Only a *refreshed user* makes the displayed data fresh. The backend can
-    // answer 200 with no user at all, and the snapshot caller then falls back
-    // to `stored_user` — so stamping success here would report an age of ~0s
-    // for data that was never replaced. `clear_current_user_failure` still runs
-    // either way: an empty answer is the backend being healthy, just not
-    // useful, and it should not keep the backoff window open.
-    if fetched.is_some() {
-        note_current_user_success(&api_base, token);
+    // Keep all post-fetch records behind the same generation checks as the
+    // positive cache. A logout (or a subsequent login) can land after the
+    // cache commit and must not have its failure/success records overwritten.
+    if !publish_current_user_unless_stale(generation, &api_base, token, fetched.clone()) {
+        return Ok(fetched);
     }
 
     Ok(fetched)

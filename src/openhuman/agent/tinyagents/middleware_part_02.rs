@@ -760,17 +760,4 @@ impl ToolPolicyMiddleware {
         None
     }
 
-    fn generated_context(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
-        self.tool_sets
-            .iter()
-            .flat_map(|set| set.iter())
-            .find(|t| t.name() == name)
-            .and_then(|t| {
-                crate::openhuman::tools::traits::generated_runtime_context(t.as_ref(), args)
-            })
-    }
 }

@@ -36,12 +36,14 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // fetched with the *old* token, passing its own staleness check.
     // `load_app_session_profile` busy-waits up to ~35s on a contended lock, so that
     // window is not a narrow one.
+    let session_mutation_lock = super::CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
     let generation = current_user_generation();
     let config_for_profile = config.clone();
     let session_profile =
         tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
             .await
             .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
+    drop(session_mutation_lock);
     let mut auth = session_state_from_profile(session_profile.as_ref());
     let mut session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
