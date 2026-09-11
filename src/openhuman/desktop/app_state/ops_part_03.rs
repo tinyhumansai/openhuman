@@ -28,11 +28,22 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // it directly on a tokio worker thread blocks that thread for the entire
     // wait, exhausting the thread pool under concurrent snapshot calls and
     // triggering `ERR_CONNECTION_TIMED_OUT` on all RPC connections.
+    // Read the sign-out generation BEFORE the profile load, not before the
+    // refresh. The token this snapshot is about is the one that load returns, so
+    // the generation has to be the one in force when that token was read.
+    // Capturing it later leaves a window — sign-out lands between the load and the
+    // refresh, the refresh reads the *new* generation, and then publishes an answer
+    // fetched with the *old* token, passing its own staleness check.
+    // `load_app_session_profile` busy-waits up to ~35s on a contended lock, so that
+    // window is not a narrow one.
+    let session_mutation_lock = super::CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
+    let generation = current_user_generation();
     let config_for_profile = config.clone();
     let session_profile =
         tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
             .await
             .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
+    drop(session_mutation_lock);
     let mut auth = session_state_from_profile(session_profile.as_ref());
     let mut session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
@@ -64,7 +75,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         }
         match tokio::time::timeout(
             auth_fetch_timeout(),
-            fetch_current_user_cached(&config, &token, !pending_backend_validation),
+            fetch_current_user_cached(&config, &token, !pending_backend_validation, generation),
         )
         .await
         {
@@ -83,6 +94,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                         &token,
                         session_metadata.clone(),
                         fresh_user.clone(),
+                        generation,
                     )
                     .await
                     {
@@ -179,7 +191,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     "{LOG_PREFIX} pending current user fetch timed out after {}s; keeping stored pending session for retry",
                     auth_fetch_timeout().as_secs()
                 );
-                note_current_user_timeout(&config, &token);
+                note_current_user_timeout(generation, &config, &token);
                 snapshot_current_user_result(stored_user.clone())
             }
             Err(_) => {
@@ -187,7 +199,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                     "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
                     auth_fetch_timeout().as_secs()
                 );
-                note_current_user_timeout(&config, &token);
+                note_current_user_timeout(generation, &config, &token);
                 snapshot_current_user_result(stored_user.clone())
             }
         }

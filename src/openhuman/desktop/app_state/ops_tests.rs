@@ -495,6 +495,9 @@ async fn current_user_fetch_carries_the_product_identity() {
     crate::api::product::reset_product_identity_for_test();
 }
 
+#[path = "ops_signout_cache_tests.rs"]
+mod signout_cache_tests;
+
 // Serialises the `OPENHUMAN_WORKSPACE` env mutations below so two of these tests
 // can't race each other on the process-global var.
 static WORKSPACE_ENV_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));

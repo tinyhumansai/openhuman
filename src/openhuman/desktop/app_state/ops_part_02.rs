@@ -1,8 +1,8 @@
-
 async fn finish_revalidated_user_activation(
     target_config: &Config,
     user_id: &str,
     service_rebind_source: Option<&Config>,
+    generation: u64,
 ) {
     if let Err(error) = crate::openhuman::cron::seed::prune_retired_jobs(target_config) {
         warn!("{LOG_PREFIX} failed to prune retired cron jobs after pending session revalidation: {error}");
@@ -29,8 +29,24 @@ async fn finish_revalidated_user_activation(
     crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
         target_config.workspace_dir.clone(),
     );
+    if current_user_generation() != generation {
+        debug!("{LOG_PREFIX} skipping stale activation after pending session revalidation");
+        return;
+    }
     if let Some(source_config) = service_rebind_source {
+        if current_user_generation() != generation {
+            debug!(
+                "{LOG_PREFIX} skipping stale login-gated service activation after pending session revalidation"
+            );
+            return;
+        }
         crate::openhuman::security::credentials::stop_login_gated_services(source_config).await;
+        if current_user_generation() != generation {
+            debug!(
+                "{LOG_PREFIX} skipping stale login-gated service restart after pending session revalidation"
+            );
+            return;
+        }
         crate::openhuman::security::credentials::start_login_gated_services(target_config).await;
     } else {
         debug!(
@@ -62,57 +78,68 @@ async fn persist_revalidated_session_user(
     token: &str,
     base_metadata: BTreeMap<String, String>,
     user: Value,
+    generation: u64,
 ) -> Result<Box<Config>, String> {
-    let user_id = user_id_from_profile_payload(&user)
-        .ok_or_else(|| "backend user id required before clearing pending validation".to_string())?;
-    let workspace_env_scoped = config_is_workspace_env_scoped(config);
-    let target_config = if !workspace_env_scoped {
-        activate_revalidated_user_dir(&user_id).await?
-    } else {
-        debug!(
-            "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
-        );
-        config.clone()
-    };
-    let source_config = config.clone();
-    let source_moved = !same_config_state_dir(config, &target_config);
-    let token = token.to_string();
-    let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
-    metadata.insert("user_id".to_string(), user_id.clone());
-    metadata.insert("user_json".to_string(), user.to_string());
-
-    let config_for_store = target_config.clone();
-    tokio::task::spawn_blocking(move || {
-        AuthService::from_config(&config_for_store)
-            .store_provider_token(
-                APP_SESSION_PROVIDER,
-                DEFAULT_AUTH_PROFILE_NAME,
-                &token,
-                metadata,
-                true,
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| {
-        Err(format!(
-            "{LOG_PREFIX} revalidated session persist task panicked: {e}"
-        ))
-    })?;
-
-    if source_moved {
-        if let Err(error) = remove_revalidated_source_profile(&source_config).await {
-            warn!(
-                "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
-            );
+    let (target_config, user_id, source_config, source_moved) = {
+        let _session_mutation_lock = CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
+        if current_user_generation() != generation {
+            return Err("pending session persistence became stale after sign-out".to_string());
         }
-    }
+        let user_id = user_id_from_profile_payload(&user).ok_or_else(|| {
+            "backend user id required before clearing pending validation".to_string()
+        })?;
+        let workspace_env_scoped = config_is_workspace_env_scoped(config);
+        let target_config = if !workspace_env_scoped {
+            activate_revalidated_user_dir(&user_id).await?
+        } else {
+            debug!(
+                "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
+            );
+            config.clone()
+        };
+        let source_config = config.clone();
+        let source_moved = !same_config_state_dir(config, &target_config);
+        let token = token.to_string();
+        let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
+        metadata.insert("user_id".to_string(), user_id.clone());
+        metadata.insert("user_json".to_string(), user.to_string());
+
+        let config_for_store = target_config.clone();
+        tokio::task::spawn_blocking(move || {
+            AuthService::from_config(&config_for_store)
+                .store_provider_token(
+                    APP_SESSION_PROVIDER,
+                    DEFAULT_AUTH_PROFILE_NAME,
+                    &token,
+                    metadata,
+                    true,
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(format!(
+                "{LOG_PREFIX} revalidated session persist task panicked: {e}"
+            ))
+        })?;
+
+        if source_moved {
+            if let Err(error) = remove_revalidated_source_profile(&source_config).await {
+                warn!(
+                    "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
+                );
+            }
+        }
+
+        (target_config, user_id, source_config, source_moved)
+    };
 
     finish_revalidated_user_activation(
         &target_config,
         &user_id,
         source_moved.then_some(&source_config),
+        generation,
     )
     .await;
 
@@ -138,9 +165,7 @@ async fn clear_deferred_session_after_backend_rejection(
         ))
     });
 
-    *CURRENT_USER_CACHE.lock() = None;
-    clear_current_user_failure();
-    clear_current_user_success();
+    forget_current_user_caches();
     crate::openhuman::cron::scheduler_gate::set_signed_out(true);
 
     match crate::openhuman::config::default_root_openhuman_dir() {
@@ -180,6 +205,7 @@ async fn fetch_current_user_cached(
     config: &Config,
     token: &str,
     allow_cache: bool,
+    generation: u64,
 ) -> Result<Option<Value>, CurrentUserFetchError> {
     let api_base = current_user_api_base(config);
 
@@ -211,7 +237,7 @@ async fn fetch_current_user_cached(
             // Only the expired-entry path revalidates in the background. With
             // no entry at all the shell has no identity to render, so that
             // first fetch after login still blocks, below.
-            spawn_current_user_refresh(config, token);
+            spawn_current_user_refresh(config, token, generation);
             debug!(
                 "{LOG_PREFIX} serving expired current user age_ms={} while refreshing behind the poll",
                 age.as_millis()
@@ -247,7 +273,7 @@ async fn fetch_current_user_cached(
         }
     }
 
-    refresh_current_user_now(config, token, RefreshOrigin::Blocking).await
+    refresh_current_user_now(config, token, generation, RefreshOrigin::Blocking).await
 }
 
 /// The cached user for this identity and how old it is, if the cache holds one.
@@ -279,7 +305,7 @@ static CURRENT_USER_REFRESH_INFLIGHT: Lazy<tokio::sync::Mutex<()>> =
 /// open — a background refresh would re-pay exactly the timeout that window
 /// exists to avoid (#5624) — and when a previous poll's refresh is still in
 /// flight.
-fn spawn_current_user_refresh(config: &Config, token: &str) {
+fn spawn_current_user_refresh(config: &Config, token: &str, generation: u64) {
     if let Some((error, consecutive, remaining)) =
         suppressed_current_user_failure(&current_user_api_base(config), token)
     {
@@ -310,7 +336,7 @@ fn spawn_current_user_refresh(config: &Config, token: &str) {
         // backend cannot leave the gate closed for longer than one window.
         match tokio::time::timeout(
             auth_fetch_timeout(),
-            refresh_current_user_now(&config, &token, RefreshOrigin::Background),
+            refresh_current_user_now(&config, &token, generation, RefreshOrigin::Background),
         )
         .await
         {
@@ -327,7 +353,9 @@ fn spawn_current_user_refresh(config: &Config, token: &str) {
                     "{LOG_PREFIX} background current user refresh timed out after {}s; serving stale entry",
                     auth_fetch_timeout().as_secs()
                 );
-                note_current_user_timeout(&config, &token);
+                // The generation is captured from when the refresh was launched and
+                // guards the timeout record against sign-out racing the timeout.
+                note_current_user_timeout(generation, &config, &token);
             }
         }
     });
@@ -353,6 +381,7 @@ enum RefreshOrigin {
 async fn refresh_current_user_now(
     config: &Config,
     token: &str,
+    generation: u64,
     origin: RefreshOrigin,
 ) -> Result<Option<Value>, CurrentUserFetchError> {
     let api_base = current_user_api_base(config);
@@ -377,11 +406,17 @@ async fn refresh_current_user_now(
     let fetched = match fetch_current_user(config, token).await {
         Ok(user) => sanitize_snapshot_user(user),
         Err(error) => {
-            record_current_user_failure(&api_base, token, error.clone());
+            if !record_current_user_failure_unless_stale(
+                generation,
+                &api_base,
+                token,
+                error.clone(),
+            ) {
+                debug!("{LOG_PREFIX} discarding current user failure that raced sign-out");
+            }
             return Err(error);
         }
     };
-
     // A detached refresh can land after the app has moved to another identity,
     // and every write below is process-global. Committing then would regress
     // the cache to the previous user — and `peek_cached_current_user_identity`
@@ -396,6 +431,13 @@ async fn refresh_current_user_now(
     // after this one has already decided it is current — narrow, but the
     // runtime is multi-threaded, so "narrow" is not "impossible".
     //
+    // The generation check (against sign-out) and the identity check (against
+    // a subsequent login the background refresh missed) are applied under the
+    // same lock. Sign-out bumps the generation before clearing the caches, so
+    // a refresh that read the old token before sign-out will read the old
+    // generation and fail the check — the cache it would restore was already
+    // cleared.
+    //
     // The failure and freshness stamps stay OUTSIDE this scope: they take their
     // own locks, and this module's rule is that `LAST_CURRENT_USER_SUCCESS` is
     // never nested inside `CURRENT_USER_CACHE`. They therefore run *after* the
@@ -404,30 +446,43 @@ async fn refresh_current_user_now(
     // `clear_current_user_failure` is unkeyed and would otherwise wipe it. The
     // stamp is only ever read as an age in seconds, so moving it to the far
     // side of the commit cannot change an observable answer.
+    //
+    // When sign-out wins the generation race, the failure and success records
+    // are untouched — they were already cleared by `forget_current_user_caches`,
+    // and this refresh has no business touching them either.
     let committed = {
         let mut cache = CURRENT_USER_CACHE.lock();
-        let moved_on = cache
-            .as_ref()
-            .is_some_and(|entry| entry.api_base != api_base || entry.token != token);
-        if origin == RefreshOrigin::Background && moved_on {
+        let generation_mismatch = current_user_generation() != generation;
+        if generation_mismatch {
+            debug!(
+                "{LOG_PREFIX} discarding current user refresh that raced sign-out; \
+                 generation bumped while in flight"
+            );
             false
         } else {
-            match fetched.clone() {
-                Some(user) => {
-                    debug!("{LOG_PREFIX} refreshed current user from backend");
-                    *cache = Some(CachedCurrentUser {
-                        api_base: api_base.clone(),
-                        token: token.to_string(),
-                        fetched_at: started_at,
-                        user,
-                    });
+            let moved_on = cache
+                .as_ref()
+                .is_some_and(|entry| entry.api_base != api_base || entry.token != token);
+            if origin == RefreshOrigin::Background && moved_on {
+                false
+            } else {
+                match fetched.clone() {
+                    Some(user) => {
+                        debug!("{LOG_PREFIX} refreshed current user from backend");
+                        *cache = Some(CachedCurrentUser {
+                            api_base: api_base.clone(),
+                            token: token.to_string(),
+                            fetched_at: started_at,
+                            user,
+                        });
+                    }
+                    None => {
+                        debug!("{LOG_PREFIX} backend returned empty current user; clearing cache");
+                        *cache = None;
+                    }
                 }
-                None => {
-                    debug!("{LOG_PREFIX} backend returned empty current user; clearing cache");
-                    *cache = None;
-                }
+                true
             }
-            true
         }
     };
 
@@ -439,15 +494,12 @@ async fn refresh_current_user_now(
         return Ok(fetched);
     }
 
-    clear_current_user_failure();
-    // Only a *refreshed user* makes the displayed data fresh. The backend can
-    // answer 200 with no user at all, and the snapshot caller then falls back
-    // to `stored_user` — so stamping success here would report an age of ~0s
-    // for data that was never replaced. `clear_current_user_failure` still runs
-    // either way: an empty answer is the backend being healthy, just not
-    // useful, and it should not keep the backoff window open.
+    // Keep all post-fetch records behind the same generation checks as the
+    // positive cache. A logout (or a subsequent login) can land after the
+    // cache commit and must not have its failure/success records overwritten.
+    clear_current_user_failure_unless_stale(generation);
     if fetched.is_some() {
-        note_current_user_success(&api_base, token);
+        note_current_user_success_unless_stale(generation, &api_base, token);
     }
 
     Ok(fetched)
