@@ -99,7 +99,7 @@ const en: TranslationMap = {
   'brain.profile.learningOffHint':
     'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
   'brain.profile.actionError': 'Something went wrong. Please try again.',
-  'brain.profile.meta': '{{state}} · stability {{stability}}',
+  'brain.profile.meta': '{state} · stability {stability}',
   'brain.profile.class.style': 'Style',
   'brain.profile.class.identity': 'Identity',
   'brain.profile.class.tooling': 'Tooling',
@@ -1423,9 +1423,9 @@ const en: TranslationMap = {
   'privacy.leavesDevice': 'Leaves device',
   'privacy.staysLocal': 'Stays local',
   'privacy.selfLearning': 'Self-learning',
-  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningLabel': 'Learn standing preferences from chat and connected channels',
   'privacy.selfLearningDesc':
-    'When on, OpenHuman may infer how you like to work and inject Active preferences into new sessions. Default is off. Manage facts on Brain → Profile.',
+    'When on, OpenHuman may infer how you like to work from chat and connected channels and inject Active preferences into new sessions. Default is off. Manage learned preferences on Brain → Profile.',
   'privacy.anonymizedAnalytics': 'Product Analytics',
   'privacy.shareAnonymizedData': 'Share Product Analytics and Diagnostics',
   'privacy.shareAnonymizedDataDesc':

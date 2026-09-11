@@ -1224,7 +1224,7 @@ const messages: TranslationMap = {
   'privacy.selfLearning': '自我学习',
   'privacy.selfLearningLabel': '从对话中学习长期偏好',
   'privacy.selfLearningDesc':
-    '开启后，OpenHuman 可能推断你的工作方式，并把生效的偏好注入新会话。默认关闭。可在大脑 → 个人资料中管理条目。',
+    '开启后，OpenHuman 可能从对话和已连接渠道推断你的工作方式，并把生效的偏好注入新会话。默认关闭。可在大脑 → 画像中管理已学习偏好。',
   'privacy.anonymizedAnalytics': '产品分析',
   'privacy.shareAnonymizedData': '分享产品分析和诊断数据',
   'privacy.shareAnonymizedDataDesc':

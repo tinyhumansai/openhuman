@@ -160,4 +160,23 @@ describe('PrivacyPanel', () => {
       expect(setMeetAutoOrchestratorHandoffMock).toHaveBeenCalledWith(true);
     });
   });
+
+  it('disables the learning control when settings cannot be loaded', async () => {
+    vi.mocked(listCapabilities).mockResolvedValue([]);
+    getSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
+    renderWithProviders(<PrivacyPanel />);
+    const toggle = await screen.findByTestId('privacy-learning-toggle');
+    expect(toggle).toBeDisabled();
+  });
+
+  it('keeps the learning toggle unchanged when saving fails', async () => {
+    vi.mocked(listCapabilities).mockResolvedValue([]);
+    updateSettingsMock.mockRejectedValueOnce(new Error('save failed'));
+    renderWithProviders(<PrivacyPanel />);
+    const toggle = await screen.findByTestId('privacy-learning-toggle');
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    fireEvent.click(toggle);
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith(true));
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+  });
 });

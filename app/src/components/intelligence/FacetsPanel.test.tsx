@@ -105,4 +105,29 @@ describe('<FacetsPanel />', () => {
     render(<FacetsPanel />);
     expect(await screen.findByTestId('facets-empty')).toBeInTheDocument();
   });
+
+  it('unpins and forgets facets, and rebuilds the cache', async () => {
+    const pinned = { key: 'identity/name', value: 'Alice', state: 'active', user_state: 'pinned', stability: 2, class: 'identity' };
+    listFacets.mockResolvedValue([pinned]);
+    render(<FacetsPanel />);
+    await screen.findByTestId('facet-row-identity/name');
+    fireEvent.click(screen.getByTestId('facet-pin-identity/name'));
+    await waitFor(() => expect(unpinFacet).toHaveBeenCalledWith('identity/name'));
+    fireEvent.click(screen.getByTestId('facet-forget-identity/name'));
+    await waitFor(() => expect(forgetFacet).toHaveBeenCalledWith('identity/name'));
+    fireEvent.click(screen.getByTestId('facets-rebuild'));
+    await waitFor(() => expect(rebuildCache).toHaveBeenCalled());
+  });
+
+  it('shows action errors and load errors', async () => {
+    listFacets.mockRejectedValueOnce(new Error('load failed'));
+    render(<FacetsPanel />);
+    expect(await screen.findByTestId('facets-panel-error')).toHaveTextContent('load failed');
+    listFacets.mockResolvedValue([{ key: 'style/x', value: 'y', state: 'active', stability: 1 }]);
+    pinFacet.mockRejectedValueOnce(new Error('pin failed'));
+    render(<FacetsPanel />);
+    await screen.findByTestId('facet-pin-style/x');
+    fireEvent.click(screen.getByTestId('facet-pin-style/x'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('pin failed');
+  });
 });

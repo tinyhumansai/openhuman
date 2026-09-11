@@ -50,6 +50,34 @@ describe('learningApi', () => {
     });
   });
 
+  it('sends unpin, forget, and rebuild actions', async () => {
+    mockCallCoreRpc.mockResolvedValue({});
+    await learningApi.unpinFacet('identity/name');
+    await learningApi.forgetFacet('style/verbosity');
+    await learningApi.rebuildCache();
+    expect(mockCallCoreRpc).toHaveBeenNthCalledWith(1, {
+      method: 'openhuman.learning_unpin_facet', params: { class: 'identity', key: 'name' },
+    });
+    expect(mockCallCoreRpc).toHaveBeenNthCalledWith(2, {
+      method: 'openhuman.learning_forget_facet', params: { class: 'style', key: 'verbosity' },
+    });
+    expect(mockCallCoreRpc).toHaveBeenNthCalledWith(3, {
+      method: 'openhuman.learning_rebuild_cache', params: {},
+    });
+  });
+
+  it('filters malformed facets and supplies safe cache-stat defaults', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ facets: [null, { key: 'x', value: 'y' }, { key: 1 }] });
+    expect(await learningApi.listFacets('style')).toEqual([
+      expect.objectContaining({ key: 'x', state: 'active', stability: 0 }),
+    ]);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.learning_list_facets', params: { class: 'style' },
+    });
+    mockCallCoreRpc.mockResolvedValueOnce({ result: {} });
+    expect(await learningApi.cacheStats()).toEqual({ total: 0, by_class: undefined });
+  });
+
   it('getSettings / updateSettings round-trip enabled', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({ result: { enabled: false } });
     expect(await learningApi.getSettings()).toEqual({ enabled: false });
