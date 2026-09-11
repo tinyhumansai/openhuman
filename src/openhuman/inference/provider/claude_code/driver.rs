@@ -88,7 +88,8 @@ fn cc_session_exists(session_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Scan `<config_dir>/projects/*` for a session JSONL file.
+/// Scan `<config_dir>/projects/*` for a session JSONL file. This is one cheap
+/// directory scan per turn, performed alongside the CLI process spawn.
 fn cc_session_exists_in(config_dir: &std::path::Path, session_id: &str) -> bool {
     let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
         return false;
