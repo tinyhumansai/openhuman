@@ -178,11 +178,14 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
     assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
-#[test]
-fn domain_subscriber_registration_wrapper_uses_the_global_bus() {
+#[tokio::test]
+async fn domain_subscriber_registration_wrapper_uses_the_global_bus() {
     use crate::core::all::DomainGroup;
 
-    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    crate::core::bus::BUS
+        .init_in_process(crate::core::bus::config())
+        .await
+        .expect("initialize global bus");
     assert!(group_first_time(DomainGroup::Media));
     assert!(!group_first_time(DomainGroup::Media));
 }
