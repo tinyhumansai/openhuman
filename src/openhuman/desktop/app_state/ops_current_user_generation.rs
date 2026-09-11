@@ -118,6 +118,17 @@ fn note_current_user_success_unless_stale(generation: u64, api_base: &str, token
     true
 }
 
+/// Clear the failure record only while the refresh still belongs to the
+/// current session generation.
+fn clear_current_user_failure_unless_stale(generation: u64) -> bool {
+    let mut failure = CURRENT_USER_FAILURE.lock();
+    if current_user_generation() != generation {
+        return false;
+    }
+    *failure = None;
+    true
+}
+
 /// Publish a fresh `/auth/me` answer to the positive cache, and drop any
 /// recorded outage, only if `generation` is still current — each check taken
 /// under the lock that guards the record it gates.
