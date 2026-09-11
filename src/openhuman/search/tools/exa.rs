@@ -240,7 +240,7 @@ impl ExaClient {
                      Check your Exa API key under Connections > Search engine."
                 );
             }
-            if status == reqwest::StatusCode::PAYMENT_REQUIRED || status.as_u16() == 402 {
+            if status == reqwest::StatusCode::PAYMENT_REQUIRED {
                 anyhow::bail!(
                     "Exa credits exhausted (HTTP 402). \
                      Please top up your Exa account at dashboard.exa.ai or switch search provider."

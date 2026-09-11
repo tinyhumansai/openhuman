@@ -598,3 +598,108 @@ async fn test_signed_out_store_does_not_reuse_the_cached_bearer_token() {
         "a signed-out tool must fail locally rather than appear to work: {result:?}"
     );
 }
+
+// ── Managed-search quota faults (#5750) ─────────────────────────────────────
+//
+// The managed route resolves to a provider server-side, so an upstream 402/429
+// arrives wrapped in the backend's own 4xx. These cover the classifier that
+// turns that into something a user can act on, and the end-to-end wiring.
+
+#[test]
+fn managed_quota_classifier_matches_exa_credit_exhaustion() {
+    // The exact shape reported in #5750.
+    let message = concat!(
+        "Backend returned 400 Bad Request for POST ",
+        "https://api.tinyhumans.ai/agent-integrations/parallel/search: ",
+        r#"Exa API error (402): {"error":"You have exceeded your credits limit. "#,
+        r#"Please top up to keep using Exa at dashboard.exa.ai","tag":"NO_MORE_CREDITS"}"#
+    );
+
+    let classified = managed_search_quota_error(message).expect("402 credits fault must classify");
+    assert!(classified.contains("shared search credit pool is exhausted"));
+    assert!(classified.contains("Connections > Search engine"));
+}
+
+#[test]
+fn managed_quota_classifier_matches_the_tag_alone() {
+    // A provider that reports the tag without the numeric status still classifies.
+    let classified = managed_search_quota_error(r#"upstream said {"tag":"NO_MORE_CREDITS"}"#)
+        .expect("the credits tag alone must classify");
+    assert!(classified.contains("credit pool is exhausted"));
+}
+
+#[test]
+fn managed_quota_classifier_matches_rate_limits() {
+    for message in [
+        "Backend returned 429 Too Many Requests for POST /agent-integrations/parallel/search: slow down",
+        "Backend returned 400 Bad Request for POST /x: provider rate limit exceeded",
+    ] {
+        let classified =
+            managed_search_quota_error(message).expect("rate-limit fault must classify");
+        assert!(
+            classified.contains("rate limited upstream"),
+            "unexpected classification for {message:?}: {classified}"
+        );
+    }
+}
+
+#[test]
+fn managed_quota_classifier_leaves_unrelated_failures_alone() {
+    // Nothing here is a quota fault; each must fall through so the original
+    // error (and its detail) reaches the caller unchanged.
+    for message in [
+        "Backend returned 500 Internal Server Error for POST /x: upstream exploded",
+        "Backend returned 404 Not Found for POST /x: no such route",
+        // A bare status that happens to appear in a port or id must not match
+        // on its own — the classifier requires the word `credit` alongside it.
+        "POST http://127.0.0.1:40200/agent-integrations/parallel/search failed: timed out",
+        "Web search unavailable: no backend session token.",
+    ] {
+        assert!(
+            managed_search_quota_error(message).is_none(),
+            "must not classify as a quota fault: {message:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_execute_surfaces_actionable_error_when_managed_credits_are_exhausted() {
+    // Replays the #5750 failure: the backend wraps Exa's 402 in a 400, so the
+    // tool previously failed with `Backend returned 400 Bad Request …` plus the
+    // raw provider JSON.
+    let app = Router::new().route(
+        "/agent-integrations/parallel/search",
+        post(|| async {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": concat!(
+                        r#"Exa API error (402): {"error":"You have exceeded your credits "#,
+                        r#"limit for query: private search","tag":"NO_MORE_CREDITS"}"#
+                    )
+                })),
+            )
+        }),
+    );
+
+    let base_url = start_mock_backend(app).await;
+    let client = Arc::new(IntegrationClient::new(base_url, "test-token".into()));
+    let error = WebSearchTool::new(Some(client), None, 5, 15)
+        .execute(json!({"query": "private search"}))
+        .await
+        .expect_err("an exhausted managed credit pool must fail with an actionable message");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("shared search credit pool is exhausted"),
+        "expected the actionable message, got: {message}"
+    );
+    assert!(message.contains("Connections > Search engine"));
+    // The replacement carries none of the provider's body, which echoes the query.
+    assert!(
+        !message.contains("private search"),
+        "the submitted query must not reach the transcript: {message}"
+    );
+    assert!(!message.contains("Backend returned 400"));
+}

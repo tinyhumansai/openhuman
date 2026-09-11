@@ -15,6 +15,51 @@ use std::sync::Arc;
 /// through to the UI attribution ("Searched with …", #5136) with no code edit.
 const MANAGED_DEFAULT_PROVIDER: &str = "Exa";
 
+/// Classify a managed-search backend failure that is really an upstream
+/// provider quota or rate-limit fault.
+///
+/// The managed route resolves to a search provider server-side, so an upstream
+/// 402/429 never reaches us as that status: the backend wraps it in its own
+/// 4xx and the only trace is the provider's text carried in the detail. Left
+/// unclassified it surfaces to the agent as `Backend returned 400 Bad Request
+/// for POST /agent-integrations/parallel/search: {"error":"You have exceeded
+/// your credits limit…"}`, which tells a user nothing they can act on (#5750).
+///
+/// Matching is on the *upstream* signature rather than our own status, so it
+/// keeps working if the backend changes which 4xx it wraps the fault in, and
+/// stays correct when the managed route resolves to a provider other than the
+/// current default. Returns `None` for anything else, leaving the original
+/// error — and its detail — exactly as it was.
+///
+/// The replacement text deliberately carries none of the original detail: the
+/// provider echoes the submitted query back in its error body, and that body
+/// would otherwise reach the agent transcript.
+fn managed_search_quota_error(message: &str) -> Option<&'static str> {
+    let lowered = message.to_ascii_lowercase();
+
+    // Exa tags credit exhaustion explicitly; the numeric form covers providers
+    // that only report the status. `credit` is required alongside the bare
+    // status so an unrelated 402 in a URL or id cannot trip this.
+    let credits_exhausted = lowered.contains("no_more_credits")
+        || (lowered.contains("402") && lowered.contains("credit"));
+    if credits_exhausted {
+        return Some(
+            "Managed web search is temporarily unavailable: the shared search credit pool is \
+             exhausted. Configure your own search API key under Connections > Search engine to \
+             keep searching, or try again later.",
+        );
+    }
+
+    if lowered.contains("429") || lowered.contains("rate limit") {
+        return Some(
+            "Managed web search is rate limited upstream. Please wait a moment before searching \
+             again, or configure your own search API key under Connections > Search engine.",
+        );
+    }
+
+    None
+}
+
 /// Resolve the provider name to attribute a managed search to. Uses the
 /// backend-reported provider when present and non-empty, otherwise falls back
 /// to [`MANAGED_DEFAULT_PROVIDER`]. Shared with the `tools.web_search` RPC so
@@ -305,7 +350,19 @@ impl Tool for WebSearchTool {
 
         let resp = client
             .post::<SearchResponse>("/agent-integrations/parallel/search", &body)
-            .await?;
+            .await
+            .map_err(
+                |error| match managed_search_quota_error(&error.to_string()) {
+                    Some(actionable) => {
+                        // Log the classification, never the detail — it echoes the query.
+                        tracing::warn!(
+                            "[web_search] managed search unavailable: upstream quota fault"
+                        );
+                        anyhow::anyhow!(actionable)
+                    }
+                    None => error,
+                },
+            )?;
 
         // Attribute the search to the provider the managed backend resolved to
         // (Exa by default). The provider name is echoed in the result text so
