@@ -469,7 +469,7 @@ impl CoreBuilder {
     }
 
     /// Choose how each tool group reaches the model (default: every group
-    /// withheld behind `load_skill` / `use_skill`, the desktop app's shape).
+    /// withheld behind `use_skill`, the desktop app's shape).
     ///
     /// The third narrowing axis, independent of both `services` and `domains`:
     /// `ServiceSet` picks the background services, `DomainSet` picks which
@@ -601,6 +601,20 @@ impl CoreBuilder {
             self.config,
         )
         .await?;
+
+        // Reap agent runs orphaned by a previous process (crash / restart /
+        // deploy). Here, and not with the other boot-once jobs, because those
+        // run from `serve()`: an embedder that only calls `build()` and then
+        // `invoke()` never reaches them, and `openhuman.agent_runs_active` is
+        // dispatchable the moment this returns. The core is a single in-process
+        // runtime, so a run left Pending/Running/Interrupted in the durable
+        // status store has no executor to advance it and would be listed as
+        // active forever. Best-effort — a store that cannot be read logs and
+        // reaps nothing rather than failing the build.
+        if let Some(cfg) = config.as_ref() {
+            crate::openhuman::agent::tinyagents::reaper::reap_orphaned_runs(&cfg.workspace_dir)
+                .await;
+        }
 
         Ok(CoreRuntime {
             ctx,
@@ -841,7 +855,16 @@ impl CoreRuntime {
             });
         }
 
-        if let Some(shutdown_token) = shutdown_token {
+        // Arms memory's exit gate for the eventual exit (and clears one a
+        // previous server in this process may have left): from here on a
+        // memory binding built during exit is refused rather than missed.
+        crate::openhuman::memory::exit::server_starting();
+
+        // The serve result is held, not propagated, until the exit work below
+        // has run. A `?` here on a server error would skip the memory teardown
+        // on exactly the exits where a wedged store is likeliest, and the
+        // callers only forward the error — nobody else runs the cleanup.
+        let served = if let Some(shutdown_token) = shutdown_token {
             log::info!(
                 "[core] embedded server waiting on cancellation token for graceful shutdown"
             );
@@ -849,12 +872,25 @@ impl CoreRuntime {
                 .with_graceful_shutdown(async move {
                     shutdown_token.cancelled().await;
                 })
-                .await?;
+                .await
         } else {
             axum::serve(listener, app)
                 .with_graceful_shutdown(crate::core::shutdown::signal())
-                .await?;
+                .await
+        };
+        if let Err(error) = &served {
+            log::warn!(
+                "[core] embedded server ended with an error; running exit cleanup before \
+                 reporting it: {error}"
+            );
         }
+
+        // Memory first. The engine's queue worker holds leases on in-flight
+        // jobs, and releasing them is a write to the store, so it has to happen
+        // while the store is still open and before anything else on the way
+        // out (tinymemory#133). Bounded inside, on one shared deadline: a
+        // wedged store costs at most that budget, never the exit.
+        crate::openhuman::memory::exit::shutdown_for_exit().await;
 
         // Server has stopped accepting and in-flight requests drained. Kill any
         // `ollama serve` openhuman itself spawned (no-op when externally
@@ -876,6 +912,7 @@ impl CoreRuntime {
             }
         }
 
+        served?;
         Ok(())
     }
 

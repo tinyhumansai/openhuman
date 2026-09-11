@@ -71,12 +71,9 @@ impl Agent {
                 self.fetch_connected_integrations().await;
                 // Sessions born without a cached Composio view still need
                 // a one-shot delegation-surface reconcile before the system
-                // prompt is frozen. The shared-Arc failure path returns
-                // `false`, but on turn 1 the Arc should still be uniquely
-                // owned; a `false` return here indicates a programmer error
-                // and the warn-level log inside the helper already surfaces
-                // it, so we keep the existing best-effort contract.
-                let _ = self.refresh_delegation_tools();
+                // prompt is frozen. It runs before `build_system_prompt`
+                // below so the rendered tool catalogue carries the delegates.
+                self.refresh_delegation_tools();
             }
             let learned = self.fetch_learned_context().await;
             let rendered_prompt = self.build_system_prompt(learned)?;
@@ -152,17 +149,39 @@ impl Agent {
             //
             // *** Mid-session schema-only refresh ***
             //
-            // The system prompt stays frozen, but the function-calling
-            // schema (the `tools` field in the provider request) is sent
-            // fresh on every API call — it's not part of the KV-cache
-            // prefix. So we *can* react to Composio connect/disconnect
+            // The system prompt stays frozen, but the function-calling schema
+            // (the `tools` field in the provider request) is sent fresh on
+            // every API call. So we *can* react to Composio connect/disconnect
             // events mid-session by re-synthesising the `delegate_<toolkit>`
-            // surface on `self.tools` / `self.tool_specs` and letting
-            // the next provider call carry the new schema. KV cache stays
-            // intact; the system prompt's `## Connected Integrations`
-            // block goes mildly stale until the next session, but the
-            // schema is the source of truth the model actually routes
-            // against.
+            // surface on `self.tools` / `self.tool_specs` and letting the next
+            // provider call carry the new schema. The system prompt's
+            // `## Connected Integrations` block goes mildly stale until the
+            // next session, but the schema is the source of truth the model
+            // actually routes against.
+            //
+            // **This is not free, and an earlier version of this comment said
+            // it was** — it claimed the tools field "is not part of the
+            // KV-cache prefix". It is. Every prefix cache in production renders
+            // the tool catalogue *before* the conversation, because a chat
+            // template has to put it somewhere the model reads it ahead of the
+            // first user turn: OpenAI's automatic cache, Anthropic's
+            // `cache_control` (tools → system → messages), DeepSeek's context
+            // cache, any vLLM/SGLang radix cache. A changed tool block
+            // therefore invalidates the *whole* prefix — including the system
+            // prompt this branch goes to such lengths to freeze.
+            //
+            // The refresh is still right, because a tool surface that lies
+            // about what the model can call is worse than a cold prefill. What
+            // follows from the correction is narrower and load-bearing: the
+            // rebuild must fire only on a *real* capability change, and must be
+            // byte-stable when nothing changed. Both properties are already
+            // paid for and must stay that way —
+            // `connected_set_hash` is order-insensitive (sorted), so a backend
+            // that returns the same toolkits in a different order does not
+            // trigger a reconcile, and `refresh_delegation_tools` rebuilds
+            // `tool_specs` in a deterministic order rather than from a set.
+            // `an_unchanged_integration_set_leaves_the_tool_block_byte_stable`
+            // pins it.
             //
             // The signal we react to is the process-wide
             // [`crate::openhuman::integrations::composio::INTEGRATIONS_CACHE`], kept
@@ -224,7 +243,22 @@ impl Agent {
             );
         }
 
-        if self.auto_save {
+        // `auto_save` says the workspace keeps its chat in memory; the origin says
+        // whether this turn is chat at all. An internal agent is built from the
+        // same config (`Agent::from_config_for_agent`), so it inherits the flag —
+        // and its "user message" is the prompt the host wrote for it, not
+        // anything the user said. Live, that stored `memory_goals::enrich`'s
+        // prompt as a `Conversation` document keyed `user_msg:…`, where it then
+        // competed for slots in every later recall (#5312). Gating here rather
+        // than at each caller keeps a new internal agent from having to remember
+        // to opt out, which is a thing nobody notices forgetting.
+        //
+        // Upstream of the same-session exclusion filter `main` added alongside
+        // `CONVERSATION_RAW_NAMESPACE`: that filter stops this document echoing
+        // back inside the turn that wrote it, but a host-written prompt stored
+        // here still surfaces in a *later* session's recall. This gate is what
+        // keeps it from being written at all.
+        if self.auto_save && crate::openhuman::agent::turn_origin::current_is_user_authored() {
             // Fire-and-forget: persisting the user message to the memory store
             // does an embedding round-trip (Voyage) + memory-tree write that the
             // in-flight turn never reads back. Awaiting it delayed the start of
@@ -334,37 +368,13 @@ impl Agent {
         // when it needs it, rather than every turn paying for a broad guess.
         let mut context = String::new();
 
-        // ── Lane B: situational preferences (every turn) ─────────────────────
-        // Recall topic-scoped preferences semantically relevant to THIS message
-        // (model-aware embeddings, gated by vector similarity) and inject them
-        // under a banner. Runs every turn — unlike the first-turn-gated tree/STM
-        // blocks above — because the query changes per message; it rides the
-        // per-turn context that's prepended to the user message (no KV-cache
-        // cost). An unrelated message clears the similarity gate to nothing, so
-        // no block is injected.
-        {
-            let situational =
-                crate::openhuman::memory::preferences::recall_situational_preferences_on(
-                    &self.memory,
-                    user_message,
-                )
-                .await;
-            if !situational.is_empty() {
-                log::info!(
-                    "[pref_recall] situational block injected: {} item(s)",
-                    situational.len()
-                );
-                context.push_str("## Relevant preferences for this message\n\n");
-                for pref in &situational {
-                    context.push_str("- ");
-                    context.push_str(pref.trim());
-                    context.push('\n');
-                }
-                context.push('\n');
-            } else {
-                log::debug!("[pref_recall] no situational preference relevant to this message");
-            }
-        }
+        // ── Lanes B and C: per-message memory (every turn) ───────────────────
+        // Situational preferences, and the gated auto-recall of facts about the
+        // user (#6040). Both are bounded — the only memory awaits left on the
+        // turn's critical path; citations and autosave above are spawned off
+        // it — and both ride this per-turn context rather than the cached
+        // system-prompt prefix. See `turn/recall_lanes.rs`.
+        super::recall_lanes::append_recall_lanes(self, user_message, &mut context).await;
 
         // ── Thread goal (Codex-style per-thread completion contract) ─────────
         // Load this thread's durable goal once per turn and prepend a compact
@@ -700,13 +710,26 @@ impl Agent {
         // archivist sub-agent that will distil durable facts into the
         // workspace MEMORY.md file via the `update_memory_md` tool.
         //
-        // The spawn is fire-and-forget: the main turn returns the
-        // user-visible response immediately, and the archivist runs
-        // asynchronously on the `agentic` tier. We optimistically mark
-        // the extraction complete right away — if it actually fails,
-        // we'll just retry on the next threshold window (a few turns
-        // later), which is the right amount of retry behaviour for a
-        // librarian task that's idempotent across reruns.
+        // The archivist sub-agent itself is spawned and runs asynchronously
+        // on the `agentic` tier. We optimistically mark the extraction
+        // complete right away — if it actually fails, we'll just retry on the
+        // next threshold window (a few turns later), which is the right amount
+        // of retry behaviour for a librarian task that's idempotent across
+        // reruns.
+        //
+        // This call is NOT fire-and-forget, despite spawning one (#6200). It
+        // is awaited, and before it spawns anything it awaits
+        // `flush_open_segment`, so the trailing segment's recap runs on this
+        // path — `result` below is returned only afterwards. The comment here
+        // used to claim the turn returned immediately; it did not, and with
+        // `tinyinference`'s 600 s request default underneath that was up to ten
+        // minutes of a held-open turn. `RECAP_DEADLINE` in `archivist::recap`
+        // is what bounds it now.
+        //
+        // Detaching the flush instead would match the old comment, but it would
+        // drop the `GUARANTEE:` documented at the flush site — that the
+        // trailing segment always receives its recap before wind-down. Bounding
+        // the wait keeps that promise and removes the hazard.
         if result.is_ok() && self.context.should_extract_session_memory() {
             self.spawn_session_memory_extraction(session_memory_parent_context)
                 .await;

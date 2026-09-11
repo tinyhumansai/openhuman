@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
+use openhuman_core::core::dispatch::UNKNOWN_METHOD_PREFIX;
 use openhuman_core::core::jsonrpc::build_core_http_router;
 
 const TEST_RPC_TOKEN: &str = "worker-c-modules-e2e-token";
@@ -116,21 +117,6 @@ embedding_strict = false
 async fn setup() -> Harness {
     ensure_rpc_auth();
 
-    // Memory-source RPC handlers invoke the extracted tinymemory host seams
-    // from background work. Production startup installs these before building
-    // the router; mirror that wiring in this standalone transport harness.
-    std::thread::Builder::new()
-        .name("worker-c-memory-seams".to_string())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(
-                openhuman_core::openhuman::config::Config::default(),
-            ));
-        })
-        .expect("spawn worker-c memory seam installer")
-        .join()
-        .expect("worker-c memory seam installer panicked");
-
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     write_config(&home.join(".openhuman"));
@@ -218,10 +204,52 @@ fn error_message<'a>(value: &'a Value, context: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{context}: expected JSON-RPC error with message: {value}"))
 }
 
+/// Assert that `value` is a JSON-RPC response for a method the core actually
+/// serves.
+///
+/// This used to assert only that the envelope carried `result` **or** `error`,
+/// which every well-formed JSON-RPC response does — including
+/// `unknown method: openhuman.whatever`. The reachability loops below call ~90
+/// methods through this helper, so all of them could have been deleted from the
+/// registry and this file would still have passed.
+///
+/// An error is still tolerated, and deliberately: these loops call each method
+/// with empty params, so a registered method usually answers with a validation
+/// failure. That is a *completed dispatch* — the method resolved, took the
+/// params and rejected them — and it is the strongest thing a probe with no
+/// arguments can honestly assert. What must not happen is the request never
+/// reaching a handler at all, which is exactly what
+/// [`UNKNOWN_METHOD_PREFIX`] marks.
 fn assert_rpc_completed(value: &Value, context: &str) {
+    let error = match (value.get("result"), value.get("error")) {
+        (Some(_), None) => return,
+        (None, Some(error)) => error,
+        (Some(_), Some(_)) => panic!(
+            "{context}: response carries BOTH result and error, which is not a valid \
+             JSON-RPC envelope: {value}"
+        ),
+        (None, None) => panic!("{context}: response carries neither result nor error: {value}"),
+    };
+    // Not `unwrap_or_default()`: that turns a missing, null or non-string
+    // `message` into `""`, which then satisfies the check below and lets a
+    // malformed error-only response count as a completed dispatch — the same
+    // vacuous-pass shape this helper was rewritten to remove.
+    let Some(message) = error.get("message").and_then(Value::as_str) else {
+        panic!(
+            "{context}: error response carries no string `message`, so nothing can be \
+             concluded about whether the method dispatched: {value}"
+        );
+    };
+    // `starts_with`, not `contains`: `dispatch.rs:96` builds the string as
+    // `format!("{UNKNOWN_METHOD_PREFIX}{method}")`, so the marker is always at
+    // byte zero — `dispatch.rs:151` reads it back with `strip_prefix` for the
+    // same reason. `contains` would additionally reject a REGISTERED method
+    // whose own validation error quoted the phrase later in the message,
+    // turning a reachable surface into a false failure.
     assert!(
-        value.get("result").is_some() || value.get("error").is_some(),
-        "{context}: expected JSON-RPC result or error envelope: {value}"
+        !message.starts_with(UNKNOWN_METHOD_PREFIX),
+        "{context}: the core does not serve this method, so the surface is NOT reachable \
+         — the registry entry is missing or its namespace was renamed. Got: {message}"
     );
 }
 

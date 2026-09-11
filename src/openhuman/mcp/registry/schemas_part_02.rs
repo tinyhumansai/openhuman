@@ -1,4 +1,3 @@
-
 // ── Handler implementations ──────────────────────────────────────────────────
 
 fn handle_registry_search(params: Map<String, Value>) -> ControllerFuture {
@@ -407,6 +406,12 @@ pub fn setup_schemas(function: &str) -> ControllerSchema {
                     name: "server_id",
                     ty: TypeSchema::String,
                     comment: "Freshly-minted server UUID.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "qualified_name",
+                    ty: TypeSchema::String,
+                    comment: "Registry qualified name the install was made from — echoed back so a caller need not correlate on the request.",
                     required: true,
                 },
                 FieldSchema {

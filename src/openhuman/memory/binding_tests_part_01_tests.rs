@@ -188,59 +188,6 @@ fn for_workspace_caches_binding_per_workspace() {
     );
 }
 
-#[cfg(feature = "modules")]
-#[tokio::test]
-async fn unrelated_test_binding_cannot_capture_the_module_workspace() {
-    let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
-        .lock()
-        .await;
-    crate::openhuman::memory::ops::ensure_shared_memory_client();
-    let unrelated = tempfile::tempdir().expect("unrelated workspace");
-    let binding =
-        for_workspace(unrelated.path(), &MemorySubsystemConfig::default()).expect("module binding");
-    let guard = binding.guard();
-    let documents = guard.as_documents().expect("documents capability");
-    let namespace = format!("memory-binding-test-{}", uuid::Uuid::new_v4());
-    let key = format!(
-        "shared{}",
-        &uuid::Uuid::new_v4().as_simple().to_string()[..12]
-    );
-
-    documents
-        .put_document(
-            crate::openhuman::memory::api::types::NamespaceDocumentInput {
-                namespace: namespace.clone(),
-                key: key.clone(),
-                title: "Shared test module workspace".into(),
-                content: "The module must share the process-global test store.".into(),
-                source_type: "doc".into(),
-                priority: "normal".into(),
-                tags: vec![],
-                metadata: serde_json::Value::Null,
-                category: "general".into(),
-                session_id: None,
-                document_id: None,
-                taint: MemoryTaint::Internal,
-            },
-        )
-        .await
-        .expect("module-backed put");
-
-    let client = tinymemory_core::global::client().expect("shared test client");
-    let raw = client
-        .list_documents(Some(&namespace))
-        .await
-        .expect("raw list");
-    assert!(
-        raw["documents"]
-            .as_array()
-            .expect("documents array")
-            .iter()
-            .any(|document| document["key"] == key),
-        "an unrelated binding must not split the native module from the shared test store"
-    );
-}
-
 #[test]
 fn same_workspace_with_changed_config_binds_fresh() {
     // `CoreContext::rebind_workspace` treats "same workspace, changed

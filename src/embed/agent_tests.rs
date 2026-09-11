@@ -87,6 +87,18 @@ fn a_route_sets_both_halves_or_neither() {
 }
 
 #[test]
+fn blank_per_turn_route_is_rejected_before_dispatch() {
+    let mut request = TurnRequest::new("hi");
+    request.inference_url = Some("https://api.example/v1".into());
+    request.api_key = Some("   ".into());
+
+    assert!(matches!(
+        validate_route(&request),
+        Err(CoreError::InvalidRoute { method: AGENT_CHAT })
+    ));
+}
+
+#[test]
 fn absolute_leaves_absolute_paths_alone() {
     let already = std::path::Path::new("/tmp/example");
     assert_eq!(absolute(already).expect("absolute"), already);

@@ -1,5 +1,5 @@
 use super::*;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_tungstenite::tungstenite::http::{header::LOCATION, Response, StatusCode};
 
@@ -14,6 +14,7 @@ fn make_shared() -> Arc<SharedState> {
         status: RwLock::new(ConnectionStatus::Connected),
         socket_id: RwLock::new(None),
         error: RwLock::new(None),
+        connection_identity: RwLock::new(None),
     })
 }
 

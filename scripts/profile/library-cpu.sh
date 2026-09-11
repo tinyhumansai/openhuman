@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # library-cpu.sh — samply wrapper for a CPU profile of one library-profile
-# scenario, following the recipe used in docs/resource-profiling-session-2026-07-21.md.
+# scenario, following the cold-path CPU profiling recipe.
 #
 # Usage:
 #   ./scripts/profile/library-cpu.sh <scenario> [-- <extra env VAR=value>...]

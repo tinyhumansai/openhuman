@@ -4091,7 +4091,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openhuman"
-version = "0.63.19"
+version = "0.63.25"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -4172,7 +4172,6 @@ dependencies = [
  "tinychannels",
  "tinychannels-bus",
  "tinyconnectors-bus",
- "tinycortex",
  "tinydocs-bus",
  "tinyflows",
  "tinyflows-catalog",
@@ -4186,9 +4185,8 @@ dependencies = [
  "tinymcp-bus",
  "tinymemory-api",
  "tinymemory-bus",
- "tinymemory-core",
+ "tinymemory-conformance",
  "tinymemory-sources",
- "tinymemory-tinycortex",
  "tinyruntime-bus",
  "tinytools",
  "tinyvoice-bus",
@@ -6543,46 +6541,10 @@ dependencies = [
 
 [[package]]
 name = "tinyconnectors-bus"
-version = "0.7.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "tinycortex"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "dirs 6.0.0",
- "futures",
- "log",
- "parking_lot",
- "rand 0.10.2",
- "regex",
- "reqwest",
- "rusqlite",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tinycortex-api",
- "tinyinference",
- "tokio",
- "toml 1.1.4+spec-1.1.0",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "tinycortex-api"
-version = "0.1.1"
-dependencies = [
- "tinymemory-api",
 ]
 
 [[package]]
@@ -6757,35 +6719,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "tinymemory-core"
+name = "tinymemory-conformance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
- "dirs 6.0.0",
- "futures",
- "log",
- "parking_lot",
- "rand 0.10.2",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
  "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "tinycortex",
- "tinycortex-api",
- "tinyinference",
  "tinymemory-api",
- "tinymemory-sources",
- "tinymemory-sync",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -6807,35 +6747,6 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "tinymemory-sync"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "log",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "tinymemory-tinycortex"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "log",
- "rusqlite",
- "serde",
- "serde_json",
- "tinycortex",
- "tinymemory-api",
- "tinymemory-core",
- "tokio",
- "uuid",
 ]
 
 [[package]]

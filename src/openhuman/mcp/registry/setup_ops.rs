@@ -24,6 +24,7 @@ use crate::rpc::RpcOutcome;
 use tinymcp::SecretRef;
 
 use super::helpers::{encode, inject_required_env_keys, require, resolve};
+use super::types::{ConnStatus, ServerStatus};
 
 /// Reads a map of credential names to handles.
 fn parse_handles(raw: HashMap<String, String>) -> Result<HashMap<String, SecretRef>, String> {
@@ -206,6 +207,91 @@ pub async fn mcp_setup_test_connection(
 
 // ── install_and_connect ──────────────────────────────────────────────────────
 
+/// The schema's `status` discriminator, and the `error` that accompanies a
+/// non-connected result.
+///
+/// Split out as a pure function so both arms are testable without standing up a
+/// registry and a reachable MCP server.
+///
+/// **Why the verdict comes from `ConnStatus` and not from the call's own
+/// return.** `McpRegistry::setup_install_and_connect` turns a failed connect
+/// into `Ok(ConnectOutcome { server_id, tools: vec![] })` — it logs the reason
+/// and drops it. `ConnectOutcome` carries only `server_id` and `tools`, so a
+/// failed connect is byte-identical to a server that connected and advertises
+/// no tools, which is a legitimate state (a server exposing only resources or
+/// prompts). Counting tools therefore cannot answer the question. The registry's
+/// own `ConnStatus` can: it carries the live [`ServerStatus`] plus `last_error`.
+///
+/// A status we cannot read back is reported as `installed_disconnected` rather
+/// than assumed connected: the install is confirmed either way, and claiming a
+/// connection we did not observe is the failure mode this change exists to
+/// remove (#6110).
+///
+/// The three inputs are deliberately distinct, because they are three different
+/// facts and a caller acts on them differently:
+///
+/// - `Ok(Some(entry))` — the registry answered and knows this server.
+/// - `Ok(None)` — the registry answered but has no row for it.
+/// - `Err(reason)` — the status query itself failed. The reason is carried into
+///   the message rather than being left in a log line the user never sees:
+///   "the registry could not be asked" is not the same fact as "the server is
+///   not connected", and a transient store error must not read as the latter.
+fn classify_install_connect(
+    status: Result<Option<&ConnStatus>, &str>,
+) -> (&'static str, Option<String>) {
+    match status {
+        Ok(Some(entry)) if matches!(entry.status, ServerStatus::Connected) => ("connected", None),
+        // `last_error` is the connect failure the registry recorded, not a
+        // description of some later state: `connections::connect` builds a
+        // `ConnectFailure` from the original error and stores it, and
+        // `classify` surfaces it here. The synthetic arm below is reached only
+        // when a non-connected server has no recorded failure at all (a
+        // `Disabled` install, say), where naming the state is the whole answer.
+        Ok(Some(entry)) => (
+            "installed_disconnected",
+            Some(entry.last_error.clone().unwrap_or_else(|| {
+                format!(
+                    "installed, but the server is `{}` rather than connected",
+                    entry.status.as_str()
+                )
+            })),
+        ),
+        Ok(None) => (
+            "installed_disconnected",
+            Some("installed, but the registry reported no status row for this server".to_string()),
+        ),
+        Err(reason) => (
+            "installed_disconnected",
+            Some(format!(
+                "installed, but the server's connection state could not be read back: {reason}"
+            )),
+        ),
+    }
+}
+
+/// Builds the reply for `install_and_connect`, honouring the two conditional
+/// fields the controller schema declares: `tools` iff `status == connected`,
+/// `error` iff it is not. Pure, so the shape is testable without a registry.
+fn install_and_connect_payload(
+    server_id: &str,
+    qualified_name: &str,
+    status: &str,
+    error: Option<String>,
+    tools: Vec<tinymcp_bus::McpTool>,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("server_id".to_string(), json!(server_id));
+    payload.insert("qualified_name".to_string(), json!(qualified_name));
+    payload.insert("status".to_string(), json!(status));
+    if status == "connected" {
+        payload.insert("tools".to_string(), json!(tools));
+    }
+    if let Some(error) = error {
+        payload.insert("error".to_string(), json!(error));
+    }
+    Value::Object(payload)
+}
+
 pub async fn mcp_setup_install_and_connect(
     config: &Config,
     qualified_name: String,
@@ -214,38 +300,66 @@ pub async fn mcp_setup_install_and_connect(
     let qualified_name = require(&qualified_name, "qualified_name")?;
     let handles = parse_handles(env_refs)?;
 
-    let outcome = resolve(config)?
+    let host = resolve(config)?;
+    // Still `?`: this arm is reached only when the *install* failed, and there
+    // is no server to report a status for. A failed *connect* does not come
+    // through here — see `classify_install_connect`.
+    let outcome = host
         .dynamic()
         .setup_install_and_connect(&qualified_name, &handles, None)
         .await
         .map_err(|error| error.to_string())?;
 
-    let tools = super::tools_safe_for_agent(&outcome.server_id, outcome.tools);
+    let server_id = outcome.server_id.clone();
+    let connection = match host.dynamic().status().await {
+        Ok(all) => Ok(all.into_iter().find(|entry| entry.server_id == server_id)),
+        Err(error) => {
+            log::warn!(
+                "[mcp_setup] install_and_connect could not read back status for \
+                 server_id={server_id}: {error}"
+            );
+            Err(error.to_string())
+        }
+    };
+    let (status, error) = classify_install_connect(
+        connection
+            .as_ref()
+            .map(Option::as_ref)
+            .map_err(String::as_str),
+    );
+    let connected = status == "connected";
+
+    let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
     let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
     BUS.publish(DomainEvent::McpServerInstalled {
-        server_id: outcome.server_id.clone(),
+        server_id: server_id.clone(),
         qualified_name: qualified_name.clone(),
     });
-    // Unconditional, like the `connect` handler's. The call returning `Ok` is
-    // what says the connection succeeded; a server exposing only resources or
-    // prompts connects with zero tools, and gating on the count would leave
-    // anything tracking connection state believing it never came up.
-    BUS.publish(DomainEvent::McpServerConnected {
-        server_id: outcome.server_id.clone(),
-        tool_count,
-    });
+    // Only when the server is actually connected. This used to fire
+    // unconditionally, so an install whose connect failed announced
+    // `McpServerConnected { tool_count: 0 }` to every subscriber — the same
+    // false claim the `status` field now avoids making to the caller (#6110).
+    // A connected server with zero tools still publishes: `connected` is read
+    // from `ServerStatus`, never from the tool count.
+    if connected {
+        BUS.publish(DomainEvent::McpServerConnected {
+            server_id: server_id.clone(),
+            tool_count,
+        });
+    }
 
+    let log = if connected {
+        format!("installed and connected server_id={server_id} tools={tool_count}")
+    } else {
+        format!(
+            "installed server_id={server_id}, but connecting did not succeed: {}",
+            error.as_deref().unwrap_or("no reason reported")
+        )
+    };
     Ok(RpcOutcome::new(
-        json!({
-            "server_id": outcome.server_id,
-            "qualified_name": qualified_name,
-            "tools": tools,
-        }),
-        vec![format!(
-            "installed and connected server_id={} tools={tool_count}",
-            outcome.server_id
-        )],
+        install_and_connect_payload(&server_id, &qualified_name, status, error, tools),
+        vec![log],
     ))
 }
 

@@ -4,8 +4,8 @@
 //! `threads/<hex(thread_id)>.jsonl` so arbitrary provider ids remain
 //! filesystem-safe.
 //!
-//! All on-disk mutations serialise through a single process-wide mutex so
-//! concurrent RPC handlers don't interleave writes.
+//! On-disk mutations synchronize at the narrowest safe scope: lifecycle per
+//! conversation root, shared metadata per root, and messages per thread.
 //!
 //! This file is the store as it came back from the memory engine (#5560),
 //! unchanged apart from the one constructor described below. The three
@@ -57,6 +57,8 @@ mod ops;
 
 #[path = "store_index.rs"]
 mod index;
+#[path = "store_locks.rs"]
+mod locks;
 
 /// Filename of the append-only thread metadata log, relative to the
 /// `memory/conversations` root.
@@ -64,10 +66,6 @@ pub(super) const THREADS_FILENAME: &str = "threads.jsonl";
 /// Subdirectory (relative to the `memory/conversations` root) holding the
 /// per-thread message JSONL files, named `<hex(thread_id)>.jsonl`.
 pub(super) const THREAD_MESSAGES_DIR: &str = "threads";
-
-/// Serialises every on-disk mutation so concurrent handlers can't interleave
-/// writes to `threads.jsonl` or the per-thread message logs.
-static CONVERSATION_STORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Per-workspace inverted index cache. Keyed by the workspace's
 /// `memory/conversations` root so multiple `ConversationStore` clones
@@ -80,28 +78,26 @@ static CONVERSATION_STORE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::ne
 ///
 /// # Lock ordering
 ///
-/// When BOTH `CONVERSATION_STORE_LOCK` and `CONVERSATION_INDEX_CACHE`
-/// must be held simultaneously, `CONVERSATION_STORE_LOCK` MUST be
-/// acquired first. This applies to `append_message` (writes JSONL then
-/// updates the warm index) and `with_index` (caller holds the outer
-/// lock, then takes the cache lock to run the search closure).
+/// Every operation first takes the root lifecycle lock. Message operations
+/// then take their per-thread lock and briefly take the metadata lock when
+/// they must inspect or append `threads.jsonl`. When metadata and the index
+/// cache are both needed, metadata is acquired first. No code may acquire a
+/// thread or metadata lock while holding `CONVERSATION_INDEX_CACHE`.
 ///
 /// `prime_index_if_cold` minimises shared locking. It may hold both
-/// locks only momentarily, and always in the `CONVERSATION_STORE_LOCK`
-/// → `CONVERSATION_INDEX_CACHE` order above: while holding the outer
-/// lock to snapshot live thread IDs via `thread_index_unlocked`
+/// metadata and index locks only momentarily, and always in the metadata
+/// → `CONVERSATION_INDEX_CACHE` order above: while holding metadata
+/// to snapshot live thread IDs via `thread_index_unlocked`
 /// (header-only, no per-thread I/O) it re-checks the cache once. It then
-/// releases `CONVERSATION_STORE_LOCK` before reading per-thread JSONL
-/// content (no lock held) and finally acquires `CONVERSATION_INDEX_CACHE`
-/// alone to insert the built index. It never holds both across the slow
-/// JSONL walk, and neither operation calls back into a function that
-/// would acquire the other lock.
+/// releases metadata before reading each transcript under that thread's own
+/// lock and finally acquires `CONVERSATION_INDEX_CACHE` alone to insert the
+/// built index. It never holds both across the slow JSONL walk.
 ///
 /// `list_threads_unlocked` MUST NOT be used inside the locked snapshot —
 /// it calls `measure_messages_unlocked` per legacy thread (no Stats
 /// history), which reads every per-thread JSONL file and appends a
 /// `Stats` entry to `threads.jsonl`, reintroducing the multi-second
-/// stall under the outer lock that this design was built to avoid.
+/// stall under the shared metadata lock that this design was built to avoid.
 static CONVERSATION_INDEX_CACHE: LazyLock<Mutex<HashMap<PathBuf, InvertedIndex>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -117,7 +113,8 @@ pub struct ConversationPurgeStats {
 /// Workspace-rooted handle that reads and writes the JSONL conversation log.
 #[derive(Debug, Clone)]
 pub struct ConversationStore {
-    workspace_dir: PathBuf,
+    root_dir: PathBuf,
+    locks: std::sync::Arc<locks::StoreLocks>,
 }
 
 impl ConversationStore {
@@ -128,7 +125,27 @@ impl ConversationStore {
     /// `root_dir` in `store_index.rs`), so the caller's workspace is the whole
     /// input and there is nothing for a config type to add.
     pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+        let root = locks::normalized_root(&workspace_dir.join("memory").join("conversations"));
+        let locks = locks::for_root(&root);
+        Self {
+            root_dir: root,
+            locks,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn lock_identity_for_test(&self) -> usize {
+        std::sync::Arc::as_ptr(&self.locks) as usize
+    }
+
+    #[cfg(test)]
+    pub(super) fn thread_lock_identity_for_test(&self, thread_id: &str) -> usize {
+        std::sync::Arc::as_ptr(&self.locks.thread(thread_id)) as usize
+    }
+
+    #[cfg(test)]
+    pub(super) fn thread_lock_count_for_test(&self) -> usize {
+        self.locks.thread_count()
     }
 }
 
@@ -273,6 +290,36 @@ where
         }
     }
     Ok(items)
+}
+
+/// Find one message in a thread's JSONL log by id, without materializing the
+/// whole transcript.
+///
+/// Only the lines whose raw text carries the quoted id are deserialized, so a
+/// lookup costs one parse rather than one per stored message; a line that
+/// merely quotes the id inside its own content is rejected by the `id` check.
+/// Mirrors [`read_jsonl`]'s tolerance of blank and corrupt lines.
+pub(super) fn find_message_by_id(
+    path: &Path,
+    id: &str,
+) -> Result<Option<ConversationMessage>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let needle = serde_json::to_string(id).map_err(|e| format!("encode message id {id}: {e}"))?;
+    let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    for (line_no, line) in BufReader::new(file).lines().enumerate() {
+        let line =
+            line.map_err(|e| format!("read {} line {}: {e}", path.display(), line_no + 1))?;
+        if !line.contains(&needle) {
+            continue;
+        }
+        match serde_json::from_str::<ConversationMessage>(&line) {
+            Ok(message) if message.id == id => return Ok(Some(message)),
+            _ => continue,
+        }
+    }
+    Ok(None)
 }
 
 /// Append one serialized value as a JSONL line, fsync'd before returning.

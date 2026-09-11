@@ -551,6 +551,8 @@ const messages: TranslationMap = {
   'settings.clearAppData': 'Cancella dati app',
   'settings.clearAppDataDesc':
     "Disconnetti e cancella permanentemente tutti i dati locali dell'app",
+  'settings.clearAppDataIrreversible': 'Questa azione è irreversibile.',
+  'settings.clearAppDataAction': 'Cancella i dati',
   'settings.logOut': 'Disconnetti',
   'settings.logOutDesc': 'Disconnetti dal tuo account',
   'settings.exitLocalSession': 'Esci dalla sessione locale',
@@ -1410,7 +1412,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Imposta come predefinito la ricerca gestita da OpenHuman oppure collega il tuo provider con una chiave API.',
   'settings.search.description':
-    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit ed Exa vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
+    "Scegli il motore di ricerca utilizzato dall'agente oppure disabilita completamente gli strumenti di ricerca. Gestito utilizza il backend di OpenHuman (nessuna configurazione). Parallelo, Brave, Querit, Exa e Tavily vengono eseguiti direttamente dalla tua macchina usando la tua chiave API.",
   'settings.search.engineAria': 'Motore di ricerca',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1419,7 +1421,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Predefinito. Instradato tramite il backend di OpenHuman, attualmente basato su Exa: nessuna chiave API necessaria.',
   'settings.search.localManagedUnavailable':
-    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit o Exa per abilitare la ricerca web.',
+    'La ricerca gestita da OpenHuman non è disponibile per gli utenti locali. Aggiungi la tua chiave API Parallel, Brave, Querit, Exa o Tavily per abilitare la ricerca web.',
   'settings.search.engineParallelLabel': 'parallelo',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: ricerca, estrai, chatta, ricerca, arricchisci, strumenti per set di dati.',
@@ -1432,6 +1434,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Ricerca neurale basata su Exa. Richiede la tua chiave API Exa. Aggiunge strumenti di ricerca, pagine simili e contenuti delle pagine.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Ricerca sul web, di notizie e finanziaria con Tavily. Richiede la tua chiave API Tavily. Aggiunge strumenti di ricerca ed estrazione di pagine.',
   'settings.search.statusConfigured': 'Configurato',
   'settings.search.statusNeedsKey': 'Richiede la chiave API',
   'settings.search.fallbackToManaged':
@@ -1453,6 +1458,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Chiave Querit API',
   'settings.search.placeholderExa': 'Incolla la tua chiave API Exa…',
+  'settings.search.tavilyKeyLabel': 'Chiave API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Siti web consentiti',
   'settings.search.allowedSitesHint':
     "Inserisci, uno per riga, gli host che l'assistente può aprire e leggere tramite il recupero web e lo strumento browser, ad es. reuters.com. Un host include anche i suoi sottodomini. La ricerca web stessa non è limitata da questo elenco.",
@@ -2664,6 +2671,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Prossimamente',
   'memorySources.composioListFailed': 'Impossibile caricare le connessioni Composio.',
   'memorySources.browse': 'Sfoglia…',
+  'memorySources.folderPathUnavailable':
+    'Impossibile determinare dove si trova quella cartella. Digita invece il suo percorso completo.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2686,6 +2695,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'elementi sincronizzati',
   'memorySources.sync.upToDate': 'Aggiornato',
   'memorySources.sync.failedLabel': 'Non riuscito',
+  'memorySources.sync.morePending': 'Altro da sincronizzare. Fai di nuovo clic su Sincronizza',
+  'memorySources.sync.budgetSpent': 'Il budget di richieste di oggi è esaurito. Riprova domani',
   'time.justNow': 'proprio ora',
   'time.secondsAgoSuffix': 's fa',
   'time.minutesAgoSuffix': 'min fa',
@@ -2729,6 +2740,19 @@ const messages: TranslationMap = {
   'memorySources.allIn.allFailed':
     'Nessuna sincronizzazione è potuta partire. Controlla ogni fonte per vedere il motivo.',
   'memorySources.allIn.partial': 'Sincronizzazioni avviate: {triggered}. Non avviabili: {failed}.',
+  'memorySources.repair.button': 'Ripara i ricordi meno recenti',
+  'memorySources.repair.title': 'Riparare i ricordi meno recenti?',
+  'memorySources.repair.message':
+    "Fino a {scanned} documenti sincronizzati sono stati salvati prima della correzione dell'archiviazione nell'albero della memoria e non compaiono nel grafo della memoria. Archiviarli consuma crediti di embedding. I documenti già nell'albero vengono saltati.",
+  'memorySources.repair.confirm': 'Ripara',
+  'memorySources.repair.cancel': 'Non ora',
+  'memorySources.repair.nothing':
+    'Niente da riparare. Nessun documento sincronizzato è in attesa di archiviazione.',
+  'memorySources.repair.success':
+    "{ingested} archiviati nell'albero della memoria ({already} già presenti, {skipped} saltati).",
+  'memorySources.repair.morePending':
+    'Ne restano altri. Fai di nuovo clic su Ripara i ricordi meno recenti.',
+  'memorySources.repair.failed': 'Impossibile riparare i ricordi meno recenti.',
   'memorySources.settings.button': 'Impostazioni',
   'memorySources.settings.title': 'Impostazioni di sincronizzazione',
   'memorySources.settings.maxPrs': 'Numero massimo di pull request',
@@ -2742,7 +2766,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Illimitato',
   'memorySources.settings.unlimitedTooltip':
     'Hai scelto di sincronizzare il massimo per {toolkit}. Puoi modificare i limiti qui.',
-  'memorySources.settings.maxed': 'Pieno',
   'memorySources.settings.save': 'Salva',
   'memorySources.settings.saving': 'Salvataggio…',
   'memorySources.settings.saved': 'Impostazioni salvate',
@@ -3405,6 +3428,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'non riuscito',
   'conversations.subagent.statusAwaitingUser': "in attesa dell'utente",
   'conversations.subagent.statusCancelled': 'annullato',
+  'conversations.subagent.awaitingTitle': 'In attesa della tua risposta',
+  'conversations.subagent.answerPlaceholder': 'Scrivi la tua risposta',
+  'conversations.subagent.answerSend': 'Invia risposta',
+  'conversations.subagent.answerSent': 'Risposta inviata',
   'conversations.agentTaskInsights.title': 'Approfondimenti attività agente',
   'conversations.agentTaskInsights.response': 'Risposta',
   'conversations.agentTaskInsights.processSourceTitle': "Origine del processo dell'agente",
@@ -4407,7 +4434,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Accedi con Claude',
   'settings.ai.claudeCode.reconnect': 'Riconnetti',
   'settings.ai.claudeCode.loginHint':
-    'Apre un terminale che esegue claude login. Al termine, fai clic su Ricontrolla.',
+    'Apre un terminale che esegue claude auth login --claudeai. Al termine, fai clic su Ricontrolla.',
   'settings.ai.claudeCode.loginError': 'Impossibile aprire il terminale di accesso. Riprova.',
   'settings.ai.claudeCode.fullAccess': 'Accesso completo',
   'settings.ai.claudeCode.fullAccessOn':
@@ -5001,6 +5028,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Registro eventi',
   'settings.developerMenu.eventLog.desc':
     'Flusso in diretta codificato a colori di tutti gli eventi di agenti, strumenti e sistemi',
+  'settings.developerMenu.eventLog.workspaceScope': 'Ambito dello spazio di lavoro',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Questo spazio di lavoro',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Tutti gli spazi di lavoro',
   'settings.developerMenu.eventLog.allTypes': 'Tutti i tipi',
   'settings.developerMenu.eventLog.filterAgent': 'Filtro...',
   'settings.developerMenu.eventLog.download': 'Scarica',
@@ -5008,6 +5038,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Vivere',
   'settings.developerMenu.eventLog.disconnected': 'Disconnesso',
   'settings.developerMenu.eventLog.waiting': 'In attesa degli eventi...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Gli eventi compaiono qui mentre agenti, strumenti e sistema lavorano. Per ora non è successo nulla.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Riconnettiti al core per riprendere lo streaming.',
   'settings.developerMenu.eventLog.notConnected': 'Non connesso al nucleo',
   'settings.developerMenu.eventLog.jumpToLatest': "Vai all'ultimo",
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6162,6 +6196,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Suggerimenti di instradamento',
   'settings.agents.editor.modelTiers': 'Livelli di modello',
   'settings.agents.editor.modelCustom': 'ID modello personalizzato…',
+  'settings.agents.editor.modelManaged': 'Modelli gestiti',
   'settings.agents.editor.modelCustomPlaceholder': 'es. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Aggiungi strumenti',
   'settings.agents.editor.toolsAllSelected': 'Tutti gli strumenti',
@@ -6310,6 +6345,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Modalità archiviazione segreti',
   'keyring.settings.mode.osKeychain': 'Portachiavi del SO',
   'keyring.settings.mode.encryptedFile': 'Locale crittografato',
+  'keyring.settings.mode.localEncryptedFile': 'File crittografato',
+  'keyring.settings.mode.localPlaintextFile': 'File non crittografato',
   'keyring.settings.mode.consentPending': 'Non configurato',
   'keyring.settings.mode.declined': 'Rifiutato',
   'keyring.settings.availability': 'Disponibilità portachiavi',
@@ -6657,6 +6694,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.body':
     "Ollama non è raggiungibile sull'endpoint configurato, oppure il modello necessario non è installato lì. Avvia Ollama e scarica il modello su quell'endpoint, oppure sposta questo lavoro su un provider cloud.",
   'userErrors.scope.chat': 'Chat',
+  'userErrors.replyDeliveryFailed.title': 'Impossibile mostrare la risposta',
+  'userErrors.replyDeliveryFailed.body':
+    'L’agente ha completato questo turno, ma la sua risposta non è stata salvata né riletta. Chiedi di nuovo per fartela ripetere.',
   'userErrors.memoryStoreCorrupt.title': 'L’indice della memoria era corrotto',
   'userErrors.memoryStoreCorrupt.body':
     'Il database dell’albero della memoria era danneggiato. Il file danneggiato è stato conservato accanto ai tuoi dati di memoria ed è stato ricostruito un indice vuoto. Risincronizza le tue fonti di memoria per riempirlo di nuovo.',
@@ -6700,6 +6740,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Elimina',
   'flows.delete.deleting': 'Eliminazione…',
   'flows.canvas.renameLabel': 'Rinomina flusso di lavoro',
+  'settings.ai.openaiOauthTitle': 'Accedi con ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Accedi con il tuo account ChatGPT per usare i modelli OpenAI senza una chiave API.',
+  'settings.ai.openaiOauthConnect': 'Accedi con ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Connesso a ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Apertura del browser…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Dopo l’accesso, incolla l’URL di reindirizzamento completo dal browser (inizia con http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Completa l’accesso a ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Disconnetti ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'L’accesso a ChatGPT è disponibile solo nell’app desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Impossibile avviare l’accesso a ChatGPT. Riprova o usa una chiave API.',
+  'settings.ai.openaiOauthCompleteError':
+    'L’accesso a ChatGPT non è stato completato. Controlla l’URL di reindirizzamento e riprova.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Dopo l’accesso, incolla l’URL di reindirizzamento dal browser.',
+  'settings.ai.openaiOauthDisconnectError': 'Impossibile disconnettere ChatGPT. Riprova.',
   'memorySources.codingSessions.title': 'Sessioni degli agenti di programmazione',
   'memorySources.codingSessions.description':
     'Trasforma decisioni e correzioni di Codex e Claude Code in memoria privata della persona.',
@@ -6740,6 +6800,8 @@ const messages: TranslationMap = {
   'sync.pipeline.ingestedOnly': 'Solo acquisito',
   'sync.pipeline.storedWithoutVectors':
     'Memorizzato senza vettori. Ricerca semantica non disponibile.',
+  'sync.pipeline.vectorsPending':
+    'Chunk in attesa dei vettori: {count}. La ricerca semantica li coprirà a breve.',
   'sync.pipeline.signInToEnable': 'Accedi per attivare',
   'sync.pipeline.extractionFailed':
     'Estrazione della struttura della memoria non riuscita. Il wiki potrebbe essere incompleto.',

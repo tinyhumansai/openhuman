@@ -55,7 +55,7 @@ fn bound_config() -> (tempfile::TempDir, Config) {
     config.memory_tree.embedding_endpoint = None;
     config.memory_tree.embedding_model = None;
     config.memory_tree.embedding_strict = false;
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
     (tmp, config)
 }
 
@@ -141,4 +141,111 @@ async fn experience_store_round_trips_over_the_bound_driver() {
         listed.iter().any(|item| item.id == "exp_adapter"),
         "a record written through the bound driver must read back"
     );
+}
+
+// ── recall_relevant_by_vector (#6041) ────────────────────────────────────────
+//
+// The adapter used to leave this on the trait's empty default, which made Lane B
+// a silent no-op on every module-backed install. These pin the override against
+// a scripted driver: the vector floor, the mapping, and the two degradations.
+
+fn driver_over(
+    provider: crate::openhuman::memory::guard::test_support::RecordingProvider,
+) -> DriverMemory {
+    DriverMemory::new(Arc::new(provider) as Arc<dyn MemoryProvider>)
+}
+
+#[tokio::test]
+async fn recall_relevant_by_vector_keeps_hits_above_the_vector_floor_only() {
+    use crate::openhuman::memory::guard::test_support::{namespace_hit, RecordingProvider};
+    let memory = driver_over(RecordingProvider::new().with_namespace_hits(vec![
+        namespace_hit("user_pref_situational", "editor", "Prefers vim.", 0.9),
+        namespace_hit(
+            "user_pref_situational",
+            "lexical",
+            "Shares words only.",
+            0.1,
+        ),
+        namespace_hit("user_pref_situational", "blank", "   ", 0.95),
+    ]));
+
+    let out = memory
+        .recall_relevant_by_vector("user_pref_situational", "which editor?", 5, 0.35)
+        .await
+        .expect("a driver with retrieval answers");
+    assert_eq!(
+        out,
+        vec![("editor".to_string(), "Prefers vim.".to_string())],
+        "below-floor and empty-bodied hits must be dropped"
+    );
+}
+
+#[tokio::test]
+async fn recall_relevant_by_vector_asks_the_driver_not_the_trait_default() {
+    use crate::openhuman::memory::guard::test_support::RecordingProvider;
+    let provider = Arc::new(RecordingProvider::new());
+    let memory = DriverMemory::new(provider.clone() as Arc<dyn MemoryProvider>);
+
+    let out = memory
+        .recall_relevant_by_vector("user_pref_situational", "anything", 5, 0.35)
+        .await
+        .expect("an empty page is not an error");
+    assert!(out.is_empty());
+    assert_eq!(
+        provider.only_call().method,
+        "retrieval.recall_namespace_scored",
+        "the lookup must reach the driver's retrieval family"
+    );
+}
+
+#[tokio::test]
+async fn recall_relevant_by_vector_forwards_namespace_and_limit_to_the_driver() {
+    use crate::openhuman::memory::guard::test_support::{namespace_hit, RecordingProvider};
+    let mut hits: Vec<_> = (0..7)
+        .map(|i| {
+            namespace_hit(
+                "user_pref_situational",
+                &format!("k{i}"),
+                &format!("pref {i}"),
+                0.9,
+            )
+        })
+        .collect();
+    hits.push(namespace_hit(
+        "user_pref_general",
+        "other",
+        "a general preference",
+        0.99,
+    ));
+    let provider = Arc::new(RecordingProvider::new().with_namespace_hits(hits));
+    let memory = DriverMemory::new(provider.clone() as Arc<dyn MemoryProvider>);
+
+    let out = memory
+        .recall_relevant_by_vector("user_pref_situational", "anything", 5, 0.35)
+        .await
+        .expect("a driver with retrieval answers");
+    assert_eq!(out.len(), 5, "the driver's page is the cap: {out:?}");
+    assert!(
+        out.iter().all(|(key, _)| key.starts_with('k')),
+        "a hit from another namespace must never come back: {out:?}"
+    );
+    let call = provider.only_call();
+    assert_eq!(call.method, "retrieval.recall_namespace_scored");
+    assert_eq!(
+        call.content.as_deref(),
+        Some("namespace=user_pref_situational limit=5"),
+        "the request must carry the caller's namespace and limit"
+    );
+}
+
+#[tokio::test]
+async fn recall_relevant_by_vector_over_a_driver_without_retrieval_answers_empty() {
+    // The null driver advertises nothing, so there is no retrieval family to
+    // ask: the documented degradation is an empty answer, not an error.
+    let memory = DriverMemory::new(Arc::new(tinymemory_api::null::NullMemoryProvider));
+    let out = memory
+        .recall_relevant_by_vector("user_pref_situational", "anything", 5, 0.35)
+        .await
+        .expect("no retrieval family is a degradation, not a failure");
+    assert!(out.is_empty());
 }

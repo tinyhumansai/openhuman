@@ -289,7 +289,8 @@ pub async fn flows_run_detached(
     let flow = prepared.flow;
     let flow_id_owned = flow_id.to_string();
     let body_thread_id = thread_id.clone();
-    tokio::spawn(async move {
+    tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
+        async move {
         if let Err(e) = run_flow_body(
             config_arc,
             flow,
@@ -308,7 +309,8 @@ pub async fn flows_run_detached(
             // finalizer — this only logs that the detached run ended in error.
             tracing::warn!(target: "flows", error = %e, "[flows] flows_run_detached: background run ended with error (row already reconciled)");
         }
-    });
+        },
+    ));
 
     let result = json!({
         "run_id": thread_id,

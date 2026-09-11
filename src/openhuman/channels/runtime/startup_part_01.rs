@@ -2,7 +2,7 @@ use super::dispatch::{run_message_dispatch_loop, RuntimeChannelMessage};
 use super::supervision::{compute_max_in_flight_messages, spawn_supervised_listener};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::openhuman::agent::context::channels_prompt::build_system_prompt;
+use crate::openhuman::channels::system_prompt::{ChannelPromptInputs, ChannelSystemPrompt};
 use crate::openhuman::agent::harness::build_tool_instructions_filtered;
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::channels::context::{
@@ -374,20 +374,6 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     } else {
         None
     };
-    // `channel_name = None` on startup: the channel runtime wires up
-    // multiple providers in parallel, so there's no single platform to
-    // name here. The capability block falls back to a platform-agnostic
-    // "messaging bot" phrasing. Per-channel renderers that want a
-    // named capabilities section can call `build_system_prompt` with
-    // `Some(name)` directly.
-    let mut system_prompt = build_system_prompt(
-        &workspace,
-        &model,
-        &tool_descs,
-        &skills,
-        bootstrap_max_chars,
-        None,
-    );
     // Filter out Workflow-category tools (e.g. Composio, Apify) from the
     // main agent prompt — those are only available to the integrations_agent
     // subagent via category_filter = "skill".
@@ -397,10 +383,28 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         .collect();
     let non_skill_refs: Vec<&dyn crate::openhuman::tools::Tool> =
         non_skill_tools.iter().map(|t| t.as_ref()).collect();
-    system_prompt.push_str(&build_tool_instructions_filtered(&non_skill_refs));
-    // Tell the model its current filesystem access boundaries so it self-limits
-    // (advisory only — the SecurityPolicy enforces these regardless).
-    system_prompt.push_str(&format_access_context(&security));
+    // Everything after the rendered prompt is fixed for the process: the
+    // tool-instruction block, then the model's current filesystem access
+    // boundaries so it self-limits (advisory only — the SecurityPolicy
+    // enforces these regardless).
+    let mut prompt_suffix = build_tool_instructions_filtered(&non_skill_refs);
+    prompt_suffix.push_str(&format_access_context(&security));
+    // The prompt itself is rendered here for the current identity and
+    // re-rendered whenever the active profile or an identity file changes
+    // (#6027, #6028). `channel_name = None`: the runtime wires up multiple
+    // providers in parallel, so the capability block keeps its
+    // platform-agnostic "messaging bot" phrasing.
+    let system_prompt = ChannelSystemPrompt::refreshing(ChannelPromptInputs {
+        workspace_dir: workspace.clone(),
+        model: model.clone(),
+        tool_descs: tool_descs
+            .iter()
+            .map(|(name, desc)| ((*name).to_string(), (*desc).to_string()))
+            .collect(),
+        skills: skills.clone(),
+        bootstrap_max_chars,
+        suffix: prompt_suffix,
+    });
 
     if !skills.is_empty() {
         println!(
@@ -598,7 +602,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!("channels startup: memory unavailable: {e}"))?,
         tools_registry: Arc::clone(&tools_registry),
-        system_prompt: Arc::new(system_prompt),
+        system_prompt,
         model: Arc::new(model.clone()),
         temperature,
         auto_save_memory: config.memory.auto_save,

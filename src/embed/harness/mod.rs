@@ -2,16 +2,14 @@
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-//! use openhuman_core::{Access, Harness, Provider, Session, Workspace};
+//! use openhuman_core::{Access, Harness, Provider, Workspace};
 //!
 //! let harness = Harness::builder()
 //!     .provider(Provider::openai_compatible("https://api.example/v1", "sk-…").model("gpt-5"))
 //!     .workspace(Workspace::Ephemeral)
 //!     .access(Access::readonly())
-//!     // Both of these are effectively required when running on your own
-//!     // endpoint rather than a signed-in account — see "Running on your own
-//!     // endpoint" below. Omit them and the first turn fails SESSION_EXPIRED.
-//!     .session(Session::local("my-host"))
+//!     // Optional: point non-inference backend calls at the embedding
+//!     // product's backend. Caller-supplied inference needs no app login.
 //!     .backend_url("https://my-backend.example")
 //!     .build()
 //!     .await?;
@@ -41,20 +39,16 @@
 //!
 //! # Running on your own endpoint
 //!
-//! Supplying a [`Provider`] is not quite the whole story, because two things in
-//! the core are about the *account* rather than about where completions go:
+//! A harness identifies as [`HostKind::Library`](crate::core::types::HostKind::Library)
+//! by default. Supplying a [`Provider`] is therefore enough for inference: the
+//! library host is trusted to supply its endpoint and credentials, without an
+//! OpenHuman app login.
 //!
-//! - Routing at a custom provider is gated on an active app session. The gate
-//!   exists to stop an unregistered desktop user configuring every workload at
-//!   a custom endpoint and skipping registration, and it cannot tell that case
-//!   apart from a library host holding operator-supplied credentials — so the
-//!   host presents a session like anyone else. [`Session::local`] satisfies it
-//!   without asserting anything at the backend.
-//! - The core still makes non-inference backend calls (the session check,
-//!   integrations, telemetry). Left pointing at the hosted backend while signed
-//!   out, those are rejected — and a rejection publishes `SessionExpired`, which
-//!   fails the *next* turn's provider gate for reasons that have nothing to do
-//!   with the turn. [`HarnessBuilder::backend_url`] points them somewhere else.
+//! The core can still make non-inference backend calls (integrations,
+//! telemetry, managed services). Those need their own real session when the
+//! endpoint requires one. [`HarnessBuilder::backend_url`] points them at the
+//! embedding product's backend; [`HarnessBuilder::session`] installs a backend
+//! identity when required.
 //!
 //! Neither applies to [`Provider::inherit`] with [`Workspace::Inherit`], which
 //! runs exactly as the installed app does, session included.
@@ -121,12 +115,37 @@ static HARNESS_LIVE: AtomicBool = AtomicBool::new(false);
 /// Dropping it releases the process slot and, for
 /// [`Workspace::Ephemeral`], removes the workspace.
 pub struct Harness {
-    core: Core,
+    core: Option<Core>,
     provider: Provider,
     access: Access,
     /// Held for its `Drop`: an ephemeral workspace lives exactly as long as the
     /// harness that owns it.
     _workspace: ResolvedWorkspace,
+}
+
+/// Borrowed access to the core owned by a [`Harness`].
+///
+/// Unlike [`Core`], this facade is deliberately not cloneable and exposes
+/// neither the unconfigured agent facade nor the raw runtime: either path
+/// could start a turn without the harness's caller-supplied provider route.
+/// Share an `Arc<Harness>` when several agents need concurrent turn access.
+pub struct HarnessCore<'a> {
+    core: &'a Core,
+}
+
+impl HarnessCore<'_> {
+    pub fn config(&self) -> crate::embed::Config<'_> {
+        self.core.config()
+    }
+
+    pub fn auth(&self) -> crate::embed::Auth<'_> {
+        self.core.auth()
+    }
+
+    #[cfg(feature = "medulla")]
+    pub fn medulla(&self) -> crate::embed::Medulla<'_> {
+        self.core.medulla()
+    }
 }
 
 impl Harness {
@@ -149,7 +168,12 @@ impl Harness {
     /// The harness's provider route and access origin are pre-applied; anything
     /// set on the returned [`Turn`] overrides them for that turn alone.
     pub fn turn(&self, message: impl Into<String>) -> Turn<'_> {
-        let mut turn = self.core.agent().turn(message);
+        let mut turn = self
+            .core
+            .as_ref()
+            .expect("harness core is present until drop")
+            .agent()
+            .turn(message);
         if let Some(route) = self.provider.route() {
             turn = turn.route(route.clone());
         }
@@ -162,10 +186,16 @@ impl Harness {
         turn
     }
 
-    /// The typed core facade beneath this harness — config, memory, and the
-    /// [`raw`](Core::raw) escape hatch for anything not yet modelled.
-    pub fn core(&self) -> &Core {
-        &self.core
+    /// Safe typed access to non-turn core domains. Agent turns intentionally
+    /// remain on [`Harness::turn`], which always applies the harness provider
+    /// route and access origin.
+    pub fn core(&self) -> HarnessCore<'_> {
+        HarnessCore {
+            core: self
+                .core
+                .as_ref()
+                .expect("harness core is present until drop"),
+        }
     }
 
     /// The workspace this harness is rooted at.
@@ -184,7 +214,10 @@ impl Harness {
 
 impl Drop for Harness {
     fn drop(&mut self) {
-        HARNESS_LIVE.store(false, std::sync::atomic::Ordering::Release);
+        // Drop the old core while the process slot is still claimed. Releasing
+        // it first lets another builder initialize process-scoped state while
+        // this runtime's keyring, bearer, event bus and subscribers are live.
+        drop(self.core.take());
         // For an ephemeral workspace, take ownership of the temp path and
         // remove it with a short retry. The core's memory/session writers keep
         // running a moment after the harness returns from a turn and can
@@ -196,13 +229,27 @@ impl Drop for Harness {
             // `keep()` hands back the path without removing the directory so
             // we can do the retried removal ourselves.
             let root = temp.keep();
+            // Require a short quiet period rather than trusting one successful
+            // removal: a detached session writer can recreate the directory
+            // immediately afterward. Most drops finish in ~200 ms; repeated
+            // writes retain the one-second hard cap.
+            let mut quiet_passes = 0;
             for _ in 0..20 {
-                if std::fs::remove_dir_all(&root).is_ok() {
+                match std::fs::remove_dir_all(&root) {
+                    Ok(()) => quiet_passes += 1,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        quiet_passes += 1;
+                    }
+                    Err(_) => quiet_passes = 0,
+                }
+                if quiet_passes >= 5 {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
+            let _ = std::fs::remove_dir_all(&root);
         }
+        HARNESS_LIVE.store(false, std::sync::atomic::Ordering::Release);
         log::debug!("[embed][harness] released");
     }
 }

@@ -19,6 +19,12 @@ fn assemble_turn_harness(
     tool_policy: Option<ToolPolicyEnforcement>,
     required_capabilities: Option<CapabilitySet>,
     deterministic_cacheable: bool,
+    // Whether this run pauses gracefully at its model-call cap (issue #6014).
+    // Only such a run gets the in-loop conclusion: a run that errors at its cap
+    // instead (the channel/CLI path, which maps the stop to
+    // `MaxIterationsExceeded`) must keep doing that, and handing it a wrap-up
+    // would silently convert a documented error into an answer.
+    pause_at_cap: bool,
 ) -> AssembledTurnHarness {
     let mut harness: AgentHarness<()> = AgentHarness::new();
     // Cross-route fallback ownership (issue #4249, Workstream 02.2): populate the
@@ -125,6 +131,9 @@ fn assemble_turn_harness(
 
     // Capture context settings before `install` consumes `context_mw`.
     let autocompact_enabled = context_mw.autocompact_enabled;
+    // Captured for the same reason `autocompact_enabled` is — `install` consumes
+    // `context_mw` — and used to site microcompact below, after compression.
+    let microcompact_keep_recent = context_mw.microcompact_keep_recent;
     let tool_result_artifact_index = context_mw
         .artifact_store
         .as_ref()
@@ -244,12 +253,12 @@ fn assemble_turn_harness(
             Some(set) => set.contains(name),
         };
         // Defense-in-depth (issue #4452): a sub-agent must NEVER be handed a
-        // spawn/delegate tool, regardless of what the resolved allowlist contains.
-        // Re-assert the invariant here at registration time (not just on the
-        // caller's `allowed_indices`) so a misbuilt allowlist can't reintroduce
-        // `spawn_subagent`/`delegate_*`/worker-thread spawning into a child run.
+        // spawn/delegate tool whatever the allowlist says — re-assert it here at
+        // registration, not just on the caller's `allowed_indices`. Warn only when
+        // the allowlist actually readmitted one (issue #6157); the caller strips
+        // them first, so a bare `spawn_stripped` warn fired on every healthy run.
         let spawn_stripped = is_subagent_run && is_subagent_spawn_or_delegate_tool(name);
-        if spawn_stripped {
+        if spawn_stripped && admitted {
             tracing::warn!(
                 tool = name,
                 "[subagent] refusing to register spawn/delegate tool on sub-agent run"
@@ -483,7 +492,6 @@ fn assemble_turn_harness(
     harness.push_middleware(Arc::new(middleware::CostBudgetMiddleware::with_shadow(
         shadow_budget_tracker,
     )));
-
     // Autocompaction parity: when the provider's context window is known, install
     // the two-stage context-management step (issue #4249).
     //
@@ -539,6 +547,100 @@ fn assemble_turn_harness(
         // restores all three: image markers priced at a flat cost, the
         // proportional reply reserve, system messages always kept in place, and a
         // grep-able warn with drop/token counts on any eviction.
+    }
+
+    // ── The context ladder, cheapest sufficient step first (issue #6014) ──────
+    //
+    // `before_model` runs in registration order, so what follows IS the firing
+    // order, and each step only matters when the one above was not enough:
+    // 1. compression (above) folds the older slice into a task-aware summary;
+    // 2. microcompact blanks older tool bodies if still over;
+    // 3. the wrap-up undoes (2) for a capped turn's concluding call;
+    // 4. trim evicts oldest whole messages if still over.
+    //
+    // The order used to be 2 -> 1 -> 4, because `context_mw.install` registered
+    // microcompact: the summarizer was handed a transcript whose tool bodies
+    // were already `CLEARED_PLACEHOLDER` and asked, by its own prompt, for "key
+    // results/outputs" it could no longer see. Nothing recovered them.
+    if microcompact_keep_recent > 0 {
+        // The token-budget gate the crate added for this (#4755) and this call
+        // site never used. Constructed bare, microcompact blanks on EVERY call
+        // past `keep_recent` — not only under pressure — so a ten-call turn
+        // answered from the last five results while well inside a window with
+        // room for all ten. Not a capped-turn problem: every turn. The budget
+        // matches the trim's allowance, putting microcompact strictly behind
+        // compression. With no window there is nothing to size against and
+        // nothing else bounding growth, so always-blank stays as the backstop.
+        let microcompact = tinyagents_harness::middleware::MicrocompactMiddleware::new(
+            microcompact_keep_recent,
+            crate::openhuman::agent::context::CLEARED_PLACEHOLDER,
+        );
+        let microcompact = match context_window.filter(|w| *w > 0) {
+            Some(window) => {
+                microcompact.with_token_budget(middleware::legacy_max_input_tokens(window).max(1))
+            }
+            None => microcompact,
+        };
+        // Emit `AgentEvent::Compressed` when a body is cleared. Off by default —
+        // the middleware was built as "a silent transcript rewrite" — which is
+        // why blanking was, until now, the one reduction step nobody could see
+        // happening: compression logs its provenance, the trim warns on every
+        // eviction, and the per-result artifact store logs each persist. Only
+        // this one destroyed content without saying so, which is how it went
+        // unnoticed that it was doing it on every call.
+        harness.push_middleware(Arc::new(microcompact.with_events(true)));
+    }
+
+    // Issue #6014: make the last permitted model call the turn's conclusion,
+    // rather than leaving the answer to an extra out-of-band call after the loop
+    // has exited.
+    //
+    // **Top-level turns only**, the same cut `CapPauser`'s dispatch guard takes.
+    // A sub-agent reaching its own cap is a routine outcome, not a user-visible
+    // dead end: it summarises, hands the result back to its parent, and
+    // `subagent_runner` already owns that checkpoint. The harm this fixes — a
+    // person left with a status line where an answer should be — belongs to the
+    // turn that answers a human. It also leaves a child's budget alone: the
+    // conclusion costs a call, and turning every delegated run's N tool rounds
+    // into N-1 is not a trade to impose as a side effect.
+    // One allowance, split between the two things that add to the request
+    // (CodeRabbit on #6068). Computed independently they were each bounded and
+    // the pair was not: restoration could fill the whole allowance and the
+    // contents list add its tenth on top. `0` when no window is advertised.
+    let trim_allowance = context_window
+        .filter(|w| *w > 0)
+        .map(|w| middleware::legacy_max_input_tokens(w).max(1))
+        .unwrap_or(0);
+    let (toc_allowance, restore_allowance) = middleware::split_input_allowance(trim_allowance);
+
+    let wrap_up_mw = (pause_at_cap && subagent_scope.is_none()).then(|| {
+        Arc::new(middleware::FinalCallWrapUpMiddleware::new(
+            crate::openhuman::agent::harness::session::turn_checkpoint::MAX_ITER_CHECKPOINT_INSTRUCTION,
+            tool_outcome_sink.clone(),
+            // What is left after the contents list's share, so restoration
+            // stops short of provoking an eviction (see the middleware).
+            restore_allowance,
+        ))
+    });
+    let wrap_up_fired = wrap_up_mw.as_ref().map(|mw| mw.fired());
+    if let Some(mw) = wrap_up_mw {
+        harness.push_middleware(mw);
+    }
+
+    // Issue #6014: say where the offloaded results went, from the index rather
+    // than the transcript. After the reduction steps so it renders what
+    // survived them, before the trim so its message is counted in that budget.
+    // Its share of the allowance split above: the list is a system message, so
+    // nothing downstream can shrink it (see the middleware).
+    harness.push_middleware(Arc::new(middleware::ArtifactIndexTocMiddleware::new(
+        toc_allowance,
+    )));
+
+    if let Some(window) = context_window.filter(|w| *w > 0) {
+        // Deterministic hard-cap trim (issue #4462), last in the ladder: it drops
+        // whole messages, so it runs only once summarizing and blanking have both
+        // failed to fit the window. See `ImageAwareMessageTrimMiddleware` for the
+        // three legacy guards it restores over the crate trim.
         harness.push_middleware(Arc::new(
             middleware::ImageAwareMessageTrimMiddleware::for_context_window(window),
         ));
@@ -636,6 +738,7 @@ fn assemble_turn_harness(
         tool_outcome_sink,
         handle,
         early_exit_hook,
+        wrap_up_fired,
         tool_count,
         registry_snapshot,
         registry_diagnostics,

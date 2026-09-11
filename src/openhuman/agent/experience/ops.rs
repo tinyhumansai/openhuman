@@ -179,14 +179,36 @@ impl Memory for DriverMemory {
             .await?)
     }
 
-    // `recall_relevant_by_vector` is deliberately left on the trait's default.
-    // The contract has no vector-threshold recall member, and the trait
-    // defines the default as the documented opt-out for a backend that cannot
-    // answer it ("keyword-only / mock backends opt out"), not as a swallowed
-    // failure. The consumer that cares — situational preferences
-    // (`memory::preferences`, Lane B) — already treats an empty answer as "no
-    // block to inject" rather than as a broken turn, and it is reached through
-    // the session's own memory handle, not through this adapter.
+    /// Situational preferences (Lane B) reach memory through **this** adapter:
+    /// the session's `Arc<dyn Memory>` is a `DriverMemory` on every
+    /// module-backed install. This used to sit on the trait's default — empty,
+    /// "the documented opt-out for a backend that cannot answer it" — on the
+    /// belief that Lane B was reached through some other handle. It was not,
+    /// so the lane silently injected nothing for everyone (#6041).
+    ///
+    /// The contract has no vector-threshold member; the body is the guard
+    /// path's, over `MemoryRetrieval::recall_namespace_scored`, filtered on the
+    /// vector component. A driver without the retrieval family still answers
+    /// empty; a driver that has it and fails answers `Err`, which Lane B reads
+    /// as "no block" rather than as a broken turn.
+    async fn recall_relevant_by_vector(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+        min_vector_similarity: f64,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(
+            crate::openhuman::memory::preferences::recall_by_vector_over(
+                self.provider.as_ref(),
+                namespace,
+                query,
+                limit,
+                min_vector_similarity,
+            )
+            .await?,
+        )
+    }
 
     async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
         Ok(self.provider.get(namespace, key).await?)

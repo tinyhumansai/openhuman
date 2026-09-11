@@ -18,6 +18,13 @@ fn inherit_states_no_route() {
 }
 
 #[test]
+fn usable_routes_require_nonblank_endpoint_and_credential() {
+    assert!(Provider::openai_compatible("https://api.example/v1", "sk").has_usable_route());
+    assert!(!Provider::openai_compatible("   ", "sk").has_usable_route());
+    assert!(!Provider::openai_compatible("https://api.example/v1", "   ").has_usable_route());
+}
+
+#[test]
 fn a_blank_model_is_not_a_model() {
     // The core treats a blank `model_override` as absent, and a route with no
     // resolved model registers nothing at all. Collapsing it here means the

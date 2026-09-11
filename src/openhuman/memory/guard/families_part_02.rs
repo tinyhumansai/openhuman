@@ -391,6 +391,41 @@ impl MemoryMaintenance for GuardedMaintenance {
         self.family()?.consolidate().await
     }
 
+    /// Tiered by what the call actually does, not by what the member could do.
+    ///
+    /// Executing writes memory-tree rows for documents already stored, so it
+    /// takes the **write** tier like every other mutating maintenance member: a
+    /// `readonly` operator may inspect a store, and re-filing thousands of its
+    /// documents is not inspection.
+    ///
+    /// A **dry run writes nothing** — it counts what a pass would examine — so
+    /// it takes the **read** tier, the same trade [`Self::doctor`] makes below.
+    /// Gating it behind the write tier would withhold the one safe way to size
+    /// the job from precisely the tier that should be sizing rather than
+    /// executing, and the preview is what the expensive control exists to be
+    /// asked for first (review finding).
+    async fn backfill_connector_trees(
+        &self,
+        request: BackfillTreesRequest,
+    ) -> Result<BackfillTreesOutcome, MemoryError> {
+        if request.dry_run {
+            self.policy.admit_read(
+                Capability::Maintenance,
+                "maintenance.backfill_connector_trees",
+                NO_NAMESPACE,
+                false,
+            )?;
+        } else {
+            self.policy.admit_write(
+                Capability::Maintenance,
+                "maintenance.backfill_connector_trees",
+                NO_NAMESPACE,
+                false,
+            )?;
+        }
+        self.family()?.backfill_connector_trees(request).await
+    }
+
     /// Read-only by contract, so this takes the **read** tier check: a
     /// `readonly` operator must still be able to run `doctor`, which is exactly
     /// the tier where diagnosing without mutating matters most.
@@ -548,171 +583,5 @@ impl MemoryPeople for GuardedPeople {
             true,
         )?;
         self.family()?.seed_from_address_book().await
-    }
-}
-
-// ── Chunks ───────────────────────────────────────────────────────────────────
-
-#[async_trait]
-impl MemoryChunks for GuardedChunks {
-    async fn list_chunks(
-        &self,
-        query: &ChunkQuery,
-        scope: Option<&SourceScope>,
-    ) -> Result<Vec<Chunk>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.list_chunks",
-            NO_NAMESPACE,
-            false,
-        )?;
-        // Intersected with the ambient allowlist, never passed through. The
-        // ambient scope is an upper bound: forwarding the caller's scope
-        // unchanged would let a source-restricted turn widen itself back out by
-        // naming a collection the restriction excluded. See
-        // `GuardPolicy::narrow_scope`.
-        let effective = self.policy.narrow_scope(scope);
-        self.family()?.list_chunks(query, effective.as_ref()).await
-    }
-
-    /// The count that labels a [`Self::list_chunks`] page, and it must be
-    /// narrowed by exactly the same rule. A total computed against a wider
-    /// scope than the page it labels leaks the existence of rows the caller may
-    /// not read — "showing 20 of 4000" tells a source-restricted turn how much
-    /// it is not being shown.
-    async fn count_chunks(
-        &self,
-        query: &ChunkQuery,
-        scope: Option<&SourceScope>,
-    ) -> Result<u64, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.count_chunks",
-            NO_NAMESPACE,
-            false,
-        )?;
-        let effective = self.policy.narrow_scope(scope);
-        self.family()?.count_chunks(query, effective.as_ref()).await
-    }
-
-    /// Same rows as [`Self::list_chunks`] with the stored facts beside them, so
-    /// the same intersection applies for the same reason.
-    async fn list_chunk_details(
-        &self,
-        query: &ChunkQuery,
-        scope: Option<&SourceScope>,
-    ) -> Result<Vec<ChunkListRow>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.list_chunk_details",
-            NO_NAMESPACE,
-            false,
-        )?;
-        let effective = self.policy.narrow_scope(scope);
-        self.family()?
-            .list_chunk_details(query, effective.as_ref())
-            .await
-    }
-
-    /// Per-source totals are computed from the chunks the scope admits, not
-    /// filtered afterwards — so a restricted caller must not learn that a
-    /// forbidden source exists by seeing its row, nor see a permitted source
-    /// carrying a count that includes rows it cannot read.
-    async fn source_totals(
-        &self,
-        limit: usize,
-        scope: Option<&SourceScope>,
-    ) -> Result<Vec<SourceTotal>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.source_totals",
-            NO_NAMESPACE,
-            false,
-        )?;
-        let effective = self.policy.narrow_scope(scope);
-        self.family()?
-            .source_totals(limit, effective.as_ref())
-            .await
-    }
-
-    async fn get_chunk(&self, chunk_id: &str) -> Result<Option<Chunk>, MemoryError> {
-        self.policy
-            .admit_read(Capability::Chunks, "chunks.get_chunk", NO_NAMESPACE, false)?;
-        self.family()?.get_chunk(chunk_id).await
-    }
-
-    async fn chunk_detail(&self, chunk_id: &str) -> Result<Option<ChunkDetail>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.chunk_detail",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.chunk_detail(chunk_id).await
-    }
-
-    /// The catalog is not user content, so it takes no namespace and the
-    /// lightest read check — refusing it under `readonly` would stop an
-    /// operator finding out what the store can even hold.
-    async fn storage_kinds(&self) -> Result<Vec<String>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.storage_kinds",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.storage_kinds().await
-    }
-
-    /// Vectors, not content — but still a read of stored material, so it takes
-    /// the same tier check rather than being waved through as metadata.
-    async fn chunk_embeddings(
-        &self,
-        chunk_ids: &[String],
-        model_signature: &str,
-    ) -> Result<Vec<ChunkEmbedding>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.chunk_embeddings",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?
-            .chunk_embeddings(chunk_ids, model_signature)
-            .await
-    }
-
-    /// One chunk's admission verdict, read by chunk id exactly as
-    /// [`Self::chunk_detail`] is — so it takes that member's check, not
-    /// [`Self::list_chunks`]'s scope intersection. There is no scope to narrow:
-    /// the caller already holds the id.
-    async fn chunk_score(&self, chunk_id: &str) -> Result<Option<ChunkScore>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.chunk_score",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.chunk_score(chunk_id).await
-    }
-
-    /// Ingest progress for the sources the caller names, one row per query.
-    ///
-    /// Unlike [`Self::source_totals`], which enumerates the groups that exist
-    /// and therefore has to be narrowed to the ambient allowlist, this answers
-    /// only about prefixes the caller supplied — it discloses no source the
-    /// caller did not already name — and the contract member carries no
-    /// [`SourceScope`] for the guard to intersect anything into.
-    async fn source_ingest_status(
-        &self,
-        source_prefixes: &[SourceIngestQuery],
-    ) -> Result<Vec<SourceIngestStatus>, MemoryError> {
-        self.policy.admit_read(
-            Capability::Chunks,
-            "chunks.source_ingest_status",
-            NO_NAMESPACE,
-            false,
-        )?;
-        self.family()?.source_ingest_status(source_prefixes).await
     }
 }

@@ -507,6 +507,16 @@ Capability {
         }),
     },
     Capability {
+        id: "channels.mcp_connection_alerts",
+        name: "MCP Connection Health Alerts",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Watch installed MCP servers in the background. Each non-nominal liveness-probe outcome (a slow answer, a dropped transport, a reconnect that succeeded or failed) is recorded in the developer Event Log — an answered probe is not, so a healthy server stays silent — and a server that stays down, comes back after failing, or cannot start because its launcher runtime is missing raises a notification.",
+        how_to: "Automatic. Settings > Developer > Event Log (filter: mcp) for the stream; Notifications for the alerts",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "channels.mcp_tool_call",
         name: "Invoke MCP Server Tools",
         domain: "channels",

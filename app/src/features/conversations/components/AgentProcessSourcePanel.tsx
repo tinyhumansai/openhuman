@@ -11,8 +11,8 @@ import {
   formatTimelineEntry,
 } from '../../../utils/toolTimelineFormatting';
 import { AgentSparkIcon } from './AgentTimelineRail';
+import { AssistantUiSubagentCall } from './AssistantUiSubagentCall';
 import { ProcessingTranscriptView } from './ProcessingTranscriptView';
-import { SubagentActivityBlock } from './SubagentActivityBlock';
 import { ToolTimelineBlock } from './ToolTimelineBlock';
 
 const log = createDebug('app:conversations:agent-process-source');
@@ -176,7 +176,7 @@ export function AgentProcessSourcePanel({
             {scopedEntry ? (
               // Scoped to one step: show only that step's details.
               scopedEntry.subagent ? (
-                <SubagentActivityBlock subagent={scopedEntry.subagent} />
+                <AssistantUiSubagentCall activity={scopedEntry.subagent} />
               ) : scopedDetail ? (
                 <pre className="max-h-[60vh] overflow-y-auto rounded-lg bg-surface-muted px-3 py-2 text-[12px] whitespace-pre-wrap wrap-break-word text-content-secondary">
                   {scopedDetail}
@@ -195,7 +195,7 @@ export function AgentProcessSourcePanel({
               <ProcessingTranscriptView
                 transcript={transcript}
                 entries={entries}
-                renderSubagent={subagent => <SubagentActivityBlock subagent={subagent} />}
+                renderSubagent={subagent => <AssistantUiSubagentCall activity={subagent} />}
               />
             ) : entries.length > 0 ? (
               // Legacy snapshot (no transcript): fall back to the tool timeline,
@@ -223,7 +223,7 @@ export function AgentProcessSourcePanel({
                     <p className="text-[12px] font-medium text-content-secondary">
                       {formatTimelineEntry(entry).title}
                     </p>
-                    <SubagentActivityBlock subagent={entry.subagent!} />
+                    <AssistantUiSubagentCall activity={entry.subagent!} />
                   </div>
                 ))}
               </div>

@@ -52,14 +52,6 @@
 pub mod rpc;
 pub mod schemas;
 
-/// Chunk-staging fixtures for [`rpc`]'s inline tests.
-///
-/// Test-only, and in a directory both memory lints skip by path — see the
-/// module's own docs for why a genuinely dev-only engine reference had to move
-/// out of the inline `#[cfg(test)]` block to be classified as one.
-#[cfg(test)]
-pub(crate) mod test_support;
-
 // The controller aggregators this domain's RPC surface defines. Aliased
 // exactly as the pre-extraction module exported them.
 pub use schemas::{

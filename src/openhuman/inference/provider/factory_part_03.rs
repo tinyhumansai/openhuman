@@ -519,6 +519,23 @@ pub(crate) fn create_local_chat_model_from_string(
 /// construction-time chokepoint can never diverge on what "session active"
 /// means.
 pub(crate) fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+    // An in-process library host is given its provider URL and credential by
+    // its caller. It does not participate in the OpenHuman app's registration
+    // or auth-profile lifecycle, so requiring a fabricated local session here
+    // would mix desktop product policy into the library contract. The ambient
+    // context is installed by the dispatch chokepoint; all other host kinds
+    // retain the registration gate below.
+    if !current_host_requires_session() {
+        return Ok(());
+    }
+
+    verify_backend_session_active(config)
+}
+
+/// Managed `OpenhumanJwt` inference always needs the backend bearer, including
+/// in a Library host. Library mode exempts caller-owned provider credentials;
+/// it cannot manufacture a TinyHumans account credential.
+pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
     // Fast path: the scheduler gate already knows the session is dead.
     if crate::openhuman::cron::scheduler_gate::is_signed_out() {
         anyhow::bail!(
@@ -547,6 +564,19 @@ pub(crate) fn verify_session_active(config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("SESSION_EXPIRED: no backend session — sign in to use OpenHuman")
     }
     Ok(())
+}
+
+/// Whether inference in the ambient host participates in OpenHuman app login.
+/// Library hosts receive their provider configuration from the embedding
+/// process; every other host retains the product session policy.
+pub(crate) fn current_host_requires_session() -> bool {
+    crate::core::runtime::context::CoreContext::current()
+        .map(|ctx| host_requires_session(ctx.host_kind()))
+        .unwrap_or(true)
+}
+
+fn host_requires_session(host_kind: crate::core::types::HostKind) -> bool {
+    host_kind != crate::core::types::HostKind::Library
 }
 
 fn resolve_primary_cloud_provider_string(config: &Config) -> String {

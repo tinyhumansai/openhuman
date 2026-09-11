@@ -44,6 +44,14 @@ fn compute_dir_size_bytes(root: &std::path::Path) -> u64 {
 /// machine or a laptop that was asleep for an hour.
 pub(crate) const QUEUE_STALL_THRESHOLD_MS: i64 = 6 * 60 * 60 * 1000;
 
+/// The #5324 stall verdict on its own: eligible work has been waiting for at
+/// least [`QUEUE_STALL_THRESHOLD_MS`] without any job settling. Shared by the
+/// status precedence below and by the `queue_stalled` flag the response
+/// carries, so the two cannot disagree (openhuman#6025 review).
+pub(crate) fn queue_is_stalled(queue_idle_ms: Option<i64>) -> bool {
+    queue_idle_ms.is_some_and(|idle| idle >= QUEUE_STALL_THRESHOLD_MS)
+}
+
 /// Pure derivation of `(status, reason)` from raw signals. Split out so the
 /// unit tests can exercise the precedence rules without spinning up a
 /// store.
@@ -106,7 +114,7 @@ fn derive_pipeline_status(
     // degradation, and is deliberately NOT gated on `total_chunks` — a queue
     // that never drained has no chunks to gate on, which is exactly the case
     // that must not read as `idle`.
-    if queue_idle_ms.is_some_and(|idle| idle >= QUEUE_STALL_THRESHOLD_MS) {
+    if queue_is_stalled(queue_idle_ms) {
         let hours = queue_idle_ms.unwrap_or(0) / (60 * 60 * 1000);
         return (
             "degraded".to_string(),

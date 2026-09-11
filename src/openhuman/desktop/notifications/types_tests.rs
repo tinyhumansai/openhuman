@@ -47,6 +47,8 @@ fn core_notification_serialize_skips_empty_actions() {
         deep_link: None,
         timestamp_ms: 1,
         actions: None,
+        workspace: None,
+        workspace_revision: None,
     };
     let s = serde_json::to_string(&event).unwrap();
     assert!(!s.contains("actions"));

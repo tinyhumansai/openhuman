@@ -123,9 +123,12 @@ fn model_supports_vision_combines_tier_map_and_registry() {
         vision: true,
         ..Default::default()
     }];
-    // `reasoning-v1` is the one vision-capable managed tier; the rest are not.
+    // `reasoning-v1` and `vision-v1` are the vision-capable managed tiers; the
+    // rest are not.
     assert!(model_supports_vision("reasoning-v1", &config));
     assert!(model_supports_vision("hint:reasoning", &config));
+    assert!(model_supports_vision("vision-v1", &config));
+    assert!(model_supports_vision("hint:vision", &config));
     assert!(!model_supports_vision("chat-v1", &config));
     assert!(!model_supports_vision("hint:chat", &config));
     assert!(!model_supports_vision("burst-v1", &config));
@@ -154,4 +157,57 @@ fn o1_o3_segment_match_does_not_overmatch() {
         "`-o1-` segment should still match"
     );
     assert_eq!(context_window_for_model("octo3thing"), None);
+}
+
+/// Pins the complete managed-tier vision map — every tier constant and every
+/// `hint:` alias `oh_tier_supports_vision` accepts.
+///
+/// The map's capability set is documented in three places (the
+/// `inference.resolve_model` handler comment, the `oh_tier_supports_vision`
+/// doc, and the [`model_supports_vision`] doc) and those comments drifted out
+/// of sync with it once already (#6075: they claimed the map was "currently all
+/// `false`" long after two tiers returned `true`). Asserting every arm — the
+/// `false` ones included — means a future arm flip fails here and forces the
+/// docs to be revisited, instead of only the two `true` arms being covered.
+#[test]
+fn oh_tier_vision_map_is_exhaustively_pinned() {
+    use crate::openhuman::config::{
+        MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1,
+    };
+    use crate::openhuman::inference::provider::factory::oh_tier_supports_vision;
+
+    for tier in [
+        MODEL_REASONING_V1,
+        "hint:reasoning",
+        MODEL_VISION_V1,
+        "hint:vision",
+    ] {
+        assert!(
+            oh_tier_supports_vision(tier),
+            "{tier} must be reported vision-capable"
+        );
+    }
+
+    for tier in [
+        MODEL_CHAT_V1,
+        "hint:chat",
+        MODEL_REASONING_QUICK_V1,
+        MODEL_AGENTIC_V1,
+        "hint:agentic",
+        MODEL_BURST_V1,
+        "hint:burst",
+        MODEL_CODING_V1,
+        "hint:coding",
+        MODEL_SUMMARIZATION_V1,
+        "hint:summarization",
+        // Anything the map does not name at all falls through to `false`.
+        "gpt-5",
+        "",
+    ] {
+        assert!(
+            !oh_tier_supports_vision(tier),
+            "{tier} must not be reported vision-capable"
+        );
+    }
 }

@@ -233,6 +233,122 @@ async fn shutdown_on_an_unused_driver_is_a_no_op() {
     assert!(provider.shutdown().await.is_ok());
 }
 
+#[tokio::test]
+async fn a_read_against_a_loading_module_reports_unavailable_within_its_grace() {
+    use crate::openhuman::modules::resolution::{self, Resolution};
+    use tinymemory_api::provider::mandatory::MemoryCore;
+
+    // Plant an in-flight slot for the memory module. The table is process-wide
+    // and shared with the rest of the suite, so the slot is settled and
+    // removed before this test returns; a parallel caller sees, at worst, a
+    // brief "loading" followed by the terminal failure it would have reached
+    // anyway with downloads off.
+    let table = resolution::table();
+    let sender = table.mark_in_flight_for_test(MODULE_ID);
+    let provider = ModuleMemoryProvider::new(Arc::new(Config::default()))
+        .with_loading_grace(std::time::Duration::from_millis(30));
+
+    // Observe first, assert last. An assertion that fired here would leave
+    // MODULE_ID parked in `Loading` for every test that runs after this one in
+    // the same process, turning one failure into a cascade of unrelated ones.
+    let health = provider.health().await;
+    let started = std::time::Instant::now();
+    let outcome = MemoryCore::get(&provider, "ns", "key").await;
+    let elapsed = started.elapsed();
+
+    table.complete(
+        MODULE_ID,
+        Resolution::Failed("planted by a test".to_string()),
+        sender,
+    );
+    table.reset_for_test(MODULE_ID);
+
+    // Loading is degraded, never down: `Down` is what rebinds the fallback.
+    assert!(
+        matches!(
+            health,
+            tinymemory_api::health::MemoryHealth::Degraded { .. }
+        ),
+        "a loading module must report Degraded, got {health:?}"
+    );
+    // A read gives up after its grace with the retryable class, and does so
+    // promptly rather than at some caller's deadline.
+    assert!(
+        matches!(outcome, Err(MemoryError::Unavailable(_))),
+        "expected Unavailable while loading, got {outcome:?}"
+    );
+    assert!(elapsed < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn writes_wait_for_the_module_and_reads_do_not() {
+    let provider = provider();
+    // Every family that mutates, one representative each. A bounded wait here
+    // does not delay the call, it discards it: none of these has a retry above
+    // it, so the archivist's turn, the autosaved message or the operator's
+    // sync would be lost rather than late.
+    for write in [
+        "store",
+        "forget",
+        "import_records",
+        "ingest_document",
+        "ingest_chat",
+        "ingest_email",
+        "ingest_coding_sessions",
+        "typed_ingest_event",
+        "insert_turn",
+        "insert_event",
+        "open_segment",
+        "set_goals",
+        "append",
+        "put_document",
+        "put_relation",
+        "put_tool_rule",
+        "upsert_facet",
+        "delete_facet",
+        "forget_source",
+        "purge_all",
+        "compact",
+        "consolidate",
+        "reembed",
+        "retry_failed",
+        "flush_pending",
+        "cascade",
+        "seal",
+        "summarise",
+        "run_source_sync",
+        "run_connection_sync",
+        "bootstrap_connection",
+        "override_scheduler_gate",
+        "shutdown",
+    ] {
+        assert_eq!(
+            provider.loading_grace(write),
+            None,
+            "{write} mutates, so it must wait the module out"
+        );
+    }
+    for read in [
+        "get",
+        "recall",
+        "list",
+        "health",
+        "namespaces",
+        "export_page",
+    ] {
+        assert!(
+            provider.loading_grace(read).is_some(),
+            "{read} must be bounded"
+        );
+    }
+    // The default for anything nobody classified is to wait, so a member added
+    // upstream tomorrow cannot start silently dropping writes.
+    assert_eq!(
+        provider.loading_grace("a_member_from_a_future_contract"),
+        None,
+        "an unrecognised operation must wait rather than be treated as a read"
+    );
+}
 #[test]
 fn the_capability_list_matches_the_pinned_release() {
     // ARTIFACT_CAPABILITIES describes what ONE specific release of the module
@@ -575,132 +691,5 @@ async fn the_defaulted_members_dispatch_to_the_module_instead_of_refusing() {
     );
 }
 
-/// The runtime-tree and flavour doors, driven against a **real** module.
-///
-/// The test above proves the `module_call!` arms exist by discriminating
-/// `Other` from `Unsupported` against a disabled host; it cannot prove the wire
-/// names are right, because a mistyped one fails the same way a disabled host
-/// does. This one can: it loads an actual artifact and asserts the answers.
-///
-/// # What it deliberately does not drive
-///
-/// `runtime_summarize` and `runtime_rebuild` resolve a chat model on the
-/// driver's side and then spend on it. A test that called them would either
-/// reach the network or assert against a provider-resolution failure, and
-/// neither says anything about the door. The five below are store-shaped and
-/// answer from a fresh workspace with no ambiguity: a buffered write reports
-/// where it landed, an empty tree has no root and no children, its status is
-/// all zeroes, and nothing has been distilled for a persona scope.
-///
-/// Run it against a locally built module, one test per process:
-///
-/// ```text
-/// TINYMEMORY_TEST_MODULE=/path/to/libtinymemory_module.dylib \
-///   cargo test --lib -- --ignored --exact --test-threads=1 \
-///   openhuman::modules::memory::tests::the_runtime_tree_doors_round_trip_through_a_real_module
-/// ```
-#[tokio::test]
-#[ignore = "needs a built tinymemory module (TINYMEMORY_TEST_MODULE) and its own process: \
-the bus belongs to whichever runtime creates it, so a second module-loading test in the same \
-process finds a broker whose tasks are already gone and hangs rather than failing"]
-async fn the_runtime_tree_doors_round_trip_through_a_real_module() {
-    let module = std::env::var_os("TINYMEMORY_TEST_MODULE")
-        .expect("set TINYMEMORY_TEST_MODULE to a built libtinymemory_module cdylib");
-    let workspace = tempfile::TempDir::new().expect("tempdir");
-
-    let mut config = Config::default();
-    config.workspace_dir = workspace.path().to_path_buf();
-    config.modules.enabled = true;
-    config.modules.install_dir = Some(
-        workspace
-            .path()
-            .join("modules")
-            .to_string_lossy()
-            .into_owned(),
-    );
-    config
-        .modules
-        .overrides
-        .push(crate::openhuman::config::schema::ModuleOverride {
-            id: MODULE_ID.to_string(),
-            path: module.to_string_lossy().into_owned(),
-        });
-
-    let provider = ModuleMemoryProvider::new(Arc::new(config));
-    let tree = provider.as_tree().expect("the Tree family");
-    let at = chrono::Utc::now();
-
-    let path = tree
-        .runtime_buffer_write("team", "standup notes", at, None)
-        .await
-        .expect("RuntimeBufferWrite must reach the module");
-    assert!(
-        !path.trim().is_empty(),
-        "the buffered write reports where it landed"
-    );
-
-    assert!(
-        tree.runtime_read_node("team", "root")
-            .await
-            .expect("RuntimeReadNode must reach the module")
-            .is_none(),
-        "a buffered write creates no nodes; absence is data, not an error"
-    );
-    assert!(
-        tree.runtime_read_children("team", "root")
-            .await
-            .expect("RuntimeReadChildren must reach the module")
-            .is_empty(),
-        "a parent that does not exist has no children"
-    );
-
-    let status = tree
-        .runtime_tree_status("team")
-        .await
-        .expect("RuntimeTreeStatus must reach the module");
-    assert_eq!(status.namespace, "team");
-    assert_eq!(status.total_nodes, 0);
-    assert_eq!(status.depth, 0);
-
-    assert!(
-        tree.flavour_profile("persona/communication")
-            .await
-            .expect("FlavourProfile must reach the module")
-            .is_none(),
-        "nothing has been distilled for this scope yet"
-    );
-
-    // The two refusals the doors make before touching the store, so a wrong
-    // wire name cannot pass this test by answering plausibly to everything.
-    let rejected = tree
-        .runtime_buffer_write("../escape", "x", at, None)
-        .await
-        .expect_err("a traversal namespace is refused");
-    assert!(
-        matches!(rejected, MemoryError::Invalid(_)),
-        "a rejected namespace is a caller mistake, not a backend failure: {rejected:?}"
-    );
-    let blank = tree
-        .runtime_buffer_write("team", "   ", at, None)
-        .await
-        .expect_err("blank content is refused");
-    assert!(
-        matches!(blank, MemoryError::Invalid(_)),
-        "blank content is a caller mistake: {blank:?}"
-    );
-}
-
-#[test]
-fn scoring_is_advertised_and_has_a_host_accessor() {
-    // tinymemory v1.13.2 (tinymemory#110) added the family; advertising it and
-    // forwarding it must land together, or the driver claims a family whose
-    // accessor answers `None` — the #5598 over-claim in miniature.
-    let mut config = Config::default();
-    config.modules.enabled = false;
-    let provider = ModuleMemoryProvider::new(Arc::new(config));
-    assert!(super::capabilities_for(false).contains(Capability::Scoring));
-    assert!(
-        provider.as_scoring().is_some(),
-        "Scoring is advertised, so the accessor must be wired"
-    );
-}
+#[path = "memory_tests_part_01_tests.rs"]
+mod part_01_tests;

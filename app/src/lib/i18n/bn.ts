@@ -535,6 +535,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'ডেভেলপমেন্ট বিল্ডে সবসময় চালু',
   'settings.clearAppData': 'অ্যাপ ডেটা মুছুন',
   'settings.clearAppDataDesc': 'সাইন আউট করুন এবং সব লোকাল ডেটা স্থায়ীভাবে মুছুন',
+  'settings.clearAppDataIrreversible': 'এটি আর ফেরানো যাবে না।',
+  'settings.clearAppDataAction': 'ডেটা মুছুন',
   'settings.logOut': 'লগ আউট',
   'settings.logOutDesc': 'আপনার অ্যাকাউন্ট থেকে সাইন আউট করুন',
   'settings.exitLocalSession': 'স্থানীয় সেশন থেকে প্রস্থান করুন',
@@ -1377,7 +1379,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Xqx1q1x - নিজ হাতে অনুসন্ধান অথবা তার নিজের উপলব্ধকারীর সাথে যোগাযোগ স্থাপন করুন। Xqxqxkey কী- র সাথে একযোগে কাজ করার জন্য',
   'settings.search.description':
-    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, এবং Exa আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
+    'এজেন্ট যে সার্চ ইঞ্জিন ব্যবহার করে তা বেছে নিন, অথবা সার্চ টুলগুলো সম্পূর্ণভাবে নিষ্ক্রিয় করুন। Managed OpenHuman-এর ব্যাকএন্ড ব্যবহার করে (কোনো সেটআপ নেই)। Parallel, Brave, Querit, Exa, এবং Tavily আপনার API কী ব্যবহার করে সরাসরি আপনার মেশিন থেকে চলে।',
   'settings.search.engineAria': 'সার্চ ইঞ্জিন',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1386,7 +1388,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'ডিফল্ট। OpenHuman ব্যাক-এন্ডের মাধ্যমে রুট করা হয়, বর্তমানে Exa দ্বারা চালিত: কোনো API key প্রয়োজন নেই।',
   'settings.search.localManagedUnavailable':
-    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit বা Exa API key যোগ করুন।',
+    'লোকাল ব্যবহারকারীদের জন্য OpenHuman Managed সার্চ উপলভ্য নয়। ওয়েব সার্চ চালু করতে আপনার নিজের Parallel, Brave, Querit, Exa বা Tavily API key যোগ করুন।',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'সরাসরি xqxxxxxxxxxxxxqx; অনুসন্ধান, চ্যাট, গবেষণা, সমৃদ্ধ টুল।',
@@ -1399,6 +1401,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa দ্বারা চালিত নিউরাল সার্চ। আপনার নিজের Exa API key প্রয়োজন। সার্চ, সদৃশ পৃষ্ঠা খোঁজা এবং পৃষ্ঠার বিষয়বস্তু আনার টুল যোগ করে।',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily দ্বারা চালিত ওয়েব, সংবাদ এবং আর্থিক সার্চ। আপনার নিজের Tavily API key প্রয়োজন। সার্চ ও পেজ কনটেন্ট আনার টুল যোগ করে।',
   'settings.search.statusConfigured': 'কনফিগার করা',
   'settings.search.statusNeedsKey': 'API কী প্রয়োজন',
   'settings.search.fallbackToManaged':
@@ -1420,6 +1425,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'কিউ- টি xxqx কি',
   'settings.search.placeholderExa': 'আপনার Exa API কী পেস্ট করুন…',
+  'settings.search.tavilyKeyLabel': 'Tavily API কী',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'ওয়েবসাইটের অনুমতি দেওয়া হয়েছে',
   'settings.search.allowedSitesHint':
     'যেসব হোস্ট অ্যাসিস্ট্যান্ট খুলতে ও পড়তে পারবে (ওয়েব ফেচ এবং ব্রাউজার টুলের মাধ্যমে) প্রতি লাইনে একটি করে, যেমন reuters.com। একটি হোস্ট তার সাবডোমেইনগুলোও অন্তর্ভুক্ত করে। ওয়েব সার্চ নিজে এই তালিকা দ্বারা সীমাবদ্ধ নয়।',
@@ -2614,6 +2621,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'শীঘ্রই আসছে',
   'memorySources.composioListFailed': 'Xqxqx সংযোগ লোড করতে ব্যর্থ।',
   'memorySources.browse': 'ব্রাউজ করুন...',
+  'memorySources.folderPathUnavailable':
+    'সেই ফোল্ডারটি কোথায় আছে তা নির্ধারণ করা যায়নি। এর পরিবর্তে এর সম্পূর্ণ পাথ টাইপ করুন।',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '*ড্যাম',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2636,6 +2645,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'আইটেম সিঙ্ক হয়েছে',
   'memorySources.sync.upToDate': 'হালনাগাদ আছে',
   'memorySources.sync.failedLabel': 'ব্যর্থ',
+  'memorySources.sync.morePending': 'আরও সিঙ্ক বাকি আছে। আবার Sync-এ ক্লিক করুন',
+  'memorySources.sync.budgetSpent': 'আজকের অনুরোধের বাজেট শেষ। আগামীকাল আবার চেষ্টা করুন',
   'time.justNow': 'এইমাত্র',
   'time.secondsAgoSuffix': 'সেকেন্ড আগে',
   'time.minutesAgoSuffix': 'মিনিট আগে',
@@ -2677,6 +2688,18 @@ const messages: TranslationMap = {
   'memorySources.allIn.failed': 'সব চালু করা সম্ভব হয়নি। আবার চেষ্টা করুন।',
   'memorySources.allIn.allFailed': 'কোনো সিঙ্ক শুরু করা যায়নি। কারণ জানতে প্রতিটি উৎস দেখুন।',
   'memorySources.allIn.partial': 'শুরু হওয়া সিঙ্ক: {triggered}। শুরু করা যায়নি: {failed}।',
+  'memorySources.repair.button': 'পুরোনো স্মৃতি মেরামত করুন',
+  'memorySources.repair.title': 'পুরোনো স্মৃতি মেরামত করবেন?',
+  'memorySources.repair.message':
+    'মেমোরি ট্রিতে ফাইলিং ঠিক করার আগে সংরক্ষিত সর্বোচ্চ {scanned}টি সিঙ্ক করা নথি মেমোরি গ্রাফে দেখা যায় না। সেগুলি ফাইল করতে এমবেডিং ক্রেডিট খরচ হয়। যেসব নথি ইতিমধ্যে ট্রিতে আছে সেগুলি বাদ দেওয়া হয়।',
+  'memorySources.repair.confirm': 'মেরামত করুন',
+  'memorySources.repair.cancel': 'এখন নয়',
+  'memorySources.repair.nothing':
+    'মেরামতের কিছু নেই। কোনো সিঙ্ক করা নথি ফাইল হওয়ার অপেক্ষায় নেই।',
+  'memorySources.repair.success':
+    '{ingested}টি মেমোরি ট্রিতে ফাইল করা হয়েছে ({already}টি আগে থেকেই ছিল, {skipped}টি বাদ দেওয়া হয়েছে)।',
+  'memorySources.repair.morePending': 'আরও বাকি আছে। আবার পুরোনো স্মৃতি মেরামত করুন-এ ক্লিক করুন।',
+  'memorySources.repair.failed': 'পুরোনো স্মৃতি মেরামত করা যায়নি।',
   'memorySources.settings.button': 'সেটিংস',
   'memorySources.settings.title': 'সিঙ্ক সেটিংস',
   'memorySources.settings.maxPrs': 'সর্বোচ্চ পুল রিকোয়েস্ট',
@@ -2690,7 +2713,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'সীমাহীন',
   'memorySources.settings.unlimitedTooltip':
     'আপনি {toolkit}-এর জন্য সর্বাধিক সিঙ্ক করার অপশন বেছে নিয়েছেন। আপনি এখানে সীমা পরিবর্তন করতে পারেন।',
-  'memorySources.settings.maxed': 'পূর্ণ',
   'memorySources.settings.save': 'সংরক্ষণ',
   'memorySources.settings.saving': 'সংরক্ষণ হচ্ছে…',
   'memorySources.settings.saved': 'সেটিংস সংরক্ষিত হয়েছে',
@@ -3347,6 +3369,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'ব্যর্থ',
   'conversations.subagent.statusAwaitingUser': 'ব্যবহারকারীর অপেক্ষায়',
   'conversations.subagent.statusCancelled': 'বাতিল হয়েছে',
+  'conversations.subagent.awaitingTitle': 'আপনার উত্তরের অপেক্ষায়',
+  'conversations.subagent.answerPlaceholder': 'আপনার উত্তর লিখুন',
+  'conversations.subagent.answerSend': 'উত্তর পাঠান',
+  'conversations.subagent.answerSent': 'উত্তর পাঠানো হয়েছে',
   'conversations.agentTaskInsights.title': 'এজেন্ট টাস্ক অন্তর্দৃষ্টি',
   'conversations.agentTaskInsights.response': 'প্রতিক্রিয়া',
   'conversations.agentTaskInsights.processSourceTitle': 'এজেন্ট প্রক্রিয়া উৎস',
@@ -4338,7 +4364,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude দিয়ে সাইন ইন করুন',
   'settings.ai.claudeCode.reconnect': 'পুনরায় সংযুক্ত করুন',
   'settings.ai.claudeCode.loginHint':
-    'claude login চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
+    'claude auth login --claudeai চালানো একটি টার্মিনাল খোলে। সম্পন্ন হলে, পুনরায় যাচাই-এ ক্লিক করুন।',
   'settings.ai.claudeCode.loginError': 'লগইন টার্মিনাল খোলা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'settings.ai.claudeCode.fullAccess': 'সম্পূর্ণ অ্যাক্সেস',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4921,6 +4947,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'ইভেন্টের লগ',
   'settings.developerMenu.eventLog.desc':
     'লাইভ রঙ-কোডকৃত সব এজেন্ট, টুল, এবং সিস্টেম ইভেন্টের জন্য',
+  'settings.developerMenu.eventLog.workspaceScope': 'ওয়ার্কস্পেসের পরিসর',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'এই ওয়ার্কস্পেস',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'সব ওয়ার্কস্পেস',
   'settings.developerMenu.eventLog.allTypes': 'সর্ব প্রকার',
   'settings.developerMenu.eventLog.filterAgent': 'ফিল্টার...',
   'settings.developerMenu.eventLog.download': 'ডাউনলোড করা হয়েছে',
@@ -4928,6 +4957,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'লাইভ',
   'settings.developerMenu.eventLog.disconnected': 'বিচ্ছিন্ন',
   'settings.developerMenu.eventLog.waiting': 'ইভেন্টের অপেক্ষা করা হচ্ছে...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'এজেন্ট, টুল ও সিস্টেম কাজ করলে ঘটনাগুলি এখানে দেখা যাবে। এখনও কিছু ঘটেনি।',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'স্ট্রিম আবার চালু করতে কোরের সঙ্গে পুনরায় সংযোগ করুন।',
   'settings.developerMenu.eventLog.notConnected': 'সংযুক্ত নয়',
   'settings.developerMenu.eventLog.jumpToLatest': 'সর্বশেষ গুরুত্বপূর্ণ',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6056,6 +6089,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'রুট হিন্টস',
   'settings.agents.editor.modelTiers': 'মডেল স্তর',
   'settings.agents.editor.modelCustom': 'কাস্টম মডেল আইডি…',
+  'settings.agents.editor.modelManaged': 'পরিচালিত মডেল',
   'settings.agents.editor.modelCustomPlaceholder': 'যেমন anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'টুল যোগ করুন',
   'settings.agents.editor.toolsAllSelected': 'সব টুল',
@@ -6202,6 +6236,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'গোপনীয়তা সঞ্চয়স্থান মোড',
   'keyring.settings.mode.osKeychain': 'OS কীচেইন',
   'keyring.settings.mode.encryptedFile': 'স্থানীয় এনক্রিপ্টেড',
+  'keyring.settings.mode.localEncryptedFile': 'এনক্রিপ্টেড ফাইল',
+  'keyring.settings.mode.localPlaintextFile': 'এনক্রিপ্ট করা হয়নি এমন ফাইল',
   'keyring.settings.mode.consentPending': 'কনফিগার করা হয়নি',
   'keyring.settings.mode.declined': 'প্রত্যাখ্যান করা হয়েছে',
   'keyring.settings.availability': 'কিচেন প্রাপ্যতা',
@@ -6532,6 +6568,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'লোকাল মডেল অনুপলব্ধ',
   'userErrors.localModelUnavailable.body':
     'কনফিগার করা এন্ডপয়েন্টে Ollama-তে পৌঁছানো যাচ্ছে না, অথবা সেখানে প্রয়োজনীয় মডেলটি ইনস্টল করা নেই। Ollama চালু করে সেই এন্ডপয়েন্টে মডেলটি পুল করুন, অথবা এই কাজটি কোনো ক্লাউড প্রোভাইডারে সরিয়ে নিন।',
+  'userErrors.replyDeliveryFailed.title': 'উত্তরটি দেখানো যায়নি',
+  'userErrors.replyDeliveryFailed.body':
+    'এজেন্ট এই দফাটি শেষ করেছে, কিন্তু তার উত্তর সংরক্ষণ বা পুনরায় পড়া যায়নি। আবার জিজ্ঞাসা করলে সে উত্তরটি আবার দেবে।',
   'userErrors.memoryStoreCorrupt.title': 'মেমোরি ইনডেক্স নষ্ট হয়ে গেছে',
   'userErrors.memoryStoreCorrupt.body':
     'আপনার মেমোরি ট্রির ডেটাবেস নষ্ট হয়ে গিয়েছিল। নষ্ট ফাইলটি মেমোরি ডেটার পাশে সংরক্ষিত আছে এবং একটি খালি ইনডেক্স নতুন করে তৈরি হয়েছে। আবার পূরণ করতে মেমোরি উৎসগুলি পুনরায় সিঙ্ক করুন।',
@@ -6576,6 +6615,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'মুছুন',
   'flows.delete.deleting': 'মুছে ফেলা হচ্ছে…',
   'flows.canvas.renameLabel': 'ওয়ার্কফ্লো পুনঃনামকরণ করুন',
+  'settings.ai.openaiOauthTitle': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthDescription':
+    'API কী ছাড়াই OpenAI মডেল ব্যবহার করতে আপনার ChatGPT অ্যাকাউন্ট দিয়ে সাইন ইন করুন।',
+  'settings.ai.openaiOauthConnect': 'ChatGPT দিয়ে সাইন ইন করুন',
+  'settings.ai.openaiOauthConnected': 'ChatGPT-এর সাথে সংযুক্ত',
+  'settings.ai.openaiOauthOpening': 'সাইন-ইন খোলা হচ্ছে…',
+  'settings.ai.openaiOauthCallbackHint':
+    'সাইন ইন করার পর ব্রাউজার থেকে সম্পূর্ণ রিডাইরেক্ট URL পেস্ট করুন (http://127.0.0.1:1455/ দিয়ে শুরু)।',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT সাইন-ইন সম্পূর্ণ করুন',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT সংযোগ বিচ্ছিন্ন করুন',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT সাইন-ইন শুধু ডেস্কটপ অ্যাপে পাওয়া যায়।',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT সাইন-ইন শুরু করা যায়নি। আবার চেষ্টা করুন অথবা একটি API কী ব্যবহার করুন।',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT সাইন-ইন সম্পূর্ণ হয়নি। রিডাইরেক্ট URL পরীক্ষা করে আবার চেষ্টা করুন।',
+  'settings.ai.openaiOauthCallbackRequired':
+    'সাইন ইন করার পর ব্রাউজার থেকে রিডাইরেক্ট URL পেস্ট করুন।',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT সংযোগ বিচ্ছিন্ন করা যায়নি। আবার চেষ্টা করুন।',
   'memorySources.codingSessions.title': 'কোডিং-এজেন্ট সেশন',
   'memorySources.codingSessions.description':
     'Codex ও Claude Code-এর সিদ্ধান্ত এবং সংশোধনকে ব্যক্তিগত পারসোনা মেমরিতে রূপ দিন।',
@@ -6613,6 +6672,8 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': 'শুধু গৃহীত',
   'sync.pipeline.storedWithoutVectors': 'ভেক্টর ছাড়াই সংরক্ষিত। শব্দার্থিক অনুসন্ধান অনুপলব্ধ।',
+  'sync.pipeline.vectorsPending':
+    'ভেক্টরের জন্য অপেক্ষমাণ চাংক: {count}। শব্দার্থিক অনুসন্ধান শীঘ্রই সেগুলি অন্তর্ভুক্ত করবে।',
   'sync.pipeline.signInToEnable': 'সক্রিয় করতে সাইন ইন করুন',
   'sync.pipeline.extractionFailed': 'মেমরি কাঠামো নিষ্কাশন ব্যর্থ হয়েছে। উইকি অসম্পূর্ণ হতে পারে।',
   'sync.pipeline.treeDegraded': 'মেমরি ট্রি অবনমিত। পুনরুদ্ধার পুরনো ফলাফল দিতে পারে।',

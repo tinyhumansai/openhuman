@@ -392,3 +392,5 @@ mod part_01_tests;
 mod part_02_tests;
 #[path = "middleware_tests_part_03_tests.rs"]
 mod part_03_tests;
+#[path = "middleware_tests_part_04_tests.rs"]
+mod part_04_tests;

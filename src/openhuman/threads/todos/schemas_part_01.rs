@@ -236,15 +236,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "todos",
             function: "replace",
             description: "Wholesale-replace the todo list for a thread.",
-            inputs: vec![
-                thread_id_input(),
-                FieldSchema {
-                    name: "cards",
-                    ty: TypeSchema::Json,
-                    comment: "Array of card objects (id may be empty — server generates).",
-                    required: true,
-                },
-            ],
+            inputs: vec![thread_id_input(), replace_cards_input()],
             outputs: vec![snapshot_output()],
         },
         "clear" => ControllerSchema {

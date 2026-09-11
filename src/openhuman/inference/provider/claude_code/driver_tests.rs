@@ -178,3 +178,63 @@ fn full_access_reads_persisted_toggle_when_env_unset() {
     }
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn parse_error_events_produce_a_log_line() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: "{not json".to_string(),
+        reason: "expected value at line 1 column 2".to_string(),
+    };
+    let msg = parse_error_log_line(&ev).expect("a ParseError must be reported");
+    assert!(msg.contains("expected value at line 1 column 2"), "{msg}");
+    assert!(msg.contains("9 bytes"), "{msg}");
+}
+
+#[test]
+fn other_events_produce_nothing() {
+    let ev = ClaudeCodeEvent::Error {
+        message: "boom".to_string(),
+    };
+    assert!(parse_error_log_line(&ev).is_none());
+}
+
+/// An unparsable line can be a well-formed event of an unknown type, so it
+/// can hold the prompt, the reply, or a credential. None of it is quoted.
+#[test]
+fn the_line_itself_is_never_quoted() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: r#"{"type":"secret_leak","api_key":"sk-ant-not-in-the-log"}"#.to_string(),
+        reason: "unknown event type `secret_leak`".to_string(),
+    };
+    let msg = parse_error_log_line(&ev).unwrap();
+    assert!(!msg.contains("sk-ant-not-in-the-log"), "{msg}");
+    assert!(!msg.contains("api_key"), "{msg}");
+}
+
+/// Size is reported instead of content, so a truncated stream still reads
+/// differently from a chatty one.
+#[test]
+fn the_size_of_the_line_is_reported() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: "x".repeat(5_000),
+        reason: "trailing characters".to_string(),
+    };
+    assert!(parse_error_log_line(&ev).unwrap().contains("5000 bytes"));
+}
+
+#[test]
+fn the_shape_of_the_line_is_reported() {
+    let shape = |line: &str| {
+        parse_error_log_line(&ClaudeCodeEvent::ParseError {
+            line: line.to_string(),
+            reason: "r".to_string(),
+        })
+        .unwrap()
+    };
+    assert!(shape(r#"  {"type":"x"}"#).contains("json object"));
+    assert!(shape("[1,2]").contains("json array"));
+    assert!(shape("panic: claude-code crashed").contains("non-json"));
+    assert!(shape("   ").contains("blank"));
+}
+
+use super::*;

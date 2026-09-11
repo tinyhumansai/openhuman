@@ -36,6 +36,17 @@ impl Tool for ComposioExecuteTool {
         // as write-level to respect channel permission caps.
         PermissionLevel::Write
     }
+    fn external_effect(&self) -> bool {
+        true
+    }
+    fn external_effect_with_args(&self, args: &Value) -> bool {
+        args.get("tool")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|slug| !slug.is_empty())
+            .map(action_mutates_external_state)
+            .unwrap_or(true)
+    }
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }

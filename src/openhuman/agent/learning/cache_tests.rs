@@ -81,6 +81,131 @@ fn class_from_key_parses_known_classes() {
     assert_eq!(class_from_key("no_slash"), None);
 }
 
+// ── parse_facet_class_name ────────────────────────────────────────────────────
+
+#[test]
+fn parse_facet_class_name_accepts_every_taxonomy_name() {
+    assert_eq!(parse_facet_class_name("style"), Ok(FacetClass::Style));
+    assert_eq!(parse_facet_class_name("identity"), Ok(FacetClass::Identity));
+    assert_eq!(parse_facet_class_name("tooling"), Ok(FacetClass::Tooling));
+    assert_eq!(parse_facet_class_name("veto"), Ok(FacetClass::Veto));
+    assert_eq!(parse_facet_class_name("goal"), Ok(FacetClass::Goal));
+    assert_eq!(parse_facet_class_name("channel"), Ok(FacetClass::Channel));
+}
+
+#[test]
+fn parse_facet_class_name_rejects_unknown_class() {
+    let err = parse_facet_class_name("nonsense").expect_err("unknown class must be rejected");
+    assert!(err.contains("invalid class `nonsense`"), "got: {err}");
+    // Lists the accepted taxonomy so the caller can recover.
+    assert!(
+        err.contains("style, identity, tooling, veto, goal, channel"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn parse_facet_class_name_rejects_a_name_with_a_slash() {
+    // `"style/"` shares a first `/`-segment with a real class, so a bare
+    // `class_from_key` would accept it and then compose an unmatchable key —
+    // the silent-empty behaviour #6077 removes. The slash guard rejects it.
+    let err =
+        parse_facet_class_name("style/").expect_err("a slash in a class name must be rejected");
+    assert!(err.contains("invalid class `style/`"), "got: {err}");
+}
+
+// ── class filter is column-only (#6077) ───────────────────────────────────────
+//
+// `list_facets` filters on the `class` column alone; the redundant
+// `|| key.starts_with("{class}/")` arm was dropped. This proves the two are not
+// equivalent when they disagree: a valid class returns exactly the rows whose
+// `class` column matches, and a key-prefix that does not match the column is
+// excluded.
+#[tokio::test]
+async fn class_filter_matches_column_not_key_prefix() {
+    let cache = make_cache();
+
+    // Two facets whose class column is genuinely `style`.
+    let mut a = stub_facet("f1", "style/verbosity", "terse", FacetState::Active, 1.8);
+    a.class = Some("style".into());
+    let mut b = stub_facet("f2", "style/tone", "formal", FacetState::Active, 0.9);
+    b.class = Some("style".into());
+    // A facet whose key prefix reads "style/" but whose class column is `goal` —
+    // the old `starts_with` arm would have wrongly matched this under a `style`
+    // filter; the column-only rule must not.
+    let mut c = stub_facet("f3", "style/mislabelled", "x", FacetState::Active, 0.5);
+    c.class = Some("goal".into());
+
+    cache.upsert(&a).await.unwrap();
+    cache.upsert(&b).await.unwrap();
+    cache.upsert(&c).await.unwrap();
+
+    // The same predicate list_facets now applies: class column only.
+    let all = cache.list_all().await.unwrap();
+    let matched: Vec<&str> = all
+        .iter()
+        .filter(|f| f.state == FacetState::Active)
+        .filter(|f| f.class.as_deref() == Some("style"))
+        .map(|f| f.key.as_str())
+        .collect();
+
+    assert_eq!(matched, vec!["style/verbosity", "style/tone"]);
+    assert!(
+        !matched.contains(&"style/mislabelled"),
+        "column-only filter must exclude a key-prefix match with a different class column"
+    );
+}
+
+// ── classless rows fall back to the key prefix (#6104) ────────────────────────
+//
+// `class` is `Option`: a facet can carry a canonical key like `style/verbosity`
+// with `class: None`. The column-only filter that #6077 introduced hid such
+// rows entirely. `list_facets` therefore keeps the class column authoritative
+// but falls back to the key prefix **only when the column is absent** — the
+// same predicate both `handle_list_facets` and `LearningListFacetsTool` apply.
+// This proves the fallback restores a legitimate classless row without
+// reopening the leak: the row is returned for its own class and for no other.
+#[tokio::test]
+async fn class_filter_falls_back_to_key_prefix_for_classless_rows() {
+    let cache = make_cache();
+
+    // A facet whose class column is absent but whose canonical key names the
+    // class. `stub_facet` already defaults `class` to `None`.
+    let classless = stub_facet("f1", "style/verbosity", "terse", FacetState::Active, 1.8);
+    assert!(
+        classless.class.is_none(),
+        "precondition: the row under test has no class column"
+    );
+    cache.upsert(&classless).await.unwrap();
+
+    // The exact predicate list_facets applies (both the schema handler and the
+    // tool mirror): class column authoritative, key-prefix fallback only when
+    // the column is None.
+    let all = cache.list_all().await.unwrap();
+    let matched = |cls: &str| -> Vec<&str> {
+        all.iter()
+            .filter(|f| f.state == FacetState::Active)
+            .filter(|f| {
+                f.class.as_deref() == Some(cls)
+                    || (f.class.is_none() && f.key.starts_with(&format!("{cls}/")))
+            })
+            .map(|f| f.key.as_str())
+            .collect()
+    };
+
+    // Included under its own class via the key-prefix fallback…
+    assert_eq!(
+        matched("style"),
+        vec!["style/verbosity"],
+        "a classless row must be matched by the class its key prefix names"
+    );
+    // …and never leaks into a different class.
+    assert!(
+        matched("goal").is_empty(),
+        "the key-prefix fallback must not match a different class"
+    );
+}
+
 // ── set_user_state_pinned_persists ────────────────────────────────────────────
 
 #[tokio::test]

@@ -76,6 +76,16 @@ fn append_worker_message(
         "agent_id": agent_id,
         "task_id": task_id,
         "mode": "typed",
+        // #5934: a mirror row that is not the sub-agent speaking is a tool
+        // result, and the renderer maps every non-`"agent"` sender to
+        // `role: 'user'` (`assistantUiMessages.ts`) — so without this flag a
+        // tool's raw output is painted, in an openable worker thread, as
+        // something the human typed. `hidden` keeps the row in the log for the
+        // process rail and the process-source view; it only stops being chat.
+        // Genuine worker-thread user turns are written by
+        // `worker_thread::{create_worker_thread, append_worker_user_message}`,
+        // not here, so they are unaffected. Overridable by `metadata` below.
+        "hidden": sender != "agent",
     });
     if let (Some(base), Some(extra_fields)) = (extra.as_object_mut(), metadata.as_object()) {
         for (k, v) in extra_fields {

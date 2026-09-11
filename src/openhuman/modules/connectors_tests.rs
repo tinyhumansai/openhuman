@@ -145,3 +145,17 @@ fn the_backend_route_needs_a_session() {
     let error = module_config(&config).expect_err("no session token");
     assert!(error.contains("Sign in"), "{error}");
 }
+
+#[tokio::test]
+async fn reconciling_the_route_of_a_module_that_is_not_serving_loads_nothing() {
+    // One module instance per process — serialise with every test that
+    // reaches it, since a signed-out reconcile drops whatever route it holds.
+    let _serialised = crate::openhuman::integrations::composio::module_client::module_guard().await;
+    let before = crate::openhuman::modules::ops::state_of(MODULE_ID);
+    super::reconcile_route_if_loaded(&bare_config())
+        .await
+        .expect("nothing to reconcile is not a failure");
+    // A module that was not serving must not have been loaded to answer this;
+    // one that was serving stays serving.
+    assert_eq!(crate::openhuman::modules::ops::state_of(MODULE_ID), before);
+}

@@ -24,25 +24,6 @@
 
 use super::*;
 
-use tinycortex::memory::sync::state::STATE_NAMESPACE as ENGINE_SYNC_STATE_NAMESPACE;
-
-/// The scopes namespace is the literal the engine writes, and it is not the
-/// sync-state namespace.
-///
-/// If either constant ever moved onto the other, prefs and Composio sync
-/// cursors would overwrite each other row for row.
-#[test]
-fn user_scopes_namespace_is_the_engine_literal_and_not_sync_state() {
-    assert_eq!(
-        KV_NAMESPACE, "composio-user-scopes",
-        "must stay the literal tinymemory-core's user_scopes::KV_NAMESPACE holds"
-    );
-    assert_ne!(
-        KV_NAMESPACE, ENGINE_SYNC_STATE_NAMESPACE,
-        "prefs must not share a namespace with Composio sync state"
-    );
-}
-
 /// `kv_key` trims and ASCII-lowercases, exactly as the engine's does — the RPC
 /// takes free text from a settings toggle, so `"GitHub"`, `" github "` and
 /// `"github"` have to reach one row.

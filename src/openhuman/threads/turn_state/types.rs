@@ -195,6 +195,23 @@ pub struct SubagentToolCall {
     /// Server-computed contextual detail (e.g. the path / recipient).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Size-capped arguments the child invoked the tool with, so a rehydrated
+    /// row shows *what* the sub-agent did and not just which tool it reached
+    /// for (#5987). Mirrors the live `subagent_tool_call` event's `args`
+    /// verbatim when it fits the cap; an oversized payload degrades to a
+    /// truncated string. Taken from the started event when it carries the
+    /// arguments, otherwise backfilled from
+    /// [`AgentProgress::SubagentToolCallCompleted::arguments`] — the tinyagents
+    /// path emits `Value::Null` at start and only captures the input on
+    /// completion. `None` when the harness captured no input at all
+    /// (`PayloadCapture::tool_io` off) and on legacy snapshots.
+    ///
+    /// Deliberately absent from [`SubagentTranscriptItem::Tool`]: like
+    /// `output` and `failure`, this is a heavy payload that lives once on the
+    /// call row, and the frontend grafts it onto the matching transcript item
+    /// by `call_id` when it rehydrates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<serde_json::Value>,
     /// Plain-language failure explanation for a FAILED child call, so a
     /// sub-agent's failed row carries the same "why + next" copy as a
     /// main-agent row and it survives a snapshot round-trip (#4459). `None` on

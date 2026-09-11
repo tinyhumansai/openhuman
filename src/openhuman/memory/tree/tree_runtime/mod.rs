@@ -42,10 +42,6 @@ pub use crate::openhuman::memory::api::tree::{
 pub mod ops;
 pub mod schemas;
 
-/// The driver the handler and CLI tests bind, now that both resolve one.
-#[cfg(test)]
-pub(crate) mod test_support;
-
 pub use ops as rpc;
 
 pub mod bus;

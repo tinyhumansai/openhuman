@@ -4,7 +4,6 @@ use super::*;
 fn recovery_tool_joins_a_named_allowlist() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::inference::tokenjuice::RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
     use std::collections::HashSet;
 
@@ -27,7 +26,6 @@ fn recovery_tool_joins_a_named_allowlist() {
 fn empty_allowlist_stays_empty() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use std::collections::HashSet;
     // Empty == "no filter" (all tools visible) AND the deliberately tool-less
     // Named([]) case — both must stay empty so the invariant holds.
@@ -40,7 +38,6 @@ fn empty_allowlist_stays_empty() {
 fn drops_duplicates_first_wins() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     // Real-world collision: researcher's `delegate_name = "research"`
     // synthesises a delegate tool that shadows a same-named skill.
     // Anthropic 400s on duplicate tool names; the dedup helper must
@@ -65,7 +62,6 @@ fn drops_duplicates_first_wins() {
 fn passes_through_when_no_duplicates() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let specs = vec![spec("a"), spec("b"), spec("c")];
     let deduped = dedup_visible_tool_specs(specs);
     assert_eq!(deduped.len(), 3);
@@ -78,7 +74,6 @@ fn passes_through_when_no_duplicates() {
 fn handles_empty_input() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let deduped = dedup_visible_tool_specs(Vec::<ToolSpec>::new());
     assert!(deduped.is_empty());
 }
@@ -87,7 +82,6 @@ fn handles_empty_input() {
 fn preserves_full_spec_content_for_kept_entries() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     // Description + parameters must survive the dedup pass intact —
     // the LLM uses both for tool-call decisions, and corrupting them
     // would silently degrade function-calling quality.
@@ -112,7 +106,6 @@ fn preserves_full_spec_content_for_kept_entries() {
 fn automatic_memory_policy_does_not_synthesize_delegate_tools() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let defs = crate::openhuman::agent::registry::agents::load_builtins().unwrap();
     let help = defs
         .iter()
@@ -137,7 +130,6 @@ fn automatic_memory_policy_does_not_synthesize_delegate_tools() {
 async fn build_session_agent_applies_extended_policy_definition_cap() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -171,7 +163,6 @@ async fn build_session_agent_applies_extended_policy_definition_cap() {
 async fn build_session_agent_applies_strict_cap_below_global_default() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -199,7 +190,6 @@ async fn build_session_agent_applies_strict_cap_below_global_default() {
 async fn build_session_agent_falls_back_to_global_default_when_no_definition() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -225,7 +215,6 @@ async fn build_session_agent_falls_back_to_global_default_when_no_definition() {
 async fn build_session_agent_carries_active_profile_id_when_profile_present() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -257,7 +246,6 @@ async fn build_session_agent_carries_active_profile_id_when_profile_present() {
 async fn profile_allowed_tools_restrict_shared_session_builder() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -266,7 +254,11 @@ async fn profile_allowed_tools_restrict_shared_session_builder() {
     let mut profile = crate::openhuman::agent::profiles::store::built_in_default_profile();
     profile.id = "alice".to_string();
     profile.built_in = false;
-    profile.allowed_tools = Some(vec!["file_read".to_string()]);
+    // `shell` rather than `file_read`: this test is about a profile's
+    // `allowed_tools` reaching every caller, and `file_read` moved into the
+    // `files` tool pack, so the visible set would come back as the `use_skill`
+    // proxy and the assertion would be about packing instead.
+    profile.allowed_tools = Some(vec!["shell".to_string()]);
 
     let agent = Agent::build_session_agent_inner(
         &config,
@@ -280,12 +272,12 @@ async fn profile_allowed_tools_restrict_shared_session_builder() {
 
     assert_eq!(
         agent.visible_tool_names_for_test(),
-        &["file_read".to_string()].into_iter().collect(),
+        &["shell".to_string()].into_iter().collect(),
         "every profile-aware caller must inherit the same tool restriction"
     );
     assert_eq!(
         agent.subagent_tool_ceiling_names_for_test(),
-        &["file_read".to_string()].into_iter().collect(),
+        &["shell".to_string()].into_iter().collect(),
         "an explicit profile tool restriction must also ceiling delegated agents"
     );
 }
@@ -294,7 +286,6 @@ async fn profile_allowed_tools_restrict_shared_session_builder() {
 async fn channel_ceiling_does_not_inherit_orchestrator_role_visibility() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -309,15 +300,25 @@ async fn channel_ceiling_does_not_inherit_orchestrator_role_visibility() {
         Agent::build_session_agent_inner(&config, "orchestrator", Some(&def), None, false, None)
             .expect("build channel-scoped orchestrator session");
 
+    // Withheld from the parent: `shell` covers reading and writing a file, so
+    // the `files` pack takes the dedicated tools off the Master Agent's wire.
     assert!(
-        agent.visible_tool_names_for_test().contains("file_write"),
-        "the Master Agent must advertise file_write for direct coding work"
+        !agent.visible_tool_names_for_test().contains("file_write"),
+        "`file_write` belongs to the `files` pack and must not be advertised \
+         to the Master Agent, which reaches it through `use_skill`"
     );
+    // …and that withholding must NOT travel down. The ceiling is built from
+    // the full spec list against the channel policy, deliberately independent
+    // of pack disclosure, so `code_executor` — which owns the pack — still
+    // inherits the real tool. A ceiling computed from the parent's advertised
+    // set instead would silently strip every packed tool from every child,
+    // which is the regression this half exists to catch.
     assert!(
         agent
             .subagent_tool_ceiling_names_for_test()
             .contains("file_write"),
-        "an execute-capable channel must let code_executor inherit file_write"
+        "an execute-capable channel must let code_executor inherit file_write \
+         even though the parent no longer advertises it"
     );
     assert!(
         !agent
@@ -331,7 +332,6 @@ async fn channel_ceiling_does_not_inherit_orchestrator_role_visibility() {
 async fn dedicated_memory_profile_scopes_tree_and_transcript_storage() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -359,7 +359,6 @@ async fn dedicated_memory_profile_scopes_tree_and_transcript_storage() {
 async fn build_session_agent_leaves_active_profile_id_none_without_profile() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -380,7 +379,6 @@ async fn build_session_agent_leaves_active_profile_id_none_without_profile() {
 async fn build_session_agent_routes_dedicated_memory_to_profile_subtree() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -425,7 +423,6 @@ async fn build_session_agent_routes_dedicated_memory_to_profile_subtree() {
 async fn build_session_agent_profile_less_uses_shared_memory_subtree() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -463,7 +460,6 @@ async fn build_session_agent_profile_less_uses_shared_memory_subtree() {
 async fn build_session_agent_injects_profile_soul_into_prompt() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -507,7 +503,6 @@ async fn build_session_agent_injects_profile_soul_into_prompt() {
 async fn build_session_agent_uses_profile_memory_instead_of_root_memory() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -541,6 +536,63 @@ async fn build_session_agent_uses_profile_memory_instead_of_root_memory() {
     assert!(!prompt.contains("shared root memory marker"));
 }
 
+/// #6040 — the memory-access instruction is about the memory tools, not the
+/// learning subsystem, so it must be in the prompt with `learning.enabled`
+/// off (the default) whenever a retrieval tool is registered and visible.
+///
+/// Passes the definition explicitly via [`builtin_def`] rather than letting the
+/// factory resolve `"orchestrator"` from the registry, and that is load-bearing
+/// rather than ceremony.
+///
+/// The section is gated on `memory_recall` being **registered and visible after
+/// tool filtering** (`any_tool_offered`), and the visible set comes from the
+/// resolved definition's tool scope. With `None` here the factory reads
+/// `AgentDefinitionRegistry`'s `static GLOBAL: OnceLock<…>`
+/// (`harness/definition_part_02.rs:24`) — first-write-wins and never reset — so
+/// the test was asserting against whichever definition set some *other* test in
+/// the binary had installed first. That is exactly the hazard `builtin_def`
+/// was written for: it loads fresh from the bundled TOML, "entirely independent
+/// of the global registry singleton".
+///
+/// It is why this passed run alone and failed inside the full
+/// `openhuman::agent` run (`ci-lite` scopes the Rust lane per changed domain,
+/// so the whole scope only runs when a PR touches `agent/`), and why the
+/// sibling write-side test in `builder_tests_part_03_tests.rs` never flaked —
+/// it already supplied `builtin_def("orchestrator")`.
+#[tokio::test]
+async fn memory_access_instruction_is_present_with_learning_disabled() {
+    use crate::openhuman::agent::context::prompt::LearnedContextData;
+    use crate::openhuman::agent::harness::session::types::Agent;
+    use crate::openhuman::agent::learning::MEMORY_ACCESS_INSTRUCTION;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.learning.enabled = false;
+
+    let orchestrator = builtin_def("orchestrator");
+    let agent = Agent::build_session_agent_inner(
+        &config,
+        "orchestrator",
+        Some(&orchestrator),
+        None,
+        false,
+        None,
+    )
+    .expect("build session agent");
+    let prompt = agent
+        .build_system_prompt(LearnedContextData::default())
+        .expect("build_system_prompt");
+
+    assert!(
+        prompt.contains(MEMORY_ACCESS_INSTRUCTION.trim()),
+        "the memory-access section must not be gated on learning.enabled"
+    );
+    assert!(
+        prompt.contains("Never say something is not stored"),
+        "the instruction must forbid claiming absence without a retrieval"
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // B38 (Gap 2) — a custom (non-shipped) `AgentRegistryEntry` must synthesize a
 // real `AgentDefinition` and run with its own `ToolScope::Named` filter,
@@ -566,7 +618,6 @@ async fn build_session_agent_uses_profile_memory_instead_of_root_memory() {
 async fn from_config_for_agent_synthesizes_custom_registry_entry_with_named_scope() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
     use crate::openhuman::agent::registry::types::{
         AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy,
@@ -618,4 +669,62 @@ async fn from_config_for_agent_synthesizes_custom_registry_entry_with_named_scop
         !visible.contains("automate"),
         "a tool outside the custom agent's allowlist must not be visible: {visible:?}"
     );
+}
+
+/// `from_config` hands the build-time delegation tools to the builder's
+/// synthesised set rather than folding them into the durable registry.
+///
+/// Before #6145 the factory appended them to `tools`, so the first
+/// `refresh_delegation_tools` — which replaces `Agent::synthesized_tools` and
+/// never touches `tools` — would have left the build-time instances behind:
+/// duplicated in the prompt catalogue next to their fresh replacements, and
+/// only kept off the dispatch path by set ordering.
+#[test]
+fn from_config_keeps_build_time_delegation_tools_out_of_the_durable_registry() {
+    crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let agent = crate::openhuman::agent::Agent::from_config_for_agent(&config, "orchestrator")
+        .expect("orchestrator session build");
+
+    let synthesized: Vec<String> = agent
+        .synthesized_tools_arc()
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect();
+    assert!(
+        !synthesized.is_empty(),
+        "the orchestrator declares sub-agents, so the factory must synthesise delegates"
+    );
+    for name in &synthesized {
+        assert!(
+            agent.tools().iter().all(|tool| tool.name() != name),
+            "build-time delegate `{name}` must not also sit in the durable registry"
+        );
+        assert!(
+            agent.tool_specs().iter().any(|spec| &spec.name == name),
+            "build-time delegate `{name}` must be advertised"
+        );
+        assert!(
+            agent.tool_policy_session.decisions.contains_key(name),
+            "build-time delegate `{name}` must carry a policy decision"
+        );
+    }
+    let expected_mask: std::collections::HashSet<String> = synthesized.iter().cloned().collect();
+    assert_eq!(
+        agent.synthesized_tool_names, expected_mask,
+        "the refresh mask must be seeded with exactly the synthesised names"
+    );
+    // What a sub-agent is handed: the durable registry and its specs, index
+    // for index, with no synthesised delegate among them.
+    let durable_specs = agent.durable_tool_specs_arc();
+    assert_eq!(durable_specs.len(), agent.tools().len());
+    for (tool, spec) in agent.tools().iter().zip(durable_specs.iter()) {
+        assert_eq!(
+            tool.name(),
+            spec.name,
+            "durable specs must track the registry index for index"
+        );
+    }
 }

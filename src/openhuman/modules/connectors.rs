@@ -35,6 +35,7 @@ use serde::Serialize;
 use tinybus::Proxy;
 use tinyconnectors_bus::names;
 
+use super::types::ModuleState;
 use super::{ops, registry};
 use crate::openhuman::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
 use crate::openhuman::config::Config;
@@ -211,19 +212,64 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
 /// proxy.
 pub async fn proxy(config: &Config) -> Result<Proxy, String> {
     ops::ensure_loaded(config, MODULE_ID).await?;
+    let proxy = proxy_to_serving().await?;
+    ensure_routed(config, &proxy).await?;
+    Ok(proxy)
+}
 
+/// A proxy to the module as it is serving right now — no load, no route
+/// reconciliation. Callers decide which of those they need.
+async fn proxy_to_serving() -> Result<Proxy, String> {
     let record =
         registry::find(MODULE_ID).ok_or_else(|| format!("unknown module '{MODULE_ID}'"))?;
     let runtime = super::host::runtime()
         .await
         .map_err(|error| format!("the module runtime is unavailable: {error}"))?;
-
-    let proxy = runtime
+    runtime
         .proxy(record.bus_name, record.object_path)
-        .map_err(|error| format!("could not reach '{MODULE_ID}': {error}"))?;
+        .map_err(|error| format!("could not reach '{MODULE_ID}': {error}"))
+}
 
-    ensure_routed(config, &proxy).await?;
-    Ok(proxy)
+/// Give an already-serving module the route the current configuration
+/// selects, without loading a module that is not serving.
+///
+/// Every call reconciles the route (`ensure_routed`), and that is how sign-out
+/// reaches a module configured while the user was signed in: the next call
+/// sends `{"route": "none"}` and the module drops the bearer. A caller that
+/// answers a signed-out user itself — `composio_list_connections`, which the
+/// periodic sync drives every minute — makes no such call, so it uses this to
+/// give the instruction anyway; otherwise the credential would stay resident
+/// until some other member happened to be used. A module that was never
+/// loaded holds no credential, and boot is the wrong moment to download one,
+/// so a module that is not serving is left alone.
+///
+/// # Errors
+///
+/// Returns a message when the module is serving but could not be reached or
+/// refused the reconfiguration. Nothing is recorded in that case, so the next
+/// call retries.
+pub async fn reconcile_route_if_loaded(config: &Config) -> Result<(), String> {
+    if ops::state_of(MODULE_ID) != ModuleState::Ready {
+        return Ok(());
+    }
+    let proxy = proxy_to_serving().await?;
+    ensure_routed(config, &proxy).await
+}
+
+/// Whether the route the module last accepted is the signed-out one.
+#[cfg(test)]
+pub(crate) fn last_route_is_none() -> bool {
+    *last_route()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        == Some(fingerprint(&serde_json::json!({ "route": "none" })))
+}
+
+/// A proxy to the serving module that does NOT reconcile the route first —
+/// for tests that need to observe what the module currently holds.
+#[cfg(test)]
+pub(crate) async fn proxy_without_reconcile() -> Result<Proxy, String> {
+    proxy_to_serving().await
 }
 
 /// Call one member with an argument and decode its reply.

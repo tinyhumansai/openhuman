@@ -2,7 +2,7 @@
 
 How this repository's Discussions are organized, and how a thread moves through
 them. Written for maintainers doing triage; contributors only need
-[SUPPORT.md](../../SUPPORT.md).
+[SUPPORT.md](../SUPPORT.md).
 
 ## Why not the default six
 

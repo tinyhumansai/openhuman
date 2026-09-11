@@ -199,6 +199,8 @@ export interface InstalledModelInfo {
 
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
+  /** Fine-grained status from the two-phase health probe (#6032). */
+  ollama_status?: 'running' | 'degraded' | 'stopped';
   ollama_runner_ok?: boolean;
   ollama_base_url: string;
   ollama_binary_path: string | null;

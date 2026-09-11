@@ -85,5 +85,5 @@ None on disk. State lives in a process-global `OnceLock<HealthRegistry>` (lazy-i
 - `upsert_component` creates entries lazily with initial status `"starting"` and always refreshes `updated_at` after the update closure.
 - `mark_component_ok` clears `last_error`; `mark_component_error` leaves `last_ok` intact (so the last-known-good time survives a failure).
 - `restart_count` uses `saturating_add` (won't overflow).
-- The `system_info` schema declares `pid` as a `String` (`TypeSchema::String`) even though the `SystemInfo` struct serializes `pid` as a numeric `u32` — schema type vs. wire type differ here.
+- The `system_info` schema declares `pid` as `TypeSchema::U64`, matching `SystemInfo.pid: u32`, which serializes as a JSON number. It declared `TypeSchema::String` until #6074; the wire value has always been a number, so that fix moved only the declaration — and with it the generated frontend types and the model-facing tool `output_schema`.
 - `bus.rs` short-circuits double registration via a `OnceLock` and warns (does not panic) if the bus isn't initialized.

@@ -152,100 +152,66 @@ fn build_parent_context_has_no_descriptor_without_profile_or_parent() {
     assert!(parent.workspace_descriptor.is_none());
 }
 
-#[tokio::test]
-async fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
-    // #2944: the wrapper must carry the root node's `updated_at` from the
-    // store tuple into the `NamespaceSummary` the prompt renderer stamps.
-    //
-    // Asserted over a **profile** subtree since #5560: the mapping is the same
-    // one both arms share, and the profile arm is the one that still scans a
-    // caller-named workspace. The shared `"memory"` arm now answers from the
-    // bound driver, which has no way to be pointed at this temp directory.
-    use crate::openhuman::config::Config;
-    use tinycortex::memory::tree::runtime::{
-        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
-    };
-    use tinymemory_core::tree::tree_runtime::store::write_node;
+/// Stands in for a synthesised `delegate_*` tool in the parent's own surface.
+struct ProbeDelegateTool;
 
-    let tmp = tempfile::TempDir::new().unwrap();
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let config = Config {
-        workspace_dir: workspace.clone(),
-        ..Config::default()
-    };
+#[async_trait]
+impl Tool for ProbeDelegateTool {
+    /// A `delegate_*` name, like every synthesised delegation tool.
+    fn name(&self) -> &str {
+        "delegate_probe"
+    }
 
-    let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
-    let summary = "Distilled activities summary.";
-    let node = TreeNode {
-        node_id: "root".to_string(),
-        namespace: "activities".to_string(),
-        level: level_from_node_id("root"),
-        parent_id: derive_parent_id("root"),
-        summary: summary.to_string(),
-        token_count: estimate_tokens(summary),
-        child_count: 0,
-        created_at: updated_at,
-        updated_at,
-        metadata: None,
-    };
-    write_node(&config, &node).unwrap();
-    // `write_node` only knows `<workspace>/memory`; rename it into the profile
-    // layout the host-local arm reads.
-    std::fs::rename(workspace.join("memory"), workspace.join("memory-alice")).unwrap();
+    /// Marker text only; the description is never asserted on.
+    fn description(&self) -> &str {
+        "probe delegate"
+    }
 
-    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000).await;
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].namespace, "activities");
-    assert_eq!(summaries[0].body, summary);
-    assert_eq!(summaries[0].updated_at, updated_at);
+    /// An empty object schema, like a parameterless delegate.
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+
+    /// Never dispatched by these tests.
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        Ok(ToolResult::success("probe"))
+    }
 }
 
-#[tokio::test]
-async fn collect_tree_root_summaries_reads_only_profile_memory_subtree() {
-    use crate::openhuman::config::Config;
-    use tinycortex::memory::tree::runtime::{
-        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
-    };
-    use tinymemory_core::tree::tree_runtime::store::write_node;
-
-    let tmp = tempfile::TempDir::new().unwrap();
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let config = Config {
-        workspace_dir: workspace.clone(),
-        ..Config::default()
-    };
-    let now = chrono::Utc::now();
-    let node = TreeNode {
-        node_id: "root".into(),
-        namespace: "private".into(),
-        level: level_from_node_id("root"),
-        parent_id: derive_parent_id("root"),
-        summary: "Alice-only context".into(),
-        token_count: estimate_tokens("Alice-only context"),
-        child_count: 0,
-        created_at: now,
-        updated_at: now,
-        metadata: None,
-    };
-    write_node(&config, &node).unwrap();
-    std::fs::rename(workspace.join("memory"), workspace.join("memory-alice")).unwrap();
-
-    // A *different* profile's subtree, not `"memory"`: since #5560 the shared
-    // arm answers from the bound driver rather than from this temp workspace,
-    // so asking it here would be asserting about a store this test never
-    // wrote. Bob is the isolation the assertion is actually about.
-    assert!(
-        collect_tree_root_summaries(&workspace, "memory-bob", 8_000, 32_000)
-            .await
-            .is_empty()
+/// What a child is handed: the durable registry and its specs, index for
+/// index — never the parent's synthesised delegation specs, which have no
+/// instance in `all_tools` and which a sub-agent must not see (#4452).
+#[test]
+fn build_parent_context_passes_durable_specs_matching_all_tools() {
+    let agent = make_agent_with_tool_sets(
+        vec![Box::new(EchoTool), Box::new(CronAddProbeTool)],
+        vec![Box::new(ProbeDelegateTool)],
+        None,
     );
-    let summaries = collect_tree_root_summaries(&workspace, "memory-alice", 8_000, 32_000).await;
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].body, "Alice-only context");
+    assert!(
+        agent
+            .tool_specs()
+            .iter()
+            .any(|spec| spec.name == "delegate_probe"),
+        "sanity: the parent itself advertises the synthesised delegate"
+    );
+
+    let parent = agent.build_parent_execution_context();
+    assert_eq!(parent.all_tool_specs.len(), parent.all_tools.len());
+    for (tool, spec) in parent.all_tools.iter().zip(parent.all_tool_specs.iter()) {
+        assert_eq!(
+            tool.name(),
+            spec.name,
+            "a child's specs must track its tools index for index"
+        );
+    }
+    assert!(
+        !parent
+            .all_tool_specs
+            .iter()
+            .any(|spec| spec.name == "delegate_probe"),
+        "a synthesised delegate spec must never reach a child"
+    );
 }
 
 #[tokio::test]
@@ -519,10 +485,8 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
 
 #[tokio::test]
 async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
-    crate::openhuman::memory::host_impls::install_for_tests();
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("built-in agent definitions should load");
     assert!(
@@ -558,14 +522,12 @@ async fn turn_triggers_configured_memory_agent_before_parent_prompt() {
     // fast path finds nothing and the model-driven walk (the two-call sequence
     // asserted below) is what actually runs.
     let _workspace_env = WorkspaceEnvGuard::set(&workspace_path);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
     // The embedding seam, as above.
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     let mut agent = Agent::builder()
         .chat_model(provider)

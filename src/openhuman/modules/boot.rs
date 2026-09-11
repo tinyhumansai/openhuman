@@ -65,11 +65,38 @@ pub async fn load_declared_modules(config: &Config) {
             );
             continue;
         }
+        // TinyMemory resolves its embedding provider while the library is
+        // admitted, through callbacks this host serves on the module bus. The
+        // lazy path installs them before loading; the eager path must too, or
+        // the module comes up without an embedder and every memory write fails
+        // from then on.
+        if record.id == super::memory::MODULE_ID {
+            if let Err(reason) =
+                super::memory::install_host_callbacks(std::sync::Arc::new(config.clone())).await
+            {
+                log::warn!(
+                    "[modules] eager module '{}' skipped: host callbacks are unavailable: {reason}",
+                    record.id
+                );
+                continue;
+            }
+        }
+        log::info!("[modules] eager module '{}' resolving at boot", record.id);
         if let Err(reason) = ops::ensure_loaded(config, record.id).await {
             log::warn!(
                 "[modules] eager module '{}' did not load: {reason}",
                 record.id
             );
+            continue;
+        }
+        // The first retrieval after boot pays the Python server start, the
+        // model load and the embedder's first connection — several seconds the
+        // user's first question would otherwise wait on, or lose its memory
+        // block to. Pay it now, off the request path (#6040).
+        if record.id == super::memory::MODULE_ID {
+            crate::openhuman::memory::auto_recall::warm::spawn_at_boot(std::sync::Arc::new(
+                config.clone(),
+            ));
         }
     }
 }

@@ -13,6 +13,7 @@ mod read_diff;
 mod run_linter;
 mod run_tests;
 mod update_memory_md;
+mod write_sink;
 
 use crate::openhuman::security::policy::{TrustedAccess, TrustedRoot};
 use crate::openhuman::security::SecurityPolicy;
@@ -21,6 +22,13 @@ use tinytools::ToolRunContext;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+/// The git config overrides a shell-spawned `git` is forced to run under.
+///
+/// Re-exported from the module that owns the whole policy so the `shell` tool
+/// and `git_operations` cannot drift into two different answers about which
+/// config keys are dangerous.
+pub(crate) use git_operations_config::SHELL_NEUTRALISED_CONFIG;
 
 pub use apply_patch::ApplyPatchTool;
 pub use csv_export::CsvExportTool;

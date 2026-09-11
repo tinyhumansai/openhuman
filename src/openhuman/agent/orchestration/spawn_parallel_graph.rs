@@ -3,8 +3,7 @@
 //! The tool wrapper still owns `ToolResult` translation. This module owns
 //! request parsing, parent-context validation, graph-side request validation,
 //! worktree preflight, progress/event projection, worker fanout, final JSON
-//! formatting, and the topology surface (WP-5 of
-//! `docs/tinyagents-migration-plan-2026-07-22.md`).
+//! formatting, and the topology surface.
 //!
 //! **Write safety.** Whether a worker *needs* a claim on the shared workspace is
 //! an OpenHuman decision — it reads sandbox mode, tool permissions and the

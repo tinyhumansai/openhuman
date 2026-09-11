@@ -20,7 +20,6 @@
  * standalone route. The "card" style matches the other sections inside
  * VoicePanel.
  *
- * Spec: docs/superpowers/specs/2026-06-02-global-ptt-design.md.
  */
 import { useCallback, useState } from 'react';
 

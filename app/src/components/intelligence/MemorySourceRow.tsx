@@ -15,7 +15,10 @@ import {
   type SourceStatus,
 } from '../../services/memorySourcesService';
 import type { ToastNotification } from '../../types/intelligence';
-import type { MemoryTreePipelineStatus } from '../../utils/tauriCommands/memoryTree';
+import type {
+  BackfillStatus,
+  MemoryTreePipelineStatus,
+} from '../../utils/tauriCommands/memoryTree';
 import Button from '../ui/Button';
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from '../ui/Collapsible';
 import Switch from '../ui/Switch';
@@ -38,6 +41,7 @@ import {
   deriveSourcePipelineHealth,
   pipelineIssueMessageKey,
   type SourcePipelineHealth,
+  VECTORS_PENDING_MESSAGE_KEY,
 } from './sourcePipelineStatus';
 import { SourceSettingsPanel } from './SourceSettingsPanel';
 
@@ -46,6 +50,12 @@ interface SourceRowProps {
   status: SourceStatus | null;
   /** Global downstream pipeline health (GH-4690); `null` before first poll. */
   pipeline: MemoryTreePipelineStatus | null;
+  /**
+   * Global embed-backfill snapshot (openhuman#6025); `null` before the first
+   * poll or when that RPC failed. Tells a backlog that is being drained from
+   * one nothing is working on.
+   */
+  backfill: BackfillStatus | null;
   /** Whether a backend session exists — gates the "Sign in to enable" prompt. */
   isAuthenticated: boolean;
   isSyncing: boolean;
@@ -66,10 +76,23 @@ interface SourceRowProps {
   onSignIn: () => void;
 }
 
+/**
+ * The line shown beside a successful count when the run stopped short. With a
+ * zero count the chip itself says why the run stopped (there is no count to
+ * show instead), so the note is never repeated beside it.
+ */
+function syncNoteKey(result: SyncResult): string | null {
+  if (!(result.items && result.items > 0)) return null;
+  if (result.note === 'more_pending') return 'memorySources.sync.morePending';
+  if (result.note === 'budget_spent') return 'memorySources.sync.budgetSpent';
+  return null;
+}
+
 export function MemorySourceRow({
   source,
   status,
   pipeline,
+  backfill,
   isAuthenticated,
   isSyncing,
   isBuilding,
@@ -92,18 +115,27 @@ export function MemorySourceRow({
   const detail = sourceDetail(source);
   const lastSync = status ? relativeTimestamp(status.last_chunk_at_ms, t) : null;
 
-  // GH-4690: layered pipeline verdict. Only meaningful in a settled state —
-  // during an active sync (`progress`) or right after one (`result`) the row
-  // renders live progress / a terminal chip instead, and `chunks_pending` is
-  // legitimately transient, so we suppress the warning until things settle.
-  const settled = !progress && !result;
+  // GH-4690: layered pipeline verdict. Only meaningful once no sync is
+  // reporting live progress — mid-run the row renders the progress bar
+  // instead. A terminal result chip does NOT suppress it (openhuman#6025):
+  // the chip sits on the row until the next sync starts, and the minutes
+  // right after `completed` are exactly when the embed backlog is visible.
+  // The verdict itself tells a draining backlog (neutral note) from a stuck
+  // one (amber warning), so it no longer needs the chip as a proxy.
+  const settled = !progress;
+  const noteKey = result ? syncNoteKey(result) : null;
   const health: SourcePipelineHealth = settled
-    ? deriveSourcePipelineHealth(status, pipeline)
-    : { state: 'none', issues: [], authRelated: false };
+    ? deriveSourcePipelineHealth(status, pipeline, backfill)
+    : { state: 'none', issues: [], authRelated: false, vectorsPending: false };
   const ingestedOnly = health.state === 'ingested_only';
   if (ingestedOnly) {
     console.debug(
       `[ui-flow][memory-sources] source=${source.id} ingested-only issues=${health.issues.join(',')}`
+    );
+  }
+  if (health.vectorsPending) {
+    console.debug(
+      `[ui-flow][memory-sources] source=${source.id} vectors-pending chunks=${status?.chunks_pending ?? 0}`
     );
   }
 
@@ -164,12 +196,25 @@ export function MemorySourceRow({
             {!progress && result && (
               <div className="mt-2 pl-7" data-testid={`memory-source-result-${source.id}`}>
                 {result.kind === 'success' ? (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-sage-100 px-2 py-0.5 text-xs font-medium text-sage-700 dark:bg-sage-500/20 dark:text-sage-300">
-                    <CheckIcon />
-                    {result.items && result.items > 0
-                      ? `${result.items.toLocaleString()} ${t('memorySources.sync.itemsSynced')}`
-                      : t('memorySources.sync.upToDate')}
-                  </span>
+                  <>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-sage-100 px-2 py-0.5 text-xs font-medium text-sage-700 dark:bg-sage-500/20 dark:text-sage-300">
+                      <CheckIcon />
+                      {result.items && result.items > 0
+                        ? `${result.items.toLocaleString()} ${t('memorySources.sync.itemsSynced')}`
+                        : result.note === 'budget_spent'
+                          ? t('memorySources.sync.budgetSpent')
+                          : result.note === 'more_pending'
+                            ? t('memorySources.sync.morePending')
+                            : t('memorySources.sync.upToDate')}
+                    </span>
+                    {noteKey && (
+                      <span
+                        className="ml-2 text-xs text-content-muted"
+                        data-testid={`memory-source-note-${source.id}`}>
+                        {t(noteKey)}
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <span
                     className="inline-flex items-start gap-1 rounded-md bg-coral-50 px-2 py-0.5 text-xs font-medium text-coral-700 dark:bg-coral-500/10 dark:text-coral-300"
@@ -203,6 +248,17 @@ export function MemorySourceRow({
                   )}
                 </div>
               )}
+            {health.vectorsPending && status && (
+              <p
+                className="mt-1 pl-7 text-xs text-content-muted"
+                data-testid={`memory-source-vectors-pending-${source.id}`}
+                role="status">
+                {t(VECTORS_PENDING_MESSAGE_KEY).replace(
+                  '{count}',
+                  status.chunks_pending.toLocaleString()
+                )}
+              </p>
+            )}
             {ingestedOnly && (
               <div
                 className="mt-2 flex flex-col gap-1 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 pl-7 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
@@ -294,12 +350,7 @@ export function MemorySourceRow({
           </div>
         </div>
         <CollapsibleContent>
-          <SourceSettingsPanel
-            source={source}
-            syncedCount={status?.chunks_synced}
-            onSaved={onSettingsSaved}
-            onToast={onToast}
-          />
+          <SourceSettingsPanel source={source} onSaved={onSettingsSaved} onToast={onToast} />
         </CollapsibleContent>
       </CollapsibleRoot>
     </li>

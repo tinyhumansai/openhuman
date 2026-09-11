@@ -19,6 +19,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
+import { listProviderModels, type ModelInfo } from '../../../services/api/aiSettingsApi';
 import { Alert, AlertDescription } from '../../ui/Alert';
 import Badge from '../../ui/Badge';
 import Button from '../../ui/Button';
@@ -57,6 +58,28 @@ const MODEL_TIERS = [
 const KNOWN_MODELS = new Set([...MODEL_HINTS, ...MODEL_TIERS]);
 const CUSTOM_MODEL = '__custom__';
 
+/**
+ * `cloud_providers` slug of the managed backend, used to list the models it can
+ * serve. Pinning one here sets the agent's persistent default — unlike the
+ * composer's picker, which only overrides the current conversation.
+ *
+ * The listing is the OpenRouter passthrough catalog and is empty unless the
+ * backend has `OPENROUTER_PASSTHROUGH_ENABLED` on, so the optgroup simply does
+ * not render against a backend without it.
+ */
+const MANAGED_PROVIDER_SLUG = 'openhuman';
+
+/** `Display Name — $in/$out per 1M`, falling back to the bare id. */
+const managedOptionLabel = (m: ModelInfo): string => {
+  const name = m.display_name?.trim() || m.id;
+  const inPrice = m.input_per_1m;
+  const outPrice = m.output_per_1m;
+  if (typeof inPrice !== 'number' || typeof outPrice !== 'number') return name;
+  const fmt = (n: number) =>
+    n === 0 ? '$0' : `$${n < 1 ? n.toFixed(3).replace(/0+$/, '') : n.toFixed(2)}`;
+  return `${name} — ${fmt(inPrice)}/${fmt(outPrice)} per 1M`;
+};
+
 function slugify(name: string): string {
   return name
     .trim()
@@ -84,6 +107,7 @@ const AgentEditorPage = () => {
   const [description, setDescription] = useState('');
   const [model, setModel] = useState('');
   const [customModelMode, setCustomModelMode] = useState(false);
+  const [managedModels, setManagedModels] = useState<ModelInfo[]>([]);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [toolAllowlist, setToolAllowlist] = useState<string[]>([]);
 
@@ -179,6 +203,33 @@ const AgentEditorPage = () => {
       if (mountedRef.current) setSubmitting(false);
     }
   };
+
+  // Managed catalog for the optgroup below. A failure or an empty result is not
+  // an error worth surfacing here: the backend returns an empty list when the
+  // passthrough is off or the session is stale, and the rest of the editor is
+  // unaffected — the optgroup just does not render.
+  useEffect(() => {
+    let active = true;
+    void listProviderModels(MANAGED_PROVIDER_SLUG)
+      .then(models => {
+        if (active) setManagedModels(models);
+      })
+      .catch(() => {
+        if (active) setManagedModels([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // A saved managed-catalog id is not in KNOWN_MODELS, so the load above flips
+  // the editor into free-text "custom" mode for it. The catalog arrives after
+  // that load, so re-check once it does and select the entry properly instead of
+  // showing a raw id in a text box. Only ever clears custom mode — a genuine
+  // BYOK id the catalog does not contain keeps its text box.
+  useEffect(() => {
+    if (model && managedModels.some(m => m.id === model)) setCustomModelMode(false);
+  }, [managedModels, model]);
 
   const selectValue = customModelMode ? CUSTOM_MODEL : model;
 
@@ -324,6 +375,15 @@ const AgentEditorPage = () => {
                         </option>
                       ))}
                     </optgroup>
+                    {managedModels.length > 0 && (
+                      <optgroup label={t('settings.agents.editor.modelManaged')}>
+                        {managedModels.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {managedOptionLabel(m)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                     <option value={CUSTOM_MODEL}>{t('settings.agents.editor.modelCustom')}</option>
                   </NativeSelect>
                   {customModelMode && (

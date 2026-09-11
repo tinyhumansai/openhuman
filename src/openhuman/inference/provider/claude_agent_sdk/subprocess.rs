@@ -261,10 +261,7 @@ impl ChatModel<()> for ClaudeAgentSdkProvider {
     ) -> tinyinference::Result<ModelResponse> {
         let messages = coalesce_prompt_tool_results(&request.messages);
         let messages = with_prompt_tool_instructions(&messages, &request.tools);
-        let system = messages.iter().find_map(|message| match message {
-            Message::System(_) => Some(message.text()),
-            _ => None,
-        });
+        let system = coalesce_system_prompt(&messages);
         let last_user = messages
             .iter()
             .rev()
@@ -289,6 +286,24 @@ impl ChatModel<()> for ClaudeAgentSdkProvider {
             ),
         )
     }
+}
+
+/// Join every system message into the one system prompt the CLI accepts.
+///
+/// The CLI takes a single `--system-prompt`, and this used to `find_map` the
+/// first system message and drop the rest (codex on #6068). What gets dropped is
+/// not incidental: the artifact contents list and the turn-cap wrap-up are both
+/// appended as system messages *precisely because* a system message is the one
+/// thing compression and the trim will not remove. Taking only the first put
+/// them back to being removable — on this provider alone, and silently.
+fn coalesce_system_prompt(messages: &[Message]) -> Option<String> {
+    let parts: Vec<String> = messages
+        .iter()
+        .filter(|message| matches!(message, Message::System(_)))
+        .map(|message| message.text())
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 #[cfg(test)]

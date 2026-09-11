@@ -141,3 +141,95 @@ fn reset_cache_schema_shape() {
     assert!(s.outputs.iter().any(|f| f.name == "deleted"));
     assert!(s.outputs.iter().any(|f| f.name == "pinned_preserved"));
 }
+
+// ── strict class validation (#6077) ───────────────────────────────────────────
+//
+// The class filter/argument is validated before the handler touches the store,
+// so an unknown class is rejected without a bound memory guard — which is what
+// lets these run as plain unit tests. On the old code `list_facets` with an
+// unknown class returned `{facets:[],count:0}`; it must now be an error.
+
+fn params_with_class(class: &str) -> Map<String, Value> {
+    let mut m = Map::new();
+    m.insert("class".to_string(), Value::String(class.to_string()));
+    m
+}
+
+#[tokio::test]
+async fn list_facets_rejects_unknown_class() {
+    let err = handle_list_facets(params_with_class("nonsense"))
+        .await
+        .expect_err("unknown class must be an error, not an empty result");
+    assert!(err.contains("invalid class `nonsense`"), "got: {err}");
+}
+
+#[tokio::test]
+async fn get_facet_rejects_unknown_class() {
+    let mut params = params_with_class("nonsense");
+    params.insert("key".to_string(), Value::String("verbosity".to_string()));
+    let err = handle_get_facet(params)
+        .await
+        .expect_err("unknown class must be rejected before store access");
+    assert!(err.contains("invalid class `nonsense`"), "got: {err}");
+}
+
+#[tokio::test]
+async fn forget_facet_rejects_unknown_class() {
+    let mut params = params_with_class("nonsense");
+    params.insert("key".to_string(), Value::String("verbosity".to_string()));
+    let err = handle_forget_facet(params)
+        .await
+        .expect_err("unknown class must be rejected before store access");
+    assert!(err.contains("invalid class `nonsense`"), "got: {err}");
+}
+
+#[tokio::test]
+async fn class_taking_handlers_keep_presence_check_before_value_check() {
+    // A missing class is still the presence error, not the invalid-class error —
+    // the new validation does not weaken the existing "missing required" contract.
+    let err = handle_get_facet(Map::new())
+        .await
+        .expect_err("missing class must error");
+    assert!(err.contains("missing required `class`"), "got: {err}");
+}
+
+// ── #6108: the forget_facet log must describe what actually happened ─────────
+
+/// The line was previously built unconditionally, before the read that decides
+/// whether there is anything to drop. A typo'd key therefore produced a log
+/// asserting `state=dropped user_state=forgotten` for a row that was never
+/// touched. The RPC contract itself is unchanged and deliberately idempotent —
+/// `{"facet": null}`, no error — so the log is the only thing that can tell the
+/// two outcomes apart.
+#[test]
+fn forget_facet_log_claims_a_drop_only_when_a_row_was_written() {
+    let dropped = forget_facet_log("style/observed_key", true);
+    assert_eq!(dropped.len(), 1);
+    assert!(
+        dropped[0].contains("state=dropped") && dropped[0].contains("user_state=forgotten"),
+        "a real drop must still record the state change: {dropped:?}"
+    );
+    assert!(
+        dropped[0].contains("style/observed_key"),
+        "the log must name the key it dropped: {dropped:?}"
+    );
+}
+
+#[test]
+fn forget_facet_log_does_not_claim_a_drop_for_an_absent_key() {
+    let absent = forget_facet_log("style/never_observed", false);
+    assert_eq!(absent.len(), 1);
+    assert!(
+        !absent[0].contains("state=dropped"),
+        "an absent key must not be logged as a state change — this is the #6108 \
+         defect, where the claim was made before the row was read: {absent:?}"
+    );
+    assert!(
+        !absent[0].contains("user_state=forgotten"),
+        "nor may it claim the user forgot something that was never there: {absent:?}"
+    );
+    assert!(
+        absent[0].contains("style/never_observed") && absent[0].contains("not present"),
+        "it must still name the key and say plainly that nothing changed: {absent:?}"
+    );
+}

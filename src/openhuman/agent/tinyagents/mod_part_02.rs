@@ -48,6 +48,7 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
         tool_outcome_sink,
         handle,
         early_exit_hook,
+        wrap_up_fired,
         tool_count,
         registry_snapshot: _,
         registry_diagnostics,
@@ -68,6 +69,7 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
         tool_policy,
         routes::turn_required_capabilities(model),
         deterministic_cacheable,
+        pause_at_cap,
     );
 
     // Fail-closed registry validation gate (issue #4249, Workstream 10 — registry).
@@ -547,9 +549,32 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
     // (`defer_turn_completed_to_caller`, #4457 defect C) — so this is the single
     // emission point for callers with no post-run streaming (channel/CLI).
     if let Some(sink) = &turn_completed_sink {
-        let _ = sink.try_send(AgentProgress::TurnCompleted {
-            iterations: run.model_calls as u32,
-        });
+        // NOT best-effort. `TurnCompleted` is the web bridge's sole completion
+        // signal: drop it and `parent_completed` stays false, so the bridge
+        // marks a turn that actually finished as `interrupted` and never emits
+        // `chat_done`. The turn's output still reaches the journal, session
+        // transcript and memory tree, so the agent "remembers" replying while
+        // the user's thread shows silence. A heavy turn (many tools + long
+        // streaming) reliably fills the 256-slot channel, which is why only
+        // tool-heavy turns were affected.
+        //
+        // Blocking is safe *here specifically*: this site is guarded by
+        // `subagent_scope.is_none()`, so it only ever runs on a parent turn
+        // with nothing awaiting it. The sub-agent stall documented on
+        // `tool_progress::emit` comes from parking a *sub-agent's* loop while
+        // the orchestrator awaits its tool call — unreachable from this path.
+        // Deltas and sub-agent lifecycle events stay lossy via `emit`.
+        if let Err(err) = sink
+            .send(AgentProgress::TurnCompleted {
+                iterations: run.model_calls as u32,
+            })
+            .await
+        {
+            tracing::warn!(
+                error = %err,
+                "[tinyagents] TurnCompleted not delivered — progress receiver gone"
+            );
+        }
     }
 
     // Response-cache effectiveness for this turn (issue #4249, 03.2). Additive —
@@ -613,11 +638,23 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
     // breaker halt is *not* a cap hit: it already carries a root-cause summary, so
     // treating it as a cap would let the caller (sub-agent runner) overwrite that
     // summary with a generic checkpoint digest.
+    // Issue #6014: the in-loop conclusion is the primary tell now. When
+    // `FinalCallWrapUpMiddleware` fired, the turn reached its cap *and* answered
+    // from inside the loop — which means it ended the way a finished turn does
+    // (text, no tool request), so `final_response` is `Some` and the original
+    // predicate below can no longer see it. The old predicate is kept as the
+    // second arm rather than replaced: it still covers every run with the
+    // middleware uninstalled, and the case where the concluding call itself came
+    // back requesting a tool (a text-protocol model ignoring an empty schema
+    // list) and the loop ran out with nothing final.
+    let wrap_up_injected = wrap_up_fired
+        .as_ref()
+        .is_some_and(|fired| fired.load(std::sync::atomic::Ordering::SeqCst));
     let hit_cap = pause_at_cap
         && early_exit.is_none()
         && breaker_halt.is_none()
-        && run.model_calls >= max_iterations
-        && run.final_response.is_none();
+        && (wrap_up_injected
+            || (run.model_calls >= max_iterations && run.final_response.is_none()));
 
     let (early_exit_tool, mut text) = match early_exit {
         Some(exit) => (Some(exit.tool), exit.question),
@@ -669,6 +706,7 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
         charged_amount_usd,
         early_exit_tool,
         hit_cap,
+        wrap_up_injected,
         breaker_halt,
         tool_outcomes,
     })

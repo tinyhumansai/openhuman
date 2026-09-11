@@ -349,10 +349,13 @@ impl Tool for GetToolContractTool {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => return Ok(ToolResult::error("Missing 'slug' parameter".to_string())),
         };
-        // Contract crate — `toolkit_from_slug` is defined in
-        // `tinymemory_api::composio::scopes` and only re-exported by the engine's
-        // providers module, so this names the same function (#5560).
-        let Some(toolkit) = tinymemory_api::composio::toolkit_from_slug(&slug) else {
+        // Shape-check before any I/O, through the same guard the
+        // `flows_get_tool_contract` RPC uses — `toolkit_from_slug` falls back to
+        // the whole string when there is no `_`, so a bare action name would
+        // otherwise resolve to a bogus toolkit and come back as the catalog
+        // error below, which tells the model to retry a fetch that can never
+        // succeed.
+        let Some(toolkit) = crate::openhuman::flows::ops::toolkit_for_contract_slug(&slug) else {
             return Ok(ToolResult::error(format!(
                 "Could not extract a toolkit from slug '{slug}' — it must look like \
                  '<TOOLKIT>_<ACTION>' (e.g. 'GMAIL_SEND_EMAIL')."

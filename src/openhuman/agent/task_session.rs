@@ -30,7 +30,7 @@ use serde_json::json;
 
 use crate::openhuman::agent::task_board::TaskBoardCard;
 use crate::openhuman::memory::conversations::{
-    self as conversations, ConversationMessage, CreateConversationThread,
+    self as conversations, run_reply_message_id, ConversationMessage, CreateConversationThread,
 };
 
 /// Label that lands a thread in the Conversations → Tasks tab. Mirrors the
@@ -121,11 +121,23 @@ fn session_title(card: &TaskBoardCard) -> String {
 }
 
 /// Append the run's final response (or failure reason) to the session thread as
-/// the closing `assistant` message, so a reopened session shows the outcome.
+/// the closing `agent` message, so a reopened session shows the outcome.
 /// No-op on an empty response. Best-effort: a store failure is logged only.
+///
+/// The row is keyed [`run_reply_message_id`] (`agent:<run_id>`) on purpose — a
+/// deterministic id, which is also what makes the store's idempotency lookup
+/// apply to it. A client viewing the thread
+/// persists the same reply again from the `chat_done` the run announces, and it
+/// reuses this id for `client_id: "system"` turns (`ChatRuntimeProvider`), so
+/// the conversation store's id idempotency collapses both writes onto one row
+/// instead of the duplicate reply #5933 reported. `sender` is `agent` — the
+/// vocabulary every renderer keys on; the former `assistant` painted this row
+/// as a USER bubble. `requestId` carries the run id so the reply anchors to its
+/// own process trail exactly like an interactive turn's answer.
 pub(crate) fn append_final(
     workspace_dir: PathBuf,
     thread_id: &str,
+    run_id: &str,
     outcome: &Result<String, String>,
 ) {
     let (content, success) = match outcome {
@@ -139,11 +151,15 @@ pub(crate) fn append_final(
         workspace_dir,
         thread_id,
         ConversationMessage {
-            id: format!("assistant:{}", uuid::Uuid::new_v4()),
+            id: run_reply_message_id(run_id),
             content,
             message_type: "text".to_string(),
-            extra_metadata: json!({ "scope": "autonomous_task_result", "success": success }),
-            sender: "assistant".to_string(),
+            extra_metadata: json!({
+                "scope": "autonomous_task_result",
+                "success": success,
+                "requestId": run_id,
+            }),
+            sender: "agent".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
         },
     ) {

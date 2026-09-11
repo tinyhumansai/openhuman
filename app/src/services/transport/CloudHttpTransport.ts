@@ -6,6 +6,7 @@
  */
 import debug from 'debug';
 
+import { redactRpcUrlForLog } from '../../utils/redactRpcUrlForLog';
 import type { CoreTransport } from './CoreTransport';
 
 const log = debug('transport:cloud');
@@ -35,7 +36,14 @@ export class CloudHttpTransport implements CoreTransport {
     private readonly bearerToken: string | null = null,
     private readonly timeoutMs: number = 30_000
   ) {
-    log('[transport:cloud] created rpcUrl=%s token=%s', rpcUrl, bearerToken ? 'set' : 'none');
+    // The bearer token is already reported by presence only; the URL needs the same
+    // care, because a profile rpcUrl may carry `user:pass@` or `?token=` (see the
+    // redactRpcUrlForLog test) and this line ran before any of it was stripped.
+    log(
+      '[transport:cloud] created rpcUrl=%s token=%s',
+      redactRpcUrlForLog(rpcUrl),
+      bearerToken ? 'set' : 'none'
+    );
   }
 
   async call<T>(

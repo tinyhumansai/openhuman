@@ -9,10 +9,16 @@ use serde_json::Value;
 
 /// Envelope wrapping every event on the session stream.
 ///
-/// `event` retains the raw JSON payload; [`EventEnvelope::kind`] parses it into
-/// a typed [`EventKind`].
+/// This is the **wire** shape: it carries `sessionId` / `cycleId` and matches
+/// what `ops::list_events` returns over the RPC surface. Distinct from the
+/// in-process contract type `events::EventEnvelope`, which has neither field —
+/// the two are named apart so a consumer cannot build one where the other is
+/// expected (see #6078).
+///
+/// `event` retains the raw JSON payload; [`WireEventEnvelope::kind`] parses it
+/// into a typed [`EventKind`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventEnvelope {
+pub struct WireEventEnvelope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
     pub at: u64,
@@ -24,14 +30,14 @@ pub struct EventEnvelope {
     pub event: Value,
 }
 
-impl EventEnvelope {
+impl WireEventEnvelope {
     /// Parse the raw `event` payload into a typed [`EventKind`].
     pub fn kind(&self) -> EventKind {
         EventKind::from_value(&self.event)
     }
 }
 
-/// Typed event payload parsed from [`EventEnvelope::event`].
+/// Typed event payload parsed from [`WireEventEnvelope::event`].
 ///
 /// `Unknown` preserves the raw value for forward-compatibility with event
 /// kinds this client does not yet model.

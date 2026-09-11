@@ -58,7 +58,10 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// you do. Peers exchange this through [`manifest`], so a version skew between
 /// the kernel and an out-of-process integration is reported at startup with
 /// both numbers rather than as a decode failure later.
-pub const EVENTS_VERSION: Version = Version::new(1, 0, 0);
+///
+/// `1.1.0` added the MCP reconnect-supervisor variants (#5931).
+/// `1.2.0` added `ActiveWorkspaceChanged` (#5966).
+pub const EVENTS_VERSION: Version = Version::new(1, 2, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();

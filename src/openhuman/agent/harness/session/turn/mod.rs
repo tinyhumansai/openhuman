@@ -4,6 +4,7 @@
 mod context;
 mod core;
 mod graph;
+mod recall_lanes;
 mod session_io;
 mod tools;
 

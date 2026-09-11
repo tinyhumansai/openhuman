@@ -410,10 +410,7 @@ const MEMORY_TOOL_CAPABILITIES: &[(&str, tinymemory_api::capabilities::Capabilit
         ("memory_store_raw_search", C::Entities),
         ("memory_doctor", C::Maintenance),
         ("tool_stats", C::ToolMemory),
-        ("goals_list", C::Goals),
-        ("goals_add", C::Goals),
-        ("goals_edit", C::Goals),
-        ("goals_delete", C::Goals),
+        ("goals", C::Goals),
     ]
 };
 
@@ -452,10 +449,7 @@ const OPTIONAL_FAMILY_MEMORY_TOOLS: &[&str] = &[
     "memory_flavour",
     "memory_store_raw_search",
     "memory_doctor",
-    "goals_list",
-    "goals_add",
-    "goals_edit",
-    "goals_delete",
+    "goals",
 ];
 
 /// Memory-family tools that remain available when a null driver deliberately

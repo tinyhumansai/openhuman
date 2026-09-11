@@ -15,7 +15,7 @@ import { handleConversations } from "./routes/conversations.mjs";
 import { handleCron } from "./routes/cron.mjs";
 import { handleIntegrations } from "./routes/integrations.mjs";
 import { handleInvites } from "./routes/invites.mjs";
-import { handleLlmCompletions } from "./routes/llm.mjs";
+import { handleLlmCompletions, handleModelListing } from "./routes/llm.mjs";
 import { handleOAuth } from "./routes/oauth.mjs";
 import { handlePayments } from "./routes/payments.mjs";
 import { handleTelegram } from "./routes/telegram.mjs";
@@ -52,6 +52,7 @@ const ROUTE_HANDLERS = [
   // `handleIntegrations` so keyword-driven test scripts can override
   // the default "Hello from e2e mock agent" reply.
   handleLlmCompletions,
+  handleModelListing,
   handleIntegrations,
   handleWebhooks,
   handleCron,
