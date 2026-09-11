@@ -30,6 +30,12 @@ async fn finish_revalidated_user_activation(
     crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
         target_config.workspace_dir.clone(),
     );
+    if current_user_generation() != generation {
+        debug!(
+            "{LOG_PREFIX} skipping stale activation after pending session revalidation"
+        );
+        return;
+    }
     if let Some(source_config) = service_rebind_source {
         if current_user_generation() != generation {
             debug!(
