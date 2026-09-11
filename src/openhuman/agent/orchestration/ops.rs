@@ -1,9 +1,29 @@
-//! In-memory high-level orchestration control plane.
+//! High-level orchestration control plane over TinyAgents' detached-task registry.
+//!
+//! This session used to own a second, bespoke process-local task table
+//! (`HashMap<String, AgentRecord>` + `HashMap<String, JoinHandle>` plus a
+//! `Notify` plus a hand-rolled terminal sweep). TinyAgents'
+//! [`DetachedTaskRegistry`] is a strict superset of that: it owns the status
+//! watch channels, cooperative cancellation tokens, hard-abort handles,
+//! owner-scoped lookup, the wait/timeout loop, and the soft-cap terminal sweep.
+//! `spawn_agent` / `wait_agents` / `abort_all` are now thin product wrappers
+//! over `register` / `wait` / `cancel_all`, following the shape
+//! [`running_subagents`](super::running_subagents) already established.
+//!
+//! What stays host-side is exactly the product layer: the
+//! [`DomainEvent::AgentOrchestrationSpawned`] /
+//! [`DomainEvent::AgentOrchestrationCompleted`] /
+//! [`DomainEvent::AgentOrchestrationFailed`] event-bus bridge, the parent
+//! [`AgentProgress`] fan-out, agent-definition resolution, and the
+//! [`AgentSnapshot`] response shape callers already consume.
+//!
+//! One behavioural consequence of the crate registry is worth knowing: `wait`
+//! **prunes** an entry once it observes a terminal status, so a child can be
+//! waited on once. Every caller in-tree spawns and waits exactly once, and this
+//! is the same contract `running_subagents` runs under.
 
 use super::types::{
-    AgentMessage, AgentOrchestrationEvent, AgentSnapshot, AgentStatus, CloseAgentRequest,
-    FollowUpRequest, MessageAgentRequest, ResumeAgentRequest, SpawnAgentRequest,
-    SpawnAgentResponse, WaitAgentOptions, WaitAgentResponse,
+    AgentSnapshot, SpawnAgentRequest, SpawnAgentResponse, WaitAgentOptions, WaitAgentResponse,
 };
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -15,12 +35,16 @@ use crate::openhuman::agent::harness::subagent_runner::{
     run_subagent, SubagentRunOptions, SubagentRunOutcome,
 };
 use crate::openhuman::agent::progress::AgentProgress;
-use std::collections::HashMap;
+use crate::openhuman::agent::tinyagents::orchestration::{
+    shared_steering_registry, DetachedTaskRegistry, DetachedTaskRegistryError,
+    DetachedTaskWaitOutcome, OrchestrationTaskStatus, TaskId,
+};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::{mpsc, Mutex, Notify};
-use tokio::task::JoinHandle;
-use tokio::time::{timeout, Duration};
+use tinyagents_harness::CancellationToken;
+use tokio::sync::{mpsc, watch};
+use tokio::time::{Duration, Instant};
 
 #[derive(Debug, Error)]
 pub enum OrchestrationError {
@@ -32,47 +56,86 @@ pub enum OrchestrationError {
     DefinitionNotFound(String),
     #[error("orchestration agent '{0}' not found")]
     AgentNotFound(String),
-    #[error("orchestration agent '{0}' is already terminal")]
-    AgentTerminal(String),
     #[error("agent_id and prompt are required")]
     InvalidSpawnRequest,
-    #[error("message content is required")]
-    InvalidMessage,
+    #[error("orchestration task registry unavailable: {0:?}")]
+    Registry(DetachedTaskRegistryError),
 }
+
+/// Soft cap on live children per session. Terminal entries are only swept when
+/// the table grows past this, matching [`super::running_subagents`].
+const REGISTRY_SOFT_CAP: usize = 256;
+
+/// Chunk length for an unbounded `wait_agents`. The crate's `wait` takes a
+/// concrete deadline, so a `timeout_ms: None` request loops over these until a
+/// terminal status lands — which preserves the old "wait forever" contract
+/// without inventing a fake far-future instant.
+const UNBOUNDED_WAIT_CHUNK: Duration = Duration::from_secs(3600);
+
+/// Product metadata retained alongside each detached child's executor handles.
+///
+/// `status_tx` rides in the metadata deliberately: it is what lets
+/// [`AgentOrchestrationSession::abort_all`] publish a terminal `Cancelled`
+/// status to an in-flight `wait_agents` before the crate hard-aborts the task.
+/// Without it, cancelling drops the sender and a concurrent waiter sees a closed
+/// channel instead of a cancellation.
+#[derive(Clone)]
+struct ChildMetadata {
+    agent_id: String,
+    parent_agent_id: Option<String>,
+    prompt: String,
+    created_at: String,
+    metadata: BTreeMap<String, String>,
+    status_tx: Arc<watch::Sender<ChildState>>,
+}
+
+/// Live status plus the terminal payload a snapshot reports.
+#[derive(Clone)]
+struct ChildState {
+    status: OrchestrationTaskStatus,
+    result_summary: Option<String>,
+    error: Option<String>,
+    updated_at: String,
+}
+
+impl ChildState {
+    fn pending(updated_at: String) -> Self {
+        Self {
+            status: OrchestrationTaskStatus::Pending,
+            result_summary: None,
+            error: None,
+            updated_at,
+        }
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.status.is_terminal()
+    }
+}
+
+type ChildRegistry = DetachedTaskRegistry<ChildMetadata, ChildState>;
 
 #[derive(Clone)]
 pub struct AgentOrchestrationSession {
     session_id: String,
-    state: Arc<Mutex<SessionState>>,
-    notify: Arc<Notify>,
-}
-
-#[derive(Default)]
-struct SessionState {
-    agents: HashMap<String, AgentRecord>,
-    tasks: HashMap<String, JoinHandle<()>>,
-    events: Vec<AgentOrchestrationEvent>,
-}
-
-#[derive(Clone)]
-struct AgentRecord {
-    snapshot: AgentSnapshot,
-    toolkit: Option<String>,
-    model: Option<String>,
-    progress_sink: Option<mpsc::Sender<AgentProgress>>,
+    registry: Arc<ChildRegistry>,
 }
 
 impl AgentOrchestrationSession {
-    /// Create an in-memory orchestration session.
+    /// Create an orchestration session backed by its own TinyAgents
+    /// detached-task registry.
     ///
     /// The `session_id` identifies the parent orchestration run in emitted
-    /// [`DomainEvent`] payloads. The session starts empty and remains
-    /// process-local until a future persistence layer stores snapshots.
+    /// [`DomainEvent`] payloads and is the registry's owner id, so one session
+    /// can never wait on or cancel another's children.
     pub fn new(session_id: impl Into<String>) -> Self {
         Self {
             session_id: session_id.into(),
-            state: Arc::new(Mutex::new(SessionState::default())),
-            notify: Arc::new(Notify::new()),
+            registry: Arc::new(DetachedTaskRegistry::new(
+                shared_steering_registry().clone(),
+                REGISTRY_SOFT_CAP,
+                ChildState::is_terminal,
+            )),
         }
     }
 
@@ -94,9 +157,9 @@ impl AgentOrchestrationSession {
     /// agent id or prompt, [`OrchestrationError::RegistryUnavailable`] when the
     /// agent definition registry is not initialized, or
     /// [`OrchestrationError::DefinitionNotFound`] for an unknown agent id. Side
-    /// effects include storing a pending snapshot, publishing an
-    /// [`DomainEvent::AgentOrchestrationSpawned`] event, emitting parent
-    /// progress when available, and waking waiters.
+    /// effects include registering the child in the detached-task registry,
+    /// publishing a [`DomainEvent::AgentOrchestrationSpawned`] event, and
+    /// emitting parent progress when available.
     pub async fn spawn_agent(
         &self,
         request: SpawnAgentRequest,
@@ -107,77 +170,16 @@ impl AgentOrchestrationSession {
             .await
     }
 
-    /// List all child agents currently known to this session.
-    ///
-    /// Returns cloned [`AgentSnapshot`] values ordered by creation timestamp.
-    /// This method has no fallible paths and does not mutate session state.
-    pub async fn list_agents(&self) -> Vec<AgentSnapshot> {
-        let state = self.state.lock().await;
-        let mut agents: Vec<AgentSnapshot> = state
-            .agents
-            .values()
-            .map(|record| record.snapshot.clone())
-            .collect();
-        agents.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        agents
-    }
-
-    /// Record a parent-to-child message on an orchestration record.
-    ///
-    /// `request.orchestration_id` selects the child record and
-    /// `request.content` must be non-empty after trimming. For a running child,
-    /// the snapshot status moves to [`AgentStatus::Waiting`]; terminal children
-    /// keep their terminal status so a completed child can still receive a
-    /// recorded orchestrator answer before a follow-up child is spawned.
-    ///
-    /// Returns [`OrchestrationError::InvalidMessage`] for empty content or
-    /// [`OrchestrationError::AgentNotFound`] for an unknown child id. Side
-    /// effects include appending an [`AgentMessage`], recording a
-    /// [`AgentOrchestrationEvent::MessageRecorded`] event, updating the
-    /// timestamp, and waking waiters. This records communication metadata only;
-    /// it does not inject live input into an already-running harness loop.
-    pub async fn message_agent(
-        &self,
-        request: MessageAgentRequest,
-    ) -> Result<AgentSnapshot, OrchestrationError> {
-        let content = request.content.trim();
-        if content.is_empty() {
-            return Err(OrchestrationError::InvalidMessage);
-        }
-
-        let mut state = self.state.lock().await;
-        let record = state
-            .agents
-            .get_mut(&request.orchestration_id)
-            .ok_or_else(|| OrchestrationError::AgentNotFound(request.orchestration_id.clone()))?;
-        if !record.snapshot.status.is_terminal() {
-            record.snapshot.status = AgentStatus::Waiting;
-        }
-        record.snapshot.messages.push(AgentMessage {
-            role: "parent".to_string(),
-            content: content.to_string(),
-            created_at: now(),
-        });
-        record.snapshot.updated_at = now();
-        let snapshot = record.snapshot.clone();
-        state.events.push(AgentOrchestrationEvent::MessageRecorded {
-            orchestration_id: request.orchestration_id,
-        });
-        drop(state);
-        self.notify.notify_waiters();
-        Ok(snapshot)
-    }
-
     /// Wait for one or more child agents to reach terminal status.
     ///
     /// `options.orchestration_ids` names the children to observe. An empty id
     /// list returns the current full session snapshot immediately. When
     /// `timeout_ms` is present, the wait returns a partial response with
-    /// `completed = false` after the timeout instead of failing.
+    /// `completed = false` after the timeout instead of failing; the deadline
+    /// covers the whole id list, not each child in turn.
     ///
     /// Returns [`OrchestrationError::AgentNotFound`] if any requested child id
-    /// is unknown. Side effects are limited to waiting on internal notifications;
-    /// no snapshots or events are mutated.
+    /// is unknown to this session's registry.
     pub async fn wait_agents(
         &self,
         options: WaitAgentOptions,
@@ -185,207 +187,119 @@ impl AgentOrchestrationSession {
         if options.orchestration_ids.is_empty() {
             return Ok(WaitAgentResponse {
                 completed: true,
-                agents: self.list_agents().await,
+                agents: self.all_snapshots()?,
             });
         }
 
-        let wait = async {
-            loop {
-                let agents = self.snapshots_for(&options.orchestration_ids).await?;
-                let completed = agents.iter().all(|agent| agent.status.is_terminal());
-                if completed {
-                    return Ok(WaitAgentResponse { completed, agents });
-                }
-                self.notify.notified().await;
+        let deadline = options
+            .timeout_ms
+            .map(|ms| Instant::now() + Duration::from_millis(ms));
+        let mut agents = Vec::with_capacity(options.orchestration_ids.len());
+        let mut completed = true;
+
+        for id in &options.orchestration_ids {
+            let task_id = TaskId::new(id.clone());
+            // Metadata is only retained while the entry is live, so capture it
+            // before `wait` prunes a terminal child.
+            let metadata = self
+                .registry
+                .snapshot(&task_id, &self.session_id)
+                .map_err(|err| self.lookup_error(id, err))?
+                .metadata;
+
+            let state = self.wait_one(&task_id, deadline).await?;
+            if !state.is_terminal() {
+                completed = false;
             }
-        };
-
-        match options.timeout_ms {
-            Some(ms) => match timeout(Duration::from_millis(ms), wait).await {
-                Ok(response) => response,
-                Err(_) => Ok(WaitAgentResponse {
-                    completed: false,
-                    agents: self.snapshots_for(&options.orchestration_ids).await?,
-                }),
-            },
-            None => wait.await,
+            agents.push(snapshot_of(id, &metadata, &state));
         }
+
+        Ok(WaitAgentResponse { completed, agents })
     }
 
-    /// Close a child agent record and abort its background task if present.
-    ///
-    /// `request.orchestration_id` selects the child and `request.reason`, when
-    /// present, is stored as the snapshot error/reason. Closing is terminal and
-    /// returns the updated snapshot.
-    ///
-    /// Returns [`OrchestrationError::AgentNotFound`] for an unknown child id.
-    /// Side effects include aborting the child task, marking the snapshot as
-    /// [`AgentStatus::Closed`], recording an
-    /// [`AgentOrchestrationEvent::Closed`] event, publishing
-    /// [`DomainEvent::AgentOrchestrationClosed`], and waking waiters.
-    pub async fn close_agent(
-        &self,
-        request: CloseAgentRequest,
-    ) -> Result<AgentSnapshot, OrchestrationError> {
-        let mut state = self.state.lock().await;
-        if let Some(task) = state.tasks.remove(&request.orchestration_id) {
-            task.abort();
-        }
-        let record = state
-            .agents
-            .get_mut(&request.orchestration_id)
-            .ok_or_else(|| OrchestrationError::AgentNotFound(request.orchestration_id.clone()))?;
-        record.snapshot.status = AgentStatus::Closed;
-        record.snapshot.error = request.reason.clone();
-        record.snapshot.updated_at = now();
-        let snapshot = record.snapshot.clone();
-        state.events.push(AgentOrchestrationEvent::Closed {
-            orchestration_id: request.orchestration_id.clone(),
-            reason: request.reason.clone(),
-        });
-        drop(state);
-        BUS.publish(DomainEvent::AgentOrchestrationClosed {
-            session_id: self.session_id.clone(),
-            orchestration_id: request.orchestration_id,
-            reason: request.reason,
-        });
-        self.notify.notify_waiters();
-        Ok(snapshot)
-    }
-
-    /// Abort every in-flight child task and mark non-terminal children
-    /// [`AgentStatus::Cancelled`].
+    /// Abort every in-flight child and mark non-terminal children
+    /// [`OrchestrationTaskStatus::Cancelled`].
     ///
     /// Used by the workflow engine on stop/interrupt to drain a session's
-    /// running children without going through per-child `close_agent` calls.
-    /// Idempotent — children already terminal are left untouched. Wakes waiters
-    /// so any pending `wait_agents` resolves immediately.
+    /// running children. Idempotent — the crate registry cancels the
+    /// cooperative token and the hard abort handle, and the `Cancelled` status
+    /// is published on each child's watch channel first so a concurrent
+    /// `wait_agents` resolves with a cancellation rather than a closed channel.
     pub async fn abort_all(&self) {
-        let mut state = self.state.lock().await;
-        let task_ids: Vec<String> = state.tasks.keys().cloned().collect();
-        for id in task_ids {
-            if let Some(task) = state.tasks.remove(&id) {
-                task.abort();
+        let cancelled = match self.registry.cancel_all() {
+            Ok(cancelled) => cancelled,
+            Err(err) => {
+                log::warn!("[agent_orchestration] abort_all could not drain registry: {err:?}");
+                return;
             }
-        }
-        for record in state.agents.values_mut() {
-            if !record.snapshot.status.is_terminal() {
-                record.snapshot.status = AgentStatus::Cancelled;
-                record.snapshot.updated_at = now();
-            }
-        }
-        drop(state);
-        self.notify.notify_waiters();
-    }
-
-    /// Spawn a linked follow-up child from an existing child record.
-    ///
-    /// `request.orchestration_id` identifies the previous child and
-    /// `request.prompt` is the new delegated instruction. If `request.context`
-    /// is absent, the previous child's result summary is used as follow-up
-    /// context. The new child inherits the prior child agent id, toolkit, model,
-    /// and metadata, and stores `follow_up_of` metadata plus `parent_agent_id`
-    /// pointing at the previous child.
-    ///
-    /// Returns [`OrchestrationError::NoParentContext`] outside an active parent
-    /// turn, [`OrchestrationError::AgentNotFound`] for an unknown prior child,
-    /// or any spawn-time error from [`Self::spawn_agent`]'s validation path.
-    /// Side effects match spawning a new child agent.
-    pub async fn follow_up(
-        &self,
-        request: FollowUpRequest,
-    ) -> Result<SpawnAgentResponse, OrchestrationError> {
-        let parent = current_parent().ok_or(OrchestrationError::NoParentContext)?;
-        let prior = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(&request.orchestration_id)
-                .cloned()
-                .ok_or_else(|| {
-                    OrchestrationError::AgentNotFound(request.orchestration_id.clone())
-                })?
         };
-
-        let mut metadata = prior.snapshot.metadata.clone();
-        metadata.insert(
-            "follow_up_of".to_string(),
-            prior.snapshot.orchestration_id.clone(),
+        for entry in &cancelled {
+            if entry.status.is_terminal() {
+                continue;
+            }
+            let _ = entry.metadata.status_tx.send(ChildState {
+                status: OrchestrationTaskStatus::Cancelled,
+                result_summary: entry.status.result_summary.clone(),
+                error: entry.status.error.clone(),
+                updated_at: now(),
+            });
+        }
+        log::debug!(
+            "[agent_orchestration] abort_all session={} cancelled={}",
+            self.session_id,
+            cancelled.len()
         );
-
-        let context = request
-            .context
-            .or_else(|| prior.snapshot.result_summary.clone());
-        let spawn = SpawnAgentRequest {
-            agent_id: prior.snapshot.agent_id,
-            prompt: request.prompt,
-            context,
-            toolkit: prior.toolkit,
-            model: prior.model,
-            parent_agent_id: Some(prior.snapshot.orchestration_id),
-            metadata,
-        };
-        let definition = resolve_definition(&spawn)?;
-        self.spawn_agent_with_definition(parent, definition, spawn)
-            .await
     }
 
-    /// Resume a child by spawning a linked continuation child.
-    ///
-    /// `request.orchestration_id` selects the prior child. When
-    /// `request.prompt` is absent, the previous prompt is reused; the previous
-    /// result summary or error becomes the follow-up context. This is a
-    /// convenience wrapper around [`Self::follow_up`].
-    ///
-    /// Returns [`OrchestrationError::AgentNotFound`] if the prior child is
-    /// unknown, [`OrchestrationError::NoParentContext`] if no parent turn is
-    /// active, or the same spawn-time errors as [`Self::follow_up`]. Side
-    /// effects match spawning a linked follow-up child.
-    pub async fn resume_agent(
+    /// Wait one child to a terminal status, honouring the shared `deadline`.
+    async fn wait_one(
         &self,
-        request: ResumeAgentRequest,
-    ) -> Result<SpawnAgentResponse, OrchestrationError> {
-        let prior = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(&request.orchestration_id)
-                .map(|record| record.snapshot.clone())
-                .ok_or_else(|| {
-                    OrchestrationError::AgentNotFound(request.orchestration_id.clone())
-                })?
-        };
-        self.follow_up(FollowUpRequest {
-            orchestration_id: request.orchestration_id,
-            prompt: request.prompt.unwrap_or(prior.prompt),
-            context: prior.result_summary.or(prior.error),
-        })
-        .await
+        task_id: &TaskId,
+        deadline: Option<Instant>,
+    ) -> Result<ChildState, OrchestrationError> {
+        loop {
+            let slice = match deadline {
+                Some(deadline) => deadline.saturating_duration_since(Instant::now()),
+                None => UNBOUNDED_WAIT_CHUNK,
+            };
+            let outcome = self
+                .registry
+                .wait(task_id, &self.session_id, slice)
+                .await
+                .map_err(|err| self.lookup_error(task_id.as_str(), err))?;
+            match outcome {
+                DetachedTaskWaitOutcome::Terminal(state) => return Ok(state),
+                DetachedTaskWaitOutcome::TimedOut(state) => {
+                    if deadline.is_some() {
+                        return Ok(state);
+                    }
+                    // Unbounded wait: the chunk expired, keep waiting.
+                }
+            }
+        }
     }
 
-    /// Return lifecycle events recorded by this session.
-    ///
-    /// The returned vector is a cloned snapshot of in-memory events in
-    /// insertion order. This method has no fallible paths and does not mutate
-    /// the session.
-    pub async fn events(&self) -> Vec<AgentOrchestrationEvent> {
-        self.state.lock().await.events.clone()
+    /// Every child snapshot still live in this session's registry, ordered by
+    /// creation time.
+    fn all_snapshots(&self) -> Result<Vec<AgentSnapshot>, OrchestrationError> {
+        let mut agents: Vec<AgentSnapshot> = self
+            .registry
+            .snapshots(Some(&self.session_id))
+            .map_err(OrchestrationError::Registry)?
+            .into_iter()
+            .map(|entry| snapshot_of(entry.task_id.as_str(), &entry.metadata, &entry.status))
+            .collect();
+        agents.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(agents)
     }
 
-    async fn snapshots_for(
-        &self,
-        ids: &[String],
-    ) -> Result<Vec<AgentSnapshot>, OrchestrationError> {
-        let state = self.state.lock().await;
-        ids.iter()
-            .map(|id| {
-                state
-                    .agents
-                    .get(id)
-                    .map(|record| record.snapshot.clone())
-                    .ok_or_else(|| OrchestrationError::AgentNotFound(id.clone()))
-            })
-            .collect()
+    fn lookup_error(&self, id: &str, err: DetachedTaskRegistryError) -> OrchestrationError {
+        match err {
+            DetachedTaskRegistryError::Unknown | DetachedTaskRegistryError::NotOwned => {
+                OrchestrationError::AgentNotFound(id.to_string())
+            }
+            other => OrchestrationError::Registry(other),
+        }
     }
 
     async fn spawn_agent_with_definition(
@@ -401,36 +315,17 @@ impl AgentOrchestrationSession {
         }
 
         let orchestration_id = format!("agent-{}", uuid::Uuid::new_v4());
-        let now = now();
-        let snapshot = AgentSnapshot {
-            orchestration_id: orchestration_id.clone(),
+        let created_at = now();
+        let (status_tx, status_rx) = watch::channel(ChildState::pending(created_at.clone()));
+        let status_tx = Arc::new(status_tx);
+        let metadata = ChildMetadata {
             agent_id: agent_id.clone(),
             parent_agent_id: request.parent_agent_id.clone(),
-            status: AgentStatus::Pending,
             prompt: prompt.clone(),
-            messages: Vec::new(),
-            result_summary: None,
-            error: None,
-            created_at: now.clone(),
-            updated_at: now,
+            created_at,
             metadata: request.metadata.clone(),
+            status_tx: status_tx.clone(),
         };
-        let record = AgentRecord {
-            snapshot,
-            toolkit: request.toolkit.clone(),
-            model: request.model.clone(),
-            progress_sink: parent.on_progress.clone(),
-        };
-
-        {
-            let mut state = self.state.lock().await;
-            state.agents.insert(orchestration_id.clone(), record);
-            state.events.push(AgentOrchestrationEvent::Spawned {
-                orchestration_id: orchestration_id.clone(),
-                agent_id: agent_id.clone(),
-                parent_agent_id: request.parent_agent_id.clone(),
-            });
-        }
 
         BUS.publish(DomainEvent::AgentOrchestrationSpawned {
             session_id: self.session_id.clone(),
@@ -439,7 +334,8 @@ impl AgentOrchestrationSession {
             parent_agent_id: request.parent_agent_id,
         });
 
-        if let Some(progress) = parent.on_progress.clone() {
+        let progress_sink = parent.on_progress.clone();
+        if let Some(progress) = progress_sink.clone() {
             let resolved_display_name = AgentDefinitionRegistry::global()
                 .and_then(|reg| reg.get(&agent_id))
                 .map(|def| def.display_name().to_string());
@@ -482,145 +378,187 @@ impl AgentOrchestrationSession {
             checkpoint_dir: None,
             worktree_action_dir: parent_worktree_action_dir,
             workspace_descriptor: parent_workspace_descriptor,
+            // Not a dropped value: this is the harness's mid-run steering
+            // channel, and this path has never offered live steering — the
+            // orchestration control plane's `message_agent` recorded metadata
+            // only, and it is gone. The child's *registry* entry does carry a
+            // cooperative `CancellationToken` and an `AbortHandle` below, which
+            // is what `abort_all` uses.
             run_queue: None,
         };
 
-        let task_session = self.clone();
+        let session = self.clone();
         let task_id = orchestration_id.clone();
+        let task_status_tx = status_tx.clone();
+        let task_agent_id = agent_id.clone();
         // Captured on *this* task: a `tokio::task_local` does not cross
         // `tokio::spawn`, so the turn's origin label and workspace root are
         // carried across the same boundary the parent execution context
         // already is. Without the origin the spawned agent's external-effect
         // tools reach the approval gate unlabelled and are refused.
-        let task = tokio::spawn(crate::openhuman::agent::turn_origin::propagate(
+        let handle = tokio::spawn(crate::openhuman::agent::turn_origin::propagate(
             crate::openhuman::agent::turn_workspace::propagate(async move {
-                task_session.mark_running(&task_id).await;
+                mark_running(&task_status_tx);
                 let result = with_parent_context(parent, async move {
                     run_subagent(&definition, &prompt, options).await
                 })
                 .await;
-                task_session.finish_agent(&task_id, result).await;
+                session
+                    .finish_agent(
+                        &task_id,
+                        &task_agent_id,
+                        &task_status_tx,
+                        progress_sink,
+                        result,
+                    )
+                    .await;
             }),
         ));
 
-        {
-            let mut state = self.state.lock().await;
-            state.tasks.insert(orchestration_id.clone(), task);
-        }
-        self.notify.notify_waiters();
+        self.registry
+            .register(
+                TaskId::new(orchestration_id.clone()),
+                self.session_id.clone(),
+                metadata,
+                status_rx,
+                CancellationToken::new(),
+                handle.abort_handle(),
+            )
+            .map_err(|err| {
+                log::error!("[agent_orchestration] duplicate detached child id: {err}");
+                // Registration failed, so the registry holds no record of this
+                // task and `abort_all`/`cancel_all` can never reach it. Dropping
+                // `handle` here would only detach the `JoinHandle` — the spawned
+                // task keeps running orphaned. Abort it explicitly so a failed
+                // spawn never leaves a live, unreachable child behind.
+                handle.abort();
+                OrchestrationError::InvalidSpawnRequest
+            })?;
+
+        log::debug!(
+            "[agent_orchestration] spawned session={} orchestration_id={} agent_id={}",
+            self.session_id,
+            orchestration_id,
+            agent_id
+        );
 
         Ok(SpawnAgentResponse {
             orchestration_id,
             agent_id,
-            status: AgentStatus::Pending,
+            status: OrchestrationTaskStatus::Pending,
         })
-    }
-
-    async fn mark_running(&self, orchestration_id: &str) {
-        let mut state = self.state.lock().await;
-        if let Some(record) = state.agents.get_mut(orchestration_id) {
-            if !record.snapshot.status.is_terminal() {
-                record.snapshot.status = AgentStatus::Running;
-                record.snapshot.updated_at = now();
-            }
-        }
-        drop(state);
-        self.notify.notify_waiters();
     }
 
     async fn finish_agent(
         &self,
         orchestration_id: &str,
+        agent_id: &str,
+        status_tx: &watch::Sender<ChildState>,
+        progress_sink: Option<mpsc::Sender<AgentProgress>>,
         result: Result<SubagentRunOutcome, crate::openhuman::agent::harness::SubagentRunError>,
     ) {
-        let mut completed_event = None;
-        let mut failed_event = None;
-        let mut progress_event = None;
-        let mut state = self.state.lock().await;
-        state.tasks.remove(orchestration_id);
-        if let Some(record) = state.agents.get_mut(orchestration_id) {
-            if record.snapshot.status == AgentStatus::Closed {
-                drop(state);
-                self.notify.notify_waiters();
-                return;
-            }
-            match result {
-                Ok(outcome) => {
-                    record.snapshot.status = AgentStatus::Completed;
-                    record.snapshot.result_summary = Some(outcome.output.clone());
-                    record.snapshot.updated_at = now();
-                    let event = AgentOrchestrationEvent::Completed {
-                        orchestration_id: orchestration_id.to_string(),
-                        output_chars: outcome.output.chars().count(),
-                        iterations: outcome.iterations,
-                    };
-                    if let Some(progress) = record.progress_sink.clone() {
-                        progress_event = Some((
-                            progress,
-                            AgentProgress::SubagentCompleted {
-                                agent_id: outcome.agent_id.clone(),
-                                task_id: orchestration_id.to_string(),
-                                elapsed_ms: outcome.elapsed.as_millis() as u64,
-                                iterations: outcome.iterations as u32,
-                                output_chars: outcome.output.chars().count(),
-                                output: outcome.output.clone(),
-                                worktree_path: None,
-                                changed_files: Vec::new(),
-                                dirty_status: None,
-                            },
-                        ));
-                    }
-                    completed_event = Some((outcome, event.clone()));
-                    state.events.push(event);
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    record.snapshot.status = AgentStatus::Failed;
-                    record.snapshot.error = Some(message.clone());
-                    record.snapshot.updated_at = now();
-                    let event = AgentOrchestrationEvent::Failed {
-                        orchestration_id: orchestration_id.to_string(),
-                        error: message.clone(),
-                    };
-                    if let Some(progress) = record.progress_sink.clone() {
-                        progress_event = Some((
-                            progress,
-                            AgentProgress::SubagentFailed {
-                                agent_id: record.snapshot.agent_id.clone(),
-                                task_id: orchestration_id.to_string(),
-                                error: message.clone(),
-                            },
-                        ));
-                    }
-                    failed_event = Some((record.snapshot.agent_id.clone(), message, event.clone()));
-                    state.events.push(event);
-                }
-            }
+        // A cancelled child has already reached a terminal status via
+        // `abort_all`; do not overwrite it with a late completion.
+        if status_tx.borrow().is_terminal() {
+            return;
         }
-        drop(state);
 
-        if let Some((outcome, _)) = completed_event {
-            BUS.publish(DomainEvent::AgentOrchestrationCompleted {
-                session_id: self.session_id.clone(),
-                orchestration_id: orchestration_id.to_string(),
-                agent_id: outcome.agent_id,
-                elapsed_ms: outcome.elapsed.as_millis() as u64,
-                output_chars: outcome.output.chars().count(),
-                iterations: outcome.iterations,
-            });
+        match result {
+            Ok(outcome) => {
+                let _ = status_tx.send(ChildState {
+                    status: OrchestrationTaskStatus::Completed,
+                    result_summary: Some(outcome.output.clone()),
+                    error: None,
+                    updated_at: now(),
+                });
+                BUS.publish(DomainEvent::AgentOrchestrationCompleted {
+                    session_id: self.session_id.clone(),
+                    orchestration_id: orchestration_id.to_string(),
+                    agent_id: outcome.agent_id.clone(),
+                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                    output_chars: outcome.output.chars().count(),
+                    iterations: outcome.iterations,
+                });
+                if let Some(progress) = progress_sink {
+                    let _ = progress
+                        .send(AgentProgress::SubagentCompleted {
+                            agent_id: outcome.agent_id.clone(),
+                            task_id: orchestration_id.to_string(),
+                            elapsed_ms: outcome.elapsed.as_millis() as u64,
+                            iterations: outcome.iterations as u32,
+                            output_chars: outcome.output.chars().count(),
+                            output: outcome.output.clone(),
+                            // Not a dropped value: these three describe a
+                            // worker's *own* isolated checkout, and this path
+                            // never creates one — it only inherits the parent's
+                            // descriptor (above). `spawn_parallel_agents`
+                            // populates them from the descriptor it freshly
+                            // created per worker, and reports `None` for an
+                            // inherited one for the same reason.
+                            worktree_path: None,
+                            changed_files: Vec::new(),
+                            dirty_status: None,
+                        })
+                        .await;
+                }
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let _ = status_tx.send(ChildState {
+                    status: OrchestrationTaskStatus::Failed,
+                    result_summary: None,
+                    error: Some(message.clone()),
+                    updated_at: now(),
+                });
+                BUS.publish(DomainEvent::AgentOrchestrationFailed {
+                    session_id: self.session_id.clone(),
+                    orchestration_id: orchestration_id.to_string(),
+                    agent_id: agent_id.to_string(),
+                    error: message.clone(),
+                });
+                if let Some(progress) = progress_sink {
+                    let _ = progress
+                        .send(AgentProgress::SubagentFailed {
+                            agent_id: agent_id.to_string(),
+                            task_id: orchestration_id.to_string(),
+                            error: message,
+                        })
+                        .await;
+                }
+            }
         }
-        if let Some((agent_id, error, _)) = failed_event {
-            BUS.publish(DomainEvent::AgentOrchestrationFailed {
-                session_id: self.session_id.clone(),
-                orchestration_id: orchestration_id.to_string(),
-                agent_id,
-                error,
-            });
+    }
+}
+
+/// Publish `Running` unless the child already reached a terminal status.
+fn mark_running(status_tx: &watch::Sender<ChildState>) {
+    let updated_at = now();
+    status_tx.send_if_modified(|state| {
+        if state.is_terminal() || state.status == OrchestrationTaskStatus::Running {
+            return false;
         }
-        if let Some((progress, event)) = progress_event {
-            let _ = progress.send(event).await;
-        }
-        self.notify.notify_waiters();
+        state.status = OrchestrationTaskStatus::Running;
+        state.updated_at = updated_at;
+        true
+    });
+}
+
+fn snapshot_of(
+    orchestration_id: &str,
+    metadata: &ChildMetadata,
+    state: &ChildState,
+) -> AgentSnapshot {
+    AgentSnapshot {
+        orchestration_id: orchestration_id.to_string(),
+        agent_id: metadata.agent_id.clone(),
+        parent_agent_id: metadata.parent_agent_id.clone(),
+        status: state.status,
+        prompt: metadata.prompt.clone(),
+        result_summary: state.result_summary.clone(),
+        error: state.error.clone(),
+        created_at: metadata.created_at.clone(),
+        updated_at: state.updated_at.clone(),
+        metadata: metadata.metadata.clone(),
     }
 }
 
@@ -639,49 +577,4 @@ fn resolve_definition(request: &SpawnAgentRequest) -> Result<AgentDefinition, Or
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_statuses_are_explicit() {
-        assert!(AgentStatus::Completed.is_terminal());
-        assert!(AgentStatus::Failed.is_terminal());
-        assert!(AgentStatus::Cancelled.is_terminal());
-        assert!(AgentStatus::Closed.is_terminal());
-        assert!(!AgentStatus::Pending.is_terminal());
-        assert!(!AgentStatus::Running.is_terminal());
-        assert!(!AgentStatus::Waiting.is_terminal());
-    }
-
-    #[tokio::test]
-    async fn empty_wait_lists_current_agents() {
-        let session = AgentOrchestrationSession::new("test-session");
-        let response = session
-            .wait_agents(WaitAgentOptions {
-                orchestration_ids: Vec::new(),
-                timeout_ms: Some(1),
-            })
-            .await
-            .unwrap();
-
-        assert!(response.completed);
-        assert!(response.agents.is_empty());
-    }
-
-    #[tokio::test]
-    async fn unknown_wait_target_returns_not_found() {
-        let session = AgentOrchestrationSession::new("test-session");
-        let err = session
-            .wait_agents(WaitAgentOptions {
-                orchestration_ids: vec!["missing".to_string()],
-                timeout_ms: Some(1),
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, OrchestrationError::AgentNotFound(id) if id == "missing"));
-    }
 }

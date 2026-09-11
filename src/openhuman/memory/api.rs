@@ -52,11 +52,13 @@
 //! - **`null`** is `NullMemoryProvider`, the fallback bound by
 //!   `memory::binding` when no module driver is available. It is what runs
 //!   when nothing crosses the bus, which makes it the opposite of contract.
-//! - **`traits`**, **`version`** (as a module path) and **`is_compatible`** had
-//!   no use anywhere in `src/`; they were alias surface only. Version
-//!   negotiation is done through [`CONTRACT_VERSION`], which `memory::binding`
-//!   and `memory::ops::provider` compare against the driver's reported
-//!   contract, so that constant stays.
+//! - **`traits`** is the engine-embedding scaffolding (`Memory` supertrait and
+//!   its provider helpers). It is not wire vocabulary and never crosses a bus
+//!   boundary. `memory::mod` re-exports `tinymemory_api::traits::Memory`
+//!   directly for the handful of in-process callers that need it; reaching it
+//!   through this facade would make engine-only scaffolding appear to be contract
+//!   surface. **`version`** (as a module path) and **`is_compatible`** likewise
+//!   had no bus use; version negotiation uses [`CONTRACT_VERSION`] directly.
 //!
 //! Everything else is re-exported as a whole namespace on purpose: each of
 //! `capabilities`, `chunks`, `error`, `goals`, `health`, `provider` (with its
@@ -78,18 +80,28 @@ pub use tinymemory_api::{
     CONTRACT_VERSION,
 };
 
-/// The inbound half of the seam: the only two `tinymemory_api::host` types that
-/// cross the bus, rather than the whole engine-embedding namespace.
+/// The inbound half of the seam: the `tinymemory_api::host` types that cross
+/// the bus, named one at a time rather than as the whole engine-embedding
+/// namespace.
 ///
-/// `modules/memory_host.rs` serves two of them — [`MemoryEvent`] is what the
-/// module publishes back into the host's event bus, and [`SpacyResponse`]
-/// answers the module's NLP callback. [`EvidenceRef`] joined them with the
-/// `Profile` capability family: it is not a callback type, but it is a field of
-/// `provider::profile::ProfileFacet`, so it crosses the bus in both directions
-/// whenever a facet does. That is the same rule the rest of this list follows —
-/// what actually crosses — and it is why the entry is here rather than being
-/// named on the crate at each call site. The rest of `tinymemory_api::host` is
-/// the in-process engine seam and must still be named on the crate.
+/// `modules/memory_host.rs` serves the callbacks two of them belong to —
+/// [`MemoryEvent`] is what the module publishes back into the host's event bus,
+/// and [`SpacyResponse`] answers the module's NLP callback. [`EvidenceRef`]
+/// joined them with the `Profile` capability family: it is not a callback type,
+/// but it is a field of `provider::profile::ProfileFacet`, so it crosses the bus
+/// in both directions whenever a facet does. [`ComposioConnection`] and
+/// [`ComposioExecuteResponse`] joined them with the `ComposioHost` interface:
+/// they are what `ListConnections` and `Execute` reply with once Composio is
+/// reached over the bus instead of through the in-process engine.
+///
+/// That is the same rule the rest of this list follows — what actually crosses
+/// — and it is why these entries are here rather than being named on the crate
+/// at each call site. It is also why `host::composio` is *not* re-exported
+/// whole: that namespace carries toolkits, catalog entries, GitHub repos and
+/// trigger payloads, none of which this seam moves. The rest of
+/// `tinymemory_api::host` is the in-process engine seam and must still be named
+/// on the crate.
 pub mod host {
+    pub use tinyconnectors_bus::{ComposioConnection, ComposioExecuteResponse};
     pub use tinymemory_api::host::{EvidenceRef, MemoryEvent, SpacyResponse};
 }

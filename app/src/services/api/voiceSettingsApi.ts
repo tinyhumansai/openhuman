@@ -221,14 +221,35 @@ function stripLogPrefix(s: string): string {
   return s.replace(/^\[voice-(?:stt|tts|factory)\]\s*/i, '');
 }
 
+/**
+ * Test a voice provider.
+ *
+ * With `validateOnly`, the core does a lightweight authenticated GET instead of
+ * a real transcription/synthesis, and `apiKey` lets the caller check a key the
+ * user has typed but not yet saved — the key is validated and discarded, never
+ * written to the keychain (#5896).
+ */
 export async function testVoiceProvider(
   workload: VoiceWorkloadId,
   provider: string,
-  validateOnly = false
+  validateOnly = false,
+  apiKey?: string
 ): Promise<VoiceTestResult> {
   const result = await callCoreRpc<VoiceTestResult>({
     method: 'openhuman.voice_test_provider',
-    params: { workload, provider, validate_only: validateOnly },
+    params: {
+      workload,
+      provider,
+      validate_only: validateOnly,
+      // Omit rather than send an empty string: the core reads an empty
+      // candidate as "fall back to the stored credential", and sending one
+      // for a provider with no stored key would report a confusing
+      // "no API key configured" instead of the real validation result.
+      // Trimmed on the way out so the guard and the payload agree — a key
+      // pasted with a trailing newline should be tested as the key the user
+      // will actually save, not as a different string.
+      ...(apiKey?.trim() ? { api_key: apiKey.trim() } : {}),
+    },
     timeoutMs: VOICE_TEST_TIMEOUT_MS,
   });
   return { ...result, detail: stripLogPrefix(result.detail) };

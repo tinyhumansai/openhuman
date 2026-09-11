@@ -5,7 +5,6 @@ import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import {
   clickLabelContaining,
-  clickSelector,
   clickText,
   textExists,
   waitForText,
@@ -15,13 +14,6 @@ import { navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-settings-advanced-config';
-
-async function readLocalStorageJson<T = unknown>(key: string): Promise<T | null> {
-  return await browser.execute(storageKey => {
-    const raw = window.localStorage.getItem(storageKey);
-    return raw ? JSON.parse(raw) : null;
-  }, key);
-}
 
 describe('Settings - Advanced Config', function () {
   this.timeout(90_000);
@@ -48,32 +40,19 @@ describe('Settings - Advanced Config', function () {
     await waitForText('Restart Tour', 15_000);
   });
 
-  it('persists notification routing settings through core RPC', async function () {
+  it('toggles the surviving notification preference control', async function () {
     this.timeout(60_000);
-    const before = await callOpenhumanRpc('openhuman.notification_settings_get', {
-      provider: 'gmail',
-    });
-    expect(before.ok).toBe(true);
-    const initialEnabled = Boolean(before.result?.settings?.enabled);
-
-    // /settings/notification-routing now redirects to
-    // /settings/notifications#routing (the Routing tab on the tabbed
-    // Notifications panel). Navigate to the tabbed panel directly and click
-    // the Routing tab so we land on the same content the legacy path used to
-    // render.
     await navigateViaHash('/settings/notifications');
-    await clickText('Routing', 10_000);
-    await waitForText('Notification Intelligence', 15_000);
-    await clickSelector('input[type="checkbox"]');
+    const toggle = await browser.$('[aria-label="Toggle Messages notifications"]');
+    await toggle.waitForExist({ timeout: 15_000 });
+    const initiallyEnabled = await toggle.getAttribute('aria-checked');
+    await toggle.click();
 
     await browser.waitUntil(
       async () => {
-        const after = await callOpenhumanRpc('openhuman.notification_settings_get', {
-          provider: 'gmail',
-        });
-        return after.ok && Boolean(after.result?.settings?.enabled) === !initialEnabled;
+        return (await toggle.getAttribute('aria-checked')) !== initiallyEnabled;
       },
-      { timeout: 15_000, interval: 500, timeoutMsg: 'notification routing did not persist' }
+      { timeout: 15_000, interval: 250, timeoutMsg: 'notification preference did not toggle' }
     );
   });
 
@@ -225,57 +204,19 @@ describe('Settings - Advanced Config', function () {
     expect(backend.result?.result?.api_key_set).toBe(false);
   });
 
-  it('persists agent chat draft state to localStorage', async function () {
+  it('redirects retired agent chat debug links to the LLM settings surface', async function () {
     this.timeout(90_000);
     await navigateViaHash('/settings/agent-chat');
-
-    await waitForText('Overrides', 15_000);
-
-    // Use the native value setter + React change event to drive controlled
-    // inputs. WebDriver's setValue clears the field but does not always
-    // trigger React's synthetic onChange on controlled inputs.
-    const setReactInput = async (selector: string, value: string) => {
-      await browser.execute(
-        (sel: string, val: string) => {
-          const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel);
-          if (!el) return;
-          const setter = Object.getOwnPropertyDescriptor(
-            el instanceof HTMLTextAreaElement
-              ? window.HTMLTextAreaElement.prototype
-              : window.HTMLInputElement.prototype,
-            'value'
-          )?.set;
-          if (setter) setter.call(el, val);
-          else el.value = val;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        },
-        selector,
-        value
-      );
-    };
-
-    await setReactInput('input[placeholder="gpt-4o"]', 'gpt-4.1-mini');
-    await setReactInput('input[placeholder="0.7"]', '0.2');
-    await browser.pause(500);
-
-    await browser.waitUntil(
-      async () => {
-        const payload = await readLocalStorageJson<{
-          modelOverride?: string;
-          temperature?: string;
-          messages?: Array<{ role: string; text: string }>;
-        }>('openhuman.settings.agentChat.history');
-        return payload?.modelOverride === 'gpt-4.1-mini' && payload?.temperature === '0.2';
-      },
-      { timeout: 20_000, interval: 500, timeoutMsg: 'agent chat draft did not persist' }
-    );
+    const providersTab = await browser.$('[data-testid="ai-tab-providers"]');
+    await providersTab.waitForExist({ timeout: 15_000 });
+    expect(await providersTab.isDisplayed()).toBe(true);
   });
 
   it('mounts the remaining advanced settings routes', async function () {
     this.timeout(90_000);
     await navigateViaHash('/settings/local-model-debug');
-    await waitForText('Local Model Debug', 15_000);
+    const providersTab = await browser.$('[data-testid="ai-tab-providers"]');
+    await providersTab.waitForExist({ timeout: 15_000 });
 
     await navigateViaHash('/settings/about');
     await waitForText('Software updates', 15_000);

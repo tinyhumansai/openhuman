@@ -8,7 +8,7 @@
 //!
 //! ## Capabilities cross the wire as opaque strings, never as a typed set
 //!
-//! A memory driver's typed set (`crate::openhuman::memory::api::capabilities::Capabilities`)
+//! A memory driver's typed set (`tinymemory_api::capabilities::Capabilities`)
 //! is a `u16` bitset whose `Deserialize` rejects the **whole** array on a
 //! single unrecognised family string. A driver speaking a newer minor contract
 //! may legitimately advertise a family this build has never heard of, and

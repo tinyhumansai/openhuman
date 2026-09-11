@@ -485,6 +485,58 @@ fn deserialize_voice_test_provider_params() {
     let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
     assert_eq!(parsed.workload, "stt");
     assert_eq!(parsed.provider, "deepgram:nova-2");
+    // Absent `api_key` means "use the stored credential", not "empty key".
+    assert_eq!(parsed.api_key, None);
+    assert!(!parsed.validate_only);
+}
+
+#[test]
+fn deserialize_voice_test_provider_params_accepts_candidate_key() {
+    let params = Map::from_iter([
+        ("workload".to_string(), json!("stt")),
+        ("provider".to_string(), json!("elevenlabs")),
+        ("validate_only".to_string(), json!(true)),
+        ("api_key".to_string(), json!("sk-candidate-not-yet-saved")),
+    ]);
+    let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
+    assert!(parsed.validate_only);
+    assert_eq!(
+        parsed.api_key.as_deref(),
+        Some("sk-candidate-not-yet-saved")
+    );
+}
+
+#[test]
+fn voice_test_provider_params_debug_redacts_the_candidate_key() {
+    let params = Map::from_iter([
+        ("workload".to_string(), json!("stt")),
+        ("provider".to_string(), json!("elevenlabs")),
+        ("api_key".to_string(), json!("sk-super-secret-value")),
+    ]);
+    let parsed = deserialize_params::<VoiceTestProviderParams>(params).unwrap();
+    let rendered = format!("{parsed:?}");
+    assert!(
+        !rendered.contains("sk-super-secret-value"),
+        "Debug must never render the raw key: {rendered}"
+    );
+    assert!(rendered.contains("[REDACTED]"), "got: {rendered}");
+    // The non-secret fields still have to be debuggable, or the manual impl
+    // has traded a leak for an undiagnosable handler.
+    assert!(rendered.contains("elevenlabs"), "got: {rendered}");
+}
+
+#[test]
+fn test_provider_schema_exposes_the_dry_run_candidate_key() {
+    let s = voice_schemas("voice_test_provider");
+    let api_key = s
+        .inputs
+        .iter()
+        .find(|i| i.name == "api_key")
+        .expect("voice_test_provider must accept a candidate api_key for the dry run");
+    assert!(
+        !api_key.required,
+        "api_key is optional — omitting it means 'use the stored credential'"
+    );
 }
 
 #[test]
@@ -530,4 +582,67 @@ fn set_providers_params_all_optional() {
     assert!(parsed.tts_provider.is_none());
     assert!(parsed.stt_model.is_none());
     assert!(parsed.tts_voice.is_none());
+}
+
+// ── `validate_provider_key`: the candidate-key half of #5947 ────────────────
+//
+// `validate_provider_key` had no test caller at all — the only references in
+// the tree were its definition and the one handler call site. What that left
+// unpinned is the branch the "Test Key" button exists for: a key the user has
+// just typed, for a provider they have not saved yet, must be the key that
+// gets validated. Invert the two match arms and the modal silently validates
+// whatever was already stored (or reports "no API key configured" for a key the
+// user is looking at), while still answering `ok` — a wrong answer about a
+// credential, which is the worst shape this code can fail in.
+//
+// `127.0.0.1:1` is the observation trick: it refuses immediately, so "the
+// validator got past the key check and tried to reach the provider" is
+// distinguishable from "the validator stopped at the key check" with no mock
+// server, no network and no wall-clock cost.
+
+fn candidate_precedence_config(slug: &str) -> crate::openhuman::config::Config {
+    use crate::openhuman::config::schema::voice_providers::VoiceProviderCreds;
+
+    let mut config = crate::openhuman::config::Config::default();
+    config.voice_providers.push(VoiceProviderCreds {
+        slug: slug.to_string(),
+        endpoint: "http://127.0.0.1:1".to_string(),
+        ..Default::default()
+    });
+    config
+}
+
+/// A candidate key must win over an absent stored key (#5947, #5896).
+#[tokio::test]
+async fn validate_provider_key_prefers_the_candidate_over_an_absent_stored_key() {
+    let slug = "e2e-candidate-precedence";
+    let config = candidate_precedence_config(slug);
+
+    // Nothing stored, no candidate: the validator must stop at the key check.
+    // This is the control — it proves the slug resolves and that the "no key"
+    // answer is what the absent-key path produces.
+    let without = super::helpers::validate_provider_key(slug, &config, None)
+        .await
+        .expect_err("no key anywhere cannot be a valid provider");
+    assert!(
+        without.contains("no API key configured"),
+        "control: with nothing stored and no candidate the validator must stop \
+         at the key check, got {without:?}"
+    );
+
+    // Same config, same absent stored key — only a candidate is added.
+    let with =
+        super::helpers::validate_provider_key(slug, &config, Some("candidate-not-yet-saved"))
+            .await
+            .expect_err("127.0.0.1:1 refuses, so the request cannot succeed");
+    assert!(
+        !with.contains("no API key configured"),
+        "a candidate key must be used when nothing is stored for the slug; \
+         got {with:?}, which means the candidate was ignored and the absent \
+         stored key won — the modal would report on a key the user never typed"
+    );
+    assert!(
+        with.contains("request failed"),
+        "the candidate must carry the validator through to the provider request, got {with:?}"
+    );
 }

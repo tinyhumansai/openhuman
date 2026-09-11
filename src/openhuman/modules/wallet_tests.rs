@@ -7,8 +7,8 @@
 //! themselves are covered where they can be honest: `tinywallet`'s own loader
 //! E2E, which drives a real module over a real broker.
 
-use tinywallet::wire::{Scheme, Signature, SigningPayload, TransactionSpec};
-use tinywallet::Chain;
+use tinywallet_bus::wire::TransactionSpec;
+use tinywallet_bus::Chain;
 
 use super::{classify, WalletCallError};
 use crate::openhuman::config::Config;
@@ -37,8 +37,8 @@ fn failure(name: &str) -> tinybus::Error {
 ///
 /// No key is derived here any more: the module does that. This is the request,
 /// not the secret it produces.
-fn evm_signing_secret() -> tinywallet::wire::SecretMaterial {
-    tinywallet::wire::SecretMaterial {
+fn evm_signing_secret() -> tinywallet_bus::wire::SecretMaterial {
+    tinywallet_bus::wire::SecretMaterial {
         mnemonic: VECTOR.to_string(),
         derivation_path: "m/44'/60'/0'/0/0".to_string(),
         chain: Chain::Evm,
@@ -161,6 +161,14 @@ mod attestation_guard {
     }
 
     #[test]
+    fn the_attested_linux_release_library_is_accepted() {
+        assert!(digest_is_pinned(
+            record(),
+            "2bd70433707c44dbfe6b3cc3b4cc835299fe951fcb375b49c940d8d3fc1d4061"
+        ));
+    }
+
+    #[test]
     fn a_digest_this_build_did_not_pin_is_refused() {
         // The case that matters: an artifact the host attested but this build
         // never named. Without the check, "the host vouched for something"
@@ -196,7 +204,7 @@ mod attestation_guard {
 /// These assert the two shapes are genuinely distinct, so the wrapper cannot be
 /// dropped again without a test failing.
 mod request_shapes {
-    use tinywallet::wire::{ExportRequest, SecretMaterial, SignMessageRequest, SignRequest};
+    use tinywallet_bus::wire::{ExportRequest, SecretMaterial, SignMessageRequest, SignRequest};
 
     fn secret() -> SecretMaterial {
         super::evm_signing_secret()
@@ -223,14 +231,14 @@ mod request_shapes {
         let sign_message = serde_json::to_value(SignMessageRequest {
             secret: secret(),
             message_hex: "00".repeat(32),
-            scheme: tinywallet::wire::Scheme::Secp256k1Prehash,
+            scheme: tinywallet_bus::wire::Scheme::Secp256k1Prehash,
         })
         .unwrap();
         assert!(serde_json::from_value::<SignRequest>(sign_message).is_err());
         assert!(serde_json::from_value::<ExportRequest>(
             serde_json::to_value(SignRequest {
                 secret: secret(),
-                transaction: tinywallet::wire::TransactionSpec::Evm {
+                transaction: tinywallet_bus::wire::TransactionSpec::Evm {
                     to: format!("0x{}", "11".repeat(20)),
                     value_wei: "1".to_string(),
                     data_hex: "0x".to_string(),
@@ -243,5 +251,63 @@ mod request_shapes {
             .unwrap()
         )
         .is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The contract this client compiles against
+// ---------------------------------------------------------------------------
+
+/// `registry.rs` is a compiled-in `const` table, and it cannot name a gated
+/// crate: its `bus_name` and `object_path` are string literals sitting next to
+/// the module's own spelling of them with nothing between the two. A mismatch is
+/// therefore not a compile error — it is a `NameHasNoOwner` at first use, in the
+/// field, on whichever platform nobody tested. These two tests are what stands
+/// in for the compiler.
+mod contract {
+    use crate::openhuman::modules::registry;
+
+    #[test]
+    fn the_registry_entry_matches_the_interface_this_client_calls() {
+        let record = registry::find("tinywallet").expect("the tinywallet record is compiled in");
+        assert_eq!(record.bus_name, tinywallet_bus::BUS_NAME);
+        assert_eq!(record.object_path, tinywallet_bus::OBJECT_PATH);
+        assert!(
+            record.object_path.starts_with('/') && !record.object_path.contains('.'),
+            "an object path with a dot in it is rejected by the loader, not by the compiler"
+        );
+    }
+
+    #[test]
+    fn every_member_this_client_calls_is_one_the_contract_declares() {
+        // The direction that matters. A name this host sends that the module
+        // does not serve fails at call time with nothing to catch it earlier;
+        // the reverse — a member the module serves and this host never calls —
+        // is fine, and two of them are exactly that. `BuildUnsigned` and
+        // `AttachSignature` are the two-round-trip flow for a backend that
+        // cannot be trusted with a key, which does not apply to a module whose
+        // artifact this build hashed, so the confidential members are the ones
+        // used here.
+        use tinywallet_bus::names::methods;
+
+        let called = [
+            methods::SIGN_TRANSACTION,
+            methods::DERIVE_ACCOUNT,
+            methods::SIGN_MESSAGE,
+            methods::EXPORT_KEY,
+        ];
+        for member in called {
+            assert!(
+                tinywallet_bus::METHODS.contains(&member),
+                "{member} is not a member of {}",
+                tinywallet_bus::BUS_NAME
+            );
+            // And every one of them carries a recovery phrase, so every one has
+            // to go out over a confidential call rather than a plain one.
+            assert!(
+                tinywallet_bus::CONFIDENTIAL_METHODS.contains(&member),
+                "{member} is called confidentially but not declared confidential"
+            );
+        }
     }
 }

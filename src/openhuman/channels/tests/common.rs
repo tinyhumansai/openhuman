@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
-use tinyagents::harness::message::{AssistantMessage, Message};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall;
+use tinyinference::message::{AssistantMessage, Message};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall;
 
 fn message_role(message: &Message) -> &'static str {
     match message {
@@ -93,7 +93,7 @@ impl ChatModel<()> for DummyModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         Ok(ModelResponse::assistant("ok"))
     }
 }
@@ -182,7 +182,7 @@ impl ChatModel<()> for SlowModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         tokio::time::sleep(self.delay).await;
         let message = request
             .messages
@@ -207,7 +207,7 @@ impl ChatModel<()> for ToolCallingModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         let has_tool_results = request.messages.iter().any(|message| {
             matches!(message, Message::Tool(_)) || message.text().contains("[Tool results]")
         });
@@ -246,7 +246,7 @@ impl ChatModel<()> for IterativeToolModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         let completed_iterations = Self::completed_tool_iterations(&request.messages);
         if completed_iterations >= self.required_tool_iterations {
             Ok(ModelResponse::assistant(format!(
@@ -273,7 +273,7 @@ impl ChatModel<()> for HistoryCaptureModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         let snapshot = request
             .messages
             .iter()
@@ -312,7 +312,7 @@ impl ChatModel<()> for ModelCaptureModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.models
             .lock()

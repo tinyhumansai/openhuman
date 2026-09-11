@@ -11,9 +11,11 @@ import {
   diffForwarding,
   INTENTIONALLY_NOT_FORWARDED,
   parseCoreDefaultFeatures,
+  parseCoreFeatureGraph,
   parseCoreFeatureNames,
   parseProductFeatures,
   parseShellForwardedFeatures,
+  resolveEnabledFeatures,
   stripComments,
 } from '../lib/feature-forwarding.mjs';
 
@@ -343,4 +345,134 @@ test('the real shell manifest forwards every real core default', () => {
       `core default gate not forwarded to the shell: ${gate}`
     );
   }
+});
+
+// ── feature graph ──────────────────────────────────────────────────────────
+
+test('parses the whole feature table, default included', () => {
+  const toml = `
+[features]
+default = ["media", "modules"]
+documents = ["modules", "dep:tinydocs-bus"]
+modules = ["tinybus/modules"]
+
+[dependencies]
+serde = "1"
+documents = ["not-a-feature"]
+`;
+  const graph = parseCoreFeatureGraph(toml);
+
+  assert.deepEqual(graph.get('default'), ['media', 'modules']);
+  assert.deepEqual(graph.get('documents'), ['modules', 'dep:tinydocs-bus']);
+  // Bounded at the next table header, so a `[dependencies]` key of the same
+  // name cannot overwrite a real gate's dependency list.
+  assert.equal(graph.size, 3);
+});
+
+test('resolves a gate enabled only through another gate', () => {
+  const graph = parseCoreFeatureGraph(`
+[features]
+default = ["documents"]
+documents = ["modules"]
+modules = []
+`);
+
+  const enabled = resolveEnabledFeatures(graph, ['default']);
+
+  // `modules` is nowhere in `default`; a direct membership test would read it
+  // as OFF while cargo compiles it in.
+  assert.ok(enabled.has('modules'), 'expected a transitively enabled gate to resolve as ON');
+  assert.ok(enabled.has('documents'));
+  assert.ok(!enabled.has('voice'), 'expected an unrelated gate to stay OFF');
+});
+
+test('does not mistake dependency activations for local gates', () => {
+  const graph = parseCoreFeatureGraph(`
+[features]
+default = ["modules"]
+modules = ["tinybus/modules", "dep:ureq"]
+`);
+
+  const enabled = resolveEnabledFeatures(graph, ['default']);
+
+  // `tinybus/modules` forwards a feature into a dependency and `dep:ureq` turns
+  // an optional dependency on. Neither names a gate in THIS crate, so neither
+  // can be what a local `#[cfg(feature = "…")]` reads.
+  assert.ok(!enabled.has('tinybus/modules'));
+  assert.ok(!enabled.has('dep:ureq'));
+  assert.ok(enabled.has('modules'));
+});
+
+test('seeds beyond default are followed too', () => {
+  const graph = parseCoreFeatureGraph(`
+[features]
+default = []
+documents = ["modules"]
+modules = []
+`);
+
+  // The product set is a second seed alongside `default`: the e2e runner passes
+  // `--features` WITHOUT `--no-default-features`, so the measured build is the
+  // union of the two.
+  const enabled = resolveEnabledFeatures(graph, ['default', 'documents']);
+
+  assert.ok(enabled.has('documents'));
+  assert.ok(enabled.has('modules'));
+});
+
+test('a seed the feature table does not declare resolves to itself', () => {
+  const enabled = resolveEnabledFeatures(parseCoreFeatureGraph('[features]\ndefault = []\n'), [
+    'default',
+    'ghost',
+  ]);
+
+  // A typo in product-features.txt is caught by `checkProductForwarding`, not
+  // here; this must not throw on the way there.
+  assert.ok(enabled.has('ghost'));
+});
+
+test('a manifest with no [features] table yields an empty graph', () => {
+  assert.equal(parseCoreFeatureGraph('[package]\nname = "openhuman"\n').size, 0);
+});
+
+test('a cycle in the feature graph terminates instead of hanging', () => {
+  // Cargo would reject this, but the gate reads the file as text and must not
+  // spin on a hand-edit that has not been through cargo yet.
+  const graph = parseCoreFeatureGraph(`
+[features]
+default = ["a"]
+a = ["b"]
+b = ["a"]
+`);
+
+  const enabled = resolveEnabledFeatures(graph, ['default']);
+
+  assert.deepEqual([...enabled].sort(), ['a', 'b', 'default']);
+});
+
+test('reads TOML literal strings, not just basic strings', () => {
+  // Both forms are valid TOML and cargo accepts either. Matching only `"…"`
+  // reported these arrays as EMPTY, and empty is the answer that makes every
+  // consumer here pass vacuously. (CodeRabbit, PR #6092.)
+  assert.deepEqual(parseCoreDefaultFeatures("[features]\ndefault = ['voice', \"media\"]\n"), [
+    'voice',
+    'media',
+  ]);
+  assert.deepEqual(parseCoreFeatureGraph("[features]\ndefault = ['documents']\ndocuments = ['modules']\n").get('documents'), ['modules']);
+  assert.deepEqual(
+    parseShellForwardedFeatures(
+      "openhuman_core = { path = \"../..\", default-features = false, features = ['voice'] }\n",
+    ).features,
+    ['voice'],
+  );
+});
+
+test('an apostrophe inside a basic string does not open a literal string', () => {
+  // Alternation order is load-bearing: `"…"` is tried first at each position,
+  // so the `'` in `don't` is consumed as part of the basic string rather than
+  // starting a literal one and swallowing the rest of the array.
+  assert.deepEqual(parseCoreDefaultFeatures('[features]\ndefault = ["don\'t", "media"]\n'), [
+    "don't",
+    'media',
+  ]);
 });

@@ -24,7 +24,7 @@ async function openChat(page: Page): Promise<void> {
     await skipButton.first().click({ force: true });
     await expect(skipButton.first()).toBeHidden();
   }
-  await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
+  await expect(page.getByTestId('chat-message-input')).toBeVisible();
 }
 
 async function installGetUserMediaError(page: Page, name: string): Promise<void> {
@@ -77,8 +77,8 @@ test.describe('Voice mode integration', () => {
     await switchChatIntoMicComposer(page);
 
     await page.getByRole('button', { name: 'Switch to text' }).click();
-    await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
-    await expect(page.getByTestId('send-message-button')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
   test('permission-denied getUserMedia shows a specific voice-transcription error', async ({

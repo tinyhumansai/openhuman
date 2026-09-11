@@ -2,59 +2,24 @@ use super::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::task_sources::store;
 use crate::openhuman::integrations::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
-use crate::openhuman::memory::sync::composio::providers::{
-    register_provider, ComposioProvider, NormalizedTask, ProviderContext, ProviderUserProfile,
-    TaskFetchFilter,
-};
-use async_trait::async_trait;
 use serde_json::json;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
-/// Serialize pipeline tests: they register a stub provider under the
-/// shared "github" registry slug, so they must not run concurrently.
-fn registry_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-}
-
-struct StubProvider {
-    tasks: Vec<NormalizedTask>,
-}
-
-#[async_trait]
-impl ComposioProvider for StubProvider {
-    fn toolkit_slug(&self) -> &'static str {
-        "github"
-    }
-    async fn fetch_user_profile(
-        &self,
-        _ctx: &ProviderContext,
-    ) -> Result<ProviderUserProfile, String> {
-        Ok(ProviderUserProfile::default())
-    }
-    async fn fetch_tasks(
-        &self,
-        _ctx: &ProviderContext,
-        _filter: &TaskFetchFilter,
-    ) -> Result<Vec<NormalizedTask>, String> {
-        Ok(self.tasks.clone())
-    }
-}
-
-fn canned_task(id: &str, title: &str, updated: &str) -> NormalizedTask {
-    NormalizedTask {
-        external_id: id.into(),
-        source_id: String::new(),
-        provider: "github".into(),
-        title: title.into(),
-        url: Some(format!("https://example.com/{id}")),
-        updated_at: Some(updated.into()),
-        ..Default::default()
-    }
-}
+// This file used to register a stub `ComposioProvider` under the engine's
+// provider registry (`register_provider`) so `run_source_once` had something
+// to fetch tasks from, then asserted the full fetch → dedup → route →
+// reconcile pipeline end to end. tinymemory v1.13.4 deleted
+// `ComposioProvider` and the registry outright with no replacement — see
+// `pipeline::fetch_tasks_unavailable`'s doc comment — so there is no seam
+// left to inject a fake provider through, and `run_inner` now refuses for
+// every toolkit before it ever reaches the dedup/route/reconcile stages.
+//
+// The four tests below assert that refusal is what actually happens (no
+// panic, the error lands in `FetchOutcome::error`, nothing gets routed) —
+// the honest replacement for "the pipeline runs end to end". The
+// dedup/route/reconcile logic these tests used to exercise through the
+// pipeline is still covered directly in `store_tests.rs`, `route_tests.rs`
+// and `enrich_tests.rs`, none of which ever depended on `ComposioProvider`.
 
 fn test_config(tmp: &TempDir) -> Config {
     let config = Config {
@@ -90,131 +55,65 @@ fn add_github_source(config: &Config) -> TaskSource {
 }
 
 #[tokio::test]
-async fn fetch_routes_cards_and_dedups_on_rerun() {
-    let _guard = registry_lock();
-    register_provider(Arc::new(StubProvider {
-        tasks: vec![
-            canned_task("1", "First task", "2025-01-01T00:00:00Z"),
-            canned_task("2", "Second task", "2025-01-02T00:00:00Z"),
-        ],
-    }));
-
+async fn fetch_surfaces_error_for_every_toolkit() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let source = add_github_source(&config);
 
-    // First pass: both tasks fetched and routed onto the board.
     let outcome = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(outcome.fetched, 2, "error={:?}", outcome.error);
-    assert_eq!(outcome.routed, 2);
+    assert!(outcome.error.is_some(), "fetch must refuse, not panic");
+    assert_eq!(outcome.fetched, 0);
+    assert_eq!(outcome.routed, 0);
     assert_eq!(outcome.skipped_dupe, 0);
-    assert!(outcome.error.is_none());
+    assert_eq!(outcome.pruned, 0);
 
     let cards = route::board_cards(&config).await.unwrap();
-    assert_eq!(cards.len(), 2);
-    assert!(cards.iter().any(|c| c.title.contains("First task")));
-    assert!(cards.iter().all(|c| c.title.starts_with("[GitHub]")));
+    assert!(cards.is_empty(), "a refused fetch must route nothing");
 
-    // Second pass: same tasks → all deduped, no new cards.
-    let outcome2 = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(outcome2.fetched, 2);
-    assert_eq!(outcome2.routed, 0);
-    assert_eq!(outcome2.skipped_dupe, 2);
-
-    let cards_after = route::board_cards(&config).await.unwrap();
-    assert_eq!(cards_after.len(), 2, "dedup must not add duplicate cards");
-
-    // Ingested ledger reflects both tasks.
     let ingested = store::list_ingested(&config, &source.id, 10).unwrap();
-    assert_eq!(ingested.len(), 2);
+    assert!(ingested.is_empty(), "a refused fetch must ingest nothing");
 }
 
 #[tokio::test]
-async fn edited_task_reroutes_as_new_card() {
-    let _guard = registry_lock();
-    register_provider(Arc::new(StubProvider {
-        tasks: vec![canned_task("7", "Original title", "2025-01-01T00:00:00Z")],
-    }));
-
+async fn refusal_is_stable_across_repeated_passes() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let source = add_github_source(&config);
 
     let first = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(first.routed, 1);
-
-    // Re-register with an edited version (newer updated_at → new hash).
-    register_provider(Arc::new(StubProvider {
-        tasks: vec![canned_task("7", "Edited title", "2025-02-01T00:00:00Z")],
-    }));
     let second = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(second.routed, 1, "edited task should re-route");
-    assert_eq!(second.skipped_dupe, 0);
-
-    // Board must have exactly one card: the stale card was removed before
-    // the fresh one was added, so no duplicate accumulation.
-    let cards = route::board_cards(&config).await.unwrap();
-    assert_eq!(
-        cards.len(),
-        1,
-        "edited task must not leave duplicate board cards"
-    );
-    assert!(cards[0].title.contains("Edited title"));
-
-    // Ledger still holds a single row for external_id 7 (upsert).
-    let ingested = store::list_ingested(&config, &source.id, 10).unwrap();
-    assert_eq!(ingested.len(), 1);
-    assert_eq!(ingested[0].title, "Edited title");
-}
-
-#[tokio::test]
-async fn task_missing_from_latest_fetch_is_pruned() {
-    let _guard = registry_lock();
-    register_provider(Arc::new(StubProvider {
-        tasks: vec![
-            canned_task("1", "Keep task", "2025-01-01T00:00:00Z"),
-            canned_task("2", "Closed task", "2025-01-02T00:00:00Z"),
-        ],
-    }));
-
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let source = add_github_source(&config);
-
-    let first = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(first.routed, 2, "error={:?}", first.error);
-    assert_eq!(route::board_cards(&config).await.unwrap().len(), 2);
-
-    // Simulate the provider returning only currently-open/matching tasks:
-    // task 2 was closed or no longer matches the source filter.
-    register_provider(Arc::new(StubProvider {
-        tasks: vec![canned_task("1", "Keep task", "2025-01-01T00:00:00Z")],
-    }));
-
-    let second = run_source_once(&config, &source, FetchReason::Manual).await;
-    assert_eq!(second.fetched, 1);
+    assert!(first.error.is_some());
+    assert!(second.error.is_some());
     assert_eq!(second.routed, 0);
-    assert_eq!(second.skipped_dupe, 1);
-    assert_eq!(second.pruned, 1);
-    assert!(second.error.is_none());
+    assert_eq!(second.pruned, 0);
+}
 
-    let cards = route::board_cards(&config).await.unwrap();
-    assert_eq!(cards.len(), 1);
-    assert!(cards[0].title.contains("Keep task"));
+#[tokio::test]
+async fn refusal_records_a_fetch_history_entry() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let source = add_github_source(&config);
 
-    let ingested = store::list_ingested(&config, &source.id, 10).unwrap();
-    assert_eq!(ingested.len(), 1);
-    assert_eq!(ingested[0].external_id, "1");
+    let _ = run_source_once(&config, &source, FetchReason::Manual).await;
+
+    // `run_source_once` records the failed pass so the UI can show why a
+    // source has never ingested anything, rather than looking silently idle.
+    let sources = store::list_sources(&config).unwrap();
+    let recorded = sources.iter().find(|s| s.id == source.id);
+    assert!(
+        recorded.is_some(),
+        "source must still be listed after a refused fetch"
+    );
 }
 
 #[tokio::test]
 async fn missing_provider_surfaces_error_in_outcome() {
-    let _guard = registry_lock();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
-    // A clickup source with no registered clickup provider in the test
-    // binary → outcome carries the error, never panics.
+    // A clickup source — no registered provider ever existed for any
+    // toolkit, `ComposioProvider` and its registry are gone — so the
+    // outcome carries the error, never panics.
     let source = store::add_source(
         &config,
         ProviderSlug::Clickup,

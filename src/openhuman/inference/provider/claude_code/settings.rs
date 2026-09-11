@@ -2,11 +2,18 @@
 //!
 //! The only Claude-Code-specific knob exposed to the user — full access
 //! (`bypassPermissions` + full native toolset) vs the default `acceptEdits`
-//! posture — lives in a small JSON file under the user's workspace rather than
-//! in the central [`crate::openhuman::config::Config`]. Keeping it module-local
-//! means the toggle is easy to reason about and trivial to remove, and it
-//! avoids threading a Claude-Code-only flag through the shared config/RPC
-//! plumbing.
+//! posture — lives in its own small JSON file rather than in the central
+//! [`crate::openhuman::config::Config`]. Keeping it module-local means the
+//! toggle is easy to reason about and trivial to remove, and it avoids
+//! threading a Claude-Code-only flag through the shared config/RPC plumbing.
+//!
+//! **Where the file actually is:** the directory
+//! [`super::workspace_dir_from_config`] returns — the parent of
+//! `config.config_path`, i.e. the OpenHuman **config directory** (`~/.openhuman`
+//! by default), so the file sits next to `config.toml`. Despite the parameter
+//! name below, that is *not* [`crate::openhuman::config::Config::workspace_dir`]
+//! (the internal state dir, `~/.openhuman/workspace`) and *not* the user's
+//! project root (`config.action_dir`).
 //!
 //! Read at turn time by [`super::driver`]; written by the
 //! `inference.claude_code_set_full_access` RPC. The
@@ -17,7 +24,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// File name (under `workspace_dir`) holding the persisted toggle.
+/// File name holding the persisted toggle, written into the directory the
+/// caller passes (the OpenHuman config dir — see the module docs).
 const SETTINGS_FILE: &str = "claude_code_settings.json";
 
 /// Persisted Claude Code provider settings. Defaults are the safe posture.
@@ -34,8 +42,11 @@ fn settings_path(workspace_dir: &Path) -> PathBuf {
     workspace_dir.join(SETTINGS_FILE)
 }
 
-/// Load settings from `workspace_dir`. A missing or unreadable/corrupt file
-/// yields defaults (full access OFF) — fail safe, never fail open.
+/// Load settings from `workspace_dir` — the Claude Code provider's own notion
+/// of a workspace, which is the OpenHuman config dir (see the module docs), not
+/// [`crate::openhuman::config::Config::workspace_dir`]. A missing or
+/// unreadable/corrupt file yields defaults (full access OFF) — fail safe, never
+/// fail open.
 pub fn load(workspace_dir: &Path) -> ClaudeCodeSettings {
     let path = settings_path(workspace_dir);
     match std::fs::read(&path) {
@@ -72,9 +83,10 @@ pub fn save(workspace_dir: &Path, settings: &ClaudeCodeSettings) -> std::io::Res
     Ok(())
 }
 
-/// Load settings for the workspace implied by `config` (resolved via
-/// [`super::workspace_dir_from_config`]). Keeps workspace resolution + file IO
-/// out of the RPC handler so `schemas.rs` stays a thin delegator.
+/// Load settings for the directory implied by `config` — the parent of
+/// `config.config_path`, resolved via [`super::workspace_dir_from_config`].
+/// Keeps path resolution + file IO out of the RPC handler so `schemas.rs` stays
+/// a thin delegator.
 pub fn load_for_config(config: &crate::openhuman::config::Config) -> ClaudeCodeSettings {
     load(&super::workspace_dir_from_config(config))
 }
@@ -91,45 +103,5 @@ pub fn save_full_access_for_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn load_missing_file_returns_safe_defaults() {
-        let dir = std::env::temp_dir().join("oh_cc_settings_missing_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        let s = load(&dir);
-        assert!(!s.full_access, "missing settings must default to OFF");
-    }
-
-    #[test]
-    fn save_then_load_roundtrips() {
-        let dir = std::env::temp_dir().join("oh_cc_settings_roundtrip_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        save(&dir, &ClaudeCodeSettings { full_access: true }).unwrap();
-        assert!(
-            load(&dir).full_access,
-            "saved full_access=true must persist"
-        );
-        save(&dir, &ClaudeCodeSettings { full_access: false }).unwrap();
-        assert!(
-            !load(&dir).full_access,
-            "toggling back to false must persist"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_corrupt_file_returns_safe_defaults() {
-        let dir = std::env::temp_dir().join("oh_cc_settings_corrupt_test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(settings_path(&dir), b"{not json").unwrap();
-        assert!(
-            !load(&dir).full_access,
-            "corrupt settings must fail safe to OFF"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+#[path = "settings_tests.rs"]
+mod tests;

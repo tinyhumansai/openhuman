@@ -17,12 +17,12 @@ use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
-use tinyagents::harness::model::{
+use tinyinference::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::{ToolCall, ToolDelta};
-use tinyagents::harness::usage::Usage;
+use tinyinference::tool::{ToolCall, ToolDelta};
+use tinyinference::usage::Usage;
 
 #[derive(Clone, Debug)]
 struct CapturedTurn {
@@ -80,12 +80,12 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.capture(request);
         self.pop_response()
     }
 
-    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyinference::Result<ModelStream> {
         self.capture(request);
         let response = self.pop_response()?;
         let mut items = vec![ModelStreamItem::Started];
@@ -103,16 +103,16 @@ impl ScriptedModel {
         });
     }
 
-    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+    fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
         if let Some(message) = &self.always_fail {
-            return Err(tinyagents::TinyAgentsError::Model(message.clone()));
+            return Err(tinyinference::Error::Model(message.clone()));
         }
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(ModelResponse::assistant("")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 

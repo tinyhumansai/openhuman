@@ -11,7 +11,7 @@ test.describe('Core port conflict recovery', () => {
   test('startup-integrity check reaches a usable screen', async ({ page }) => {
     await waitForAppReady(page);
     await expect(
-      page.locator('[data-testid="send-message-button"], [data-testid="onboarding-welcome-step"]')
+      page.locator('[data-testid="chat-message-input"], [data-testid="onboarding-welcome-step"]')
     ).toBeVisible();
   });
 

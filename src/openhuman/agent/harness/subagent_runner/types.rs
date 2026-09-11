@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
-use tinyagents::harness::workspace::WorkspaceDescriptor;
+use tinyagents_harness::workspace::WorkspaceDescriptor;
 
 use crate::openhuman::agent::harness::definition::AgentTier;
 use crate::openhuman::agent::messages::ChatMessage;
@@ -92,11 +92,27 @@ pub enum SubagentRunStatus {
     Completed,
     /// The sub-agent called `ask_user_clarification` and is waiting
     /// for the orchestrator to relay the user's answer via
-    /// `continue_subagent`. The checkpoint file contains the full
-    /// conversation history for resumption.
+    /// `continue_subagent`.
     AwaitingUser {
         question: String,
         options: Option<Vec<String>>,
+        /// Where the paused conversation was persisted, or `None` when it
+        /// could not be.
+        ///
+        /// This used to be an unstated promise — the doc said "the checkpoint
+        /// file contains the full conversation history" while every write
+        /// failure in the runner was logged at `warn` and then reported as an
+        /// ordinary `AwaitingUser` anyway. The orchestrator relayed a question
+        /// and a `task_id`, and the failure only surfaced much later, when the
+        /// user had already answered and `continue_subagent` found nothing on
+        /// disk. Carrying the outcome here is what makes a failed write
+        /// visible at pause time rather than at resume time (#5928).
+        ///
+        /// `None` does not mean resumption is impossible: a sub-agent with a
+        /// durable session can still be continued from the
+        /// `[active_subagents]` roster. It means resumption *from this pause*
+        /// is not available, which is a different promise.
+        checkpoint: Option<PathBuf>,
     },
     /// The sub-agent stopped WITHOUT reaching its goal — a circuit breaker
     /// halted it (stuck: repeated identical call / repeated output / repeated
@@ -239,4 +255,50 @@ pub enum SubagentRunError {
 
     #[error("sub-agent exceeded maximum iterations ({0})")]
     MaxIterationsExceeded(usize),
+
+    /// A configured `subagentStart` hook refused the spawn.
+    ///
+    /// Distinct from [`Self::TierViolation`] on purpose: a tier violation is a
+    /// fact about the agent graph the model cannot do anything about, while
+    /// this one carries a reason a human wrote and the model may be able to
+    /// satisfy — so the two must not read the same in a transcript.
+    #[error("delegation blocked by a configured hook: {0}")]
+    HookDenied(String),
+
+    /// The turn asked to pause gracefully at its model-call cap before this
+    /// dispatch was attempted (#5804).
+    ///
+    /// Distinct from the budget refusal below on purpose: this one is a fact
+    /// about the turn's *intent* — the loop is going to stop at its next
+    /// boundary no matter how much time is left — while the other is a
+    /// measured prediction. Reported to the model as a terminal instruction to
+    /// summarise, because further fan-out cannot reach the answer and can only
+    /// consume the budget the checkpoint summary needs.
+    #[error(
+        "delegation refused: this turn reached its model-call cap ({completed_model_calls}/{cap}) \
+         and has already requested a graceful pause. Do not delegate again — summarise the results \
+         you already have and finish the turn."
+    )]
+    PauseRequested {
+        completed_model_calls: u64,
+        cap: u64,
+    },
+
+    /// Less wall-clock remained than the slowest sub-agent this turn has
+    /// actually completed, so the dispatch could not have finished (#5804).
+    ///
+    /// The comparison is against this turn's own measured maximum, never a
+    /// configured constant, so the refusal means the same thing for a turn
+    /// with three fast children as for one with three hundred slow ones.
+    #[error(
+        "delegation refused: {remaining_ms} ms of this turn's wall-clock budget remain, but the \
+         slowest of its {observed_samples} completed sub-agent(s) took {observed_max_ms} ms, so a \
+         new delegation cannot finish in time. Summarise the results you already have and finish \
+         the turn."
+    )]
+    DispatchBudgetExhausted {
+        remaining_ms: u64,
+        observed_max_ms: u64,
+        observed_samples: u64,
+    },
 }

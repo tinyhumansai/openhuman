@@ -1,13 +1,13 @@
 //! Aggregate + validation types for durable agent-team coordination (#3374).
 //!
 //! The durable row types ([`AgentTeam`], [`AgentTeamMember`], [`AgentTeamTask`],
-//! [`ClaimOutcome`]) live in `tinyagents::session::run_ledger`. This module adds the
+//! [`ClaimOutcome`]) live in `tinyagents_session::run_ledger`. This module adds the
 //! read-aggregate view returned by the controllers and the validation error
 //! surface used by `ops::assign_task`.
 
 use serde::Serialize;
 
-use tinyagents::session::run_ledger::{AgentTeam, AgentTeamMember, AgentTeamTask};
+use tinyagents_session::run_ledger::{AgentTeam, AgentTeamMember, AgentTeamTask};
 
 /// A team plus its members and tasks — the shape returned by `get`.
 #[derive(Debug, Clone, PartialEq, Serialize)]

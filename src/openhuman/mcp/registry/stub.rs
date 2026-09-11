@@ -103,6 +103,8 @@ pub mod oauth {
 
 /// Global in-process registry of connected MCP servers.
 pub mod connections {
+    use crate::openhuman::config::Config;
+
     /// Re-exported from the ungated `types` module — the SAME type the enabled
     /// build uses, not a mirrored copy, so the orchestrator prompt builder's
     /// field access can never drift between builds.
@@ -122,6 +124,14 @@ pub mod connections {
     /// folds this into its entry map, which simply gains no `mcp-client::*`
     /// entries.
     pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
+        Vec::new()
+    }
+
+    /// Empty, for the same reason as [`all_connected_tools`]. The workspace the
+    /// caller names changes nothing when the registry is compiled out.
+    pub async fn all_connected_tools_for_config(
+        _config: &Config,
+    ) -> Vec<(String, String, McpTool)> {
         Vec::new()
     }
 }

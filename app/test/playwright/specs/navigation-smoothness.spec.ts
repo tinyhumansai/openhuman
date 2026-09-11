@@ -8,7 +8,7 @@ interface RouteCheck {
 }
 
 const routes: RouteCheck[] = [
-  { hash: '/chat', markers: ['Your assistant is ready', 'Reasoning', 'Super Context'] },
+  { hash: '/chat', markers: ['Your assistant is ready', 'Reasoning'] },
   { hash: '/connections', markers: ['Composio', 'Channels', 'MCP Servers', 'Skills'] },
   // Home folded into the unified chat surface — /home redirects to /chat.
   { hash: '/home', markers: ['Your assistant is ready', 'Reasoning'] },
@@ -60,8 +60,7 @@ test.describe('Navigation Smoothness', () => {
     // the chat "new window" empty state renders the former Home hero card.
     await page.goto('/#/home');
     await waitForAppReady(page);
-    await expect(page.locator('[data-walkthrough="home-card"]')).toBeVisible();
-    await expect(page.getByTestId('send-message-button')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
     await expect.poll(async () => page.evaluate(() => window.location.hash)).toMatch(/^#\/chat/);
   });
 });

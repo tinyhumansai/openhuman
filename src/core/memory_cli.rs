@@ -15,8 +15,7 @@ use anyhow::Result;
 use std::io::Read;
 use std::path::PathBuf;
 
-use tinymemory_core::ingestion::{MemoryIngestionConfig, MemoryIngestionRequest};
-use tinymemory_core::store::NamespaceDocumentInput;
+use crate::openhuman::memory::api::types::NamespaceDocumentInput;
 
 /// Entry point for `openhuman memory <subcommand>`.
 pub fn run_memory_command(args: &[String]) -> Result<()> {
@@ -62,9 +61,7 @@ const SUBCOMMAND_CONTROLLER: &[(&str, &str)] = &[
 
 /// The capability `openhuman memory <sub>` needs, if any. Resolved from the
 /// controller registry, never from a local table.
-fn required_capability(
-    subcommand: &str,
-) -> Option<crate::openhuman::memory::api::capabilities::Capability> {
+fn required_capability(subcommand: &str) -> Option<tinymemory_api::capabilities::Capability> {
     let function = SUBCOMMAND_CONTROLLER
         .iter()
         .find(|(sub, _)| *sub == subcommand)
@@ -151,8 +148,14 @@ fn run_ingest(args: &[String]) -> Result<()> {
         .enable_all()
         .build()?;
 
-    let result = rt.block_on(async {
-        let client = create_memory_client("ingest").await?;
+    let document_id = rt.block_on(async {
+        let binding = create_memory_binding("ingest").await?;
+        let documents = binding.provider().as_documents().ok_or_else(|| {
+            anyhow::anyhow!(
+                "the bound memory driver '{}' does not serve documents",
+                binding.driver_id()
+            )
+        })?;
 
         let document = NamespaceDocumentInput {
             namespace: namespace.clone(),
@@ -169,39 +172,33 @@ fn run_ingest(args: &[String]) -> Result<()> {
             taint: crate::openhuman::memory::MemoryTaint::Internal,
         };
 
-        let ingestion_config = MemoryIngestionConfig::default();
-
-        eprintln!(
-            "[memory:cli] starting ingestion with model={}",
-            ingestion_config.model_name,
-        );
-
-        let result = client
-            .ingest_doc(MemoryIngestionRequest {
-                document,
-                config: ingestion_config,
-            })
+        documents
+            .put_document(document)
             .await
-            .map_err(anyhow::Error::msg)?;
-
-        Ok::<_, anyhow::Error>(result)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     })?;
 
     eprintln!();
     eprintln!("=== Ingestion Result ===");
-    eprintln!("  document_id:  {}", result.document_id);
-    eprintln!("  namespace:    {}", result.namespace);
-    eprintln!("  model:        {}", result.model_name);
-    eprintln!("  mode:         {}", result.extraction_mode);
-    eprintln!("  chunks:       {}", result.chunk_count);
-    eprintln!("  entities:     {}", result.entity_count);
-    eprintln!("  relations:    {}", result.relation_count);
-    eprintln!("  preferences:  {}", result.preference_count);
-    eprintln!("  decisions:    {}", result.decision_count);
-    eprintln!("  tags:         {:?}", result.tags);
+    eprintln!("  document_id:  {document_id}");
+    eprintln!("  namespace:    {namespace}");
+    // Narrower than this command used to print, and the reason is worth stating
+    // rather than leaving as an apparent regression. It used to call the
+    // engine's `ingest_doc` directly and report the extraction tally it
+    // returned — chunk, entity, relation, preference and decision counts, the
+    // model and the extraction mode. The module contract's `put_document`
+    // answers a document id, and `IngestOutcome` carries only written/skipped
+    // counts and ids, so there is nothing on the wire to print those from.
+    // The extraction still happens; only the report is smaller. Widening it
+    // means a new contract member and a release, not a host change.
 
-    // Print full JSON to stdout for piping/scripting
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "document_id": document_id,
+            "namespace": namespace,
+        }))?
+    );
 
     Ok(())
 }
@@ -236,11 +233,11 @@ fn run_docs(args: &[String]) -> Result<()> {
         .build()?;
 
     let result = rt.block_on(async {
-        let client = create_memory_client("docs").await?;
-        client
+        let binding = create_memory_binding("docs").await?;
+        documents_family(&binding)?
             .list_documents(namespace.as_deref())
             .await
-            .map_err(anyhow::Error::msg)
+            .map_err(|error| anyhow::anyhow!("{error}"))
     })?;
 
     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -287,15 +284,30 @@ fn run_graph_query(args: &[String]) -> Result<()> {
         .build()?;
 
     let result = rt.block_on(async {
-        let client = create_memory_client("graph").await?;
-        client
-            .graph_query(
+        let binding = create_memory_binding("graph").await?;
+        let graph = binding.provider().as_graph().ok_or_else(|| {
+            anyhow::anyhow!(
+                "memory driver `{}` does not support the graph family",
+                binding.driver_id()
+            )
+        })?;
+        // `usize::MAX` is how this tree spells "no limit" on the contract's
+        // `relations` — the same value `memory.graph_query` passes over RPC —
+        // because the engine call this replaced took no limit argument at all.
+        let records = graph
+            .relations(
                 namespace.as_deref(),
                 subject.as_deref(),
                 predicate.as_deref(),
+                usize::MAX,
             )
             .await
-            .map_err(anyhow::Error::msg)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let rows = records
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok::<_, anyhow::Error>(rows)
     })?;
 
     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -349,14 +361,24 @@ fn run_query(args: &[String]) -> Result<()> {
         .build()?;
 
     let result = rt.block_on(async {
-        let client = create_memory_client("query").await?;
-        client
-            .query_namespace(&namespace, &query, limit)
+        let binding = create_memory_binding("query").await?;
+        let documents = binding.provider().as_documents().ok_or_else(|| {
+            anyhow::anyhow!(
+                "the bound memory driver '{}' does not serve documents",
+                binding.driver_id()
+            )
+        })?;
+        documents
+            .query_documents(&namespace, &query, limit as usize)
             .await
-            .map_err(anyhow::Error::msg)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     })?;
 
-    println!("{result}");
+    // The contract answers a structured context where the engine handed back a
+    // rendered string, so the CLI does the rendering. JSON rather than a guess
+    // at the engine's old prose layout: a scripted caller can read it, and it
+    // cannot silently diverge from what the driver actually returned.
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 
@@ -381,8 +403,15 @@ fn run_namespaces(args: &[String]) -> Result<()> {
         .build()?;
 
     let result = rt.block_on(async {
-        let client = create_memory_client("namespaces").await?;
-        client.list_namespaces().await.map_err(anyhow::Error::msg)
+        let binding = create_memory_binding("namespaces").await?;
+        // The documents family, not `MemoryCore::namespaces`: the engine call
+        // this replaced listed the namespaces that hold *documents* and
+        // answered bare names, where the mandatory family enumerates entry
+        // namespaces with aggregate counts.
+        documents_family(&binding)?
+            .list_namespaces()
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))
     })?;
 
     for ns in &result {
@@ -424,11 +453,11 @@ fn run_clear(args: &[String]) -> Result<()> {
         .build()?;
 
     rt.block_on(async {
-        let client = create_memory_client("clear").await?;
-        client
+        let binding = create_memory_binding("clear").await?;
+        documents_family(&binding)?
             .clear_namespace(&namespace)
             .await
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         eprintln!("[memory:cli] namespace '{namespace}' cleared");
         Ok::<_, anyhow::Error>(())
     })?;
@@ -467,45 +496,45 @@ fn read_input(path: &str) -> Result<String> {
     }
 }
 
-/// Resolve the memory client for a subcommand, refusing first when the bound
-/// driver cannot serve it.
+/// Resolve the bound memory driver for a subcommand, refusing first when it
+/// does not advertise the family the subcommand needs.
 ///
-/// Two gates run here, both *config facts* naming the driver rather than silent
-/// absence (`docs/specs/kernel.md` §3.3 makes the CLI its one exception, because
-/// a human reads silence as a typo — same reasoning as the retained `mcp` /
-/// `tui` arms in `src/core/cli.rs`):
+/// Returns the whole [`MemoryBinding`](crate::openhuman::memory::binding::MemoryBinding)
+/// rather than the provider alone, so a missing family can be refused by name
+/// *and* by driver id — the same shape as the capability diagnostic, and the
+/// only way an operator can tell "this driver has no documents tier" from "this
+/// namespace is empty".
 ///
-/// 1. **Capability gate** — when the subcommand maps to a gated controller, the
-///    bound driver must advertise that family.
-/// 2. **Legacy-client gate** — every subcommand below operates on the embedded
-///    store directly (via `memory::global::init`), so the bound driver must be
-///    the embedded engine. This is what makes `driver = "null"` (or a fallback)
-///    actually disable `openhuman memory clear` / `docs` / `query` /
-///    `namespaces`, which have no gated capability to refuse on.
+/// Only the capability gate runs here. The legacy-client gate
+/// [`create_memory_client`] additionally applies is specifically about the
+/// embedded engine client: its refusal says the command "operates on the local
+/// embedded store directly, and this configuration bound a different driver",
+/// which is exactly what routing through the contract stops doing. Applying it
+/// to a contract call would refuse every non-embedded driver for serving a
+/// request it is able to serve — and since `binding::admit` now rejects
+/// `DriverClass::Embedded` outright, it would refuse all of them.
 ///
-/// Both gates are default-OPEN when the binding cannot be resolved, mirroring
+/// The gate is default-OPEN when the binding cannot be resolved, mirroring
 /// [`crate::core::all::capability_allowed`]: denying is only ever correct after
 /// a driver has actually answered `capabilities()`.
-///
-/// This is the single chokepoint every subcommand already funnels through, and
-/// it already loads config, so the gates cost no extra config read.
-async fn create_memory_client(subcommand: &str) -> Result<tinymemory_core::store::MemoryClientRef> {
+async fn create_memory_binding(
+    subcommand: &str,
+) -> Result<std::sync::Arc<crate::openhuman::memory::binding::MemoryBinding>> {
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .unwrap_or_default();
 
-    // Resolved through `cli_capability` rather than `binding::for_workspace`
-    // here, so the memory-guard bypass ratchet carries ONE allowlisted line
-    // for the whole CLI layer instead of one per entry point. Default-OPEN
-    // when the binding cannot be resolved.
+    // Resolved through `cli_capability` for the same reason `create_memory_client`
+    // does: the memory-guard bypass ratchet carries one allowlisted line for the
+    // whole CLI layer. The binding is cached per workspace, so asking twice
+    // costs one map lookup.
     let invocation = format!("openhuman memory {subcommand}");
-    if let Some((driver_id, class, advertised)) =
+    if let Some((driver_id, _class, advertised)) =
         crate::core::cli_capability::bound_memory_driver_for(
             &config.workspace_dir,
             &config.subsystems.memory,
         )
     {
-        crate::core::cli_capability::legacy_client_verdict(&driver_id, class, &invocation)?;
         if let Some(required) = required_capability(subcommand) {
             crate::core::cli_capability::capability_verdict(
                 &driver_id,
@@ -516,18 +545,68 @@ async fn create_memory_client(subcommand: &str) -> Result<tinymemory_core::store
         }
     }
 
-    // The CLI dispatches straight to a subcommand and never runs the runtime
-    // bootstrap, so nothing else installs these. They must be in place before
-    // the first memory call: the embedding, chat, Composio and config seams
-    // fail loudly when unwired rather than degrading, and a `memory` subcommand
-    // that reached one would report a broken subsystem rather than a missing
-    // one. Idempotent, so calling it per invocation is safe.
-    crate::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        config.clone(),
-    ));
-    tinymemory_core::global::init(config.workspace_dir).map_err(anyhow::Error::msg)
+    // The contract event sink, plus the `[modules]` policy a module-backed
+    // driver needs published before it can load. Both idempotent.
+    //
+    // The seven engine seams that used to be installed here went with
+    // `tinymemory-core` (#5560) — this process embeds no engine, and every
+    // `memory` subcommand routes through `binding::for_workspace` below. The
+    // two that did not, `ingest` and `query`, resolved an in-process client
+    // and no longer exist. The sink is a `tinymemory-api` seam, not an engine
+    // one, and stays for the reason spelled out in `runtime::context`.
+    crate::openhuman::memory::host::install_memory_event_sink();
+    #[cfg(feature = "modules")]
+    crate::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(config.clone()));
+
+    crate::openhuman::memory::binding::for_workspace(
+        &config.workspace_dir,
+        &config.subsystems.memory,
+    )
+    .map_err(|error| anyhow::anyhow!(error))
 }
 
+/// The documents family on a bound driver, or a refusal naming the driver.
+fn documents_family(
+    binding: &crate::openhuman::memory::binding::MemoryBinding,
+) -> Result<&dyn crate::openhuman::memory::api::provider::MemoryDocuments> {
+    binding.provider().as_documents().ok_or_else(|| {
+        anyhow::anyhow!(
+            "memory driver `{}` does not support the documents family",
+            binding.driver_id()
+        )
+    })
+}
+
+/// Resolve the in-process engine client for the two subcommands whose shapes
+/// the contract cannot yet carry (#5560):
+///
+/// - `ingest` drives the engine's `MemoryIngestionRequest` pipeline — a
+///   caller-supplied `MemoryIngestionConfig` and the extraction counts it
+///   reports back. `MemoryIngest::ingest_document` takes neither.
+/// - `query` prints the engine's rendered context string; the contract's
+///   `query_documents` answers a `NamespaceRetrievalContext`, so the rendering
+///   would move into this file and stop matching what the RPC surface returns.
+///
+/// Every other subcommand routes through [`create_memory_binding`]. Draining
+/// these two is upstream work — a `tinymemory` release and a `modules::registry`
+/// re-pin — not a routing change here.
+///
+/// Two gates run first, both *config facts* naming the driver rather than silent
+/// absence (`docs/specs/kernel.md` §3.3 makes the CLI its one exception, because
+/// a human reads silence as a typo — same reasoning as the retained `mcp` /
+/// `tui` arms in `src/core/cli.rs`):
+///
+/// 1. **Capability gate** — when the subcommand maps to a gated controller, the
+///    bound driver must advertise that family.
+/// 2. **Legacy-client gate** — both subcommands below operate on the embedded
+///    store directly (via `memory::global::init`), so the bound driver must be
+///    the embedded engine. This is what makes `driver = "null"` (or a fallback)
+///    actually disable `openhuman memory query`, which has no gated capability
+///    to refuse on beyond the one every driver advertises.
+///
+/// Both gates are default-OPEN when the binding cannot be resolved, mirroring
+/// [`crate::core::all::capability_allowed`]: denying is only ever correct after
+/// a driver has actually answered `capabilities()`.
 fn print_memory_help() {
     println!("Usage: openhuman memory <subcommand> [options]");
     println!();
@@ -555,7 +634,7 @@ mod tests {
     use super::*;
     use crate::core::cli_capability::{capability_verdict, CAPABILITY_UNAVAILABLE_PREFIX};
     use crate::core::subsystem::DriverClass;
-    use crate::openhuman::memory::api::capabilities::{Capabilities, Capability};
+    use tinymemory_api::capabilities::{Capabilities, Capability};
 
     /// Drift guard: a renamed controller function must break here rather than
     /// silently un-gate a subcommand (`required_capability` would start
@@ -655,14 +734,20 @@ mod tests {
         }
     }
 
+    /// The subcommands still resolved through [`create_memory_client`], and so
+    /// still subject to the legacy-client gate. The rest reach the bound driver
+    /// through the contract, where "not the embedded engine" is not a refusal
+    /// reason — see [`create_memory_binding`].
+    const LEGACY_ENGINE_SUBCOMMANDS: &[&str] = &["ingest", "query"];
+
     /// Every legacy subcommand — gated or not — must be rejected under a null
-    /// binding: they all operate on the embedded store directly, and the null
+    /// binding: they operate on the embedded store directly, and the null
     /// driver is not that engine. This is the regression the reviewer flagged:
     /// `openhuman memory clear` used to open the embedded DB even with
-    /// `driver = "null"`.
+    /// `driver = "null"` (and now does not open it at all).
     #[test]
     fn null_driver_rejects_every_legacy_subcommand() {
-        for (sub, _) in SUBCOMMAND_CONTROLLER {
+        for sub in LEGACY_ENGINE_SUBCOMMANDS {
             let err = crate::core::cli_capability::legacy_client_verdict(
                 "null",
                 DriverClass::Null,
@@ -672,24 +757,50 @@ mod tests {
             let msg = err.to_string();
             assert!(msg.contains("null"), "{msg}");
             assert!(
-                msg.contains("embedded"),
-                "refusal must explain that the legacy client is the embedded engine: {msg}"
+                msg.contains("local store"),
+                "refusal must explain that these subcommands read the local store: {msg}"
             );
         }
     }
 
-    /// The embedded driver is the only class that may serve legacy subcommands.
+    /// Both local-store classes may serve the legacy subcommands.
+    ///
+    /// `Module` matters more than `Embedded` now: `binding::admit` refuses
+    /// `Embedded` outright, so the built-in driver binds as `Module` and a gate
+    /// that accepted only `Embedded` refused every subcommand in the field.
     #[test]
-    fn embedded_driver_serves_every_legacy_subcommand() {
-        for (sub, _) in SUBCOMMAND_CONTROLLER {
+    fn local_store_drivers_serve_every_legacy_subcommand() {
+        for (driver, class) in [
+            ("tinycortex", DriverClass::Embedded),
+            ("tinymemory", DriverClass::Module),
+        ] {
+            for sub in LEGACY_ENGINE_SUBCOMMANDS {
+                assert!(
+                    crate::core::cli_capability::legacy_client_verdict(
+                        driver,
+                        class,
+                        &format!("openhuman memory {sub}"),
+                    )
+                    .is_ok(),
+                    "`openhuman memory {sub}` must stay available under {driver} ({class:?})"
+                );
+            }
+        }
+    }
+
+    /// A driver that answers from somewhere else must still be refused —
+    /// reading the local store there would answer from the wrong place.
+    #[test]
+    fn external_driver_still_rejects_every_legacy_subcommand() {
+        for sub in LEGACY_ENGINE_SUBCOMMANDS {
             assert!(
                 crate::core::cli_capability::legacy_client_verdict(
-                    "tinycortex",
-                    DriverClass::Embedded,
+                    "supermemory",
+                    DriverClass::External,
                     &format!("openhuman memory {sub}"),
                 )
-                .is_ok(),
-                "`openhuman memory {sub}` must stay available under the embedded driver"
+                .is_err(),
+                "`openhuman memory {sub}` must stay refused under a remote driver"
             );
         }
     }
@@ -697,8 +808,10 @@ mod tests {
     /// The legacy-client diagnostic must not leak credentials or endpoints.
     #[test]
     fn legacy_message_never_contains_a_credential_or_endpoint() {
+        use crate::core::subsystem::DriverClass;
         let msg = crate::core::cli_capability::legacy_client_unavailable_message(
             "supermemory",
+            DriverClass::External,
             "openhuman memory clear",
         );
         assert!(!msg.contains("keychain:"), "{msg}");

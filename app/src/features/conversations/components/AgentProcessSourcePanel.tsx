@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import createDebug from 'debug';
 
+import { Source, Sources, SourcesContent, SourcesTrigger } from '../../../components/ai-elements';
 import Button from '../../../components/ui/Button';
+import { SheetContent, SheetRoot, SheetTitle } from '../../../components/ui/Sheet';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { ProcessingTranscriptItem, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import {
@@ -10,8 +11,11 @@ import {
   formatTimelineEntry,
 } from '../../../utils/toolTimelineFormatting';
 import { AgentSparkIcon } from './AgentTimelineRail';
+import { AssistantUiSubagentCall } from './AssistantUiSubagentCall';
 import { ProcessingTranscriptView } from './ProcessingTranscriptView';
-import { SubagentActivityBlock, ToolTimelineBlock } from './ToolTimelineBlock';
+import { ToolTimelineBlock } from './ToolTimelineBlock';
+
+const log = createDebug('app:conversations:agent-process-source');
 
 /** Compact globe glyph for a source row. Inherits `currentColor`. */
 function GlobeIcon({ className }: { className?: string }) {
@@ -34,22 +38,28 @@ function GlobeIcon({ className }: { className?: string }) {
   );
 }
 
-/** One web-source row: globe + hostname title (left) + full URL (right). */
+/**
+ * One web-source row: globe + hostname title (left) + full URL (right).
+ *
+ * The anchor itself is `ai-elements`' {@link Source}, which owns the
+ * `target="_blank"` + `rel` hardening and the `data-slot="source"` contract;
+ * the two-column body is this panel's own, passed as children so the shared
+ * primitive does not have to grow a layout variant for it.
+ */
 function AgentSourceRow({ source }: { source: AgentSource }) {
   return (
     <li>
-      <a
+      <Source
         href={source.url}
-        target="_blank"
         rel="noreferrer noopener"
-        className="flex items-center justify-between gap-3 rounded-md px-1.5 py-1 text-[11px] hover:bg-surface-hover"
+        className="flex items-center justify-between gap-3 rounded-md px-1.5 py-1 text-[11px] text-content-secondary hover:bg-surface-hover"
         data-testid="agent-source-row">
         <span className="flex min-w-0 items-center gap-1.5">
           <GlobeIcon className="shrink-0 text-content-faint" />
           <span className="truncate text-content-secondary">{source.title}</span>
         </span>
         <span className="shrink-0 truncate text-content-faint">{source.url}</span>
-      </a>
+      </Source>
     </li>
   );
 }
@@ -94,16 +104,6 @@ export function AgentProcessSourcePanel({
 }) {
   const { t } = useT();
 
-  // Close on Escape for keyboard parity with the backdrop click.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
   if (!open) return null;
 
   // Sources/sub-agents are scoped to the single step when one is selected,
@@ -117,33 +117,45 @@ export function AgentProcessSourcePanel({
       normalizeScopedBody(scopedEntry.argsBuffer))
     : undefined;
 
-  // Portaled to `document.body` rather than rendered in place. This is a
-  // viewport-level overlay, but its host tree sits inside `Conversations`'
-  // `relative z-10` wrapper — a stacking context. Left in place, `z-50` only
-  // orders it against its own siblings; from the outside the whole chat subtree
-  // is just "z-10", so any later sibling with a higher z-index paints straight
-  // over it. Portaling lifts it into the root stacking context, where `z-50`
-  // means what it reads like. Same pattern as `components/ui/ModalShell`.
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex justify-end" data-testid="agent-process-source-panel">
-      {/* Backdrop */}
-      <button
-        type="button"
-        aria-label={t('conversations.subagent.close')}
-        className="absolute inset-0 bg-stone-900/30 dark:bg-black/50"
-        onClick={onClose}
-      />
-      <aside className="relative flex h-full w-full max-w-[600px] flex-col bg-surface shadow-xl">
+  log(
+    'render panel scoped=%s entries=%d sources=%d',
+    Boolean(scopedEntry),
+    entries.length,
+    sources.length
+  );
+
+  // The overlay is the shared Radix-backed `Sheet`: the hand-rolled portal +
+  // backdrop `<button>` + `keydown` listener it replaced had no focus trap, no
+  // scroll lock and no focus restore on close. `open` is hard-coded because the
+  // early return above already renders nothing when closed — `onOpenChange` is
+  // what routes Escape / outside-click back to the caller's `onClose`.
+  return (
+    <SheetRoot
+      open
+      onOpenChange={next => {
+        if (!next) onClose();
+      }}>
+      <SheetContent
+        side="right"
+        aria-describedby={undefined}
+        data-testid="agent-process-source-panel"
+        className="max-w-[600px]">
         {/* Header */}
-        <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-50 text-primary-500 dark:bg-primary-500/15">
+        <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-4 py-3">
+          <span
+            aria-hidden
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-50 text-primary-500 dark:bg-primary-500/15">
             <AgentSparkIcon />
           </span>
-          <span className="min-w-0 flex-1 truncate font-semibold text-content">
-            {scopedEntry
-              ? formatTimelineEntry(scopedEntry).title
-              : t('conversations.agentTaskInsights.processSourceTitle')}
-          </span>
+          {/* `asChild` keeps the historical inline span so the header layout is
+              unchanged while Radix gets its required accessible title. */}
+          <SheetTitle asChild>
+            <span className="min-w-0 flex-1 truncate font-semibold text-content">
+              {scopedEntry
+                ? formatTimelineEntry(scopedEntry).title
+                : t('conversations.agentTaskInsights.processSourceTitle')}
+            </span>
+          </SheetTitle>
           <Button
             iconOnly
             variant="tertiary"
@@ -164,9 +176,9 @@ export function AgentProcessSourcePanel({
             {scopedEntry ? (
               // Scoped to one step: show only that step's details.
               scopedEntry.subagent ? (
-                <SubagentActivityBlock subagent={scopedEntry.subagent} />
+                <AssistantUiSubagentCall activity={scopedEntry.subagent} />
               ) : scopedDetail ? (
-                <pre className="max-h-[60vh] overflow-y-auto rounded-lg bg-surface-muted px-3 py-2 text-[12px] whitespace-pre-wrap break-words text-content-secondary">
+                <pre className="max-h-[60vh] overflow-y-auto rounded-lg bg-surface-muted px-3 py-2 text-[12px] whitespace-pre-wrap wrap-break-word text-content-secondary">
                   {scopedDetail}
                 </pre>
               ) : (
@@ -183,7 +195,7 @@ export function AgentProcessSourcePanel({
               <ProcessingTranscriptView
                 transcript={transcript}
                 entries={entries}
-                renderSubagent={subagent => <SubagentActivityBlock subagent={subagent} />}
+                renderSubagent={subagent => <AssistantUiSubagentCall activity={subagent} />}
               />
             ) : entries.length > 0 ? (
               // Legacy snapshot (no transcript): fall back to the tool timeline,
@@ -211,28 +223,38 @@ export function AgentProcessSourcePanel({
                     <p className="text-[12px] font-medium text-content-secondary">
                       {formatTimelineEntry(entry).title}
                     </p>
-                    <SubagentActivityBlock subagent={entry.subagent!} />
+                    <AssistantUiSubagentCall activity={entry.subagent!} />
                   </div>
                 ))}
               </div>
             </section>
           ) : null}
 
+          {/* Sources — `ai-elements`' Sources disclosure rather than a static
+              heading: a long run can visit dozens of pages, and Radix's
+              Collapsible gives the header real `aria-expanded`/`aria-controls`
+              wiring that an <h3> never had. `defaultOpen` keeps the previous
+              always-visible behaviour, so nothing is hidden by the change. */}
           {sources.length > 0 ? (
-            <section>
-              <h3 className="mb-2 text-[10px] font-semibold tracking-wide text-content-faint uppercase">
-                {t('conversations.agentTaskInsights.sourcesHeading')}
-              </h3>
-              <ul className="space-y-0.5">
-                {sources.map(source => (
-                  <AgentSourceRow key={source.id} source={source} />
-                ))}
-              </ul>
-            </section>
+            <Sources asChild defaultOpen className="mb-0 text-content">
+              <section>
+                <SourcesTrigger
+                  count={sources.length}
+                  className="mb-2 text-[10px] font-semibold tracking-wide text-content-faint uppercase">
+                  {t('conversations.agentTaskInsights.sourcesHeading')} ({sources.length})
+                </SourcesTrigger>
+                <SourcesContent className="mt-0 w-full gap-0">
+                  <ul className="space-y-0.5">
+                    {sources.map(source => (
+                      <AgentSourceRow key={source.id} source={source} />
+                    ))}
+                  </ul>
+                </SourcesContent>
+              </section>
+            </Sources>
           ) : null}
         </div>
-      </aside>
-    </div>,
-    document.body
+      </SheetContent>
+    </SheetRoot>
   );
 }

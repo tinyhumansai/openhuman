@@ -1,62 +1,102 @@
-//! Pins the orchestrator's parallel/council fan-out routing (#4754).
+//! Pins the orchestrator's parallel fan-out routing (#4754, re-anchored for #5757).
 //!
 //! An agent-efficiency eval found the orchestrator never fanning out workers
 //! concurrently: parallel/"separate researcher for each"/council prompts either
 //! single-spawned or issued serial `spawn_subagent` calls 145-200s apart
 //! (each sub-agent finishing before the next started), defeating the request.
 //!
-//! Root cause is routing, not harness concurrency: `spawn_parallel_agents`
-//! already fans out concurrently (tinyagents `map_reduce` / `buffer_unordered`)
-//! as a single tool call, but the orchestrator reached for serial
-//! `spawn_subagent` instead. The fix steers parallel/council/fan-out requests
-//! to ONE `spawn_parallel_agents` call — in both the system prompt and the
-//! `spawn_subagent` tool description the model reads when choosing a tool.
+//! Root cause was routing, not harness concurrency, and it is still routing
+//! that these assertions guard. What changed is the primitive being routed to.
 //!
-//! These assertions pin that guidance so a future edit can't silently drop it.
+//! #5757 (`02d81f6cf`) retired `spawn_parallel_agents` along with five other
+//! sub-agent tools, cutting the surface from 11 tools to 3. A dedicated fan-out
+//! tool was judged "a second way to say spawn again" now that
+//! `spawn_async_subagent` is always async: it returns a task id immediately, so
+//! N spawns issued together are already N workers running concurrently. The
+//! retirement is pinned both ways in `agents/loader.rs` — three tools required,
+//! six asserted absent — so it is deliberate and enforced, not drift.
+//!
+//! The anti-pattern this file exists to catch is therefore unchanged — a prompt
+//! that lets fan-out serialize — but the guidance it anchors on had to move
+//! with the tool. Anchoring on the retired name is what left this suite
+//! asserting against a prompt that no longer mentions it.
 
 const ORCHESTRATOR_PROMPT: &str =
     include_str!("../src/openhuman/agent/registry/agents/orchestrator/prompt.md");
 
-const SPAWN_SUBAGENT_SRC: &str =
-    include_str!("../src/openhuman/agent/orchestration/tools/spawn_subagent.rs");
-
 #[test]
-fn prompt_routes_parallel_and_council_to_spawn_parallel_agents() {
-    // The parallel-fanout guidance must exist and name the concurrent primitive.
+fn prompt_routes_fanout_to_concurrent_async_spawns() {
+    let prompt = ORCHESTRATOR_PROMPT.to_lowercase();
+
+    // The fan-out guidance must exist and name the primitive that actually
+    // runs concurrently. Post-#5757 that is `spawn_async_subagent`; the
+    // assertion is deliberately on the *current* tool rather than on whichever
+    // name happened to be right in 2026, because a prompt naming a retired
+    // tool is the failure this file is meant to catch.
     assert!(
-        ORCHESTRATOR_PROMPT.contains("spawn_parallel_agents"),
-        "orchestrator prompt must route fan-out to `spawn_parallel_agents` (#4754)"
+        ORCHESTRATOR_PROMPT.contains("spawn_async_subagent"),
+        "orchestrator prompt must name the concurrent spawn primitive (#4754, #5757)"
     );
-    // It must explicitly cover the council / multiple-independent-opinions case
-    // that the eval showed collapsing to a single spawn.
+
+    // It must say that fan-out IS several spawns — the sentence that replaced
+    // "use one spawn_parallel_agents call". Without it a model reading the
+    // prompt has no instruction to issue them together, which is exactly the
+    // serialization the eval measured.
     assert!(
-        ORCHESTRATOR_PROMPT.to_lowercase().contains("council"),
-        "orchestrator prompt must steer council / multiple-opinions requests to \
-         a parallel fan-out, not a single spawn (#4754)"
+        prompt.contains("fan-out is just several") || prompt.contains("n spawns"),
+        "orchestrator prompt must state that fan-out is several spawns issued \
+         together, not a sequence of dependent ones (#4754, #5757)"
     );
-    // It must warn against the serial anti-pattern (looping `spawn_subagent`),
-    // which is what produced the 145-200s serial gaps.
-    let p = ORCHESTRATOR_PROMPT.to_lowercase();
+
+    // And it must state that they run concurrently. "Several spawns" is only
+    // the fix if the spawns overlap; a prompt that dropped this could be read
+    // as endorsing the 145-200s serial gaps the eval found.
     assert!(
-        p.contains("never a loop of") || p.contains("do **not** call `spawn_subagent` once per"),
-        "orchestrator prompt must warn that repeated `spawn_subagent` serializes \
-         fan-out and to use one `spawn_parallel_agents` call instead (#4754)"
+        prompt.contains("run concurrently") || prompt.contains("concurrently"),
+        "orchestrator prompt must state that several spawns run concurrently, \
+         which is what makes fan-out a fan-out (#4754, #5757)"
     );
 }
 
+/// The retired fan-out tool must not come back in the prompt without coming
+/// back in `agent.toml` — a prompt teaching a tool the orchestrator cannot call
+/// is worse than one that teaches nothing, because the model spends a turn
+/// discovering it. `agents/loader.rs` already pins the tool list itself; this
+/// pins the half of the contract that lives in prose.
 #[test]
-fn spawn_subagent_description_redirects_fanout_to_parallel() {
-    // The tool description is what the model reads while picking a tool, so the
-    // redirect has to live there, not only in the system prompt. Anchor on the
-    // description() body to avoid matching an unrelated mention elsewhere.
-    let desc_start = SPAWN_SUBAGENT_SRC
-        .find("fn description(&self)")
-        .expect("spawn_subagent must have a description()");
-    let desc = &SPAWN_SUBAGENT_SRC[desc_start..];
-    let desc_body = &desc[..desc.find("fn parameters_schema").unwrap_or(desc.len())];
-    assert!(
-        desc_body.contains("spawn_parallel_agents"),
-        "spawn_subagent's description must redirect concurrent fan-out to \
-         `spawn_parallel_agents` so the model picks the parallel tool (#4754)"
-    );
+fn prompt_does_not_teach_a_retired_subagent_tool() {
+    for retired in [
+        "spawn_parallel_agents",
+        "wait_subagent",
+        "steer_subagent",
+        "close_subagent",
+        "wait_loop",
+    ] {
+        assert!(
+            !ORCHESTRATOR_PROMPT.contains(retired),
+            "orchestrator prompt teaches `{retired}`, which #5757 retired from \
+             agent.toml — re-adding one means re-adding it in both places"
+        );
+    }
 }
+
+// `spawn_subagent_description_redirects_fanout_to_parallel` was removed here.
+//
+// It required `spawn_subagent`'s description to redirect fan-out to
+// `spawn_parallel_agents` — a tool #5757 retired. It still passed, because the
+// description still says it, which made it the same orphan as the two above:
+// a test pinning guidance for a tool nothing can call.
+//
+// It is deleted rather than re-anchored because there is no correct name to
+// re-anchor it to. `spawn_subagent` survives in exactly one agent —
+// `trigger_reactor/agent.toml` — and that agent's tool list is
+// `spawn_subagent` alone: no `spawn_parallel_agents`, and no
+// `spawn_async_subagent` either. So the redirect is dangling for its only
+// caller, and pointing it at the new tool would leave it just as dangling.
+//
+// The underlying defect is in `src/`, not in a test: `spawn_subagent`'s
+// description sends its only caller to a tool that caller does not have.
+// Deciding what it should say instead — give `trigger_reactor` a fan-out
+// affordance, or drop the redirect — is a product call for #5757's author, so
+// it is reported rather than guessed at here. Encoding a guess as an assertion
+// is what left this file asserting against a retired tool in the first place.

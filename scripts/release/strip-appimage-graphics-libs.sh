@@ -32,6 +32,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPIMAGE_RUNTIME_VALIDATOR="${APPIMAGE_RUNTIME_VALIDATOR:-$SCRIPT_DIR/validate-appimage-runtime.sh}"
+# shellcheck source=scripts/release/tauri-signer.sh
+. "$SCRIPT_DIR/tauri-signer.sh"
 
 EXCLUDE_PATTERNS=(
   'libGL.so.*'
@@ -52,6 +54,17 @@ EXCLUDE_PATTERNS=(
   'libxcb-dri3.so.*'
   'libxcb-glx.so.*'
   'libxcb-present.so.*'
+  # OpenSSL: strip the bundled libssl/libcrypto so the AppImage uses the host's
+  # OpenSSL. The AppImage is built on Ubuntu 24.04, which ships OpenSSL 3.0.x;
+  # linuxdeploy bundles those 3.0.x libs, which provide only OPENSSL_3.0.x
+  # versioned symbols. On modern host distros (Arch, Fedora, Ubuntu 24.10+)
+  # OpenSSL is 3.2+ or 3.5+, and the host's libcurl.so.4 / libngtcp2_crypto_ossl
+  # require OPENSSL_3.2.0+ symbols. When the AppImage's bundled 3.0.x libssl
+  # shadows the host's newer library those symbols are absent, causing dlopen
+  # failures at runtime. Stripping the bundled copies lets the AppImage fall
+  # back to the host's newer OpenSSL. (#3716)
+  'libssl.so.*'
+  'libcrypto.so.*'
 )
 
 # Default to a pinned release tag rather than the mutable `continuous` asset so
@@ -844,19 +857,22 @@ strip_one_appimage() {
 
 resign_artifact() {
   local file="$1"
+  # No key configured means this is an unsigned lane (a PR build): the bundler
+  # produced no .sig either, so there is nothing to invalidate. Skipping is
+  # correct here and is the ONLY case in which signing may be skipped.
   if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
     return
   fi
-  if ! command -v cargo-tauri >/dev/null 2>&1; then
-    echo "[strip-libs] WARNING: cargo-tauri not on PATH; cannot re-sign $file" >&2
-    return
-  fi
   echo "[strip-libs] Re-signing $file"
-  rm -f "$file.sig"
-  cargo tauri signer sign \
-    --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
-    --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-    "$file" >/dev/null
+  # Previously guarded by `command -v cargo-tauri` with a warn-and-return. CI
+  # never installs cargo-tauri, so that branch was always taken and this leg
+  # shipped a .sig covering the pre-strip bytes. Stripping rewrites the
+  # AppImage, so a signature that is merely left behind cannot verify -- fail
+  # the job instead of publishing it (#5658).
+  if ! tauri_signer_sign "$file"; then
+    echo "[strip-libs] ERROR: could not re-sign $file after stripping; refusing to publish an artifact whose signature does not match its bytes" >&2
+    exit 1
+  fi
 }
 
 main() {

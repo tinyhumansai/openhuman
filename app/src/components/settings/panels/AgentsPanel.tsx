@@ -12,6 +12,7 @@ import { LuPencil, LuPlus, LuRotateCcw, LuTrash2 } from 'react-icons/lu';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
+import { Alert, AlertDescription, CenteredLoadingState } from '../../ui';
 import Button from '../../ui/Button';
 import { SettingsBadge, SettingsEmptyState, SettingsSwitch } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -103,24 +104,23 @@ const AgentsPanel = () => {
         </Button>
       }>
       {actionError && (
-        <div className="mb-3 rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-sm text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-          {actionError}
-        </div>
+        <Alert variant="destructive" density="compact" className="mb-3">
+          <AlertDescription>{actionError}</AlertDescription>
+        </Alert>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-12 text-content-faint">
-          <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
-          <span className="text-sm">{t('common.loading')}</span>
-        </div>
+        <CenteredLoadingState label={t('common.loading')} className="py-12" />
       ) : error ? (
-        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-          {t('settings.agents.loadError')}: {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {t('settings.agents.loadError')}: {error}
+          </AlertDescription>
+        </Alert>
       ) : agents.length === 0 ? (
         <SettingsEmptyState label={t('settings.agents.empty')} />
       ) : (
-        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line dark:divide-neutral-800">
+        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
           {agents.map(agent => (
             <AgentRow
               key={agent.id}
@@ -177,7 +177,7 @@ function AgentRow({
         />
       </div>
 
-      <p className="mt-1 break-words text-xs leading-snug text-content-muted">
+      <p className="mt-1 wrap-break-word text-xs leading-snug text-content-muted">
         {agent.description}
       </p>
       <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-content-faint">

@@ -34,6 +34,7 @@ import { isTauri } from '../utils/tauriCommands/common';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
 import Button from './ui/Button';
+import ModalShell from './ui/ModalShell';
 
 interface OpenhumanLinkEvent {
   path: string;
@@ -81,35 +82,13 @@ const OpenhumanLinkModal = () => {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={close}
-      role="dialog"
-      aria-modal="true">
-      <div
-        className="w-full max-w-md rounded-2xl bg-surface shadow-xl overflow-hidden"
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-line-subtle px-5 py-3">
-          <h2 className="text-sm font-semibold text-content">{titleForPath(activePath, t)}</h2>
-          <Button
-            iconOnly
-            variant="tertiary"
-            size="xs"
-            onClick={close}
-            aria-label={t('common.close')}>
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 6l12 12M6 18L18 6"
-              />
-            </svg>
-          </Button>
-        </div>
-        <div className="p-5">{renderBody(activePath, close)}</div>
-      </div>
-    </div>
+    <ModalShell
+      onClose={close}
+      title={titleForPath(activePath, t)}
+      titleId="openhuman-link-modal-title"
+      contentClassName="p-5">
+      {renderBody(activePath, close)}
+    </ModalShell>
   );
 };
 
@@ -330,19 +309,19 @@ const DiscordBody = ({ close }: { close: () => void }) => {
       <p>{t('app.openhumanLink.discord.intro')}</p>
       <ul className="space-y-1.5 text-xs text-content-secondary pl-1">
         <li className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
           {t('app.openhumanLink.discord.perk1')}
         </li>
         <li className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
           {t('app.openhumanLink.discord.perk2')}
         </li>
         <li className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
           {t('app.openhumanLink.discord.perk3')}
         </li>
         <li className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 flex-shrink-0" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
           {t('app.openhumanLink.discord.perk4')}
         </li>
       </ul>
@@ -543,7 +522,7 @@ const AccountsSetupBody = ({ close }: { close: () => void }) => {
                 aria-checked={on}
                 aria-label={`${on ? t('skills.disconnect') : t('skills.connect')} ${p.label}`}
                 onClick={() => handleToggle(p.id, p.label, on)}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
                   on ? 'bg-primary-500' : 'bg-surface-strong'
                 }`}>
                 <span

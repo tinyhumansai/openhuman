@@ -25,7 +25,7 @@ test.describe('Agent review - canonical onboarding + privacy flow', () => {
 
     // The composer is the durable readiness marker for the unified chat shell;
     // sidebar copy and empty-state headings change independently of readiness.
-    await expect(page.getByTestId('send-message-button')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
 
     await page.goto('/#/settings/privacy');
     await waitForAppReady(page);

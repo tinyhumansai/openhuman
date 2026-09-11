@@ -146,6 +146,17 @@ export async function bootAuthenticatedPage(
   await page.goto('/#/home');
   await waitForAuthenticatedSnapshot(page);
   await page.goto(`/#${hash}`);
+  // `/home` is the legacy landing alias and redirects to the unified chat
+  // shell. Wait for that redirect to settle before reporting the page ready:
+  // under a busy browser lane the app could otherwise still be rendering the
+  // pre-auth welcome surface when a caller immediately asserts the composer.
+  if (hash === '/home') {
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash), {
+        timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+      })
+      .toMatch(/^#\/chat/);
+  }
   await waitForAppReady(page);
 }
 

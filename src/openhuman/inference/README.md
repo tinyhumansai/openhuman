@@ -4,7 +4,7 @@ Unified inference domain: the canonical home for everything LLM/STT/TTS/embeddin
 
 ## Responsibilities
 
-- Resolve workload names (`chat`, `reasoning`, `agentic`, `coding`, `memory`, `embeddings`, `heartbeat`, `learning`, `subconscious`, etc.) and provider strings (`openhuman`, `cloud`, `ollama:<model>`, `lmstudio:<model>`, `claude_agent_sdk:<model>`, `<slug>:<model>[@<temp>]`) to a concrete `Arc<dyn tinyagents::ChatModel<()>>` + model id.
+- Resolve workload names (`chat`, `reasoning`, `agentic`, `coding`, `memory`, `embeddings`, `heartbeat`, `learning`, `subconscious`, etc.) and provider strings (`openhuman`, `cloud`, `ollama:<model>`, `lmstudio:<model>`, `claude_agent_sdk:<model>`, `<slug>:<model>[@<temp>]`) to a concrete `Arc<dyn tinyinference::ChatModel<()>>` + model id.
 - Manage the local AI runtime: detect/spawn/adopt `ollama serve` and LM Studio, install/run Whisper (STT) and Piper (TTS), track download progress, and enforce a minimum-context-window floor.
 - Provide chat, vision (multimodal), summarization, embeddings, sentiment, and "should react" inference operations.
 - Preserve config-rejection, billing, authentication, and retry classification while TinyAgents owns model-call retry execution.

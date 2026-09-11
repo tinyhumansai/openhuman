@@ -130,7 +130,7 @@ def reachable(root, children, cut: set[str], global_cut: bool = False) -> set[tu
 
     The gap between them is not academic. The `encryption` cohort measures -17
     globally but **-4** as a gate, because `hmac`/`hkdf`/`x25519-dalek` arrive via
-    `tinyplace` and `zeroize` via `aws-lc-rs -> rustls -> reqwest`. Quoting the
+    `zeroize` via `aws-lc-rs -> rustls -> reqwest`. Quoting the
     global number as a gate's value overstates it by a factor of four.
     """
     if root[0] in cut:

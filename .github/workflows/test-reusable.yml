@@ -85,7 +85,10 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
       # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
-      # vendor/tinychannels/src/controllers/schemas.rs at test time. This lane
+      # vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs
+      # at test time (controller metadata is contract, so it lives in the bus
+      # crate). Still one submodule — the bus crate is a workspace member of
+      # vendor/tinychannels, not a submodule of its own. This lane
       # otherwise checks out without submodules, so init just that one — not
       # `submodules: recursive`, which would also pull the large tauri-cef fork
       # this job never builds.
@@ -156,6 +159,28 @@ jobs:
           workspaces: . -> target
           cache-on-failure: true
           key: core
+      - name: Build native test modules
+        run: |
+          # Memory and connector tests exercise host/module seams. Supplying
+          # local native fixtures keeps them independent of GitHub's release
+          # metadata API and mirrors the Rust E2E and desktop-E2E jobs.
+          # tinybus validates every directory ancestor, so a container-root
+          # owned directory outside the runner-owned checkout is required.
+          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          memory_dir="$module_root/tinymemory"
+          connectors_dir="$module_root/tinyconnectors"
+          rm -rf "$module_root"
+          mkdir -p "$memory_dir" "$connectors_dir"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
+            --manifest-path vendor/tinymemory/crates/tinymemory-module/Cargo.toml
+          cp vendor/tinymemory/crates/tinymemory-module/target/release/libtinymemory_module.so \
+            "$memory_dir/libtinymemory_module.so"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
+            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
+          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
+            "$connectors_dir/libtinyconnectors.so"
+          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" >> "$GITHUB_ENV"
+          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
       - name: Test core crate (openhuman)
         # This script uses Bash-only process substitution below. Reusable
         # workflows do not inherit the caller's `defaults.run.shell`, and
@@ -190,11 +215,11 @@ jobs:
           FEATURES="$(bash scripts/ci/product-features.sh),bin-tools"
           echo "[test-reusable] feature set: ${FEATURES}"
 
-          # `--features bin-tools` is load-bearing, not cosmetic: the six binaries
-          # under src/bin/ now declare `required-features = ["bin-tools"]`, so
-          # without it `--bins` silently matches NOTHING and this lane goes green
-          # having compiled none of them. fleet.rs and slack_backfill.rs each carry
-          # a `#[cfg(test)] mod`, so those tests would vanish too, with no error.
+          # `--features bin-tools` is load-bearing, not cosmetic: the ops binaries
+          # under src/bin/ declare `required-features = ["bin-tools"]`, so without
+          # it `--bins` silently skips them and this lane goes green having
+          # compiled none of them. fleet.rs carries a `#[cfg(test)] mod`, so those
+          # tests would vanish too, with no error.
           bash scripts/ci-cancel-aware.sh cargo test -p openhuman --lib --bins --features "${FEATURES}"
           bash scripts/ci-cancel-aware.sh cargo test -p openhuman --doc --features "${FEATURES}"
 
@@ -223,39 +248,6 @@ jobs:
               bash scripts/ci-cancel-aware.sh cargo test -p openhuman --features "${FEATURES}" --test "${target}"
             fi
           done < <(integration_test_targets)
-
-  tinycortex-tests:
-    if: inputs.run_rust_core
-    name: TinyCortex Memory Tests
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    container:
-      image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    env:
-      CARGO_INCREMENTAL: "0"
-      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Init tinycortex and tinymemory submodules
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init --recursive vendor/tinycortex vendor/tinymemory
-
-      - name: Cache TinyCortex build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: vendor/tinycortex -> vendor/tinycortex/target
-          cache-on-failure: true
-          key: tinycortex-full
-
-      - name: Run TinyCortex engine and Composio sync tests
-        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
 
   rust-core-tests-windows:
     if: inputs.run_rust_core

@@ -50,7 +50,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   return (
     <>
       {children}
-      <div className="fixed inset-0 z-[10000] bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-10000 bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4">
         <div className="w-full max-w-xl rounded-2xl border border-coral-500/30 bg-stone-900 p-6 shadow-2xl">
           <h2 className="text-xl font-semibold text-white">
             {t('daemon.serviceBlockingGate.title')}

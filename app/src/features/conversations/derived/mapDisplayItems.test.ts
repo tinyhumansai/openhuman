@@ -12,6 +12,54 @@ function newestFirst(chronological: DerivedDisplayItem[]): DerivedDisplayItem[] 
 }
 
 describe('mapDisplayItems', () => {
+  /**
+   * `callId` is whatever the provider wrote into the session transcript, and a
+   * provider that emits tool calls without ids writes `''` for every one. Two
+   * such calls in a turn used to collapse onto one row id, which lost the first
+   * call from the timeline and gave assistant-ui two parts keyed
+   * `toolCallId-` — a throw ("Duplicate key … in useResources") that takes the
+   * thread render down on load.
+   */
+  it('gives id-less tool calls distinct, position-stable row ids', () => {
+    const chronological: DerivedDisplayItem[] = [
+      { kind: 'turnBoundary', requestId: 'req-1' },
+      { kind: 'userMessage', content: 'go', requestId: 'req-1' },
+      { kind: 'toolCall', callId: '', name: 'shell', status: 'success', result: 'one' },
+      { kind: 'toolCall', callId: '', name: 'shell', status: 'success', result: 'two' },
+    ];
+
+    const { timelines, transcripts } = mapDisplayItems(newestFirst(chronological));
+
+    const ids = timelines['req-1'].map(entry => entry.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).not.toContain('');
+    // Each transcript pointer names its own row, so both results survive.
+    expect(transcripts['req-1'].map(item => 'callId' in item && item.callId)).toEqual(ids);
+    expect(timelines['req-1'].map(entry => entry.result)).toEqual(['one', 'two']);
+
+    // Position-derived, so re-deriving the same page yields the same ids — the
+    // id has to survive a remount, not merely be unique once.
+    expect(mapDisplayItems(newestFirst(chronological)).timelines['req-1'].map(e => e.id)).toEqual(
+      ids
+    );
+  });
+
+  it('disambiguates a repeated non-empty call id within a turn', () => {
+    const chronological: DerivedDisplayItem[] = [
+      { kind: 'turnBoundary', requestId: 'req-1' },
+      { kind: 'userMessage', content: 'go', requestId: 'req-1' },
+      { kind: 'toolCall', callId: 'dup', name: 'shell', status: 'success', result: 'one' },
+      { kind: 'toolCall', callId: 'dup', name: 'shell', status: 'success', result: 'two' },
+    ];
+
+    const ids = mapDisplayItems(newestFirst(chronological)).timelines['req-1'].map(e => e.id);
+
+    // The first keeps the provider's id; only the collision is renamed.
+    expect(ids[0]).toBe('dup');
+    expect(new Set(ids).size).toBe(2);
+  });
+
   it('projects reasoning + interim narration + tool call for one turn, skipping the final answer', () => {
     const chronological: DerivedDisplayItem[] = [
       { kind: 'turnBoundary', requestId: 'req-1' },

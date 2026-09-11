@@ -86,7 +86,7 @@ interface PanelProps {
 function Panel({ children }: PanelProps) {
   return (
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+      className="fixed inset-0 z-10000 flex items-center justify-center p-4"
       style={{ backgroundColor: 'var(--color-background)' }}>
       <AppBackground />
       <div className="relative z-10 w-full max-w-xl rounded-2xl border border-line bg-surface p-6 shadow-soft animate-fade-up">
@@ -269,10 +269,10 @@ function ModePicker({ onConfirm }: PickerProps) {
             type="button"
             onClick={() => setSelected('local')}
             aria-pressed={selected === 'local'}
-            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
+            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-hidden ${
               selected === 'local'
-                ? '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 text-content shadow-sm'
-                : '!border-stone-200 dark:!border-neutral-700 bg-surface text-content-secondary hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-surface-hover'
+                ? 'border-primary-500! bg-primary-50 dark:bg-primary-500/15 text-content shadow-xs'
+                : 'border-stone-200! dark:border-neutral-700! bg-surface text-content-secondary hover:border-stone-300! dark:hover:border-neutral-600! hover:bg-surface-hover'
             }`}>
             <div className="font-medium">{t('bootCheck.localRecommended')}</div>
             <div className="mt-0.5 text-xs text-content-muted">
@@ -287,10 +287,10 @@ function ModePicker({ onConfirm }: PickerProps) {
             type="button"
             onClick={() => setSelected('cloud')}
             aria-pressed={selected === 'cloud'}
-            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-none ${
+            className={`rounded-xl border-2 p-5 text-left transition-colors focus:outline-hidden ${
               selected === 'cloud'
-                ? '!border-primary-500 bg-primary-50 dark:bg-primary-500/15 text-content shadow-sm'
-                : '!border-stone-200 dark:!border-neutral-700 bg-surface text-content-secondary hover:!border-stone-300 dark:hover:!border-neutral-600 hover:bg-surface-hover'
+                ? 'border-primary-500! bg-primary-50 dark:bg-primary-500/15 text-content shadow-xs'
+                : 'border-stone-200! dark:border-neutral-700! bg-surface text-content-secondary hover:border-stone-300! dark:hover:border-neutral-600! hover:bg-surface-hover'
             }`}>
             <div className="font-medium">{t('bootCheck.cloudMode')}</div>
             <div className="mt-0.5 text-xs text-content-muted">
@@ -316,7 +316,7 @@ function ModePicker({ onConfirm }: PickerProps) {
                   setUrlWarning(httpPublicHostWarning(next, t));
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-hidden focus:ring-1 focus:ring-primary-500"
               />
               {urlError && <p className="text-xs text-red-600">{urlError}</p>}
               {!urlError && urlWarning && (
@@ -341,7 +341,7 @@ function ModePicker({ onConfirm }: PickerProps) {
                   setTokenError(null);
                   setTestStatus({ kind: 'idle' });
                 }}
-                className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-hidden focus:ring-1 focus:ring-primary-500"
               />
               {tokenError && <p className="text-xs text-red-600">{tokenError}</p>}
               <p className="text-[11px] text-content-muted leading-snug">

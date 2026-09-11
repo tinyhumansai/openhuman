@@ -1,3 +1,4 @@
+import debugFactory from 'debug';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -9,24 +10,32 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../../store/layoutSlice';
-import { Tooltip } from '../../ui';
-import CollapsedNavRail from './CollapsedNavRail';
+import { isTauri, safeInvoke } from '../../../utils/tauriCommands/common';
+import {
+  Sidebar,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SidebarProvider,
+  SidebarRail,
+} from '../../ui';
 import ContentSurface from './ContentSurface';
 import WindowDragBar from './WindowDragBar';
+
+const log = debugFactory('sidebar');
 
 // `app-shell` (not the older `root-shell`) so the persisted geometry seeds
 // fresh with the sidebar visible by default. Exported so the global command
 // layer (mod+B "Toggle sidebar") can target this exact panel.
 export const APP_SHELL_LAYOUT_ID = 'app-shell';
 const LAYOUT_ID = APP_SHELL_LAYOUT_ID;
-const DEFAULT_WIDTH = 224;
-const MIN_WIDTH = 188;
-const MAX_WIDTH = 420;
-const KEYBOARD_STEP = 16;
-const LAYOUT_DEFAULTS = { sidebarVisible: true, sidebarWidth: DEFAULT_WIDTH };
+// Geometry bounds come from the `Sidebar` primitive rather than being restated
+// here — they were byte-identical, and two copies of a clamp is one copy too
+// many once the primitive is the thing doing the clamping.
+const LAYOUT_DEFAULTS = { sidebarVisible: true, sidebarWidth: SIDEBAR_DEFAULT_WIDTH };
 
 function clamp(width: number): number {
-  return Math.min(Math.max(width, MIN_WIDTH), MAX_WIDTH);
+  return Math.min(Math.max(width, SIDEBAR_MIN_WIDTH), SIDEBAR_MAX_WIDTH);
 }
 
 /**
@@ -74,9 +83,25 @@ interface RootShellLayoutProps {
  *   - **Card** — the routed content sits on a single inset, rounded
  *     {@link ContentSurface}, the only opaque sheet in the shell.
  *
- * The two separate by fill contrast, which is why the sidebar needs no border
- * and the panes need no divider fill. The dragged sidebar width persists per
+ * The two separate by fill contrast — the canvas/chrome neutrals sit below the
+ * card's surface — which is why the sidebar needs no border and the panes need
+ * no divider fill. The dragged sidebar width persists per
  * user via the `layout` slice (id `app-shell`).
+ *
+ * ## Redux stays the source of truth
+ *
+ * The column and the rail are the `Sidebar` primitive (the collapsed-state
+ * reopen affordance lives inside {@link AppSidebar}, which reads the same
+ * primitive's `useSidebar()` context), driven as a **controlled view**:
+ * `open` and `width` are
+ * read out of the `layout` slice on every render, and `onOpenChange` /
+ * `onWidthChange` dispatch back into it. Letting `SidebarProvider` hold the
+ * state uncontrolled would look identical in a unit test and silently stop
+ * restoring the persisted geometry across restarts.
+ *
+ * `keyboardShortcut` stays off (its default) for the same reason it always was:
+ * `lib/commands/registry` already binds mod+B to `toggleSidebar`, and a second
+ * window listener on the same chord toggles twice and cancels out.
  */
 export default function RootShellLayout({ sidebar, children, unframed }: RootShellLayoutProps) {
   const { t } = useT();
@@ -85,13 +110,36 @@ export default function RootShellLayout({ sidebar, children, unframed }: RootShe
   const persistedWidth = clamp(layout.sidebarWidth);
   const isOpen = layout.sidebarVisible;
 
+  // Collapsed, the sidebar header — the app's stand-in for a title bar, and the
+  // row the traffic lights are aligned to — is gone, leaving window controls
+  // floating on bare content with no title anywhere. Hand the title bar back to
+  // macOS for as long as the rail is collapsed, and take it back on expand.
+  //
+  // Driven from `isOpen` rather than from `handleOpenChange` so the window
+  // agrees with a collapsed state restored from persisted layout on boot, not
+  // only with states the user toggles into during this session.
+  //
+  // Fire-and-forget through `safeInvoke`: this is cosmetic chrome, and the
+  // command is a no-op off macOS, so a failure must never break the shell
+  // render. Outside Tauri there is no window at all.
+  useEffect(() => {
+    if (!isTauri()) return;
+    void safeInvoke('set_titlebar_for_sidebar', { collapsed: !isOpen }).catch(err => {
+      log('titlebar sync failed: %o', err);
+    });
+  }, [isOpen]);
+
   // Seed persisted geometry once so the selector returns a stable stored
   // reference on subsequent renders (avoids the new-object memoization warning).
   useEffect(() => {
     dispatch(ensurePanelLayout({ id: LAYOUT_ID, defaults: LAYOUT_DEFAULTS }));
   }, [dispatch]);
 
+  // Live drag width. `SidebarRail` reports a width per pointermove frame; those
+  // frames are held locally and committed to Redux once on release, so a drag
+  // writes (and persists) one value rather than sixty.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const draggingRef = useRef(false);
   const dragWidthRef = useRef<number | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const width = dragWidth ?? persistedWidth;
@@ -101,62 +149,61 @@ export default function RootShellLayout({ sidebar, children, unframed }: RootShe
     [dispatch]
   );
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startWidth = width;
-      dragWidthRef.current = startWidth;
-      setDragWidth(startWidth);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      function handleMove(ev: PointerEvent) {
-        const next = clamp(startWidth + (ev.clientX - startX));
+  /** Every width the primitive proposes — drag frames and arrow-key steps alike. */
+  const handleWidthChange = useCallback(
+    (next: number) => {
+      if (draggingRef.current) {
         dragWidthRef.current = next;
         setDragWidth(next);
+        return;
       }
-      function detach() {
-        window.removeEventListener('pointermove', handleMove);
-        window.removeEventListener('pointerup', stop);
-        window.removeEventListener('pointercancel', stop);
-        window.removeEventListener('blur', stop);
-        document.body.style.removeProperty('cursor');
-        document.body.style.removeProperty('user-select');
-        dragCleanupRef.current = null;
-      }
-      function stop() {
-        detach();
-        const finalWidth = dragWidthRef.current;
-        dragWidthRef.current = null;
-        setDragWidth(null);
-        if (finalWidth != null) commitWidth(finalWidth);
-      }
-
-      dragCleanupRef.current = detach;
-      window.addEventListener('pointermove', handleMove);
-      window.addEventListener('pointerup', stop);
-      window.addEventListener('pointercancel', stop);
-      window.addEventListener('blur', stop);
+      // Arrow-key resize: discrete, so it lands straight in the store.
+      commitWidth(next);
     },
-    [width, commitWidth]
+    [commitWidth]
   );
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      log('sidebar open change: %s', next ? 'expanded' : 'collapsed');
+      dispatch(setSidebarVisible({ id: LAYOUT_ID, visible: next }));
+    },
+    [dispatch]
+  );
+
+  // The rail owns the pointermove maths; this only brackets the gesture (and
+  // paints the drag cursor across the whole window while it is in flight).
+  const handleRailPointerDown = useCallback(() => {
+    draggingRef.current = true;
+    dragWidthRef.current = null;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function detach() {
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('blur', stop);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+      draggingRef.current = false;
+      dragCleanupRef.current = null;
+    }
+    function stop() {
+      detach();
+      const finalWidth = dragWidthRef.current;
+      dragWidthRef.current = null;
+      setDragWidth(null);
+      if (finalWidth != null) commitWidth(finalWidth);
+    }
+
+    dragCleanupRef.current = detach;
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+  }, [commitWidth]);
 
   // Detach global listeners if we unmount mid-drag.
   useLayoutEffect(() => () => dragCleanupRef.current?.(), []);
-
-  const onDividerKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        commitWidth(persistedWidth - KEYBOARD_STEP);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        commitWidth(persistedWidth + KEYBOARD_STEP);
-      }
-    },
-    [commitWidth, persistedWidth]
-  );
 
   return (
     // The chrome layer. One legibility scrim across the WHOLE shell — the
@@ -164,94 +211,76 @@ export default function RootShellLayout({ sidebar, children, unframed }: RootShe
     // a single continuous surface. Scrimming per-pane would tint them
     // differently and reintroduce the very seam this layout removes.
     //
-    // The alpha is deliberately light: the themed AppBackground behind it is an
-    // *animated* WebGL mesh gradient, and the content card above is opaque, so
-    // the chrome is the only place that motion is visible at all. A heavier
-    // scrim (or a backdrop blur, which also smears the 18px dotted canvas)
-    // flattens it back into paint and leaves the shader burning GPU for nothing.
-    // /30 is the legibility knob — raise it if sidebar labels wash out, which is
-    // most likely under a `backdrop: image` theme rather than the mesh.
-    <div className="relative flex h-full w-full min-h-0 overflow-hidden bg-surface-chrome/30">
+    // The alpha is deliberately light: the content card above is opaque, so the
+    // chrome is the only place the themed AppBackground is visible at all. That
+    // matters most under the opt-in `mesh` backdrop, where a heavier scrim (or a
+    // backdrop blur, which also smears the 18px dotted canvas) flattens the
+    // shader back into paint and leaves it burning GPU for nothing. /30 is the
+    // legibility knob — raise it if sidebar labels wash out, which is most
+    // likely under a `backdrop: image` theme rather than the flat default.
+    <SidebarProvider
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      width={width}
+      onWidthChange={handleWidthChange}
+      minWidth={SIDEBAR_MIN_WIDTH}
+      maxWidth={SIDEBAR_MAX_WIDTH}
+      className="bg-surface-chrome/30">
+      {/* `collapsible="icon"` — a real, non-zero {@link SIDEBAR_ICON_WIDTH}px
+          column that stays mounted when collapsed, rather than the previous
+          `offcanvas` (unmount) + a hand-rolled sibling `<div>` standing in for
+          the collapsed rail outside this column.
+
+          `offcanvas` was chosen deliberately when this shell was built: "the
+          native webview glued to the content bounds has historically punched
+          through a zero-width-but-present column." That failure mode was
+          CEF's per-provider child-webview architecture (`webview_accounts` /
+          the CDP scanners) positioning a *separate* native webview by
+          tracking a DOM placeholder's bounds — a zero-width-but-mounted
+          column could desync from what the native layer painted over.
+
+          Both halves of that architecture are gone from this codebase: the
+          CDP-driven scanners and the `webview_accounts` surface they ran
+          inside were removed (#5478), and the app itself moved off CEF onto
+          Wry (#5456) — see `CLAUDE.md`'s Tauri-shell section. `grep -rln
+          "webview_accounts\|WebviewWindow::builder" app/src-tauri/src`
+          confirms there is no bounds-tracked child webview left anywhere in
+          the shell; the whole app renders as one native webview, so there is
+          no second compositing layer for a narrowed HTML column to be
+          "punched through" by. `icon` mode's real ~48–56px column — never
+          zero-width, in either state — does not reintroduce the failure mode
+          `offcanvas` was chosen for; that failure mode's precondition no
+          longer exists. `AppSidebar` reads {@link useSidebar}'s `state` to
+          render its own compact, icon-only body while collapsed (formerly
+          the sibling `<div>` here). */}
+      <Sidebar collapsible="icon" data-testid="root-shell-sidebar">
+        {sidebar}
+      </Sidebar>
+
+      {/* Resize seam. Transparent at rest — the sidebar and the content card
+          separate by fill contrast, so a filled seam would draw a line across
+          the chrome that the two-layer look is trying to remove. Arrow keys
+          resize in 16px steps; the pointer drag is bracketed above. Hidden
+          while collapsed — the icon-width column is fixed, not draggable. */}
       {isOpen && (
-        <>
-          <div
-            className="flex-shrink-0 min-w-0 overflow-hidden"
-            style={{ width }}
-            data-testid="root-shell-sidebar">
-            {sidebar}
-          </div>
-
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('layout.resizeSidebar')}
-            aria-valuenow={Math.round(width)}
-            aria-valuemin={MIN_WIDTH}
-            aria-valuemax={MAX_WIDTH}
-            tabIndex={0}
-            data-testid="root-shell-divider"
-            data-analytics-id="root-shell-resize-divider"
-            onPointerDown={onPointerDown}
-            onKeyDown={onDividerKeyDown}
-            title={t('layout.resizeSidebar')}
-            // Transparent at rest: the sidebar and the content card separate by
-            // fill contrast, so a filled seam would draw a line across the
-            // chrome that the two-layer look is trying to remove. It still
-            // lights up on hover/focus to advertise the drag affordance.
-            className="group relative w-px flex-shrink-0 cursor-col-resize select-none self-stretch bg-transparent focus:outline-none">
-            <span className="absolute inset-y-0 -left-1 -right-1 z-10" />
-            <span className="absolute inset-0 transition-colors group-hover:bg-line-chrome group-focus:bg-line-chrome" />
-          </div>
-        </>
-      )}
-
-      {/* Reshow affordance — only when the sidebar is collapsed. A thin rail
-          that occupies layout space (NOT an overlay) so the content — and the
-          native CEF webview glued to the content's bounds, which composites
-          above the HTML layer — starts to its right and never covers it. */}
-      {!isOpen && (
-        <div className="flex w-14 flex-none flex-col items-center gap-0.5">
-          {/* macOS overlay title bar (titleBarStyle: Overlay) floats the traffic
-              lights over the top-left. The expanded SidebarHeader dodges them by
-              right-aligning, but this narrow rail can't — so reserve a draggable
-              strip the height of the window controls and start the rail below it,
-              clear of the lights. */}
-          <div className="h-7 w-full flex-none" data-tauri-drag-region />
-          <Tooltip label={t('layout.showSidebar')}>
-            <button
-              type="button"
-              onClick={() => dispatch(setSidebarVisible({ id: LAYOUT_ID, visible: true }))}
-              data-testid="root-shell-reopen"
-              data-analytics-id="root-shell-reopen-sidebar"
-              aria-label={t('layout.showSidebar')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-surface-hover hover:text-content-secondary">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.8}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            </button>
-          </Tooltip>
-          {/* Keep the primary nav reachable while collapsed: an icon-only rail. */}
-          <div className="mt-1 w-full pt-1">
-            <CollapsedNavRail />
-          </div>
-        </div>
+        <SidebarRail
+          aria-label={t('layout.resizeSidebar')}
+          title={t('layout.resizeSidebar')}
+          data-testid="root-shell-divider"
+          data-analytics-id="root-shell-resize-divider"
+          onPointerDown={handleRailPointerDown}
+        />
       )}
 
       <div
         className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         data-testid="root-shell-content">
-        {/* macOS overlay-title-bar band, in flow ABOVE the content card so the
-            traffic lights land on bare chrome instead of on the card. No-op off
-            macOS / outside Tauri, where the native title bar already owns that
-            band and reserving one would just waste 28px. */}
+        {/* macOS overlay-title-bar drag region. It is absolutely positioned, so
+            the routed surface keeps its full height. No-op off macOS / outside
+            Tauri, where the native title bar already owns this area. */}
         <WindowDragBar />
         <ContentSurface unframed={unframed}>{children}</ContentSurface>
       </div>
-    </div>
+    </SidebarProvider>
   );
 }

@@ -26,8 +26,6 @@ vi.mock('../../components/PublicRoute', () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock('../../components/DefaultRedirect', () => ({ default: () => <div /> }));
-vi.mock('../../agentworld/AgentWorldShell', () => ({ default: () => <div /> }));
-vi.mock('../../agentworld/pages/AgentWorld', () => ({ default: () => <div /> }));
 
 const AppRoutes = (await import('../../AppRoutes')).default;
 

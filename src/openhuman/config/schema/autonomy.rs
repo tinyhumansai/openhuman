@@ -40,6 +40,17 @@ pub struct AutonomyConfig {
     /// Hard security blocks (`is_always_forbidden`, `is_workspace_internal_path`,
     /// `ToolPolicyMiddleware`) live on independent code paths inside the tool
     /// implementations themselves and are unaffected by this setting.
+    ///
+    /// It also bypasses **parking**, which is worth knowing before enabling it.
+    /// A remote-origin triage dispatch — a Composio or webhook payload reaching
+    /// `triage.escalate` — normally parks for a decision and writes a
+    /// `pending_approvals` audit row. With this flag on it is allowed
+    /// immediately and **no audit row is written**, so those dispatches leave no
+    /// approval trail. Accepted deliberately as the cost of a blanket
+    /// "approve everything" switch (openhuman#5634); the alternative was to make
+    /// this flag mean "approve everything except…", which is harder to reason
+    /// about.
+    ///
     /// Defaults to `false` — existing users see no behavior change.
     #[serde(default)]
     pub auto_approve_all: bool,

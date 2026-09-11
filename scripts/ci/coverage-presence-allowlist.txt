@@ -16,4 +16,18 @@
 # #5619 merged first, the lane now compiles the family, and the two lines were
 # deleted rather than left to rot into "excluded on purpose".
 #
-# (empty)
+# src/openhuman/runtime/client/disabled.rs is the `modules`-OFF stand-in for
+# the runtime client facade (`#[cfg(not(feature = "modules"))] mod disabled;` in
+# runtime/client/mod.rs). `modules` is in BOTH `[features] default` and
+# product-features.txt, so the coverage lane (default + product-features.txt)
+# always builds with the gate ON and the OFF-branch stub is never compiled — the
+# same shape as the `stub.rs` structural category, but this file is named
+# `disabled.rs` because it answers as a runtime that is "disabled", not as a
+# generic facade stub.
+src/openhuman/runtime/client/disabled.rs
+
+# `helper.rs` includes this fragment only to build the macOS Swift accessibility
+# helper. The production feature set is compiled for Linux in this coverage lane,
+# so the fragment's `#[cfg(target_os = "macos")]` definition is intentionally
+# absent. It is exercised by the macOS desktop E2E matrix instead.
+src/openhuman/desktop/accessibility/helper_part_02.rs

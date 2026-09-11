@@ -4,11 +4,14 @@
  * modal's "How do I get a token?" link and from the server detail page, so the
  * chat gets its own space instead of crowding the auth inputs.
  *
- * Stacks above the Connect modal (z-[60] vs z-50); backdrop click / ✕ closes
- * only this modal and returns to whatever opened it.
+ * Built on the shared `ModalShell` primitive (Radix `Dialog` underneath), so it
+ * gets a real focus trap and stacks correctly above the Connect modal via
+ * Radix's own layering rather than a hand-picked z-index.
  */
+import { useId } from 'react';
+
 import { useT } from '../../../lib/i18n/I18nContext';
-import Button from '../../ui/Button';
+import { ModalShell } from '../../ui/ModalShell';
 import ConfigAssistantPanel from './ConfigAssistantPanel';
 
 interface ConfigHelpModalProps {
@@ -29,6 +32,7 @@ const ConfigHelpModal = ({
   onApplySuggestedEnv,
 }: ConfigHelpModalProps) => {
   const { t } = useT();
+  const titleId = useId();
 
   // Fixed, server-specific research prompt the assistant auto-runs on open.
   const autoPrompt =
@@ -39,37 +43,18 @@ const ConfigHelpModal = ({
     ` and the exact header name and value format to paste. Be concise and specific to this service.`;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('mcp.connectAuth.howToGetToken')}
-      onMouseDown={e => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 py-6 overflow-y-auto">
-      <div className="flex h-[78vh] max-h-[88vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-xl p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-content">
-            {t('mcp.connectAuth.howToGetToken')}
-          </h3>
-          <Button
-            variant="secondary"
-            size="xs"
-            onClick={onClose}
-            aria-label={t('common.cancel')}
-            className="shrink-0">
-            ✕
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1">
-          <ConfigAssistantPanel
-            qualifiedName={qualifiedName}
-            autoPrompt={autoPrompt}
-            onApplySuggestedEnv={onApplySuggestedEnv}
-          />
-        </div>
-      </div>
-    </div>
+    <ModalShell
+      onClose={onClose}
+      titleId={titleId}
+      title={t('mcp.connectAuth.howToGetToken')}
+      maxWidthClassName="max-w-2xl"
+      contentClassName="flex h-[78vh] max-h-[88vh] min-h-0 flex-col px-5 py-4">
+      <ConfigAssistantPanel
+        qualifiedName={qualifiedName}
+        autoPrompt={autoPrompt}
+        onApplySuggestedEnv={onApplySuggestedEnv}
+      />
+    </ModalShell>
   );
 };
 

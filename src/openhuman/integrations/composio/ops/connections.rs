@@ -2,26 +2,26 @@
 
 use std::collections::HashMap;
 
+use super::super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
+use super::super::module_client::{self as connectors, methods};
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 
-use super::super::client::{
-    create_composio_client, direct_list_connections, ComposioClient, ComposioClientKind,
-};
 use super::super::connected_integrations::{
     fetch_connected_integrations_status, invalidate_connected_integrations_cache,
     sync_cache_with_connections, FetchConnectedIntegrationsStatus,
 };
-use super::super::providers::profile::{
-    load_connected_identities, normalize_connection_identifier,
-};
+use super::super::identity_store::{delete_connected_identity_facets, load_connected_identities};
 use super::super::types::{
-    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioDeleteResponse,
+    ComposioAuthorizeRequest, ComposioAuthorizeResponse, ComposioConnectionsResponse,
+    ComposioDeleteConnectionRequest, ComposioDeleteResponse,
 };
 use super::error_utils::{
-    direct_mode_without_key, report_composio_op_error, resolve_client, OpResult,
+    backend_mode_without_session, direct_mode_without_key, report_composio_op_error, OpResult,
+    COMPOSIO_NO_SESSION,
 };
 use super::memory_cleanup::composio_memory_targets_for_connection;
+use tinymemory_api::composio::normalize_connection_identifier;
 
 pub async fn composio_list_connections(
     config: &Config,
@@ -39,43 +39,61 @@ pub async fn composio_list_connections(
             vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
         ));
     }
-    let kind =
-        create_composio_client(config).map_err(|e| format!("[composio] list_connections: {e}"))?;
-    let client = match kind {
-        ComposioClientKind::Backend(client) => {
-            tracing::debug!("[composio] list_connections: backend variant");
-            client
-        }
-        ComposioClientKind::Direct(direct) => {
-            tracing::info!(
-                "[composio-direct] list_connections: fetching v3 \
-                 /connected_accounts for the user's personal Composio tenant"
+    if backend_mode_without_session(config) {
+        // No session means no proxy route, so the connector module cannot
+        // answer — but the connections may well exist server-side. That makes
+        // this "unavailable", not "none": callers that tell the two apart
+        // (`memory::sources::reconcile` hides nothing on `Err`,
+        // `flows::validate_connection_refs` fails open on `Err`) must keep
+        // doing so, which an empty `Ok` would silently defeat. It is also not
+        // a fault, so it is not reported here: nothing reaches Sentry for a
+        // user who has simply not signed in yet (#6176). The wording is the one
+        // every other backend-mode member gives in this state, which the
+        // JSON-RPC boundary also recognises as expected.
+        tracing::debug!(
+            "[composio] list_connections: backend mode selected, not signed in yet \
+             — connections unavailable until sign-in (valid setup state, not reported)"
+        );
+        // A module configured while the user was signed in still holds that
+        // bearer, and the per-call route reconciliation that would tell it to
+        // drop it is exactly what answering here skips. Give an already-loaded
+        // module the instruction now; a module that was never loaded holds no
+        // credential and is not loaded for this.
+        if let Err(error) = connectors::reconcile_route_if_loaded(config).await {
+            tracing::warn!(
+                "[composio] list_connections: could not drop the connector module's route \
+                 after sign-out ({error}); the next routed call retries"
             );
-            let resp = direct_list_connections(&direct).await.map_err(|e| {
-                let rendered = format!("[composio-direct] list_connections failed: {e:#}");
-                report_composio_op_error("list_connections", &rendered);
-                rendered
-            })?;
-            let active = resp.connections.iter().filter(|c| c.is_active()).count();
-            let total = resp.connections.len();
-            sync_cache_with_connections(&resp.connections);
-            let resp = enrich_connections_with_identity(resp);
-            return Ok(RpcOutcome::new(
-                resp,
-                vec![format!(
-                    "composio: direct mode — {total} connection(s) listed ({active} active)"
-                )],
-            ));
         }
-    };
-    let resp = client.list_connections().await.map_err(|e| {
-        report_composio_op_error("list_connections", &e);
-        format!("[composio] list_connections failed: {e:#}")
-    })?;
+        return Err(COMPOSIO_NO_SESSION.to_string());
+    }
+    // The connector module owns the backend-proxied route. Direct mode stays
+    // host-side because its client accepts the local loopback overrides used
+    // by desktop development and its v3 response mapper lives here.
+    let resp =
+        if config.composio.mode.trim() == crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT {
+            let ComposioClientKind::Direct(direct) = create_composio_client(config)
+                .map_err(|error| format!("[composio-direct] list_connections: {error:#}"))?
+            else {
+                unreachable!("direct Composio mode must construct a direct client")
+            };
+            direct_list_connections(&direct).await.map_err(|error| {
+                report_composio_op_error("list_connections", &error);
+                format!("[composio-direct] list_connections: {error:#}")
+            })?
+        } else {
+            connectors::call_bare::<ComposioConnectionsResponse>(config, methods::LIST_CONNECTIONS)
+                .await
+                .map_err(|error| {
+                    report_composio_op_error("list_connections", &anyhow::anyhow!("{error}"));
+                    format!("[composio] list_connections failed: {error}")
+                })?
+        };
+
     let active = resp.connections.iter().filter(|c| c.is_active()).count();
     let total = resp.connections.len();
     sync_cache_with_connections(&resp.connections);
-    let resp = enrich_connections_with_identity(resp);
+    let resp = enrich_connections_with_identity(config, resp).await;
     Ok(RpcOutcome::new(
         resp,
         vec![format!(
@@ -90,47 +108,23 @@ pub async fn composio_authorize(
     extra_params: Option<serde_json::Value>,
 ) -> OpResult<RpcOutcome<ComposioAuthorizeResponse>> {
     tracing::debug!(toolkit = %toolkit, has_extra_params = extra_params.is_some(), "[composio] rpc authorize");
-    let kind = create_composio_client(config).map_err(|e| format!("[composio] authorize: {e}"))?;
-    let resp = match kind {
-        ComposioClientKind::Backend(client) => {
-            tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            super::super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
-                .await
-                .map_err(|e| {
-                    report_composio_op_error("authorize", &e);
-                    let wrapped =
-                        super::super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
-                    format!("[composio] authorize failed: {wrapped:#}")
-                })?
-        }
-        ComposioClientKind::Direct(direct) => {
-            tracing::info!(
-                toolkit = %toolkit,
-                "[composio-direct] authorize: routing to user's personal Composio tenant"
-            );
-            if extra_params.is_some() {
-                tracing::warn!(
-                    toolkit = %toolkit,
-                    "[composio-direct] authorize: extra_params is set but direct mode does \
-                     not propagate it — configure toolkit-specific fields via \
-                     app.composio.dev for your auth config"
-                );
-            }
-            super::super::oauth_handoff::direct_authorize_with_meta_guard(
-                &direct,
-                toolkit,
-                &config.composio.entity_id,
-            )
-            .await
-            .map_err(|e| {
-                let wrapped =
-                    super::super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
-                let rendered = format!("[composio-direct] authorize failed: {wrapped:#}");
-                report_composio_op_error("authorize", &rendered);
-                rendered
-            })?
-        }
-    };
+    // The module owns the whole handoff: the Meta pre-clean, the 429 backoff,
+    // and the guidance message that replaces an unhelpful rate-limit error.
+    // It also owns the difference between the proxy's authorize body and v3's
+    // link call, so `extra_params` no longer needs a per-route caveat here.
+    let resp = connectors::call::<_, ComposioAuthorizeResponse>(
+        config,
+        methods::AUTHORIZE,
+        ComposioAuthorizeRequest {
+            toolkit: toolkit.to_string(),
+            extra_params,
+        },
+    )
+    .await
+    .map_err(|error| {
+        report_composio_op_error("authorize", &anyhow::anyhow!("{error}"));
+        format!("[composio] authorize failed: {error}")
+    })?;
 
     crate::core::bus::BUS.publish(
         crate::core::events::DomainEvent::ComposioConnectionCreated {
@@ -152,8 +146,7 @@ pub async fn composio_delete_connection(
     clear_memory: bool,
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
-    let client = resolve_client(config)?;
-    let toolkit = match resolve_toolkit_for_connection(&client, connection_id).await {
+    let toolkit = match resolve_toolkit_for_connection(config, connection_id).await {
         Ok(toolkit) => Some(toolkit),
         Err(error) if clear_memory => {
             return Err(format!(
@@ -163,17 +156,15 @@ pub async fn composio_delete_connection(
         Err(_) => None,
     };
     let memory_targets = if clear_memory {
-        // The LIVE process client — target discovery loads notion sync state
-        // through it. Resolved here, not constructed inside the discovery:
-        // `MemoryClient::from_workspace_dir` starts an ingestion worker at
-        // construction, so building one per delete put a second worker on the
-        // live store every time.
-        let memory = crate::openhuman::memory::ops::helpers::active_memory_client()
-            .await
-            .map_err(|error| {
-                format!("[composio] delete_connection cannot resolve the memory client: {error}")
-            })?;
-        composio_memory_targets_for_connection(&memory, toolkit.as_deref(), connection_id)
+        // Target discovery takes the config and resolves the bound driver
+        // itself — the notion arm reads sync state through the driver's `Graph`
+        // family. This used to resolve the LIVE in-process client here
+        // (`memory::ops::helpers::active_memory_client`) and hand it down;
+        // openhuman#5560 deleted that engine, and the binding is what replaced
+        // it. Discovery still refuses before the connection is deleted rather
+        // than after, so a memory store this host cannot reach aborts the
+        // delete instead of orphaning the user's synced pages.
+        composio_memory_targets_for_connection(config, toolkit.as_deref(), connection_id)
             .await
             .map_err(|error| {
                 format!("[composio] delete_connection cannot enumerate memory targets: {error:#}")
@@ -181,14 +172,27 @@ pub async fn composio_delete_connection(
     } else {
         Vec::new()
     };
-    let mut resp = client.delete_connection(connection_id).await.map_err(|e| {
-        report_composio_op_error("delete_connection", &e);
-        format!("[composio] delete_connection failed: {e:#}")
+    // Only the Composio-side removal crosses the bus. Everything around it —
+    // the memory targets, the identity facets, PROFILE.md, the memory_sources
+    // row — is this host's own bookkeeping about a connection it no longer has,
+    // and the module knows nothing about any of it.
+    let mut resp = connectors::call::<_, ComposioDeleteResponse>(
+        config,
+        methods::DELETE_CONNECTION,
+        ComposioDeleteConnectionRequest {
+            connection_id: connection_id.to_string(),
+            clear_memory,
+        },
+    )
+    .await
+    .map_err(|error| {
+        report_composio_op_error("delete_connection", &anyhow::anyhow!("{error}"));
+        format!("[composio] delete_connection failed: {error}")
     })?;
     let mut memory_chunks_deleted = 0;
     let mut memory_clear_errors = Vec::new();
     for target in &memory_targets {
-        match target.delete(config) {
+        match target.delete(config).await {
             Ok(deleted) => {
                 memory_chunks_deleted += deleted;
             }
@@ -202,17 +206,24 @@ pub async fn composio_delete_connection(
     }
     resp.memory_chunks_deleted = memory_chunks_deleted;
     if let Some(toolkit) = toolkit.as_deref() {
-        let deleted = super::super::providers::profile::delete_connected_identity_facets(
-            toolkit,
-            connection_id,
-        );
+        let deleted = delete_connected_identity_facets(config, toolkit, connection_id)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    connection_id = %connection_id,
+                    %error,
+                    "[composio] delete_connected_identity_facets failed (non-fatal)"
+                );
+                0
+            });
         tracing::debug!(
             toolkit = %toolkit,
             connection_id = %connection_id,
             facets_deleted = deleted,
             "[composio] deleted connected identity facets after connection removal"
         );
-        if let Err(e) = super::super::providers::profile_md::remove_provider_from_profile_md(
+        if let Err(e) = super::super::profile_md::remove_provider_from_profile_md(
             &config.workspace_dir,
             toolkit,
             connection_id,
@@ -275,14 +286,20 @@ pub async fn composio_delete_connection(
 
 /// Look up the toolkit slug for an existing connection.
 pub(super) async fn resolve_toolkit_for_connection(
-    client: &ComposioClient,
+    config: &Config,
     connection_id: &str,
 ) -> OpResult<String> {
     tracing::debug!(connection_id = %connection_id, "[composio] resolve_toolkit_for_connection");
-    let resp = client.list_connections().await.map_err(|e| {
-        report_composio_op_error("resolve_toolkit_for_connection", &e);
-        format!("[composio] list_connections failed: {e:#}")
-    })?;
+    let resp =
+        connectors::call_bare::<ComposioConnectionsResponse>(config, methods::LIST_CONNECTIONS)
+            .await
+            .map_err(|error| {
+                report_composio_op_error(
+                    "resolve_toolkit_for_connection",
+                    &anyhow::anyhow!("{error}"),
+                );
+                format!("[composio] list_connections failed: {error}")
+            })?;
     let conn = resp
         .connections
         .into_iter()
@@ -297,10 +314,19 @@ pub(super) async fn resolve_toolkit_for_connection(
 /// "Gmail · user@example.com" instead of a generic "Account N" label.
 ///
 /// This is best-effort — no live API calls are made (one SQLite read per poll).
-pub(crate) fn enrich_connections_with_identity(
+pub(crate) async fn enrich_connections_with_identity(
+    config: &Config,
     mut resp: ComposioConnectionsResponse,
 ) -> ComposioConnectionsResponse {
-    let identities = load_connected_identities();
+    let identities = load_connected_identities(config)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::debug!(
+                %error,
+                "[composio] enrich_connections_with_identity: load_connected_identities failed"
+            );
+            Vec::new()
+        });
     if identities.is_empty() {
         tracing::debug!(
             "[composio] enrich_connections_with_identity: no cached identities yet \

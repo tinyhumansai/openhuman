@@ -1,24 +1,52 @@
 //! [`SystemPromptBuilder`] — assembles ordered [`PromptSection`]s into a
 //! final system-prompt string.
 
+use super::render_helpers::sync_workspace_file;
 use super::sections::*;
 use super::types::*;
 use anyhow::Result;
+use std::path::Path;
 
 /// Global style rules appended to every assembled system prompt, regardless
 /// of which sections the agent opts in/out of. Kept tiny and byte-stable so
 /// it doesn't bust the inference backend's prefix cache.
-pub const GLOBAL_STYLE_SUFFIX: &str = "## Output style\n\n\
-    - Do **not** use em-dashes (`—`). Replace them with commas, colons, \
-    parentheses, or two short sentences. This applies to every output \
-    you produce: chat replies, summaries, tool args, and file contents.\n\
-    - **Be concise.** Lead with the answer, then only the detail the task \
-    needs. No preamble, no recap of the request, no filler. Make the \
-    response as long as the task requires and no longer: a one-line answer \
-    for a simple ask, fuller treatment only when the task genuinely needs it.\n\
-    - **Do not repeat yourself.** Don't restate facts, context, or results \
-    already shown earlier in this conversation; reference them instead of \
-    pasting them again.\n";
+///
+/// These are the rules that make output read as written by a person. There
+/// used to be a **Be concise** bullet here too ("lead with the answer, then
+/// only the detail the task needs ... a one-line answer for a simple ask").
+/// It was removed deliberately: brevity is not the same goal as sounding
+/// human, and a global length ceiling was truncating answers that had more to
+/// say. Lead-with-the-answer and no-preamble survive in the per-agent voice
+/// sections, where they can be phrased as ordering rather than as a budget.
+/// Do not reintroduce a global length rule here.
+///
+/// The text itself now lives in `STYLE.md` (#5701) rather than in this
+/// constant, so it can be tuned on disk without a rebuild. This value is the
+/// bundled seed and the fallback when the workspace copy cannot be read; the
+/// authoritative content is whatever `sync_workspace_file` last wrote, plus
+/// any user edit on top of it.
+pub const GLOBAL_STYLE_SUFFIX: &str = include_str!("STYLE.md");
+
+/// The writing-style block appended to every agent's prompt.
+///
+/// Reads the workspace `STYLE.md`, seeding it from the bundled copy first so a
+/// fresh workspace still gets the rules. Falls back to the bundled text if the
+/// file cannot be read, because a prompt with no style contract at all is a
+/// worse failure than a stale one.
+///
+/// Synced here rather than only in [`IdentitySection`] because agents that set
+/// `omit_identity` skip that section entirely, and they need the style rules
+/// too.
+fn global_style_block(workspace_dir: &Path) -> String {
+    sync_workspace_file(workspace_dir, "STYLE.md");
+    std::fs::read_to_string(workspace_dir.join("STYLE.md")).unwrap_or_else(|error| {
+        tracing::warn!(
+            "[style] could not read workspace STYLE.md ({error}); \
+             falling back to the bundled copy"
+        );
+        GLOBAL_STYLE_SUFFIX.to_string()
+    })
+}
 
 #[derive(Default)]
 pub struct SystemPromptBuilder {
@@ -92,7 +120,6 @@ impl SystemPromptBuilder {
         archetype_prompt_text: String,
         omit_identity: bool,
         omit_safety_preamble: bool,
-        _omit_skills_catalog: bool,
     ) -> Self {
         let mut sections: Vec<Box<dyn PromptSection>> =
             vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];
@@ -241,29 +268,6 @@ impl SystemPromptBuilder {
         self
     }
 
-    /// Append a "Memory context" section carrying the resolved chunks the
-    /// subconscious LLM cited when it produced the reflection that
-    /// spawned this thread (#623).
-    ///
-    /// Snapshot semantics — chunks are baked at construction so the
-    /// rendered system prompt remains byte-identical for the lifetime of
-    /// the session, preserving the inference backend's prefix cache hit.
-    /// The session builder calls this when it detects a thread with a
-    /// `subconscious_reflection`-origin seed message.
-    ///
-    /// No-op when `chunks` is empty.
-    pub fn with_reflection_context(
-        mut self,
-        chunks: Vec<crate::openhuman::subconscious::SourceChunk>,
-    ) -> Self {
-        if chunks.is_empty() {
-            return self;
-        }
-        self.sections
-            .push(Box::new(ReflectionMemoryContextSection::new(chunks)));
-        self
-    }
-
     /// Render every section in order into a single prompt string.
     ///
     /// The rendered bytes are intended to be **frozen for the whole
@@ -290,9 +294,17 @@ impl SystemPromptBuilder {
         // to splice it in individually. Single source of truth: GROUNDING_BODY.
         // Placed near the tail (just before the output-style rules) so it reads
         // as a closing contract; byte-stable, so it stays cache-friendly.
-        output.push_str(GROUNDING_BODY);
-        output.push_str("\n\n");
-        output.push_str(GLOBAL_STYLE_SUFFIX);
+        // Skipped when the agent's own prompt already carries the contract.
+        // The orchestrator folds grounding into its merged `## Rules` section
+        // (#5701) so the rules read as one list rather than two that repeat
+        // each other; appending here as well would ship it twice. Matching on
+        // the heading keeps this self-maintaining: an agent that stops
+        // carrying its own copy silently gets the global one back.
+        if !output.contains(GROUNDING_HEADING) {
+            output.push_str(GROUNDING_BODY);
+            output.push_str("\n\n");
+        }
+        output.push_str(global_style_block(ctx.workspace_dir).trim_end());
         output.push('\n');
         Ok(output)
     }

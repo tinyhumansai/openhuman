@@ -1,3 +1,6 @@
+#[path = "../support/noop_memory.rs"]
+mod noop_memory;
+
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use openhuman_core::openhuman::agent::harness::definition::AgentTier;
@@ -12,30 +15,28 @@ use openhuman_core::openhuman::agent::tool_policy::{
     ToolPolicy, ToolPolicyDecision, ToolPolicyRequest,
 };
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::memory::agent::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::config::{AgentConfig, Config, ContextConfig, MemoryConfig};
 use openhuman_core::openhuman::agent::messages::ConversationMessage;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
-use tinymemory_core::store as memory_store;
 use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::traits::ToolCallOptions;
 use openhuman_core::openhuman::tools::{
     PermissionLevel, Tool, ToolContent, ToolResult, ToolScope as RuntimeToolScope,
 };
 use serde_json::json;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
-use tinyagents::harness::model::{
+use tinyinference::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::{ToolCall, ToolDelta};
-use tinyagents::harness::usage::Usage;
+use tinyinference::tool::{ToolCall, ToolDelta};
+use tinyinference::usage::Usage;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::time::{timeout, Duration};
 
@@ -76,9 +77,6 @@ fn ensure_memory_seams() {
             .name("agent-session-turn-raw-coverage-seams".to_string())
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    Arc::new(Config::default()),
-                );
             })
             .expect("spawn agent session turn raw coverage seam installer")
             .join()
@@ -169,12 +167,12 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.capture(&request, false);
         self.pop_response()
     }
 
-    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyinference::Result<ModelStream> {
         self.capture(&request, true);
         let response = self.pop_response()?;
         let mut items = vec![ModelStreamItem::Started];
@@ -195,29 +193,52 @@ impl ScriptedModel {
         });
     }
 
-    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+    fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
         if let Some(message) = self.always_fail {
-            return Err(tinyagents::TinyAgentsError::Model(message.to_string()));
+            return Err(tinyinference::Error::Model(message.to_string()));
         }
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("default scripted final")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 
 struct StaticMemory {
     entries: Mutex<Vec<MemoryEntry>>,
+    entries_by_query: HashMap<String, Vec<MemoryEntry>>,
     fail_recall: bool,
+    blocked_query: Option<String>,
+    recall_started: Option<Arc<Notify>>,
+    release_recall: Option<Arc<Notify>>,
+    recall_cancelled: Option<Arc<AtomicBool>>,
+}
+
+struct RecallCancellationGuard {
+    cancelled: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl Drop for RecallCancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 impl Default for StaticMemory {
     fn default() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
+            entries_by_query: HashMap::new(),
             fail_recall: false,
+            blocked_query: None,
+            recall_started: None,
+            release_recall: None,
+            recall_cancelled: None,
         }
     }
 }
@@ -260,6 +281,26 @@ impl Memory for StaticMemory {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         if self.fail_recall {
             anyhow::bail!("forced recall failure for {query}");
+        }
+        if self.blocked_query.as_deref() == Some(query) {
+            if let Some(started) = &self.recall_started {
+                started.notify_one();
+            }
+            let mut cancellation_guard = self.recall_cancelled.as_ref().map(|cancelled| {
+                RecallCancellationGuard {
+                    cancelled: cancelled.clone(),
+                    armed: true,
+                }
+            });
+            if let Some(release) = &self.release_recall {
+                release.notified().await;
+            }
+            if let Some(guard) = &mut cancellation_guard {
+                guard.armed = false;
+            }
+        }
+        if let Some(entries) = self.entries_by_query.get(query) {
+            return Ok(entries.iter().take(limit).cloned().collect());
         }
         Ok(self
             .entries
@@ -320,25 +361,6 @@ impl Memory for StaticMemory {
 
     async fn health_check(&self) -> bool {
         true
-    }
-}
-
-struct StaticMemoryLoader {
-    context: String,
-    fail: bool,
-}
-
-#[async_trait]
-impl MemoryLoader for StaticMemoryLoader {
-    async fn load_context(
-        &self,
-        _memory: &dyn Memory,
-        _user_message: &str,
-    ) -> anyhow::Result<String> {
-        if self.fail {
-            anyhow::bail!("forced loader failure");
-        }
-        Ok(self.context.clone())
     }
 }
 
@@ -592,14 +614,6 @@ fn workspace(label: &str) -> (TempDir, PathBuf) {
     (temp, path)
 }
 
-fn memory_for_workspace(path: &PathBuf) -> Arc<dyn Memory> {
-    let cfg = MemoryConfig {
-        backend: "none".to_string(),
-        ..MemoryConfig::default()
-    };
-    Arc::from(memory_store::create_memory(&cfg, path).unwrap())
-}
-
 fn agent_with(
     model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
@@ -611,11 +625,7 @@ fn agent_with(
     Agent::builder()
         .chat_model(model)
         .tools(tools)
-        .memory(memory_for_workspace(&workspace_path))
-        .memory_loader(Box::new(StaticMemoryLoader {
-            context: String::new(),
-            fail: false,
-        }))
+        .memory(noop_memory::noop_memory())
         .tool_dispatcher(dispatcher)
         .workspace_dir(workspace_path)
         .event_context("round17-session", "round17-channel")
@@ -779,6 +789,95 @@ async fn turn_native_tool_progress_reasoning_usage_and_resume_seed_paths_inner()
 }
 
 #[test]
+fn turn_citation_task_replaces_previous_handle_and_joins_successfully() {
+    run_on_agent_stack(
+        "agent-session-turn-citation-task-raw-coverage",
+        turn_citation_task_replaces_previous_handle_and_joins_successfully_inner,
+    );
+}
+
+async fn turn_citation_task_replaces_previous_handle_and_joins_successfully_inner() {
+    ensure_memory_seams();
+    let _env = env_lock();
+    let (_temp, workspace_path) = workspace("citation-task");
+    let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
+    let citation = |id: &str| MemoryEntry {
+        id: id.to_string(),
+        key: "project.summary".to_string(),
+        content: "The launch checklist is ready.".to_string(),
+        namespace: Some("projects".to_string()),
+        category: MemoryCategory::Conversation,
+        timestamp: "2026-05-29T00:00:00Z".to_string(),
+        session_id: None,
+        score: Some(0.9),
+        taint: Default::default(),
+    };
+    let first_started = Arc::new(Notify::new());
+    let never_release_first = Arc::new(Notify::new());
+    let first_cancelled = Arc::new(AtomicBool::new(false));
+    let memory = Arc::new(StaticMemory {
+        entries: Mutex::new(Vec::new()),
+        entries_by_query: HashMap::from([
+            (
+                "first citation query".to_string(),
+                vec![citation("citation-first")],
+            ),
+            (
+                "second citation query".to_string(),
+                vec![citation("citation-second")],
+            ),
+        ]),
+        fail_recall: false,
+        blocked_query: Some("first citation query".to_string()),
+        recall_started: Some(first_started.clone()),
+        release_recall: Some(never_release_first),
+        recall_cancelled: Some(first_cancelled.clone()),
+    });
+    let mut agent = Agent::builder()
+        .chat_model(ScriptedModel::new(vec![
+            text_response("first answer"),
+            text_response("second answer"),
+        ]))
+        .tools(Vec::new())
+        .memory(memory)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .event_context("round17-session", "round17-channel")
+        .agent_definition_name("round17/orchestrator")
+        .config(AgentConfig::default())
+        .context_config(ContextConfig::default())
+        .auto_save(false)
+        .explicit_preferences_enabled(false)
+        .build()
+        .unwrap();
+
+    assert_eq!(agent.turn("first citation query").await.unwrap(), "first answer");
+    timeout(Duration::from_secs(1), first_started.notified())
+        .await
+        .expect("first citation recall should be in flight");
+    // Starting a second turn must abort the blocked first task before installing
+    // the query-specific citation task joined below.
+    let second_answer = timeout(
+        Duration::from_secs(1),
+        agent.turn("second citation query"),
+    )
+    .await
+    .expect("replacement turn must not wait for the blocked first recall")
+    .unwrap();
+    assert_eq!(second_answer, "second answer");
+    timeout(Duration::from_secs(1), async {
+        while !first_cancelled.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first citation recall future should be cancelled");
+    let citations = agent.take_last_turn_citations().await;
+    assert_eq!(citations.len(), 1);
+    assert_eq!(citations[0].id, "citation-second");
+}
+
+#[test]
 fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_exercised() {
     run_on_agent_stack(
         "agent-session-turn-xml-raw-coverage",
@@ -845,11 +944,12 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
                 score: Some(0.9),
                 taint: Default::default(),
             }]),
+            entries_by_query: HashMap::new(),
             fail_recall: true,
-        }))
-        .memory_loader(Box::new(StaticMemoryLoader {
-            context: "[round17 injected context]\n".to_string(),
-            fail: true,
+            blocked_query: None,
+            recall_started: None,
+            release_recall: None,
+            recall_cancelled: None,
         }))
         .tool_dispatcher(Box::new(XmlToolDispatcher))
         .workspace_dir(workspace_path)
@@ -906,7 +1006,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     assert_eq!(err_calls.load(Ordering::SeqCst), 1);
     assert_eq!(boom_calls.load(Ordering::SeqCst), 1);
     assert_eq!(write_calls.load(Ordering::SeqCst), 0);
-    assert!(agent.take_last_turn_citations().is_empty());
+    assert!(agent.take_last_turn_citations().await.is_empty());
 
     timeout(Duration::from_secs(1), async {
         loop {
@@ -1001,7 +1101,10 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
             Arc::new(AtomicUsize::new(0)),
         ),
     ];
-    let all_specs = all_tools.iter().map(|tool| tool.spec()).collect::<Vec<_>>();
+    let all_specs = all_tools
+        .iter()
+        .map(|tool| Arc::new(tool.spec()))
+        .collect::<Vec<_>>();
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -1015,6 +1118,10 @@ async fn subagent_runner_parent_context_filters_tools_caps_output_and_reports_er
         ),
         all_tools: Arc::new(all_tools),
         all_tool_specs: Arc::new(all_specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "parent-model".to_string(),
@@ -1123,7 +1230,6 @@ fn definition(
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,

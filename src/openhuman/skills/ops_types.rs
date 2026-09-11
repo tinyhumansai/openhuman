@@ -88,7 +88,13 @@ pub struct WorkflowFrontmatter {
     pub metadata: HashMap<String, serde_yaml::Value>,
     /// Tools the skill author asserts their instructions rely on
     /// (non-binding hint; the host decides what to expose).
-    #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
+    #[serde(
+        default,
+        rename = "allowed-tools",
+        alias = "allowed_tools",
+        alias = "tools",
+        deserialize_with = "de_string_or_seq"
+    )]
     pub allowed_tools: Vec<String>,
     /// Domain events that should activate this skill.
     ///
@@ -106,6 +112,32 @@ pub struct WorkflowFrontmatter {
     /// a migration warning when read.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// Deserialize `allowed-tools` from either a YAML sequence (`[Bash, Read]`) or a
+/// single scalar string in Claude Code's convention (`allowed-tools: Bash,
+/// Read, Grep`). A bare scalar is split on commas and trimmed. Without this,
+/// skills authored for the `claude` CLI — which writes a comma-joined string —
+/// fail frontmatter parsing, and their declared tools (Bash, etc.) get dropped,
+/// surfacing as "tool not available" at run time.
+fn de_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrSeq {
+        Seq(Vec<String>),
+        Str(String),
+    }
+    Ok(match StringOrSeq::deserialize(deserializer)? {
+        StringOrSeq::Seq(v) => v,
+        StringOrSeq::Str(s) => s
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+    })
 }
 
 pub(crate) fn metadata_string(fm: &WorkflowFrontmatter, key: &str) -> Option<String> {
@@ -131,7 +163,6 @@ pub(crate) fn extract_version(fm: &WorkflowFrontmatter, warnings: &mut Vec<Strin
         return v;
     }
     if let Some(v) = fm.extra.get("version").and_then(|v| v.as_str()) {
-        log::warn!("[skills] top-level 'version' is deprecated; move under 'metadata.version'");
         warnings
             .push("top-level 'version' is deprecated; move under 'metadata.version'".to_string());
         return v.to_string();
@@ -147,7 +178,6 @@ pub(crate) fn extract_author(
         return Some(v);
     }
     if let Some(v) = fm.extra.get("author").and_then(|v| v.as_str()) {
-        log::warn!("[skills] top-level 'author' is deprecated; move under 'metadata.author'");
         warnings.push("top-level 'author' is deprecated; move under 'metadata.author'".to_string());
         return Some(v.to_string());
     }
@@ -168,7 +198,6 @@ pub(crate) fn extract_tags(fm: &WorkflowFrontmatter, warnings: &mut Vec<String>)
         tags.extend(metadata_string_seq(hermes_tags));
     }
     if let Some(v) = fm.extra.get("tags") {
-        log::warn!("[skills] top-level 'tags' is deprecated; move under 'metadata.tags'");
         warnings.push("top-level 'tags' is deprecated; move under 'metadata.tags'".to_string());
         tags.extend(metadata_string_seq(v));
     }
@@ -275,3 +304,7 @@ pub(crate) struct LegacyWorkflowManifest {
     #[serde(default)]
     pub prompts: Vec<String>,
 }
+
+#[cfg(test)]
+#[path = "ops_types_tests.rs"]
+mod ops_types_tests;

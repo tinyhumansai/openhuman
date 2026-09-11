@@ -81,11 +81,6 @@ pub struct ContextManager {
     /// middleware; `0` when microcompact is disabled. Read by the tinyagents
     /// turn to configure `MicrocompactMiddleware`.
     microcompact_keep_recent: usize,
-    /// When `true`, the harness runs a mandatory first-turn context
-    /// collection pass before the orchestrator LLM runs. Read once at
-    /// session construction so it only affects newly started threads.
-    /// See [`ContextConfig::super_context_enabled`].
-    super_context_enabled: bool,
     /// When `true`, the tinyagents turn installs the LLM summarization step
     /// (`ContextCompressionMiddleware`). Gated by both `[context].enabled` and
     /// `[context].autocompact_enabled` so a diagnostic/test opt-out doesn't spend
@@ -121,7 +116,6 @@ impl ContextManager {
             } else {
                 0
             },
-            super_context_enabled: config.super_context_enabled,
             // Summarization is off when the whole context system is disabled OR
             // autocompaction specifically is turned off.
             autocompact_enabled: config.enabled && config.autocompact_enabled,
@@ -154,14 +148,6 @@ impl ContextManager {
         self.compaction_enabled
     }
 
-    /// Whether "super context" is enabled — i.e. whether the harness
-    /// should run a mandatory read-only context-collection pass on the
-    /// first turn of a new thread before the orchestrator LLM runs.
-    /// Read by `Agent::turn`. See [`ContextConfig::super_context_enabled`].
-    pub fn super_context_enabled(&self) -> bool {
-        self.super_context_enabled
-    }
-
     /// Whether the tinyagents turn should install the LLM summarization step.
     /// `false` when `[context].enabled = false` or `autocompact_enabled = false`
     /// — the diagnostic/test opt-outs the legacy reducer honored before
@@ -169,14 +155,6 @@ impl ContextManager {
     /// `TurnContextMiddleware`.
     pub fn autocompact_enabled(&self) -> bool {
         self.autocompact_enabled
-    }
-
-    /// Force-disable the first-turn super-context pass for this session,
-    /// regardless of the config default. Used by non-interactive orchestrator
-    /// builds (e.g. read-only model-council jurors) where a scout pass would add
-    /// an unexpected LLM call and perturb deterministic call sequences.
-    pub fn set_super_context_enabled(&mut self, enabled: bool) {
-        self.super_context_enabled = enabled;
     }
 
     // ─── Budget tracking ──────────────────────────────────────────

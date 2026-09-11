@@ -85,16 +85,6 @@ describe('Navigation', () => {
     expect(homeText).toBeTruthy();
   });
 
-  it('redirects users without a tiny.place identity away from Agent World', async () => {
-    await browser.execute(() => {
-      window.location.hash = '/agent-world/welcome';
-    });
-    await browser.waitUntil(
-      async () => (await browser.execute(() => window.location.hash)) === '#/chat',
-      { timeout: 15_000, timeoutMsg: 'Agent World did not redirect a non-identity user to chat' }
-    );
-  });
-
   for (const route of ROUTES) {
     it(`renders ${route.hash}`, async () => {
       await navigateViaHash(route.hash);

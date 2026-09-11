@@ -8,10 +8,9 @@
 //! The binding is resolved by
 //! [`CoreContext::memory_binding`](crate::core::runtime::CoreContext::memory_binding),
 //! which keys on the context's workspace dir. The cache below is deliberately
-//! shaped like
-//! [`memory::people::store::for_workspace`](crate::openhuman::memory::people::store::for_workspace)
-//! — a **workspace-keyed map** — and deliberately *not* like
-//! [`memory::global`](crate::openhuman::memory::global), which is a single slot
+//! shaped like the engine's `people::store::for_workspace`
+//! — a **workspace-keyed map** — and deliberately *not* like the engine's
+//! `global` slot, which is a single slot
 //! holding "the one active-user workspace".
 //!
 //! That shape choice carries a real correctness property for free.
@@ -76,6 +75,9 @@ pub struct MemoryBinding {
     provider: Arc<dyn MemoryProvider>,
     guard: Arc<MemoryGuard>,
     driver_id: String,
+    /// The memory subtree this binding serves — `"memory"` for the shared tree,
+    /// `"memory-<id>"` for a profile that opted into dedicated memory.
+    memory_subdir: String,
     class: DriverClass,
     /// Asked **once**, at bind time, and cached here. The contract's
     /// `MemoryProvider::capabilities` doc is normative on this ("asked once at
@@ -107,6 +109,22 @@ impl MemoryBinding {
     /// not the id that was asked for (that is in [`Self::fallback`]).
     pub fn driver_id(&self) -> &str {
         &self.driver_id
+    }
+
+    /// The memory subtree this binding resolved to.
+    ///
+    /// `"memory"` is the shared tree; `"memory-<id>"` is a profile that opted
+    /// into dedicated memory, and keeping the two apart is what makes
+    /// `dedicatedMemory` isolation hold.
+    ///
+    /// Worth an accessor because the routing decision is made **here**, at bind
+    /// time, but only reaches disk lazily: a module-backed driver opens the
+    /// subtree on its first call (`OpenStore`), so nothing observes the choice
+    /// until memory is actually used. Callers that need to report or assert
+    /// which tree they were bound to — status output, and the session-builder
+    /// tests — have no other way to see it.
+    pub fn memory_subdir(&self) -> &str {
+        &self.memory_subdir
     }
 
     /// How the bound driver was reached. A host fact, never self-reported.
@@ -286,7 +304,13 @@ fn build(workspace_dir: &Path, memory_subdir: &str, cfg: &MemorySubsystemConfig)
                 } else {
                     module_provider(workspace_dir, memory_subdir)
                 };
-            let binding = bind_provider(provider, driver_id, reported_class, None);
+            let binding = bind_provider(
+                provider,
+                driver_id,
+                memory_subdir.to_string(),
+                reported_class,
+                None,
+            );
             log::info!(
                 "[memory:binding] workspace={} bound driver='{}' class={} capabilities=[{}]",
                 workspace_dir.display(),
@@ -321,6 +345,7 @@ fn build(workspace_dir: &Path, memory_subdir: &str, cfg: &MemorySubsystemConfig)
             bind_provider(
                 Arc::new(NullMemoryProvider::new()),
                 NULL_DRIVER_ID.to_string(),
+                memory_subdir.to_string(),
                 DriverClass::Null,
                 Some(fallback),
             )
@@ -345,17 +370,20 @@ fn module_provider(
     )
 }
 
+/// The configuration every test-build memory binding loads its module through.
+///
+/// Unit tests do not run the full boot sequence that publishes the module
+/// policy. A native module is loaded once per process and therefore captures
+/// the first workspace it receives. Pin every test binding to the same
+/// workspace as the process-global test client so concurrent tests cannot
+/// win module initialization with an unrelated tempdir and split guarded
+/// writes from legacy read-back calls.
+///
+/// Named rather than inlined into [`module_provider`] so a test can await this
+/// module's resolution through the same configuration the binding will use —
+/// see [`crate::openhuman::memory::test_support::settle_memory_module`].
 #[cfg(all(feature = "modules", test))]
-fn module_provider(
-    _workspace_dir: &Path,
-    memory_subdir: &str,
-) -> (Arc<dyn MemoryProvider>, DriverClass) {
-    // Unit tests do not run the full boot sequence that publishes the module
-    // policy. A native module is loaded once per process and therefore captures
-    // the first workspace it receives. Pin every test binding to the same
-    // workspace as the process-global test client so concurrent tests cannot
-    // win module initialization with an unrelated tempdir and split guarded
-    // writes from legacy read-back calls.
+pub(crate) fn test_module_config() -> crate::openhuman::config::Config {
     let workspace_dir = crate::openhuman::memory::ops::shared_memory_test_workspace();
     let mut config = crate::openhuman::config::Config::default();
     config.workspace_dir = workspace_dir.clone();
@@ -369,10 +397,20 @@ fn module_provider(
                 path: path.to_string_lossy().into_owned(),
             });
     }
+    config
+}
+
+#[cfg(all(feature = "modules", test))]
+fn module_provider(
+    _workspace_dir: &Path,
+    memory_subdir: &str,
+) -> (Arc<dyn MemoryProvider>, DriverClass) {
     (
         Arc::new(
-            crate::openhuman::modules::memory::ModuleMemoryProvider::new(Arc::new(config))
-                .in_subdir(memory_subdir),
+            crate::openhuman::modules::memory::ModuleMemoryProvider::new(Arc::new(
+                test_module_config(),
+            ))
+            .in_subdir(memory_subdir),
         ),
         DriverClass::Module,
     )
@@ -395,6 +433,7 @@ fn module_provider(
 fn bind_provider(
     provider: Arc<dyn MemoryProvider>,
     driver_id: String,
+    memory_subdir: String,
     class: DriverClass,
     fallback: Option<FallbackReason>,
 ) -> MemoryBinding {
@@ -412,6 +451,7 @@ fn bind_provider(
         provider,
         guard,
         driver_id,
+        memory_subdir,
         class,
         capabilities,
         fallback,
@@ -428,7 +468,7 @@ pub(crate) fn bind_provider_for_test(
     class: DriverClass,
 ) -> MemoryBinding {
     let driver_id = provider.driver_id().to_string();
-    bind_provider(provider, driver_id, class, None)
+    bind_provider(provider, driver_id, "memory".to_string(), class, None)
 }
 
 /// Per-workspace binding cache. Same shape as
@@ -439,6 +479,46 @@ pub(crate) fn bind_provider_for_test(
 /// The subtree is `"memory"` for every ordinary caller.
 type BindingCacheKey = (PathBuf, String, MemorySubsystemConfig);
 static BINDINGS: OnceLock<RwLock<HashMap<BindingCacheKey, Arc<MemoryBinding>>>> = OnceLock::new();
+
+/// Every binding this process has built so far, for the exit path.
+///
+/// A snapshot rather than a handle to the map: exit runs while other tasks may
+/// still be resolving bindings, and holding the lock across a driver's
+/// `shutdown` would queue them behind it.
+pub(crate) fn cached_bindings() -> Vec<Arc<MemoryBinding>> {
+    let Some(cache) = BINDINGS.get() else {
+        return Vec::new();
+    };
+    match cache.read() {
+        Ok(map) => map.values().cloned().collect(),
+        Err(poisoned) => poisoned.into_inner().values().cloned().collect(),
+    }
+}
+
+/// Drop `shut_down` from the cache, so a server that starts again in this
+/// process binds fresh drivers instead of the ones exit has already torn down.
+///
+/// The shell restarts the embedded server in place (a permission refresh, an
+/// app update), and exit runs every cached driver's `shutdown` on the way out.
+/// Left in the cache, those drivers would be handed straight back to the next
+/// server — their workers stopped and their hooks already drained — and memory
+/// would stay dark until the whole desktop process restarted. Matched by
+/// identity, not by key: only what exit actually asked to shut down leaves.
+/// With the exit gate up nothing else can be in the cache by then; without it
+/// (a bare call, in tests) a binding built beside the exit stays.
+pub(crate) fn evict_bindings(shut_down: &[Arc<MemoryBinding>]) {
+    if shut_down.is_empty() {
+        return;
+    }
+    let Some(cache) = BINDINGS.get() else {
+        return;
+    };
+    let mut map = match cache.write() {
+        Ok(map) => map,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    map.retain(|_, binding| !shut_down.iter().any(|gone| Arc::ptr_eq(gone, binding)));
+}
 
 /// The bound memory driver for `workspace_dir`, constructing it on first use.
 ///
@@ -454,6 +534,155 @@ pub fn for_workspace(
     cfg: &MemorySubsystemConfig,
 ) -> Result<Arc<MemoryBinding>, String> {
     for_subtree(workspace_dir, "memory", cfg)
+}
+
+/// A driver that reports the diagnostics it was handed, and does nothing else.
+///
+/// Reads that used to hit the engine's tables go through the contract now, and
+/// the real driver is a compiled module that cannot load inside a unit test —
+/// so a test workspace binds the null driver and every diagnostic answers
+/// empty. A handler that used to be provable by writing rows and calling it
+/// needs a driver in between.
+///
+/// The split that leaves is the honest one. What a handler *derives* from the
+/// numbers is the host's rule and belongs in the host's tests, which is what
+/// this exists for. What a given store *is* — that an ingest raises the chunk
+/// count, that a deferred job stays ready without becoming eligible — is the
+/// driver's rule, pinned in the driver's own conformance suite against a real
+/// store.
+///
+/// Everything outside `Maintenance` delegates to the null driver: a test that
+/// needed those would be testing something this double is the wrong shape for.
+#[cfg(test)]
+pub(crate) struct FixedDiagnostics {
+    inner: NullMemoryProvider,
+    /// How many times the host has asked this driver to retry failed work,
+    /// and how many jobs it should say it requeued when asked.
+    ///
+    /// The gate in front of the ask is host logic — only an embedder change
+    /// should un-park anything — so a test needs to see whether the ask
+    /// happened, separately from what the driver would have done.
+    retry_calls: std::sync::atomic::AtomicUsize,
+    retry_requeues: u64,
+    /// How many times the host has asked this driver to re-embed.
+    ///
+    /// `reembed` enqueues work rather than doing it, so the host's side of that
+    /// contract is only that it *asked* — whether a row appears is the driver's
+    /// business, and pinning it here would test the driver through the host.
+    reembed_calls: std::sync::atomic::AtomicUsize,
+    store: crate::openhuman::memory::api::provider::types::StoreStats,
+    queue: crate::openhuman::memory::api::provider::types::QueueStats,
+    failure: Option<crate::openhuman::memory::api::provider::types::QueueFailure>,
+    /// What this driver says about a backfill running in its process.
+    ///
+    /// Separate from [`Self::queue`] on purpose, mirroring the contract: the
+    /// flag is not derivable from the counts, and a test that needs the gap
+    /// between them — nothing ready, nothing running, backfill unfinished —
+    /// has to set the two independently.
+    backfill: bool,
+    /// What [`MemoryMaintenance::backfill_connector_trees`] answers, when a test
+    /// sets it.
+    ///
+    /// Distinct from [`Self::backfill`], which is the unrelated
+    /// `backfill_in_progress` flag — one is "is a re-embed running", the other
+    /// is the connector-tree pass's counters.
+    backfill_trees: crate::openhuman::memory::api::provider::types::BackfillTreesOutcome,
+    /// What [`MemoryMaintenance::flush_pending`] answers, when a test sets it.
+    flush: crate::openhuman::memory::api::provider::types::FlushOutcome,
+    /// What [`MemoryMaintenance::reset_derived_index`] answers, likewise.
+    reset: crate::openhuman::memory::api::provider::types::ResetOutcome,
+}
+
+#[cfg(test)]
+#[path = "binding_fixed_diagnostics_impl_tests.rs"]
+mod fixed_diagnostics_impl;
+
+/// Bind a driver reporting fixed diagnostics as this workspace's driver.
+///
+/// The shorthand every test needs that reaches a handler reading through
+/// `Maintenance`. Without a binding installed, resolving one attempts to load
+/// the compiled module, and in a test process that can block rather than
+/// fail — the module host's runtime belongs to whichever test created it, so
+/// a later test finds a broker whose tasks are already gone.
+#[cfg(test)]
+pub(crate) fn install_diagnostics_for_test(
+    workspace_dir: &Path,
+    cfg: &MemorySubsystemConfig,
+    store: crate::openhuman::memory::api::provider::types::StoreStats,
+    queue: crate::openhuman::memory::api::provider::types::QueueStats,
+) -> Arc<FixedDiagnostics> {
+    let driver = Arc::new(FixedDiagnostics::new(store, queue));
+    install_for_test(
+        workspace_dir,
+        cfg,
+        Arc::clone(&driver) as Arc<dyn MemoryProvider>,
+    );
+    driver
+}
+
+/// Bind a driver that reports `requeued` from `retry_failed` and counts the
+/// asks, for tests about *when* the host asks rather than what a queue does.
+#[cfg(test)]
+pub(crate) fn install_retrying_driver_for_test(
+    config: &crate::openhuman::config::Config,
+    requeued: u64,
+) -> Arc<FixedDiagnostics> {
+    let driver = Arc::new(
+        FixedDiagnostics::new(Default::default(), Default::default()).requeueing(requeued),
+    );
+    install_for_test(
+        &config.workspace_dir,
+        &config.subsystems.memory,
+        Arc::clone(&driver) as Arc<dyn MemoryProvider>,
+    );
+    driver
+}
+
+/// Install `provider` as the binding a workspace resolves to.
+///
+/// The cache below is normally filled by [`build`], which binds the compiled
+/// TinyMemory module — and that module is not loadable inside a unit test, so
+/// a test workspace otherwise resolves to the null driver and every read
+/// through the contract answers empty.
+///
+/// That matters more since reads moved off the engine: a handler that used to
+/// be provable by writing rows and calling it now needs a driver in between.
+/// This is the seam that puts one there.
+///
+/// Test-only. It writes a process-global map, so a test using it must own the
+/// workspace path it installs against — which a `tempdir` does.
+#[cfg(test)]
+pub(crate) fn install_for_test(
+    workspace_dir: &Path,
+    cfg: &MemorySubsystemConfig,
+    provider: Arc<dyn MemoryProvider>,
+) {
+    let binding = Arc::new(bind_provider_for_test(provider, DriverClass::Module));
+    let key = (
+        workspace_dir.to_path_buf(),
+        "memory".to_string(),
+        cfg.clone(),
+    );
+    BINDINGS
+        .get_or_init(Default::default)
+        .write()
+        .expect("binding cache lock")
+        .insert(key, binding);
+}
+
+/// The bound memory driver for the workspace a whole [`Config`] names.
+///
+/// The two pieces [`for_workspace`] needs sit in different halves of `Config`,
+/// so most call sites were spelling the same pair out. It is the same cached
+/// binding either way.
+///
+/// [`Config`]: crate::openhuman::config::Config
+///
+/// # Errors
+///
+/// Only lock poisoning, as [`for_workspace`].
+pub fn for_config(config: &crate::openhuman::config::Config) -> Result<Arc<MemoryBinding>, String> {
+    for_workspace(&config.workspace_dir, &config.subsystems.memory)
 }
 
 /// The bound memory driver for one **memory subtree** of `workspace_dir`.
@@ -490,6 +719,16 @@ pub fn for_subtree(
     let mut guard = cache
         .write()
         .map_err(|e| format!("[memory:binding] cache write lock poisoned: {e}"))?;
+    // Under the same lock the exit snapshot is taken under: once memory is on
+    // its way out, a driver bound now would never be asked to shut down, so
+    // it is not bound at all. The check sits inside the lock on purpose — a
+    // builder that passed it inserted before the snapshot, and one that did
+    // not is refused; there is no third case (memory/exit.rs).
+    if crate::openhuman::memory::exit::exiting() {
+        return Err(
+            "[memory:binding] memory is shutting down; not binding a new driver".to_string(),
+        );
+    }
     // Re-check under the write lock: a racing caller may have bound the same
     // workspace while we were building. Reuse theirs so one workspace never has
     // two live drivers (kernel.md §3.1) and `capabilities()` stays asked once.

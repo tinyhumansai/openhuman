@@ -97,7 +97,7 @@ fn driver_health_display_includes_the_reason() {
 /// silently making the conversion partial.
 #[test]
 fn driver_health_shape_matches_memory_health_one_for_one() {
-    use crate::openhuman::memory::api::health::MemoryHealth;
+    use tinymemory_api::health::MemoryHealth;
 
     let pairs: Vec<(MemoryHealth, DriverHealth)> = vec![
         (MemoryHealth::Ready, DriverHealth::Ready),
@@ -188,18 +188,21 @@ fn driver_capabilities_contains_all_is_subset_semantics() {
 /// memory capability is.
 #[test]
 fn every_memory_contract_capability_string_maps_into_driver_capabilities() {
-    use crate::openhuman::memory::api::capabilities::Capability;
+    use tinymemory_api::capabilities::Capability;
 
     let caps: DriverCapabilities = Capability::ALL.iter().map(|cap| cap.as_str()).collect();
 
     assert_eq!(caps.len(), Capability::ALL.len());
     // A literal, so adding a family forces a look at this test rather than
     // sliding past it. 13 → 17 when the port added People, Chunks, Retrieval
-    // and Profile, then 18 with Episodic. The assertion above is the
+    // and Profile, then 18 with Episodic, then 20 when tinymemory v1.7.0 added
+    // SourceSync and CodingSessions, then 21 with v1.13.2 adding Scoring,
+    // then 26 with v1.13.7's typed-ingestion round (Document/Conversation/
+    // Learning/Event ingest and Answer). The assertion above is the
     // load-bearing one: it says the mapping is lossless, which is what makes
     // the kernel's opaque-string set able to carry the contract without
     // knowing what a memory capability is.
-    assert_eq!(caps.len(), 18);
+    assert_eq!(caps.len(), 26);
     assert!(
         caps.contains("tool_memory"),
         "the one non-identity snake_case family must survive"

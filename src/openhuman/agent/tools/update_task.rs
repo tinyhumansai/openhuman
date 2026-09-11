@@ -39,15 +39,7 @@ impl Tool for UpdateTaskTool {
     }
 
     fn description(&self) -> &str {
-        "Move or update a specific task card on a task board, addressed by `id`. \
-         Use this to advance the task you're working on: set `status` \
-         (`todo`/`in_progress`/`blocked`/`done`) to move it between columns, and/or \
-         update `objective`, `notes`, `evidence`, `blocker`, `plan`, \
-         `acceptanceCriteria`. When you finish, set `status: done` with `evidence`; \
-         if you cannot proceed, set `status: blocked` with a `blocker` reason. \
-         Targets the proactive `task-sources` board by default — pass `threadId` to \
-         target another thread's board. Returns the updated card list + a markdown \
-         rendering. At most one card may be `in_progress` at a time."
+        "Update one task card by `id`: move it between columns via `status`, and/or revise its other fields. Finish with `status: done` plus `evidence`; if you cannot proceed, `status: blocked` plus a `blocker`. At most one card may be `in_progress`. Defaults to the proactive `task-sources` board."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

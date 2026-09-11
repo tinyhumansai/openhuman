@@ -66,7 +66,8 @@
 //! with which it is, and [`sign_payload`] dispatches on the tag rather than on
 //! the chain — so a chain that changes scheme cannot silently sign wrongly.
 
-use tinywallet::wire::{
+use tinywallet_bus::names::methods;
+use tinywallet_bus::wire::{
     DerivedAccount, ExportRequest, ExportedKey, Scheme, SecretMaterial, SignMessageRequest,
     SignRequest, Signature, SignedTransaction, TransactionSpec,
 };
@@ -125,7 +126,7 @@ pub async fn sign_transaction_in_module(
     );
     proxy
         .call_confidential(
-            "SignTransaction",
+            methods::SIGN_TRANSACTION,
             (SignRequest {
                 secret: secret.clone(),
                 transaction: transaction.clone(),
@@ -150,7 +151,7 @@ pub async fn derive_account(
         secret.chain
     );
     proxy
-        .call_confidential("DeriveAccount", (secret.clone(),))
+        .call_confidential(methods::DERIVE_ACCOUNT, (secret.clone(),))
         .await
         .map_err(|error| classify(&error))
 }
@@ -181,7 +182,7 @@ pub async fn sign_message(
     );
     proxy
         .call_confidential(
-            "SignMessage",
+            methods::SIGN_MESSAGE,
             (SignMessageRequest {
                 secret: secret.clone(),
                 message_hex: hex(message),
@@ -194,10 +195,8 @@ pub async fn sign_message(
 
 /// Ask the module for the raw derived key.
 ///
-/// The one call that brings key material back into this process. It exists for
-/// signers this host must drive itself — tinyplace's `LocalSigner`, which takes
-/// a seed and cannot be handed a transaction instead. Anything that can use
-/// [`sign_transaction_in_module`] must.
+/// A compatibility call for downstream hosts that must drive a signer locally.
+/// OpenHuman's own wallet paths sign inside the module.
 ///
 /// # Errors
 ///
@@ -213,7 +212,7 @@ pub async fn export_key(
     );
     proxy
         .call_confidential(
-            "ExportKey",
+            methods::EXPORT_KEY,
             (ExportRequest {
                 secret: secret.clone(),
             },),
@@ -289,10 +288,26 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
 /// artifact loaded is not recorded, and a host that fell through to an older
 /// build after an admission failure is running a pinned artifact either way.
 fn digest_is_pinned(record: &super::ModuleRecord, sha256: &str) -> bool {
-    record
+    let release_archive_is_pinned = record
         .assets
         .iter()
-        .any(|asset| asset.sha256.eq_ignore_ascii_case(sha256))
+        .any(|asset| asset.sha256.eq_ignore_ascii_case(sha256));
+
+    // `load_github_release` attests the checksum of its verified archive. A
+    // locally discovered artifact is instead attested from the module's own
+    // `modules.toml`, which records the library checksum. Accept the latter
+    // for the checked release artifact too, so an operator can preload the
+    // official module without changing the confidential-call policy.
+    //
+    // This is the linux x86_64 library shipped inside
+    // tinywallet-module-0.5.1-ubuntu-22.04-x86_64.tar.gz. Its archive checksum
+    // remains in the registry above; the two digests intentionally cover
+    // different bytes.
+    const TINYWALLET_0_5_1_UBUNTU_22_04_X86_64_LIBRARY_SHA256: &str =
+        "2bd70433707c44dbfe6b3cc3b4cc835299fe951fcb375b49c940d8d3fc1d4061";
+
+    release_archive_is_pinned
+        || sha256.eq_ignore_ascii_case(TINYWALLET_0_5_1_UBUNTU_22_04_X86_64_LIBRARY_SHA256)
 }
 
 /// Load the wallet module if it is not already serving.

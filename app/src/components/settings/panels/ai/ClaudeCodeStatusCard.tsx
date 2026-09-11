@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { LuKeyRound, LuX } from 'react-icons/lu';
+import { useCallback, useEffect, useId, useState } from 'react';
+import { LuKeyRound } from 'react-icons/lu';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
 import {
@@ -10,6 +10,9 @@ import {
   openhumanClaudeCodeSettings,
 } from '../../../../utils/tauriCommands/config';
 import Button from '../../../ui/Button';
+import Card from '../../../ui/Card';
+import { ModalShell } from '../../../ui/ModalShell';
+import Switch from '../../../ui/Switch';
 
 /**
  * Claude Code CLI connect control — the peer of the Codex connect button.
@@ -154,7 +157,7 @@ function InlineSummary({
       ? ` (${formatSubscriptionType(auth.subscription_type)})`
       : '';
     return (
-      <span className="text-emerald-600 dark:text-emerald-400">
+      <span className="text-sage-600 dark:text-sage-400">
         {t('settings.ai.claudeCode.signedInAs')} {who}
         {plan}
       </span>
@@ -162,7 +165,7 @@ function InlineSummary({
   }
   if (auth.source === 'api_key_env') {
     return (
-      <span className="text-emerald-600 dark:text-emerald-400">
+      <span className="text-sage-600 dark:text-sage-400">
         {t('settings.ai.claudeCode.usingApiKeyEnv')}
       </span>
     );
@@ -207,6 +210,8 @@ function ClaudeCodeModal({
   onRecheck: () => void | Promise<void>;
 }) {
   const { t } = useT();
+  const titleId = useId();
+  const fullAccessSwitchId = useId();
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -258,42 +263,18 @@ function ClaudeCodeModal({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('settings.ai.claudeCode.modalTitle')}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-      onClick={onClose}>
-      <div
-        className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 shadow-soft"
-        onClick={e => e.stopPropagation()}>
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-content">
-              {t('settings.ai.claudeCode.modalTitle')}
-            </h3>
-            <p className="mt-1 max-w-sm text-xs leading-5 text-content-muted">
-              {t('settings.ai.claudeCode.modalDescription')}
-            </p>
-          </div>
-          <Button
-            iconOnly
-            variant="tertiary"
-            size="xs"
-            onClick={onClose}
-            aria-label={t('settings.ai.claudeCode.close')}>
-            <LuX className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {/* Connection */}
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+    <ModalShell
+      title={t('settings.ai.claudeCode.modalTitle')}
+      titleId={titleId}
+      subtitle={t('settings.ai.claudeCode.modalDescription')}
+      onClose={onClose}
+      contentClassName="p-4 space-y-4">
+      {/* Connection */}
+      <Card title={t('settings.ai.claudeCode.connection')}>
+        <div className="flex items-center justify-between gap-3 p-4">
           <div className="text-xs">
             <div className="font-medium text-content">{t('settings.ai.claudeCode.connection')}</div>
-            <div
-              className={
-                connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-content-muted'
-              }>
+            <div className={connected ? 'text-sage-600 dark:text-sage-400' : 'text-content-muted'}>
               {connected
                 ? t('settings.ai.claudeCode.enabled')
                 : t('settings.ai.claudeCode.notEnabled')}
@@ -311,22 +292,17 @@ function ClaudeCodeModal({
                 : t('settings.ai.claudeCode.disconnect')}
             </Button>
           ) : (
-            <button
-              type="button"
-              onClick={() => void onConnect()}
-              disabled={busy}
-              className="rounded-md bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300">
+            <Button variant="primary" size="xs" onClick={() => void onConnect()} disabled={busy}>
               {busy ? t('settings.ai.claudeCode.enabling') : t('settings.ai.claudeCode.enable')}
-            </button>
+            </Button>
           )}
         </div>
+      </Card>
 
-        {/* Authentication */}
-        <div className="mt-3 rounded-lg border border-line px-3 py-2">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-content">
-              {t('settings.ai.claudeCode.authentication')}
-            </span>
+      {/* Authentication */}
+      <Card title={t('settings.ai.claudeCode.authentication')}>
+        <div className="space-y-3 p-4">
+          <div className="flex items-center justify-end">
             <Button
               variant="tertiary"
               size="xs"
@@ -338,7 +314,7 @@ function ClaudeCodeModal({
             </Button>
           </div>
           <AuthDetail auth={auth} loading={authLoading} />
-          <div className="mt-2">
+          <div>
             <Button
               variant="secondary"
               size="sm"
@@ -354,15 +330,17 @@ function ClaudeCodeModal({
               {t('settings.ai.claudeCode.loginHint')}
             </p>
             {launchError && (
-              <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400" role="alert">
+              <p className="mt-1 text-[11px] text-coral-600 dark:text-coral-400" role="alert">
                 {launchError}
               </p>
             )}
           </div>
         </div>
+      </Card>
 
-        {/* Permissions — full access vs. the default acceptEdits posture. */}
-        <div className="mt-3 rounded-lg border border-line px-3 py-2">
+      {/* Permissions — full access vs. the default acceptEdits posture. */}
+      <Card title={t('settings.ai.claudeCode.fullAccess')}>
+        <div className="p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xs font-medium text-content">
@@ -374,22 +352,13 @@ function ClaudeCodeModal({
                   : t('settings.ai.claudeCode.fullAccessOff')}
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={fullAccess === true}
+            <Switch
+              id={fullAccessSwitchId}
+              checked={fullAccess === true}
               aria-label={t('settings.ai.claudeCode.fullAccess')}
               disabled={fullAccess === null || savingAccess}
-              onClick={() => void toggleFullAccess(!fullAccess)}
-              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${
-                fullAccess ? 'bg-emerald-500 dark:bg-emerald-500' : 'bg-surface-strong'
-              }`}>
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow transition-transform ${
-                  fullAccess ? 'translate-x-4' : 'translate-x-0.5'
-                }`}
-              />
-            </button>
+              onCheckedChange={next => void toggleFullAccess(next)}
+            />
           </div>
           <p className="mt-1.5 text-[11px] leading-4 text-content-faint">
             {isMac()
@@ -397,8 +366,8 @@ function ClaudeCodeModal({
               : t('settings.ai.claudeCode.sandboxNoteOther')}
           </p>
         </div>
-      </div>
-    </div>
+      </Card>
+    </ModalShell>
   );
 }
 
@@ -426,7 +395,7 @@ function AuthDetail({ auth, loading }: { auth: ClaudeCodeAuthStatus | null; load
       ? ` (${formatSubscriptionType(auth.subscription_type)})`
       : '';
     return (
-      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+      <p className="text-xs text-sage-600 dark:text-sage-400">
         {t('settings.ai.claudeCode.signedInAs')} {who}
         {plan}
       </p>
@@ -434,7 +403,7 @@ function AuthDetail({ auth, loading }: { auth: ClaudeCodeAuthStatus | null; load
   }
   if (auth.source === 'api_key_env') {
     return (
-      <p className="text-xs text-emerald-600 dark:text-emerald-400">
+      <p className="text-xs text-sage-600 dark:text-sage-400">
         {t('settings.ai.claudeCode.usingApiKeyEnvDetail')}
       </p>
     );

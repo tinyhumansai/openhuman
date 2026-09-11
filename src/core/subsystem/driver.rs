@@ -10,8 +10,8 @@
 //! (kernel.md §5). A *memory* crate must not be the source of generic kernel
 //! vocabulary, and a third-party driver must be able to depend on the contract
 //! crate without pulling in the host. The contract crate states both halves of
-//! that rule itself (`vendor/tinycortex/api/src/lib.rs`, module docs of
-//! `vendor/tinycortex/api/src/health.rs`).
+//! that rule itself (`vendor/tinymemory/vendor/tinycortex/api/src/lib.rs`,
+//! module docs of `vendor/tinymemory/vendor/tinycortex/api/src/health.rs`).
 //!
 //! So the contract carries `MemoryHealth` / `Capabilities`, this module carries
 //! the kernel's equivalents, and the **memory adapter converts at the
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 /// This is a **host configuration fact**, never something the driver reports.
 ///
 /// Deliberately not `#[non_exhaustive]`, for the same reason
-/// `crate::openhuman::memory::api::capabilities::Capability` is not: adding a class must break
+/// `tinymemory_api::capabilities::Capability` is not: adding a class must break
 /// every exhaustive `match` in the host, because those matches are where policy
 /// (egress, trust, credential resolution) is decided per class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -108,7 +108,7 @@ impl std::str::FromStr for DriverClass {
 
 /// Liveness of a bound driver, in the kernel's generic vocabulary.
 ///
-/// Shaped one-for-one against `crate::openhuman::memory::api::health::MemoryHealth` — and
+/// Shaped one-for-one against `tinymemory_api::health::MemoryHealth` — and
 /// against whatever the next subsystem's contract carries — so the boundary
 /// conversion is a total three-arm `match` that cannot drift. Serializes as an
 /// internally-tagged object with a stable snake_case `status` discriminant:
@@ -191,7 +191,7 @@ impl std::fmt::Display for DriverHealth {
 /// The kernel deliberately does not know any subsystem's family vocabulary —
 /// `"tree"` and `"tool_memory"` mean something to the memory subsystem and
 /// nothing here. Each subsystem's adapter converts its own typed set (for
-/// memory: `crate::openhuman::memory::api::capabilities::Capabilities`) into this at bind
+/// memory: `tinymemory_api::capabilities::Capabilities`) into this at bind
 /// time, and the kernel only ever asks "does the bound driver advertise this
 /// string?" when deciding whether to register a controller or emit a tool.
 ///

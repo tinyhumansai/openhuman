@@ -12,7 +12,6 @@ describe('tauriCommands/core', () => {
   const mockInvoke = invoke as Mock;
   let restartApp: typeof import('./core').restartApp;
   let restartCoreProcess: typeof import('./core').restartCoreProcess;
-  let scheduleCefProfilePurge: typeof import('./core').scheduleCefProfilePurge;
   let mockClearCoreRpcTokenCache: Mock;
 
   beforeEach(async () => {
@@ -21,7 +20,6 @@ describe('tauriCommands/core', () => {
     const actual = await vi.importActual<typeof import('./core')>('./core');
     restartApp = actual.restartApp;
     restartCoreProcess = actual.restartCoreProcess;
-    scheduleCefProfilePurge = actual.scheduleCefProfilePurge;
     const { clearCoreRpcTokenCache } = await import('../../services/coreRpcClient');
     mockClearCoreRpcTokenCache = clearCoreRpcTokenCache as Mock;
   });
@@ -220,49 +218,6 @@ describe('tauriCommands/core', () => {
       mockInvoke.mockResolvedValueOnce(undefined);
       await applyAppUpdate();
       expect(mockInvoke).toHaveBeenCalledWith('apply_app_update');
-    });
-  });
-
-  describe('scheduleCefProfilePurge', () => {
-    test('returns null and does not invoke when not in Tauri', async () => {
-      mockIsTauri.mockReturnValue(false);
-      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-
-      const out = await scheduleCefProfilePurge('x');
-
-      expect(out).toBeNull();
-      expect(mockInvoke).not.toHaveBeenCalled();
-      expect(debug).toHaveBeenCalledWith(
-        expect.stringContaining('scheduleCefProfilePurge: skipped — not running in Tauri')
-      );
-      debug.mockRestore();
-    });
-
-    test('invoke with userId null when argument is undefined', async () => {
-      mockInvoke.mockResolvedValueOnce('/path');
-
-      const out = await scheduleCefProfilePurge();
-
-      expect(mockInvoke).toHaveBeenCalledWith('schedule_cef_profile_purge', { userId: null });
-      expect(out).toBe('/path');
-    });
-
-    test('invoke with userId null when argument is null', async () => {
-      mockInvoke.mockResolvedValueOnce('/path');
-
-      const out = await scheduleCefProfilePurge(null);
-
-      expect(mockInvoke).toHaveBeenCalledWith('schedule_cef_profile_purge', { userId: null });
-      expect(out).toBe('/path');
-    });
-
-    test('invoke with userId string when provided', async () => {
-      mockInvoke.mockResolvedValueOnce('/other');
-
-      const out = await scheduleCefProfilePurge('user-9');
-
-      expect(mockInvoke).toHaveBeenCalledWith('schedule_cef_profile_purge', { userId: 'user-9' });
-      expect(out).toBe('/other');
     });
   });
 });

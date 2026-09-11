@@ -1,0 +1,74 @@
+/*
+ * shadcn/Base UI semantic tokens, expressed as aliases over the canonical
+ * palette in `tokens.css`.
+ *
+ * Every component pulled from a shadcn-style registry — the whole of
+ * `components/assistant-ui/`, and the ~200 app files that reached for
+ * `bg-muted` / `text-muted-foreground` / `border-border` — is written against
+ * this vocabulary. The vocabulary had no definition in this app: those
+ * utilities compiled to `var(--color-muted)` and friends, which resolved to
+ * nothing, so the classes rendered no colour at all. `shadcn init` would have
+ * written the block; only `shadcn add` was ever run.
+ *
+ * They are aliases rather than a second palette on purpose. Pointing them at
+ * `--surface-*` / `--content-*` / `--line-*` means a registry component themes
+ * with the rest of the app and follows the light/dark flip for free — the
+ * canonical tokens already swap under `:root.dark`, so only the three values
+ * whose dark form is not simply "the same token, flipped" are restated below.
+ *
+ * Values stay RGB channel triples, matching `tokens.css`, so `@theme` in
+ * `index.css` can wrap each one and alpha modifiers (`bg-muted/30`) keep
+ * working.
+ */
+
+:root {
+  --background: var(--surface);
+  --foreground: var(--content);
+
+  --card: var(--surface);
+  --card-foreground: var(--content);
+
+  --popover: var(--surface);
+  --popover-foreground: var(--content);
+
+  --primary: var(--primary-500);
+  --primary-foreground: var(--content-inverted);
+
+  --secondary: var(--surface-subtle);
+  --secondary-foreground: var(--content);
+
+  --muted: var(--surface-subtle);
+  --muted-foreground: var(--content-muted);
+
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--content);
+
+  --destructive: var(--coral-500);
+  --destructive-foreground: var(--content-inverted);
+
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--primary-500);
+
+  --sidebar: var(--surface-chrome);
+  --sidebar-foreground: var(--content);
+  --sidebar-primary: var(--primary-500);
+  --sidebar-primary-foreground: var(--content-inverted);
+  --sidebar-accent: var(--surface-hover);
+  --sidebar-accent-foreground: var(--content);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--primary-500);
+
+  /* Corner radius the registry components derive their scale from. */
+  --radius: 0.625rem;
+}
+
+/*
+ * Dark only needs the values whose dark form is a *different* token, not the
+ * same one flipped. Everything omitted here already follows `tokens.css`.
+ */
+:root.dark {
+  --primary: var(--primary-400);
+  --destructive: var(--coral-400);
+  --ring: var(--primary-400);
+}

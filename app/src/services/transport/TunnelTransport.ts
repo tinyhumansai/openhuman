@@ -340,8 +340,13 @@ export class TunnelTransport implements CoreTransport {
 
   // -- CoreTransport ---------------------------------------------------------
 
-  async call<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+  async call<T>(
+    method: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T> {
     await this.ensureConnected();
+    const timeoutMs = opts?.timeoutMs ?? this.callTimeoutMs;
 
     const requestId = crypto.randomUUID();
     const envelope: Envelope = { requestId, kind: 'request', seq: 0, payload: { method, params } };
@@ -349,8 +354,8 @@ export class TunnelTransport implements CoreTransport {
     return new Promise<T>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error(`[tunnel] ${method} timed out after ${this.callTimeoutMs}ms`));
-      }, this.callTimeoutMs);
+        reject(new Error(`[tunnel] ${method} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
 
       opts?.signal?.addEventListener('abort', () => {
         clearTimeout(timeoutId);

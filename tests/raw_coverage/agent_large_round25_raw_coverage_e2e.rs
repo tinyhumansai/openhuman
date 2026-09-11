@@ -18,10 +18,10 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::message::{AssistantMessage, ContentBlock, Message};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 
 struct EnvGuard {
     key: &'static str,
@@ -105,7 +105,7 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         // Route extraction calls — identified
         // by the extraction system prompt — to the fixed extracted answer so they
         // do not consume the agent-turn response queue, and record them separately
@@ -284,7 +284,6 @@ fn integrations_definition() -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,
@@ -312,7 +311,7 @@ fn integrations_definition() -> AgentDefinition {
 
 fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(LargePayloadTool)];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -327,6 +326,10 @@ fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionC
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round25-parent-model".to_string(),

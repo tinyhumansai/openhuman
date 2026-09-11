@@ -29,7 +29,7 @@
 //! than taking dictation down with it. The one thing none of them may do is
 //! guess: see [`is_hallucinated`].
 
-use serde::Deserialize;
+use tinyvoice_bus::names::methods;
 
 use super::{host, ops, registry};
 use crate::openhuman::config::Config;
@@ -55,98 +55,37 @@ impl std::fmt::Display for VoiceCallError {
     }
 }
 
-/// Which hallucination list applies, mirroring `tinyvoice::transcript::Mode`.
+/// Which hallucination list applies.
 ///
-/// Redeclared here rather than imported because this crate does not depend on
-/// `tinyvoice` — the module is the only link, and its interface speaks strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HallucinationMode {
-    /// Push-to-talk dictation. Aggressive.
-    Dictation,
-    /// Chat voice input. Conservative.
-    Conversation,
-}
+/// The contract's own type under the name the voice domain has always used for
+/// it. It was redeclared here — with a comment saying it had to be, "because
+/// this crate does not depend on `tinyvoice`" — and that is no longer true:
+/// `tinyvoice-bus` is exactly that dependency, and it costs `serde` and
+/// nothing else.
+pub use tinyvoice_bus::transcript::Mode as HallucinationMode;
 
-impl HallucinationMode {
-    /// The wire value the module expects.
-    fn as_wire(self) -> &'static str {
-        match self {
-            Self::Dictation => "dictation",
-            Self::Conversation => "conversation",
-        }
+/// The wire value for a screening mode.
+///
+/// The interface takes the mode as a plain string argument rather than a JSON
+/// value, so this reaches the same spelling the contract's `rename_all =
+/// "snake_case"` derive produces without a `serde_json` round trip. The match
+/// is exhaustive, so a variant added upstream is a compile error here rather
+/// than a mode that silently screens as something else.
+fn hallucination_mode_wire(mode: HallucinationMode) -> &'static str {
+    match mode {
+        HallucinationMode::Dictation => "dictation",
+        HallucinationMode::Conversation => "conversation",
     }
 }
 
 /// A recognised fast-path voice command, or `Unknown`.
 ///
-/// Deserialized from the module's tagged JSON. The variants and their payload
-/// names are the wire contract — renaming one here silently turns it into
-/// `Unknown`, which is why [`VoiceIntent::Unknown`] carries the catch-all
-/// `#[serde(other)]` and the tests below pin every tag.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(tag = "intent", rename_all = "snake_case")]
-pub enum VoiceIntent {
-    /// "play <song/artist>".
-    Play {
-        /// The cleaned search query.
-        query: String,
-    },
-    /// Pause playback.
-    Pause,
-    /// Resume playback.
-    Resume,
-    /// Skip to the next track.
-    Next,
-    /// Go back to the previous track.
-    Previous,
-    /// "open/launch/start <app>".
-    OpenApp {
-        /// The cleaned application name.
-        app: String,
-    },
-    /// "set volume to N", absolute `0..=100`.
-    SetVolume {
-        /// Target volume percentage.
-        percent: u8,
-    },
-    /// Raise the volume.
-    VolumeUp,
-    /// Lower the volume.
-    VolumeDown,
-    /// Mute audio output.
-    Mute,
-    /// Unmute audio output.
-    Unmute,
-    /// Not a confident fast command — defer to the agent.
-    #[serde(other)]
-    Unknown,
-}
-
-impl VoiceIntent {
-    /// A stable, **non-PII** variant name, for logs and metrics.
-    ///
-    /// Never includes the `query` / `app` payloads. This path is fed by an
-    /// always-on microphone, so those fields can hold anything said in the
-    /// room: a log line naming the variant is diagnostics, and one naming the
-    /// query is a recording.
-    #[must_use]
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Play { .. } => "play",
-            Self::Pause => "pause",
-            Self::Resume => "resume",
-            Self::Next => "next",
-            Self::Previous => "previous",
-            Self::OpenApp { .. } => "open_app",
-            Self::SetVolume { .. } => "set_volume",
-            Self::VolumeUp => "volume_up",
-            Self::VolumeDown => "volume_down",
-            Self::Mute => "mute",
-            Self::Unmute => "unmute",
-            Self::Unknown => "unknown",
-        }
-    }
-}
+/// The contract's own type. `Unknown` carries `#[serde(other)]` upstream, so a
+/// module newer than this host — which `is_compatible` permits, it only
+/// requires the module's minor version to be at least the host's — reports an
+/// intent this build has never heard of as `Unknown` and the utterance goes to
+/// the agent, rather than failing to decode.
+pub use tinyvoice_bus::VoiceIntent;
 
 /// Classify a command transcript into a fast-path intent.
 ///
@@ -160,28 +99,32 @@ impl VoiceIntent {
 /// to the agent — the fast path is an optimisation, and losing it costs a round
 /// trip rather than the request.
 pub async fn route(config: &Config, transcript: &str) -> Result<VoiceIntent, VoiceCallError> {
-    let json: String = call(config, "Route", (transcript,)).await?;
+    let json: String = call(config, methods::ROUTE, (transcript,)).await?;
     let intent: VoiceIntent = serde_json::from_str(&json)
         .map_err(|e| VoiceCallError::Failed(format!("could not decode intent: {e}")))?;
-    Ok(intent.clamped())
+    Ok(clamped(intent))
 }
 
-impl VoiceIntent {
-    /// Bring payloads back inside the range the executors assume.
-    ///
-    /// The module already clamps a spoken volume to `0..=100`, so in practice
-    /// this changes nothing. It runs anyway because *this* type is decoded from
-    /// a wire payload, and `percent` is interpolated straight into an
-    /// `osascript` command by `voice::always_on::execute_intent`. A value the
-    /// host never checked reaching a shell command is the shape of bug worth
-    /// spending three lines to make impossible, rather than one that depends on
-    /// a remote clamp staying correct.
-    #[must_use]
-    fn clamped(self) -> Self {
-        match self {
-            Self::SetVolume { percent } if percent > 100 => Self::SetVolume { percent: 100 },
-            other => other,
+/// Bring payloads back inside the range the executors assume.
+///
+/// The module already clamps a spoken volume to `0..=100`, so in practice this
+/// changes nothing. It runs anyway because the value is decoded from a wire
+/// payload, and `percent` is interpolated straight into an `osascript` command
+/// by `voice::always_on::execute_intent`. A value the host never checked
+/// reaching a shell command is the shape of bug worth spending three lines to
+/// make impossible, rather than one that depends on a remote clamp staying
+/// correct.
+///
+/// It is a free function rather than an inherent method because the type is
+/// the contract's now, and this is host policy: the contract describes what a
+/// module may say, not what this host is willing to act on.
+#[must_use]
+fn clamped(intent: VoiceIntent) -> VoiceIntent {
+    match intent {
+        VoiceIntent::SetVolume { percent } if percent > 100 => {
+            VoiceIntent::SetVolume { percent: 100 }
         }
+        other => other,
     }
 }
 
@@ -199,7 +142,7 @@ pub async fn extract_command(
     transcript: &str,
     wake_word: &str,
 ) -> Result<Option<String>, VoiceCallError> {
-    let command: String = call(config, "ExtractCommand", (transcript, wake_word)).await?;
+    let command: String = call(config, methods::EXTRACT_COMMAND, (transcript, wake_word)).await?;
     Ok(if command.is_empty() {
         None
     } else {
@@ -220,7 +163,7 @@ pub async fn wake_word_present(
     transcript: &str,
     wake_word: &str,
 ) -> Result<bool, VoiceCallError> {
-    call(config, "WakeWordPresent", (transcript, wake_word)).await
+    call(config, methods::WAKE_WORD_PRESENT, (transcript, wake_word)).await
 }
 
 /// Whether an STT transcript looks like a hallucination rather than speech.
@@ -239,7 +182,12 @@ pub async fn is_hallucinated(
     text: &str,
     mode: HallucinationMode,
 ) -> Result<bool, VoiceCallError> {
-    call(config, "IsHallucinated", (text, mode.as_wire())).await
+    call(
+        config,
+        methods::IS_HALLUCINATED,
+        (text, hallucination_mode_wire(mode)),
+    )
+    .await
 }
 
 /// Downmix, resample to 16 kHz, optionally silence-gate, and frame as WAV.
@@ -265,7 +213,7 @@ pub async fn prepare_capture(
     let encoded = encode_samples(samples);
     let wav: String = call(
         config,
-        "PrepareCapture",
+        methods::PREPARE_CAPTURE,
         (encoded, source_rate, channels, gate_threshold),
     )
     .await?;
@@ -283,65 +231,44 @@ pub async fn encode_wav(
     sample_rate: u32,
 ) -> Result<Vec<u8>, VoiceCallError> {
     let encoded = encode_samples(samples);
-    let wav: String = call(config, "EncodeWav", (encoded, sample_rate)).await?;
+    let wav: String = call(config, methods::ENCODE_WAV, (encoded, sample_rate)).await?;
     decode_audio(&wav)
 }
 
-/// Tuning for a VAD session, mirroring `tinyvoice::vad::VadConfig`.
+/// Tuning for a VAD session.
 ///
-/// Built from `voice_server` config by [`VadConfig::from_server_config`]. The
-/// module has no such constructor on purpose — it does not know what OpenHuman
-/// persists — so the mapping lives here.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
-pub struct VadConfig {
-    /// Peak-RMS energy above which a frame counts as speech.
-    pub onset_threshold: f32,
-    /// How long energy must stay below `onset_threshold` before the utterance
-    /// closes. Bridges natural mid-sentence pauses.
-    pub hangover_ms: u32,
-    /// Minimum voiced duration for a segment to be emitted.
-    pub min_speech_ms: u32,
-    /// Hard ceiling on a single utterance.
-    pub max_utterance_ms: u32,
-}
+/// The contract's own type. There is no `from_server_config` on it and there
+/// should not be: a crate that any host can link cannot know what *this* host
+/// persists, so that mapping stays here as [`vad_config_from_server_config`].
+pub use tinyvoice_bus::vad::VadConfig;
 
-impl VadConfig {
-    /// Build VAD tuning from the persisted voice-server config.
-    #[must_use]
-    pub fn from_server_config(c: &crate::openhuman::config::VoiceServerConfig) -> Self {
-        Self {
-            onset_threshold: c.vad_onset_threshold,
-            hangover_ms: c.vad_hangover_ms,
-            min_speech_ms: c.vad_min_speech_ms,
-            // Config stores seconds; the module speaks milliseconds. Clamped to
-            // at least 1ms so a zero or negative setting cannot make every
-            // utterance close on its first frame.
-            max_utterance_ms: (c.vad_max_utterance_secs * 1000.0).round().max(1.0) as u32,
-        }
+/// Build VAD tuning from the persisted voice-server config.
+///
+/// A free function rather than an inherent method because [`VadConfig`] is the
+/// contract's type. The unit conversion is the reason this exists at all:
+/// OpenHuman persists the utterance ceiling in seconds and the module speaks
+/// milliseconds.
+#[must_use]
+pub fn vad_config_from_server_config(c: &crate::openhuman::config::VoiceServerConfig) -> VadConfig {
+    VadConfig {
+        onset_threshold: c.vad_onset_threshold,
+        hangover_ms: c.vad_hangover_ms,
+        min_speech_ms: c.vad_min_speech_ms,
+        // Config stores seconds; the module speaks milliseconds. Clamped to at
+        // least 1ms so a zero or negative setting cannot make every utterance
+        // close on its first frame.
+        max_utterance_ms: (c.vad_max_utterance_secs * 1000.0).round().max(1.0) as u32,
     }
 }
 
-/// What the segmenter reported at one frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum VadEvent {
-    /// Energy crossed the onset threshold — an utterance has begun.
-    SpeechStart {
-        /// Index of the frame, within the batch that was pushed.
-        frame: usize,
-    },
-    /// An utterance closed.
-    SpeechEnd {
-        /// Index of the frame, within the batch that was pushed.
-        frame: usize,
-        /// Accumulated speech duration, excluding the trailing silence.
-        voiced_ms: u32,
-        /// False when the segment was too short to be worth transcribing.
-        emit: bool,
-        /// True when the close was forced by the utterance ceiling.
-        forced: bool,
-    },
-}
+/// What the segmenter reported, and at which frame.
+///
+/// The contract splits these in two — [`VadEvent`] is what happened,
+/// [`IndexedVadEvent`] pairs it with the frame — where this host used to carry
+/// one enum with `frame` repeated in every variant. The JSON is identical
+/// either way: `IndexedVadEvent` flattens its event, so the wire still reads
+/// `{"frame": 3, "kind": "speech_start"}`.
+pub use tinyvoice_bus::vad::{IndexedVadEvent, VadEvent};
 
 /// A live VAD session held by the module.
 ///
@@ -364,7 +291,7 @@ impl VadSession {
     pub async fn open(config: &Config, vad: VadConfig) -> Result<Self, VoiceCallError> {
         let json = serde_json::to_string(&vad)
             .map_err(|e| VoiceCallError::Failed(format!("could not encode VAD config: {e}")))?;
-        let id: u64 = call(config, "VadOpen", (json,)).await?;
+        let id: u64 = call(config, methods::VAD_OPEN, (json,)).await?;
         Ok(Self { id })
     }
 
@@ -381,8 +308,8 @@ impl VadSession {
         config: &Config,
         frame_ms: u32,
         energies: &[f32],
-    ) -> Result<Vec<VadEvent>, VoiceCallError> {
-        let json: String = call(config, "VadPush", (self.id, frame_ms, energies)).await?;
+    ) -> Result<Vec<IndexedVadEvent>, VoiceCallError> {
+        let json: String = call(config, methods::VAD_PUSH, (self.id, frame_ms, energies)).await?;
         serde_json::from_str(&json)
             .map_err(|e| VoiceCallError::Failed(format!("could not decode VAD events: {e}")))
     }
@@ -394,7 +321,7 @@ impl VadSession {
     /// [`VoiceCallError`] when the module is unavailable or the session is not
     /// open.
     pub async fn is_speaking(&self, config: &Config) -> Result<bool, VoiceCallError> {
-        call(config, "VadIsSpeaking", (self.id,)).await
+        call(config, methods::VAD_IS_SPEAKING, (self.id,)).await
     }
 
     /// Abort any in-flight utterance without emitting an event.
@@ -407,7 +334,7 @@ impl VadSession {
     /// [`VoiceCallError`] when the module is unavailable or the session is not
     /// open.
     pub async fn reset(&self, config: &Config) -> Result<(), VoiceCallError> {
-        call(config, "VadReset", (self.id,)).await
+        call(config, methods::VAD_RESET, (self.id,)).await
     }
 
     /// Release the session. Closing one that is already gone is not an error.
@@ -416,7 +343,7 @@ impl VadSession {
     ///
     /// [`VoiceCallError`] only when the module itself is unreachable.
     pub async fn close(&self, config: &Config) -> Result<(), VoiceCallError> {
-        call(config, "VadClose", (self.id,)).await
+        call(config, methods::VAD_CLOSE, (self.id,)).await
     }
 }
 
@@ -437,7 +364,7 @@ pub async fn prepare_frames(
 ) -> Result<Vec<f32>, VoiceCallError> {
     let encoded: String = call(
         config,
-        "PrepareFrames",
+        methods::PREPARE_FRAMES,
         (encode_samples(samples), source_rate, channels),
     )
     .await?;
@@ -456,7 +383,7 @@ pub async fn frame_energies(
 ) -> Result<Vec<f32>, VoiceCallError> {
     call(
         config,
-        "FrameEnergies",
+        methods::FRAME_ENERGIES,
         (encode_samples(samples), frame_len),
     )
     .await
@@ -480,7 +407,12 @@ pub async fn encode_wav_pcm16(
     use base64::Engine as _;
     let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    let wav: String = call(config, "EncodeWavPcm16", (encoded, sample_rate, channels)).await?;
+    let wav: String = call(
+        config,
+        methods::ENCODE_WAV_PCM16,
+        (encoded, sample_rate, channels),
+    )
+    .await?;
     decode_audio(&wav)
 }
 

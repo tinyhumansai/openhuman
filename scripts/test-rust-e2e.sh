@@ -31,6 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Tests guarded by `#[ignore]` stay skipped unless the caller passes
 # `-- --ignored`.
 ALL_E2E_SUITES=(
+  agent_approval_memory_coverage_e2e
   agent_retrieval_e2e
   calendar_grounding_e2e
   config_auth_app_state_connectivity_e2e
@@ -46,7 +47,6 @@ ALL_E2E_SUITES=(
   live_routing_e2e
   mcp_registry_e2e
   mcp_setup_e2e
-  memory_artifacts_e2e
   # Golden-workspace schema gates. These are the guard against a memory-store
   # schema change stranding an existing user workspace, so they belong in every
   # run of this suite — they were previously listed nowhere in .github/ or
@@ -58,9 +58,9 @@ ALL_E2E_SUITES=(
   memory_sources_e2e
   memory_tree_summarizer_e2e
   memory_fast_retrieve_e2e
+  observability_wallet_expected_e2e
   ollama_embeddings_fallback_e2e
   skill_registry_e2e
-  subconscious_e2e
   worker_b_domain_e2e
   worker_c_modules_e2e
 )

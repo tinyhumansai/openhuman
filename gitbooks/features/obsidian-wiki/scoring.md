@@ -10,7 +10,7 @@ icon: scale
 
 Not every chunk deserves a place in the Memory Tree. A "thanks!" reply, an email footer, or a calendar auto-notification carry almost no signal, and folding them into summary trees only dilutes the result and burns LLM tokens. Scoring is the gate: a per-chunk pass that runs **after chunking and before the chunk is appended to the L0 buffer**, deciding whether the chunk is worth keeping, enriching it with extracted entities, and indexing it for retrieval.
 
-The entry point is `score_chunk` in [`src/openhuman/memory/tree/score/mod.rs`](https://github.com/tinyhumansai/tinymemory/blob/main/core/src/tree/score/mod.rs). It is a pure function - it computes a result but does not touch the store; callers persist based on `ScoreResult::kept`.
+The entry point is `score_chunk` in [`src/openhuman/memory/tree/score/mod.rs`](https://github.com/tinyhumansai/tinymemory/blob/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/mod.rs). It is a pure function - it computes a result but does not touch the store; callers persist based on `ScoreResult::kept`.
 
 ---
 
@@ -25,7 +25,7 @@ Two goals, both in service of a dense, relevant tree:
 
 ## The signals
 
-`score_chunk` computes a bag of independent signals, each normalised to `[0.0, 1.0]`, defined in [`score/signals/`](https://github.com/tinyhumansai/tinymemory/tree/main/core/src/tree/score/signals). They are combined into a single weighted total and stored alongside it in `mem_tree_score` so every admit/drop decision stays auditable.
+`score_chunk` computes a bag of independent signals, each normalised to `[0.0, 1.0]`, defined in [`score/signals/`](https://github.com/tinyhumansai/tinymemory/tree/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/signals). They are combined into a single weighted total and stored alongside it in `mem_tree_score` so every admit/drop decision stays auditable.
 
 | Signal            | What it measures                                                                                                                     | Default weight |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
@@ -75,7 +75,7 @@ Dropped chunks still get a score row written for diagnostics, with a `drop_reaso
 
 ## Entity extraction
 
-Extraction enriches a chunk and feeds both the `entity_density` / `llm_importance` signals and the index. It is pluggable via the `EntityExtractor` trait in [`score/extract/`](https://github.com/tinyhumansai/tinymemory/tree/main/core/src/tree/score/extract), and runs in two stages:
+Extraction enriches a chunk and feeds both the `entity_density` / `llm_importance` signals and the index. It is pluggable via the `EntityExtractor` trait in [`score/extract/`](https://github.com/tinyhumansai/tinymemory/tree/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/extract), and runs in two stages:
 
 - **`RegexEntityExtractor`** - always on, deterministic, cheap. Once-compiled patterns pull mechanical identifiers: email, URL, handle (`@alice` and Discord-style `alice#1234`), and hashtag. UTF-8 safe (spans are char offsets).
 - **`LlmEntityExtractor`** - consulted only on borderline chunks. A single structured-JSON call asks the model for semantic NER (Person / Organization / Location / Topic / …) plus an importance rating, with span recovery and a soft warn-and-empty fallback on transport failure.
@@ -86,7 +86,7 @@ The two are chained by **`CompositeExtractor`**, which runs a sequence of extrac
 
 ## The entity index & graph
 
-Canonical entities for each kept chunk are written to **`mem_tree_entity_index`**, an inverted index mapping `entity_id → node_id` ([`store.rs`](https://github.com/tinyhumansai/tinymemory/blob/main/core/src/tree/score/store.rs)). This is the connective tissue the rest of the Memory Tree reads from:
+Canonical entities for each kept chunk are written to **`mem_tree_entity_index`**, an inverted index mapping `entity_id → node_id` ([`store.rs`](https://github.com/tinyhumansai/tinymemory/blob/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/store.rs)). This is the connective tissue the rest of the Memory Tree reads from:
 
 - **Retrieval** resolves a query's entities against the index to find candidate nodes.
 - **Topic routing** uses entity hotness to decide which entities deserve their own topic tree.
@@ -96,9 +96,9 @@ Canonical entities for each kept chunk are written to **`mem_tree_entity_index`*
 
 ## Embeddings for semantic recall
 
-Scoring also produces vectors. The embedder in [`score/embed/`](https://github.com/tinyhumansai/tinymemory/tree/main/core/src/tree/score/embed) turns each chunk (and later, summary) into a fixed `EMBEDDING_DIM = 1024`-float `Vec<f32>`, packed into a SQLite BLOB, so retrieval can rerank candidates by cosine similarity rather than relying on the entity index alone.
+Scoring also produces vectors. The embedder in [`score/embed/`](https://github.com/tinyhumansai/tinymemory/tree/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/embed) turns each chunk (and later, summary) into a fixed `EMBEDDING_DIM = 1024`-float `Vec<f32>`, packed into a SQLite BLOB, so retrieval can rerank candidates by cosine similarity rather than relying on the entity index alone.
 
-The active embedder is selected by `build_embedder_from_config` ([`embed/factory.rs`](https://github.com/tinyhumansai/tinymemory/blob/main/core/src/tree/score/embed/factory.rs)) walking a resolution ladder, identical for read and write paths:
+The active embedder is selected by `build_embedder_from_config` ([`embed/factory.rs`](https://github.com/tinyhumansai/tinymemory/blob/1d6b997874a06600ba0c4922708b5613497c9ffe/crates/tinymemory-core/src/tree/score/embed/factory.rs)) walking a resolution ladder, identical for read and write paths:
 
 1. **Explicit Ollama override** (`memory_tree.embedding_endpoint` + `embedding_model`) - power users / E2E rigs.
 2. **Local Ollama** via the unified `embeddings` workload setting - the "Memory embeddings" checkbox in [Local AI](../model-routing/local-ai.md) Settings.

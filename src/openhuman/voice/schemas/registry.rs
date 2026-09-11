@@ -322,7 +322,9 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             function: "test_provider",
             description:
                 "Test a voice provider endpoint without saving. STT transcribes a \
-                 silent audio clip; TTS synthesizes 'Hello' and discards.",
+                 silent audio clip; TTS synthesizes 'Hello' and discards. With \
+                 `validate_only` it is a dry run: a lightweight authenticated GET, \
+                 no inference call and nothing persisted.",
             inputs: vec![
                 required_string("workload", "Workload to test: 'stt' or 'tts'."),
                 required_string(
@@ -331,7 +333,14 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 ),
                 optional_bool(
                     "validate_only",
-                    "When true, only validate the API key without synthesizing/transcribing.",
+                    "When true, only validate the API key without synthesizing/transcribing. \
+                     Honoured for both workloads.",
+                ),
+                optional_string(
+                    "api_key",
+                    "Candidate API key to validate without storing it, so a key can be \
+                     checked before the user commits to saving it. Omit to use the stored \
+                     credential. Only read when `validate_only` is true.",
                 ),
             ],
             outputs: vec![json_output(

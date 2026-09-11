@@ -19,7 +19,7 @@ use openhuman_core::openhuman::memory::ops::{
     clear_namespace, doc_put, memory_recall_context, memory_recall_memories, ClearNamespaceParams,
     PutDocParams,
 };
-use tinymemory_core::rpc_models::{RecallContextRequest, RecallMemoriesRequest};
+use openhuman_core::openhuman::memory::rpc_models::{RecallContextRequest, RecallMemoriesRequest};
 
 // ── Env isolation ────────────────────────────────────────────────────
 
@@ -81,9 +81,6 @@ fn ensure_memory_seams(workspace: &Path) {
                     config_path: workspace.join("config.toml"),
                     ..openhuman_core::openhuman::config::Config::default()
                 });
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    config.clone(),
-                );
                 #[cfg(feature = "modules")]
                 openhuman_core::openhuman::modules::memory::set_modules_policy(config);
             })

@@ -2,10 +2,50 @@ use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::tree::tree::rpc;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::json;
-use tinycortex::memory::ingest::canonicalize::document::DocumentInput;
-use tinymemory_core::store::chunks::types::SourceKind;
+use tinymemory_api::chunks::SourceKind;
+
+/// The `document` ingest payload, as the driver's canonicaliser reads it.
+///
+/// # Why this is declared here rather than imported (#5560)
+///
+/// It was `tinycortex::memory::ingest::canonicalize::document::DocumentInput`,
+/// and the import was the last thing keeping the engine crate named in this
+/// file. The contract has no equivalent and should not: `IngestRequest::payload`
+/// is deliberately a `serde_json::Value`, because the shape a payload takes is
+/// owned by the *source kind*, and the set of source kinds grows without a
+/// contract change. A per-kind payload type in the contract would be the
+/// opposite of that.
+///
+/// So what crosses here is JSON, and what this struct is for is naming the
+/// field set that JSON must have. Serialize-only, for the same reason: the
+/// engine's type carries a `deserialize_with` that accepts epoch-millis,
+/// RFC 3339, or an absent timestamp, and none of that leniency is this
+/// producer's business — it always emits one shape. Reproducing the read side
+/// would be a second parser with no reader.
+///
+/// Field for field with the engine's declaration, in the same order, with no
+/// serde attributes on either side beyond the defaults, so the emitted object
+/// is byte-identical. `execute_success_path_roundtrips_document_chunk` is what
+/// checks that end to end: it ingests through this payload and reads the
+/// resulting chunk back, so a renamed or dropped field fails as a missing
+/// chunk rather than as a silent no-op.
+#[derive(Serialize)]
+struct DocumentInput {
+    /// Provider name (e.g. `notion`, `drive`, `meeting_notes`).
+    provider: String,
+    /// Document title.
+    title: String,
+    /// Document body (markdown preferred; plain text also accepted).
+    body: String,
+    /// When the document was last modified at the source. Emitted as RFC 3339,
+    /// which is one of the three forms the canonicaliser accepts.
+    modified_at: DateTime<Utc>,
+    /// Optional pointer back to source (URL, file path, Notion page id).
+    source_ref: Option<String>,
+}
 
 pub struct MemoryTreeIngestDocumentTool;
 
@@ -141,243 +181,5 @@ impl Tool for MemoryTreeIngestDocumentTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsString;
-
-    use tempfile::TempDir;
-
-    use crate::openhuman::config::Config;
-    use crate::openhuman::config::TEST_ENV_LOCK;
-    use crate::openhuman::tools::traits::Tool;
-    use serde_json::json;
-    use tinymemory_core::store::chunks::types::SourceRef;
-
-    struct WorkspaceEnvGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        previous: Option<OsString>,
-    }
-
-    impl WorkspaceEnvGuard {
-        fn set(path: &std::path::Path) -> Self {
-            let lock = TEST_ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
-            std::env::set_var("OPENHUMAN_WORKSPACE", path);
-            Self {
-                _lock: lock,
-                previous,
-            }
-        }
-    }
-
-    impl Drop for WorkspaceEnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.as_ref() {
-                std::env::set_var("OPENHUMAN_WORKSPACE", previous);
-            } else {
-                std::env::remove_var("OPENHUMAN_WORKSPACE");
-            }
-        }
-    }
-
-    async fn isolated_config(tmp: &TempDir) -> (WorkspaceEnvGuard, Config) {
-        let guard = WorkspaceEnvGuard::set(tmp.path());
-        let config = Config::load_or_init().await.expect("load config");
-        (guard, config)
-    }
-
-    #[test]
-    fn parameters_schema_requires_title_body_and_source_id() {
-        let tool = MemoryTreeIngestDocumentTool;
-        let schema = tool.parameters_schema();
-        assert_eq!(schema["required"], json!(["title", "body", "source_id"]));
-        assert_eq!(schema["properties"]["provider"]["type"], "string");
-    }
-
-    #[test]
-    fn missing_required_fields_produce_none_via_json_accessors() {
-        let value = json!({
-            "title": "Doc title",
-            "body": "Body"
-        });
-        assert_eq!(value.get("source_id").and_then(|v| v.as_str()), None);
-    }
-
-    #[test]
-    fn source_kind_document_string_is_expected() {
-        assert_eq!(SourceKind::Document.as_str(), "document");
-    }
-
-    #[tokio::test]
-    async fn execute_rejects_missing_title_before_config_load() {
-        let tool = MemoryTreeIngestDocumentTool;
-        let err = tool
-            .execute(json!({
-                "body": "Body text",
-                "source_id": "doc-1"
-            }))
-            .await
-            .expect_err("missing title should fail");
-        assert!(err
-            .to_string()
-            .contains("ingest_document: missing required field `title`"));
-    }
-
-    #[tokio::test]
-    async fn execute_rejects_missing_body_before_config_load() {
-        let tool = MemoryTreeIngestDocumentTool;
-        let err = tool
-            .execute(json!({
-                "title": "Doc title",
-                "source_id": "doc-1"
-            }))
-            .await
-            .expect_err("missing body should fail");
-        assert!(err
-            .to_string()
-            .contains("ingest_document: missing required field `body`"));
-    }
-
-    #[tokio::test]
-    async fn execute_rejects_missing_source_id_before_config_load() {
-        let tool = MemoryTreeIngestDocumentTool;
-        let err = tool
-            .execute(json!({
-                "title": "Doc title",
-                "body": "Body text"
-            }))
-            .await
-            .expect_err("missing source_id should fail");
-        assert!(err
-            .to_string()
-            .contains("ingest_document: missing required field `source_id`"));
-    }
-
-    #[tokio::test]
-    async fn execute_rejects_blank_required_fields() {
-        let tool = MemoryTreeIngestDocumentTool;
-        let result = tool
-            .execute(json!({
-                "title": "   ",
-                "body": "Body text",
-                "source_id": "doc-1"
-            }))
-            .await
-            .expect("blank title should return ToolResult error, not anyhow failure");
-        assert!(result.is_error);
-        assert_eq!(
-            result.text(),
-            "ingest_document: title, body, and source_id must be non-empty"
-        );
-
-        let result = tool
-            .execute(json!({
-                "title": "Doc title",
-                "body": "   ",
-                "source_id": "doc-1"
-            }))
-            .await
-            .expect("blank body should return ToolResult error");
-        assert!(result.is_error);
-
-        let result = tool
-            .execute(json!({
-                "title": "Doc title",
-                "body": "Body text",
-                "source_id": "   "
-            }))
-            .await
-            .expect("blank source_id should return ToolResult error");
-        assert!(result.is_error);
-    }
-
-    #[tokio::test]
-    async fn execute_success_path_roundtrips_document_chunk() {
-        let tmp = TempDir::new().expect("tempdir");
-        let (_workspace, cfg) = isolated_config(&tmp).await;
-        let tool = MemoryTreeIngestDocumentTool;
-        let result = tool
-            .execute(json!({
-                "title": "Doc title",
-                "body": "Body text with a memorable launch detail.",
-                "source_id": "doc-1",
-                "provider": "web",
-                "source_ref": "https://example.test/doc-1",
-                "owner": "owner-1"
-            }))
-            .await
-            .expect("valid request should succeed in the isolated test environment");
-        assert!(!result.is_error);
-        let text = result.text();
-        assert!(
-            text.contains("Ingested document \"Doc title\" as source_id=doc-1."),
-            "unexpected success payload: {text}"
-        );
-
-        let listed = rpc::list_chunks_rpc(
-            &cfg,
-            rpc::ListChunksRequest {
-                source_kind: Some("document".into()),
-                source_id: Some("doc-1".into()),
-                owner: Some("owner-1".into()),
-                limit: Some(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("list chunks after tool execute")
-        .value
-        .chunks;
-        assert_eq!(listed.len(), 1);
-        assert!(
-            listed[0]
-                .content
-                .contains("Body text with a memorable launch detail."),
-            "stored chunk missing document body: {}",
-            listed[0].content
-        );
-        assert_eq!(listed[0].metadata.owner, "owner-1");
-        assert_eq!(
-            listed[0].metadata.source_ref,
-            Some(SourceRef::new("https://example.test/doc-1"))
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_duplicate_source_id_reports_zero_new_chunks() {
-        let tmp = TempDir::new().expect("tempdir");
-        let (_workspace, cfg) = isolated_config(&tmp).await;
-        let tool = MemoryTreeIngestDocumentTool;
-        let args = json!({
-            "title": "Doc title",
-            "body": "Body text",
-            "source_id": "doc-dup"
-        });
-
-        let first = tool.execute(args.clone()).await.expect("first execute");
-        let second = tool.execute(args).await.expect("second execute");
-        assert!(!first.is_error);
-        assert!(!second.is_error);
-        assert!(first.text().contains("1 chunks created and indexed."));
-        assert!(second.text().contains("0 chunks created and indexed."));
-
-        let listed = rpc::list_chunks_rpc(
-            &cfg,
-            rpc::ListChunksRequest {
-                source_kind: Some("document".into()),
-                source_id: Some("doc-dup".into()),
-                limit: Some(10),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("list chunks after duplicate execute")
-        .value
-        .chunks;
-        assert_eq!(
-            listed.len(),
-            1,
-            "duplicate source_id should not create extra chunks"
-        );
-    }
-}
+#[path = "ingest_document_tests.rs"]
+mod tests;

@@ -31,65 +31,94 @@ const DATETIME_PREFIX: &str = "Current Date & Time:";
 /// live injector currently only prepends [`DATETIME_PREFIX`].
 const CHANNEL_CONTEXT_PREFIX: &str = "[Channel context]";
 
+type NativeToolCall = (String, String, String);
+type NativeToolEnvelope = (String, Vec<NativeToolCall>);
+
 /// Resolve a thread's root transcript, discover its sub-agent siblings, and
 /// project everything into display items. Returns `None` when the thread has
 /// no root transcript yet (brand-new thread / first turn not persisted).
 pub fn project_thread(workspace_dir: &Path, thread_id: &str) -> Option<ProjectedTranscript> {
-    let (root_path, sub_paths) = resolve_files(workspace_dir, thread_id)?;
-    Some(project_from_files(thread_id, &root_path, &sub_paths))
+    let (root_paths, sub_paths) = resolve_files(workspace_dir, thread_id)?;
+    Some(project_from_files(thread_id, &root_paths, &sub_paths))
 }
 
 /// Resolve the on-disk file set backing a thread's transcript view: the root
 /// transcript path plus every sub-agent sibling file. `None` when the thread
 /// has no root transcript yet. Exposed so the cache can key on these paths
 /// (and their mtimes/lengths) without re-projecting.
-pub fn resolve_files(workspace_dir: &Path, thread_id: &str) -> Option<(PathBuf, Vec<PathBuf>)> {
-    let root_path = transcript::find_root_transcript_for_thread(workspace_dir, thread_id)?;
-    let root_stem = root_path.file_stem()?.to_str()?.to_string();
-    let Some(raw_dir) = root_path.parent() else {
-        log::warn!(
-            "{LOG_PREFIX} resolved root has no parent thread={thread_id} root={}",
-            root_path.display()
-        );
+pub fn resolve_files(
+    workspace_dir: &Path,
+    thread_id: &str,
+) -> Option<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let root_paths = transcript::find_root_transcripts_for_thread(workspace_dir, thread_id);
+    if root_paths.is_empty() {
         return None;
-    };
-    let sub_paths = discover_subagent_files(raw_dir, &root_stem);
-    Some((root_path, sub_paths))
+    }
+    let mut sub_paths = Vec::new();
+    for root_path in &root_paths {
+        let Some(root_stem) = root_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Some(raw_dir) = root_path.parent() else {
+            continue;
+        };
+        sub_paths.extend(discover_subagent_files(raw_dir, root_stem));
+    }
+    sub_paths.sort();
+    sub_paths.dedup();
+    Some((root_paths, sub_paths))
 }
 
 /// Project a thread from an already-resolved file set (root + sub-agent
 /// siblings). Missing/unreadable files degrade to empty rather than failing.
 pub fn project_from_files(
     thread_id: &str,
-    root_path: &Path,
+    root_paths: &[PathBuf],
     sub_paths: &[PathBuf],
 ) -> ProjectedTranscript {
-    let root_stem = root_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_string();
-
     log::debug!(
-        "{LOG_PREFIX} projecting thread={thread_id} root={} subagent_files={}",
-        root_path.display(),
+        "{LOG_PREFIX} projecting thread={thread_id} roots={} subagent_files={}",
+        root_paths.len(),
         sub_paths.len()
     );
 
     // Read the root display records once: they feed both the top-level items
     // and the per-turn timestamp ranges used to anchor sub-agent trails.
-    let (mut items, segments) = match transcript::read_transcript_display(root_path) {
-        Ok(d) => (project_records(&d.records), turn_segments(&d.records)),
-        Err(err) => {
-            log::warn!(
-                "{LOG_PREFIX} failed to read root transcript {}: {err}",
-                root_path.display()
-            );
-            (Vec::new(), Vec::new())
+    let mut items = Vec::new();
+    let mut segments = Vec::new();
+    for root_path in root_paths {
+        match transcript::read_transcript_display(root_path) {
+            Ok(display) => {
+                items.extend(project_records(&display.records));
+                segments.extend(turn_segments(&display.records));
+            }
+            Err(err) => {
+                log::warn!(
+                    "{LOG_PREFIX} failed to read root transcript {}: {err}",
+                    root_path.display()
+                );
+            }
         }
-    };
+    }
 
-    let subagents = build_subagent_items(sub_paths, &root_stem, 0, &segments);
+    let mut subagents = Vec::new();
+    for root_path in root_paths {
+        let root_stem = root_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let prefix = format!("{root_stem}__");
+        let siblings: Vec<PathBuf> = sub_paths
+            .iter()
+            .filter(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.starts_with(&prefix))
+            })
+            .cloned()
+            .collect();
+        subagents.extend(build_subagent_items(&siblings, root_stem, 0, &segments));
+    }
     log::debug!(
         "{LOG_PREFIX} projected thread={thread_id} top_level_items={} subagents={}",
         items.len(),
@@ -377,17 +406,43 @@ fn project_assistant(
         }
     }
 
-    let tool_calls = msg
+    let persisted_tool_calls: Vec<(String, String, String)> = msg
         .turn_usage
         .as_ref()
-        .map(|tu| tu.tool_calls.as_slice())
+        .map(|tu| {
+            tu.tool_calls
+                .iter()
+                .map(|call| (call.id.clone(), call.name.clone(), call.arguments.clone()))
+                .collect()
+        })
         .unwrap_or_default();
+    let native_envelope = parse_native_tool_envelope(&msg.message.content);
+    // Some native/tinyagents histories predate top-level `turn_usage` lifting
+    // and carry the invocation only inside the provider replay envelope. Use
+    // that canonical call shape rather than degrading the paired result to an
+    // orphan named "tool".
+    let tool_calls = if persisted_tool_calls.is_empty() {
+        native_envelope
+            .as_ref()
+            .map(|(_, calls)| calls.clone())
+            .unwrap_or_default()
+    } else {
+        persisted_tool_calls
+    };
     let interim = !tool_calls.is_empty();
 
+    // Native tool-call turns are persisted as their provider envelope so they
+    // can be replayed byte-faithfully. The display projection needs only the
+    // envelope's visible `content`; rendering/sanitizing the whole JSON object
+    // makes the narration disappear (and risks showing raw tool JSON).
+    let visible_content = native_envelope
+        .map(|(content, _)| content)
+        .unwrap_or_else(|| msg.message.content.clone());
+
     // The assistant's prose (if any) shows before its tool calls.
-    if !msg.message.content.trim().is_empty() {
+    if !visible_content.trim().is_empty() {
         items.push(DisplayItem::AssistantMessage {
-            content: msg.message.content.clone(),
+            content: visible_content,
             interim,
             request_id: msg.request_id.clone(),
             model: msg.turn_usage.as_ref().map(|tu| tu.model.clone()),
@@ -395,18 +450,46 @@ fn project_assistant(
         });
     }
 
-    for call in tool_calls {
-        let args = parse_tool_args(&call.arguments);
+    for (call_id, name, arguments) in tool_calls {
+        let args = parse_tool_args(&arguments);
         items.push(DisplayItem::ToolCall {
-            call_id: call.id.clone(),
-            name: call.name.clone(),
+            call_id: call_id.clone(),
+            name,
             args,
             result: None,
             status: ToolCallStatus::Running,
             failure: None,
         });
-        pending.push_back((call.id.clone(), items.len() - 1));
+        pending.push_back((call_id, items.len() - 1));
     }
+}
+
+/// Decode the native provider replay envelope embedded in `ChatMessage.content`.
+/// Returns visible assistant prose plus `(id, name, arguments)` calls.
+fn parse_native_tool_envelope(raw: &str) -> Option<NativeToolEnvelope> {
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let object = value.as_object()?;
+    let calls = object.get("tool_calls")?.as_array()?;
+    let content = match object.get("content") {
+        Some(serde_json::Value::String(content)) => content.clone(),
+        Some(serde_json::Value::Null) | None => String::new(),
+        _ => return None,
+    };
+    let calls = calls
+        .iter()
+        .filter_map(|call| {
+            let call = call.as_object()?;
+            let id = call.get("id")?.as_str()?.to_string();
+            let name = call.get("name")?.as_str()?.to_string();
+            let arguments = match call.get("arguments") {
+                Some(serde_json::Value::String(arguments)) => arguments.clone(),
+                Some(arguments) => arguments.to_string(),
+                None => String::new(),
+            };
+            Some((id, name, arguments))
+        })
+        .collect();
+    Some((content, calls))
 }
 
 fn project_tool_result(

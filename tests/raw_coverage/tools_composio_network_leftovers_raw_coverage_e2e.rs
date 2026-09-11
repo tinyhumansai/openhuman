@@ -253,14 +253,15 @@ async fn round20_composio_ops_cover_authorize_scopes_and_direct_factory_edges() 
     harness.config.save().await.expect("save backend config");
     store_session_token(&harness.config);
 
-    let bad_extra = composio_authorize(
+    let legacy_extra = composio_authorize(
         &harness.config,
         "gmail",
         Some(json!({ "oauth_scopes": [123] })),
     )
     .await
-    .expect_err("bad oauth scope entries rejected before network");
-    assert!(bad_extra.contains("oauth_scopes"));
+    .expect("module ignores non-string legacy OAuth scope entries")
+    .value;
+    assert_eq!(legacy_extra.connection_id, "conn-authorize");
 
     let authorized = composio_authorize(
         &harness.config,
@@ -320,8 +321,8 @@ async fn round20_composio_ops_cover_authorize_scopes_and_direct_factory_edges() 
     let requests = state.requests.lock().expect("requests").clone();
     let authorize_body = requests
         .iter()
-        .find(|request| request.path == "/agent-integrations/composio/authorize")
-        .expect("authorize request")
+        .rfind(|request| request.path == "/agent-integrations/composio/authorize")
+        .expect("authorize request with the requested WABA id")
         .body
         .clone();
     assert_eq!(authorize_body["toolkit"], "gmail");

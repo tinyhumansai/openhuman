@@ -16,22 +16,19 @@ export const WINDOW_DRAG_BAR_HEIGHT = 28;
  * webview captures the pointer events. We opt back in with a `data-tauri-drag-
  * region` band.
  *
- * Rendered **in flow** at the top of the content column ({@link
- * RootShellLayout}), above the inset {@link ContentSurface}. It reserves the
- * band the traffic lights occupy so they sit on bare window chrome rather than
- * on the content card.
- *
- * It used to be an absolutely-positioned overlay painted on top of the routed
- * view, because the content pane was edge-to-edge and any reserved inset would
- * have pushed full-bleed surfaces (the Tiny Place world canvas, the Chat
- * backdrop) down and revealed the app background above them. The two-layer
- * shell makes that moot: the card is inset by design, so an in-flow band is now
- * both simpler and correct — and it no longer steals pointer events from the
- * top ~28px of page content.
+ * Positioned over the top of the content column ({@link RootShellLayout}), so
+ * it does not reserve vertical space or add an inherited top inset to routed
+ * pages. The window controls overlay this same title-bar region.
  *
  * Native CEF provider webviews composite above all HTML and so can't be dragged
  * through; that's a platform limit, not this band. The sidebar is intentionally
  * excluded — its header already drags in place.
+ *
+ * The attribute is deliberately bare (React renders it as `="true"`). `drag.js`
+ * reads that as direct-hit-only — `el === composedPath[0]` — which is exactly
+ * right for a band with no children, since the pointer target always *is* this
+ * element. Keep it childless: a container needs `="deep"` instead, or only its
+ * own uncovered box drags. `SidebarHeader` and `AppSidebar` were that bug.
  *
  * macOS-only: Windows/Linux keep their native decorated title bar (the
  * `Overlay` style is a no-op there), so reserving a band would only waste
@@ -44,7 +41,7 @@ export default function WindowDragBar() {
     <div
       data-tauri-drag-region
       aria-hidden="true"
-      className="flex-none"
+      className="absolute inset-x-0 top-0 z-10"
       style={{ height: WINDOW_DRAG_BAR_HEIGHT }}
     />
   );

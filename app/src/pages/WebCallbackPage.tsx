@@ -49,8 +49,8 @@ export default function WebCallbackPage({
   return (
     <div className="flex min-h-[60vh] items-center justify-center px-6 text-center">
       <div className="max-w-md space-y-3">
-        <h1 className="text-2xl font-semibold text-slate-900">Completing sign-in</h1>
-        <p className="text-sm text-slate-600">
+        <h1 className="text-2xl font-semibold text-content">Completing sign-in</h1>
+        <p className="text-sm text-content-secondary">
           OpenHuman is processing your callback and will continue automatically.
         </p>
       </div>

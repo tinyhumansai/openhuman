@@ -23,7 +23,7 @@
 //!
 //! Call [`install_memory_event_sink`] once during startup, before any memory
 //! work begins. Until it runs, the core drops its events silently rather than
-//! failing — see `tinymemory_core::events`.
+//! failing — see `tinymemory_api::events`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -138,6 +138,14 @@ impl MemoryHostConfig for Config {
             entity_id: self.composio.entity_id.clone(),
             api_key: self.composio.api_key.clone(),
             triage_disabled: self.composio.triage_disabled,
+            // `None` = the whole inbox window, which is exactly what this host
+            // does today. The field is new on the contract (tinymemory#115-ish)
+            // and scopes the *background* Gmail sync to a search query;
+            // OpenHuman's `[integrations.composio]` has no such setting, so
+            // there is nothing to forward and inventing a default here would
+            // silently narrow what gets synced. Exposing it needs a config
+            // field, its schema and a migration — a follow-up, not this branch.
+            gmail_sync_query: None,
         }
     }
 
@@ -194,7 +202,7 @@ impl MemoryEventSink for BusEventSink {
 /// Wire [`BusEventSink`] into `tinymemory-core`. Call once during startup,
 /// before any memory work begins.
 pub fn install_memory_event_sink() {
-    tinymemory_core::events::set_event_sink(Arc::new(BusEventSink));
+    tinymemory_api::events::set_event_sink(Arc::new(BusEventSink));
     log::debug!("[memory:host] event sink installed");
 }
 
@@ -205,150 +213,162 @@ pub fn install_memory_event_sink() {
 /// `None` means the event was handled here and has no bus equivalent — not
 /// that it was dropped.
 fn into_domain_event(event: MemoryEvent) -> Option<DomainEvent> {
-    let domain_event = match event {
-        MemoryEvent::SyncStageChanged {
-            trigger,
-            stage,
-            provider,
-            connection_id,
-            detail,
-            source_id,
-        } => DomainEvent::MemorySyncStageChanged {
-            trigger,
-            stage,
-            provider,
-            connection_id,
-            detail,
-            source_id,
-        },
-        MemoryEvent::IngestionStarted {
-            document_id,
-            title,
-            namespace,
-            queue_depth,
-        } => DomainEvent::MemoryIngestionStarted {
-            document_id,
-            title,
-            namespace,
-            queue_depth,
-        },
-        MemoryEvent::IngestionCompleted {
-            document_id,
-            namespace,
-            success,
-            elapsed_ms,
-            queue_depth,
-        } => DomainEvent::MemoryIngestionCompleted {
-            document_id,
-            namespace,
-            success,
-            elapsed_ms,
-            queue_depth,
-        },
-        MemoryEvent::DocumentCanonicalized {
-            source_id,
-            source_kind,
-            chunks_written,
-            chunk_ids,
-            canonicalized_at,
-            body_preview,
-        } => DomainEvent::DocumentCanonicalized {
-            source_id,
-            source_kind,
-            chunks_written,
-            chunk_ids,
-            canonicalized_at,
-            body_preview,
-        },
-        MemoryEvent::TreeSummarizerHourCompleted {
-            namespace,
-            node_id,
-            token_count,
-        } => DomainEvent::TreeSummarizerHourCompleted {
-            namespace,
-            node_id,
-            token_count,
-        },
-        MemoryEvent::TreeSummarizerPropagated {
-            namespace,
-            node_id,
-            level,
-            token_count,
-        } => DomainEvent::TreeSummarizerPropagated {
-            namespace,
-            node_id,
-            level,
-            token_count,
-        },
-        MemoryEvent::TreeSummarizerRebuildCompleted {
-            namespace,
-            total_nodes,
-        } => DomainEvent::TreeSummarizerRebuildCompleted {
-            namespace,
-            total_nodes,
-        },
-        MemoryEvent::TreeBuildProgress {
-            phase,
-            step,
-            tree_scope,
-            level,
-            item_count,
-            detail,
-        } => DomainEvent::MemoryTreeBuildProgress {
-            phase,
-            step,
-            tree_scope,
-            level,
-            item_count,
-            detail,
-        },
-        MemoryEvent::EmbeddingModelUnhealthy(reason) => DomainEvent::EmbeddingModelUnhealthy {
-            provider: reason.provider,
-            model: reason.model,
-            fallback_provider: reason.fallback_provider,
-            message: reason.message,
-        },
-        MemoryEvent::DriverBindFailed {
-            configured_driver,
-            bound_driver,
-            reason,
-        } => DomainEvent::MemoryDriverBindFailed {
-            configured_driver,
-            bound_driver,
-            reason,
-        },
-        MemoryEvent::DiffSnapshotTaken {
-            snapshot_id,
-            source_id,
-            source_kind,
-            item_count,
-            trigger,
-        } => DomainEvent::MemoryDiffSnapshotTaken {
-            snapshot_id,
-            source_id,
-            source_kind,
-            item_count,
-            trigger,
-        },
-        MemoryEvent::DiffMarkedRead {
-            source_ids,
-            snapshot_ids,
-        } => DomainEvent::MemoryDiffMarkedRead {
-            source_ids,
-            snapshot_ids,
-        },
-        MemoryEvent::ComposioIntegrationsChanged { toolkits } => {
-            DomainEvent::ComposioIntegrationsChanged { toolkits }
-        }
-        MemoryEvent::SyncRequested { channel_id } => {
-            DomainEvent::MemorySyncRequested { channel_id }
-        }
-        // Goes to the durable UserErrorCenter over the web channel, not the bus.
-        MemoryEvent::LocalModelUnavailable { origin } => {
-            crate::openhuman::memory::tree::health::user_error::
+    let domain_event =
+        match event {
+            MemoryEvent::SyncStageChanged {
+                trigger,
+                stage,
+                provider,
+                connection_id,
+                detail,
+                source_id,
+            } => DomainEvent::MemorySyncStageChanged {
+                trigger,
+                stage,
+                provider,
+                connection_id,
+                detail,
+                source_id,
+            },
+            MemoryEvent::IngestionStarted {
+                document_id,
+                title,
+                namespace,
+                queue_depth,
+            } => DomainEvent::MemoryIngestionStarted {
+                document_id,
+                title,
+                namespace,
+                queue_depth,
+            },
+            MemoryEvent::IngestionCompleted {
+                document_id,
+                namespace,
+                success,
+                elapsed_ms,
+                queue_depth,
+            } => DomainEvent::MemoryIngestionCompleted {
+                document_id,
+                namespace,
+                success,
+                elapsed_ms,
+                queue_depth,
+            },
+            MemoryEvent::DocumentCanonicalized {
+                source_id,
+                source_kind,
+                chunks_written,
+                chunk_ids,
+                canonicalized_at,
+                body_preview,
+            } => DomainEvent::DocumentCanonicalized {
+                source_id,
+                source_kind,
+                chunks_written,
+                chunk_ids,
+                canonicalized_at,
+                body_preview,
+            },
+            MemoryEvent::TreeSummarizerHourCompleted {
+                namespace,
+                node_id,
+                token_count,
+            } => DomainEvent::TreeSummarizerHourCompleted {
+                namespace,
+                node_id,
+                token_count,
+            },
+            MemoryEvent::TreeSummarizerPropagated {
+                namespace,
+                node_id,
+                level,
+                token_count,
+            } => DomainEvent::TreeSummarizerPropagated {
+                namespace,
+                node_id,
+                level,
+                token_count,
+            },
+            MemoryEvent::TreeSummarizerRebuildCompleted {
+                namespace,
+                total_nodes,
+            } => DomainEvent::TreeSummarizerRebuildCompleted {
+                namespace,
+                total_nodes,
+            },
+            MemoryEvent::TreeBuildProgress {
+                phase,
+                step,
+                tree_scope,
+                level,
+                item_count,
+                detail,
+            } => DomainEvent::MemoryTreeBuildProgress {
+                phase,
+                step,
+                tree_scope,
+                level,
+                item_count,
+                detail,
+            },
+            MemoryEvent::EmbeddingModelUnhealthy(reason) => DomainEvent::EmbeddingModelUnhealthy {
+                provider: reason.provider,
+                model: reason.model,
+                fallback_provider: reason.fallback_provider,
+                message: reason.message,
+            },
+            MemoryEvent::DriverBindFailed {
+                configured_driver,
+                bound_driver,
+                reason,
+            } => DomainEvent::MemoryDriverBindFailed {
+                configured_driver,
+                bound_driver,
+                reason,
+            },
+            MemoryEvent::DiffSnapshotTaken {
+                snapshot_id,
+                source_id,
+                source_kind,
+                item_count,
+                trigger,
+            } => DomainEvent::MemoryDiffSnapshotTaken {
+                snapshot_id,
+                source_id,
+                source_kind,
+                item_count,
+                trigger,
+            },
+            MemoryEvent::DiffMarkedRead {
+                source_ids,
+                snapshot_ids,
+            } => DomainEvent::MemoryDiffMarkedRead {
+                source_ids,
+                snapshot_ids,
+            },
+            MemoryEvent::ComposioIntegrationsChanged { toolkits } => {
+                DomainEvent::ComposioIntegrationsChanged { toolkits }
+            }
+            MemoryEvent::SyncRequested { channel_id } => {
+                DomainEvent::MemorySyncRequested { channel_id }
+            }
+            // Goes to the durable UserErrorCenter over the web channel, not the bus.
+            MemoryEvent::LocalModelUnavailable { origin } => {
+                crate::openhuman::memory::tree::health::user_error::
                 publish_local_model_unavailable_user_error(&origin);
-            return None;
-        }
-    };
+                return None;
+            }
+            // Also web-channel-only (openhuman#5820): the engine already
+            // quarantined and rebuilt, so there is nothing for a bus subscriber to
+            // do — the user needs to hear it, durably.
+            MemoryEvent::StoreCorruptQuarantined {
+                origin,
+                quarantined_path,
+            } => {
+                crate::openhuman::memory::tree::health::user_error::
+                publish_store_corrupt_user_error(&origin, quarantined_path.as_deref());
+                return None;
+            }
+        };
     Some(domain_event)
 }

@@ -16,7 +16,6 @@ import { initGA, initSentry, startUiInteractionTracking, trackEvent } from './se
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
 import './styles/code-highlight.css';
-import './styles/theme.css';
 import { resolveActiveUserBootstrap } from './utils/bootstrapActiveUser';
 import { APP_VERSION } from './utils/config';
 import { getStoredCoreMode } from './utils/configPersistence';

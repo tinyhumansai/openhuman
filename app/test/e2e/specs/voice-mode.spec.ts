@@ -677,19 +677,41 @@ describe.skip('Voice mode — Human tab capture & error mapping (#1610)', () => 
       await waitForSendErrorCode(8_000);
 
       // Now assert that no user message bubble in the thread says "beep".
-      const beepInThread = await browser.execute(() => {
-        // User messages are rendered by ChatBubble / MessageBubble.
-        // We cast a wide net: any element with role="group" or a message
-        // container whose data-sender="user" contains the word "beep".
-        const candidates = Array.from(
-          document.querySelectorAll('[data-sender="user"], [data-message-sender="user"]')
-        );
-        return candidates.some(
-          (el: Element) => (el as HTMLElement).textContent?.toLowerCase().includes('beep') ?? false
-        );
+      //
+      // This assertion used to query `[data-sender="user"], [data-message-sender="user"]`,
+      // and NEITHER attribute existed anywhere in `app/src` — the NodeList was
+      // always empty, `.some()` was always false, and the guard could never
+      // fail no matter what the thread contained. `data-sender` is now a real
+      // attribute on the message row in ChatThreadView, so the query matches;
+      // the `listMounted` check below is what keeps the assertion from
+      // regressing back into a vacuous pass if that hook is ever renamed.
+      const probe = await browser.execute(() => {
+        const listMounted = !!document.querySelector('[data-testid="chat-message-list"]');
+        const rows = Array.from(document.querySelectorAll('[data-testid="chat-message-row"]'));
+        const userRows = rows.filter(el => el.getAttribute('data-sender') === 'user');
+        const hasBeep = (el: Element) =>
+          (el as HTMLElement).textContent?.toLowerCase().includes('beep') ?? false;
+        return {
+          listMounted,
+          rowCount: rows.length,
+          userRowCount: userRows.length,
+          beepInUserMessage: userRows.some(hasBeep),
+          beepAnywhereInThread: rows.some(hasBeep),
+        };
       });
 
-      expect(beepInThread).toBe(false);
+      // Selector-rot guard: if the transcript itself is not mounted we are not
+      // inspecting the thread at all, and "no beep found" means nothing.
+      expect(probe.listMounted).toBe(true);
+
+      // The real regression guard (#1610): no placeholder utterance was
+      // emitted. Zero user rows is a legitimate pass here — it means nothing
+      // was appended — but it is now distinguishable from "the selector
+      // matched nothing", which is the failure mode this test previously had.
+      expect(probe.beepInUserMessage).toBe(false);
+      // Wider net: the placeholder must not appear on any row, in case a
+      // future implementation renders it under a different sender.
+      expect(probe.beepAnywhereInThread).toBe(false);
     } finally {
       await restoreGetUserMedia();
     }

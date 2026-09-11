@@ -59,36 +59,19 @@ function unwrap<T>(value: T | { result: T }): T {
 }
 
 test.describe('Settings leaf workflows', () => {
-  test('appearance theme, tab bar, and chat rendering preferences persist in app state', async ({
-    page,
-  }) => {
+  test('appearance theme persists in app state', async ({ page }) => {
     await openSettings(page, 'pw-settings-appearance', '/settings/appearance');
 
     // Panel title dropped in the PanelPage migration; the theme radios confirm
     // the Appearance panel mounted.
     await expect(page.getByRole('radio', { name: /Dark/ })).toBeVisible();
     await page.getByRole('radio', { name: /Dark/ }).click();
-    const labelSwitch = page.getByRole('switch', { name: /Always show labels/ });
-    if ((await labelSwitch.getAttribute('aria-checked')) !== 'true') {
-      await labelSwitch.click();
-    }
-    const assistantTextSwitch = page.getByRole('switch', { name: /Plain assistant responses/ });
-    if ((await assistantTextSwitch.getAttribute('aria-checked')) !== 'true') {
-      await assistantTextSwitch.click();
-    }
-
-    await expect
-      .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
-    await expect
-      .poll(() => persistedThemeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
+    await expect.poll(() => themeState(page)).toMatchObject({ mode: 'dark' });
+    await expect.poll(() => persistedThemeState(page)).toMatchObject({ mode: 'dark' });
 
     await page.reload();
     await waitForAppReady(page);
-    await expect
-      .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
+    await expect.poll(() => themeState(page)).toMatchObject({ mode: 'dark' });
   });
 
   test('agents/new creates a custom agent that appears in the registry', async ({ page }) => {

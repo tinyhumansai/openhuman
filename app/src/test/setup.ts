@@ -128,6 +128,64 @@ if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function () {};
 }
 
+// assistant-ui's thread viewport scrolls after a send. jsdom exposes scroll
+// metrics but not the imperative `scrollTo` method used by that primitive.
+if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.scrollTo) {
+  HTMLElement.prototype.scrollTo = function () {};
+}
+
+// Lexical measures the DOM selection after controlled composer updates. jsdom
+// implements Range but omits its layout methods.
+if (typeof Range !== 'undefined' && !Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
+if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+}
+
+// Polyfill the Pointer Capture API for Radix primitives in jsdom.
+// Radix's Select, Slider, Toggle and DropdownMenu call these unconditionally
+// on pointerdown; jsdom implements none of them, so without this the very
+// first pointer interaction throws instead of opening the control.
+if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+
+// Polyfill IntersectionObserver for Radix lazy-mount internals in jsdom.
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class IntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = '';
+    readonly thresholds: readonly number[] = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
+// Polyfill PointerEvent for @testing-library/user-event's pointer sequences
+// against Radix triggers. jsdom 28 still ships no PointerEvent constructor, so
+// user-event falls back to MouseEvent and Radix's pointer handlers never fire.
+if (typeof globalThis.PointerEvent === 'undefined') {
+  globalThis.PointerEvent = class PointerEvent extends MouseEvent {
+    readonly pointerId: number;
+    readonly pointerType: string;
+    readonly isPrimary: boolean;
+
+    constructor(type: string, params: PointerEventInit = {}) {
+      super(type, params);
+      this.pointerId = params.pointerId ?? 1;
+      this.pointerType = params.pointerType ?? 'mouse';
+      this.isPrimary = params.isPrimary ?? true;
+    }
+  } as unknown as typeof PointerEvent;
+}
+
 // The hardened `isTauri()` (in `utils/tauriCommands/common.ts`) checks both
 // `coreIsTauri()` and `window.__TAURI_INTERNALS__.invoke`. Many existing test
 // files mock `@tauri-apps/api/core::isTauri` to `true` to exercise the
@@ -197,6 +255,7 @@ vi.mock('../utils/config', () => ({
   CORE_RPC_TIMEOUT_MS: 30_000,
   IS_DEV: true,
   IS_DEV_LIKE: true,
+  IS_TEST: true,
   IS_PROD: false,
   E2E_DEFAULT_CORE_MODE: '',
   E2E_RESTART_APP_AS_RELOAD: false,

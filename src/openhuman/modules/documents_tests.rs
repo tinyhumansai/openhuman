@@ -129,3 +129,39 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         Err(DocumentCallError::Unavailable(_))
     ));
 }
+
+#[test]
+fn the_registry_entry_matches_the_interface_this_client_calls() {
+    // The registry is a plain `const` table and cannot name a gated crate, so
+    // the bus name and object path are written out there by hand. This is what
+    // checks them against the contract's own constants — a mismatch is not a
+    // compile error, it is a `NameHasNoOwner` at first use, in the field, on
+    // whichever platform nobody tested.
+    let record =
+        crate::openhuman::modules::registry::find("tinydocs").expect("tinydocs is registered");
+    assert_eq!(record.bus_name, tinydocs_bus::names::BUS_NAME);
+    assert_eq!(record.object_path, tinydocs_bus::names::OBJECT_PATH);
+}
+
+#[test]
+fn every_member_this_client_calls_is_one_the_contract_declares() {
+    // The five calls in this module are written as `tinydocs_bus` constants, so
+    // a rename upstream is a compile error here rather than a `MemberNotFound`
+    // at runtime. This pins the other direction: that the constants are the
+    // contract's whole surface, so a member added upstream shows up as an
+    // unused one here rather than being quietly unreachable.
+    use tinydocs_bus::names::methods;
+    let called = [
+        methods::GENERATE_DOCX,
+        methods::GENERATE_PPTX,
+        methods::EXTRACT_TEXT,
+        methods::READ_OUTPUT,
+        methods::RELEASE_OUTPUT,
+    ];
+    for member in tinydocs_bus::names::METHODS {
+        assert!(
+            called.contains(&member),
+            "the contract declares `{member}`, which this client never calls"
+        );
+    }
+}

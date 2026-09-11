@@ -8,6 +8,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "init",
     "list_documents",
     "list_namespaces",
+    "namespace_summaries",
     "delete_document",
     "query_namespace",
     "recall_context",
@@ -33,6 +34,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "sync_all",
     "learn_all",
     "ingestion_status",
+    "scheduler_override",
     // The bound memory driver (kernel.md §6 item 6, plan-memory.md §5)
     "provider_status",
     // Tool-scoped memory (#1400)
@@ -68,6 +70,7 @@ const REGISTRATION_ORDER: &[&str] = &[
     "init",
     "list_documents",
     "list_namespaces",
+    "namespace_summaries",
     "delete_document",
     "query_namespace",
     "recall_context",
@@ -97,6 +100,7 @@ const REGISTRATION_ORDER: &[&str] = &[
     "sync_channel",
     "sync_all",
     "ingestion_status",
+    "scheduler_override",
     // learn
     "learn_all",
     // provider

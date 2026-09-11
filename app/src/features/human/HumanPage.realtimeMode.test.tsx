@@ -11,6 +11,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
@@ -75,9 +76,13 @@ async function renderPage() {
   const store = configureStore({
     reducer: { mascot: mascotReducer, thread: threadReducer, chatRuntime: chatRuntimeReducer },
   });
+  // HumanPage routes (the composer's idle action opens /human, and the page
+  // navigates back), so it needs a router in scope.
   return render(
     <Provider store={store}>
-      <HumanPage />
+      <MemoryRouter initialEntries={['/human']}>
+        <HumanPage />
+      </MemoryRouter>
     </Provider>
   );
 }
@@ -95,24 +100,27 @@ describe('HumanPage — voice entry point', () => {
     expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
   });
 
-  it('falls back to tap-and-speak when the realtime flag is off', async () => {
+  /**
+   * The page is a mascot-only stage now — it no longer embeds the chat rail, so
+   * there is no composer to fall back to. Push-to-talk lived in that rail's
+   * composer and submitted through its send path, so a
+   * `VITE_HUMAN_VOICE_REALTIME=false` build simply has no control to show here.
+   */
+  it('shows a mascot-only stage with no voice control when realtime is off', async () => {
     flags.realtimeEnabled = false;
     await renderPage();
-    expect(screen.getByTestId('mic-composer-stub')).toBeInTheDocument();
     expect(screen.queryByTestId('realtime-voice-controls-stub')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
   });
 
-  // Comparison mode keeps the two paths apart: the realtime control floats over
-  // the mascot stage (outside the card), tap-and-speak stays in the card.
-  it('shows both controls when the show-both flag is on, and not stacked', async () => {
+  // Comparison mode used to show the realtime control beside the chat rail's
+  // tap-and-speak composer. With the rail gone there is only the one control,
+  // and the assertion that matters is that show-both does not double it.
+  it('still shows a single realtime control when the show-both flag is on', async () => {
     flags.showBoth = true;
     await renderPage();
-    expect(screen.getByTestId('realtime-voice-controls-stub')).toBeInTheDocument();
-    expect(screen.getByTestId('mic-composer-stub')).toBeInTheDocument();
-    // The card's slot stays empty — the realtime control is rendered outside it.
-    expect(
-      screen.getByTestId('conversations-stub').querySelector('[data-testid$="voice-controls-stub"]')
-    ).toBeNull();
+    expect(screen.getAllByTestId('realtime-voice-controls-stub')).toHaveLength(1);
+    expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
   });
 
   // Whichever mode is on, exactly one realtime control exists: the single-control

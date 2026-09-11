@@ -19,7 +19,7 @@
 //! — use [`redact`], which returns an 8-hex-char SHA-256 prefix: stable enough
 //! to correlate two log lines, useless for recovering the value. Note that
 //! [`redact`] is a **log** redactor only; the content-side scrubber for egress
-//! is `store::safety::sanitize_text`, selected in
+//! is `memory::safety::sanitize_text`, selected in
 //! [`GuardPolicy::redact_outbound`](super::GuardPolicy::redact_outbound).
 //!
 //! ## Denials only on the bus
@@ -32,7 +32,7 @@ use crate::openhuman::memory::api::capabilities::Capability;
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use tinymemory_core::util::redact::redact;
+use crate::openhuman::util::redact::redact;
 
 use super::policy::GuardPolicy;
 

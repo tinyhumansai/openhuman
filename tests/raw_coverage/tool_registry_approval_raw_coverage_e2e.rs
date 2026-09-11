@@ -37,7 +37,7 @@ use openhuman_core::openhuman::tools::registry::{
     all_tool_registry_controller_schemas, all_tool_registry_registered_controllers,
     capability_provider_by_id, capability_provider_diagnostics, capability_provider_registry,
     denials, get_tool, is_capability_provider_trusted_enabled, list_capability_providers,
-    list_tools, normalize_capability_provider_id, registry_entries,
+    list_tools, normalize_capability_provider_id, registry_entries, registry_entries_for_config,
     CapabilityProviderRegistryError,
 };
 
@@ -100,6 +100,20 @@ fn ensure_rpc_auth() {
         let token_dir = std::env::temp_dir().join("openhuman-tool-registry-approval-e2e-auth");
         init_rpc_token(&token_dir).expect("init rpc auth token");
     });
+}
+
+/// The bearer this process actually validates.
+///
+/// `core::auth::RPC_TOKEN` is a process-global `OnceLock` and `init_rpc_token`
+/// returns early once it is set — deliberately, so a second call cannot 401 live
+/// clients. Since `tests/raw_coverage/` is one aggregated binary, only the first
+/// suite to reach `ensure_rpc_auth` pins its own `TEST_RPC_TOKEN`; every other
+/// suite sending its literal gets a 401 and trips its own `assert_eq!` (#6112).
+/// Ask the auth module what it settled on instead of assuming we won the race.
+fn rpc_bearer() -> &'static str {
+    ensure_rpc_auth();
+    openhuman_core::core::auth::get_rpc_token()
+        .expect("ensure_rpc_auth initialises the token subsystem on the line above")
 }
 
 async fn serve_rpc() -> (
@@ -199,7 +213,7 @@ async fn rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> Value {
     let url = format!("{}/rpc", rpc_base.trim_end_matches('/'));
     let response = client
         .post(&url)
-        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
+        .header(AUTHORIZATION, format!("Bearer {}", rpc_bearer()))
         .json(&json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -654,7 +668,26 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
         .expect("connect test mcp server");
     assert_eq!(tools.first().map(|tool| tool.name.as_str()), Some("echo"));
 
-    let entries = registry_entries();
+    // A second workspace, so that scoping is what the assertions below actually
+    // test. With one workspace open, `registry_entries()` and the config-scoped
+    // form agree, and this case would keep passing if the forwarding regressed.
+    let other_tmp = tempdir().expect("second tempdir");
+    let other_config = Config {
+        workspace_dir: other_tmp.path().to_path_buf(),
+        ..Config::default()
+    };
+    let other_server = test_mcp_server();
+    connections::connect(&other_config, &other_server)
+        .await
+        .expect("connect second test mcp server");
+
+    // Config-scoped, not ambient: this case connects through
+    // `host::for_config(&config)`, keyed by its own tempdir. `registry_entries()`
+    // resolves through the process default instead, which returns a lone host
+    // but `None` once another case in this binary has opened a second one — so
+    // the ambient form reports nothing connected here purely because of who
+    // else ran first.
+    let entries = registry_entries_for_config(&config);
     let client_entry = entries
         .iter()
         .find(|entry| entry.tool_id == format!("mcp-client::{}::echo", server.server_id))
@@ -664,7 +697,29 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
     assert_eq!(client_entry.route["server_id"], json!(server.server_id));
     assert!(client_entry.tags.iter().any(|tag| tag == "mcp_client"));
 
-    assert!(connections::disconnect(&server.server_id).await);
+    // The other workspace's server must NOT leak in. This is the assertion that
+    // fails if a config-scoped lookup falls back to the process default.
+    assert!(
+        !entries.iter().any(
+            |entry| entry.tool_id == format!("mcp-client::{}::echo", other_server.server_id)
+        ),
+        "entries for one workspace must not include another workspace's server"
+    );
+
+    // Symmetrically, from the second workspace's side.
+    let other_entries = registry_entries_for_config(&other_config);
+    assert!(other_entries
+        .iter()
+        .any(|entry| entry.tool_id == format!("mcp-client::{}::echo", other_server.server_id)));
+    assert!(!other_entries
+        .iter()
+        .any(|entry| entry.tool_id == format!("mcp-client::{}::echo", server.server_id)));
+
+    // Config-scoped for the same reason as the lookup above: this connection
+    // lives in the host keyed by `config`'s workspace, and the by-id form
+    // resolves through the process default.
+    assert!(connections::disconnect_for_config(&config, &server.server_id).await);
+    assert!(connections::disconnect_for_config(&other_config, &other_server.server_id).await);
 }
 
 #[tokio::test]

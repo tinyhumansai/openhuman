@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use tinyagents::harness::artifacts::{OUTPUTS_DIR, SCRATCH_DIR};
+use tinyagents_harness::artifacts::{OUTPUTS_DIR, SCRATCH_DIR};
 
 /// Approximate token budget quoted to the model as the offload trigger.
 /// Mirrors [`super::types::DEFAULT_OFFLOAD_THRESHOLD_BYTES`] at the harness-wide

@@ -69,19 +69,6 @@ pub(super) fn build_session_agent(
         thread_id
     );
 
-    let reflection_chunks = load_reflection_chunks_for_thread(&effective.workspace_dir, thread_id);
-
-    if let Some(chunks) = reflection_chunks
-        .as_ref()
-        .filter(|chunks| !chunks.is_empty())
-    {
-        log::info!(
-            "[web-channel] thread={} spawned from reflection — injecting {} memory chunks into system prompt",
-            thread_id,
-            chunks.len()
-        );
-    }
-
     let locale_directive = locale.and_then(locale_reply_directive);
     let composed_suffix = compose_system_prompt_suffix(
         locale_directive.as_deref(),
@@ -100,7 +87,6 @@ pub(super) fn build_session_agent(
     let agent_result = Agent::from_config_for_agent_with_profile(
         &effective,
         target_agent_id,
-        reflection_chunks,
         composed_suffix,
         Some(profile),
     );
@@ -120,15 +106,6 @@ pub(super) fn build_session_agent(
             agent
         })
         .map_err(|e| e.to_string())
-}
-
-fn load_reflection_chunks_for_thread(
-    _workspace_dir: &std::path::Path,
-    _thread_id: &str,
-) -> Option<Vec<crate::openhuman::subconscious::SourceChunk>> {
-    // Reflection store has been removed. Existing threads spawned from
-    // reflections no longer receive memory-context injection.
-    None
 }
 
 pub(crate) fn locale_reply_directive(locale: &str) -> Option<String> {

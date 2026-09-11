@@ -66,14 +66,25 @@
 //! statement against `user_profile` is now inside the family, and the compiler
 //! enforces that.
 //!
-//! **That is confinement, not policy.** The contract has no profile/facet
-//! capability family, so `ProfileStore`'s reads and writes still run beneath
-//! every one of the seven steps above — no tier check, no source scope, no
-//! taint, no redaction, no budget, no audit. Closing *that* needs a fourteenth
-//! family in `tinycortex_api`, or a host-side half-measure where `ProfileStore`
-//! consults [`policy::GuardPolicy`] directly (which would make a `readonly`
-//! tier start rejecting learning-cache rebuilds — a behaviour change, not a
-//! refactor). Current unguarded profile callers:
+//! **That is confinement, not policy** — for the callers listed below, which
+//! still reach `ProfileStore` directly and so run beneath every one of the
+//! seven steps above: no tier check, no source scope, no taint, no redaction,
+//! no budget, no audit.
+//!
+//! This note used to say the fix "needs a fourteenth family in
+//! `tinycortex_api`". **That family now exists.** The contract has
+//! `MemoryProfile` (`tinymemory_api::provider::profile`, eleven methods) and
+//! [`families::GuardedProfile`] implements it, so the guarded door is built.
+//! What remains is migrating the callers below onto it, plus the release lag on
+//! the module that serves it — `MemoryProfile` is one of the five families that
+//! shipped in no released artifact until v1.2.0, so a caller moved onto it
+//! before the registry re-pin would get a runtime `Unsupported`. The host-side
+//! half-measure the note floated (having `ProfileStore` consult
+//! [`policy::GuardPolicy`] directly) is no longer the only option and should not
+//! be taken: it would make a `readonly` tier start rejecting learning-cache
+//! rebuilds, which is a behaviour change rather than a refactor.
+//!
+//! Current unguarded profile callers:
 //!
 //! - `memory/sync/composio/providers/profile.rs`
 //! - `agent/learning/{tools,startup,schemas}.rs`
@@ -97,7 +108,7 @@ pub mod policy;
 pub mod provider;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 pub use policy::GuardPolicy;
 pub use provider::MemoryGuard;

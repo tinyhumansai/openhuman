@@ -67,7 +67,7 @@ describe('NodeKindTile', () => {
   it('renders the kind gradient and its glyph together', () => {
     const { container } = render(<NodeKindTile kind="http_request" testId="tile" />);
     const tile = container.querySelector('[data-testid="tile"]');
-    expect(tile?.className).toContain('bg-gradient-to-br');
+    expect(tile?.className).toContain('bg-linear-to-br');
     expect(tile?.className).toContain('h-8 w-8');
     expect(tile?.querySelector('svg')).not.toBeNull();
   });

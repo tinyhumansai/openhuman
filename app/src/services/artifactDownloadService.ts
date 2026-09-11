@@ -1,17 +1,17 @@
 /**
- * Artifact export service (#2779, #3162).
+ * Artifact export service (#2779).
  *
  * All paths first resolve the artifact's absolute on-disk path + meta
  * via the `openhuman.ai_get_artifact` core RPC, then hand a source path
- * + filename hint to a Tauri command:
+ * + filename hint to the `download_artifact_to_downloads` Tauri command,
+ * which copies into the user's Downloads directory with a non-colliding
+ * name and returns the dest path so the UI can offer "Reveal in Finder".
  *
- *  - {@link saveArtifactViaDialog} (#3162) — native Save-As dialog
- *    pre-filled with the filename; user picks the destination. Cancel is
- *    reported as `{ ok: false, code: 'CANCELLED' }`. Falls back to the
- *    Downloads copy if the dialog itself is unavailable.
- *  - {@link downloadArtifact} (#2779) — copies into the user's Downloads
- *    directory with a non-colliding name and returns the dest path so the
- *    UI can offer "Reveal in Finder".
+ * {@link saveArtifactViaDialog} is kept as the name its callers use, but
+ * the native Save-As dialog behind it was removed with the shell's `rfd`
+ * dependency — it now delegates to {@link downloadArtifact}, which was
+ * already its fallback on any host without an xdg-desktop portal. Callers
+ * may still branch on `'CANCELLED'`; nothing produces it any more.
  *
  * No-ops outside Tauri (browser dev preview) — export only makes sense in
  * the desktop shell.
@@ -258,44 +258,21 @@ export async function downloadArtifact(
 }
 
 /**
- * Export an artifact via the native Save-As dialog (#3162), pre-filled
- * with the artifact's filename. On the user dismissing the dialog,
- * returns `{ ok: false, code: 'CANCELLED' }` (the caller should treat
- * this as a no-op, not an error). If the dialog itself is unavailable —
- * e.g. headless Linux with no xdg-desktop portal — falls back to the
- * Downloads copy so the artifact is still recoverable.
+ * Export an artifact under its own filename.
+ *
+ * Historically (#3162) this opened a native Save-As dialog and fell back
+ * to the Downloads copy when no dialog was available. The dialog is gone
+ * along with the shell's `rfd` dependency, so the fallback is now the only
+ * path: the artifact lands in Downloads and the caller offers "Reveal in
+ * Finder". Kept as a named export because `ArtifactCard` calls it, and
+ * because a real destination picker may return here later.
  */
 export async function saveArtifactViaDialog(
   artifactId: string,
   fallbackTitle: string,
   extension: string
 ): Promise<DownloadArtifactOutcome> {
-  if (!isTauri()) {
-    return { ok: false, code: 'NOT_DESKTOP', error: 'Saving is only available in the desktop app' };
-  }
-
-  const resolved = await resolveArtifactForExport(artifactId, fallbackTitle, extension);
-  if (!resolved.ok) {
-    return { ok: false, code: resolved.code, error: resolved.error };
-  }
-
-  try {
-    // Command returns the saved path, or `null` when the user cancelled.
-    const dest = await invoke<string | null>('save_artifact_via_dialog', {
-      sourcePath: resolved.sourcePath,
-      suggestedFilename: resolved.filename,
-    });
-    if (dest == null) {
-      return { ok: false, code: 'CANCELLED', error: 'save cancelled by user' };
-    }
-    return { ok: true, path: dest };
-  } catch (err) {
-    // Dialog unavailable (no portal / unsupported) — recover the artifact
-    // via the Downloads copy rather than stranding the user.
-    const reason = err instanceof Error ? err.message : String(err);
-    console.warn('[artifact] save dialog failed, falling back to Downloads:', reason);
-    return downloadArtifact(artifactId, fallbackTitle, extension);
-  }
+  return downloadArtifact(artifactId, fallbackTitle, extension);
 }
 
 /**

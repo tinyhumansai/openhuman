@@ -141,6 +141,123 @@ export default [
     },
   },
 
+  // Barrel-import enforcement, `settings/controls` half. This one IS global:
+  // it has zero outstanding deep imports app-wide (confirmed via
+  // `rg "from '.*settings/controls/[A-Za-z]"`), so there is nothing to
+  // grandfather.
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: ['src/components/settings/controls/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/settings/controls/*', '!**/settings/controls/index'],
+              message:
+                "Import settings controls from the 'settings/controls' barrel instead of a deep path into the control file.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // Barrel-import enforcement (S10). `src/components/ui` is documented as
+  // the only sanctioned import path for shared UI primitives (see its
+  // `index.ts` doc comment) and `src/components/settings/controls` is the
+  // same shape for settings controls — reaching past either barrel into a
+  // specific primitive file is exactly the drift this rule exists to stop
+  // from regrowing once a directory has been migrated onto it.
+  //
+  // `**/assistant-ui/ui/*` is excluded: that is a different, barrel-less
+  // vendored primitive set (shadcn-style, one file per component, no
+  // `index.ts`) and deep-importing it is the intended, only way to use it.
+  //
+  // SCOPED, NOT GLOBAL — an allowlist, not a denylist. Turning this on
+  // app-wide surfaced ~340 pre-existing deep `components/ui` imports across
+  // `src/components/{accounts,BootCheckGate,channels,chat,feedback,
+  // InitProgressScreen,intelligence,notifications,orchestration,rewards,
+  // settings,shortcuts,skills}`, several root-level `src/components/*.tsx`
+  // files, `src/features/**`, and most of `src/pages/**` — well past the 48
+  // the S10 audit itself flagged, and far beyond this change's scope to fix.
+  // `files` below lists exactly the directories this pass actually migrated
+  // (confirmed clean via `rg "from '(\.\./)+ui/[A-Za-z]"` returning nothing
+  // for each), so the rule is enforced everywhere it has already been
+  // cleaned up without failing lint on code this change never touched.
+  // Widen `files` as each remaining directory gets its own migration pass —
+  // an allowlist only ever grows, never shrinks, so the net only tightens.
+  {
+    files: [
+      'src/components/flows/**/*.tsx',
+      'src/components/flows/**/*.ts',
+      'src/components/layout/**/*.tsx',
+      'src/components/layout/**/*.ts',
+      'src/components/dashboard/**/*.tsx',
+      'src/components/dashboard/**/*.ts',
+      'src/components/approvals/**/*.tsx',
+      'src/components/approvals/**/*.ts',
+      'src/pages/FlowsPage.tsx',
+      'src/pages/FlowCanvasPage.tsx',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/ui/*', '!**/assistant-ui/ui/*', '!**/ui/index'],
+              message:
+                "Import UI primitives from the 'components/ui' barrel (src/components/ui) instead of a deep path into the primitive file.",
+            },
+            // Repeated verbatim from the global block below. Flat config
+            // REPLACES a rule's options rather than merging them, so a later
+            // block that also sets `no-restricted-imports` would otherwise
+            // silently drop whichever patterns it does not itself list. Both
+            // halves therefore have to travel together in every block that
+            // configures this rule.
+            {
+              group: ['**/settings/controls/*', '!**/settings/controls/index'],
+              message:
+                "Import settings controls from the 'settings/controls' barrel instead of a deep path into the control file.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // Frontend config is centralized in src/utils/config.ts (AGENTS.md). A direct
+  // import.meta.env read elsewhere bypasses the derived values that file owns --
+  // IS_DEV_LIKE exists precisely because import.meta.env.DEV is false under the
+  // E2E harness (vite build --mode development) -- and cannot be stubbed once the
+  // module graph has loaded, which is why the loopback OAuth test reads config
+  // instead. The rule was documented but unenforced, and had already drifted.
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    ignores: [
+      'src/utils/config.ts',
+      'src/test/**',
+      'src/**/__tests__/**',
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // Pin the meta-property to `import.meta` -- `new.target` is a MetaProperty
+          // too -- and match both `import.meta.env` and `import.meta['env']`.
+          selector:
+            'MemberExpression[object.type="MetaProperty"][object.meta.name="import"][object.property.name="meta"]:matches([computed=false][property.name="env"], [computed=true][property.value="env"])',
+          message:
+            'Read frontend config from src/utils/config.ts (IS_DEV, IS_DEV_LIKE, ...) instead of import.meta.env directly; add the value there if it is missing.',
+        },
+      ],
+    },
+  },
+
   // React files configuration
   {
     files: ['src/**/*.jsx', 'src/**/*.tsx'],

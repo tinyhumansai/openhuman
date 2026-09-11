@@ -2,11 +2,45 @@
 //!
 //! Sync RPCs publish `DomainEvent::MemorySyncRequested` on the global event
 //! bus — they are fire-and-forget hooks for future ingestion subscribers.
+//!
+//! # The engine call that was here is gone (openhuman#5560)
+//!
+//! This section used to name one blocker: `spawn_manual_sync` reached
+//! `tinycortex::run_composio_connection`, whose
+//! `run_composio_connection_with_caps` opens with
+//! `global::client_if_ready().ok_or(… "memory client is not ready")` — so with
+//! the in-process engine gone, every target failed and the handler emitted
+//! `MemorySyncStage::Failed` per connection. Loud, but wrong.
+//!
+//! [`spawn_manual_sync`] runs the pass through
+//! [`integrations::composio::ops::run_sync_pass`](crate::openhuman::integrations::composio::ops::run_sync_pass)
+//! now — the tinyconnectors module for the fetch, the bound driver's
+//! `MemorySourceSink` for the write. The one thing this handler still does for
+//! itself is resolve the binding *before* the spawn, so a driver that accepts
+//! no source items is an error the caller sees rather than a status line a
+//! detached task emits into a channel nobody is reading yet.
+//!
+//! # `memory_ingestion_status` was the quiet one, and it is fixed
+//!
+//! It used to read the in-process engine's live `IngestionState` through
+//! `global::client_if_ready()`, whose `None` arm answered "idle, queue empty" —
+//! indistinguishable from a healthy store with nothing to do. Once the second
+//! engine stopped booting, that arm became the *only* arm: the RPC reported
+//! permanent idle regardless of reality, and the Memory panel's ingestion
+//! indicator never lit up again. The frontend polls this every 1.5–4s
+//! (`useMemoryIngestionStatus`, `useBackgroundActivity`), so the wrong answer
+//! was on screen continuously.
+//!
+//! It now reads `MemoryMaintenance::queue_stats` off the bound driver, which is
+//! the contract's own queue telemetry and needs no new bus member. See
+//! `ingestion_status_for_config` for exactly which fields survived that move
+//! and which the contract does not carry.
 
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::Config;
 use crate::openhuman::memory::sync::composio;
 use crate::rpc::RpcOutcome;
-use tinymemory_core::sync_events::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
+use tinymemory_api::sync_events::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
 
 /// Parameters for `memory_sync_channel`.
 #[derive(Debug, serde::Deserialize)]
@@ -27,10 +61,19 @@ pub struct SyncAllResult {
     pub requested: bool,
 }
 
-/// Result returned by `memory_ingestion_status`. Mirrors
-/// [`crate::openhuman::memory::IngestionStatusSnapshot`] but is the public RPC
-/// shape — the indirection keeps internal renames from breaking the wire
-/// contract.
+/// Result returned by `memory_ingestion_status` — the public RPC shape, kept
+/// deliberately separate from whatever the driver answers so an internal rename
+/// cannot break the wire contract.
+///
+/// **Five fields are permanently `None` since the move onto the contract**
+/// (`current_document_id`, `current_title`, `current_namespace`,
+/// `last_document_id`, `last_success`) — see `ingestion_status_for_config`,
+/// which documents the reduction field by field. They stay on the struct because
+/// `MemoryControls`, `OverviewPanel` and `useBackgroundActivity` decode this
+/// shape and every one of them is `skip_serializing_if = "Option::is_none"`
+/// already, so an absent field is a shape the frontend has always handled.
+/// Removing them would be a wire change; leaving them is not a promise that
+/// they are filled.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct IngestionStatusResult {
     pub running: bool,
@@ -151,6 +194,20 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
         }
     }
 
+    // Resolved BEFORE the spawn so a missing driver is an error the caller
+    // sees, not a status line the spawned task emits into a channel nobody is
+    // reading yet. `run_sync_pass` re-resolves its own binding per target
+    // (it takes `&Config`, not a binding), so this check exists purely to
+    // fail fast on the same "does the bound driver accept source items"
+    // question it would otherwise only discover after the spawn.
+    let binding = crate::openhuman::memory::binding::for_config(&config)?;
+    if binding.provider().as_sources().is_none() {
+        return Err(format!(
+            "the bound memory driver '{}' does not accept source items",
+            binding.driver_id()
+        ));
+    }
+
     tokio::spawn(async move {
         for target in targets {
             emit_sync_stage(
@@ -162,22 +219,27 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
                 None, // provider-level composio sync — not a memory-source row
             );
 
-            match tinymemory_core::tinycortex::run_composio_connection(
+            // Through the tinyconnectors module and the bound driver's
+            // `MemorySourceSink`, not the (now permanently refusing) engine
+            // seam — see `memory::sync::composio`'s module docs.
+            let outcome = crate::openhuman::integrations::composio::ops::run_sync_within_budget(
+                &config,
                 &target.toolkit,
                 &target.connection_id,
-                &config,
+                "manual",
             )
-            .await
-            {
-                Ok(outcome) => {
+            .await;
+            match outcome {
+                Ok(pass) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Completed,
                         Some(&target.toolkit),
                         Some(&target.connection_id),
                         Some(format!(
-                            "provider sync completed items_ingested={}",
-                            outcome.records_ingested
+                            "provider sync completed items_ingested={} written={} \
+                             already_ingested={}",
+                            pass.records_read, pass.written, pass.already_ingested
                         )),
                         None, // provider-level composio sync — not a memory-source row
                     );
@@ -188,7 +250,7 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
                         MemorySyncStage::Failed,
                         Some(&target.toolkit),
                         Some(&target.connection_id),
-                        Some(error.to_string()),
+                        Some(error.clone()),
                         None, // provider-level composio sync — not a memory-source row
                     );
                     tracing::warn!(
@@ -205,193 +267,157 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
     Ok(())
 }
 
-/// Returns the current memory-ingestion status: whether a job is running, the
-/// in-flight document, queue depth, and the most recent completion. Read-only,
+/// Returns the current memory-ingestion status: whether the driver's queue is
+/// working, how much is waiting, and when it last settled a job. Read-only,
 /// safe to poll.
 pub async fn memory_ingestion_status() -> Result<RpcOutcome<IngestionStatusResult>, String> {
-    let snapshot = match tinymemory_core::global::client_if_ready() {
-        Some(c) => c.ingestion_state().snapshot(),
-        // Memory not yet initialised — report idle, no in-flight job.
-        None => Default::default(),
+    let config = config_rpc::load_config_with_timeout().await?;
+    let status = ingestion_status_for_config(&config).await?;
+    Ok(RpcOutcome::new(status, vec![]))
+}
+
+/// The queue half of [`memory_ingestion_status`], against an explicit config.
+///
+/// Split out so the mapping below is testable against a bound driver without
+/// the handler's ambient `Config::load_or_init` — the same shape
+/// `read_rpc::chunks` uses for its own paged reads.
+///
+/// # What moved, and what the contract does not carry
+///
+/// This was `global::client_if_ready().ingestion_state().snapshot()` — an
+/// in-process counter owned by the engine this host no longer boots. The
+/// replacement is
+/// [`MemoryMaintenance::queue_stats`](crate::openhuman::memory::api::provider::MemoryMaintenance::queue_stats),
+/// the contract's own queue
+/// telemetry, so it works against *whichever* driver is bound rather than only
+/// against an engine living in this address space.
+///
+/// | RPC field | Source | Note |
+/// | --- | --- | --- |
+/// | `running` | `QueueStats::running > 0` | jobs a worker currently holds |
+/// | `queue_depth` | `QueueStats::ready` | jobs waiting; the running one is counted by `running`, exactly as the engine counter split them |
+/// | `last_completed_at` | `QueueStats::last_completed_ms` | when the queue last settled a job |
+///
+/// **The reduction, stated rather than hidden.** `current_document_id`,
+/// `current_title`, `current_namespace`, `last_document_id` and `last_success`
+/// have no contract equivalent and are left `None`. `QueueStats` is counts, not
+/// job identity: it can say a worker is busy, not *what* it is busy with. That
+/// is a narrower answer than the engine's snapshot gave — and a strictly better
+/// one than what shipped, because since the second engine stopped booting those
+/// fields were `None` **and** `running`/`queue_depth` were falsely zero. Nothing
+/// is substituted for them: `latest_queue_failure()` could be squinted at to
+/// synthesise a `last_success`, and it would be a different question's answer
+/// (the newest *terminal failure*, not the newest job's outcome).
+///
+/// Widening this back out is a contract member and a `tinymemory` release, not
+/// a host change.
+///
+/// # Degrade
+///
+/// A driver error propagates — reporting "idle" because the driver failed is
+/// the exact bug this replaced. A driver that does not serve `Maintenance` at
+/// all reports zeros with the driver named in the log, matching its siblings in
+/// `memory::tree::tree::rpc`: it has no queue to be behind on.
+async fn ingestion_status_for_config(config: &Config) -> Result<IngestionStatusResult, String> {
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        log::debug!(
+            "[memory.sync] ingestion_status: driver '{}' does not serve Maintenance; reporting idle",
+            binding.driver_id()
+        );
+        return Ok(IngestionStatusResult::default());
     };
-    Ok(RpcOutcome::new(
-        IngestionStatusResult {
-            running: snapshot.running,
-            current_document_id: snapshot.current_document_id,
-            current_title: snapshot.current_title,
-            current_namespace: snapshot.current_namespace,
-            queue_depth: snapshot.queue_depth,
-            last_completed_at: snapshot.last_completed_at,
-            last_document_id: snapshot.last_document_id,
-            last_success: snapshot.last_success,
-        },
-        vec![],
-    ))
+
+    // `None` counts every job kind. The engine counter this replaces was not
+    // narrowed to the ingest kind either — it was bumped on every submit — so
+    // narrowing here would silently shrink a number the Memory panel already
+    // displays.
+    let queue = maintenance
+        .queue_stats(None)
+        .await
+        .map_err(|e| format!("queue_stats: {e}"))?;
+
+    log::debug!(
+        "[memory.sync] ingestion_status: driver='{}' running={} ready={} eligible_now={}",
+        binding.driver_id(),
+        queue.running,
+        queue.ready,
+        queue.eligible_now
+    );
+
+    Ok(IngestionStatusResult {
+        running: queue.running > 0,
+        current_document_id: None,
+        current_title: None,
+        current_namespace: None,
+        queue_depth: usize::try_from(queue.ready).unwrap_or(usize::MAX),
+        last_completed_at: queue.last_completed_ms,
+        last_document_id: None,
+        last_success: None,
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, OnceLock};
+#[path = "sync_tests.rs"]
+mod tests;
 
-    use super::*;
-    use async_trait::async_trait;
-    use serde_json::json;
-    use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
+/// `openhuman.memory_scheduler_override` result.
+#[derive(Debug, serde::Serialize)]
+pub struct SchedulerOverrideResult {
+    pub overridden: bool,
+    pub seconds: u64,
+}
 
-    use crate::core::bus::BUS;
-    use crate::core::events::DomainEvent;
-    use tinybus::EventHandler;
-
-    fn test_mutex() -> &'static std::sync::Mutex<()> {
-        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-    }
-
-    fn ensure_memory_client() -> tinymemory_core::store::MemoryClientRef {
-        crate::openhuman::memory::ops::ensure_shared_memory_client();
-        tinymemory_core::global::client().expect("memory client")
-    }
-
-    struct ChannelCapture {
-        tx: mpsc::UnboundedSender<Option<String>>,
-    }
-
-    #[async_trait]
-    impl EventHandler<DomainEvent> for ChannelCapture {
-        fn name(&self) -> &str {
-            "memory::ops::sync::tests::capture"
-        }
-
-        fn domains(&self) -> Option<&[&str]> {
-            Some(&["memory"])
-        }
-
-        async fn handle(&self, event: &DomainEvent) {
-            if let DomainEvent::MemorySyncRequested { channel_id } = event {
-                let _ = self.tx.send(channel_id.clone());
-            }
-        }
-    }
-
-    #[test]
-    fn sync_channel_params_deserialize_channel_id() {
-        let params: SyncChannelParams =
-            serde_json::from_value(json!({"channel_id": "channel-1"})).unwrap();
-        assert_eq!(params.channel_id, "channel-1");
-    }
-
-    #[test]
-    fn ingestion_status_result_default_is_idle() {
-        let status = IngestionStatusResult::default();
-        assert!(!status.running);
-        assert!(status.current_document_id.is_none());
-        assert!(status.current_title.is_none());
-        assert!(status.current_namespace.is_none());
-        assert_eq!(status.queue_depth, 0);
-        assert!(status.last_completed_at.is_none());
-        assert!(status.last_document_id.is_none());
-        assert!(status.last_success.is_none());
-    }
-
-    #[test]
-    fn sync_result_structs_serialize_expected_fields() {
-        let one = serde_json::to_value(SyncChannelResult {
-            requested: true,
-            channel_id: "abc".into(),
-        })
-        .unwrap();
-        assert_eq!(one, json!({"requested": true, "channel_id": "abc"}));
-
-        let all = serde_json::to_value(SyncAllResult { requested: true }).unwrap();
-        assert_eq!(all, json!({"requested": true}));
-    }
-
-    #[tokio::test]
-    async fn memory_sync_channel_publishes_targeted_event() {
-        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
-            .lock()
-            .await;
-        let _guard = test_mutex()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _ = crate::core::bus::init().await;
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let _subscription = BUS
-            .subscribe(Arc::new(ChannelCapture { tx }))
-            .expect("global bus should be initialized");
-
-        let outcome = memory_sync_channel(SyncChannelParams {
-            channel_id: "channel-123".into(),
-        })
-        .await
-        .expect("memory_sync_channel");
-        assert!(outcome.value.requested);
-        assert_eq!(outcome.value.channel_id, "channel-123");
-
-        let received = timeout(Duration::from_secs(1), rx.recv())
+/// `openhuman.memory_scheduler_override` — open a bounded manual-override
+/// window on the module's scheduler gate.
+///
+/// The gate's pauses (`mode = off`, signed-out, battery) protect the user
+/// from background cost they did not ask for; this RPC is the sanctioned
+/// exception for work they explicitly did — "process my memory now" while
+/// the gate is off (openhuman#5935). The window is clamped module-side to an
+/// hour; the default asks for ten minutes.
+pub async fn memory_scheduler_override(
+    seconds: Option<u64>,
+) -> Result<RpcOutcome<SchedulerOverrideResult>, String> {
+    let seconds = seconds.unwrap_or(600).min(3600);
+    #[cfg(feature = "modules")]
+    {
+        crate::openhuman::modules::memory::ModuleMemoryProvider::from_boot_policy()
+            .override_scheduler_gate(seconds)
             .await
-            .expect("event should arrive before timeout")
-            .expect("sender should still be connected");
-        assert_eq!(received.as_deref(), Some("channel-123"));
+            .map_err(|error| {
+                // Typed version-gap detection: the provider maps a module
+                // that predates the member (tinybus UnknownMethod) onto
+                // `MemoryError::Unsupported`, so this match is on the type,
+                // not on error prose (review finding on #5932).
+                if matches!(
+                    error,
+                    crate::openhuman::memory::api::error::MemoryError::Unsupported { .. }
+                ) {
+                    "this build's memory module does not support the scheduler override \
+                     (requires tinymemory >= 1.13.7)"
+                        .to_string()
+                } else {
+                    format!("scheduler override: {error}")
+                }
+            })?;
+        Ok(RpcOutcome::new(
+            SchedulerOverrideResult {
+                overridden: true,
+                seconds,
+            },
+            vec![format!(
+                "memory: scheduler gate overridden for {seconds}s — background maintenance runs \
+                 now regardless of the gate's pause"
+            )],
+        ))
     }
-
-    #[tokio::test]
-    async fn memory_sync_all_publishes_broadcast_event() {
-        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
-            .lock()
-            .await;
-        let _guard = test_mutex()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _ = crate::core::bus::init().await;
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let _subscription = BUS
-            .subscribe(Arc::new(ChannelCapture { tx }))
-            .expect("global bus should be initialized");
-
-        let outcome = memory_sync_all().await.expect("memory_sync_all");
-        assert!(outcome.value.requested);
-
-        let received = timeout(Duration::from_secs(1), rx.recv())
-            .await
-            .expect("event should arrive before timeout")
-            .expect("sender should still be connected");
-        assert!(
-            received.is_none(),
-            "sync-all should publish channel_id=None"
-        );
-    }
-
-    #[tokio::test]
-    async fn memory_ingestion_status_reflects_initialized_client_snapshot() {
-        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
-            .lock()
-            .await;
-        let _guard = test_mutex()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let client = ensure_memory_client();
-        let state = client.ingestion_state();
-
-        // Reset any residue from background ingestion left by prior tests.
-        state.reset_for_test();
-
-        state.enqueue();
-        state.mark_running("doc-sync", "Sync Title", "sync-test");
-
-        let status = memory_ingestion_status()
-            .await
-            .expect("memory_ingestion_status")
-            .value;
-
-        assert!(status.running);
-        assert_eq!(status.current_document_id.as_deref(), Some("doc-sync"));
-        assert_eq!(status.current_title.as_deref(), Some("Sync Title"));
-        assert_eq!(status.current_namespace.as_deref(), Some("sync-test"));
-        assert_eq!(status.queue_depth, 1);
-
-        state.dequeue();
-        state.mark_completed("doc-sync", true, 12345);
+    #[cfg(not(feature = "modules"))]
+    {
+        Err(
+            "scheduler override needs the modules feature: the gate lives in the loaded memory \
+             module"
+                .to_string(),
+        )
     }
 }

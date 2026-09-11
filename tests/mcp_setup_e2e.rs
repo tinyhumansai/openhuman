@@ -17,23 +17,38 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::mcp::registry::setup::{self, SecretRef};
+use tinymcp::{SecretRef, SecretVault};
+
+/// A vault for one test.
+///
+/// Owned rather than process-wide: the machinery moved to `tinymcp`, where a
+/// library installing a global would make two hosts share one map and make its
+/// own tests order-dependent.
+fn vault() -> SecretVault {
+    SecretVault::new()
+}
 
 #[tokio::test]
 async fn request_secret_blocks_until_submit_then_resolves() {
+    // Shared because the two halves run in different tasks — which is the
+    // shape the real flow has: the model waits while a user interface answers.
+    let v = std::sync::Arc::new(vault());
     // Caller mints + awaits in one task, fulfiller submits in another.
     // The exact API the setup_ops::request_secret handler uses.
-    let (r, rx) = setup::mint_request("API_KEY").await;
+    let (r, rx) = v.request("API_KEY").await;
 
     let r_for_submit = r.clone();
+    let v_for_submit = std::sync::Arc::clone(&v);
     let submit_task = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let submitted = setup::fulfill(&r_for_submit, "shh-secret".to_string()).await;
-        assert!(submitted, "fulfill returns true on first submit");
+        let submitted = v_for_submit
+            .submit(&r_for_submit, "shh-secret".to_string())
+            .await;
+        assert!(submitted, "submit returns true the first time");
     });
 
     // The await side: must not return before fulfill is called.
-    setup::await_fulfillment(&r, rx)
+    v.await_fulfillment(&r, rx)
         .await
         .expect("await_fulfillment completes once submit lands");
     submit_task.await.unwrap();
@@ -42,7 +57,7 @@ async fn request_secret_blocks_until_submit_then_resolves() {
     // anywhere it shouldn't be.
     let mut refs = HashMap::new();
     refs.insert("API_KEY".to_string(), r.clone());
-    let resolved = setup::resolve_refs(&refs).await.expect("resolves");
+    let resolved = v.resolve(&refs).await.expect("resolves");
     assert_eq!(
         resolved,
         vec![("API_KEY".to_string(), "shh-secret".to_string())]
@@ -50,33 +65,36 @@ async fn request_secret_blocks_until_submit_then_resolves() {
 
     // The setup-agent contract: once install_and_connect persists the
     // values, the refs are gone.
-    let _ = setup::consume_refs(&refs).await.expect("consumes");
+    let _ = v.consume(&refs).await.expect("consumes");
     assert!(
-        setup::resolve_refs(&refs).await.is_err(),
+        v.resolve(&refs).await.is_err(),
         "post-consume resolve fails"
     );
 }
 
 #[tokio::test]
 async fn test_connection_against_stub_returns_tools() {
+    let v = vault();
     use openhuman_core::openhuman::mcp::config_servers::McpStdioClient;
 
     // Mirror what setup_ops::test_connection does end-to-end, minus the
     // registry::registry_get step (we don't want to hit a real upstream
     // from CI). The point of this test is the spawn + initialize +
     // list_tools + teardown lifecycle the setup agent relies on.
-    let (r, _rx) = setup::mint_request("ECHO_TOKEN").await;
-    assert!(setup::fulfill(&r, "ignored-by-stub".to_string()).await);
+    let (r, _rx) = v.request("ECHO_TOKEN").await;
+    assert!(v.submit(&r, "ignored-by-stub".to_string()).await);
 
     let mut refs = HashMap::new();
     refs.insert("ECHO_TOKEN".to_string(), r);
-    let env = setup::resolve_refs(&refs).await.expect("resolves");
+    let env = v.resolve(&refs).await.expect("resolves");
     assert_eq!(env.len(), 1);
 
     let stub_path = env!("CARGO_BIN_EXE_test-mcp-stub");
+    // Through the host conversion, so the test builds the identity the same way
+    // the application does rather than reaching past it.
     let cfg = Config::default();
-    let identity = cfg.mcp_client.client_identity.clone();
-    let client = McpStdioClient::new(stub_path.to_string(), Vec::new(), env, None, identity);
+    let identity = openhuman_core::openhuman::mcp::host::client_config(&cfg).client_identity;
+    let client = McpStdioClient::new(stub_path.to_string(), Vec::new(), env, None, &identity);
 
     client.initialize().await.expect("stub initialises");
     let tools = client.list_tools().await.expect("stub lists tools");

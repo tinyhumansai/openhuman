@@ -28,7 +28,52 @@ const LIST_MAX_DEPTH: u32 = 6;
 
 /// Reject any relative path containing a `..` component or that resolves
 /// outside the workspace root. Returns the joined absolute path on success.
+///
+/// # Why the component walk has to come first
+///
+/// The prefix check below cannot enforce the `..` half of that promise on its
+/// own, and used to be the only check. `Path::join` does not normalise `..`,
+/// and `Path::starts_with` compares whole components — so
+/// `<root>/../../etc/passwd` *does* start with `<root>` and sails through. The
+/// only thing that ever caught a traversal was `canonicalize()` resolving it to
+/// somewhere outside the root, which means the guard was load-bearing exactly
+/// when the target **existed** and failed open when it did not:
+/// `canonicalize()` errors on a missing path, `unwrap_or_else` restores the
+/// un-normalised candidate, and the comparison passes. `../../nope` was
+/// answered with "No such file or directory" from the caller's own `stat`
+/// rather than a refusal.
+///
+/// So `..` is rejected lexically, before any filesystem access, which is what
+/// the doc line above has always promised and needs no `canonicalize()` to
+/// hold. The canonicalize + `starts_with` pair is kept underneath: a component
+/// walk cannot see a symlink that points out of the workspace, and that check
+/// can. See openhuman#6085.
 fn resolve_workspace_relative(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
+    let trimmed = rel.trim_start_matches('/');
+
+    // Lexical guard. Rejects `..` outright; also rejects a root/prefix
+    // component, which `trim_start_matches('/')` alone does not remove on
+    // Windows (`C:\…`, `\\?\…`) and which would otherwise make `join`
+    // discard the workspace root entirely. `CurDir` (`./`) is harmless and is
+    // allowed through so existing callers keep working.
+    for component in Path::new(trimmed).components() {
+        match component {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                return Err(format!(
+                    "rel_path {rel:?} escapes workspace root {}",
+                    workspace.display()
+                ));
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(format!(
+                    "rel_path {rel:?} must be relative to the workspace root {}",
+                    workspace.display()
+                ));
+            }
+        }
+    }
+
     // Canonicalize the workspace root first so both sides of the prefix check
     // share the same symlink-resolved base. On macOS `/var` is a symlink to
     // `/private/var`; if we join `rel` onto the original (unresolved) workspace
@@ -39,7 +84,6 @@ fn resolve_workspace_relative(workspace: &Path, rel: &str) -> Result<PathBuf, St
     let canonical_root = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());
-    let trimmed = rel.trim_start_matches('/');
     let candidate = canonical_root.join(trimmed);
     let canonical_candidate = candidate
         .canonicalize()
@@ -289,3 +333,7 @@ pub async fn wallet_prepared_quotes() -> Result<RpcOutcome<PreparedQuotesResult>
         format!("wallet_prepared_quotes: {count} quotes"),
     ))
 }
+
+#[cfg(test)]
+#[path = "introspect_tests.rs"]
+mod tests;

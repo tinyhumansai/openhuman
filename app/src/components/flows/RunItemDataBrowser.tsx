@@ -30,6 +30,17 @@ import {
   hasObjectRows,
 } from '../../lib/flows/runItems';
 import { useT } from '../../lib/i18n/I18nContext';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Toggle,
+  ToggleGroupItem,
+  ToggleGroupRoot,
+} from '../ui';
 
 const log = debug('flows:run-item-data-browser');
 
@@ -127,35 +138,29 @@ export function RunItemDataBrowser({ items, inputItems, testIdPrefix }: Props) {
     <div data-testid={`${testIdPrefix}-data-browser`}>
       {/* Header: view toggle + item count. */}
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div
-          className="inline-flex overflow-hidden rounded-md border border-line"
-          role="group"
-          aria-label={t('flowRuns.inspector.dataViewLabel')}>
-          <button
-            type="button"
+        <ToggleGroupRoot
+          type="single"
+          variant="secondary"
+          size="xs"
+          value={view}
+          onValueChange={next => {
+            if (next) setView(next as ViewMode);
+          }}
+          aria-label={t('flowRuns.inspector.dataViewLabel')}
+          className="overflow-hidden rounded-md border border-line gap-0 *:rounded-none">
+          <ToggleGroupItem
+            value="table"
             data-testid={`${testIdPrefix}-view-table`}
-            aria-pressed={view === 'table'}
-            onClick={() => setView('table')}
-            className={`px-2 py-0.5 text-[11px] font-medium ${
-              view === 'table'
-                ? 'bg-ocean-500 text-white'
-                : 'bg-surface text-content-muted hover:bg-surface-hover'
-            }`}>
+            className="border-0 px-2 py-0.5 text-[11px]">
             {t('flowRuns.inspector.dataTable')}
-          </button>
-          <button
-            type="button"
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="json"
             data-testid={`${testIdPrefix}-view-json`}
-            aria-pressed={view === 'json'}
-            onClick={() => setView('json')}
-            className={`border-l border-line px-2 py-0.5 text-[11px] font-medium ${
-              view === 'json'
-                ? 'bg-ocean-500 text-white'
-                : 'bg-surface text-content-muted hover:bg-surface-hover'
-            }`}>
+            className="border-0 border-l border-line px-2 py-0.5 text-[11px]">
             {t('flowRuns.inspector.dataJson')}
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroupRoot>
         <span className="text-[10px] text-content-faint" data-testid={`${testIdPrefix}-item-count`}>
           {t('flowRuns.inspector.itemCount').replace('{count}', String(items.length))}
         </span>
@@ -164,37 +169,32 @@ export function RunItemDataBrowser({ items, inputItems, testIdPrefix }: Props) {
       {view === 'json' ? (
         <pre
           data-testid={`${testIdPrefix}-json`}
-          className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-surface px-2 py-1.5 font-mono text-[11px] leading-relaxed text-content-secondary">
+          className="max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word rounded bg-surface px-2 py-1.5 font-mono text-[11px] leading-relaxed text-content-secondary">
           {jsonText}
         </pre>
       ) : (
         <div
           className="max-h-72 overflow-auto rounded border border-line"
           data-testid={`${testIdPrefix}-table-scroll`}>
-          <table
-            className="w-full border-collapse text-left text-[11px]"
-            data-testid={`${testIdPrefix}-table`}>
-            <thead>
-              <tr className="bg-surface-muted text-content-muted">
-                <th className="border-b border-line px-1.5 py-1 font-medium" aria-hidden />
+          <Table className="text-left text-[11px]" data-testid={`${testIdPrefix}-table`}>
+            <TableHeader>
+              <TableRow className="bg-surface-muted text-content-muted hover:bg-surface-muted">
+                <TableHead className="h-auto px-1.5 py-1 font-medium" aria-hidden />
                 {useColumns ? (
                   columns.map(column => (
-                    <th
-                      key={column}
-                      className="border-b border-line px-1.5 py-1 font-mono font-medium"
-                      scope="col">
+                    <TableHead key={column} className="h-auto px-1.5 py-1 font-mono font-medium">
                       {column}
-                    </th>
+                    </TableHead>
                   ))
                 ) : (
-                  <th className="border-b border-line px-1.5 py-1 font-medium" scope="col">
+                  <TableHead className="h-auto px-1.5 py-1 font-medium">
                     {t('flowRuns.inspector.dataJson')}
-                  </th>
+                  </TableHead>
                 )}
-                {showActions && <th className="border-b border-line px-1.5 py-1" aria-hidden />}
-              </tr>
-            </thead>
-            <tbody>
+                {showActions && <TableHead className="h-auto px-1.5 py-1" aria-hidden />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((item, index) => {
                 const canPair = item.pairedIndex !== null && inputItems !== undefined;
                 const sourceItem =
@@ -219,8 +219,8 @@ export function RunItemDataBrowser({ items, inputItems, testIdPrefix }: Props) {
                   />
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -257,62 +257,66 @@ function FragmentRow({
   const { t } = useT();
   return (
     <>
-      <tr
+      <TableRow
         data-testid={`${testIdPrefix}-row-${index}`}
-        className="border-b border-line last:border-b-0 align-top">
-        <th scope="row" className="px-1.5 py-1 text-left font-mono font-normal text-content-faint">
+        className="align-top hover:bg-transparent">
+        <th
+          scope="row"
+          data-slot="table-cell"
+          className="px-1.5 py-1 text-left align-middle font-mono font-normal text-content-faint">
           {index + 1}
         </th>
         {useColumns ? (
           columns.map(column => {
             const text = formatCell(cellValue(item, column));
             return (
-              <td
+              <TableCell
                 key={column}
                 className="max-w-[16rem] truncate px-1.5 py-1 font-mono text-content-secondary"
                 title={text || undefined}>
                 {truncate(text)}
-              </td>
+              </TableCell>
             );
           })
         ) : (
-          <td
+          <TableCell
             className="max-w-[16rem] truncate px-1.5 py-1 font-mono text-content-secondary"
             title={formatCell(item.json) || undefined}>
             {truncate(formatCell(item.json))}
-          </td>
+          </TableCell>
         )}
         {showActions && (
-          <td className="whitespace-nowrap px-1.5 py-1">
+          <TableCell className="whitespace-nowrap px-1.5 py-1">
             <div className="flex items-center justify-end gap-1.5">
               <BinaryChips binary={item.binary} testId={`${testIdPrefix}-binary-${index}`} />
               {canPair && (
-                <button
-                  type="button"
+                <Toggle
+                  variant="secondary"
+                  size="xs"
                   data-testid={`${testIdPrefix}-source-toggle-${index}`}
-                  aria-pressed={isRevealed}
-                  onClick={onToggleSource}
-                  className="rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-content-muted hover:bg-surface-hover">
+                  pressed={isRevealed}
+                  onPressedChange={onToggleSource}
+                  className="h-auto px-1.5 py-0.5 text-[10px]">
                   {isRevealed
                     ? t('flowRuns.inspector.hideSource')
                     : t('flowRuns.inspector.showSource')}
-                </button>
+                </Toggle>
               )}
             </div>
-          </td>
+          </TableCell>
         )}
-      </tr>
+      </TableRow>
       {canPair && isRevealed && (
-        <tr data-testid={`${testIdPrefix}-source-${index}`}>
-          <td colSpan={totalColSpan} className="bg-surface-muted px-1.5 py-1.5">
+        <TableRow data-testid={`${testIdPrefix}-source-${index}`} className="hover:bg-transparent">
+          <TableCell colSpan={totalColSpan} className="bg-surface-muted px-1.5 py-1.5">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-content-faint">
               {t('flowRuns.inspector.sourceInputTitle')}
             </div>
-            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface px-2 py-1.5 font-mono text-[11px] leading-relaxed text-content-secondary">
+            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap wrap-break-word rounded bg-surface px-2 py-1.5 font-mono text-[11px] leading-relaxed text-content-secondary">
               {sourceItem ? formatJson(sourceItem.json) : t('flowRuns.inspector.emptyValue')}
             </pre>
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       )}
     </>
   );

@@ -1,7 +1,7 @@
 id = "task_manager_agent"
 display_name = "Task Manager Agent"
 delegate_name = "manage_tasks"
-when_to_use = "Task-board and task-source specialist — owns todo cards, proactive task-source feeds, workflow bundles, artifacts, task evidence, and status updates. Use when the user asks the agent to create, edit, route, fetch, approve, reject, clear, remove, or summarize tasks/workflows/sources."
+when_to_use = "Task-board and task-source specialist: todo cards, proactive feeds, workflow bundles, artifacts, evidence and status. Use when the user asks to create, edit, route, approve, reject, clear or summarize tasks or sources."
 temperature = 0.2
 max_iterations = 8
 iteration_policy = "extended"
@@ -10,7 +10,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = false
-omit_skills_catalog = true
 omit_profile = false
 omit_memory_md = false
 
@@ -29,8 +28,6 @@ named = [
     "todo_clear",
     "todowrite",
     "update_task",
-    "thread_task_board_read",
-    "thread_task_board_write",
     "task_source_list",
     "task_source_get",
     "task_source_fetch",

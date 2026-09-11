@@ -32,7 +32,6 @@ pub mod runtime;
 pub mod sentry_transport;
 pub mod shutdown;
 pub mod socketio;
-pub mod subconscious_cli;
 pub mod subsystem;
 pub mod subsystems_cli;
 pub mod types;

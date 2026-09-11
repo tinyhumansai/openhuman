@@ -42,11 +42,11 @@ use crate::openhuman::memory::api::types::MemoryTaint;
 
 use crate::core::subsystem::DriverClass;
 use crate::openhuman::config::schema::MemoryHooksConfig;
+use crate::openhuman::memory::source_scope::current_source_scope;
 use crate::openhuman::security::egress::emit_external_transfer;
 use crate::openhuman::security::egress::types::{DataKind, EgressDescriptor, EgressReason};
 use crate::openhuman::security::live_policy;
 use crate::openhuman::security::policy::ToolOperation;
-use tinymemory_core::source_scope::current_source_scope;
 
 /// Prefix on every guard-authored error message, so a refusal that surfaces to
 /// a caller is attributable to the guard rather than to the driver underneath.
@@ -329,8 +329,7 @@ impl GuardPolicy {
     ///
     /// For [`DriverClass::External`] the content goes through the same
     /// conservative secret/PII scrubber every other host write path uses
-    /// (`memory::store::safety::sanitize_text`, re-exported from the tinycortex
-    /// crate).
+    /// (`memory::safety::sanitize_text`).
     ///
     /// **Do not substitute `memory::util::redact::redact` here.** That function
     /// is a *log* redactor: it returns an 8-hex-character SHA-256 prefix, so
@@ -348,18 +347,18 @@ impl GuardPolicy {
                 Cow::Borrowed(content)
             }
             DriverClass::External => {
-                Cow::Owned(tinymemory_core::store::safety::sanitize_text(content).value)
+                Cow::Owned(crate::openhuman::memory::safety::sanitize_text(content).value)
             }
         }
     }
 
     /// [`Self::redact_outbound`] for structured payloads (KV values, document
-    /// metadata), via the crate's `sanitize_json`. Same class rule: an
+    /// metadata), via `memory::safety::sanitize_json`. Same class rule: an
     /// unmodified pass-through for embedded and null drivers.
     pub fn redact_outbound_json(&self, value: serde_json::Value) -> serde_json::Value {
         match self.class {
             DriverClass::Embedded | DriverClass::Module | DriverClass::Null => value,
-            DriverClass::External => tinymemory_core::store::safety::sanitize_json(&value).value,
+            DriverClass::External => crate::openhuman::memory::safety::sanitize_json(&value).value,
         }
     }
 

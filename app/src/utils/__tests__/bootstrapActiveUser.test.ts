@@ -90,3 +90,35 @@ describe('resolveActiveUserBootstrap', () => {
     expect(getActiveUserIdFromCore).not.toHaveBeenCalled();
   });
 });
+
+describe('gateway mode is a remote core, not a local one', () => {
+  // Regression: `getStoredCoreMode` did not recognise `gateway` and returned
+  // null, which reads as "local" everywhere this is consulted. Priming the
+  // active user from the local `active_user.toml` then overwrites the seed
+  // `handleIdentityFlip` wrote, which is the #4545 restart loop — reintroduced
+  // for exactly the users the gateway feature exists for.
+  it('skips the local active-user read, the same as cloud', () => {
+    expect(
+      shouldSkipLocalActiveUserRead({ isStandaloneNativeWindow: false, coreMode: 'gateway' })
+    ).toBe(true);
+  });
+
+  it('still reads locally for local mode', () => {
+    expect(
+      shouldSkipLocalActiveUserRead({ isStandaloneNativeWindow: false, coreMode: 'local' })
+    ).toBe(false);
+  });
+
+  it('resolves null rather than calling the core', async () => {
+    const getActiveUserIdFromCore = vi.fn();
+
+    await expect(
+      resolveActiveUserBootstrap({
+        isStandaloneNativeWindow: false,
+        coreMode: 'gateway',
+        getActiveUserIdFromCore,
+      })
+    ).resolves.toBeNull();
+    expect(getActiveUserIdFromCore).not.toHaveBeenCalled();
+  });
+});

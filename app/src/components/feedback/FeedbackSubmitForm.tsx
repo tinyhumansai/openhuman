@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../services/api/feedbackApi';
+import { messageForApiError } from '../../services/apiError';
 import type { CreateFeedbackResult, FeedbackQuality, FeedbackType } from '../../types/feedback';
-import Button from '../ui/Button';
+import { Button, TextArea, TextField } from '../ui';
 
 const log = debugFactory('feedback:submit');
 
@@ -21,34 +22,16 @@ const QUALITY_HINT_ID = 'feedback-quality-hint';
 
 type SubmitStatus = 'idle' | 'loading' | 'accepted' | 'rejected' | 'error';
 
-/**
- * Reads the server's message off a rejected API call, falling back to
- * `fallback` when neither shape carries one. `apiClient` rejects with a plain
- * `{ success, error }` object rather than an `Error`, so an `instanceof Error`
- * check alone drops the reason and substitutes generic failure copy.
- */
-function messageForApiError(err: unknown, fallback: string): string {
-  if (err instanceof Error) return err.message;
-  // apiClient rejects with a plain `{ success, error }` object, not an Error.
-  // Without this the server's reason is replaced by generic failure copy, and a
-  // blocked submitter is told nothing they can act on.
-  if (err && typeof err === 'object' && 'error' in err) {
-    const { error } = err as { error?: unknown };
-    if (typeof error === 'string' && error.trim()) return error;
-  }
-  return fallback;
-}
-
 interface FeedbackSubmitFormProps {
   /** Called with the published item when a submission is accepted. */
   onAccepted: (result: CreateFeedbackResult) => void;
 }
 
-const INPUT_CLASS =
-  'w-full rounded-xl border border-line bg-surface-muted px-4 py-2.5 text-sm text-content ' +
-  'placeholder:text-neutral-400 transition-all focus:border-primary-500/50 focus:bg-white focus:outline-none ' +
-  'focus:ring-2 focus:ring-primary-500/30 dark:border-line-strong dark:bg-white/[0.03] dark:text-content ' +
-  'dark:placeholder:text-neutral-500 dark:focus:bg-white/[0.06]';
+// The card fills the pane; the fields inside it do not. A title line and a
+// description are prose, and prose past ~80 characters per line is measurably
+// harder to read -- a full-pane textarea also makes a short body look like a
+// mistake. 68ch keeps both comfortable without leaving the field looking stunted.
+const INPUT_CLASS = 'w-full max-w-[68ch] rounded-xl bg-surface-muted px-4 py-2.5';
 
 export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormProps) {
   const { t } = useT();
@@ -163,64 +146,61 @@ export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormPro
 
   return (
     <div className="rounded-2xl border border-line bg-surface p-6 shadow-soft dark:shadow-none">
-      <h2 className="font-title text-base font-semibold text-content">
-        {t('feedback.submit.heading')}
-      </h2>
-      <p className="mb-4 mt-0.5 text-xs text-content-muted">{t('feedback.submit.subheading')}</p>
+      {/* The type toggle used to be two full-width `size="lg"` buttons stacked
+          above the fields: a binary property of the draft, rendered larger and
+          louder than the title, the body and Submit combined, so the form read
+          as "pick one of two things" and the primary action read as dead.
+          It is now a pill beside the heading -- the same shape and placement
+          the billing panel gives its monthly/annual switch, which is the same
+          kind of control: one bit that qualifies the thing below it. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="max-w-[52ch]">
+          <h2 className="font-title text-base font-semibold text-content">
+            {t('feedback.submit.heading')}
+          </h2>
+          <p className="mt-0.5 text-xs text-content-muted">{t('feedback.submit.subheading')}</p>
+        </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-2.5">
-        <button
-          type="button"
-          onClick={() => {
-            // Changing the type is an edit like any other: the advice the last
-            // submission came back with is no longer about what is on screen.
-            setType('feature');
-            setSubmittedQuality(null);
-          }}
-          aria-pressed={type === 'feature'}
-          className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${
-            type === 'feature'
-              ? 'border-primary-500 bg-primary-500/10 text-primary-600 ring-1 ring-primary-500/30 dark:text-primary-400'
-              : 'border-line text-content-muted hover:border-line-strong hover:bg-surface-muted dark:border-line-strong dark:hover:bg-white/[0.03]'
-          }`}>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.8}
-              d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3zM18.5 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z"
-            />
-          </svg>
-          {t('feedback.type.feature')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setType('bug');
-            setSubmittedQuality(null);
-          }}
-          aria-pressed={type === 'bug'}
-          className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${
-            type === 'bug'
-              ? 'border-coral-500 bg-coral-500/10 text-coral-600 ring-1 ring-coral-500/30 dark:text-coral-400'
-              : 'border-line text-content-muted hover:border-line-strong hover:bg-surface-muted dark:border-line-strong dark:hover:bg-white/[0.03]'
-          }`}>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.8}
-              d="M12 8a4 4 0 00-4 4v2a4 4 0 008 0v-2a4 4 0 00-4-4zM9.5 5.5L8.2 4.2M14.5 5.5l1.3-1.3M8 12.5H4.5M16 12.5h3.5M8 16l-2.8 1.6M16 16l2.8 1.6"
-            />
-          </svg>
-          {t('feedback.type.bug')}
-        </button>
+        <div
+          role="group"
+          aria-label={t('feedback.submit.heading')}
+          className="inline-flex w-fit shrink-0 rounded-full bg-surface-subtle p-1 ring-1 ring-line">
+          <Button
+            variant={type === 'feature' ? 'primary' : 'tertiary'}
+            size="sm"
+            className="rounded-full"
+            onClick={() => {
+              // Changing the type is an edit like any other: the advice the last
+              // submission came back with is no longer about what is on screen.
+              // Clicking the pill that is already selected is not an edit, so it
+              // must not discard advice an accepted-with-warning submission just
+              // produced -- easier to hit now that these are adjacent pills.
+              if (type === 'feature') return;
+              setType('feature');
+              setSubmittedQuality(null);
+            }}
+            aria-pressed={type === 'feature'}>
+            {t('feedback.type.feature')}
+          </Button>
+          <Button
+            variant={type === 'bug' ? 'primary' : 'tertiary'}
+            size="sm"
+            className="rounded-full"
+            onClick={() => {
+              if (type === 'bug') return;
+              setType('bug');
+              setSubmittedQuality(null);
+            }}
+            aria-pressed={type === 'bug'}>
+            {t('feedback.type.bug')}
+          </Button>
+        </div>
       </div>
 
       <label htmlFor="feedback-title" className="sr-only">
         {t('feedback.submit.titlePlaceholder')}
       </label>
-      <input
+      <TextField
         id="feedback-title"
         type="text"
         value={title}
@@ -237,7 +217,7 @@ export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormPro
       <label htmlFor="feedback-body" className="sr-only">
         {t('feedback.submit.bodyPlaceholder')}
       </label>
-      <textarea
+      <TextArea
         id="feedback-body"
         value={body}
         maxLength={BODY_MAX}
@@ -289,7 +269,7 @@ export default function FeedbackSubmitForm({ onAccepted }: FeedbackSubmitFormPro
         <div className="flex items-center gap-3">
           {message && <p className={`text-xs ${messageClass}`}>{message}</p>}
           {body.length > 0 && (
-            <span className="text-[11px] tabular-nums text-content-faint dark:text-neutral-600">
+            <span className="text-[11px] tabular-nums text-content-faint">
               {body.length}/{BODY_MAX}
             </span>
           )}

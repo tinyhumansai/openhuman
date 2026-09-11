@@ -44,7 +44,7 @@ pub mod voice;
 pub use ops as rpc;
 pub use schemas::{
     all_controller_schemas as all_inference_controller_schemas,
-    all_registered_controllers as all_inference_registered_controllers,
+    all_registered_controllers as all_inference_registered_controllers, INFERENCE_AGENT_CHAT,
 };
 
 // Re-export the types that external callers (voice, agent, etc.) import from inference

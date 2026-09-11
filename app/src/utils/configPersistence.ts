@@ -39,6 +39,11 @@ const CORE_TOKEN_STORAGE_KEY = 'openhuman_core_rpc_token';
 // infinite picker → flip → reload loop in cloud mode.
 const CORE_MODE_STORAGE_KEY = 'openhuman_core_mode';
 
+// Which gateway record `coreMode.kind === 'gateway'` refers to. Mirrors
+// `GATEWAY_ID_STORAGE_KEY` in `store/coreModeSlice.ts`, for the same
+// synchronous-recovery reason as the mode marker above.
+const GATEWAY_ID_STORAGE_KEY = 'openhuman_core_gateway_id';
+
 // Default RPC URL — canonical value from config.ts so they can never drift
 const DEFAULT_RPC_URL = CORE_RPC_URL;
 
@@ -282,11 +287,16 @@ export function clearStoredCoreToken(): void {
  * Read the synchronous core-mode marker. Returns `null` when nothing has
  * been written yet (first launch, or after `clearStoredCoreMode`).
  */
-export function getStoredCoreMode(): 'local' | 'cloud' | null {
+export function getStoredCoreMode(): 'local' | 'cloud' | 'gateway' | null {
   try {
     const stored = localStorage.getItem(CORE_MODE_STORAGE_KEY)?.trim();
     if (stored) {
-      if (stored === 'local' || stored === 'cloud') return stored;
+      // `gateway` must be recognised here, not just written by
+      // `storeCoreMode`. Returning null for it would read as "the picker has
+      // not run yet", which is what `oauthAuthReadiness` treats as licence to
+      // start the local core and proceed as though the session were local —
+      // for a user whose core is in a container on another machine.
+      if (stored === 'local' || stored === 'cloud' || stored === 'gateway') return stored;
       return null;
     }
   } catch {
@@ -298,13 +308,41 @@ export function getStoredCoreMode(): 'local' | 'cloud' | null {
 }
 
 /** Persist the synchronous core-mode marker. */
-export function storeCoreMode(mode: 'local' | 'cloud'): void {
+export function storeCoreMode(mode: 'local' | 'cloud' | 'gateway'): void {
   try {
     localStorage.setItem(CORE_MODE_STORAGE_KEY, mode);
     console.debug('[configPersistence] Stored core mode:', mode);
   } catch {
     console.warn('[configPersistence] Unable to store core mode in localStorage');
   }
+}
+
+/**
+ * Store which shell-side gateway `kind: 'gateway'` refers to.
+ *
+ * An id only. The gateway's URL, bearer, SSH destination and identity path stay
+ * in the Tauri shell's own `gateways.json` and are never mirrored here — see
+ * the audit-U3 note on `CORE_TOKEN_STORAGE_KEY` above for why a renderer is the
+ * wrong place for a long-lived credential.
+ */
+export function storeGatewayId(id: string): void {
+  try {
+    localStorage.setItem(GATEWAY_ID_STORAGE_KEY, id);
+    log('Stored gateway id: %s', id);
+  } catch {
+    console.warn('[configPersistence] Unable to store gateway id in localStorage');
+  }
+}
+
+/** The stored gateway id, or null when none was chosen. */
+export function peekStoredGatewayId(): string | null {
+  try {
+    const stored = localStorage.getItem(GATEWAY_ID_STORAGE_KEY);
+    if (stored && stored.trim().length > 0) return stored.trim();
+  } catch {
+    console.warn('[configPersistence] Unable to access localStorage');
+  }
+  return null;
 }
 
 /** Remove the synchronous core-mode marker (returns the picker to first-launch state). */

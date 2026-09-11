@@ -7,7 +7,9 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard, TaskCardStatus};
+use tinyagents_graph::todos::dispatch::select;
+
+use crate::openhuman::agent::task_board::{TaskApprovalMode, TaskBoardCard};
 use crate::openhuman::config::Config;
 use crate::openhuman::threads::todos::ops::{self, BoardLocation, USER_TASKS_THREAD_ID};
 use crate::openhuman::threads::todos::runs::{self, RunLimits};
@@ -30,27 +32,22 @@ const POLLER_MAX_BACKOFF_SECONDS: u64 = 15 * 60;
 /// immediately slow down.
 const POLLER_IDLE_GRACE_TICKS: u32 = 2;
 
+/// The backoff curve itself lives in the crate
+/// ([`select::PollCadence`](tinyagents_graph::todos::dispatch::select::PollCadence));
+/// this is OpenHuman's tuning of it (issue #4090).
+const POLLER_CADENCE: select::PollCadence = select::PollCadence {
+    base: Duration::from_secs(POLLER_TICK_SECONDS),
+    max_backoff: Duration::from_secs(POLLER_MAX_BACKOFF_SECONDS),
+    grace_ticks: POLLER_IDLE_GRACE_TICKS,
+};
+
 static POLLER_STARTED: OnceLock<()> = OnceLock::new();
 
-/// Compute the next sleep before a poll tick given how many consecutive idle
-/// ticks have elapsed (issue #4090). Pure + deterministic so the backoff curve
-/// is unit-testable without the real timer.
-///
-/// - Fresh work (`idle_ticks == 0`) or within the grace window → base cadence.
-/// - Beyond the grace window → exponential backoff (double per extra idle tick)
-///   saturating at [`POLLER_MAX_BACKOFF_SECONDS`].
+/// How long to sleep before the next poll tick, given how many consecutive idle
+/// ticks have elapsed: base cadence through the grace window, then doubling up
+/// to the ceiling.
 fn next_poll_delay(idle_ticks: u32) -> Duration {
-    let over = idle_ticks.saturating_sub(POLLER_IDLE_GRACE_TICKS);
-    if over == 0 {
-        return Duration::from_secs(POLLER_TICK_SECONDS);
-    }
-    // Double per idle tick past the grace window, saturating at the cap. Clamp
-    // the shift so a long idle streak can't overflow the multiply.
-    let factor = 1u64.checked_shl(over.min(20)).unwrap_or(u64::MAX);
-    let secs = POLLER_TICK_SECONDS
-        .saturating_mul(factor)
-        .min(POLLER_MAX_BACKOFF_SECONDS);
-    Duration::from_secs(secs)
+    POLLER_CADENCE.next_delay(idle_ticks)
 }
 
 /// Spawn the board poller. Idempotent — only the first call installs the loop.
@@ -200,11 +197,7 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
 
     // `enforce_single_in_progress` caps the board at one running card, so if
     // one is already in progress there's nothing for this tick to claim.
-    if snapshot
-        .cards
-        .iter()
-        .any(|c| c.status == TaskCardStatus::InProgress)
-    {
+    if select::has_card_in_progress(&snapshot.cards) {
         return Ok(false);
     }
 
@@ -230,105 +223,39 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
 /// When `agent_assigned_only` is set, cards without an `assigned_agent` are
 /// excluded — used on the `user-tasks` board so the poller runs only
 /// agent-generated tasks and never picks up a human's manually-created card.
+///
+/// The selection policy itself is
+/// [`select::pick_next_card`](tinyagents_graph::todos::dispatch::select::pick_next_card).
 pub(super) fn pick_next_todo(
     cards: &[TaskBoardCard],
     agent_assigned_only: bool,
 ) -> Option<TaskBoardCard> {
-    cards
-        .iter()
-        .filter(|c| matches!(c.status, TaskCardStatus::Todo | TaskCardStatus::Ready))
-        .filter(|c| {
-            !agent_assigned_only
-                || c.assigned_agent
-                    .as_deref()
-                    .map(|a| !a.trim().is_empty())
-                    .unwrap_or(false)
-        })
-        .max_by(|a, b| {
-            card_urgency(a)
-                .partial_cmp(&card_urgency(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-                // On equal urgency, prefer the lower `order` (earlier card):
-                // reversing the order comparison makes it the "greater" pick.
-                .then(b.order.cmp(&a.order))
-        })
-        .cloned()
+    select::pick_next_card(cards, agent_assigned_only)
 }
 
 /// Whether a card must be parked at `awaiting_approval` before it can run.
 ///
 /// Per-card `approval_mode` is authoritative when set; the global
 /// `require_task_plan_approval` setting is only the fallback for cards with no
-/// explicit preference:
-/// - `Required` → always park, **even when the global default is off**. The
-///   interactive plan-review gate (WebChat turns, see
-///   [`crate::openhuman::agent::tools::todo`]) stamps `Required`, and that
-///   review must hold regardless of the global switch — otherwise an
-///   interactive plan would execute before the user ever sees the review card.
-/// - `NotRequired` → never park (already cleared human review, e.g. approved
-///   out of the `task-sources` inbox onto `user-tasks`).
-/// - unset → fall back to the global default.
+/// explicit preference. In particular `Required` parks the card **even when the
+/// global default is off**: the interactive plan-review gate (WebChat turns,
+/// see [`crate::openhuman::agent::tools::todo`]) stamps `Required`, and that
+/// review must hold regardless of the global switch — otherwise an interactive
+/// plan would execute before the user ever saw the review card.
+///
+/// The rule itself is
+/// [`select::requires_plan_approval`](tinyagents_graph::todos::dispatch::select::requires_plan_approval).
 pub(super) fn requires_plan_approval(
     global_required: bool,
     approval_mode: Option<&TaskApprovalMode>,
 ) -> bool {
-    match approval_mode {
-        Some(TaskApprovalMode::Required) => true,
-        Some(TaskApprovalMode::NotRequired) => false,
-        None => global_required,
-    }
+    select::requires_plan_approval(global_required, approval_mode)
 }
 
 pub(super) fn card_urgency(card: &TaskBoardCard) -> f64 {
-    card.source_metadata
-        .as_ref()
-        .and_then(|m| m.get("urgency"))
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.0)
+    select::card_urgency(card)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn next_poll_delay_holds_base_cadence_within_the_grace_window() {
-        let base = Duration::from_secs(POLLER_TICK_SECONDS);
-        // Fresh work and the first few idle ticks all poll at the base cadence.
-        assert_eq!(next_poll_delay(0), base);
-        assert_eq!(next_poll_delay(POLLER_IDLE_GRACE_TICKS), base);
-    }
-
-    #[test]
-    fn next_poll_delay_backs_off_exponentially_past_the_grace_window() {
-        // One tick past the grace window doubles, then doubles again.
-        assert_eq!(
-            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 1),
-            Duration::from_secs(POLLER_TICK_SECONDS * 2)
-        );
-        assert_eq!(
-            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 2),
-            Duration::from_secs(POLLER_TICK_SECONDS * 4)
-        );
-        assert_eq!(
-            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 3),
-            Duration::from_secs(POLLER_TICK_SECONDS * 8)
-        );
-    }
-
-    #[test]
-    fn next_poll_delay_saturates_at_the_ceiling() {
-        let cap = Duration::from_secs(POLLER_MAX_BACKOFF_SECONDS);
-        // A long idle streak caps out (self-suspend) and never overflows.
-        assert_eq!(next_poll_delay(50), cap);
-        assert_eq!(next_poll_delay(u32::MAX), cap);
-        // The backoff is monotonic non-decreasing and never exceeds the ceiling.
-        let mut prev = next_poll_delay(0);
-        for idle in 1..40u32 {
-            let d = next_poll_delay(idle);
-            assert!(d >= prev, "backoff must not shrink as idle grows");
-            assert!(d <= cap, "backoff must never exceed the ceiling");
-            prev = d;
-        }
-    }
-}
+#[path = "poller_tests.rs"]
+mod tests;

@@ -1,4 +1,5 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
+import Button from '../../../ui/Button';
 import { applyTemplate, PERSONA_TEMPLATES } from './personaTemplates';
 
 interface PersonaTemplatePickerProps {
@@ -36,18 +37,18 @@ const PersonaTemplatePicker = ({
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {PERSONA_TEMPLATES.map(template => (
-          <button
+          <Button
             key={template.id}
-            type="button"
+            variant="secondary"
             disabled={disabled}
             data-testid={`persona-template-${template.id}`}
             onClick={() => onChange(applyTemplate(value, template))}
-            className="flex flex-col items-start gap-0.5 rounded-lg border border-line-strong bg-surface px-3 py-2 text-left transition-colors hover:border-primary-400 hover:bg-surface-hover disabled:opacity-50">
+            className="h-auto w-full flex-col items-start justify-start gap-0.5 rounded-lg border-line-strong px-3 py-2 text-left hover:border-primary-400">
             <span className="text-sm font-medium text-content">{t(template.labelKey)}</span>
-            <span className="text-[11px] text-content-muted leading-snug">
+            <span className="text-[11px] font-normal text-content-muted leading-snug">
               {t(template.descriptionKey)}
             </span>
-          </button>
+          </Button>
         ))}
       </div>
     </div>

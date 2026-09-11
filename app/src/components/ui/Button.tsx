@@ -1,4 +1,8 @@
+import { cva, type VariantProps } from 'class-variance-authority';
+import { Slot } from 'radix-ui';
 import { type ButtonHTMLAttributes, forwardRef, type ReactNode } from 'react';
+
+import { cn } from '../../lib/cn';
 
 /**
  * The one button in the app. Three hierarchy variants plus an orthogonal tone:
@@ -13,70 +17,95 @@ import { type ButtonHTMLAttributes, forwardRef, type ReactNode } from 'react';
  *
  * Use `iconOnly` for icon-only affordances (close / refresh / add); it squares
  * the padding — always pass an `aria-label` in that case.
+ *
+ * ---
+ *
+ * DANGER TONE IS APPENDED, NOT SUBSTITUTED — and that difference is load-bearing.
+ * The previous implementation looked its classes up as `VARIANTS[variant][tone]`,
+ * so the danger string *replaced* the default one. cva's `compoundVariants`
+ * instead concatenate, so a danger button's class list contains both
+ * `bg-primary-500` and `bg-coral-500`; only `cn()`'s tailwind-merge pass
+ * resolves that to coral, last-wins.
+ *
+ * The consequence: never render `buttonVariants(...)` without passing it
+ * through `cn()`, or every destructive button in the app silently renders in
+ * the primary colour. `Button.test.tsx` asserts the losing class is absent for
+ * each tone rather than merely asserting the winning one is present, because
+ * only the former catches that failure.
  */
-type ButtonVariant = 'primary' | 'secondary' | 'tertiary';
-type ButtonTone = 'default' | 'danger';
-type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+export const buttonVariants = cva(
+  'inline-flex items-center justify-center gap-2 font-medium transition-colors duration-150 ' +
+    'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-2 ' +
+    'focus-visible:ring-offset-surface ' +
+    'disabled:opacity-40 disabled:pointer-events-none',
+  {
+    variants: {
+      variant: {
+        primary:
+          'bg-primary-500 text-content-inverted hover:bg-primary-600 active:bg-primary-700 focus-visible:ring-primary-500/25 ' +
+          'dark:hover:bg-primary-400 dark:active:bg-primary-600',
+        secondary:
+          'bg-surface text-content border border-line-strong hover:bg-surface-hover focus-visible:ring-primary-500/25',
+        tertiary:
+          'bg-transparent text-content-secondary hover:bg-surface-hover focus-visible:ring-primary-500/25',
+      },
+      tone: { default: '', danger: '' },
+      size: {
+        xs: 'h-6 text-xs rounded-sm',
+        sm: 'h-[30px] text-sm rounded-md',
+        md: 'h-9 text-sm rounded-lg',
+        lg: 'h-11 text-base rounded-lg',
+        xl: 'h-14 text-base rounded-xl',
+      },
+      iconOnly: { true: '', false: '' },
+    },
+    compoundVariants: [
+      {
+        variant: 'primary',
+        tone: 'danger',
+        class:
+          'bg-coral-500 text-content-inverted hover:bg-coral-600 active:bg-coral-700 focus-visible:ring-coral-500/25 ' +
+          'dark:hover:bg-coral-400 dark:active:bg-coral-600',
+      },
+      {
+        variant: 'secondary',
+        tone: 'danger',
+        class:
+          'bg-transparent text-coral-600 border border-coral-300/50 hover:bg-coral-50 focus-visible:ring-coral-500/25 ' +
+          'dark:text-coral-400 dark:border-coral-500/40 dark:hover:bg-coral-500/10',
+      },
+      {
+        variant: 'tertiary',
+        tone: 'danger',
+        class:
+          'bg-transparent text-coral-600 hover:bg-coral-50 focus-visible:ring-coral-500/25 ' +
+          'dark:text-coral-400 dark:hover:bg-coral-500/10',
+      },
+      // Horizontal padding for text buttons; square footprints for icon-only.
+      { iconOnly: false, size: 'xs', class: 'px-2' },
+      { iconOnly: false, size: 'sm', class: 'px-3' },
+      { iconOnly: false, size: 'md', class: 'px-4' },
+      { iconOnly: false, size: 'lg', class: 'px-5' },
+      { iconOnly: false, size: 'xl', class: 'px-7' },
+      { iconOnly: true, size: 'xs', class: 'w-6' },
+      { iconOnly: true, size: 'sm', class: 'w-[30px]' },
+      { iconOnly: true, size: 'md', class: 'w-9' },
+      { iconOnly: true, size: 'lg', class: 'w-11' },
+      { iconOnly: true, size: 'xl', class: 'w-14' },
+    ],
+    defaultVariants: { variant: 'primary', tone: 'default', size: 'md', iconOnly: false },
+  }
+);
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  tone?: ButtonTone;
-  size?: ButtonSize;
-  /** Square the button for a single centered icon. Requires an `aria-label`. */
-  iconOnly?: boolean;
+export interface ButtonProps
+  extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
+  /** Render the child element instead of a `<button>` — for links and Radix triggers. */
+  asChild?: boolean;
   leadingIcon?: ReactNode;
   trailingIcon?: ReactNode;
   /** Stable, content-free identifier consumed by the app-wide analytics tracker. */
   analyticsId?: string;
 }
-
-const BASE =
-  'inline-flex items-center justify-center gap-2 font-medium transition-colors duration-150 ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ' +
-  'disabled:opacity-40 disabled:pointer-events-none';
-
-// variant × tone → surface classes. The focus ring colour follows the tone.
-const VARIANTS: Record<ButtonVariant, Record<ButtonTone, string>> = {
-  primary: {
-    default:
-      'bg-primary-500 text-content-inverted hover:bg-primary-600 active:bg-primary-700 focus-visible:ring-primary-500/25 ' +
-      'dark:hover:bg-primary-400 dark:active:bg-primary-600',
-    danger:
-      'bg-coral-500 text-content-inverted hover:bg-coral-600 active:bg-coral-700 focus-visible:ring-coral-500/25 ' +
-      'dark:hover:bg-coral-400 dark:active:bg-coral-600',
-  },
-  secondary: {
-    default:
-      'bg-surface text-content border border-line-strong hover:bg-surface-hover focus-visible:ring-primary-500/25',
-    danger:
-      'bg-transparent text-coral-600 border border-coral-300/50 hover:bg-coral-50 focus-visible:ring-coral-500/25 ' +
-      'dark:text-coral-400 dark:border-coral-500/40 dark:hover:bg-coral-500/10',
-  },
-  tertiary: {
-    default:
-      'bg-transparent text-content-secondary hover:bg-surface-hover focus-visible:ring-primary-500/25',
-    danger:
-      'bg-transparent text-coral-600 hover:bg-coral-50 focus-visible:ring-coral-500/25 ' +
-      'dark:text-coral-400 dark:hover:bg-coral-500/10',
-  },
-};
-
-const SIZES: Record<ButtonSize, string> = {
-  xs: 'h-6 px-2 text-xs rounded-sm',
-  sm: 'h-[30px] px-3 text-sm rounded-md',
-  md: 'h-9 px-4 text-sm rounded-lg',
-  lg: 'h-11 px-5 text-base rounded-lg',
-  xl: 'h-14 px-7 text-base rounded-xl font-medium',
-};
-
-// Square footprints for icon-only buttons (no horizontal padding).
-const ICON_SIZES: Record<ButtonSize, string> = {
-  xs: 'h-6 w-6 text-xs rounded-sm',
-  sm: 'h-[30px] w-[30px] text-sm rounded-md',
-  md: 'h-9 w-9 text-sm rounded-lg',
-  lg: 'h-11 w-11 text-base rounded-lg',
-  xl: 'h-14 w-14 text-base rounded-xl',
-};
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
   const {
@@ -84,6 +113,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     tone = 'default',
     size = 'md',
     iconOnly = false,
+    asChild = false,
     leadingIcon,
     trailingIcon,
     analyticsId,
@@ -93,22 +123,33 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     ...rest
   } = props;
 
-  const sizeClass = (iconOnly ? ICON_SIZES : SIZES)[size];
-  const classes = [BASE, VARIANTS[variant][tone], sizeClass, className ?? '']
-    .filter(Boolean)
-    .join(' ');
+  const Comp = asChild ? Slot.Root : 'button';
 
   return (
-    <button
+    <Comp
       ref={ref}
-      type={type ?? 'button'}
-      className={classes}
+      // `asChild` delegates to whatever the child renders — forcing `type` onto
+      // an `<a>` would emit an invalid attribute.
+      type={asChild ? undefined : (type ?? 'button')}
+      data-slot="button"
+      data-variant={variant}
+      data-tone={tone}
+      data-size={size}
+      className={cn(buttonVariants({ variant, tone, size, iconOnly }), className)}
       data-analytics-id={analyticsId}
       {...rest}>
-      {leadingIcon}
-      {children}
-      {trailingIcon}
-    </button>
+      {/* `Slot` requires exactly one element child, so under `asChild` the
+          caller owns its own layout and the icon slots are not applied. */}
+      {asChild ? (
+        children
+      ) : (
+        <>
+          {leadingIcon}
+          {children}
+          {trailingIcon}
+        </>
+      )}
+    </Comp>
   );
 });
 Button.displayName = 'Button';

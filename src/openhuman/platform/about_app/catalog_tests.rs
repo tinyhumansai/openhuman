@@ -148,8 +148,6 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "settings.manage_service",
         "settings.clear_app_data",
         "local_ai.configure_provider",
-        "meet.join_call",
-        "meet_agent.live_loop",
         "intelligence.mcp_server",
         "intelligence.searxng_search",
         "intelligence.tool_registry",
@@ -160,30 +158,12 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.memory_source_sync_controls",
         "intelligence.coding_session_memory",
         "conversation.subagent_mascots",
-        "companion.session",
     ] {
         assert!(
             ids.contains(expected),
             "missing catalog capability `{expected}`"
         );
     }
-}
-
-#[test]
-fn companion_capabilities_disclose_backend_reasoning() {
-    let capability = lookup("companion.session").expect("companion capability registered");
-    assert_eq!(capability.domain, "companion");
-    assert_eq!(capability.category, CapabilityCategory::Conversation);
-
-    let privacy = capability.privacy.expect("privacy disclosure");
-    assert!(privacy.leaves_device);
-    assert_eq!(privacy.data_kind, PrivacyDataKind::Derived);
-    assert!(privacy.destinations.contains(&"OpenHuman backend"));
-
-    assert!(
-        lookup("companion.pointing").is_none(),
-        "visual pointing depends on removed screen context and must not be catalogued"
-    );
 }
 
 #[test]

@@ -36,6 +36,19 @@ fn profile_conn_is_confined_to_the_memory_family() {
         if path.starts_with(&family) {
             continue;
         }
+        // By-path test files are out of scope, matching the sibling lints
+        // (`direct_engine_refs`, `bypass_allowlist`): a `_tests.rs` file that
+        // writes through the provider and then proves the row landed with a
+        // raw read is using the connection as an oracle, not as a door. The
+        // production rule is unchanged — no non-test file outside the family
+        // may touch it.
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with("_tests.rs") || n == "tests.rs")
+        {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };

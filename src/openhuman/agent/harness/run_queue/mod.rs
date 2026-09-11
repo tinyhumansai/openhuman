@@ -15,9 +15,9 @@
 mod types;
 
 use std::sync::Arc;
-use tinyagents::harness::run_queue::{QueueLane, RunQueue as TinyAgentsRunQueue};
+use tinyagents_harness::run_queue::{QueueLane, RunQueue as TinyAgentsRunQueue};
 
-pub use tinyagents::harness::run_queue::QueueStatus;
+pub use tinyagents_harness::run_queue::QueueStatus;
 pub use types::{QueueMode, QueuedMessage};
 
 /// Thread-safe run queue with three lanes. Wrapped in `Arc` for shared

@@ -75,7 +75,7 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - `crate::openhuman::config` (`Config`, `rpc::load_config_with_timeout`, `McpAuthConfig`/`McpClientIdentityConfig` in tests) — load config for policy/searxng gating and per-call config.
 - `crate::openhuman::security` (`SecurityPolicy`, `ToolOperation`) — enforce read/act autonomy policy per tool call.
 - `crate::openhuman::agent` (`Agent`, `agents::BUILTINS`, `harness::AgentDefinitionRegistry`) — build the orchestrator agent for `core.list_tools`/`core.tool_instructions`, list/run subagents, and cross-check the resource catalog.
-- `crate::openhuman::inference::provider::traits::build_tool_instructions_text` — render the markdown tool-use instructions block for `core.tool_instructions`.
+- `tinyagents_harness::tool::prompt_tool_instructions` — render the markdown tool-use instructions block for `core.tool_instructions`. Replaced the host's `build_tool_instructions_text` (deleted); the model-facing copy changed two words ("may emit" vs "may use", "After execution" vs "After tool execution").
 - `crate::openhuman::tools` (`SEARXNG_MAX_RESULTS`, `normalize_categories`) — SearXNG bounds + category normalization for `searxng_search`.
 - `crate::openhuman::mcp::audit` (`record_write`, `NewMcpWriteRecord`, list/query helpers in tests) — durable write-audit log.
 - `crate::openhuman::mcp::http_client::McpHttpClient` — round-trip test harness for the HTTP transport (test-only).

@@ -26,6 +26,9 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../utils/tauriCommands', () => ({
+  // The status hook polls this alongside pipeline status; a factory mock
+  // without it turns every render into an unhandled rejection.
+  memoryNamespaceSummaries: vi.fn(async () => ({ namespaces: [], total_documents: 0 })),
   isTauri: hoisted.mockIsTauri,
   openhumanGetConfig: hoisted.mockGetConfig,
   openhumanUpdateMemorySettings: hoisted.mockUpdateMemorySettings,

@@ -31,7 +31,7 @@ function statusDotClass(connection: ComposioConnection | undefined): string {
     case 'error':
       return 'bg-coral-500';
     default:
-      return 'bg-stone-300';
+      return 'bg-content-faint';
   }
 }
 
@@ -123,7 +123,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
             onClick={() => setActiveToolkit(gmailMeta)}
             data-testid="onboarding-skills-gmail-button"
             className="w-full flex items-center gap-3 rounded-xl border border-line-subtle bg-surface p-3 transition-colors hover:bg-surface-hover text-left">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center text-lg">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center text-lg">
               {gmailMeta.icon}
             </div>
 
@@ -135,9 +135,9 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                 {statusLabel(gmailState, t) && (
                   <>
                     <div
-                      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusDotClass(gmailConnection)}`}
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(gmailConnection)}`}
                     />
-                    <span className={`flex-shrink-0 text-xs ${statusColor(gmailState)}`}>
+                    <span className={`shrink-0 text-xs ${statusColor(gmailState)}`}>
                       {statusLabel(gmailState, t)}
                     </span>
                   </>
@@ -149,7 +149,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
             </div>
 
             <span
-              className={`flex-shrink-0 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+              className={`shrink-0 rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-colors ${
                 gmailConnected
                   ? 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 text-sage-700 dark:text-sage-300'
                   : gmailState === 'pending'

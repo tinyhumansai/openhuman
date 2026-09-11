@@ -212,6 +212,30 @@ pub(super) fn handle_flush_source(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
+pub(super) fn handle_backfill_connector_trees(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        /// `dry_run` defaults to **true**, and the default is the point.
+        ///
+        /// A pass costs one read and one set of chunk embeddings per document,
+        /// against a user's embedding budget. A caller that omits the field gets
+        /// the preview; writing is something you ask for.
+        #[derive(serde::Deserialize)]
+        struct Req {
+            #[serde(default = "dry_run_default")]
+            dry_run: bool,
+            #[serde(default)]
+            limit: Option<u64>,
+        }
+        fn dry_run_default() -> bool {
+            true
+        }
+
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::backfill_connector_trees_rpc(&config, req.limit, req.dry_run).await?)
+    })
+}
+
 pub(super) fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -252,7 +276,10 @@ pub(super) fn handle_set_enabled(params: Map<String, Value>) -> ControllerFuture
 
 pub(super) fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use crate::openhuman::memory::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
+        use crate::openhuman::memory::api::provider::retrieval::{
+            FastRetrieveQuery, RetrievalResponse,
+        };
+        use crate::openhuman::memory::source_scope::as_bus_scope;
 
         // `max_turns`/`model` are accepted for backwards compatibility but
         // ignored — retrieval is now deterministic (E2GraphRAG), so there are
@@ -297,15 +324,36 @@ pub(super) fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture 
 
         let config = config_rpc::load_config_with_timeout().await?;
 
-        let opts = FastRetrieveOptions {
+        let opts = FastRetrieveQuery {
             limit: req.limit.map(|n| n as usize).unwrap_or(10),
             max_hops: req.max_hops.unwrap_or(2),
             time_window_days: req.time_window_days,
         };
 
-        let resp = fast_retrieve(&config, &req.query, opts)
-            .await
-            .map_err(|e| format!("smart_walk error: {e}"))?;
+        // Through the bound driver's `MemoryRetrieval` rather than the engine
+        // (#5560). The JSON is unchanged: `RetrievalResponse` matches the
+        // engine's `QueryResponse` field for field, and every hit the module
+        // returns carries `Some(tree_kind)`, so the key is still emitted with
+        // the same value — see `memory::tree::retrieval::rpc`'s module docs for
+        // the full argument, including why a `None` there is not this path.
+        //
+        // `binding.provider()` is the unguarded driver, so `as_bus_scope()` is
+        // the source gate. A literal `None` fails it open.
+        let scope = as_bus_scope();
+        let binding = crate::openhuman::memory::binding::for_config(&config)?;
+        let resp = match binding.provider().as_retrieval() {
+            Some(retrieval) => retrieval
+                .fast_retrieve(&req.query, opts, scope.as_ref())
+                .await
+                .map_err(|e| format!("smart_walk error: {e}"))?,
+            None => {
+                log::debug!(
+                    "[memory][rpc] smart_walk: driver '{}' does not serve Retrieval; reporting empty",
+                    binding.driver_id()
+                );
+                RetrievalResponse::default()
+            }
+        };
 
         let result = serde_json::to_value(&resp)
             .map_err(|e| format!("smart_walk: serialize response failed: {e}"))?;

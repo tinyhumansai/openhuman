@@ -1,32 +1,24 @@
 /**
- * Brain — the centerpiece memory + subconscious surface.
+ * Brain — the centerpiece memory surface.
  *
- * Sub-tabs: Welcome, Graph, Goals, Sources, Sync, Subconscious, and
- * **Orchestration** (the TinyPlace multi-agent surface, folded back in from the
- * former top-level `/orchestration` tab — see {@link OrchestrationView}).
+ * Sub-tabs: Welcome, Graph, Goals, Sources, and Sync.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
-import TinyPlaceSunsetNotice from '../agentworld/TinyPlaceSunsetNotice';
 import { CodingSessionsCard } from '../components/intelligence/CodingSessionsCard';
 import GoalsPanel from '../components/intelligence/GoalsPanel';
-import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import { MemoryControls } from '../components/intelligence/MemoryControls';
 import { MemoryGraph } from '../components/intelligence/MemoryGraph';
 import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
-import SubconsciousTriggersPanel from '../components/intelligence/SubconsciousTriggersPanel';
 import { SyncAuditPanel } from '../components/intelligence/SyncAuditPanel';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PageWelcome from '../components/layout/PageWelcome';
-import PanelPage from '../components/layout/PanelPage';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
-import OrchestrationView from '../components/orchestration/OrchestrationView';
-import BetaBanner from '../components/ui/BetaBanner';
-import { useSubconscious } from '../hooks/useSubconscious';
-import { useTinyPlaceIdentity } from '../hooks/useTinyPlaceIdentity';
+import SettingsTabbedPage from '../components/settings/layout/SettingsTabbedPage';
+import { Alert, AlertDescription, Card } from '../components/ui';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import type { ToastNotification } from '../types/intelligence';
@@ -36,14 +28,7 @@ import {
   memoryTreeGraphExport,
 } from '../utils/tauriCommands';
 
-type BrainTab =
-  | 'welcome'
-  | 'graph'
-  | 'goals'
-  | 'sources'
-  | 'sync'
-  | 'subconscious'
-  | 'orchestration';
+type BrainTab = 'welcome' | 'graph' | 'goals' | 'sources' | 'sync';
 
 /** Small inline icon helper for the Brain sidebar nav. */
 const navIcon = (d: string) => (
@@ -52,30 +37,26 @@ const navIcon = (d: string) => (
   </svg>
 );
 
-const BRAIN_TABS: readonly BrainTab[] = [
-  'welcome',
-  'graph',
-  'goals',
-  'sources',
-  'sync',
-  'subconscious',
-  'orchestration',
-];
+const BRAIN_TABS: readonly BrainTab[] = ['welcome', 'graph', 'goals', 'sources', 'sync'];
+
+/**
+ * Backoff ladder for automatically retrying a failed graph load.
+ *
+ * Written out rather than computed from an exponent because the two things a
+ * reader needs — how long the wait is, and that there are exactly three of
+ * them — are then both visible. The last element is the bound: once the ladder
+ * is spent the error stays on screen and manual Refresh is the way back.
+ */
+const RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000];
 
 /**
  * Canonical text header (title + one-line description) per functional tab.
- * Orchestration is excluded — it renders its own full-bleed surface
- * ({@link OrchestrationView}) with its own chip nav, not the shared scaffold.
  */
-const BRAIN_HEADERS: Record<
-  Exclude<BrainTab, 'welcome' | 'orchestration'>,
-  { titleKey: string; descKey: string }
-> = {
+const BRAIN_HEADERS: Record<Exclude<BrainTab, 'welcome'>, { titleKey: string; descKey: string }> = {
   graph: { titleKey: 'brain.tabs.graph', descKey: 'brain.header.graph' },
   goals: { titleKey: 'brain.tabs.goals', descKey: 'brain.header.goals' },
   sources: { titleKey: 'brain.tabs.sources', descKey: 'brain.header.sources' },
   sync: { titleKey: 'brain.tabs.sync', descKey: 'brain.header.sync' },
-  subconscious: { titleKey: 'brain.tabs.subconscious', descKey: 'brain.header.subconscious' },
 };
 
 export default function Brain() {
@@ -96,28 +77,6 @@ export default function Brain() {
     },
     [location.pathname, location.search, navigate]
   );
-  // Back-compat: the old `?tab=tinyplace-orchestration` slug (from when
-  // Orchestration was briefly a top-level tab) now maps to the folded-in
-  // Orchestration sub-tab.
-  useEffect(() => {
-    if (new URLSearchParams(location.search).get('tab') === 'tinyplace-orchestration') {
-      console.debug('[brain] legacy tinyplace-orchestration deep link → ?tab=orchestration');
-      navigate('/brain?tab=orchestration', { replace: true });
-    }
-  }, [location.search, navigate]);
-
-  // #5424 — the Orchestration sub-tab is a tiny.place surface, hidden from users
-  // without an identity. If a *confirmed* non-holder lands on `?tab=orchestration`
-  // via a stale deep link, redirect to the Brain welcome tab. This is a
-  // render-phase redirect (not a post-commit effect), so once the check resolves
-  // to a non-holder OrchestrationView never mounts. While the check is still in
-  // flight we render optimistically — matching the AgentWorldShell route guard —
-  // so a holder (the common case) never sees a flash; the brief optimistic window
-  // for a stale non-holder link is the deliberate trade-off.
-  const { status: tinyplaceStatus, hasIdentity: hasTinyplaceIdentity } = useTinyPlaceIdentity();
-  const shouldRedirectFromOrchestration =
-    activeTab === 'orchestration' && tinyplaceStatus === 'ready' && !hasTinyplaceIdentity;
-
   const [graph, setGraph] = useState<GraphExportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<GraphMode>('tree');
@@ -134,11 +93,6 @@ export default function Brain() {
   const { snapshot } = useCoreState();
   const authUserId = snapshot.auth.userId;
 
-  // Only poll subconscious/heartbeat status while its own tab is showing — the
-  // data is consumed nowhere else, so other tabs (incl. the folded-in
-  // Orchestration sub-tab) shouldn't keep those RPCs running.
-  const sub = useSubconscious(activeTab === 'subconscious');
-
   const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
     setToasts(prev => [...prev, { ...toast, id: `toast-${Date.now()}-${Math.random()}` }]);
   }, []);
@@ -148,32 +102,111 @@ export default function Brain() {
   const refresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
   useEffect(() => {
-    // Orchestration is a full-bleed sub-tab that never renders the memory graph,
-    // so skip the export RPC + memory-tree listener entirely while it's active.
-    // Without this, folding Orchestration under Brain would fire an unrelated
-    // graph load on every `/brain?tab=orchestration` (and redirected
-    // `/orchestration`) visit, which the old standalone page never did.
-    if (activeTab === 'orchestration') {
-      console.debug('[brain] graph fetch: skipped (orchestration tab)');
-      return;
-    }
     let cancelled = false;
-    const load = async () => {
-      console.debug('[brain] graph fetch: entry mode=%s', mode);
-      setError(null);
+    // The pending automatic retry, if one is scheduled. Effect-scoped, so a
+    // dependency change or an unmount cancels it in the cleanup below.
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // Index into RETRY_DELAYS_MS. Effect-scoped too, which is what makes a
+    // manual Refresh (a `refreshKey` change re-runs this effect) start the
+    // ladder over rather than inheriting a spent one.
+    let attempt = 0;
+    // Monotonic request generation. Two `load()` calls can be in flight at once
+    // (the initial one and a `memory-tree-completed` event, or an automatic
+    // retry overtaken by an event), and they share `graph`, `error` and the
+    // retry ladder. Without this, a SUPERSEDED call's late result still writes:
+    // an obsolete rejection sets an error and schedules another retry even
+    // though a newer call has already succeeded, and an obsolete success can
+    // overwrite a newer graph. `cancelled` does not cover this — it only
+    // distinguishes this effect run from the next one, never two loads within
+    // the same run.
+    let generation = 0;
+    // Generation of the response currently ON SCREEN, which is NOT the same as
+    // the newest request. That difference is the whole point: `generation` says
+    // which request is newest, `renderedGeneration` says which one produced the
+    // data the user is looking at. They diverge exactly when a newer request
+    // FAILED — and that is the case where a superseded success must still be
+    // allowed through, because there is no newer data for it to clobber.
+    let renderedGeneration = 0;
+
+    const load = async (isAutomaticRetry = false) => {
+      const myGeneration = ++generation;
+      // Any load supersedes a retry still waiting, so a manual Refresh or a
+      // `memory-tree-completed` event cannot race a timer into a double fetch.
+      if (retryTimer !== undefined) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      console.debug(
+        '[brain] graph fetch: entry mode=%s attempt=%d retry=%s',
+        mode,
+        attempt,
+        isAutomaticRetry
+      );
+      // An AUTOMATIC retry must not clear the error while it is in flight.
+      // Clearing it here is right for a load the user or the app asked for —
+      // mount, Refresh, `memory-tree-completed` — because the previous failure
+      // is no longer what is being reported. A timer-driven retry is different:
+      // nothing has changed from the user's point of view, so blanking the
+      // alert (or the stale-data warning) for the duration of the request makes
+      // the failure flicker out and back for no reason they can perceive. The
+      // success path clears it on an accepted success, which is when the error
+      // has actually stopped being true.
+      if (!isAutomaticRetry) setError(null);
       try {
         const resp = await memoryTreeGraphExport(mode);
-        if (cancelled) return;
+        // Discard this success only if NEWER DATA already rendered — not merely
+        // because a newer request exists. Testing `myGeneration !== generation`
+        // here also dropped the older success when the newer request had
+        // failed, which leaves the user with an error and no graph: strictly
+        // worse than either behaviour this guard was meant to produce.
+        if (cancelled || myGeneration < renderedGeneration) {
+          console.debug('[brain] graph fetch: dropping success behind newer data');
+          return;
+        }
         console.debug(
           '[brain] graph fetch: exit n=%d edges=%d',
           resp.nodes.length,
           resp.edges.length
         );
         setGraph(resp);
+        renderedGeneration = myGeneration;
+        // Clear the error on an ACCEPTED SUCCESS, not only when a load starts.
+        // Two `load()` calls can overlap (the initial one and a
+        // `memory-tree-completed` event, or two events in quick succession),
+        // and they share this state with no request-generation guard. If the
+        // newer call fails and the older then succeeds, `error` stays set from
+        // the newer one while a perfectly good graph renders — which before
+        // this PR was invisible, and with the warning below would be a FALSE
+        // "your data is stale" on data that is not.
+        setError(null);
+        // Success resets the ladder: the NEXT transient failure gets the full
+        // set of retries rather than resuming where an old failure left off.
+        attempt = 0;
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || myGeneration !== generation) {
+          // A newer load has taken over. Dropping this rejection is what stops
+          // an obsolete failure from scheduling a retry against a graph that
+          // has already refreshed successfully.
+          console.debug('[brain] graph fetch: dropping superseded failure');
+          return;
+        }
         console.error('[brain] graph fetch failed', err);
         setError(err instanceof Error ? err.message : String(err));
+
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          // Bounded on purpose. Past this point the failure is very unlikely to
+          // be transient, and retrying forever would hammer the core and hide a
+          // real outage behind a spinner. The error stays on screen and the
+          // manual Refresh in `MemoryControls` remains the way back.
+          console.warn('[brain] graph fetch: retries exhausted after %d attempts', attempt);
+          return;
+        }
+        console.debug('[brain] graph fetch: scheduling retry %d in %dms', attempt + 1, delay);
+        attempt += 1;
+        retryTimer = setTimeout(() => {
+          void load(true);
+        }, delay);
       }
     };
     void load();
@@ -184,20 +217,13 @@ export default function Brain() {
     window.addEventListener('openhuman:memory-tree-completed', onTreeDone);
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
       window.removeEventListener('openhuman:memory-tree-completed', onTreeDone);
     };
     // `authUserId` is a dependency so a logout→login (identity becomes
     // available again) re-pulls the persisted graph instead of leaving the
-    // signed-out empty state on screen (#4149). `activeTab` gates the fetch off
-    // on the Orchestration sub-tab (and re-runs it when returning to a
-    // graph-bearing tab).
-  }, [mode, refreshKey, authUserId, activeTab]);
-
-  const cardClass = 'rounded-lg border border-line bg-surface p-4';
-
-  if (shouldRedirectFromOrchestration) {
-    return <Navigate to="/brain" replace />;
-  }
+    // signed-out empty state on screen (#4149).
+  }, [mode, refreshKey, authUserId]);
 
   return (
     <div className="h-full">
@@ -211,11 +237,6 @@ export default function Brain() {
             groups={[
               {
                 items: [
-                  {
-                    value: 'welcome',
-                    label: t('brain.welcome.nav'),
-                    icon: navIcon('M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'),
-                  },
                   {
                     value: 'graph',
                     label: t('brain.tabs.graph'),
@@ -242,44 +263,13 @@ export default function Brain() {
                       'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
                     ),
                   },
-                  {
-                    value: 'subconscious',
-                    label: t('brain.tabs.subconscious'),
-                    icon: navIcon(
-                      'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z'
-                    ),
-                  },
-                  // TinyPlace multi-agent orchestration, folded back under Brain
-                  // from the former top-level `/orchestration` tab. Hidden from
-                  // users without a tiny.place identity (#5424).
-                  ...(hasTinyplaceIdentity
-                    ? [
-                        {
-                          value: 'orchestration',
-                          label: t('brain.tabs.orchestration'),
-                          icon: navIcon(
-                            'M12 7v3m0 0l-5.5 6M12 10l5.5 6M12 5a2 2 0 100 0M5 19a2 2 0 100 0M19 19a2 2 0 100 0'
-                          ),
-                        },
-                      ]
-                    : []),
                 ],
               },
             ]}
           />
         </div>
       </SidebarContent>
-      {activeTab === 'orchestration' ? (
-        // Full-bleed: OrchestrationView renders its own chip nav + surfaces
-        // (chat, graph, task board), which need the full content width — so it
-        // sits outside the shared max-w scaffold the other tabs use.
-        <div className="flex h-full flex-col">
-          <TinyPlaceSunsetNotice />
-          <div className="min-h-0 flex-1">
-            <OrchestrationView />
-          </div>
-        </div>
-      ) : (
+      {
         // Full width on purpose: the header band has to run edge to edge across
         // the content card, so the width cap cannot live above it. Each tab's
         // body carries its own `mx-auto max-w-3xl`, which is what the old
@@ -335,92 +325,96 @@ export default function Brain() {
             all custom controls live inside it. The title/description go through
             PanelPage so every page opens with the same flush header band, rather
             than a bordered card floating in the content column. */
-            <PanelPage
-              contentClassName="p-4"
-              title={t(
-                BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome' | 'orchestration'>].titleKey
-              )}
-              description={t(
-                BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome' | 'orchestration'>].descKey
-              )}>
-              <div className="mx-auto max-w-3xl space-y-5">
-                {activeTab === 'graph' && (
-                  <div className="space-y-5 animate-fade-up">
-                    <MemoryControls
-                      mode={mode}
-                      onModeChange={setMode}
-                      onRefresh={refresh}
-                      onToast={addToast}
-                      contentRootAbs={graph?.content_root_abs}
-                    />
-
-                    {graph ? (
-                      <MemoryGraph
-                        nodes={graph.nodes}
-                        edges={graph.edges}
+            <div className="h-full p-4">
+              <SettingsTabbedPage
+                title={t(BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome'>].titleKey)}
+                description={t(BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome'>].descKey)}>
+                <div className="w-full space-y-5">
+                  {activeTab === 'graph' && (
+                    <div className="space-y-5 animate-fade-up">
+                      <MemoryControls
                         mode={mode}
-                        emptyHint={t('brain.empty')}
+                        onModeChange={setMode}
+                        onRefresh={refresh}
+                        onToast={addToast}
+                        contentRootAbs={graph?.content_root_abs}
                       />
-                    ) : error ? (
-                      <div
-                        className={`${cardClass} text-sm text-coral-600 dark:text-coral-400`}
-                        role="alert">
-                        {t('brain.error')}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
 
-                {activeTab === 'goals' && <GoalsPanel />}
+                      {/*
+                        A failed refresh AFTER a good load keeps the graph on
+                        screen and warns, rather than replacing it with an
+                        error. The graph is expensive to rebuild and stays
+                        useful when a refresh blips, so destroying it would
+                        turn a transient failure into total data loss on
+                        screen. What is not acceptable is the third option —
+                        showing stale data with no indication at all, which is
+                        what this did before: the error branch below is
+                        reachable only while `graph` is null, and the catch in
+                        `load()` never clears `graph`, so a later failure was
+                        invisible.
 
-                {activeTab === 'sources' && (
-                  <div className="space-y-5 animate-fade-up">
-                    <CodingSessionsCard onToast={addToast} />
-                    <MemorySourcesRegistry onToast={addToast} />
-                  </div>
-                )}
+                        The two states are deliberately different components:
+                        this one means "what you see is old", the one below
+                        means "there is nothing to see".
+                      */}
+                      {/*
+                        `error !== null`, not truthiness: `load()`'s catch does
+                        `setError(err.message)`, and an Error carrying an empty
+                        message yields `''`, which is falsy. Under a truthiness
+                        test that failure suppresses BOTH alerts and is silent
+                        again — the exact defect this PR exists to remove.
+                      */}
+                      {error !== null && graph ? (
+                        <Alert variant="warning">
+                          <AlertDescription>{t('brain.refreshError')}</AlertDescription>
+                        </Alert>
+                      ) : null}
 
-                {activeTab === 'sync' && (
-                  <div className="space-y-5 animate-fade-up">
-                    <div className={cardClass}>
-                      <MemoryTreeStatusPanel onToast={addToast} />
+                      {graph ? (
+                        <MemoryGraph
+                          nodes={graph.nodes}
+                          edges={graph.edges}
+                          mode={mode}
+                          emptyHint={t('brain.empty')}
+                        />
+                      ) : error !== null ? (
+                        <Alert variant="destructive">
+                          <AlertDescription>{t('brain.error')}</AlertDescription>
+                        </Alert>
+                      ) : null}
                     </div>
-                    {/* Sync history relocated from the Memory Inspection panel so
+                  )}
+
+                  {activeTab === 'goals' && <GoalsPanel />}
+
+                  {activeTab === 'sources' && (
+                    <div className="space-y-5 animate-fade-up">
+                      <CodingSessionsCard onToast={addToast} />
+                      <MemorySourcesRegistry onToast={addToast} />
+                    </div>
+                  )}
+
+                  {activeTab === 'sync' && (
+                    <div className="space-y-5 animate-fade-up">
+                      <Card padded divided={false}>
+                        <MemoryTreeStatusPanel onToast={addToast} />
+                      </Card>
+                      {/* Sync history relocated from the Memory Inspection panel so
                       the Sync tab is the single sync surface. */}
-                    <div className={cardClass} data-testid="brain-sync-history">
-                      <h3 className="mb-2 text-sm font-medium text-content-secondary">
-                        {t('sync.auditTitle', 'Sync History')}
-                      </h3>
-                      <SyncAuditPanel />
+                      <Card padded divided={false} data-testid="brain-sync-history">
+                        <h3 className="mb-2 text-sm font-medium text-content-secondary">
+                          {t('sync.auditTitle', 'Sync History')}
+                        </h3>
+                        <SyncAuditPanel />
+                      </Card>
                     </div>
-                  </div>
-                )}
-
-                {activeTab === 'subconscious' && (
-                  <div className="space-y-3 animate-fade-up">
-                    <BetaBanner />
-                    <div className={cardClass}>
-                      <IntelligenceSubconsciousTab
-                        status={sub.status}
-                        instances={sub.instances}
-                        mode={sub.mode}
-                        intervalMinutes={sub.intervalMinutes}
-                        triggerTick={sub.triggerTick}
-                        triggering={sub.triggering}
-                        isTriggering={sub.isTriggering}
-                        settingMode={sub.settingMode}
-                        setMode={sub.setMode}
-                        setIntervalMinutes={sub.setIntervalMinutes}
-                      />
-                    </div>
-                    <SubconsciousTriggersPanel />
-                  </div>
-                )}
-              </div>
-            </PanelPage>
+                  )}
+                </div>
+              </SettingsTabbedPage>
+            </div>
           )}
         </div>
-      )}
+      }
 
       <ToastContainer notifications={toasts} onRemove={removeToast} />
     </div>

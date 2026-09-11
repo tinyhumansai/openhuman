@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import ChipTabs, { type ChipTabItem } from './ChipTabs';
@@ -28,39 +30,78 @@ describe('ChipTabs', () => {
     expect(screen.getByTestId('t-three')).toHaveAttribute('aria-selected', 'false');
   });
 
-  it('uses roving tabIndex for keyboard navigation', () => {
-    render(<ChipTabs items={items} value="two" onChange={() => {}} testIdPrefix="t" />);
-
-    expect(screen.getByTestId('t-two')).toHaveAttribute('tabindex', '0');
-    expect(screen.getByTestId('t-one')).toHaveAttribute('tabindex', '-1');
-    expect(screen.getByTestId('t-three')).toHaveAttribute('tabindex', '-1');
-  });
+  // COVERAGE GAP, deliberate. `uses roving tabIndex for keyboard navigation`
+  // asserted the hand-rolled implementation's STATIC roving tabIndex
+  // (tabIndex = f(active value), true from first render). Radix `Tabs`'
+  // `RovingFocusGroup` genuinely does not work that way, in a browser or in
+  // jsdom: `tabIndex` starts at -1 on EVERY item (verified directly — asking
+  // for `tabindex="0"` on the active chip immediately after render, with no
+  // interaction, returns `-1`) because the roving tab stop is a one-time
+  // ENTRY behavior. The group root is the tab stop until something actually
+  // focuses into it, at which point `RovingFocusGroup` redirects focus to the
+  // active item and only THEN does that item become the roving stop. There is
+  // no static "the active item already has tabIndex 0" invariant to assert
+  // pre-interaction, so this one cannot be restored — not because jsdom can't
+  // traverse focus, but because the behavior it asserted no longer exists.
+  //
+  // The other three tests below — the arrow-key it.each and the wrap test —
+  // are NOT a coverage gap: they're restored using `userEvent.keyboard(...)`
+  // rather than raw `fireEvent.keyDown` + manual `.focus()`. The raw-event
+  // version failed (`onChange` called 0 times) because Radix's roving-focus
+  // internals depend on the real sequential focus/keydown event chain
+  // `userEvent` models — the same reason this codebase's `ToggleGroup.test.tsx`
+  // only exercises Radix roving focus through `userEvent`, never `fireEvent`.
+  // The wrap test additionally needs a small controlled harness: Radix only
+  // fires `onValueChange` for a value that differs from the CURRENT `value`
+  // prop, so a wrap-then-wrap-back assertion against a component whose parent
+  // never re-renders with the intermediate value silently no-ops on the
+  // second step (verified) — not a Radix or jsdom quirk, just what "controlled"
+  // means.
 
   it.each([
-    ['ArrowRight', 'three'],
-    ['ArrowLeft', 'one'],
-    ['Home', 'one'],
-    ['End', 'three'],
-  ] as const)('moves focus and selects with %s', (key, expectedId) => {
+    ['{ArrowRight}', 'three'],
+    ['{ArrowLeft}', 'one'],
+    ['{Home}', 'one'],
+    ['{End}', 'three'],
+  ] as const)('moves focus and selects with %s', async (key, expectedId) => {
+    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<ChipTabs items={items} value="two" onChange={onChange} testIdPrefix="t" />);
 
-    const activeTab = screen.getByTestId('t-two');
-    activeTab.focus();
-    fireEvent.keyDown(activeTab, { key });
+    screen.getByTestId('t-two').focus();
+    await user.keyboard(key);
 
     expect(onChange).toHaveBeenCalledWith(expectedId);
     expect(screen.getByTestId(`t-${expectedId}`)).toHaveFocus();
   });
 
-  it('wraps arrow-key navigation at either end', () => {
-    const onChange = vi.fn();
-    render(<ChipTabs items={items} value="one" onChange={onChange} testIdPrefix="t" />);
+  it('wraps arrow-key navigation at either end', async () => {
+    // A real controlled harness — see the coverage-gap comment above for why
+    // a static `value` prop can't exercise a second wrap in the same test.
+    function Controlled({ onSelect }: { onSelect: (id: TabId) => void }) {
+      const [value, setValue] = useState<TabId>('one');
+      return (
+        <ChipTabs
+          items={items}
+          value={value}
+          onChange={id => {
+            setValue(id);
+            onSelect(id);
+          }}
+          testIdPrefix="t"
+        />
+      );
+    }
 
-    fireEvent.keyDown(screen.getByTestId('t-one'), { key: 'ArrowLeft' });
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Controlled onSelect={onChange} />);
+
+    screen.getByTestId('t-one').focus();
+    await user.keyboard('{ArrowLeft}');
     expect(onChange).toHaveBeenLastCalledWith('three');
 
-    fireEvent.keyDown(screen.getByTestId('t-three'), { key: 'ArrowRight' });
+    await user.keyboard('{ArrowRight}');
     expect(onChange).toHaveBeenLastCalledWith('one');
   });
 

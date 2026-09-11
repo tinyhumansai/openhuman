@@ -179,7 +179,7 @@ pub fn detect_boundary(
 /// The part of a segment boundary detection reads.
 ///
 /// A narrow view rather than the whole
-/// [`ConversationSegment`](crate::openhuman::memory::api::provider::episodic::ConversationSegment)
+/// [`ConversationSegment`](tinymemory_api::provider::episodic::ConversationSegment)
 /// because the decision depends on four fields, and naming them makes it
 /// checkable that nothing else influences it.
 #[derive(Clone, Debug, Default)]
@@ -262,4 +262,5 @@ fn truncate_utf8_safe(s: &str, max_chars: usize) -> String {
 }
 
 #[cfg(test)]
+#[path = "boundary/boundary_tests.rs"]
 mod tests;

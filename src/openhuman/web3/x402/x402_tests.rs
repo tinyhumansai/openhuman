@@ -394,11 +394,11 @@ fn solana_payment_proof_serializes_correctly() {
 
 #[test]
 fn eip712_domain_separator_is_deterministic() {
-    // Now `tinywallet::eip712`; the crate's own suite pins its hashes against
+    // Now `tinywallet_bus::eip712`; the crate's own suite pins its hashes against
     // the published EIP-712/EIP-3009 vectors. What this test checks is the
     // property that matters at this layer: the separator is deterministic and
     // binds the chain, so an authorization cannot be replayed on another one.
-    use tinywallet::eip712::domain_separator;
+    use tinywallet_bus::eip712::domain_separator;
 
     let contract = base_usdc();
     let sep1 = domain_separator(contract, 8453, "USD Coin", "2");
@@ -411,8 +411,11 @@ fn eip712_domain_separator_is_deterministic() {
 
 /// The BIP-39 vector mnemonic's EVM account: raw secret and its address.
 ///
-/// Derived through `tinywallet::key`, which is what the production path uses,
-/// so the test signs as exactly the account the wallet would.
+/// Derived through the **root** `tinywallet` crate's `key` gate, taken here as a
+/// dev-dependency. Production does not derive in this process at all — it calls
+/// `modules::wallet::derive_account` — so this reproduces the same BIP-32 walk
+/// locally, which is what lets the test sign as exactly the account the wallet
+/// would without standing up a broker.
 fn test_signer() -> (Vec<u8>, String) {
     let test_mnemonic = "abandon abandon abandon abandon abandon abandon \
                          abandon abandon abandon abandon abandon about";
@@ -436,7 +439,7 @@ fn address_bytes(hex: &str) -> [u8; 20] {
 
 #[test]
 fn eip3009_struct_hash_is_deterministic() {
-    use tinywallet::eip712::{transfer_with_authorization_hash, u256_from_u64};
+    use tinywallet_bus::eip712::{transfer_with_authorization_hash, u256_from_u64};
 
     let from = address_bytes(&"aa".repeat(20));
     let to = address_bytes(&"bb".repeat(20));
@@ -532,7 +535,7 @@ fn build_evm_payment_with_test_key_produces_valid_payload() {
             assert_eq!(evm.authorization.value, "2500");
             assert_eq!(evm.authorization.valid_after, "0");
             assert!(evm.authorization.nonce.starts_with("0x"));
-            // Checksummed, as `tinywallet::address::evm` renders it, and as
+            // Checksummed, as `tinywallet_bus::address::evm` renders it, and as
             // the requirement itself carried it.
             assert_eq!(
                 evm.authorization.to,
@@ -541,7 +544,7 @@ fn build_evm_payment_with_test_key_produces_valid_payload() {
             assert_eq!(evm.authorization.from, from_address);
 
             use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-            use tinywallet::eip712;
+            use tinywallet_bus::eip712;
 
             let raw = hex::decode(evm.signature.trim_start_matches("0x")).unwrap();
             assert!(matches!(raw[64], 27 | 28), "invalid recovery byte");

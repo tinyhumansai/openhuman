@@ -528,6 +528,8 @@ async fn setup() -> TestHarness {
         EnvVarGuard::unset("BACKEND_URL"),
         EnvVarGuard::unset("VITE_BACKEND_URL"),
         EnvVarGuard::unset("OPENHUMAN_API_URL"),
+        EnvVarGuard::unset("OPENHUMAN_TAVILY_API_KEY"),
+        EnvVarGuard::unset("TAVILY_API_KEY"),
         EnvVarGuard::unset("OPENHUMAN_CORE_RPC_URL"),
         EnvVarGuard::unset("OPENHUMAN_CORE_PORT"),
         EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file"),
@@ -1066,9 +1068,6 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
     assert_eq!(audit.log_path, "audit.log");
     assert_eq!(audit.max_size_mb, 100);
 
-    let meet: openhuman_core::openhuman::config::schema::MeetConfig =
-        serde_json::from_value(json!({})).expect("meet defaults");
-    assert!(!meet.auto_orchestrator_handoff);
     let observability: openhuman_core::openhuman::config::schema::ObservabilityConfig =
         serde_json::from_value(json!({})).expect("observability defaults");
     assert!(observability.analytics_enabled);
@@ -2082,6 +2081,8 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
         EnvVarGuard::unset(APP_ENV_VAR),
         EnvVarGuard::unset(VITE_APP_ENV_VAR),
+        EnvVarGuard::unset("OPENHUMAN_TAVILY_API_KEY"),
+        EnvVarGuard::unset("TAVILY_API_KEY"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "false"),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
@@ -2105,6 +2106,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     config.search.brave.api_key = Some("brave-secret".into());
     config.search.querit.api_key = Some("querit-secret".into());
     config.search.exa.api_key = Some("exa-secret".into());
+    config.search.tavily.api_key = Some("tavily-secret".into());
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-secret".into(),
         chat_id: None,
@@ -2189,6 +2191,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         "api-secret",
         "parallel-secret",
         "exa-secret",
+        "tavily-secret",
         "telegram-secret",
         "discord-secret",
         "slack-bot-secret",
@@ -2217,6 +2220,10 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         Some("parallel-secret")
     );
     assert_eq!(loaded.search.exa.api_key.as_deref(), Some("exa-secret"));
+    assert_eq!(
+        loaded.search.tavily.api_key.as_deref(),
+        Some("tavily-secret")
+    );
     assert_eq!(
         loaded
             .channels_config
@@ -2807,21 +2814,18 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_get_dashboard_settings",
                 "openhuman.config_get_data_paths",
                 "openhuman.config_get_dictation_settings",
-                "openhuman.config_get_meet_settings",
                 "openhuman.config_get_memory_sync_settings",
                 "openhuman.config_get_onboarding_completed",
                 "openhuman.config_get_privacy_mode",
                 "openhuman.config_get_runtime_flags",
                 "openhuman.config_get_sandbox_settings",
                 "openhuman.config_get_search_settings",
-                "openhuman.config_get_super_context_enabled",
                 "openhuman.config_get_voice_server_settings",
                 "openhuman.config_reset_local_data",
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
                 "openhuman.config_set_privacy_mode",
-                "openhuman.config_set_super_context_enabled",
                 "openhuman.config_update_activity_level_settings",
                 "openhuman.config_update_agent_paths",
                 "openhuman.config_update_agent_settings",
@@ -2831,7 +2835,6 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_update_composio_trigger_settings",
                 "openhuman.config_update_dictation_settings",
                 "openhuman.config_update_local_ai_settings",
-                "openhuman.config_update_meet_settings",
                 "openhuman.config_update_memory_settings",
                 "openhuman.config_update_memory_sync_settings",
                 "openhuman.config_update_model_settings",
@@ -3284,30 +3287,6 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
         Some(false)
     );
 
-    ok(
-        &rpc(
-            &harness.rpc_base,
-            11_006,
-            "openhuman.config_update_meet_settings",
-            json!({ "auto_orchestrator_handoff": true }),
-        )
-        .await,
-        "update_meet_settings true",
-    );
-    let meet = rpc(
-        &harness.rpc_base,
-        11_007,
-        "openhuman.config_get_meet_settings",
-        json!({}),
-    )
-    .await;
-    assert_eq!(
-        payload(&meet, "get_meet_settings")
-            .get("auto_orchestrator_handoff")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-
     let onboarding_before = rpc(
         &harness.rpc_base,
         11_008,
@@ -3438,6 +3417,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
             "brave_api_key": " brave-rpc-key ",
             "querit_api_key": " querit-rpc-key ",
             "exa_api_key": " exa-rpc-key ",
+            "tavily_api_key": " tavily-rpc-key ",
             "allowed_domains": [" example.com ", "", "example.com", "docs.example.com"],
             "allow_all": false
         }),
@@ -3499,12 +3479,54 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
         Some(true)
     );
     assert_eq!(
+        search_payload
+            .get("tavily_configured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
         search_payload.get("allow_all").and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(
         search_payload.get("allowed_domains"),
         Some(&json!(["docs.example.com", "example.com"]))
+    );
+    let select_tavily = rpc(
+        &harness.rpc_base,
+        11_126,
+        "openhuman.config_update_search_settings",
+        json!({ "engine": "tavily" }),
+    )
+    .await;
+    let select_tavily_payload = payload(&select_tavily, "select Tavily search engine");
+    assert_eq!(
+        select_tavily_payload.pointer("/config/search/engine"),
+        Some(&json!("tavily"))
+    );
+    let tavily_readback = rpc(
+        &harness.rpc_base,
+        11_127,
+        "openhuman.config_get_search_settings",
+        json!({}),
+    )
+    .await;
+    let tavily_payload = payload(&tavily_readback, "get_search_settings for Tavily");
+    assert_eq!(
+        tavily_payload.get("engine").and_then(Value::as_str),
+        Some("tavily")
+    );
+    assert_eq!(
+        tavily_payload
+            .get("effective_engine")
+            .and_then(Value::as_str),
+        Some("tavily")
+    );
+    assert_eq!(
+        tavily_payload
+            .get("tavily_configured")
+            .and_then(Value::as_bool),
+        Some(true)
     );
     let allow_all_search = rpc(
         &harness.rpc_base,
@@ -3515,6 +3537,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
             "brave_api_key": " ",
             "querit_api_key": " ",
             "exa_api_key": " ",
+            "tavily_api_key": " ",
             "allow_all": true
         }),
     )

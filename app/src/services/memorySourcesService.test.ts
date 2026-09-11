@@ -8,7 +8,9 @@ import {
   drainCodingSessions,
   getCodingSessionStatus,
   ingestCodingSessions,
+  isIngestTimeout,
   listMemorySources,
+  MEMORY_SYNC_RPC_TIMEOUT_MS,
   type MemorySourceEntry,
   removeMemorySource,
   SOURCE_KIND_ICONS,
@@ -141,10 +143,31 @@ describe('memorySourcesService', () => {
 
     const result = await applyAllIn();
 
-    expect(mockedCall).toHaveBeenCalledWith({ method: 'openhuman.memory_sources_apply_all_in' });
+    expect(mockedCall).toHaveBeenCalledWith({
+      method: 'openhuman.memory_sources_apply_all_in',
+      timeoutMs: MEMORY_SYNC_RPC_TIMEOUT_MS,
+    });
     expect(result.sync_triggered).toBe(1);
     expect(result.sources).toHaveLength(1);
     expect(result.sources[0].id).toBe('src_1');
+  });
+
+  it('applyAllIn normalises the #5820 failure fields for cores that omit them', async () => {
+    mockedCall.mockResolvedValueOnce({
+      result: { sources: [], sync_triggered: 0 },
+      logs: [],
+    } as never);
+    const legacy = await applyAllIn();
+    expect(legacy.sync_failed).toBe(0);
+    expect(legacy.sync_errors).toEqual([]);
+
+    mockedCall.mockResolvedValueOnce({
+      result: { sources: [], sync_triggered: 0, sync_failed: 2, sync_errors: ['a: x', 'b: y'] },
+      logs: [],
+    } as never);
+    const failed = await applyAllIn();
+    expect(failed.sync_failed).toBe(2);
+    expect(failed.sync_errors).toEqual(['a: x', 'b: y']);
   });
 
   it('applyAllIn handles envelope-wrapped response', async () => {
@@ -298,6 +321,84 @@ describe('memorySourcesService', () => {
     expect(mockedCall).toHaveBeenCalledTimes(1);
     expect(result.passes).toBe(1);
     expect(result.moreRemaining).toBe(true);
+  });
+
+  it('reports a deadline as still-running, not as a thrown failure', async () => {
+    // The #5802 shape: a pass completes, the next one trips a deadline. No
+    // deadline in this stack cancels the import, so the run is still going —
+    // rejecting here is what put a red "failed" banner over work that
+    // succeeded seconds later.
+    mockedCall
+      .mockResolvedValueOnce(ingestResult({ sessions_processed: 3, budget_hit: true }))
+      .mockRejectedValueOnce(
+        new Error('ingest coding sessions: call to `IngestCodingSessions` timed out after 30000ms')
+      );
+
+    const result = await drainCodingSessions();
+
+    expect(result.timedOut).toBe(true);
+    // The completed pass's work is kept: those sessions really were imported.
+    expect(result.sessionsProcessed).toBe(3);
+    expect(result.passes).toBe(1);
+  });
+
+  it('reports the core budget deadline too, which is spelled in seconds', async () => {
+    // `ingest_budget` renders "timed out after 570s". The seconds form does not
+    // match coreRpcClient's `\d+ms` timeout classifier, so a check that keyed
+    // only on CoreRpcError.kind would let this one through as a failure.
+    mockedCall.mockRejectedValueOnce(new Error('ingest coding sessions: timed out after 570s'));
+
+    const result = await drainCodingSessions();
+
+    expect(result.timedOut).toBe(true);
+    expect(result.sessionsProcessed).toBe(0);
+  });
+
+  it('still rejects a genuine ingest failure', async () => {
+    // The other half of the contract: making a deadline non-fatal must not make
+    // everything non-fatal.
+    mockedCall.mockRejectedValueOnce(new Error('persona pipeline failed'));
+
+    await expect(drainCodingSessions()).rejects.toThrow('persona pipeline failed');
+  });
+
+  it('rejects a renderer-side abort instead of calling it still-running', async () => {
+    // The client's own AbortController proves the renderer stopped waiting and
+    // nothing else — a wedged, overloaded or absent core produces exactly the
+    // same signal as one happily distilling sessions. Suppressing it would show
+    // a false success over work that may never have started, which is #5802
+    // with the sign flipped. Only the core's own prefix is evidence.
+    const abort = Object.assign(
+      new Error(
+        'Core RPC openhuman.memory_sources_ingest_coding_sessions timed out after 585000ms'
+      ),
+      { kind: 'timeout' }
+    );
+    mockedCall.mockRejectedValueOnce(abort);
+
+    await expect(drainCodingSessions()).rejects.toThrow('timed out after 585000ms');
+  });
+
+  it('isIngestTimeout suppresses only deadlines the core reported', () => {
+    // Suppressed: both shapes carry `ingest coding sessions: `, which only
+    // `ingest_coding_sessions_rpc` adds — proof the handler ran.
+    expect(
+      isIngestTimeout(
+        new Error('ingest coding sessions: call to `IngestCodingSessions` timed out after 30000ms')
+      )
+    ).toBe(true);
+    expect(isIngestTimeout(new Error('ingest coding sessions: timed out after 570s'))).toBe(true);
+
+    // Not suppressed. A bare timeout phrase carries no evidence that anything
+    // was dispatched, and an unprefixed pattern would have swallowed an
+    // ordinary provider failure.
+    expect(isIngestTimeout(new Error('timed out after 30000ms'))).toBe(false);
+    expect(isIngestTimeout(new Error('request timed out after 30s'))).toBe(false);
+    expect(isIngestTimeout(new Error('Core RPC x timed out after 585000ms'))).toBe(false);
+    expect(isIngestTimeout(new Error('the request timed out'))).toBe(false);
+    expect(isIngestTimeout(new Error('session scan failed'))).toBe(false);
+    // A kind field alone is not evidence either.
+    expect(isIngestTimeout({ kind: 'timeout' })).toBe(false);
   });
 
   it('stops when a budget-hit pass makes no forward progress', async () => {

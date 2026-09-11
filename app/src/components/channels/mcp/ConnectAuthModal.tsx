@@ -20,12 +20,15 @@
  * no auth.
  */
 import debug from 'debug';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import { openUrl } from '../../../utils/openUrl';
 import Button from '../../ui/Button';
+import { ModalShell } from '../../ui/ModalShell';
+import NativeSelect from '../../ui/NativeSelect';
+import TextField from '../../ui/TextField';
 import ConfigHelpModal from './ConfigHelpModal';
 import type { InstalledServer, McpTool, SmitheryServerDetail } from './types';
 
@@ -217,6 +220,7 @@ const FALLBACK_HEADER: CustomHeader = { id: 0, name: 'Authorization', value: '',
 
 const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProps) => {
   const { t } = useT();
+  const titleId = useId();
   // Declared auth fields. Seeded from the install's stored keys (names only),
   // then enriched by a best-effort registry_get that carries each field's
   // description / secret / required metadata. `__`-prefixed keys are internal
@@ -465,31 +469,39 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
     []
   );
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('mcp.connectAuth.title').replace('{name}', server.display_name)}
-      onMouseDown={e => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 overflow-y-auto">
-      <div className="w-full max-w-md rounded-xl bg-surface border border-line shadow-xl p-5 space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-content">
-            {t('mcp.connectAuth.title').replace('{name}', server.display_name)}
-          </h3>
-          <p className="text-xs text-content-muted mt-1">{t('mcp.connectAuth.hint')}</p>
-          <button
-            type="button"
+  const modal = (
+    <ModalShell
+      onClose={onClose}
+      titleId={titleId}
+      title={t('mcp.connectAuth.title').replace('{name}', server.display_name)}
+      subtitle={
+        <>
+          {t('mcp.connectAuth.hint')}{' '}
+          <Button
+            variant="tertiary"
+            size="xs"
             onClick={() => setShowConfigHelp(true)}
-            className="mt-1 text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline">
+            className="h-auto p-0 align-baseline text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400">
             {t('mcp.connectAuth.howToGetToken')}
-          </button>
+          </Button>
+        </>
+      }
+      maxWidthClassName="max-w-md"
+      contentClassName="space-y-4 p-5"
+      closePolicy={{ backdrop: !busy, escape: !busy, button: !busy }}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleConnect} disabled={busy}>
+            {busy ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
+          </Button>
         </div>
-
+      }>
+      <>
         {error && (
-          <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300 break-words">
+          <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300 wrap-break-word">
             {error}
           </div>
         )}
@@ -514,23 +526,25 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
             {endpointHost && (
               <p className="text-[11px] text-content-secondary">
                 {t('mcp.connectAuth.tokenProvider')}{' '}
-                <button
-                  type="button"
+                <Button
+                  variant="tertiary"
+                  size="xs"
                   onClick={() => void openUrl(providerUrlFromHost(endpointHost))}
                   title={providerUrlFromHost(endpointHost)}
-                  className="font-medium text-primary-600 dark:text-primary-400 underline underline-offset-2 hover:text-primary-700 dark:hover:text-primary-300 break-all">
+                  className="h-auto p-0 align-baseline font-medium text-primary-600 underline underline-offset-2 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 break-all">
                   {endpointHost}
                   <span aria-hidden="true"> ↗</span>
-                </button>
+                </Button>
               </p>
             )}
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() => setShowConfigHelp(true)}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline">
+              className="h-auto gap-1 p-0 align-baseline text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400">
               {t('mcp.connectAuth.findToken')}
               <span aria-hidden="true">↗</span>
-            </button>
+            </Button>
           </div>
         )}
 
@@ -564,7 +578,8 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                 )}
                 <div className="flex gap-2">
                   {isAuthorizationField(field.name) && (
-                    <select
+                    <NativeSelect
+                      inputSize="sm"
                       value={schemeFor(field.name)}
                       onChange={e =>
                         setAuthSchemes(prev => ({
@@ -574,13 +589,14 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                       }
                       disabled={busy}
                       title={t('mcp.connectAuth.schemeLabel')}
-                      className="shrink-0 rounded-lg border border-line bg-surface px-1.5 py-1.5 text-[11px] text-content-secondary focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50">
+                      className="shrink-0 text-[11px]">
                       <option value="bearer">{t('mcp.connectAuth.schemeBearer')}</option>
                       <option value="raw">{t('mcp.connectAuth.schemeRaw')}</option>
-                    </select>
+                    </NativeSelect>
                   )}
-                  <input
+                  <TextField
                     id={`auth-${field.name}`}
+                    inputSize="sm"
                     type={field.secret && !reveal[field.name] ? 'password' : 'text'}
                     value={values[field.name] ?? ''}
                     onChange={e => setValues(prev => ({ ...prev, [field.name]: e.target.value }))}
@@ -592,7 +608,7 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                     data-1p-ignore
                     data-lpignore="true"
                     data-form-type="other"
-                    className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+                    className="flex-1"
                   />
                   {field.secret && (
                     <Button
@@ -618,13 +634,14 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
             <p className="text-[11px] font-medium uppercase tracking-wide text-content-faint">
               {t('mcp.connectAuth.customHeadersLabel')}
             </p>
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={addCustomHeader}
               disabled={busy}
-              className="text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50">
+              className="h-auto p-0 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400">
               {t('mcp.connectAuth.addHeader')}
-            </button>
+            </Button>
           </div>
           {displayHeaders.length === 0 && (
             <p className="text-[11px] text-content-faint">
@@ -635,7 +652,9 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
             <div key={h.id} className="space-y-1.5 rounded-lg border border-line p-2">
               {/* Row 1: header name + scheme + remove */}
               <div className="flex gap-2">
-                <input
+                <TextField
+                  mono
+                  inputSize="sm"
                   value={h.name}
                   onChange={e => patchHeader(h.id, { name: e.target.value })}
                   placeholder={t('mcp.connectAuth.headerName')}
@@ -644,17 +663,18 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                   data-1p-ignore
                   data-lpignore="true"
                   data-form-type="other"
-                  className="flex-1 min-w-0 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-mono text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+                  className="min-w-0 flex-1"
                 />
-                <select
+                <NativeSelect
+                  inputSize="sm"
                   value={h.scheme}
                   onChange={e => patchHeader(h.id, { scheme: e.target.value as 'bearer' | 'raw' })}
                   disabled={busy}
                   title={t('mcp.connectAuth.schemeLabel')}
-                  className="shrink-0 rounded-lg border border-line bg-surface px-1.5 py-1.5 text-[11px] text-content-secondary focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50">
+                  className="shrink-0 text-[11px]">
                   <option value="bearer">{t('mcp.connectAuth.schemeBearer')}</option>
                   <option value="raw">{t('mcp.connectAuth.schemeRaw')}</option>
-                </select>
+                </NativeSelect>
                 <Button
                   variant="secondary"
                   size="xs"
@@ -666,7 +686,8 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                 </Button>
               </div>
               {/* Row 2: full-width value (tokens are long) */}
-              <input
+              <TextField
+                inputSize="sm"
                 type="password"
                 value={h.value}
                 onChange={e => patchHeader(h.id, { value: e.target.value })}
@@ -678,34 +699,30 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
                 data-1p-ignore
                 data-lpignore="true"
                 data-form-type="other"
-                className="w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+                className="w-full"
               />
             </div>
           ))}
         </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
-            {t('common.cancel')}
-          </Button>
-          <Button variant="primary" size="sm" onClick={handleConnect} disabled={busy}>
-            {busy ? t('mcp.detail.connecting') : t('mcp.detail.connect')}
-          </Button>
-        </div>
-      </div>
-
-      {/* Stacked configuration-help chat modal (above this one). */}
-      {showConfigHelp && (
-        <ConfigHelpModal
-          qualifiedName={server.qualified_name}
-          displayName={server.display_name}
-          description={server.description}
-          onClose={() => setShowConfigHelp(false)}
-        />
-      )}
-    </div>
+        {/* Stacked configuration-help chat modal (above this one). Rendered
+            inside this Dialog's own tree — not as a separate top-level
+            sibling — so Radix's aria-hidden-others bookkeeping recognizes it
+            as part of the same branch instead of hiding this dialog behind
+            it. */}
+        {showConfigHelp && (
+          <ConfigHelpModal
+            qualifiedName={server.qualified_name}
+            displayName={server.display_name}
+            description={server.description}
+            onClose={() => setShowConfigHelp(false)}
+          />
+        )}
+      </>
+    </ModalShell>
   );
+
+  return modal;
 };
 
 export default ConnectAuthModal;

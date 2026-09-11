@@ -33,17 +33,16 @@ describe('Multi-round tool conversation smoke', () => {
     const hash = await browser.execute(() => window.location.hash);
     expect(String(hash)).toContain('/chat');
 
-    // Wait for rendered chat content, not only the always-mounted shell. Use
-    // textContent directly because tauri-driver's XPath text lookup can miss
-    // nested text nodes under WebKitGTK.
+    // The welcome copy is optional while the thread is hydrating, so assert the
+    // actual agent input surface rather than an empty-state string. Use the
+    // host-owned walkthrough marker because tauri-driver's XPath text lookup
+    // can miss nested text nodes under WebKitGTK.
     const chatReady = await browser.waitUntil(
       async () =>
-        (await browser.execute(() =>
-          (
-            document.querySelector('[data-testid="chat-messages-scroll"]')?.textContent ?? ''
-          ).includes('Your assistant is ready when you are')
+        (await browser.execute(
+          () => document.querySelector('[data-walkthrough="chat-agent-panel"]') !== null
         )) as boolean,
-      { timeout: 10_000, interval: 250, timeoutMsg: 'Chat ready content did not render' }
+      { timeout: 10_000, interval: 250, timeoutMsg: 'Chat composer did not render' }
     );
     expect(chatReady).toBe(true);
   });

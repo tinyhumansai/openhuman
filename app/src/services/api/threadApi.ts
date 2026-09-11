@@ -46,6 +46,18 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
 
 const generateTitleLog = debug('threadApi.generateTitleIfNeeded');
 
+/**
+ * The core's `sender` vocabulary is `user` | `agent`, but some core writers
+ * stored the assistant side as `assistant` (autonomous task sessions before
+ * #5933, channel-session mirrors). Fold that alias onto `agent` at the transport
+ * boundary so every `sender === 'agent'` check in the renderers — and the
+ * assistant-ui role mapping — treats such a row as the assistant instead of
+ * painting it as a user turn.
+ */
+function normalizeThreadMessage(message: ThreadMessage): ThreadMessage {
+  return (message.sender as string) === 'assistant' ? { ...message, sender: 'agent' } : message;
+}
+
 export const threadApi = {
   createNewThread: async (labels?: string[]): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
@@ -67,7 +79,8 @@ export const threadApi = {
       method: 'openhuman.threads_messages_list',
       params: { thread_id: threadId },
     });
-    return unwrapEnvelope(response);
+    const data = unwrapEnvelope(response);
+    return { ...data, messages: data.messages.map(normalizeThreadMessage) };
   },
 
   appendMessage: async (threadId: string, message: ThreadMessage): Promise<ThreadMessage> => {
@@ -75,7 +88,7 @@ export const threadApi = {
       method: 'openhuman.threads_message_append',
       params: { thread_id: threadId, message },
     });
-    return unwrapEnvelope(response);
+    return normalizeThreadMessage(unwrapEnvelope(response));
   },
 
   generateTitleIfNeeded: async (threadId: string, assistantMessage?: string): Promise<Thread> => {
@@ -108,7 +121,7 @@ export const threadApi = {
       method: 'openhuman.threads_message_update',
       params: { thread_id: threadId, message_id: messageId, extra_metadata: extraMetadata },
     });
-    return unwrapEnvelope(response);
+    return normalizeThreadMessage(unwrapEnvelope(response));
   },
 
   deleteThread: async (threadId: string): Promise<ThreadDeleteData> => {

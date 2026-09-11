@@ -1,5 +1,6 @@
 import { ReactNode, useCallback, useEffect, useRef } from 'react';
 
+import { withDerivedChrome } from '../lib/theme/chrome';
 import { findFamily, resolveFamilyVariant } from '../lib/theme/presets';
 import type { Theme } from '../lib/theme/types';
 import { useAppSelector } from '../store/hooks';
@@ -35,9 +36,15 @@ const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // Track which inline vars we set last time so we can clear stale ones.
   const appliedRef = useRef<{ colors: string[]; fonts: string[] }>({ colors: [], fonts: [] });
 
-  const applyTheme = useCallback((theme: Theme) => {
+  const applyTheme = useCallback((incoming: Theme) => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
+
+    // Fill in the window-chrome tokens for themes that tint the app without
+    // naming them — which was every preset. Without this a themed palette
+    // recolours the content card and leaves the frame around it default grey.
+    // Explicit values are never overridden; see `lib/theme/chrome.ts`.
+    const theme = withDerivedChrome(incoming);
 
     if (theme.isDark) root.classList.add('dark');
     else root.classList.remove('dark');

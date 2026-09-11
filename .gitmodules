@@ -4,15 +4,9 @@
 [submodule "vendor/tinyflows"]
 	path = vendor/tinyflows
 	url = https://github.com/tinyhumansai/tinyflows
-[submodule "vendor/tinycortex"]
-	path = vendor/tinycortex
-	url = https://github.com/tinyhumansai/tinycortex
 [submodule "vendor/tinychannels"]
 	path = vendor/tinychannels
 	url = https://github.com/tinyhumansai/tinychannels
-[submodule "vendor/tinyplace"]
-	path = vendor/tinyplace
-	url = https://github.com/tinyhumansai/tiny.place.git
 [submodule "vendor/tinyhumans-sdk"]
 	path = vendor/tinyhumans-sdk
 	url = https://github.com/tinyhumansai/sdk.git
@@ -30,4 +24,30 @@
 [submodule "vendor/tinyhosts"]
 	path = vendor/tinyhosts
 	url = https://github.com/tinyhumansai/tinyhosts.git
+	branch = main
+[submodule "vendor/tinymcp"]
+	path = vendor/tinymcp
+	url = https://github.com/tinyhumansai/tinymcp
+[submodule "vendor/tinybox"]
+	path = vendor/tinybox
+	url = https://github.com/tinyhumansai/tinybox
+	branch = main
+[submodule "vendor/tinyruntime"]
+	path = vendor/tinyruntime
+	url = https://github.com/tinyhumansai/tinyruntime.git
+[submodule "vendor/tinydocs"]
+	path = vendor/tinydocs
+	url = https://github.com/tinyhumansai/tinydocs
+	branch = main
+[submodule "vendor/tinyvoice"]
+	path = vendor/tinyvoice
+	url = https://github.com/tinyhumansai/tinyvoice
+	branch = main
+[submodule "vendor/tinyjuice"]
+	path = vendor/tinyjuice
+	url = https://github.com/tinyhumansai/tinyjuice
+	branch = main
+[submodule "vendor/tinyconnectors"]
+	path = vendor/tinyconnectors
+	url = https://github.com/tinyhumansai/tinyconnectors
 	branch = main

@@ -3,9 +3,24 @@
 //! Parallel coding workers spawned via [`super::tools::spawn_parallel_agents`]
 //! historically shared one workspace (`Config.action_dir`). Two workers editing
 //! overlapping files left the parent with stale assumptions and silent
-//! clobbers. This module gives each isolated worker its own `git worktree`
-//! checkout of the **user's project repo** (the directory the coding agent
-//! edits), so file edits never collide.
+//! clobbers. Each isolated worker instead gets its own `git worktree` checkout
+//! of the **user's project repo** (the directory the coding agent edits), so
+//! file edits never collide.
+//!
+//! ## Where the implementation lives
+//!
+//! The git plumbing itself is **TinyAgents'**
+//! ([`tinyagents_harness::workspace::git`]): worktree create/list/status/diff/
+//! remove, repo-root validation, run-id sanitizing, and cross-worker overlap
+//! detection are host-agnostic and are re-exported here under their historical
+//! OpenHuman names so call sites and the RPC surface are unchanged.
+//!
+//! What stays in OpenHuman is the part that depends on *this* host: the
+//! [`OpenHumanWorktreeIsolation`] adapter, which stamps an
+//! `openhuman.worktree:{agent}:{run_id}` policy id onto prepared descriptors and
+//! announces workspace lifecycle on the OpenHuman event bus so audit and
+//! observability subscribers can correlate an isolated run with its allowed
+//! root.
 //!
 //! ## Scope and safety
 //!
@@ -23,132 +38,96 @@
 //! configuration that could redirect operations elsewhere.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use serde::{Deserialize, Serialize};
-use tinyagents::harness::tool::SandboxMode;
-use tinyagents::harness::workspace::{WorkspaceDescriptor, WorkspaceIsolation};
+use tinyagents_harness::tool::SandboxMode;
+use tinyagents_harness::workspace::{
+    GitWorktreeIsolation, WorkspaceDescriptor, WorkspaceIsolation,
+};
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 
-/// Directory (relative to the repo root) under which isolated worker
-/// worktrees are created — mirrors Claude Code's `.claude/worktrees/`
-/// convention so the layout is familiar and easy to `.gitignore`.
-pub const WORKTREE_SUBDIR: &str = ".claude/worktrees";
+// The git worktree surface is TinyAgents'. These aliases keep the historical
+// OpenHuman spellings — `worktree::create`, `worktree::BaseRef`,
+// `WorktreeStatus` — so the RPC schemas, tools, and tests that name them do not
+// change. `WorktreeStatus` in particular is serialized straight to the desktop
+// UI; it is field- and `serde`-identical to the crate type, pinned by
+// `worktree_status_serializes_with_stable_camel_case_keys`.
+pub use tinyagents_harness::workspace::{
+    create_git_worktree as create, detect_worktree_overlaps as detect_overlaps,
+    git_worktree_diff_summary as diff_summary, git_worktree_status as status,
+    list_git_worktrees as list, remove_git_worktree as remove, GitWorktreeBaseRef as BaseRef,
+    GitWorktreeError as WorktreeError, GitWorktreeStatus as WorktreeStatus,
+    GIT_WORKTREE_SUBDIR as WORKTREE_SUBDIR,
+};
 
-/// Which ref a new worktree branches from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BaseRef {
-    /// Branch off the repo's current `HEAD` — the worker sees the parent's
-    /// in-progress state.
-    Head,
-    /// Branch off the repository's default branch (origin/HEAD, else the
-    /// local default) — the worker starts from a clean, known baseline.
-    Fresh,
-}
-
-impl BaseRef {
-    /// Parse the spawn-request string form. Unknown / empty values default
-    /// to [`BaseRef::Head`] (the least-surprising baseline for a worker that
-    /// continues the parent's work).
-    pub fn parse(value: Option<&str>) -> Self {
-        match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-            Some("fresh") => Self::Fresh,
-            _ => Self::Head,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Head => "head",
-            Self::Fresh => "fresh",
-        }
-    }
-}
-
-/// Snapshot of a single worktree's state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorktreeStatus {
-    /// Absolute path to the worktree checkout.
-    pub path: PathBuf,
-    /// Branch the worktree currently has checked out (or a detached-HEAD
-    /// label like `(detached HEAD)`), if resolvable.
-    pub branch: Option<String>,
-    /// Whether the worktree has uncommitted changes (staged, unstaged, or
-    /// untracked). A dirty worktree must not be auto-removed.
-    pub is_dirty: bool,
-    /// Paths (relative to the worktree root) that differ from HEAD.
-    pub changed_files: Vec<PathBuf>,
-}
-
-/// TinyAgents [`WorkspaceIsolation`] adapter backed by OpenHuman's git-worktree
-/// policy.
+/// OpenHuman's [`WorkspaceIsolation`] adapter over the TinyAgents git-worktree
+/// provider.
+///
+/// The crate's [`GitWorktreeIsolation`] already prepares and cleans up the
+/// checkout. This wrapper adds the two things that are OpenHuman's rather than
+/// every host's: the `openhuman.worktree:*` policy-id convention, and
+/// [`DomainEvent::WorkspacePrepared`] / [`DomainEvent::WorkspaceCleanup`]
+/// announcements on the global bus.
 #[derive(Debug, Clone)]
-pub struct GitWorktreeIsolation {
-    repo_root: PathBuf,
-    base_ref: BaseRef,
-    sandbox: SandboxMode,
-    trusted_roots: Vec<PathBuf>,
+pub struct OpenHumanWorktreeIsolation {
+    inner: GitWorktreeIsolation,
 }
 
-impl GitWorktreeIsolation {
+impl OpenHumanWorktreeIsolation {
     /// Create an isolation provider rooted at the user's project repo.
     pub fn new(repo_root: impl Into<PathBuf>) -> Self {
         Self {
-            repo_root: repo_root.into(),
-            base_ref: BaseRef::Head,
-            sandbox: SandboxMode::Inherit,
-            trusted_roots: Vec::new(),
+            inner: GitWorktreeIsolation::new(repo_root),
         }
     }
 
-    /// Select which ref newly prepared worktrees branch from.
+    /// Select which ref new worktrees branch from.
     pub fn with_base_ref(mut self, base_ref: BaseRef) -> Self {
-        self.base_ref = base_ref;
+        self.inner = self.inner.with_base_ref(base_ref);
         self
     }
 
     /// Advertise the sandbox expectation on prepared descriptors.
     pub fn with_sandbox(mut self, sandbox: SandboxMode) -> Self {
-        self.sandbox = sandbox;
+        self.inner = self.inner.with_sandbox(sandbox);
         self
     }
 
     /// Add an extra root tools may touch alongside the isolated checkout.
     pub fn with_trusted_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.trusted_roots.push(root.into());
+        self.inner = self.inner.with_trusted_root(root);
         self
+    }
+
+    /// OpenHuman's policy-id convention for an isolated run.
+    fn policy_id(run_id: &str, agent: Option<&str>) -> String {
+        match agent {
+            Some(agent) if !agent.is_empty() => format!("openhuman.worktree:{agent}:{run_id}"),
+            _ => format!("openhuman.worktree:{run_id}"),
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl WorkspaceIsolation for GitWorktreeIsolation {
+impl WorkspaceIsolation for OpenHumanWorktreeIsolation {
     async fn prepare(
         &self,
         run_id: &str,
         agent: Option<&str>,
-    ) -> tinyagents::Result<WorkspaceDescriptor> {
+    ) -> tinyagents_harness::Result<WorkspaceDescriptor> {
         tracing::debug!(
-            repo = %self.repo_root.display(),
             run_id,
             agent = agent.unwrap_or(""),
-            base_ref = self.base_ref.as_str(),
             "[worktree] workspace_prepare_start"
         );
-        let status = create(&self.repo_root, run_id, self.base_ref)
-            .map_err(|err| tinyagents::TinyAgentsError::Tool(err.to_string()))?;
-        let policy_id = match agent {
-            Some(agent) if !agent.is_empty() => format!("openhuman.worktree:{agent}:{run_id}"),
-            _ => format!("openhuman.worktree:{run_id}"),
-        };
-        let mut descriptor = WorkspaceDescriptor::new(status.path.clone())
-            .with_policy_id(policy_id)
-            .with_sandbox(self.sandbox);
-        for root in &self.trusted_roots {
-            descriptor = descriptor.with_trusted_root(root.clone());
-        }
+
+        let descriptor = self
+            .inner
+            .prepare(run_id, agent)
+            .await?
+            .with_policy_id(Self::policy_id(run_id, agent));
+
         tracing::debug!(
             root = %descriptor.root.display(),
             policy_id = %descriptor.policy_id,
@@ -168,14 +147,14 @@ impl WorkspaceIsolation for GitWorktreeIsolation {
         Ok(descriptor)
     }
 
-    async fn cleanup(&self, descriptor: &WorkspaceDescriptor) -> tinyagents::Result<()> {
+    async fn cleanup(&self, descriptor: &WorkspaceDescriptor) -> tinyagents_harness::Result<()> {
         tracing::debug!(
-            repo = %self.repo_root.display(),
             root = %descriptor.root.display(),
             policy_id = %descriptor.policy_id,
             "[worktree] workspace_cleanup_start"
         );
-        match remove(&self.repo_root, &descriptor.root, false) {
+
+        match self.inner.cleanup(descriptor).await {
             Ok(()) => {
                 tracing::debug!(
                     root = %descriptor.root.display(),
@@ -207,9 +186,9 @@ impl WorkspaceIsolation for GitWorktreeIsolation {
                 );
                 let _ = BUS.publish(DomainEvent::WorkspaceCleanup {
                     policy_id: descriptor.policy_id.clone(),
-                    error: Some(message.clone()),
+                    error: Some(message),
                 });
-                Err(tinyagents::TinyAgentsError::Tool(message))
+                Err(err)
             }
         }
     }
@@ -227,390 +206,33 @@ impl WorkspaceIsolation for GitWorktreeIsolation {
 /// observability + fail-closed signal keyed on the descriptor the isolated run
 /// carries.
 ///
-/// [`EventSink`]: tinyagents::harness::events::EventSink
+/// [`EventSink`]: tinyagents_harness::events::EventSink
 pub fn enforce_workspace_path(
     descriptor: &WorkspaceDescriptor,
     path: &Path,
-) -> std::result::Result<(), WorktreeError> {
+) -> std::result::Result<(), WorkspacePathError> {
     if descriptor.allows(path) {
         return Ok(());
     }
     let rendered = path.display().to_string();
     tracing::warn!(
         path = %rendered,
-        root = %descriptor.root.display(),
         policy_id = %descriptor.policy_id,
-        "[workspace] workspace_violation_out_of_root"
+        "[workspace] workspace_violation"
     );
-    BUS.publish(DomainEvent::WorkspaceViolation {
-        path: rendered.clone(),
-    });
-    Err(WorktreeError::OutsideWorkspace(path.to_path_buf()))
+    BUS.publish(DomainEvent::WorkspaceViolation { path: rendered });
+    Err(WorkspacePathError::OutsideWorkspace(path.to_path_buf()))
 }
 
-/// Errors surfaced by the worktree manager. Stringified at the RPC / tool
-/// boundary.
+/// Rejection from [`enforce_workspace_path`].
+///
+/// Separate from [`WorktreeError`] (which is TinyAgents' git-plumbing error)
+/// because this gate is about OpenHuman's descriptor policy, not about git.
 #[derive(Debug, thiserror::Error)]
-pub enum WorktreeError {
-    #[error("path is not inside a git repository: {0}")]
-    NotAGitRepo(PathBuf),
-
-    #[error("worktree is dirty and force=false; refusing to remove: {0}")]
-    DirtyRefused(PathBuf),
-
+pub enum WorkspacePathError {
+    /// The path escaped every root the descriptor allows.
     #[error("path is outside the allowed workspace roots: {0}")]
     OutsideWorkspace(PathBuf),
-
-    #[error("git command `{command}` failed: {stderr}")]
-    GitFailed { command: String, stderr: String },
-
-    #[error("io error running git: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-type Result<T> = std::result::Result<T, WorktreeError>;
-
-/// Run `git <args>` in `cwd`, returning trimmed stdout on success.
-fn git(cwd: &Path, args: &[&str]) -> Result<String> {
-    tracing::debug!(
-        cwd = %cwd.display(),
-        args = ?args,
-        "[worktree] git_invoke"
-    );
-    let output = Command::new("git").current_dir(cwd).args(args).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        tracing::debug!(
-            cwd = %cwd.display(),
-            args = ?args,
-            stderr = %stderr,
-            "[worktree] git_failed"
-        );
-        return Err(WorktreeError::GitFailed {
-            command: format!("git {}", args.join(" ")),
-            stderr,
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Like [`git`] but returns stdout **without** trimming, preserving the
-/// leading whitespace that porcelain v1 status lines depend on for column
-/// alignment. Trailing newline is left intact; callers iterate `.lines()`.
-fn git_raw(cwd: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git").current_dir(cwd).args(args).output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(WorktreeError::GitFailed {
-            command: format!("git {}", args.join(" ")),
-            stderr,
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Validate that `repo_root` is inside a real git work tree. Returns the
-/// repository's top-level directory on success.
-fn validate_repo_root(repo_root: &Path) -> Result<PathBuf> {
-    if !repo_root.exists() {
-        return Err(WorktreeError::NotAGitRepo(repo_root.to_path_buf()));
-    }
-    // `--is-inside-work-tree` prints "true" when inside a work tree. We then
-    // resolve the canonical top level so all later operations anchor on it.
-    let inside = git(repo_root, &["rev-parse", "--is-inside-work-tree"])
-        .map_err(|_| WorktreeError::NotAGitRepo(repo_root.to_path_buf()))?;
-    if inside.trim() != "true" {
-        return Err(WorktreeError::NotAGitRepo(repo_root.to_path_buf()));
-    }
-    let top = git(repo_root, &["rev-parse", "--show-toplevel"])
-        .map_err(|_| WorktreeError::NotAGitRepo(repo_root.to_path_buf()))?;
-    Ok(PathBuf::from(top.trim()))
-}
-
-/// Resolve the repo's default branch ref for `BaseRef::Fresh`. Prefers
-/// `origin/HEAD`; falls back to the local `HEAD` symbolic ref, then `main`.
-fn resolve_fresh_base(repo_top: &Path) -> String {
-    // origin/HEAD → e.g. "origin/main"
-    if let Ok(sym) = git(
-        repo_top,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    ) {
-        if !sym.is_empty() {
-            return sym;
-        }
-    }
-    // Local default branch name.
-    if let Ok(head) = git(repo_top, &["symbolic-ref", "--short", "HEAD"]) {
-        if !head.is_empty() {
-            return head;
-        }
-    }
-    "main".to_string()
-}
-
-/// Create an isolated worktree for `run_id` under
-/// `<repo>/.claude/worktrees/<run_id>`, branching off `base_ref`.
-///
-/// The new branch is named `worker/<run_id>`. Returns the worktree's status
-/// snapshot (freshly created, so `is_dirty = false`).
-pub fn create(repo_root: &Path, run_id: &str, base_ref: BaseRef) -> Result<WorktreeStatus> {
-    let repo_top = validate_repo_root(repo_root)?;
-    let run_slug = sanitize_run_id(run_id);
-    let worktree_path = repo_top.join(WORKTREE_SUBDIR).join(&run_slug);
-    let branch = format!("worker/{run_slug}");
-
-    let base = match base_ref {
-        BaseRef::Head => "HEAD".to_string(),
-        BaseRef::Fresh => resolve_fresh_base(&repo_top),
-    };
-
-    tracing::debug!(
-        repo = %repo_top.display(),
-        worktree = %worktree_path.display(),
-        branch = %branch,
-        base = %base,
-        base_ref = base_ref.as_str(),
-        "[worktree] create_start"
-    );
-
-    // Ensure the parent dir exists; `git worktree add` creates the leaf.
-    if let Some(parent) = worktree_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let worktree_str = worktree_path.to_string_lossy().to_string();
-    git(
-        &repo_top,
-        &["worktree", "add", "-b", &branch, &worktree_str, &base],
-    )?;
-
-    tracing::debug!(
-        worktree = %worktree_path.display(),
-        branch = %branch,
-        "[worktree] create_done"
-    );
-
-    status(&repo_top, &worktree_path)
-}
-
-/// List all worktrees registered on the repo at `repo_root`, parsed from
-/// `git worktree list --porcelain`.
-pub fn list(repo_root: &Path) -> Result<Vec<WorktreeStatus>> {
-    let repo_top = validate_repo_root(repo_root)?;
-    let porcelain = git(&repo_top, &["worktree", "list", "--porcelain"])?;
-    let mut out = Vec::new();
-    let mut cur_path: Option<PathBuf> = None;
-    let mut cur_branch: Option<String> = None;
-
-    let mut flush = |path: &mut Option<PathBuf>, branch: &mut Option<String>| {
-        if let Some(p) = path.take() {
-            // status() re-derives dirty + changed files for the worktree.
-            let (is_dirty, changed_files) = dirty_state(&p).unwrap_or((false, Vec::new()));
-            out.push(WorktreeStatus {
-                path: p,
-                branch: branch.take(),
-                is_dirty,
-                changed_files,
-            });
-        } else {
-            *branch = None;
-        }
-    };
-
-    for line in porcelain.lines() {
-        if let Some(rest) = line.strip_prefix("worktree ") {
-            // New record begins — flush the previous one.
-            flush(&mut cur_path, &mut cur_branch);
-            cur_path = Some(PathBuf::from(rest.trim()));
-        } else if let Some(rest) = line.strip_prefix("branch ") {
-            // "branch refs/heads/foo" → "foo"
-            cur_branch = Some(
-                rest.trim()
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(rest.trim())
-                    .to_string(),
-            );
-        } else if line.trim() == "detached" {
-            cur_branch = Some("(detached HEAD)".to_string());
-        }
-    }
-    flush(&mut cur_path, &mut cur_branch);
-
-    tracing::debug!(
-        repo = %repo_top.display(),
-        count = out.len(),
-        "[worktree] list_done"
-    );
-    Ok(out)
-}
-
-/// Branch + dirty + changed-file snapshot for a single worktree.
-pub fn status(repo_root: &Path, worktree_path: &Path) -> Result<WorktreeStatus> {
-    validate_repo_root(repo_root)?;
-    if !worktree_path.exists() {
-        return Err(WorktreeError::NotAGitRepo(worktree_path.to_path_buf()));
-    }
-    let branch = git(worktree_path, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .ok()
-        .map(|b| {
-            if b == "HEAD" {
-                "(detached HEAD)".to_string()
-            } else {
-                b
-            }
-        });
-    let (is_dirty, changed_files) = dirty_state(worktree_path)?;
-    Ok(WorktreeStatus {
-        path: worktree_path.to_path_buf(),
-        branch,
-        is_dirty,
-        changed_files,
-    })
-}
-
-/// Human-readable diff stat of a worktree's working changes vs HEAD,
-/// including untracked files. Returns an empty string for a clean worktree.
-pub fn diff_summary(repo_root: &Path, worktree_path: &Path) -> Result<String> {
-    validate_repo_root(repo_root)?;
-    // `--stat` over both staged and unstaged changes vs HEAD.
-    let stat = git(worktree_path, &["diff", "HEAD", "--stat"])?;
-    let untracked = git(
-        worktree_path,
-        &["ls-files", "--others", "--exclude-standard"],
-    )?;
-    let mut parts = Vec::new();
-    if !stat.is_empty() {
-        parts.push(stat);
-    }
-    if !untracked.is_empty() {
-        let lines: Vec<String> = untracked
-            .lines()
-            .map(|l| format!(" {l} (untracked)"))
-            .collect();
-        parts.push(lines.join("\n"));
-    }
-    Ok(parts.join("\n"))
-}
-
-/// Remove a worktree. **Refuses to remove a dirty worktree unless
-/// `force = true`** — the core safety guarantee of #3376.
-///
-/// On `force = true`, a dirty worktree is removed with `git worktree remove
-/// --force`. The associated `worker/<run_id>` branch is left intact so the
-/// caller can still inspect or merge the work.
-pub fn remove(repo_root: &Path, worktree_path: &Path, force: bool) -> Result<()> {
-    let repo_top = validate_repo_root(repo_root)?;
-    let (is_dirty, _changed) = dirty_state(worktree_path).unwrap_or((false, Vec::new()));
-
-    tracing::debug!(
-        repo = %repo_top.display(),
-        worktree = %worktree_path.display(),
-        is_dirty,
-        force,
-        "[worktree] remove_start"
-    );
-
-    if is_dirty && !force {
-        tracing::warn!(
-            worktree = %worktree_path.display(),
-            "[worktree] remove_refused_dirty"
-        );
-        return Err(WorktreeError::DirtyRefused(worktree_path.to_path_buf()));
-    }
-
-    let worktree_str = worktree_path.to_string_lossy().to_string();
-    let mut args = vec!["worktree", "remove", &worktree_str];
-    if force {
-        args.push("--force");
-    }
-    git(&repo_top, &args)?;
-    tracing::debug!(
-        worktree = %worktree_path.display(),
-        "[worktree] remove_done"
-    );
-    Ok(())
-}
-
-/// Compute `(is_dirty, changed_files)` for a worktree via
-/// `git status --porcelain`. A worktree is dirty when any tracked file is
-/// modified/staged or any untracked (non-ignored) file is present.
-///
-/// Uses the raw (un-trimmed) command output: porcelain v1 lines are
-/// column-aligned (`XY␠PATH`, status = 2 chars), so a global `.trim()` would
-/// corrupt the leading space of a `␠M file` line and shift the path. We parse
-/// the raw bytes and slice the fixed 3-char `XY␠` prefix per line.
-fn dirty_state(worktree_path: &Path) -> Result<(bool, Vec<PathBuf>)> {
-    let porcelain = git_raw(worktree_path, &["status", "--porcelain"])?;
-    let mut changed = Vec::new();
-    for line in porcelain.lines() {
-        // Porcelain v1 line: "XY <path>" — status is exactly 2 chars, then a
-        // single separator space, so the path always starts at byte index 3.
-        if line.len() > 3 {
-            let path = line[3..].trim_end();
-            // Rename lines look like "old -> new"; record the new path.
-            let path = path.rsplit(" -> ").next().unwrap_or(path);
-            changed.push(PathBuf::from(path));
-        }
-    }
-    changed.sort();
-    changed.dedup();
-    Ok((!changed.is_empty(), changed))
-}
-
-/// Sanitize a `run_id` into a filesystem-safe single path segment.
-fn sanitize_run_id(run_id: &str) -> String {
-    let cleaned: String = run_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('-');
-    if trimmed.is_empty() {
-        "worker".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-/// Detect changed files touched by more than one sibling worker.
-///
-/// Input maps each worker's id to the set of files it changed (relative
-/// paths, as produced by [`WorktreeStatus::changed_files`]). Output maps each
-/// overlapping file to the sorted list of worker ids that touched it — empty
-/// when there is no overlap. Used to surface a pre-merge conflict warning.
-pub fn detect_overlaps(
-    per_worker: &[(String, Vec<PathBuf>)],
-) -> std::collections::BTreeMap<PathBuf, Vec<String>> {
-    use std::collections::BTreeMap;
-    let mut by_file: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
-    for (worker_id, files) in per_worker {
-        let mut seen = std::collections::BTreeSet::new();
-        for f in files {
-            if seen.insert(f.clone()) {
-                by_file
-                    .entry(f.clone())
-                    .or_default()
-                    .push(worker_id.clone());
-            }
-        }
-    }
-    by_file
-        .into_iter()
-        .filter_map(|(file, mut workers)| {
-            workers.sort();
-            workers.dedup();
-            if workers.len() > 1 {
-                Some((file, workers))
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

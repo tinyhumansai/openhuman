@@ -9,4 +9,5 @@ mod hook;
 pub use hook::hook_env;
 
 #[cfg(test)]
+#[path = "git_attribution_tests.rs"]
 mod tests;

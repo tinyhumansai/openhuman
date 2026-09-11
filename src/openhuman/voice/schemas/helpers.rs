@@ -104,32 +104,52 @@ pub(super) fn effective_tts_provider(config: &crate::openhuman::config::Config) 
     crate::openhuman::voice::effective_tts_provider(config)
 }
 
-/// Validate a TTS provider's API key by hitting a lightweight read-only endpoint
-/// rather than synthesizing audio (which requires a valid voice ID).
-pub(super) async fn validate_tts_provider_key(
+/// Validate a voice provider's API key by hitting a lightweight read-only
+/// endpoint rather than synthesizing audio or transcribing a clip (both of
+/// which need a valid voice/model id, and both of which cost the user a real
+/// inference call just to answer "is this key good?").
+///
+/// `candidate_key` makes this a **dry run**: when the caller supplies a key,
+/// it is validated as-is and nothing is read from the keychain, so the settings
+/// modal can check a key the user typed *before* deciding to store it (#5896).
+/// Passing `None` falls back to the stored credential for the slug, which is
+/// what the already-configured "Test" buttons in the routing section want.
+///
+/// Likewise the endpoint is resolved from `config.voice_providers` when the
+/// provider is already registered, and from `builtin_voice_provider`
+/// otherwise — a first-time key check happens before any config entry exists.
+pub(super) async fn validate_provider_key(
     provider: &str,
     config: &crate::openhuman::config::Config,
+    candidate_key: Option<&str>,
 ) -> Result<String, String> {
+    use crate::openhuman::config::schema::voice_providers::builtin_voice_provider;
+
     let (slug, _model) = if let Some(pos) = provider.find(':') {
         (&provider[..pos], &provider[pos + 1..])
     } else {
         (provider, "")
     };
 
-    let entry = config
+    let endpoint = config
         .voice_providers
         .iter()
         .find(|p| p.slug == slug)
+        .map(|p| p.endpoint.as_str())
+        .or_else(|| builtin_voice_provider(slug).map(|b| b.endpoint))
         .ok_or_else(|| format!("no voice provider with slug '{slug}'"))?;
 
-    let api_key = crate::openhuman::inference::provider::factory::lookup_key_for_slug(slug, config)
-        .unwrap_or_default();
+    let api_key = match candidate_key.map(str::trim) {
+        Some(k) if !k.is_empty() => k.to_string(),
+        _ => crate::openhuman::inference::provider::factory::lookup_key_for_slug(slug, config)
+            .unwrap_or_default(),
+    };
 
     if api_key.is_empty() {
         return Err("no API key configured for this provider".to_string());
     }
 
-    let endpoint = entry.endpoint.trim_end_matches('/');
+    let endpoint = endpoint.trim_end_matches('/');
     let client = reqwest::Client::new();
 
     // ElevenLabs: GET /user/subscription requires only basic auth (no
@@ -140,12 +160,19 @@ pub(super) async fn validate_tts_provider_key(
         format!("{endpoint}/models")
     };
 
-    let mut req = client.get(&url);
-    if slug == "elevenlabs" {
-        req = req.header("xi-api-key", &api_key);
-    } else {
-        req = req.header("Authorization", format!("Bearer {api_key}"));
-    }
+    // Auth headers must match what the real providers send, or a valid key
+    // reads as invalid. Deepgram in particular uses `Token`, not `Bearer`
+    // (see `factory::stt_providers`) — validating it as Bearer would 401 on
+    // a perfectly good key.
+    let req = match slug {
+        "elevenlabs" => client.get(&url).header("xi-api-key", &api_key),
+        "deepgram" => client
+            .get(&url)
+            .header("Authorization", format!("Token {api_key}")),
+        _ => client
+            .get(&url)
+            .header("Authorization", format!("Bearer {api_key}")),
+    };
 
     let resp = req
         .send()
@@ -153,7 +180,7 @@ pub(super) async fn validate_tts_provider_key(
         .map_err(|e| format!("request failed: {e}"))?;
 
     if resp.status().is_success() {
-        Ok("TTS provider key is valid".to_string())
+        Ok("Provider key is valid".to_string())
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();

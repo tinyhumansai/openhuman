@@ -2,7 +2,7 @@
 //! (#3883).
 //!
 //! **The mechanics now live in
-//! [`tinyagents::harness::artifacts`]** — thresholds, path resolution, pointer
+//! [`tinyagents_harness::artifacts`]** — thresholds, path resolution, pointer
 //! rendering, the symlink re-check, and the writer itself. This module is what
 //! `plan-agents.md` Phase 5 leaves behind: the wiring, plus the two halves that
 //! are genuinely OpenHuman's.
@@ -51,7 +51,7 @@ pub mod policy;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tinyagents::harness::artifacts::ArtifactOffload;
+use tinyagents_harness::artifacts::ArtifactOffload;
 
 use crate::openhuman::security::SecurityPolicy;
 
@@ -60,7 +60,7 @@ pub use contract::{
     OFFLOAD_WRITE_TOOL,
 };
 pub use policy::{SanitizingRedactor, WorkspaceGuard};
-pub use tinyagents::harness::artifacts::{
+pub use tinyagents_harness::artifacts::{
     build_abstract, effective_offload_threshold, extract_artifact_paths, note_artifact_handoff,
     relative_to_root as relative_to_action_dir, render_artifact_pointer, resolve_artifact_path,
     sanitize_component, should_offload, ArtifactKind, ArtifactOffload as Offload, OffloadError,
@@ -113,7 +113,7 @@ pub async fn offload_oversized_result(
     offload: &ArtifactOffload,
     threshold_bytes: usize,
 ) -> (String, Option<OffloadedArtifact>) {
-    tinyagents::harness::artifacts::offload_oversized_result(
+    tinyagents_harness::artifacts::offload_oversized_result(
         output,
         offload,
         threshold_bytes,
@@ -123,5 +123,5 @@ pub async fn offload_oversized_result(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "artifact_offload_tests.rs"]
 mod tests;

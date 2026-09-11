@@ -23,13 +23,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::openhuman::memory::api::provider::MemoryCore as _;
-use crate::openhuman::memory::api::types::MemoryCategory;
 use crate::openhuman::memory::ops::guard::active_memory_guard;
+use crate::openhuman::memory::safety;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
-use tinymemory_core::store::safety;
+use tinymemory_api::provider::MemoryCore as _;
+use tinymemory_api::types::MemoryCategory;
 
 // Namespace constants live in `memory::preferences` so the write path (here),
 // the system-prompt builder (Lane A), and per-turn recall (Lane B) all share a
@@ -103,16 +103,7 @@ impl Tool for SavePreferenceTool {
     }
 
     fn description(&self) -> &str {
-        "Save a user preference so it shapes future replies. Call this when the user states or \
-         asks to remember a preference. Choose `category`:\n\
-         - \"general\": applies to EVERY reply regardless of topic — tone, language, identity, \
-           standing habits (e.g. \"reply in British English\", \"be terse\", \"I'm in IST\", \
-           \"I'm vegetarian\"). Present in every conversation.\n\
-         - \"situational\": only relevant when its topic comes up (e.g. \"when writing Rust prefer \
-           X\", \"be formal in emails to my manager\", \"my AWS account is Y\"). Surfaced only when \
-           the user's message relates to it.\n\
-         `topic` is a short snake_case slug (e.g. reply_language, email_tone_boss, cuisine); \
-         re-saving the same topic overwrites the previous value — no duplicates are created."
+        "Save a user preference so it shapes future replies; call this whenever the user states one. `category` \"general\" applies to every reply (tone, language, locale, standing habits); \"situational\" surfaces only when its topic comes up. Re-saving the same `topic` slug overwrites rather than duplicating."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -257,7 +248,7 @@ impl Tool for SavePreferenceTool {
                 value,
                 MemoryCategory::Core,
                 None,
-                crate::openhuman::memory::api::types::MemoryTaint::Internal,
+                tinymemory_api::types::MemoryTaint::Internal,
             )
             .await
         {

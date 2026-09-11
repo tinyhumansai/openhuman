@@ -1,0 +1,11 @@
+[[permission]]
+identifier = "allow-directory-picker"
+description = "Allow opening the OS-native directory chooser so the folder memory-source can store the absolute path the user picked (#5831)"
+
+[permission.commands]
+
+allow = [
+    "pick_directory_via_dialog",
+]
+
+deny = []

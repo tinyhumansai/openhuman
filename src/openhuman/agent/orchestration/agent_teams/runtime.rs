@@ -23,8 +23,7 @@
 //! worker's prompt **at spawn** (a well-defined boundary), and are always
 //! visible in the team timeline. Mid-turn injection into an already-running
 //! harness loop is intentionally **not** supported — the orchestration layer has
-//! no live inbox (`AgentOrchestrationSession::message_agent` records metadata
-//! only). Boundary delivery satisfies the issue's "see the message in the team
+//! no live inbox. Boundary delivery satisfies the issue's "see the message in the team
 //! timeline or worker thread" criterion via both paths; a live inbox would be a
 //! separate orchestration-layer change.
 
@@ -33,10 +32,10 @@ use serde_json::json;
 
 use crate::openhuman::agent::orchestration::parent_context::with_root_parent;
 use crate::openhuman::agent::orchestration::{
-    AgentOrchestrationSession, AgentStatus, SpawnAgentRequest, WaitAgentOptions,
+    AgentOrchestrationSession, OrchestrationTaskStatus, SpawnAgentRequest, WaitAgentOptions,
 };
 use crate::openhuman::config::Config;
-use tinyagents::session::run_ledger::{
+use tinyagents_session::run_ledger::{
     self, AgentTeamMemberStatus, AgentTeamTask, AgentTeamTaskStatus, ClaimOutcome, RunEvent,
     RunEventAppend, RunEventListRequest,
 };
@@ -300,16 +299,18 @@ async fn drive_member(
                     .ok_or_else(|| anyhow!("worker snapshot missing after wait"))?;
 
                 Ok(match snapshot.status {
-                    AgentStatus::Completed => super::graph::MemberOutcome::Completed {
+                    OrchestrationTaskStatus::Completed => super::graph::MemberOutcome::Completed {
                         output: snapshot.result_summary.unwrap_or_default(),
                     },
-                    AgentStatus::Failed | AgentStatus::Cancelled | AgentStatus::Closed => {
-                        super::graph::MemberOutcome::Failed {
-                            reason: snapshot
-                                .error
-                                .unwrap_or_else(|| "worker ended without completing".to_string()),
-                        }
-                    }
+                    OrchestrationTaskStatus::Failed
+                    | OrchestrationTaskStatus::Cancelled
+                    | OrchestrationTaskStatus::CancelRequested
+                    | OrchestrationTaskStatus::TimedOut
+                    | OrchestrationTaskStatus::Abandoned => super::graph::MemberOutcome::Failed {
+                        reason: snapshot
+                            .error
+                            .unwrap_or_else(|| "worker ended without completing".to_string()),
+                    },
                     // `wait_agents` with no timeout only returns on terminal
                     // status, so this is purely defensive — treat as a failure.
                     other => super::graph::MemberOutcome::Failed {

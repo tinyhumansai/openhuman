@@ -61,9 +61,6 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
-      # The vendored engine owns migrated memory tests; Cargo does not run
-      # dependency tests as part of the OpenHuman crate suite.
-      tinycortex: ${{ steps.filter.outputs.tinycortex }}
       # Shell-quoted list of changed src/ + tests/ files, consumed by
       # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
       rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
@@ -155,6 +152,8 @@ jobs:
               # lane FAILS, so they arm it for the same reason.
               - 'scripts/ci/assert-coverage-presence.sh'
               - 'scripts/ci/coverage-presence-allowlist.txt'
+              - 'scripts/ci/check-openhuman-rust-layout.mjs'
+              - 'scripts/ci/list-feature-gated-rust-tests.mjs'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
@@ -201,12 +200,6 @@ jobs:
             rust-core-src:
               - 'src/**'
               - 'tests/**'
-            tinycortex:
-              - '.github/workflows/ci-lite.yml'
-              - '.github/workflows/test-reusable.yml'
-              - '.gitmodules'
-              - 'scripts/ci-cancel-aware.sh'
-              - 'vendor/tinycortex'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -228,8 +221,20 @@ jobs:
               - 'scripts/mock-api/**'
               - 'scripts/*.mjs'
               - 'scripts/__tests__/**'
+              # The release-notes generator has node --test coverage in
+              # scripts/__tests__/ but lives one directory down, so the
+              # 'scripts/*.mjs' glob above never armed this lane for it — its
+              # tests could not have caught the v0.63.21 git ENOBUFS regression.
+              - 'scripts/release/*.mjs'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'
+              # Shared logic behind the gate CLIs, and the module-pin gate's own
+              # files. Without these a change to the checking logic would skip
+              # the lane that tests it — the gate would stop watching itself.
+              - 'scripts/lib/**'
+              - 'scripts/ci/check-module-pins.mjs'
+              - 'scripts/ci/check-submodule-monotonic.mjs'
+              - 'scripts/ci/module-pin-exemptions.json'
             # Test-wiring surface: a change here can orphan a test or add an
             # untested controller domain → run the inventory guard.
             inventory:
@@ -272,7 +277,10 @@ jobs:
           persist-credentials: false
 
       # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
-      # vendor/tinychannels/src/controllers/schemas.rs at test time. This lane
+      # vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs
+      # at test time (controller metadata is contract, so it lives in the bus
+      # crate). Still one submodule — the bus crate is a workspace member of
+      # vendor/tinychannels, not a submodule of its own. This lane
       # otherwise checks out without submodules, so init just that one — not
       # `submodules: recursive`, which would also pull the large tauri-cef fork
       # this job never builds. Mirrors the same fix in test-reusable.yml's
@@ -407,6 +415,10 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Enforce OpenHuman Rust file layout
+        if: needs.changes.outputs['rust-core'] == 'true'
+        run: node scripts/ci/check-openhuman-rust-layout.mjs
+
       - name: Enforce Linux TLS dependency policy
         if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
         run: bash scripts/check-linux-tls-dependencies.sh
@@ -495,17 +507,35 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features
 
       - name: Check the gates that are in NEITHER the contributor nor the product set
-        # `tui` is the one gate that is default-OFF *and* deliberately not
-        # forwarded to the desktop shell (it is a terminal front-end; the app
-        # ships its own UI). That combination means nothing else in CI compiles
-        # it: the product lanes do not select it, the contributor lanes no
-        # longer default it on, and the gates-off check above turns it off.
+        # Two gates are default-OFF *and* absent from the product set, so
+        # nothing else in CI compiles them: the product lanes do not select
+        # them, the contributor lanes no longer default them on, and the
+        # gates-off check above turns them off.
         #
-        # Without this step the ratatui front-end would rot silently — which is
-        # the same shape of failure as #4901, just pointed at a gate instead of
-        # at the shipped app. If a future gate lands in this same
-        # neither-set position, add it here.
-        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+        #   tui               — a terminal front-end; the app ships its own UI.
+        #   e2e-test-support  — the `test`/`test_support` RPC family, turned on
+        #                       only by app/scripts/e2e-build.sh for the packaged
+        #                       desktop E2E binary. It includes
+        #                       `openhuman.test_reset`, a destructive in-place
+        #                       wipe, which is exactly why it must stay out of
+        #                       every product lane — so a compile-only smoke
+        #                       check here is the right shape, not enabling it
+        #                       somewhere that ships.
+        #
+        # Without this step those families rot silently — the same shape of
+        # failure as #4901, pointed at a gate instead of at the shipped app.
+        # `e2e-test-support` sat in this position from the day it was added
+        # until #6086 and was never `cargo check`ed by CI in either state.
+        #
+        # Checked in SEPARATE invocations on purpose: `--features tui,e2e-test-support`
+        # would let one gate compile only because the other pulled a dependency
+        # in, which is the false pass this lane exists to prevent.
+        #
+        # If a future gate lands in this same neither-set position, add it here
+        # AND to the list in CLAUDE.md's "gate in neither set" note.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features e2e-test-support
 
       - name: Run the gate-contract tests with the default domain gates disabled
         # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
@@ -533,6 +563,29 @@ jobs:
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features mcp --lib -- \
             mcp::server::resources::
+          # `test_support` is behind `e2e-test-support`, a gate in neither the
+          # contributor nor the product set, so no other lane RUNS these — the
+          # smoke check above only compiles them. That distinction is the whole
+          # point of this step: `resolve_workspace_relative`'s traversal guard
+          # (#6085) failed open for every path that did not exist, from the day
+          # it landed in #1892, and no `cargo check` anywhere could have caught
+          # it because the code compiled perfectly. These are the tests that
+          # would have.
+          #
+          # SCOPED TO `introspect::` ON PURPOSE, and this is a hole, not a
+          # tidy-up: the first run of the unscoped `test_support::` filter found
+          # `test_support::rpc::wipe_memory_tree_removes_content_dirs_and_reports_summary`
+          # already failing here —
+          #   "test_reset: memory_tree wipe failed: wipe_all: driver
+          #    'tinymemory' does not serve Maintenance"
+          # `memory-engine-seams` (= dep:tinymemory-core) is in `default` but not
+          # in product-features.txt, so it is off in this profile. Widening the
+          # feature list to go green would hide exactly what this lane exists to
+          # expose, so the filter is narrowed and the gap is named instead.
+          # Re-widen to `test_support::` once that is resolved.
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features e2e-test-support --lib -- \
+            test_support::introspect::
 
       - name: Guard — the kernel dependency floor may not grow
         # The `--no-default-features --features flows` profile is the surface a
@@ -558,7 +611,36 @@ jobs:
         #
         # This asserts the calibration still holds. If it fails, every
         # projection built on the simulator is suspect until it is fixed.
-        run: python3 scripts/dep-sim.py --cut-nothing --expect-names 264
+        #
+        # The number is the Linux name count of the `flows` profile, so it moves
+        # whenever scripts/kernel-floor.limits does and belongs in the same PR.
+        # 264 -> 265 on 2026-08-21: the tinymemory #76/#77 bump adds exactly one
+        # name, `tinymemory-bus`. 265 -> 267 on 2026-08-22: the MCP extraction
+        # adds `tinymcp` and `tinymcp-bus`. 267 -> 268 on 2026-08-22: language
+        # runtimes moved behind the `tinyruntime` TinyBus module, adding
+        # `tinyruntime-bus`. 268 -> 269 on 2026-08-23: the TinyJuice wire
+        # contract moved into `tinyjuice-bus`, which cannot be gated because
+        # `inference::tokenjuice` compiles in every build. 269 -> 270 on
+        # 2026-08-29: `tinytools` becomes the dependency behind the `Tool`
+        # trait/types, which cannot be gated because `tools/` is kernel
+        # surface — zero transitive additions, native build count unchanged
+        # at 2. 270 -> 273 on 2026-08-30: the `tinyflows` crate's catalog/
+        # storage/copilot surface split into three sibling path-crates in the
+        # SAME vendored workspace (`tinyflows-catalog`, `tinyflows-sqlite`,
+        # `tinyflows-copilot`) — one name each, no new external crate, native
+        # build count unchanged at 2. 273 -> 275 on 2026-08-31: the compatible
+        # dependency refresh recorded in `kernel-floor.limits` raised the
+        # resolved Linux name count while keeping the native build count at 2.
+        # See the kernel-floor history for why
+        # these raises are temporary/justified. macOS resolves one higher per
+        # the host skew recorded in the limits history — this expects the CI
+        # host.
+        #
+        # This number MUST move in lockstep with scripts/kernel-floor.limits —
+        # it is a second source of truth for the same Linux name count and is
+        # not derived from that file. Bump both in the same PR that raises
+        # (or lowers) the floor.
+        run: python3 scripts/dep-sim.py --cut-nothing --expect-names 269
 
       - name: Guard — new feature-gated test modules must be acknowledged
         # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
@@ -570,35 +652,49 @@ jobs:
         run: |
           set -euo pipefail
           EXPECTED=$(cat <<'EOF'
+          core/all.rs
           core/all_tests.rs
           core/cli_tests.rs
           core/dispatch.rs
+          core/jsonrpc.rs
           core/jsonrpc_tests.rs
           core/legacy_aliases.rs
           core/runtime/services.rs
-          openhuman/agent/harness/builtin_definitions.rs
+          embed/harness/builder.rs
+          embed/harness/builder_tests.rs
+          openhuman/agent/harness/builtin_definitions_tests.rs
           openhuman/agent/harness/definition_tests.rs
-          openhuman/agent/harness/session/tests.rs
-          openhuman/agent/harness/subagent_runner/tool_prep.rs
+          openhuman/agent/harness/mod.rs
+          openhuman/agent/harness/session/session_tests_part_01_tests.rs
+          openhuman/agent/harness/subagent_runner/tool_prep_tests.rs
           openhuman/agent/registry/agents/loader.rs
+          openhuman/agent/registry/agents/loader_tests_part_01_tests.rs
+          openhuman/agent/registry/agents/loader_tests_part_02_tests.rs
+          openhuman/agent/registry/agents/loader_tests_part_03_tests.rs
           openhuman/config/migrations/retire_local_whisper_stt_tests.rs
+          openhuman/flows/mod.rs
           openhuman/mcp/server/resources.rs
-          openhuman/memory/people/mod.rs
+          openhuman/mcp/server/tools/mod.rs
           openhuman/platform/socket/event_handlers.rs
           openhuman/platform/socket/ops.rs
-          openhuman/tinyplace/manifest.rs
-          openhuman/tools/registry/ops_tests.rs
-          openhuman/tools/registry/schemas.rs
+          openhuman/skills/mod.rs
+          openhuman/tools/impl/network/http_request.rs
+          openhuman/tools/ops.rs
           openhuman/tools/ops_tests.rs
-          openhuman/voice/compile_status.rs
+          openhuman/tools/ops_tests_part_01_tests.rs
+          openhuman/tools/ops_tests_part_03_tests.rs
+          openhuman/tools/ops_tests_part_04_tests.rs
+          openhuman/tools/registry/ops_tests.rs
+          openhuman/tools/registry/schemas_tests.rs
+          openhuman/voice/compile_status_tests.rs
+          openhuman/web3/mod.rs
           openhuman/web3/stub.rs
           openhuman/web3/wallet/stub.rs
           openhuman/web3/x402/stub.rs
           tui/runner.rs
           EOF
           )
-          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows|channels|contacts)"|#\[cfg\((not\()?all\([^]]*feature = "contacts"' src --include='*.rs' \
-            | xargs grep -lE '#\[test\]|#\[tokio::test\]|fn .*_test' 2>/dev/null | sed 's|^src/||' | sort -u)
+          ACTUAL=$(node scripts/ci/list-feature-gated-rust-tests.mjs | sort -u)
           if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
             echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
             exit 1
@@ -729,29 +825,44 @@ jobs:
           # checkout as the host runner uid while this container runs as root,
           # so a module below $GITHUB_WORKSPACE is correctly refused. Keep
           # native fixtures in a root-owned, container-ephemeral tree instead.
+          # Version and digest are ONE decision and live on adjacent lines for that
+          # reason: the archive name, the release tag and the checksum each used to
+          # carry the version independently, so a bump could update two of the three
+          # and leave a stale digest that only fails after the download. Both values
+          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+          # which is the authoritative pin — copy them from there, never recompute.
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
-          memory_archive="$memory_dir/tinymemory-module-1.0.1-ubuntu-22.04-x86_64.tar.gz"
+          connectors_dir="$module_root/tinyconnectors"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           juice_archive="$juice_dir/tinyjuice-module-0.2.2-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir" "$juice_dir"
-          mkdir -p "$memory_dir" "$juice_dir"
+          rm -rf "$memory_dir" "$juice_dir" "$connectors_dir"
+          mkdir -p "$memory_dir" "$juice_dir" "$connectors_dir"
           curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v1.0.1/$(basename "$memory_archive")" \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
             --output "$memory_archive"
           curl --fail --location --silent --show-error \
             "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.2.2/$(basename "$juice_archive")" \
             --output "$juice_archive"
-          echo "35d13463041f455bebd833a71ba370d891a4e59d1b8e576e81635e2777a0c3dd  $memory_archive" \
+          echo "${memory_sha256}  $memory_archive" \
             | sha256sum --check
           echo "fd8caf7fccb53328870fd26922aa9768d253cd4b3bf758967847d6512df03863  $juice_archive" \
             | sha256sum --check
           # Do not restore the release builder's uid into the trusted tree.
           tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
           tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
+          bash scripts/ci-cancel-aware.sh cargo build --release \
+            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
+          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
+            "$connectors_dir/libtinyconnectors.so"
           echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
             >> "$GITHUB_ENV"
           echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
+            >> "$GITHUB_ENV"
+          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
             >> "$GITHUB_ENV"
 
       - name: Run TinyJuice host-module regression
@@ -1018,6 +1129,51 @@ jobs:
       - name: Verify the desktop shell forwards every default-ON core gate
         run: node scripts/ci/check-feature-forwarding.mjs
 
+  module-pin-gate:
+    name: Module Pin Gate (registry pin matches submodule pin)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Full history and every submodule: the monotonicity half compares this
+          # branch's gitlinks against the base branch's and then asks the
+          # submodule whether the new pin is an ancestor of the old one. Both
+          # answers need real history — `fetch-depth: 1` would leave the script
+          # unable to resolve the base, which it reports as a FAILURE rather than
+          # passing on an empty comparison.
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      # Nine subsystems load as downloaded cdylib modules and each is pinned
+      # twice: once as a submodule (the contract compiled here) and once as a
+      # version + digest in modules/registry.rs (the artifact loaded at runtime).
+      # Nothing compared them, so a stale pin compiled clean, passed every lane,
+      # and lost a capability on a user's machine — #5598 (capability bitmask
+      # 8191 vs 262143), #5623 (missing ListAllFacets), #5641 (missing profile
+      # family). All three were fixed by bumping a pin; none added a check.
+      #
+      # Deliberately NOT filtered on `changes`: a path filter would have to watch
+      # registry.rs, modules/memory.rs, three workflows and sixteen gitlinks, and
+      # a skipped job counts as a pass in the gate below.
+      - name: Verify each module's registry pin matches its submodule pin
+        run: node scripts/ci/check-module-pins.mjs
+
+      # The other half, and the one that has actually bitten. A pin set can be
+      # internally consistent and still be consistent with an OLDER release:
+      # 14a23b994 moved vendor/tinyagents back from #122 to #121, silently
+      # dropping a shipped fix until #5796 restored it, and #5725 did the same
+      # (undone by #5787). Both were internally consistent, so the check above
+      # would have passed them. `tinyagents` has no registry record at all — one
+      # pin, nothing to compare — so only movement direction catches it.
+      - name: Verify no vendor/ submodule pin moved backwards
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/ci/check-submodule-monotonic.mjs
+
   pester-install:
     name: PowerShell Install Test (Pester)
     needs: [changes]
@@ -1039,39 +1195,6 @@ jobs:
       - name: Run install.ps1 unit tests
         run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
 
-  tinycortex-tests:
-    name: TinyCortex Memory Tests
-    needs: [changes]
-    if: needs.changes.outputs.tinycortex == 'true'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    container:
-      image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    env:
-      CARGO_INCREMENTAL: "0"
-      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Init tinycortex and tinymemory submodules
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init --recursive vendor/tinycortex vendor/tinymemory
-
-      - name: Cache TinyCortex build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: vendor/tinycortex -> vendor/tinycortex/target
-          cache-on-failure: true
-          key: tinycortex
-
-      - name: Run TinyCortex engine and Composio sync tests
-        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
-
   pr-ci-gate:
     name: PR CI Gate
     needs:
@@ -1084,9 +1207,9 @@ jobs:
       - test-inventory
       - toolchain-image-drift
       - pester-install
-      - tinycortex-tests
       - orch-ip-gate
       - feature-forwarding-gate
+      - module-pin-gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1104,9 +1227,9 @@ jobs:
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["Toolchain Image Drift Guard"]="${{ needs['toolchain-image-drift'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
-            ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
             ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
             ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
+            ["Module Pin Gate"]="${{ needs['module-pin-gate'].result }}"
           )
 
           failed=0

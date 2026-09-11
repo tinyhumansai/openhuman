@@ -1,8 +1,7 @@
 //! `runtime-node` disabled-build stub.
 //!
 //! Mirrors the *type* surface that always-compiled callers name, with no-op
-//! behaviour. Only what is actually reached from outside the gate lives here —
-//! the download/extract/resolve machinery is compiled out entirely.
+//! behaviour. Only what is actually reached from outside the gate lives here.
 //!
 //! Why a stub rather than a leaf gate: [`NodeBootstrap`] appears in the **field
 //! type** of `tools::impl::system::ShellTool` (`Option<Arc<NodeBootstrap>>`, for
@@ -12,23 +11,23 @@
 //! `npm_exec`) are leaf-gated at their call sites instead, because registration
 //! sites want absence.
 //!
-//! Off-state: `try_cached` / `probe_installed` return `None`, so the shell
-//! simply never prepends a managed `bin/` dir — the same path taken today when
-//! `node.enabled = false`. `resolve()` is the one erroring method and is only
-//! reachable from `harness_init`'s bootstrap step, itself gated off; it returns
-//! a build fact so a stray caller reports something actionable.
+//! Off-state: `try_cached` and `probe_installed` return `None`, so the shell
+//! simply never prepends a managed `bin/` directory — the same path taken when
+//! `node.enabled = false`. `resolve` is the one erroring method and returns a
+//! build fact so a stray caller reports something actionable.
 //!
-//! Note: this stub carries **only** the managed-Node toolchain type surface.
+//! Note: this stub carries **only** the Node toolchain type surface.
 //! [`super::ops`] and [`super::types`] are not stubbed — they are the generic
 //! native-tool dispatcher and its inert serde types, always compiled so the
-//! ungated `flows` `NativeToolBackend` can keep dispatching `oh:*` tools when
-//! the managed Node runtime is off.
+//! ungated `flows` backend can keep dispatching `oh:*` tools when the managed
+//! Node runtime is off.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
-use crate::openhuman::config::schema::NodeConfig;
+use crate::openhuman::config::Config;
 
 /// Returned by [`NodeBootstrap::resolve`] in a `runtime-node`-less build.
 /// Phrased as a build fact, matching the `mcp` / `tui` CLI-arm convention.
@@ -40,50 +39,77 @@ pub const RUNTIME_NODE_DISABLED_MESSAGE: &str =
 /// arms and imports still resolve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeSource {
+    /// Reused a compatible `node` already on the host.
     System,
+    /// A managed distribution.
     Managed,
 }
 
 /// Fully-resolved Node toolchain. Never constructed in a disabled build.
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {
+    /// Directory to prepend to `PATH`.
     pub bin_dir: PathBuf,
+    /// Absolute path to the `node` binary.
     pub node_bin: PathBuf,
+    /// Absolute path to the `npm` launcher.
     pub npm_bin: PathBuf,
+    /// Version string without the leading `v`.
     pub version: String,
+    /// Where the toolchain came from.
     pub source: NodeSource,
 }
 
-/// Disabled-build bootstrap: constructs, resolves to nothing.
-#[derive(Debug)]
+/// Inert stand-in for the toolchain client.
 pub struct NodeBootstrap {
-    _config: NodeConfig,
-    _workspace_dir: PathBuf,
+    config: Arc<Config>,
+}
+
+impl std::fmt::Debug for NodeBootstrap {
+    /// The real client redacts `Config` because it is full of secrets; the stub
+    /// mirrors that so the two render identically in logs, rather than the
+    /// disabled build being the one that leaks an `api_key` into a debug line.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NodeBootstrap")
+            .field("resolved", &false)
+            .finish_non_exhaustive()
+    }
 }
 
 impl NodeBootstrap {
-    /// Signature-compatible with the real constructor. The `reqwest::Client` is
-    /// accepted and dropped — a disabled build never downloads.
-    pub fn new(config: NodeConfig, workspace_dir: PathBuf, _client: reqwest::Client) -> Self {
-        Self {
-            _config: config,
-            _workspace_dir: workspace_dir,
-        }
+    /// Build a stub over this host's configuration.
+    ///
+    /// Takes the same argument as the real client so construction sites do not
+    /// need their own gate.
+    #[must_use]
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 
-    /// Always `None` — nothing is cached because nothing resolves.
+    /// The configuration this bootstrap would resolve under.
+    #[must_use]
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Always `None`: nothing resolves in a disabled build.
+    #[must_use]
     pub fn try_cached(&self) -> Option<ResolvedNode> {
         None
     }
 
-    /// Always `None`. The real implementation probes the on-disk install; there
-    /// is no install path in a disabled build.
+    /// Always `None`: nothing is provisioned in a disabled build.
     pub async fn probe_installed(&self) -> Option<ResolvedNode> {
         None
     }
 
-    /// Always `Err`. See [`RUNTIME_NODE_DISABLED_MESSAGE`].
+    /// Always an error naming the missing feature.
+    ///
+    /// # Errors
+    ///
+    /// Always, with [`RUNTIME_NODE_DISABLED_MESSAGE`].
     pub async fn resolve(&self) -> Result<ResolvedNode> {
-        anyhow::bail!(RUNTIME_NODE_DISABLED_MESSAGE)
+        Err(anyhow!(RUNTIME_NODE_DISABLED_MESSAGE))
     }
 }

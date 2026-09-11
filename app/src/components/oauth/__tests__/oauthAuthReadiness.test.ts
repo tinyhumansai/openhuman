@@ -48,7 +48,6 @@ describe('oauthAuthReadiness', () => {
         onboardingCompleted: false,
         chatOnboardingCompleted: false,
         analyticsEnabled: false,
-        meetAutoOrchestratorHandoff: false,
         localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
         keyringStatus: {
           available: true,
@@ -115,7 +114,6 @@ describe('oauthAuthReadiness', () => {
         onboardingCompleted: false,
         chatOnboardingCompleted: false,
         analyticsEnabled: false,
-        meetAutoOrchestratorHandoff: false,
         localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
         keyringStatus: {
           available: true,

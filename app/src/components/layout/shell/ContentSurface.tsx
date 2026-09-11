@@ -1,18 +1,9 @@
 import debugFactory from 'debug';
 import type { ReactNode } from 'react';
 
+import { SidebarInset } from '../../ui';
+
 const log = debugFactory('shell:content-surface');
-
-/** Shared flex/overflow behaviour — identical in both framed and unframed modes. */
-const BASE = 'relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden bg-surface';
-
-/**
- * Inset, rounded card floating on the window chrome. Even 12px margin on all
- * four sides so the chrome reads as a deliberate frame rather than a seam. The
- * top gap lands larger than 12px in practice because the window-drag band
- * ({@link WindowDragBar}) sits above the card inside the same column.
- */
-const FRAMED = `${BASE} m-3 rounded-2xl shadow-content-edge`;
 
 interface ContentSurfaceProps {
   children: ReactNode;
@@ -41,15 +32,18 @@ interface ContentSurfaceProps {
  * This is the "card" half of the two-layer shell. The chrome carries the
  * theme's hue; this surface stays neutral so page content reads against a
  * consistent background across every theme.
+ *
+ * The geometry is the `SidebarInset` primitive: the framed default is the same
+ * even 12px inset, 2xl radius and `content-edge` inset-shadow-sm this file used to
+ * spell out, and `unframed` maps onto the primitive's own flag. The primitive
+ * reads no sidebar context, so this stays renderable outside a
+ * `SidebarProvider` — several page-level tests mount it on its own.
  */
 export default function ContentSurface({ children, unframed = false }: ContentSurfaceProps) {
   log('render: unframed=%s', unframed);
   return (
-    <div
-      className={unframed ? BASE : FRAMED}
-      data-testid="app-content-surface"
-      data-unframed={unframed ? 'true' : undefined}>
+    <SidebarInset unframed={unframed} data-testid="app-content-surface">
       {children}
-    </div>
+    </SidebarInset>
   );
 }

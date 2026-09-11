@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use openhuman_core::openhuman::agent::dispatcher::XmlToolDispatcher;
 use openhuman_core::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::memory::agent::memory_loader::MemoryLoader;
 use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
 use openhuman_core::openhuman::agent::context::prompt::{
     ConnectedIntegration, LearnedContextData, PersonalityRosterEntry, PersonalityRosterSection,
@@ -23,12 +22,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use tempfile::TempDir;
-use tinyagents::harness::message::{AssistantMessage, Message, MessageDelta};
-use tinyagents::harness::model::{
+use tinyinference::message::{AssistantMessage, Message, MessageDelta};
+use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 use tokio::time::{sleep, Duration, Instant};
 
 static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
@@ -111,12 +110,12 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.capture(&request, false);
         self.pop_response()
     }
 
-    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyinference::Result<ModelStream> {
         self.capture(&request, true);
         let response = self.pop_response()?;
         let mut items = vec![ModelStreamItem::Started];
@@ -135,12 +134,12 @@ impl ScriptedModel {
         });
     }
 
-    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+    fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
         self.responses
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final", None)))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 
@@ -250,14 +249,6 @@ impl Memory for RecordingMemory {
     }
 }
 
-struct EmptyMemoryLoader;
-
-#[async_trait]
-impl MemoryLoader for EmptyMemoryLoader {
-    async fn load_context(&self, _memory: &dyn Memory, _user_message: &str) -> Result<String> {
-        Ok(String::new())
-    }
-}
 
 struct Round24Tool {
     calls: Arc<AtomicUsize>,
@@ -439,7 +430,6 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
             calls: calls.clone(),
         })])
         .memory(RecordingMemory::new())
-        .memory_loader(Box::new(EmptyMemoryLoader))
         .tool_dispatcher(Box::new(XmlToolDispatcher))
         .workspace_dir(workspace_path.clone())
         .event_context("round24-session", "round24-channel")
@@ -525,7 +515,6 @@ async fn builder_validation_and_system_prompt_cover_defaults_and_learning() {
         .chat_model(provider.clone())
         .tools(vec![Box::new(Round24Tool { calls })])
         .memory(memory)
-        .memory_loader(Box::new(EmptyMemoryLoader))
         .tool_dispatcher(Box::new(XmlToolDispatcher))
         .workspace_dir(workspace_path)
         .event_context("round24-prompt-session", "round24-prompt-channel")
@@ -632,7 +621,6 @@ fn prompt_sections_cover_dynamic_roster_identity_and_subagent_edges() {
         SubagentRenderOptions {
             include_identity: true,
             include_safety_preamble: true,
-            include_skills_catalog: false,
             include_profile: false,
             include_memory_md: true,
         },

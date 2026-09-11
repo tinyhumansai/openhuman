@@ -253,7 +253,7 @@ pub async fn apply_model_settings(
     // so a UI embedder switch recovers prior memory under the new
     // signature. Coverage-gated + non-fatal: if the active signature did
     // not actually change, this enqueues nothing.
-    tinymemory_core::queue::ensure_reembed_backfill(config);
+    crate::openhuman::memory::ops::maintenance::reembed_best_effort(config, "model settings").await;
     // #5324: the embedder may have just moved off the exhausted managed
     // budget onto local Ollama / a BYO provider. Give the jobs that parked as
     // `unrecoverable` under the old provider a fresh attempt budget — but ONLY
@@ -265,7 +265,7 @@ pub async fn apply_model_settings(
     // would read identically to "nothing was parked" and hide that the parked
     // jobs are still stuck. Surface the error in the outcome line instead.
     let requeued_note = if embedder_changed {
-        match tinymemory_core::queue::requeue_failed_after_provider_change(config) {
+        match crate::openhuman::memory::ops::maintenance::retry_failed(config).await {
             Ok(n) => n.to_string(),
             Err(e) => format!("error ({e})"),
         }
@@ -348,7 +348,8 @@ pub async fn apply_memory_settings(
     // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
     // are logged, never fail the settings save). §7's migration is
     // one-shot so it does not cover a later switch — this does.
-    tinymemory_core::queue::ensure_reembed_backfill(config);
+    crate::openhuman::memory::ops::maintenance::reembed_best_effort(config, "memory settings")
+        .await;
     // #5324: same rationale as the model-settings path — a switch away from
     // the exhausted managed budget must un-park the jobs that failed under it,
     // but a `memory_window` / `auto_save` / `backend` save must not. Gate on a
@@ -359,7 +360,7 @@ pub async fn apply_memory_settings(
     // #5324: same as the model-settings path — keep the save successful but
     // report an un-park failure instead of a misleading `requeued_failed=0`.
     let requeued_note = if embedder_changed {
-        match tinymemory_core::queue::requeue_failed_after_provider_change(config) {
+        match crate::openhuman::memory::ops::maintenance::retry_failed(config).await {
             Ok(n) => n.to_string(),
             Err(e) => format!("error ({e})"),
         }

@@ -1,15 +1,572 @@
-/* Import Google Fonts for trust and professionalism */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap');
+/* Self-hosted webfaces. These used to be `@import`s from fonts.googleapis.com,
+   which meant this offline-capable desktop app rendered in a system fallback
+   face on any cold start without a network. Regenerate with
+   `node scripts/fetch-fonts.mjs`. */
+@import './styles/fonts.css' layer(base);
 
 /* Canonical theme tokens (colour + font-role CSS variables). Must precede the
    Tailwind layers so the var-backed utility colours resolve. */
-@import './styles/tokens.css';
+@import './styles/tokens.css' layer(base);
+
+/* shadcn/Base UI semantic token aliases over the canonical palette above. Must
+   follow tokens.css (it aliases those vars) and precede the Tailwind layers. */
+@import './styles/shadcn-tokens.css' layer(base);
 
 /* Tailwind CSS imports */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-body: var(--font-body);
+  --font-heading: var(--font-heading);
+  --font-title: var(--font-title);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-title);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  --color-cmd-surface: var(--cmd-surface);
+  --color-cmd-surface-elevated: var(--cmd-surface-elevated);
+  --color-cmd-foreground: var(--cmd-foreground);
+  --color-cmd-foreground-muted: var(--cmd-foreground-muted);
+  --color-cmd-border: var(--cmd-border);
+  --color-cmd-ring: var(--cmd-ring);
+  --color-cmd-accent: var(--cmd-accent);
+  --color-cmd-overlay: var(--cmd-overlay);
+
+  --color-surface: rgb(var(--surface));
+  --color-surface-canvas: rgb(var(--surface-canvas));
+  --color-surface-muted: rgb(var(--surface-muted));
+  --color-surface-subtle: rgb(var(--surface-subtle));
+  --color-surface-strong: rgb(var(--surface-strong));
+  --color-surface-hover: rgb(var(--surface-hover));
+  --color-surface-overlay: rgb(var(--surface-overlay));
+  --color-surface-chrome: rgb(var(--surface-chrome));
+
+  /* shadcn/Base UI semantic colours (see styles/shadcn-tokens.css). Every
+     registry component and ~200 app files are written against these. */
+  --color-background: rgb(var(--background));
+  --color-foreground: rgb(var(--foreground));
+  --color-card: rgb(var(--card));
+  --color-card-foreground: rgb(var(--card-foreground));
+  --color-popover: rgb(var(--popover));
+  --color-popover-foreground: rgb(var(--popover-foreground));
+  --color-primary: rgb(var(--primary));
+  --color-primary-foreground: rgb(var(--primary-foreground));
+  --color-secondary: rgb(var(--secondary));
+  --color-secondary-foreground: rgb(var(--secondary-foreground));
+  --color-muted: rgb(var(--muted));
+  --color-muted-foreground: rgb(var(--muted-foreground));
+  --color-accent: rgb(var(--accent));
+  --color-accent-foreground: rgb(var(--accent-foreground));
+  --color-destructive: rgb(var(--destructive));
+  --color-destructive-foreground: rgb(var(--destructive-foreground));
+  --color-border: rgb(var(--border));
+  --color-input: rgb(var(--input));
+  --color-ring: rgb(var(--ring));
+  --color-sidebar: rgb(var(--sidebar));
+  --color-sidebar-foreground: rgb(var(--sidebar-foreground));
+  --color-sidebar-primary: rgb(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: rgb(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: rgb(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: rgb(var(--sidebar-accent-foreground));
+  --color-sidebar-border: rgb(var(--sidebar-border));
+  --color-sidebar-ring: rgb(var(--sidebar-ring));
+
+  --color-content: rgb(var(--content));
+  --color-content-secondary: rgb(var(--content-secondary));
+  --color-content-muted: rgb(var(--content-muted));
+  --color-content-faint: rgb(var(--content-faint));
+  --color-content-inverted: rgb(var(--content-inverted));
+
+  --color-line: rgb(var(--line));
+  --color-line-strong: rgb(var(--line-strong));
+  --color-line-subtle: rgb(var(--line-subtle));
+  --color-line-chrome: rgb(var(--line-chrome));
+
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
+
+  --color-canvas-50: #fafafa;
+  --color-canvas-100: #f5f5f5;
+  --color-canvas-150: #efefef;
+  --color-canvas-200: #e5e5e5;
+  --color-canvas-300: #d4d4d4;
+
+  --color-primary-50: rgb(var(--primary-50));
+  --color-primary-100: rgb(var(--primary-100));
+  --color-primary-200: rgb(var(--primary-200));
+  --color-primary-300: rgb(var(--primary-300));
+  --color-primary-400: rgb(var(--primary-400));
+  --color-primary-500: rgb(var(--primary-500));
+  --color-primary-600: rgb(var(--primary-600));
+  --color-primary-700: rgb(var(--primary-700));
+  --color-primary-800: rgb(var(--primary-800));
+  --color-primary-900: rgb(var(--primary-900));
+  --color-primary-950: rgb(var(--primary-950));
+
+  --color-sage-50: rgb(var(--sage-50));
+  --color-sage-100: rgb(var(--sage-100));
+  --color-sage-200: rgb(var(--sage-200));
+  --color-sage-300: rgb(var(--sage-300));
+  --color-sage-400: rgb(var(--sage-400));
+  --color-sage-500: rgb(var(--sage-500));
+  --color-sage-600: rgb(var(--sage-600));
+  --color-sage-700: rgb(var(--sage-700));
+  --color-sage-800: rgb(var(--sage-800));
+  --color-sage-900: rgb(var(--sage-900));
+  --color-sage-950: rgb(var(--sage-950));
+
+  --color-amber-50: rgb(var(--amber-50));
+  --color-amber-100: rgb(var(--amber-100));
+  --color-amber-200: rgb(var(--amber-200));
+  --color-amber-300: rgb(var(--amber-300));
+  --color-amber-400: rgb(var(--amber-400));
+  --color-amber-500: rgb(var(--amber-500));
+  --color-amber-600: rgb(var(--amber-600));
+  --color-amber-700: rgb(var(--amber-700));
+  --color-amber-800: rgb(var(--amber-800));
+  --color-amber-900: rgb(var(--amber-900));
+  --color-amber-950: rgb(var(--amber-950));
+
+  --color-coral-50: rgb(var(--coral-50));
+  --color-coral-100: rgb(var(--coral-100));
+  --color-coral-200: rgb(var(--coral-200));
+  --color-coral-300: rgb(var(--coral-300));
+  --color-coral-400: rgb(var(--coral-400));
+  --color-coral-500: rgb(var(--coral-500));
+  --color-coral-600: rgb(var(--coral-600));
+  --color-coral-700: rgb(var(--coral-700));
+  --color-coral-800: rgb(var(--coral-800));
+  --color-coral-900: rgb(var(--coral-900));
+  --color-coral-950: rgb(var(--coral-950));
+
+  --color-stone-50: #fafafa;
+  --color-stone-100: #f5f5f5;
+  --color-stone-200: #e5e5e5;
+  --color-stone-300: #d4d4d4;
+  --color-stone-400: #a3a3a3;
+  --color-stone-500: #737373;
+  --color-stone-600: #525252;
+  --color-stone-700: #404040;
+  --color-stone-800: #262626;
+  --color-stone-900: #171717;
+  --color-stone-950: #0a0a0a;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+
+  --color-market-bullish: #4dc46f;
+  --color-market-bearish: #f56565;
+  --color-market-neutral: #94a3b8;
+  --color-market-bitcoin: #f7931a;
+  --color-market-ethereum: #627eea;
+  --color-market-stablecoin: #5b9bf3;
+
+  --color-accent-lavender: #9b8afb;
+  --color-accent-mint: #6ee7b7;
+  --color-accent-sky: #7dd3fc;
+  --color-accent-rose: #fda4af;
+  --color-accent-gold: #fcd34d;
+
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 0.75rem;
+  --text-micro--letter-spacing: 0.02em;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-xs--letter-spacing: 0.01em;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-sm--letter-spacing: 0;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-base--letter-spacing: -0.01em;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-lg--letter-spacing: -0.01em;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.875rem;
+  --text-xl--letter-spacing: -0.02em;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-2xl--letter-spacing: -0.02em;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-3xl--letter-spacing: -0.02em;
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+  --text-4xl--letter-spacing: -0.03em;
+  --text-5xl: 3rem;
+  --text-5xl--line-height: 3.5rem;
+  --text-5xl--letter-spacing: -0.03em;
+  --text-6xl: 3.75rem;
+  --text-6xl--line-height: 4rem;
+  --text-6xl--letter-spacing: -0.04em;
+  --text-7xl: 4.5rem;
+  --text-7xl--line-height: 4.75rem;
+  --text-7xl--letter-spacing: -0.04em;
+
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.25rem;
+  --radius-4xl: 1.5rem;
+  --radius-5xl: 2rem;
+
+  --shadow-glow: 0 0 20px rgba(91, 155, 243, 0.15);
+  --shadow-glow-lg: 0 0 40px rgba(91, 155, 243, 0.2);
+  --shadow-inner-glow: inset 0 0 20px rgba(91, 155, 243, 0.08);
+  --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 3px 0 rgba(0, 0, 0, 0.04);
+  --shadow-soft: 0 2px 8px -2px rgba(0, 0, 0, 0.08), 0 4px 12px -4px rgba(0, 0, 0, 0.08);
+  --shadow-medium: 0 4px 12px -2px rgba(0, 0, 0, 0.08), 0 8px 16px -4px rgba(0, 0, 0, 0.08);
+  --shadow-large: 0 8px 24px -4px rgba(0, 0, 0, 0.1), 0 16px 32px -8px rgba(0, 0, 0, 0.1);
+  --shadow-float: 0 12px 32px -8px rgba(0, 0, 0, 0.12), 0 24px 48px -12px rgba(0, 0, 0, 0.12);
+  --shadow-crisp: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.08);
+  --shadow-cmd-palette: var(--cmd-shadow-palette);
+  /* The hairline around the routed content card (`SidebarInset` / the app's
+     `app-content-surface`). Drawn as a zero-blur inset box-shadow rather than a
+     border so it costs no layout box and cannot fight a caller's own border.
+     Near-opaque on purpose: the card sits on the themed chrome, and at the
+     original 0.45/0.7 the edge read as a smudge rather than an edge on a light
+     surface. The bottom edge stays the stronger of the two so the card still
+     reads as resting on the chrome rather than floating in it.
+
+     Keyed to `--content-faint`, not `--line-chrome`, because raising the alpha
+     had nowhere left to go — it was already 0.9, and `line-chrome` is only
+     stone-300 (light) / neutral-700 (dark), so the edge resolved to ~216 on a
+     white card and ~60 on a dark one: a value the card's own surface almost
+     matches. `content-faint` is a genuine step along the grey ramp in BOTH
+     directions (stone-400 light, neutral-500 dark — darker against a light
+     card, brighter against a dark one), which is what actually buys contrast
+     rather than opacity does. `--line-chrome` itself is deliberately left
+     alone: `Sidebar`'s rail drag indicator paints with it too, and that rail
+     wants to stay a hairline.
+
+     The alphas then pull back to roughly halfway between the old edge and a
+     full-strength `content-faint` one, which turned out to be the same number
+     in both themes. Composited over the card, the ring read ~216 (light) /
+     ~60 (dark) before and ~172 / ~106 at 0.9; the midpoints of those pairs
+     both solve to α≈0.65, because `content-faint` sits a similar distance from
+     the card surface in either direction. 0.75 on the bottom edge keeps it the
+     stronger of the two, which is what makes the card read as resting on the
+     chrome rather than floating in it. */
+  --shadow-content-edge:
+    inset 0 0 0 1px rgb(var(--content-faint) / 0.65),
+    inset 0 -1px 0 rgb(var(--content-faint) / 0.75);
+
+  --animate-fade-in: fadeIn 0.2s ease-out forwards;
+  --animate-fade-up: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-dialog-in: dialogIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-slide-in: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-slide-right: slideRight 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --animate-scale-in: scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-glow-pulse: glowPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-float: float 3s ease-in-out infinite;
+  --animate-ticker: ticker 30s linear infinite;
+  --animate-wiggle: wiggle 0.5s ease-in-out;
+  /* The composer's ambient shadow orbit — see the `composerShadowOrbit`
+     keyframes below. `linear`, not an ease: the offset traces a circle, and an
+     ease would make the light appear to speed up and stall twice per lap. */
+  --animate-composer-shadow: composerShadowOrbit 18s linear infinite;
+
+  --backdrop-blur-xs: 2px;
+  --backdrop-blur-sm: 4px;
+  --backdrop-blur-md: 8px;
+  --backdrop-blur-lg: 12px;
+  --backdrop-blur-xl: 16px;
+  --backdrop-blur-2xl: 24px;
+  --backdrop-blur-3xl: 40px;
+
+  --background-image-gradient-radial: radial-gradient(var(--tw-gradient-stops));
+  --background-image-gradient-conic: conic-gradient(
+    from 180deg at 50% 50%,
+    var(--tw-gradient-stops)
+  );
+  --background-image-gradient-mesh: linear-gradient(
+    to right,
+    #5b9bf3 0%,
+    #9b8afb 25%,
+    #6ee7b7 50%,
+    #7dd3fc 75%,
+    #5b9bf3 100%
+  );
+  --transition-duration-300: 300ms;
+  --transition-duration-400: 400ms;
+
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes fadeUp {
+    0% {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  /* Entrance for the centered dialog surfaces (`ui/Dialog`, `ui/AlertDialog`).
+     Animates the `translate` PROPERTY, not `transform`, and that distinction is
+     the whole point of this keyframe.
+
+     Those dialogs center with `-translate-x-1/2 -translate-y-1/2`. Under
+     Tailwind v3 those utilities compiled into `transform`, so a keyframe
+     setting `transform` *replaced* the centering for the animation's duration
+     and only had to carry the -50% pair itself. Under v4 they compile to
+     `translate: var(--tw-translate-x) var(--tw-translate-y)` instead — a
+     separate property that composes with `transform` rather than being
+     overridden by it. A `transform: translate(-50%, …)` keyframe therefore
+     *added* to the utility, so every modal opened at -100%/-100% (up and to
+     the left of center) and snapped into place when the animation ended.
+
+     Animating `translate` overrides the same property the utility sets and
+     lands on the identical value, so there is nothing left to snap. */
+  @keyframes dialogIn {
+    0% {
+      opacity: 0;
+      translate: -50% calc(-50% + 10px);
+    }
+    100% {
+      opacity: 1;
+      translate: -50% -50%;
+    }
+  }
+  @keyframes slideIn {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+  @keyframes slideRight {
+    0% {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes scaleIn {
+    0% {
+      transform: scale(0.95);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  @keyframes glowPulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  /* Orbits the composer's shadow clockwise, as though the light above it
+     circles the room. Deliberately slow (18s a lap) and small: the point is
+     that you never catch it moving, only notice the composer feels lit rather
+     than stamped on.
+
+     The offset traces a CIRCLE, so both x and y move — that is the difference
+     between this and a sideways drift. Each layer orbits a centre that stays
+     below the box (y=8 near, y=30 far) with a radius smaller than that centre
+     (4 and 8), so the shadow swings but never rises above the composer, which
+     would read as light from underneath.
+
+     Eight stops, not four. Four corners interpolate as a diamond — the shadow
+     visibly tracks straight lines and turns hard at the compass points. The
+     45-degree stops (x and y both at 0.707 of the radius) round it into an
+     actual circle. Clockwise on screen: top, right, bottom, left, with y
+     growing downward.
+
+     The two layers orbit with different radii (4px near, 8px far) in phase.
+     That is parallax — a shadow cast further moves more for the same change in
+     light angle. Equal radii would read as one flat sheet swinging.
+
+     Blur and spread are identical in every frame. Animating blur would pulse
+     the shadow in and out of focus, which no light source does.
+
+     Paired with `motion-reduce:animate-none` at the call site, which falls back
+     to the static `shadow-[…]` utility beside it — so the composer keeps its
+     elevation when motion is off, it just stops moving. */
+  @keyframes composerShadowOrbit {
+    0%,
+    100% {
+      box-shadow:
+        0 4px 12px -4px rgb(0 0 0 / 0.34),
+        0 22px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    12.5% {
+      box-shadow:
+        3px 5px 12px -4px rgb(0 0 0 / 0.34),
+        6px 24px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    25% {
+      box-shadow:
+        4px 8px 12px -4px rgb(0 0 0 / 0.34),
+        8px 30px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    37.5% {
+      box-shadow:
+        3px 11px 12px -4px rgb(0 0 0 / 0.34),
+        6px 36px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    50% {
+      box-shadow:
+        0 12px 12px -4px rgb(0 0 0 / 0.34),
+        0 38px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    62.5% {
+      box-shadow:
+        -3px 11px 12px -4px rgb(0 0 0 / 0.34),
+        -6px 36px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    75% {
+      box-shadow:
+        -4px 8px 12px -4px rgb(0 0 0 / 0.34),
+        -8px 30px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    87.5% {
+      box-shadow:
+        -3px 5px 12px -4px rgb(0 0 0 / 0.34),
+        -6px 24px 44px -16px rgb(0 0 0 / 0.48);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+  @keyframes ticker {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+  @keyframes wiggle {
+    0%,
+    100% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(-9deg);
+    }
+    75% {
+      transform: rotate(9deg);
+    }
+  }
+}
+
+/*
+  Default border colour, for elements that use a bare `border` / `border-t`
+  utility and name no colour of their own.
+
+  Tailwind v4 changed this default to `currentcolor`, which paints a border in
+  the element's *text* colour. The v4 upgrade pinned it back to `gray-200` to
+  keep the v3 look — a fixed light grey. That is subtle in light mode and
+  **bright** in dark mode, because it does not flip: the reasoning bubble, the
+  tool group, popovers, dialogs, markdown tables and the thread-list rail all
+  drew a near-white hairline on a near-black surface.
+
+  It now points at the `--border` token, which is what shadcn's own init writes
+  and what every component pulled from that registry is written against — 18
+  places in `components/assistant-ui/` use a bare border. We ran `shadcn add`
+  but never `shadcn init`, so this rule and the token block in
+  `styles/shadcn-tokens.css` are two halves of the same missing setup.
+
+  Specificity (0,0,0), so any component naming its own border colour still
+  wins — `ui/Alert`, `ui/Badge`, `ui/RadioGroup` and `ui/Table` all do, via
+  their variants. What changes is only the elements that named none, where
+  neither `currentcolor` nor a hardcoded grey was ever a deliberate choice.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border, currentcolor);
+  }
+}
+
+/* Utility layer - Custom utilities */
+
+@utility scrollbar-hide {
+  /* NOTE: a `.scrollbar-thin` utility used to live here. It had zero call
+     sites, and being in `@layer utilities` it outranked the base-layer
+     auto-hide rules above — so the moment anyone reached for it, that pane
+     would have kept a permanently visible grey thumb and silently ignored
+     `data-scrolling`. Deleted rather than kept as a trap; scrollbars are thin
+     and theme-tinted app-wide now, so nothing needs to opt in. */
+
+  /* Hide scrollbar while keeping scroll behavior.
+     Kept as hand-written CSS deliberately: `scrollbar-width: none` has a
+     Tailwind utility (`scrollbar-none` isn't in core, but the property is
+     expressible), yet the matching `::-webkit-scrollbar { display: none }`
+     pseudo-element rule is not something a utility class can express — there
+     is no `webkit-scrollbar` variant in Tailwind. Both halves are required
+     together (Firefox honours the first, Chromium/CEF the second), so this
+     one rule stays as CSS rather than a partial migration. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
 
 /* Base layer - Typography and fundamental styles */
 @layer base {
@@ -20,7 +577,12 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    color: var(--color-text-primary);
+    /* `--color-text-primary` was never defined by any stylesheet, so this
+       declaration was invalid and inherited text fell back to the UA default
+       black — in dark mode too. Every element with an explicit colour class
+       looked right, which is why it survived: only *inherited* text was wrong.
+       `--color-content` is the canonical token and flips with the theme. */
+    color: var(--color-content);
   }
 
   /* Thin, theme-tinted, auto-hiding scrollbars app-wide — the macOS overlay
@@ -85,14 +647,40 @@
     line-height: 1.6;
 
     /* Themes may supply a decorative `--app-gradient`; fall back to the flat
-       canvas colour when they don't. */
-    background: var(--app-gradient, var(--color-background));
-    color: var(--color-text-primary);
+       canvas colour when they don't.
+
+       `--color-surface-canvas`, NOT `--color-background`: the latter is the
+       shadcn alias and resolves to `--surface`, i.e. the *card* colour, so the
+       app canvas and the content card painted the same value and the frame
+       around the card had nothing but the chrome scrim to separate them. The
+       canvas token is what "app background — primary background" means in
+       `styles/tokens.css`. */
+    background: var(--app-gradient, var(--color-surface-canvas));
+    color: var(--color-content);
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
+  }
+
+  /* Full-viewport film grain. Moved here verbatim from `styles/theme.css` when
+     that file was deleted: it was the one rule in those 713 lines with a
+     visible effect, and dropping it silently would have re-skinned every
+     screen. Decorative and non-interactive, so it stays out of the a11y tree
+     and never eats a pointer event. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' /%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23noise)' opacity='0.03' /%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.4;
+  }
+
+  :root.dark body::before {
+    opacity: 0.15;
   }
 
   html[data-window='overlay'],
@@ -218,6 +806,58 @@
     outline: none !important;
   }
 
+  /* `@plugin '@tailwindcss/forms'` styles bare `input` / `textarea` / `select`
+     directly, and two halves of that reset fight the rest of this app.
+
+     1. A focus ring of its own: a 1px `box-shadow` in a hardcoded `blue-600`
+        with a ring *offset* hardcoded to `#fff`. The `outline: none` block
+        above cannot reach it — it clears outlines and deliberately "leaves
+        borders and box-shadows alone" because components depend on those. So
+        the ring survived, in a blue that is not this app's accent, on a white
+        halo that stayed white in dark mode.
+
+     2. A border: `border-width: 1px`, `border-color: gray-500`,
+        `border-radius: 0`. Combined with (1) that is a sharp grey rectangle
+        that turns blue on focus.
+
+     A control that styles itself never notices either half — its own `border`
+     or `focus:ring-*` utility outranks the reset on layer order, and every
+     textarea in this app (`ui/TextArea`, `PlanReviewCard`, `ShareCardModal`,
+     the legacy chat composer) does exactly that. The ones that notice are the
+     assistant-ui composers, written against a registry that assumes no forms
+     plugin: `bg-transparent`, no border, the focus affordance carried by the
+     wrapper. They drew that rectangle inside their rounded pill.
+
+     Every selector here is `html`-prefixed and none is flagged important, and
+     both of those are load-bearing. Tailwind emits plugin base styles *after*
+     this block, so an equally specific selector would lose on source order; the
+     descendant bumps these to (0,1,2)/(0,0,2) and wins. Flagging them would go
+     too far the other way and beat the utilities components legitimately set —
+     an earlier revision of this block did, and would have painted
+     `ui/TextArea`'s `focus:ring-primary-500/20` fully opaque, and an invalid
+     field's coral ring primary-blue. A single class is (0,1,0)/(0,2,0) and
+     still outranks everything below. */
+  html input:focus,
+  html textarea:focus,
+  html select:focus {
+    --tw-ring-color: var(--color-ring);
+    --tw-ring-offset-color: var(--color-background);
+  }
+
+  /* Scoped to `textarea`: the same reset on `input` is load-bearing for bare
+     checkboxes and radios, whose box IS that border. */
+  html textarea {
+    border-width: 0;
+  }
+
+  /* A bare textarea gets no ring at all — see the assistant-ui composers above,
+     whose focus affordance is the wrapper's `focus-within:` border. A textarea
+     that wants one still sets `focus:ring-*` itself and outranks this. */
+  html textarea:focus {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
+  }
+
   /* Smooth scrolling */
   html {
     scroll-behavior: smooth;
@@ -226,295 +866,12 @@
 
 /* Component layer - Reusable patterns */
 @layer components {
-  /* Button variants for consistent interaction design */
-  .btn-primary {
-    @apply bg-primary-500 hover:bg-primary-600 active:bg-primary-700;
-    @apply text-content-inverted font-medium;
-    @apply px-4 py-2 rounded-lg;
-    @apply transition-all duration-200 ease-in-out;
-    @apply shadow-soft hover:shadow-medium;
-    @apply focus:outline-none;
-    @apply disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
-  .btn-secondary {
-    @apply bg-surface hover:bg-surface-hover active:bg-surface-strong;
-    @apply text-content font-medium;
-    @apply px-4 py-2 rounded-lg border border-line-strong;
-    @apply transition-all duration-200 ease-in-out;
-    @apply focus:outline-none;
-  }
-
-  .btn-success {
-    @apply bg-sage-500 hover:bg-sage-600 active:bg-sage-700;
-    @apply text-content-inverted font-medium;
-    @apply px-4 py-2 rounded-lg;
-    @apply transition-all duration-200 ease-in-out;
-    @apply shadow-soft hover:shadow-medium;
-    @apply focus:outline-none;
-  }
-
-  .btn-danger {
-    @apply bg-coral-500 hover:bg-coral-600 active:bg-coral-700;
-    @apply text-content-inverted font-medium;
-    @apply px-4 py-2 rounded-lg;
-    @apply transition-all duration-200 ease-in-out;
-    @apply shadow-soft hover:shadow-medium;
-    @apply focus:outline-none;
-  }
-
-  /* Card components for content organization */
-  .card {
-    @apply bg-surface rounded-xl shadow-soft border border-line;
-    @apply p-6 text-content;
-    @apply transition-shadow duration-200;
-  }
-
-  .card-hover {
-    @apply card hover:shadow-medium;
-  }
-
-  .app-dotted-canvas {
-    background-color: transparent;
-    /* Dots follow the theme's content colour at low alpha (dark dots on light
-       themes, light dots on dark themes, accent-tinted on custom themes). */
-    background-image: radial-gradient(
-      circle at center,
-      rgb(var(--content) / 0.1) 1px,
-      transparent 1px
-    );
-    background-size: 18px 18px;
-    background-position: 0 0;
-  }
-
-  /* Input components with consistent styling */
-  .input-primary {
-    @apply w-full px-4 py-3 rounded-lg;
-    @apply border border-line focus:border-primary-500;
-    @apply bg-surface text-content placeholder-content-faint;
-    @apply transition-colors duration-200;
-    @apply focus:outline-none;
-  }
-
-  /* Status indicators */
-  .status-online {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-    @apply bg-sage-100 text-sage-700;
-  }
-
-  .status-offline {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-    @apply bg-surface-subtle text-content-secondary;
-  }
-
-  .status-warning {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-    @apply bg-amber-100 text-amber-700;
-  }
-
-  /* Navigation styles */
-  .nav-item {
-    @apply flex items-center px-4 py-2 text-sm font-medium rounded-lg;
-    @apply text-content-secondary hover:text-content hover:bg-surface-hover;
-    @apply transition-colors duration-150;
-  }
-
-  .nav-item-active {
-    @apply nav-item bg-surface-subtle text-content;
-  }
-
-  /* Message/chat specific styles */
-  .message-bubble {
-    @apply max-w-xs lg:max-w-md px-4 py-2 rounded-2xl;
-    @apply break-words;
-  }
-
-  .message-sent {
-    @apply message-bubble bg-primary-500 text-white ml-auto;
-  }
-
-  .message-received {
-    @apply message-bubble bg-surface-strong text-content;
-  }
-
-  /* Loading states */
-  .loading-pulse {
-    @apply animate-pulse bg-surface-subtle rounded;
-  }
-
-  /* Crypto price styling */
-  .price-positive {
-    @apply text-market-bullish font-mono font-medium;
-  }
-
-  .price-negative {
-    @apply text-market-bearish font-mono font-medium;
-  }
-
-  .price-neutral {
-    @apply text-market-neutral font-mono font-medium;
-  }
-
   /* ============================================
      Dark-mode overrides for @apply'd component classes.
      Most classes are now token-driven (semantic surface/content/line) and flip
      automatically, so only the tinted status badges — which keep a light accent
      tint in light mode — still need an explicit dark override.
      ============================================ */
-  :root.dark .status-online {
-    background-color: rgba(52, 199, 89, 0.15);
-    color: theme('colors.sage.300');
-  }
-
-  :root.dark .status-warning {
-    background-color: rgba(232, 167, 40, 0.15);
-    color: theme('colors.amber.300');
-  }
-}
-
-/* Utility layer - Custom utilities */
-@layer utilities {
-  /* NOTE: a `.scrollbar-thin` utility used to live here. It had zero call
-     sites, and being in `@layer utilities` it outranked the base-layer
-     auto-hide rules above — so the moment anyone reached for it, that pane
-     would have kept a permanently visible grey thumb and silently ignored
-     `data-scrolling`. Deleted rather than kept as a trap; scrollbars are thin
-     and theme-tinted app-wide now, so nothing needs to opt in. */
-
-  /* Hide scrollbar while keeping scroll behavior */
-  .scrollbar-hide {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Text selection styling */
-  .select-primary::selection {
-    @apply bg-primary-600 text-white;
-  }
-
-  /* Glass effect for light theme */
-  .glass {
-    backdrop-filter: blur(12px);
-    /* Themeable: surface tint + line border follow the active theme. */
-    background: rgb(var(--surface) / 0.8);
-    border: 1px solid rgb(var(--line) / 0.6);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  }
-
-  :root.dark .glass {
-    /* Only the shadow needs a darker variant; colours come from the tokens. */
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  }
-
-  /* Animation utilities */
-  .animate-fade-in-up {
-    animation: fadeInUp 0.5s ease-out forwards;
-  }
-
-  @keyframes fadeInUp {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  /* Modal animations */
-  .animate-fade-in {
-    animation: fadeIn 0.2s ease-out forwards;
-  }
-
-  .animate-slide-up {
-    animation: slideUp 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  @keyframes slideUp {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  /* Safe area padding for mobile devices */
-  .safe-area-padding {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-
-  /* Skills table container */
-  .skills-table-container {
-    position: relative;
-    max-height: calc(3 * 2.5rem + 2.5rem + 1px); /* Header + 3 rows + border */
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .skills-table-scroll {
-    overflow-y: auto;
-    overflow-x: hidden;
-    max-height: calc(3 * 2.5rem + 2.5rem + 1px);
-  }
-
-  .skills-table-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(8px);
-  }
-
-  :root.dark .skills-table-header {
-    background: rgba(23, 23, 23, 0.9);
-  }
-
-  /* Gradient fade overlay at bottom */
-  .skills-table-container::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 50px;
-    background: linear-gradient(to bottom, transparent, rgba(245, 245, 245, 0.9));
-    pointer-events: none;
-    z-index: 10;
-  }
-
-  :root.dark .skills-table-container::after {
-    background: linear-gradient(to bottom, transparent, rgba(10, 10, 10, 0.9));
-  }
-
-  /* Hover overlay */
-  .skills-table-overlay {
-    z-index: 20;
-  }
-
-  .skills-table-container:hover .skills-table-overlay {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 
 /* Light mode (default) */
@@ -548,14 +905,4 @@
   --cmd-border: rgb(var(--line-strong));
   --cmd-overlay: rgb(var(--surface-overlay) / 0.7);
   --cmd-shadow-palette: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.25);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cmd-palette-enter,
-  .cmd-palette-exit,
-  .cmd-help-enter,
-  .cmd-help-exit {
-    animation: none !important;
-    transition: none !important;
-  }
 }

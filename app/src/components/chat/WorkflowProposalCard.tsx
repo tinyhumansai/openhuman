@@ -294,9 +294,9 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
       role="group"
       aria-label={t('chat.flowProposal.title')}
       data-testid="workflow-proposal-card"
-      className="mb-2 rounded-xl border border-ocean-300 bg-surface p-3 text-sm shadow-md dark:border-ocean-700">
+      className="mb-2 rounded-xl border border-primary-300 bg-surface p-3 text-sm shadow-md dark:border-primary-700">
       <div className="flex items-start gap-2">
-        <span aria-hidden className="text-base leading-none text-ocean-700 dark:text-ocean-200">
+        <span aria-hidden className="text-base leading-none text-primary-700 dark:text-primary-200">
           {completedFlowId ? '✅' : '⚙️'}
         </span>
         <div className="min-w-0 flex-1">
@@ -309,7 +309,7 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
             <div
               data-testid="workflow-proposal-saved"
               className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold text-ocean-900 dark:text-ocean-100">
+              <p className="font-semibold text-primary-900 dark:text-primary-100">
                 {proposal.name || t('chat.flowProposal.title')}
               </p>
               <span className="text-xs text-sage-700 dark:text-sage-300">
@@ -326,14 +326,14 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
             </div>
           ) : (
             <>
-              <p className="font-semibold text-ocean-900 dark:text-ocean-100">
+              <p className="font-semibold text-primary-900 dark:text-primary-100">
                 {proposal.name || t('chat.flowProposal.title')}
               </p>
-              <p className="mt-1 break-words text-ocean-800/90 dark:text-ocean-200/90">
+              <p className="mt-1 wrap-break-word text-primary-800/90 dark:text-primary-200/90">
                 {t('chat.flowProposal.subtitle')}
               </p>
 
-              <p className="mt-2 text-xs break-words text-content-secondary">
+              <p className="mt-2 text-xs wrap-break-word text-content-secondary">
                 <span className="font-medium text-content-muted">
                   {t('chat.flowProposal.triggerLabel')}:
                 </span>{' '}
@@ -352,10 +352,10 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
                         ? t(kindI18nKey)
                         : humanizeUnknownStepKind(step.kind);
                       return (
-                        <li key={i} className="break-words">
+                        <li key={i} className="wrap-break-word">
                           <span
                             data-testid="workflow-proposal-step-kind"
-                            className="mr-1.5 inline-block rounded-full bg-ocean-100 px-1.5 py-0.5 text-[10px] font-medium text-ocean-700 dark:bg-ocean-500/15 dark:text-ocean-300">
+                            className="mr-1.5 inline-block rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
                             {kindLabel}
                           </span>
                           <span>{step.name}</span>
@@ -376,7 +376,9 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
                 </p>
               )}
 
-              {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+              {errorMsg && (
+                <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button

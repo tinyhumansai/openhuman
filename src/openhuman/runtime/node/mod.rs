@@ -1,41 +1,30 @@
-//! Managed Node.js runtime and tool bridge.
+//! Managed Node.js runtime and the generic tool bridge.
 //!
-//! Responsibilities are split across submodules:
+//! Two unrelated things share this directory, and the difference matters:
 //!
-//! * [`resolver`] — detect a compatible system `node` on `PATH`. Cheap,
-//!   synchronous, called first so we can skip the download path when a
-//!   matching toolchain already exists on the host.
-//! * [`bootstrap`] / [`downloader`] / [`extractor`] — resolve or install the
-//!   managed Node.js toolchain shipped with the core.
-//! * [`ops`] / [`types`] — the generic runtime tool bridge: build / list /
-//!   classify / execute against the native agent tool registry.
-//! * [`schemas`] / [`rpc`] — the gated `javascript.*` controller pair.
-
+//! * [`bootstrap`] is the *client* for the `tinyruntime` module. It asks for a
+//!   Node toolchain and adapts the answer. It downloads nothing, unpacks
+//!   nothing, and manages no cache — the module owns all of that now.
+//! * [`ops`] and [`types`] are the generic native-tool dispatcher over the agent
+//!   tool registry (`oh:*` tools such as `memory_search`, file, and shell
+//!   tools). They have nothing to do with Node beyond being reachable from
+//!   JavaScript, which is why they are not gated below.
+//!
 //! ## Gating (`runtime-node`)
 //!
-//! Facade: this module is always declared, but only the *managed-Node*
-//! machinery (`bootstrap` / `downloader` / `extractor` / `resolver` / `rpc` /
-//! `schemas`) is `#[cfg(feature = "runtime-node")]`; a `stub` carries
-//! `NodeBootstrap`'s type surface when the feature is off. The forcing
-//! constraint is `ShellTool`, which holds `Option<Arc<NodeBootstrap>>` as a
-//! field and is kernel — always compiled.
+//! The module is always declared, but the managed-Node client and the
+//! `javascript.*` controller pair are `#[cfg(feature = "runtime-node")]`; a
+//! [`stub`] carries [`NodeBootstrap`]'s type surface when the feature is off.
+//! The forcing constraint is `ShellTool`, which holds
+//! `Option<Arc<NodeBootstrap>>` as a field and is kernel — always compiled.
 //!
-//! [`ops`] and [`types`] are deliberately **not** gated. They are the generic
-//! native-tool dispatcher over the agent tool registry (`oh:*` tools such as
-//! `memory_search`, file, and shell tools) — they back both the gated
-//! `javascript.*` controllers *and* the ungated `flows` `oh:` `NativeToolBackend`,
-//! which must keep dispatching native tools even when the managed Node runtime
-//! itself is compiled out. Only the JavaScript RPC and the Node-specific
-//! `node_exec` / `npm_exec` tools are gated.
+//! [`ops`] and [`types`] stay ungated because they back both the gated
+//! `javascript.*` controllers *and* the ungated `flows` `oh:` backend, which
+//! must keep dispatching native tools when the managed Node runtime is compiled
+//! out.
 
 #[cfg(feature = "runtime-node")]
 pub mod bootstrap;
-#[cfg(feature = "runtime-node")]
-pub mod downloader;
-#[cfg(feature = "runtime-node")]
-pub mod extractor;
-#[cfg(feature = "runtime-node")]
-pub mod resolver;
 #[cfg(feature = "runtime-node")]
 pub mod rpc;
 #[cfg(feature = "runtime-node")]
@@ -53,13 +42,7 @@ pub use stub::{NodeBootstrap, NodeSource, ResolvedNode, RUNTIME_NODE_DISABLED_ME
 
 #[cfg(feature = "runtime-node")]
 pub use bootstrap::{NodeBootstrap, NodeSource, ResolvedNode};
-#[cfg(feature = "runtime-node")]
-pub use downloader::{download_distribution, fetch_shasums, NodeDistribution};
-#[cfg(feature = "runtime-node")]
-pub use extractor::{atomic_install, extract_distribution};
 pub use ops::{execute_tool, list_tools};
-#[cfg(feature = "runtime-node")]
-pub use resolver::{detect_system_node, parse_node_version, SystemNode};
 #[cfg(feature = "runtime-node")]
 pub use schemas::{
     all_controller_schemas as all_runtime_node_controller_schemas,

@@ -788,7 +788,7 @@ function MicComposer({
           aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
           onClick={() => (isRecording ? stopRecording() : void startRecording())}
           disabled={buttonDisabled}
-          className={`relative w-14 h-14 flex items-center justify-center rounded-full text-white shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+          className={`relative w-14 h-14 flex items-center justify-center rounded-full text-content-inverted shadow-soft transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
             isRecording ? 'bg-coral-500 hover:bg-coral-400' : 'bg-primary-500 hover:bg-primary-600'
           }`}>
           {isRecording && (
@@ -840,7 +840,7 @@ function MicComposer({
                 setDeviceMenuOpen(willOpen);
               }}
               disabled={state !== 'idle'}
-              className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-line-strong transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
               <svg
                 className="w-4 h-4"
                 fill="none"
@@ -905,7 +905,7 @@ function MicComposer({
                           <span className="flex-1 min-w-0 truncate">{d.label}</span>
                           {selected && (
                             <svg
-                              className="w-3.5 h-3.5 text-primary-500 flex-shrink-0"
+                              className="w-3.5 h-3.5 text-primary-500 shrink-0"
                               fill="none"
                               stroke="currentColor"
                               strokeWidth={2.5}
@@ -934,7 +934,7 @@ function MicComposer({
             title={t('chat.switchToText')}
             onClick={onSwitchToText}
             disabled={state !== 'idle'}
-            className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+            className="w-8 h-8 flex items-center justify-center rounded-full border border-line bg-surface text-content-muted hover:text-content-secondary hover:border-line-strong dark:hover:border-line-strong transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
             <svg
               className="w-4 h-4"
               fill="none"

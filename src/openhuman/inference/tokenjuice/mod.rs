@@ -7,10 +7,12 @@ pub mod schemas;
 pub mod tools;
 pub mod types;
 
-use serde::Serialize;
+use tinyjuice_bus::names::methods;
 
 pub use tools::TokenjuiceRetrieveTool;
 pub use types::{AgentTokenjuiceCompression, CompressorKind, ContentKind};
+
+use types::InstallRequest;
 
 pub const RETRIEVE_TOOL_NAME: &str = "tinyjuice_retrieve";
 pub const LEGACY_RETRIEVE_TOOL_NAME: &str = "retrieve_tool_output";
@@ -22,16 +24,6 @@ pub const RECOVERY_TOOL_NAMES: &[&str] = &[
 
 pub fn is_recovery_tool(name: &str) -> bool {
     RECOVERY_TOOL_NAMES.contains(&name)
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InstallRequest {
-    options: types::CompressOptions,
-    max_cache_entries: usize,
-    max_cache_bytes: usize,
-    ccr_ttl_secs: Option<u64>,
-    disk_tier_root: Option<String>,
 }
 
 pub async fn install_from_config(config: &crate::openhuman::config::Config) -> Result<(), String> {
@@ -76,7 +68,7 @@ pub async fn install_from_config(config: &crate::openhuman::config::Config) -> R
     }
     proxy(config)
         .await?
-        .call::<()>("Install", (request,))
+        .call::<()>(methods::INSTALL, (request,))
         .await
         .map_err(|e| e.to_string())?;
     *installed = Some(fingerprint);
@@ -87,7 +79,6 @@ pub async fn install_from_config(config: &crate::openhuman::config::Config) -> R
 pub(super) async fn proxy(
     config: &crate::openhuman::config::Config,
 ) -> Result<tinybus::Proxy, String> {
-    #[cfg(test)]
     let config = {
         let mut test_config = config.clone();
         if let Some(path) = std::env::var_os("TINYJUICE_TEST_MODULE") {
@@ -104,7 +95,6 @@ pub(super) async fn proxy(
         }
         test_config
     };
-    #[cfg(test)]
     let config = &config;
 
     crate::openhuman::modules::ensure_loaded(config, "tinyjuice").await?;
@@ -161,7 +151,7 @@ pub async fn compact_output_with_policy(
     };
     let response: types::CompactResponse = match proxy
         .call(
-            "Compact",
+            methods::COMPACT,
             (content.clone(), tool_name.to_string(), enabled, profile),
         )
         .await
@@ -194,7 +184,7 @@ pub async fn detect(content: String, hint: types::ContentHint) -> Result<String,
         .map_err(|error| error.to_string())?;
     proxy(&config)
         .await?
-        .call("Detect", (content, hint))
+        .call(methods::DETECT, (content, hint))
         .await
         .map_err(|error| error.to_string())
 }
@@ -209,7 +199,7 @@ pub async fn compress(
     install_from_config(&config).await?;
     let response: types::CompressedOutput = proxy(&config)
         .await?
-        .call("Compress", (content, hint))
+        .call(methods::COMPRESS, (content, hint))
         .await
         .map_err(|error| error.to_string())?;
     savings::record(
@@ -231,7 +221,7 @@ pub async fn retrieve(
     install_from_config(&config).await?;
     proxy(&config)
         .await?
-        .call("Retrieve", (token, range))
+        .call(methods::RETRIEVE, (token, range))
         .await
         .map_err(|error| error.to_string())
 }
@@ -243,7 +233,7 @@ pub async fn cache_stats() -> Result<types::CacheStats, String> {
     install_from_config(&config).await?;
     proxy(&config)
         .await?
-        .call("CacheStats", ())
+        .call(methods::CACHE_STATS, ())
         .await
         .map_err(|error| error.to_string())
 }
@@ -257,39 +247,5 @@ pub fn all_tokenjuice_controller_schemas() -> Vec<crate::core::ControllerSchema>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recovery_tool_aliases_remain_stable() {
-        assert!(is_recovery_tool(RETRIEVE_TOOL_NAME));
-        assert!(is_recovery_tool(LEGACY_RETRIEVE_TOOL_NAME));
-        assert!(!is_recovery_tool("shell"));
-    }
-
-    #[tokio::test]
-    async fn disabled_compaction_is_an_exact_pass_through_without_loading_the_module() {
-        let content = "exact tool output".to_string();
-        let output = compact_output_with_policy(
-            content.clone(),
-            "shell",
-            false,
-            AgentTokenjuiceCompression::Full,
-        )
-        .await;
-        assert_eq!(output, content);
-    }
-
-    #[tokio::test]
-    async fn off_profile_is_an_exact_pass_through_without_loading_the_module() {
-        let content = "exact tool output".to_string();
-        let output = compact_output_with_policy(
-            content.clone(),
-            "shell",
-            true,
-            AgentTokenjuiceCompression::Off,
-        )
-        .await;
-        assert_eq!(output, content);
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

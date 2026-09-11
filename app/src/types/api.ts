@@ -53,14 +53,6 @@ export interface User {
   referral: UserReferral;
   subscription: UserSubscription;
   role: 'admin' | 'team' | 'user';
-  /**
-   * Backend entitlement flag: whether this user has access to Medulla (the
-   * orchestration model) and the live orchestration engine. When absent or
-   * `false`, the Orchestration page renders a showcase/demo of what
-   * orchestration looks like at scale instead of the live surfaces. Set true
-   * for subscribers granted early access.
-   */
-  hasMedullaAccess?: boolean;
   settings: UserSettings;
   autoDeleteTelegramMessagesAfterDays: number;
   autoDeleteThreadsAfterDays: number;
@@ -85,6 +77,12 @@ export interface CurrentPlanData {
   subscription: { id: string; status: string; currentPeriodEnd: string; quantity: number } | null;
   monthlyBudgetUsd: number;
   weeklyBudgetUsd: number;
+}
+
+export interface BillingSummaryData {
+  credits: { promotionBalanceUsd: number; teamTopupUsd: number; totalUsd: number };
+  plan: CurrentPlanData;
+  links: { topUpUrl: string; manageUrl: string; apiKeysUrl: string };
 }
 
 export interface PurchasePlanData {

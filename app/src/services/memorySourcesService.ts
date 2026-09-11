@@ -148,6 +148,14 @@ export interface SourceStatus {
   chunks_pending: number;
   last_chunk_at_ms: number | null;
   freshness: FreshnessLabel;
+  /**
+   * The stage of a sync the core has in flight for this source, `null` when
+   * none (openhuman#6019). Absent altogether from a core that predates the
+   * field — callers treat absent as "unknown", not as idle.
+   */
+  sync_stage?: string | null;
+  /** The detail that came with `sync_stage`, if any. */
+  sync_detail?: string | null;
 }
 
 export async function memorySourcesStatusList(): Promise<SourceStatus[]> {
@@ -159,11 +167,25 @@ export async function memorySourcesStatusList(): Promise<SourceStatus[]> {
   return data.statuses ?? [];
 }
 
+/**
+ * Per-call budget for the RPCs that run a whole source sync before answering
+ * (`memory_sources_sync`, `memory_sources_apply_all_in`).
+ *
+ * The client's default per-call timeout is 30 s and one Gmail page alone takes
+ * ~31 s end to end, so the default aborted the fetch while the core kept
+ * syncing: the row flipped to "failed" for work that then completed, and the
+ * run never showed as done (#5820). This is the client's own clamp ceiling
+ * (`PER_CALL_TIMEOUT_MAX_MS`); the core's bus deadline is sized to outlast it
+ * so this abort, with its clean message, is the one that fires if a run wedges.
+ */
+export const MEMORY_SYNC_RPC_TIMEOUT_MS = 10 * 60 * 1_000;
+
 export async function syncMemorySource(sourceId: string): Promise<void> {
   log('sync source_id=%s', sourceId);
   await callCoreRpc<{ requested: boolean }>({
     method: 'openhuman.memory_sources_sync',
     params: { source_id: sourceId },
+    timeoutMs: MEMORY_SYNC_RPC_TIMEOUT_MS,
   });
 }
 
@@ -185,6 +207,15 @@ export async function getSupportedToolkits(): Promise<string[]> {
 export interface ApplyAllInResult {
   sources: MemorySourceEntry[];
   sync_triggered: number;
+  /**
+   * Enabled sources whose sync trigger failed (openhuman#5820). Older cores
+   * omit it; the service normalises absence to `0`, so a caller can always
+   * read it. `sync_triggered === 0 && sync_failed > 0` is the "nothing
+   * started" outcome the toast must not report as success.
+   */
+  sync_failed: number;
+  /** One `<source_id>: <error>` line per failed trigger. */
+  sync_errors: string[];
 }
 
 /**
@@ -194,11 +225,19 @@ export interface ApplyAllInResult {
  */
 export async function applyAllIn(): Promise<ApplyAllInResult> {
   log('apply_all_in');
+  // All In runs every enabled source's sync to completion, one after another,
+  // before it answers; the budget has to cover the whole sweep.
   const resp = await callCoreRpc<ApplyAllInResult>({
     method: 'openhuman.memory_sources_apply_all_in',
+    timeoutMs: MEMORY_SYNC_RPC_TIMEOUT_MS,
   });
   const data = unwrap<ApplyAllInResult>(resp);
-  return { sources: data.sources ?? [], sync_triggered: data.sync_triggered ?? 0 };
+  return {
+    sources: data.sources ?? [],
+    sync_triggered: data.sync_triggered ?? 0,
+    sync_failed: data.sync_failed ?? 0,
+    sync_errors: data.sync_errors ?? [],
+  };
 }
 
 export interface CodingSessionSourceStatus {
@@ -299,6 +338,59 @@ export interface CodingSessionDrainProgress {
   remaining: number;
   /** True while the backlog still reported more work after the latest pass. */
   moreRemaining: boolean;
+  /**
+   * True when a pass stopped waiting on a deadline rather than failing.
+   *
+   * The distinction is the whole point: no deadline in this stack cancels the
+   * work it bounds. The core's `ingest_budget` and tinybus' call deadline both
+   * only release the *caller* — tinybus says so in as many words: *"A timeout
+   * does not cancel the remote work."* So the import is still running, its
+   * result is simply not going to arrive on this call, and reporting it as a
+   * failure is both wrong and harmful: it invites a retry of a 35-60 s job
+   * that already succeeded (#5802).
+   */
+  timedOut: boolean;
+}
+
+/**
+ * Whether a rejected ingest pass is a deadline the **core itself** reported.
+ *
+ * Suppressing a timeout is only defensible when the work is genuinely still
+ * running, and that needs proof — not merely the absence of a reply. The proof
+ * used here is the message prefix: `ingest coding sessions: ` is added by
+ * `ingest_coding_sessions_rpc` (`src/openhuman/memory/sources/rpc.rs`) around
+ * both of its deadline paths, so a message carrying it can only have been
+ * produced *inside* that handler. The core received the request, resolved the
+ * binding and started the call. Two shapes qualify:
+ *
+ * - `ingest coding sessions: timed out after 570s` — the RPC's own
+ *   `ingest_budget` ceiling. Note the unit: **seconds**.
+ * - ``ingest coding sessions: call to `IngestCodingSessions` timed out after
+ *   30000ms`` — the tinybus call deadline, wrapped by the same handler.
+ *   **Milliseconds.**
+ *
+ * Everything else is a failure, and two near-misses are deliberately excluded:
+ *
+ * - **The renderer's own `AbortController`** (`CoreRpcError` with
+ *   `kind === 'timeout'`, message `Core RPC <method> timed out after <n>ms`).
+ *   It proves the client stopped waiting and nothing more. A core that is
+ *   wedged, overloaded, or not running produces exactly the same signal as one
+ *   that is happily distilling sessions, so treating it as "still running"
+ *   would show a false success and discourage a retry that is actually needed
+ *   — the same false-reporting defect as #5802 with the sign flipped.
+ * - **A bare timeout phrase.** A provider failure surfacing as
+ *   `request timed out after 30s` would have matched an unprefixed pattern.
+ *
+ * That asymmetry is the point: a *false negative* here costs a banner that
+ * says "failed" when the work continues — annoying, and recoverable, because
+ * the next status poll shows what landed. A *false positive* costs a banner
+ * that says "still running" over work that stopped, which is unrecoverable
+ * without the user noticing on their own. So the predicate is deliberately
+ * narrow and keyed on evidence rather than on symptom.
+ */
+export function isIngestTimeout(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /ingest coding sessions:[\s\S]*timed out after \d+\s*(ms|s)\b/i.test(message);
 }
 
 export interface CodingSessionDrainOptions {
@@ -342,6 +434,7 @@ export async function drainCodingSessions(
     observations: 0,
     remaining: 0,
     moreRemaining: false,
+    timedOut: false,
   };
   log('drain_coding_sessions: entry max_per_pass=%d max_passes=%d', maxSessionsPerPass, maxPasses);
 
@@ -350,7 +443,26 @@ export async function drainCodingSessions(
       log('drain_coding_sessions: stop requested after pass=%d', progress.passes);
       break;
     }
-    const result = await ingestCodingSessions(false, maxSessionsPerPass);
+    let result: CodingSessionIngestResult;
+    try {
+      result = await ingestCodingSessions(false, maxSessionsPerPass);
+    } catch (cause) {
+      // A deadline is not a failure. Nothing in this stack cancels the import
+      // when a caller stops waiting for it, so the pass is still running and
+      // will still write its observations — it just has no report to hand back
+      // on this call. Rethrowing here is what put a red "ingestion failed"
+      // banner over a run that went on to succeed, and invited the user to
+      // redo 35-60 s of work (#5802).
+      //
+      // Returning rather than rethrowing keeps every completed pass's counts,
+      // which is the honest answer: those passes really did import what they
+      // report, and only the last one is unresolved.
+      if (!isIngestTimeout(cause)) throw cause;
+      progress.timedOut = true;
+      log('drain_coding_sessions: pass=%d timed out; work continues', progress.passes + 1);
+      onProgress?.({ ...progress });
+      break;
+    }
     progress.passes += 1;
     progress.sessionsProcessed += result.sessions_processed;
     progress.sessionsFailed = result.sessions_failed;

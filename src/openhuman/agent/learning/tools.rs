@@ -23,8 +23,8 @@ use serde_json::json;
 use crate::openhuman::agent::learning::cache::FacetCache;
 use crate::openhuman::agent::learning::stability_detector::StabilityDetector;
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::api::provider::{FacetState, ProfileFacet, UserState};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use tinymemory_api::provider::{FacetState, ProfileFacet, UserState};
 
 /// Acquire the profile facet cache, mirroring `learning::schemas::get_cache`.
 ///
@@ -40,6 +40,17 @@ async fn get_cache() -> anyhow::Result<FacetCache> {
 /// Compose the full facet key from a class string + key suffix.
 fn full_key(class_str: &str, key_suffix: &str) -> String {
     format!("{class_str}/{key_suffix}")
+}
+
+/// Validate a caller-supplied class name against the facet taxonomy.
+///
+/// Mirrors the RPC handlers' strict check so the agent-tool surface rejects an
+/// unknown class instead of composing a key no facet can carry. Delegates to
+/// the shared taxonomy validator and lifts its string error into `anyhow`.
+fn validate_class(class_str: &str) -> anyhow::Result<()> {
+    crate::openhuman::agent::learning::cache::parse_facet_class_name(class_str)
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 fn facet_to_json(f: &ProfileFacet) -> serde_json::Value {
@@ -86,6 +97,11 @@ impl Tool for LearningListFacetsTool {
             .get("class")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
+        // Reject an unknown class before touching the store, so a filter that
+        // could never match a facet is an error rather than a silent empty list.
+        if let Some(cls) = &class_filter {
+            validate_class(cls)?;
+        }
         let cache = get_cache().await?;
         let all = cache
             .list_all()
@@ -94,10 +110,17 @@ impl Tool for LearningListFacetsTool {
         let facets: Vec<serde_json::Value> = all
             .iter()
             .filter(|f| f.state == FacetState::Active || f.state == FacetState::Provisional)
+            // Match on the class column when it is set — that stays
+            // authoritative, so a row explicitly tagged with another class can
+            // never match `cls` via its key prefix (the #6077 leak stays
+            // closed). A row with no class column falls back to its key prefix,
+            // where a canonical key like `style/verbosity` carries the class the
+            // column omits — the behaviour the dropped `|| key.starts_with(...)`
+            // arm provided for legitimate classless rows.
             .filter(|f| match &class_filter {
                 Some(cls) => {
                     f.class.as_deref() == Some(cls.as_str())
-                        || f.key.starts_with(&format!("{cls}/"))
+                        || (f.class.is_none() && f.key.starts_with(&format!("{cls}/")))
                 }
                 None => true,
             })
@@ -143,6 +166,7 @@ impl Tool for LearningGetFacetTool {
         log::debug!("[tool][learning] get_facet invoked");
         let class_str = read_required_str(&args, "class")?;
         let key_suffix = read_required_str(&args, "key")?;
+        validate_class(&class_str)?;
         let fk = full_key(&class_str, &key_suffix);
         let cache = get_cache().await?;
         let facet = cache
@@ -248,6 +272,7 @@ impl Tool for LearningUpdateFacetTool {
         let class_str = read_required_str(&args, "class")?;
         let key_suffix = read_required_str(&args, "key")?;
         let value = read_required_str(&args, "value")?;
+        validate_class(&class_str)?;
         let fk = full_key(&class_str, &key_suffix);
         let cache = get_cache().await?;
         let mut facet = cache
@@ -275,6 +300,7 @@ async fn set_pin(
 ) -> anyhow::Result<ToolResult> {
     let class_str = read_required_str(&args, "class")?;
     let key_suffix = read_required_str(&args, "key")?;
+    validate_class(&class_str)?;
     let fk = full_key(&class_str, &key_suffix);
     let cache = get_cache().await?;
     let updated = cache
@@ -388,6 +414,7 @@ impl Tool for LearningForgetFacetTool {
         log::debug!("[tool][learning] forget_facet invoked");
         let class_str = read_required_str(&args, "class")?;
         let key_suffix = read_required_str(&args, "key")?;
+        validate_class(&class_str)?;
         let fk = full_key(&class_str, &key_suffix);
         let cache = get_cache().await?;
         let facet_json = match cache
@@ -616,53 +643,5 @@ impl Tool for LearningEnrichProfileTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::tools::traits::ToolScope;
-
-    #[test]
-    fn names_and_levels() {
-        assert_eq!(LearningListFacetsTool.name(), "learning_list_facets");
-        assert_eq!(
-            LearningListFacetsTool.permission_level(),
-            PermissionLevel::ReadOnly
-        );
-        assert_eq!(
-            LearningUpdateFacetTool.permission_level(),
-            PermissionLevel::Write
-        );
-        assert_eq!(
-            LearningRebuildCacheTool.permission_level(),
-            PermissionLevel::Execute
-        );
-        assert_eq!(
-            LearningResetCacheTool.permission_level(),
-            PermissionLevel::Dangerous
-        );
-        assert!(LearningEnrichProfileTool.external_effect_with_args(&serde_json::Value::Null));
-        assert_eq!(LearningListFacetsTool.scope(), ToolScope::All);
-    }
-
-    #[test]
-    fn full_key_composes_class_and_suffix() {
-        assert_eq!(full_key("style", "verbosity"), "style/verbosity");
-    }
-
-    #[tokio::test]
-    async fn get_facet_requires_class_and_key() {
-        let err = LearningGetFacetTool
-            .execute(json!({ "class": "style" }))
-            .await
-            .expect_err("missing key");
-        assert!(err.to_string().contains("key"));
-    }
-
-    #[tokio::test]
-    async fn update_facet_requires_value() {
-        let err = LearningUpdateFacetTool
-            .execute(json!({ "class": "style", "key": "verbosity" }))
-            .await
-            .expect_err("missing value");
-        assert!(err.to_string().contains("value"));
-    }
-}
+#[path = "tools_tests.rs"]
+mod tests;

@@ -39,11 +39,23 @@ use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 mod engine;
-pub(crate) mod format;
+/// The document wire contract, shared with the `tinydocs` module.
+///
+/// This was 1,873 lines of this repository — `format/error/`, `format/spec/` —
+/// and every line of it also existed in `crates/tinydocs-bus/src/` upstream,
+/// differing only in the paths inside doc links. Two definitions of a contract
+/// is the drift risk the contract exists to remove: the specs here are what an
+/// LLM is shown as a JSON tool schema and what the module validates against,
+/// so a limit that moved on one side would become a tool description promising
+/// something the module does not enforce.
+///
+/// Aliased rather than re-exported item by item so the ~30 existing
+/// `…::document::format::…` paths keep resolving unchanged.
+pub(crate) use tinydocs_bus as format;
 mod types;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "document_tests.rs"]
 mod tests;
 
 use self::types::{validate_input, GenerateDocumentInput, GenerateDocumentOutput};

@@ -1,0 +1,678 @@
+
+pub fn schemas(function: &str) -> ControllerSchema {
+    match function {
+        "list_toolkits" => ControllerSchema {
+            namespace: "composio",
+            function: "list_toolkits",
+            description: "List the Composio toolkits currently enabled on the backend allowlist.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "toolkits",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Toolkit slugs enabled by the backend (e.g. gmail, notion).",
+                required: true,
+            }],
+        },
+        "list_capabilities" => ControllerSchema {
+            namespace: "composio",
+            function: "list_capabilities",
+            description: "List OpenHuman's built-in Composio capability matrix without requiring a signed-in Composio session.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "capabilities",
+                ty: TypeSchema::Json,
+                comment: "Array of capability rows describing native providers, curated catalogs, sync, trigger, and memory-ingest support.",
+                required: true,
+            }],
+        },
+        "list_agent_ready_toolkits" => ControllerSchema {
+            namespace: "composio",
+            function: "list_agent_ready_toolkits",
+            description:
+                "List every toolkit slug that ships an agent-ready curated catalog. Connected \
+                 toolkits not in this list should be surfaced in the UI as preview / agent \
+                 integration coming soon. See issue #2283.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "toolkits",
+                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                comment: "Sorted toolkit slugs with curated catalogs (e.g. gmail, notion, one_drive, excel, todoist).",
+                required: true,
+            }],
+        },
+        "list_connections" => ControllerSchema {
+            namespace: "composio",
+            function: "list_connections",
+            description:
+                "List the caller's active Composio OAuth connections filtered to the allowlist.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "connections",
+                ty: TypeSchema::Json,
+                comment: "Array of {id, toolkit, status, createdAt} objects.",
+                required: true,
+            }],
+        },
+        "authorize" => ControllerSchema {
+            namespace: "composio",
+            function: "authorize",
+            description: "Begin an OAuth handoff for a toolkit and return the hosted connect URL.",
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::String,
+                    comment: "Toolkit slug to authorize (must be in the backend allowlist).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "extra_params",
+                    ty: TypeSchema::Json,
+                    comment: "Optional JSON object of additional auth fields forwarded to Composio \
+                              (e.g. {\"waba_id\": \"...\") for toolkits that require them). \
+                              The core may also add toolkit-specific OAuth scope hints such as \
+                              Gmail's oauth_scopes value. Reserved keys (toolkit, toolkit_version, \
+                              auth, client_id) are rejected.",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "connectUrl",
+                    ty: TypeSchema::String,
+                    comment: "Composio-hosted OAuth URL to open in a browser.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "connectionId",
+                    ty: TypeSchema::String,
+                    comment: "New Composio connection id created by this authorize call.",
+                    required: true,
+                },
+            ],
+        },
+        "delete_connection" => ControllerSchema {
+            namespace: "composio",
+            function: "delete_connection",
+            description: "Delete a Composio connection and optionally remove source-scoped memory.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Identifier of the connection to delete.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "clear_memory",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, delete memory chunks ingested from this connection.",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the backend confirmed the deletion.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "memory_chunks_deleted",
+                    ty: TypeSchema::U64,
+                    comment: "Number of memory chunks deleted for this connection.",
+                    required: true,
+                },
+            ],
+        },
+        "list_tools" => ControllerSchema {
+            namespace: "composio",
+            function: "list_tools",
+            description:
+                "List OpenAI-function-calling tool schemas for one or more Composio toolkits.",
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkits",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional list of toolkit slugs to filter by. Omit to get all.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "tags",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional Composio action tags to filter by (OR semantics — \
+                              multiple tags broaden the result). Case-insensitive.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "tools",
+                ty: TypeSchema::Json,
+                comment: "Array of OpenAI function-calling tool schemas.",
+                required: true,
+            }],
+        },
+        "execute" => ControllerSchema {
+            namespace: "composio",
+            function: "execute",
+            description: "Execute a Composio action (tool slug) against a connected account.",
+            inputs: vec![
+                FieldSchema {
+                    name: "tool",
+                    ty: TypeSchema::String,
+                    comment: "Composio action slug, e.g. GMAIL_SEND_EMAIL.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "arguments",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Tool-specific arguments conforming to the tool's JSON schema.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional Composio connection id to target a specific account when multiple are connected for the same toolkit. Omit to use the default (oldest active).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Execution envelope: { data, successful, error?, costUsd }.",
+                required: true,
+            }],
+        },
+        "list_github_repos" => ControllerSchema {
+            namespace: "composio",
+            function: "list_github_repos",
+            description:
+                "List repositories available through the caller's authorized GitHub Composio connection.",
+            inputs: vec![FieldSchema {
+                name: "connection_id",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment:
+                    "Optional GitHub connection id. If omitted, backend picks the first active GitHub connection.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: { connectionId, repositories:[{ owner, repo, fullName, ... }] }.",
+                required: true,
+            }],
+        },
+        "create_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "create_trigger",
+            description:
+                "Create a Composio trigger instance for a connected account. For GitHub triggers, pass owner/repo in trigger_config.",
+            inputs: vec![
+                FieldSchema {
+                    name: "slug",
+                    ty: TypeSchema::String,
+                    comment: "Trigger slug, e.g. GITHUB_PULL_REQUEST_EVENT.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional connected account id. Backend resolves from slug toolkit when omitted.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "trigger_config",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Trigger config object. For GitHub, include owner/repo or repoFullName.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: { triggerId, status? }.",
+                required: true,
+            }],
+        },
+        "get_user_profile" => ControllerSchema {
+            namespace: "composio",
+            function: "get_user_profile",
+            description:
+                "Fetch a normalized user profile for a Composio connection by dispatching to \
+                 the toolkit's native provider implementation.",
+            inputs: vec![FieldSchema {
+                name: "connection_id",
+                ty: TypeSchema::String,
+                comment: "Composio connection id (from list_connections / authorize).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "profile",
+                ty: TypeSchema::Json,
+                comment: "Normalized profile: { toolkit, connectionId, displayName?, email?, \
+                          username?, avatarUrl?, extras }.",
+                required: true,
+            }],
+        },
+        "refresh_all_identities" => ControllerSchema {
+            namespace: "composio",
+            function: "refresh_all_identities",
+            description:
+                "Re-fetch user profile for every active Composio connection and persist as \
+                 IdentityKind-tagged rows in user_profile (#1365). Best-effort per connection \
+                 — failures don't abort the others.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "report",
+                ty: TypeSchema::Json,
+                comment: "{ refreshed, failed, skippedNoProvider, skippedInactive, \
+                          rowsWritten } — aggregate counts; per-connection trail in envelope \
+                          messages.",
+                required: true,
+            }],
+        },
+        "sync" => ControllerSchema {
+            namespace: "composio",
+            function: "sync",
+            description:
+                "Run a sync pass for a Composio connection by dispatching to the toolkit's \
+                 native provider implementation. Persists results into the memory layer.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Composio connection id (from list_connections / authorize).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment:
+                        "Optional reason: 'manual' (default), 'periodic', 'connection_created'.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "outcome",
+                ty: TypeSchema::Json,
+                comment: "SyncOutcome: { toolkit, connectionId, reason, itemsIngested, \
+                          startedAtMs, finishedAtMs, summary, details }.",
+                required: true,
+            }],
+        },
+        "list_trigger_history" => ControllerSchema {
+            namespace: "composio",
+            function: "list_trigger_history",
+            description:
+                "List recent ComposeIO trigger events archived by the core and report the daily JSONL archive paths.",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of archived trigger events to return.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Trigger history payload: { archive_dir, current_day_file, entries }.",
+                required: true,
+            }],
+        },
+        "get_user_scopes" => ControllerSchema {
+            namespace: "composio",
+            function: "get_user_scopes",
+            description:
+                "Read the per-toolkit user scope preference (read/write/admin) used to gate \
+                 composio_execute. Defaults to {read:true, write:true, admin:false} when no \
+                 pref is stored.",
+            inputs: vec![FieldSchema {
+                name: "toolkit",
+                ty: TypeSchema::String,
+                comment: "Toolkit slug, e.g. 'gmail' or 'notion'.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "pref",
+                ty: TypeSchema::Json,
+                comment: "Scope pref: { read: bool, write: bool, admin: bool }.",
+                required: true,
+            }],
+        },
+        "set_user_scopes" => ControllerSchema {
+            namespace: "composio",
+            function: "set_user_scopes",
+            description:
+                "Persist a per-toolkit user scope preference. The agent will only be able to \
+                 invoke composio actions whose classified scope is enabled here.",
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::String,
+                    comment: "Toolkit slug, e.g. 'gmail' or 'notion'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "read",
+                    ty: TypeSchema::Bool,
+                    comment: "Allow read-classified actions (GET / FETCH / LIST / SEARCH).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "write",
+                    ty: TypeSchema::Bool,
+                    comment: "Allow write-classified actions (SEND / CREATE / UPDATE).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "admin",
+                    ty: TypeSchema::Bool,
+                    comment: "Allow admin-classified actions (DELETE / TRASH / SHARE).",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "pref",
+                ty: TypeSchema::Json,
+                comment: "Stored scope pref: { read, write, admin }.",
+                required: true,
+            }],
+        },
+        "list_available_triggers" => ControllerSchema {
+            namespace: "composio",
+            function: "list_available_triggers",
+            description:
+                "List the catalog of triggers the caller can enable for a toolkit. \
+                 For GitHub, pass `connection_id` to fan out into per-repo entries.",
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::String,
+                    comment: "Toolkit slug, e.g. 'gmail' or 'github'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment:
+                        "Optional connection id. Optional for most toolkits; pass when \
+                         requesting GitHub per-repo catalog entries.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "triggers",
+                ty: TypeSchema::Json,
+                comment:
+                    "Array of {slug, scope, defaultConfig?, requiredConfigKeys?, repo?}.",
+                required: true,
+            }],
+        },
+        "list_triggers" => ControllerSchema {
+            namespace: "composio",
+            function: "list_triggers",
+            description: "List the user's currently enabled Composio triggers.",
+            inputs: vec![FieldSchema {
+                name: "toolkit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Optional toolkit slug to filter by.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "triggers",
+                ty: TypeSchema::Json,
+                comment:
+                    "Array of {id, slug, toolkit, connectionId, triggerConfig?, state?}.",
+                required: true,
+            }],
+        },
+        "enable_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "enable_trigger",
+            description:
+                "Enable a single Composio trigger on a connection the caller owns.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Connection id to attach the trigger to.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "slug",
+                    ty: TypeSchema::String,
+                    comment: "Trigger slug, e.g. 'GMAIL_NEW_GMAIL_MESSAGE'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "trigger_config",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Optional trigger config object.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: {triggerId, slug, connectionId}.",
+                required: true,
+            }],
+        },
+        "disable_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "disable_trigger",
+            description: "Disable (delete) a Composio trigger owned by the caller.",
+            inputs: vec![FieldSchema {
+                name: "trigger_id",
+                ty: TypeSchema::String,
+                comment: "Identifier of the trigger to delete.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "deleted",
+                ty: TypeSchema::Bool,
+                comment: "True when the backend confirmed deletion.",
+                required: true,
+            }],
+        },
+        "get_mode" => ControllerSchema {
+            namespace: "composio",
+            function: "get_mode",
+            description:
+                "Read the current Composio routing mode and whether a direct-mode API key is stored. \
+                 Never returns the key itself.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "mode",
+                    ty: TypeSchema::String,
+                    comment: "Current mode: 'backend' (default) or 'direct'.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True if a direct-mode Composio API key is in the encrypted keychain.",
+                    required: true,
+                },
+            ],
+        },
+        "set_api_key" => ControllerSchema {
+            namespace: "composio",
+            function: "set_api_key",
+            description:
+                "Persist a user-provided Composio API key for direct mode in the encrypted \
+                 keychain. Optionally flip composio.mode to 'direct' atomically. The key is \
+                 NEVER logged or returned — only its length is recorded in tracing.",
+            inputs: vec![
+                FieldSchema {
+                    name: "api_key",
+                    ty: TypeSchema::String,
+                    comment: "The Composio API key from https://app.composio.dev/api-keys.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "activate_direct",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "When true, also set composio.mode = 'direct'. Default false.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{ stored: bool, mode: string } — current mode after the operation.",
+                required: true,
+            }],
+        },
+        "clear_api_key" => ControllerSchema {
+            namespace: "composio",
+            function: "clear_api_key",
+            description:
+                "Remove the stored direct-mode Composio API key and reset composio.mode \
+                 back to 'backend'.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "{ cleared: bool, mode: 'backend' }.",
+                required: true,
+            }],
+        },
+        _other => ControllerSchema {
+            namespace: "composio",
+            function: "unknown",
+            description: "Unknown composio controller function.",
+            inputs: vec![FieldSchema {
+                name: "function",
+                ty: TypeSchema::String,
+                comment: "Unknown function requested for schema lookup.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "error",
+                ty: TypeSchema::String,
+                comment: "Lookup error details.",
+                required: true,
+            }],
+        },
+    }
+}
+
+// ── Handlers ────────────────────────────────────────────────────────
+
+fn handle_list_toolkits(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_list_toolkits(&config).await?)
+    })
+}
+
+fn handle_list_capabilities(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_list_capabilities(&config).await?)
+    })
+}
+
+fn handle_list_agent_ready_toolkits(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(super::ops::composio_list_agent_ready_toolkits().await?) })
+}
+
+fn handle_list_connections(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(super::ops::composio_list_connections(&config).await?)
+    })
+}
+
+fn handle_authorize(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let toolkit = read_required_non_empty(&params, "toolkit")?;
+        let extra_params = params.get("extra_params").cloned();
+        to_json(super::ops::composio_authorize(&config, &toolkit, extra_params).await?)
+    })
+}
+
+fn handle_delete_connection(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let connection_id = read_required_non_empty(&params, "connection_id")?;
+        let clear_memory = read_optional::<bool>(&params, "clear_memory")?.unwrap_or(false);
+        to_json(
+            super::ops::composio_delete_connection(&config, &connection_id, clear_memory).await?,
+        )
+    })
+}
+
+fn handle_list_tools(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let toolkits = read_optional::<Vec<String>>(&params, "toolkits")?;
+        let tags = read_optional::<Vec<String>>(&params, "tags")?;
+        to_json(super::ops::composio_list_tools(&config, toolkits, tags).await?)
+    })
+}
+
+fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let tool = read_required_non_empty(&params, "tool")?;
+        let arguments = read_optional::<Value>(&params, "arguments")?;
+        let connection_id = read_optional::<String>(&params, "connection_id")?;
+        to_json(
+            super::ops::composio_execute(&config, &tool, arguments, connection_id.as_deref())
+                .await?,
+        )
+    })
+}
+
+fn handle_list_github_repos(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: ListGithubReposParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        to_json(super::ops::composio_list_github_repos(&config, payload.connection_id).await?)
+    })
+}
+
+fn handle_create_trigger(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: CreateTriggerParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        let slug = payload.slug.trim();
+        if slug.is_empty() {
+            return Err("invalid params: 'slug' must not be empty".to_string());
+        }
+        to_json(
+            super::ops::composio_create_trigger(
+                &config,
+                slug,
+                payload.connection_id,
+                payload.trigger_config,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_list_trigger_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: TriggerHistoryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        to_json(super::ops::composio_list_trigger_history(&config, payload.limit).await?)
+    })
+}
+
+fn handle_get_user_profile(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let connection_id = read_required_non_empty(&params, "connection_id")?;
+        to_json(super::ops::composio_get_user_profile(&config, &connection_id).await?)
+    })
+}

@@ -238,7 +238,7 @@ const PLATFORM_KEYWORDS = [
 
 function GenericIntegrationIcon() {
   return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-subtle text-content-secondary shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-subtle text-content-secondary shadow-xs ring-1 ring-surface-overlay/5">
       <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" aria-hidden="true" fill="none">
         <path
           d="M8 8h8v8H8zM5 12h3m8 0h3M12 5v3m0 8v3"
@@ -270,7 +270,7 @@ function ComposioLogoBadge({
   }
 
   return (
-    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
+    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-surface shadow-xs ring-1 ring-surface-overlay/5">
       <img
         src={logoUrl}
         alt={`${name} logo`}

@@ -65,7 +65,6 @@ OpenHuman は、ほとんどのアシスタントが持っていない 3 つの�
 
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: あなたのデータはスコアリングされた Markdown ツリーへ圧縮されてあなたのマシン上の SQLite に保存され、開いて編集できる [Obsidian ボルト](https://x.com/karpathy/status/2039805659525644595)としてミラーリングされます。ベクトルスープのブラックボックスではありません。
 - **[100+ の OAuth 統合、5,000+ の MCP サーバー、90,000+ の Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: Gmail、Notion、GitHub、Slack などのスタックにワンクリックで接続。[自動取得](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)が 20 分ごとに脳に栄養を与えるので、今朝の時点で明日のコンテキストを持っています。
-- **[サブコンシャス](https://tinyhumans.gitbook.io/openhuman/features/subconscious)**: あなたの世界の差分を取り、ゴールを前進させ、モーニングブリーフィングを書くバックグラウンドループです。あなたが入力をやめた後も思考は続きます。
 - **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: 長期ゴール、スレッドごとの永続ゴール、そして会話ごとの共有かんばんボード。
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ツール出力はモデルに届く前に圧縮され、同じ情報を最大 80% 少ないトークンで扱えます。これがなければ、これほど大きな脳は維持できません。
 
@@ -74,13 +73,10 @@ OpenHuman は、ほとんどのアシスタントが持っていない 3 つの�
 - **[Workflows](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: エージェントが自動化を提案し、あなたはキャンバス上でレビューして保存します。オープンソースの [tinyflows](https://github.com/tinyhumansai/tinyflows) 上で、永続的・トリガー駆動・承認ゲート付きの実行が行われます。
 - **[仕事をやり遂げるハーネス](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: オープンソースの [tinyagents](https://github.com/tinyhumansai/tinyagents) 上でのチェックポイント付きグラフ実行です。行き詰まったエージェントは軌道修正され、停止したエージェントは根本原因を返し、すべての実行は呼び出しごとの実コスト付きでリプレイできます。
 - **[常時稼働のスプリットブレイン](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: 高速な反射エージェントが受信トラフィックをトリアージし、深い推論コアがワーカー艦隊に委任します。サブコンシャスがそれを操縦します。
-- **[エージェントの経済圏](https://tinyhumans.gitbook.io/openhuman/features/tinyplace)**: [tiny.place](https://tiny.place) 上の `@handle`、Signal 暗号化のエージェント間オーケストレーション、x402 USDC バウンティと取引。鍵はディスクに一切触れません。
 
 ### 🔬 ディープリサーチャー & 実行者
 
-- **[SuperContext](https://tinyhumans.gitbook.io/openhuman/features/super-context)**: モデルがあなたの最初のメッセージを読む前に、リサーチスカウトがメモリとファイルを走査します。コールドスタートはありません。
 - **電池同梱（Batteries included）**: ウェブ検索、スクレイパー、コーダーツールセット、本物の[ブラウザ](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer)、インプロセス Whisper による[ネイティブ音声](../gitbooks/features/native-tools/voice.md)、さらにワークロードごとに適切な LLM を選ぶ[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)。1 つのサブスクリプションで、[ローカル AI はオプション](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)です。
-- **[会議エージェント](https://tinyhumans.gitbook.io/openhuman/features/mascot/meeting-agents)**: 顔と声を持って **Meet、Zoom、Teams、Webex** に参加します。カレンダーから自動参加し、ライブ文字起こしをストリーミングし、名前で呼ばれると答え、要約とアクションアイテムを保存します。
 - **[画像・動画生成](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**: Seedream/SeedEdit の画像と Seedance/Veo の動画を、同じサブスクリプションでワークスペースに直接生成します。
 - **[17 のメッセージングチャネル](https://tinyhumans.gitbook.io/openhuman/features/channels)**: Telegram、Discord、Slack、WhatsApp、Signal、iMessage… さらに**ネイティブメール**（IMAP IDLE + SMTP）。エージェントはあなたが既にいる場所であなたに届きます。
 
@@ -156,11 +152,11 @@ n8n と Zapier に強くインスパイアされた[ワークフロー](https://
 
 ## ソースからのコントリビュート
 
-新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
+新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
 
-1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.93.0（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
+1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
 2. リポジトリを fork してクローンし、`pnpm install` の前に `git submodule update --init --recursive` を実行して、ベンダー化された Tauri/CEF のソースを取得します。
-3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
+3. ウェブのみの UI 作業には `pnpm dev` を、デスクトップシェルには `pnpm --filter openhuman-app dev:app` (macOS) または `pnpm dev:app:win` (Windows) を使用し、PR を出す前に `pnpm typecheck`、`pnpm format:check`、`cargo check -p openhuman --lib` などの集中チェックを実行してください。
 
 詳細なドキュメント: [アーキテクチャ](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [セットアップガイド](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [クラウドデプロイ](../gitbooks/features/cloud-deploy.md)。
 

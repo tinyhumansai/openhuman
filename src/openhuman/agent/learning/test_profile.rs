@@ -36,8 +36,8 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use crate::openhuman::agent::learning::cache::FacetCache;
-use crate::openhuman::memory::api::error::MemoryError;
-use crate::openhuman::memory::api::provider::{FacetType, MemoryProfile, ProfileFacet, UserState};
+use tinymemory_api::error::MemoryError;
+use tinymemory_api::provider::{FacetType, MemoryProfile, ProfileFacet, UserState};
 
 /// Facets held in memory, keyed by [`ProfileFacet::key`].
 #[derive(Default)]
@@ -63,7 +63,7 @@ impl InMemoryProfile {
     /// Facets sorted the way the engine returns them: stability descending,
     /// then key ascending for a stable tie-break.
     fn sorted(&self, active_only: bool) -> Vec<ProfileFacet> {
-        use crate::openhuman::memory::api::provider::FacetState;
+        use tinymemory_api::provider::FacetState;
         let facets = self.facets.lock();
         let mut out: Vec<ProfileFacet> = facets
             .values()
@@ -190,7 +190,7 @@ impl MemoryProfile for InMemoryProfile {
     /// stays — and only **Pinned** is protected. A `Forgotten` facet is already
     /// Dropped and is meant to go.
     async fn drop_facets_below(&self, threshold: f64) -> Result<usize, MemoryError> {
-        use crate::openhuman::memory::api::provider::FacetState;
+        use tinymemory_api::provider::FacetState;
         let mut facets = self.facets.lock();
         let doomed: Vec<String> = facets
             .values()

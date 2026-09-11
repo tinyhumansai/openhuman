@@ -49,6 +49,7 @@ mod traits;
 mod tts_providers;
 
 #[cfg(test)]
+#[path = "factory_tests.rs"]
 mod tests;
 
 // Re-export the public API — exact visibility preserved from the original file.

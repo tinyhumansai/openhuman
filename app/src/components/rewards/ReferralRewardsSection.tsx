@@ -6,7 +6,7 @@ import { useCoreState } from '../../providers/CoreStateProvider';
 import { referralApi } from '../../services/api/referralApi';
 import type { ReferralRelationshipStatus, ReferralStats } from '../../types/referral';
 import { LATEST_APP_DOWNLOAD_URL } from '../../utils/config';
-import Button from '../ui/Button';
+import { Button, Card, TextField } from '../ui';
 
 function formatUsd(n: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
@@ -164,128 +164,125 @@ const ReferralRewardsSection = () => {
 
   return (
     <div className="space-y-4">
-      <div className="bg-surface rounded-2xl shadow-soft border border-line p-6 space-y-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-semibold text-content">
-              {t('rewards.referralSection.title')}
-            </h2>
-            <p className="text-sm text-content-secondary max-w-xl">
-              {t('rewards.referralSection.subtitle')}
-            </p>
-          </div>
-        </div>
-
-        {loading && !stats ? (
-          <p className="text-sm text-content-muted">{t('rewards.referralSection.loading')}</p>
-        ) : null}
-        {loadError ? (
-          <div className="rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-sm text-coral-800 dark:text-coral-200">
-            {loadError}
-            <Button
-              variant="tertiary"
-              size="xs"
-              onClick={() => void loadStats()}
-              className="ml-2 underline">
-              {t('rewards.referralSection.retry')}
-            </Button>
-          </div>
-        ) : null}
-
-        {stats ? (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-xl border border-line bg-surface-muted p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
-                  {t('rewards.referralSection.yourCode')}
-                </div>
-                <div className="mt-2 font-mono text-lg font-semibold text-content break-all">
-                  {stats.referralCode || '—'}
-                </div>
-              </div>
-              <div className="rounded-xl border border-line bg-surface-muted p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
-                  {t('rewards.referralSection.totalEarned')}
-                </div>
-                <div className="mt-2 text-2xl font-semibold text-content">
-                  {formatUsd(stats.totals.totalRewardUsd)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-line bg-surface-muted p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
-                  {t('rewards.referralSection.pendingReferrals')}
-                </div>
-                <div className="mt-2 text-2xl font-semibold text-content">
-                  {stats.totals.pendingCount}
-                </div>
-              </div>
-              <div className="rounded-xl border border-line bg-surface-muted p-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
-                  {t('rewards.referralSection.completed')}
-                </div>
-                <div className="mt-2 text-2xl font-semibold text-content">
-                  {stats.totals.convertedCount}
-                </div>
-              </div>
+      {/* p-6 space-y-6 kept explicit (not Card's `padded` p-4) to preserve this
+          section's original padding pixel-for-pixel; only the rounded-2xl →
+          Card's rounded-xl radius is converged here. */}
+      <Card divided={false} className="shadow-soft p-6">
+        <div className="space-y-6">
+          {loading && !stats ? (
+            <p className="text-sm text-content-muted">{t('rewards.referralSection.loading')}</p>
+          ) : null}
+          {loadError ? (
+            <div className="rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-sm text-coral-800 dark:text-coral-200">
+              {loadError}
+              <Button
+                variant="tertiary"
+                size="xs"
+                onClick={() => void loadStats()}
+                className="ml-2 underline">
+                {t('rewards.referralSection.retry')}
+              </Button>
             </div>
+          ) : null}
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              <button
-                type="button"
-                onClick={() => void handleCopy()}
-                disabled={!referralCodeToCopy}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-stone-800 disabled:opacity-50">
-                {t('rewards.referralSection.copyCode')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleShare()}
-                disabled={!referralCodeToCopy}
-                className="inline-flex items-center justify-center rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium text-content-secondary transition-colors hover:bg-surface-hover dark:bg-surface-muted/60 dark:hover:bg-surface-muted/60 disabled:opacity-50">
-                {t('rewards.referralSection.share')}
-              </button>
-              {copyHint ? (
-                <span className="self-center text-sm text-sage-600 dark:text-sage-300">
-                  {copyHint}
-                </span>
-              ) : null}
-            </div>
-          </>
-        ) : null}
-      </div>
+          {stats ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border border-line bg-surface-muted p-4">
+                  <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
+                    {t('rewards.referralSection.yourCode')}
+                  </div>
+                  <div className="mt-2 font-mono text-lg font-semibold text-content break-all">
+                    {stats.referralCode || '—'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-line bg-surface-muted p-4">
+                  <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
+                    {t('rewards.referralSection.totalEarned')}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-content">
+                    {formatUsd(stats.totals.totalRewardUsd)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-line bg-surface-muted p-4">
+                  <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
+                    {t('rewards.referralSection.pendingReferrals')}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-content">
+                    {stats.totals.pendingCount}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-line bg-surface-muted p-4">
+                  <div className="text-xs font-medium uppercase tracking-wide text-content-faint">
+                    {t('rewards.referralSection.completed')}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-content">
+                    {stats.totals.convertedCount}
+                  </div>
+                </div>
+              </div>
 
-      {stats && stats.canApplyReferral !== false && showApplyForm ? (
-        <div className="rounded-xl shadow-soft border border-line bg-surface p-4 space-y-3">
-          <h2 className="text-2xl font-semibold text-content">
-            {t('rewards.referralSection.haveCode')}
-          </h2>
-          <p className="text-xs text-content-secondary">
-            {t('rewards.referralSection.haveCodeDesc')}
-          </p>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              type="text"
-              value={applyCode}
-              onChange={e => setApplyCode(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && void handleApply()}
-              placeholder={t('rewards.referralSection.placeholder')}
-              disabled={applyLoading}
-              className="flex-1 px-4 py-2.5 rounded-xl border border-line bg-surface font-mono text-content placeholder:text-stone-400 dark:text-content-faint dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40"
-            />
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => void handleApply()}
-              disabled={applyLoading || !applyCode.trim()}>
-              {applyLoading
-                ? t('rewards.referralSection.applying')
-                : t('rewards.referralSection.apply')}
-            </Button>
-          </div>
-          {applyError ? (
-            <p className="text-xs text-coral-600 dark:text-coral-300">{applyError}</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={() => void handleCopy()}
+                  disabled={!referralCodeToCopy}>
+                  {t('rewards.referralSection.copyCode')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => void handleShare()}
+                  disabled={!referralCodeToCopy}>
+                  {t('rewards.referralSection.share')}
+                </Button>
+                {copyHint ? (
+                  <span className="self-center text-sm text-sage-600 dark:text-sage-300">
+                    {copyHint}
+                  </span>
+                ) : null}
+              </div>
+            </>
           ) : null}
         </div>
+      </Card>
+
+      {stats && stats.canApplyReferral !== false && showApplyForm ? (
+        <Card padded divided={false} className="shadow-soft">
+          <div className="space-y-3">
+            <h2 className="text-2xl font-semibold text-content">
+              {t('rewards.referralSection.haveCode')}
+            </h2>
+            <p className="text-xs text-content-secondary">
+              {t('rewards.referralSection.haveCodeDesc')}
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <TextField
+                type="text"
+                value={applyCode}
+                onChange={e => setApplyCode(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && void handleApply()}
+                placeholder={t('rewards.referralSection.placeholder')}
+                disabled={applyLoading}
+                mono
+                className="flex-1"
+              />
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => void handleApply()}
+                disabled={applyLoading || !applyCode.trim()}>
+                {applyLoading
+                  ? t('rewards.referralSection.applying')
+                  : t('rewards.referralSection.apply')}
+              </Button>
+            </div>
+            {applyError ? (
+              <p className="text-xs text-coral-600 dark:text-coral-300">{applyError}</p>
+            ) : null}
+          </div>
+        </Card>
       ) : null}
 
       {stats && (hasAppliedFromStats || hasAppliedFromProfile || applySuccess) && !showApplyForm ? (
@@ -300,7 +297,7 @@ const ReferralRewardsSection = () => {
       ) : null}
 
       {stats ? (
-        <div className="bg-surface rounded-2xl shadow-soft border border-line p-6">
+        <Card divided={false} className="shadow-soft p-6">
           <div>
             <h3 className="text-sm font-semibold text-content mb-2">
               {t('rewards.referralSection.activity')}
@@ -328,7 +325,7 @@ const ReferralRewardsSection = () => {
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line-subtle dark:divide-neutral-800">
+                  <tbody className="divide-y divide-line-subtle">
                     {stats.referrals.map((row, idx) => (
                       <tr key={row.id ?? row.referredUserId ?? idx} className="bg-surface">
                         <td className="px-3 py-2 font-mono text-content">
@@ -363,7 +360,7 @@ const ReferralRewardsSection = () => {
               </div>
             )}
           </div>
-        </div>
+        </Card>
       ) : null}
     </div>
   );

@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use serde_json::{Map, Value};
 
-use crate::openhuman::memory::api::capabilities::{Capabilities, Capability};
+use tinymemory_api::capabilities::{Capabilities, Capability};
 
 use crate::core::ControllerSchema;
 
@@ -62,7 +62,7 @@ impl RegisteredController {
 ///
 /// The harness families (`Agent`/`Memory`/`Threads`/`Config`/`Security`) are on
 /// under [`crate::core::runtime::DomainSet::harness`]; the gate families
-/// (`Flows`/`Skills`/`Mcp`/`Meet`/`Channels`/`Web3`/`Voice`/`Media`) are the
+/// (`Flows`/`Skills`/`Mcp`/`Channels`/`Web3`/`Voice`/`Media`) are the
 /// per-feature axes the child issues (#4797–#4804) additionally narrow at
 /// compile time. `Platform` is the catch-all for everything not in a named
 /// family — always on in `full()`, off in `harness()`/`none()`.
@@ -73,7 +73,7 @@ impl RegisteredController {
 /// of a family to name. That made two things wrong which are now fixed:
 ///
 /// - `harness()` claimed "agent + memory + threads + config + security" but
-///   silently dropped `agent::{agentbox, harness_init, artifacts, learning}`,
+///   silently dropped `agent::{harness_init, artifacts, learning}`,
 ///   `security::{credentials, devices}`, `config::{workspace, migration_helpers}`,
 ///   `memory::people` and `skills::webhooks`, all of which sat in `Platform`.
 ///   An agent harness that does not register `harness_init` is a latent bug.
@@ -100,7 +100,6 @@ pub enum DomainGroup {
     Flows,
     Skills,
     Mcp,
-    Meet,
     Channels,
     Web3,
     Voice,
@@ -135,12 +134,9 @@ pub enum DomainGroup {
     /// Desktop-shell-facing surfaces a headless or embedded host has no use for
     /// (`desktop/`).
     Desktop,
-    /// Clients of the hosted TinyHumans backend — billing, team, referral,
-    /// announcements, the hosted orchestration brain (`hosted/`). A self-hosted
-    /// build drops these as a unit.
+    /// Clients of the hosted TinyHumans backend — billing, team, referral, and
+    /// announcements (`hosted/`). A self-hosted build drops these as a unit.
     Hosted,
-    /// The multi-agent relay surface (`tinyplace/`).
-    Relay,
     /// Loadable native modules: the module host, its registry, and the `modules`
     /// RPC surface (`modules/`).
     Modules,
@@ -150,7 +146,7 @@ pub enum DomainGroup {
 
 impl DomainGroup {
     /// Number of variants. Kept in sync by `domain_group_all_lists_every_variant`.
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 21;
 
     /// Every variant, for exhaustive iteration in drift guards.
     ///
@@ -170,7 +166,6 @@ impl DomainGroup {
         DomainGroup::Flows,
         DomainGroup::Skills,
         DomainGroup::Mcp,
-        DomainGroup::Meet,
         DomainGroup::Channels,
         DomainGroup::Web3,
         DomainGroup::Voice,
@@ -182,7 +177,6 @@ impl DomainGroup {
         DomainGroup::Runtimes,
         DomainGroup::Desktop,
         DomainGroup::Hosted,
-        DomainGroup::Relay,
         DomainGroup::Modules,
         DomainGroup::Platform,
     ];
@@ -200,21 +194,19 @@ impl DomainGroup {
             DomainGroup::Flows => 5,
             DomainGroup::Skills => 6,
             DomainGroup::Mcp => 7,
-            DomainGroup::Meet => 8,
-            DomainGroup::Channels => 9,
-            DomainGroup::Web3 => 10,
-            DomainGroup::Voice => 11,
-            DomainGroup::Media => 12,
-            DomainGroup::Medulla => 13,
-            DomainGroup::Inference => 14,
-            DomainGroup::Integrations => 15,
-            DomainGroup::Automation => 16,
-            DomainGroup::Runtimes => 17,
-            DomainGroup::Desktop => 18,
-            DomainGroup::Hosted => 19,
-            DomainGroup::Relay => 20,
-            DomainGroup::Modules => 21,
-            DomainGroup::Platform => 22,
+            DomainGroup::Channels => 8,
+            DomainGroup::Web3 => 9,
+            DomainGroup::Voice => 10,
+            DomainGroup::Media => 11,
+            DomainGroup::Medulla => 12,
+            DomainGroup::Inference => 13,
+            DomainGroup::Integrations => 14,
+            DomainGroup::Automation => 15,
+            DomainGroup::Runtimes => 16,
+            DomainGroup::Desktop => 17,
+            DomainGroup::Hosted => 18,
+            DomainGroup::Modules => 19,
+            DomainGroup::Platform => 20,
         }
     }
 }
@@ -242,7 +234,7 @@ struct GroupedController {
     /// Absence, not a stub that errors — a registered-but-failing method
     /// teaches a model that the capability exists and makes it retry. Same
     /// reasoning as the `flows` compile-time gate (see CLAUDE.md) and as
-    /// `crate::openhuman::memory::api::capabilities`' module docs.
+    /// `tinymemory_api::capabilities`' module docs.
     capability: Option<Capability>,
     controller: RegisteredController,
 }
@@ -326,7 +318,7 @@ fn capability_allowed_in(caps: Capabilities, capability: Option<Capability>) -> 
 static REGISTRY: OnceLock<Vec<GroupedController>> = OnceLock::new();
 
 /// Internal-only controllers: registered for RPC dispatch but NOT in the agent-facing
-/// schema catalog.  These handlers are callable by trusted callers (e.g. the Tauri scanner)
+/// schema catalog.  These handlers are callable by trusted callers (e.g. the desktop shell)
 /// but should not be advertised to agents via tool listings or schema discovery.
 static INTERNAL_REGISTRY: OnceLock<Vec<GroupedController>> = OnceLock::new();
 
@@ -401,12 +393,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::openhuman::platform::about_app::all_about_app_registered_controllers(),
     );
-    // AgentBox marketplace adapter status
-    push(
-        &mut controllers,
-        DomainGroup::Agent,
-        crate::openhuman::agent::agentbox::all_agentbox_registered_controllers(),
-    );
     // Core application shell state
     push(
         &mut controllers,
@@ -425,13 +411,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Integrations,
         crate::openhuman::integrations::composio::all_composio_registered_controllers(),
-    );
-    // Recall.ai Calendar V1 (backend-proxied) controllers
-    push(
-        &mut controllers,
-        DomainGroup::Integrations,
-        crate::openhuman::integrations::recall_calendar::all_recall_calendar_registered_controllers(
-        ),
     );
     // Scheduled job management
     push(
@@ -526,6 +505,12 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::openhuman::platform::doctor::all_doctor_registered_controllers(),
     );
+    // User-authored hooks — inspect, reload, and test-fire `hooks.json` entries.
+    push(
+        &mut controllers,
+        DomainGroup::Platform,
+        crate::openhuman::hooks::all_hooks_registered_controllers(),
+    );
     // Secret storage and encryption
     push(
         &mut controllers,
@@ -561,12 +546,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Agent,
         crate::openhuman::agent::artifacts::all_artifacts_registered_controllers(),
-    );
-    // Background heartbeat loop controls
-    push(
-        &mut controllers,
-        DomainGroup::Automation,
-        crate::openhuman::subconscious::heartbeat::all_heartbeat_registered_controllers(),
     );
     // Ad-hoc static directory HTTP hosting for local file sharing / previews.
     // Gated with the `http-server` feature (#5048): the domain is an axum server,
@@ -634,12 +613,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Config,
         crate::openhuman::config::migration_helpers::all_migration_registered_controllers(),
-    );
-    // Background command monitors for agent-scoped event sources
-    push(
-        &mut controllers,
-        DomainGroup::Automation,
-        crate::openhuman::subconscious::monitors::all_monitor_registered_controllers(),
     );
     // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local AI, and providers modules.)
@@ -871,13 +844,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         Some(Capability::Sources),
         crate::openhuman::memory::sources::all_memory_sources_registered_controllers(),
     );
-    // Memory diff — snapshot-based change tracking for memory sources
-    push_cap(
-        &mut controllers,
-        DomainGroup::Memory,
-        Some(Capability::Diff),
-        crate::openhuman::memory::diff::all_memory_diff_registered_controllers(),
-    );
     // Referral and growth tracking
     push(
         &mut controllers,
@@ -938,18 +904,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Voice,
         crate::openhuman::voice::all_voice_registered_controllers(),
     );
-    // Background awareness and autonomous tasks
-    push(
-        &mut controllers,
-        DomainGroup::Automation,
-        crate::openhuman::subconscious::all_subconscious_registered_controllers(),
-    );
-    push(
-        &mut controllers,
-        DomainGroup::Automation,
-        crate::openhuman::subconscious::triggers::all_subconscious_triggers_registered_controllers(
-        ),
-    );
     // Webhook tunnel management
     push(
         &mut controllers,
@@ -1003,42 +957,13 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::openhuman::desktop::notifications::all_notifications_registered_controllers(),
     );
-    // Google Meet call-join request validation (shell handles the webview).
-    // Gated behind the `meet` feature.
-    #[cfg(feature = "meet")]
-    push(
-        &mut controllers,
-        DomainGroup::Meet,
-        crate::openhuman::meet::all_meet_registered_controllers(),
-    );
-    // Agent meetings — backend-delegated Meet bot via Socket.IO
-    // (gated with meet).
-    #[cfg(feature = "meet")]
-    push(
-        &mut controllers,
-        DomainGroup::Meet,
-        crate::openhuman::meet::backend_bot::all_agent_meetings_registered_controllers(),
-    );
-    // Live meet-agent loop: STT/LLM/TTS over the open call's audio
-    // (gated with meet).
-    #[cfg(feature = "meet")]
-    push(
-        &mut controllers,
-        DomainGroup::Meet,
-        crate::openhuman::meet::agent::all_meet_agent_registered_controllers(),
-    );
-    // Structured WhatsApp Web data has NO core RPC controllers: the SQLite
-    // store + ingest + list/search moved to the Tauri shell
-    // (`app/src-tauri/src/whatsapp_data/`). The agent's read-only query tools
-    // live in `openhuman::channels::whatsapp_data::tools` and reach the shell store via
-    // the in-process native request bus, not the controller registry.
     // Mobile device pairing and management
     push(
         &mut controllers,
         DomainGroup::Security,
         crate::openhuman::security::devices::all_devices_registered_controllers(),
     );
-    // Durable agent session database — queryable index over transcripts, lineage, tool calls
+    // Durable agent/workflow run ledger — read surface over run state, lineage, events, telemetry
     push(
         &mut controllers,
         DomainGroup::Agent,
@@ -1086,11 +1011,9 @@ fn build_registered_controllers() -> Vec<GroupedController> {
 /// Aggregates controllers that are registered for RPC routing but NOT exposed to agents.
 ///
 /// These are write-path or internal-only handlers callable by trusted callers
-/// (e.g. the Tauri scanner ingest path) that should not appear in agent tool listings.
+/// (e.g. the desktop shell) that should not appear in agent tool listings.
 fn build_internal_only_controllers() -> Vec<GroupedController> {
     let mut controllers = Vec::new();
-    // (whatsapp_data ingest is no longer a core RPC path — the scanner writes
-    // the shell-side store directly over the in-process native request bus.)
     // MCP write audit list: internal-only so the desktop UI/CLI can inspect
     // local write history without exposing cross-client history as an MCP tool.
     push(
@@ -1107,28 +1030,6 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Modules,
         crate::openhuman::modules::all_registered_controllers(),
-    );
-    // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
-    // but NOT advertised to agents in tool listings or schema discovery.
-    push(
-        &mut controllers,
-        DomainGroup::Relay,
-        crate::openhuman::tinyplace::all_tinyplace_registered_controllers(),
-    );
-    // User-consented tiny.place pairing for wrapped agent sessions: UI-callable
-    // via core_rpc_relay, but excluded from agent tool listings/schema discovery.
-    push(
-        &mut controllers,
-        DomainGroup::Agent,
-        crate::openhuman::agent::orchestration::all_pairing_registered_controllers(),
-    );
-    // Orchestration read surface (stage 7): the TinyPlaceOrchestrationTab reads
-    // sessions/messages, sends Master steering DMs, marks read, and polls status.
-    // Renderer-only — not advertised to agents.
-    push(
-        &mut controllers,
-        DomainGroup::Hosted,
-        crate::openhuman::hosted::orchestration::all_registered_controllers(),
     );
     controllers
 }
@@ -1175,7 +1076,6 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
-        "agentbox" => Some("AgentBox marketplace adapter status — mode flag and GMI MaaS provider wiring."),
         "ai" => Some("Agent-generated artifact storage, retrieval, and lifecycle management."),
         "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
@@ -1201,13 +1101,15 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),
+        "hooks" => Some(
+            "User-authored hooks: list what is configured, reload every hooks.json layer, and test-fire one event.",
+        ),
         "encrypt" => Some("Encrypt secure values managed by secret storage."),
         "health" => Some("Process and component health snapshots."),
         "inference" => Some("Connect to configured text, vision, and embedding inference runtimes."),
         "migrate" => Some("Data migration utilities."),
         "javascript" => Some("First-class JavaScript runtime bridge for listing and dispatching tools."),
         "medulla" => Some("Medulla orchestration backend: integration readiness, durable sessions, and the connected worker roster."),
-        "monitor" => Some("Start, inspect, read, and stop bounded background command monitors."),
         "security" => Some("Security policy and autonomy guardrail metadata."),
         "service" => Some("Desktop service lifecycle management."),
         "session_import" => {
@@ -1233,9 +1135,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory_sources" => Some(
             "User-configured data connectors (Composio, folders, GitHub repos, RSS, web pages) that feed memory.",
         ),
-        "memory_diff" => Some(
-            "Snapshot-based change tracking for memory sources — capture state, compute diffs, and surface changes to agents.",
-        ),
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "run_ledger" => Some(
             "Durable agent and workflow run state, child lineage, events, telemetry, and checkpoint references.",
@@ -1248,12 +1147,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_team" => Some(
             "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
-        ),
-        "orchestration_pairing" => Some(
-            "User-consented tiny.place contact pairing for wrapped agent sessions.",
-        ),
-        "orchestration" => Some(
-            "Subconscious-orchestration read surface: chat windows (master/subconscious/per-session), message history, Master steering DMs, read state, and steering status.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "announcements" => {
@@ -1274,10 +1167,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Local-first assistive surfaces for provider events, respond queues, and drafts.",
         ),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
-        "subconscious" => Some("Periodic local-model background awareness loop."),
-        "subconscious_triggers" => {
-            Some("Event-driven trigger pipeline feeding the background orchestrator.")
-        }
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")
         }
@@ -1297,27 +1186,11 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Integration notification ingest, triage scoring, listing, read-state, \
              and per-provider routing settings.",
         ),
-        "meet" => Some(
-            "Validate Google Meet call-join requests and mint a request_id; the desktop \
-             shell opens the embedded CEF webview that joins the call as an anonymous guest. \
-             Also provides meet_list_upcoming to fetch upcoming calendar meetings with \
-             conferencing links from connected Google Calendar accounts.",
-        ),
-        "meet_agent" => Some(
-            "Live agent loop for an open Google Meet call: shell streams inbound PCM, \
-             core runs VAD-segmented STT → LLM → TTS, shell pulls synthesized PCM back.",
-        ),
-        "agent_meetings" => Some(
-            "Backend-delegated meeting bot (Google Meet, Zoom, Teams, Webex) via Socket.IO — join, leave, and harness response.",
-        ),
         "devices" => Some(
             "Paired mobile device management — pairing channel creation, listing, and revocation.",
         ),
         "subsystems" => Some(
             "Kernel subsystem slots and their bound drivers: class, health, contract version, and advertised capabilities.",
-        ),
-        "tinyplace" => Some(
-            "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
         ),
         _ => None,
     }
@@ -1454,6 +1327,55 @@ pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
 }
 
 /// Validates that the provided parameters match the requirements of the controller schema.
+///
+/// This is the *single* pre-dispatch gate for every registered controller. Each
+/// path that reaches `try_invoke_registered_rpc` validates first:
+///
+/// | entry point | validates in |
+/// | --- | --- |
+/// | HTTP JSON-RPC | `core::jsonrpc` |
+/// | dynamic dispatch fallback | `core::dispatch::try_registry_dispatch` |
+/// | CLI | `core::cli` |
+/// | MCP read and write tools | `openhuman::mcp::server::tools::params` |
+///
+/// The one call site that does not validate for itself is
+/// `openhuman::mcp::server::write_dispatch`, whose sole caller
+/// (`openhuman::mcp::server::tools::dispatch`) validates immediately before it.
+/// That is not a gap today, but it is the place a refactor could open one.
+///
+/// # Relationship to handler-side parameter checks (#6073)
+///
+/// Many handlers re-check required params themselves, in wording of their own
+/// (`missing required param: id`, ``missing required `class` ``,
+/// `invalid params: …`). For an *absent*, *unknown* or *wrong-typed* param a
+/// caller never reaches those: this function refuses first, and its message
+/// carries the field's *schema comment* as a suffix —
+/// `missing required param 'id': Session ID.` — so the two are not
+/// interchangeable strings.
+///
+/// They are not redundant, though. This function deliberately accepts an
+/// explicit JSON `null` for any declared type: the required check tests key
+/// *presence*, and `check_type` returns early on null (see
+/// `validate_params_null_for_required_is_acceptable`). A dispatched
+/// `{"class": null}` therefore passes this gate and runs the handler, whose own
+/// refusal is exactly what the caller sees. On that path the handler-side check
+/// is the only guard there is.
+///
+/// Two further reasons they stay:
+///
+/// - Not every `missing required param` in the tree belongs to a registered
+///   controller. Agent *tool* handlers take model-produced arguments and are
+///   not dispatched through this function at all, so their checks are
+///   load-bearing.
+/// - A `RegisteredController`'s handler can be invoked directly, and several
+///   `tests/raw_coverage` suites do exactly that, asserting the handler's own
+///   refusal.
+///
+/// The practical consequence is for whoever writes the next test: a
+/// *missing-key* case asserted against handler wording is testing the handler,
+/// not the dispatch path. To pin what a caller actually observes, go through
+/// one of the entry points above — see
+/// `tests/raw_coverage/dispatch_param_validation_e2e.rs`.
 ///
 /// # Errors
 ///

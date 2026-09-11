@@ -8,6 +8,7 @@ import {
   getCodingSessionStatus,
 } from '../../services/memorySourcesService';
 import type { ToastNotification } from '../../types/intelligence';
+import { Card } from '../ui';
 import Button from '../ui/Button';
 
 interface CodingSessionsCardProps {
@@ -74,18 +75,29 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
         shouldStop: () => stopRequestedRef.current,
       });
       console.debug(
-        '[coding-sessions] drain: exit passes=%d processed=%d failed=%d more=%s',
+        '[coding-sessions] drain: exit passes=%d processed=%d failed=%d more=%s timed_out=%s',
         result.passes,
         result.sessionsProcessed,
         result.sessionsFailed,
-        result.moreRemaining
+        result.moreRemaining,
+        result.timedOut
       );
       // Any leftover backlog is incomplete, regardless of why the loop exited —
       // a user Stop, the pass cap, or a stalled pass. Only a fully drained run
       // (no more budget) is reported as complete success.
       const incomplete = result.moreRemaining;
-      const message =
-        result.sessionsFailed > 0
+      // A deadline outranks a stale failure count. `sessionsFailed` is assigned
+      // from the last *completed* pass, so when a later pass times out it
+      // describes work that is already superseded — while `timedOut` describes
+      // a run that is still going. Leading with the failure would tell the user
+      // to retry something that has not finished, which is the whole defect
+      // this branch exists to stop (#5802).
+      const message = result.timedOut
+        ? t('memorySources.codingSessions.stillRunningMessage').replace(
+            '{processed}',
+            String(result.sessionsProcessed)
+          )
+        : result.sessionsFailed > 0
           ? t('memorySources.codingSessions.partialFailure')
               .replace('{failed}', String(result.sessionsFailed))
               .replace('{processed}', String(result.sessionsProcessed))
@@ -96,11 +108,20 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
             : t('memorySources.codingSessions.completeMessage')
                 .replace('{processed}', String(result.sessionsProcessed))
                 .replace('{observations}', String(result.observations));
-      onToast?.({
-        type: result.sessionsFailed > 0 ? 'warning' : incomplete ? 'info' : 'success',
-        title: incomplete
+      const title = result.timedOut
+        ? t('memorySources.codingSessions.stillRunning')
+        : incomplete
           ? t('memorySources.codingSessions.stopped')
-          : t('memorySources.codingSessions.complete'),
+          : t('memorySources.codingSessions.complete');
+      onToast?.({
+        type: result.timedOut
+          ? 'info'
+          : result.sessionsFailed > 0
+            ? 'warning'
+            : incomplete
+              ? 'info'
+              : 'success',
+        title,
         message,
       });
       await load();
@@ -122,9 +143,7 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
   }, []);
 
   return (
-    <section
-      className="rounded-lg border border-line bg-surface p-4"
-      data-testid="coding-sessions-card">
+    <Card padded divided={false} data-testid="coding-sessions-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-content">
@@ -183,7 +202,7 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
         {sources.map(source => (
           <div
             key={source.kind}
-            className="rounded-md border border-line-subtle bg-surface-secondary px-3 py-2"
+            className="rounded-md border border-line-subtle bg-surface-muted px-3 py-2"
             data-testid={`coding-session-source-${source.kind}`}>
             <div className="text-xs font-medium text-content">
               {t(SOURCE_LABEL_KEYS[source.kind])}
@@ -214,6 +233,6 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
           {error}
         </p>
       )}
-    </section>
+    </Card>
   );
 }

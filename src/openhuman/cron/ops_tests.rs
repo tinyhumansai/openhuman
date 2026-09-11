@@ -457,6 +457,77 @@ async fn cron_run_returns_queued_immediately_for_valid_job() {
     assert!(out.logs.iter().any(|l| l.contains("enqueued")));
 }
 
+/// Guards the divergence reported in #6070: the controller schema declared
+/// `status: ok|error` plus `duration_ms` and `output`, none of which the
+/// handler can produce. Nothing validates a controller's *outputs* at runtime
+/// (`validate_params` covers inputs only), so a mismatch is silent — it only
+/// shows up in a generated client, the `/schema` catalog or the tool registry.
+/// This asserts the two against each other so drift on either side fails here.
+#[tokio::test]
+async fn cron_run_response_conforms_to_its_declared_schema() {
+    use crate::core::TypeSchema;
+    use crate::openhuman::cron::cron_schemas;
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let job = make_job(&config, "*/5 * * * *", None, "echo hello");
+
+    let out = cron_run(&config, &job.id).await.unwrap();
+    let result = out.value.as_object().expect("result payload is an object");
+
+    let schema = cron_schemas("run");
+    let TypeSchema::Object { fields } = &schema.outputs[0].ty else {
+        panic!("cron_run must declare an object result");
+    };
+
+    for field in fields.iter().filter(|f| f.required) {
+        assert!(
+            result.contains_key(field.name),
+            "schema declares required field '{}' that cron_run never returns; got {:?}",
+            field.name,
+            result.keys().collect::<Vec<_>>()
+        );
+    }
+
+    for key in result.keys() {
+        assert!(
+            fields.iter().any(|f| f.name == key),
+            "cron_run returns '{key}' but the schema does not declare it"
+        );
+    }
+
+    // A present field must also match its declared *type*. Skipping a
+    // non-string value here would let `{"job_id": 1, "status": 0}` pass the
+    // two loops above, which is the same class of silent divergence this test
+    // exists to catch.
+    for field in fields {
+        let Some(value) = result.get(field.name) else {
+            continue; // absence is the required-field loop's business
+        };
+        match &field.ty {
+            TypeSchema::String => assert!(
+                value.is_string(),
+                "cron_run returned {value} for '{}', which is declared String",
+                field.name
+            ),
+            TypeSchema::Enum { variants } => {
+                let text = value.as_str().unwrap_or_else(|| {
+                    panic!(
+                        "cron_run returned {value} for '{}', which is declared an enum of {variants:?}",
+                        field.name
+                    )
+                });
+                assert!(
+                    variants.contains(&text),
+                    "cron_run returned '{text}' for '{}', not among the declared variants {variants:?}",
+                    field.name
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
 #[tokio::test]
 async fn cron_run_rejects_duplicate_concurrent_execution() {
     let tmp = TempDir::new().unwrap();

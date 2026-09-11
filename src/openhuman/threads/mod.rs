@@ -10,7 +10,6 @@ pub mod ops;
 pub mod schemas;
 pub mod title;
 pub mod todos;
-pub mod tools;
 pub mod transcript_view;
 pub mod turn_state;
 pub mod welcome_migration;

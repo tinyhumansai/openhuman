@@ -17,7 +17,7 @@
 //! paths and sandboxed runs always use the per-call spawn.
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
-use crate::openhuman::runtime::python::{PythonBootstrap, ResolvedPython};
+use crate::openhuman::runtime::python::PythonBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
@@ -26,7 +26,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 /// Absolute ceiling a caller may request via `timeout_secs`. No default timeout —
 /// Python scripts legitimately take minutes; a deadline applies only when
@@ -147,7 +147,7 @@ impl Tool for PythonExecTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         self.execute_in_context(args, context).await
     }
@@ -157,7 +157,7 @@ impl PythonExecTool {
     async fn execute_in_context(
         &self,
         args: serde_json::Value,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let inline_code = args
             .get("inline_code")
@@ -265,7 +265,7 @@ impl PythonExecTool {
         // pool infrastructure failure also transparently falls back below.
         if let Some(code) = inline_code.as_deref() {
             if let Some(result) = self
-                .try_pool_inline(code, &resolved, &path_policy.action_dir, explicit_timeout)
+                .try_pool_inline(code, &path_policy.action_dir, explicit_timeout)
                 .await
             {
                 return Ok(result);
@@ -356,7 +356,6 @@ impl PythonExecTool {
     async fn try_pool_inline(
         &self,
         code: &str,
-        resolved: &ResolvedPython,
         action_dir: &std::path::Path,
         timeout: Option<Duration>,
     ) -> Option<ToolResult> {
@@ -364,10 +363,7 @@ impl PythonExecTool {
             return None;
         }
         match crate::openhuman::runtime::pool::python::run_inline(
-            &self.workspace_dir,
-            &self.pool_cfg.python,
-            &resolved.python_bin,
-            &resolved.bin_dir,
+            self.bootstrap.config(),
             code.to_string(),
             Some(action_dir.to_path_buf()),
             timeout,
@@ -577,44 +573,5 @@ fn resolve_script_path(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn python_timeout_policy_unbounded_by_default() {
-        assert_eq!(python_timeout_policy(&json!({})), ToolTimeout::Unbounded);
-        assert_eq!(
-            python_timeout_policy(&json!({"timeout_secs": 0})),
-            ToolTimeout::Unbounded
-        );
-    }
-
-    #[test]
-    fn python_timeout_policy_enforces_and_caps_explicit() {
-        assert_eq!(
-            python_timeout_policy(&json!({"timeout_secs": 120})),
-            ToolTimeout::Secs(120)
-        );
-        assert_eq!(
-            python_timeout_policy(&json!({"timeout_secs": 99999})),
-            ToolTimeout::Secs(PYTHON_TIMEOUT_MAX_SECS)
-        );
-    }
-
-    #[test]
-    fn shell_quote_escapes_single_quotes() {
-        assert_eq!(shell_quote("it's"), "'it'\\''s'");
-        assert_eq!(shell_quote("print('hi')"), "'print('\\''hi'\\'')'");
-    }
-
-    #[test]
-    fn resolve_script_path_rejects_escapes() {
-        let ws = std::path::Path::new("/ws");
-        assert!(resolve_script_path(ws, "").is_err());
-        assert!(resolve_script_path(ws, "../evil.py").is_err());
-        assert_eq!(
-            resolve_script_path(ws, "scripts/run.py").unwrap(),
-            std::path::Path::new("/ws/scripts/run.py")
-        );
-    }
-}
+#[path = "python_exec_tests.rs"]
+mod tests;

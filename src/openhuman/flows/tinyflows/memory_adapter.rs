@@ -41,14 +41,14 @@ use crate::openhuman::agent::harness::memory_context_safety::{
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::openhuman::config::Config;
 use crate::openhuman::flows::{cross_flow_recall, flow_namespace};
-use crate::openhuman::memory::api::provider::{MemoryCore, MemoryRecall};
-use crate::openhuman::memory::api::recall::OwnedRecallOpts;
-use crate::openhuman::memory::api::types::{MemoryCategory, MemoryEntry, MemoryTaint};
 use crate::openhuman::memory::tools::flavour::{lookup_flavour, FlavourLookup};
 use crate::openhuman::security::approval::{
     redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
 };
 use crate::openhuman::security::{CommandClass, SecurityPolicy};
+use tinymemory_api::provider::{MemoryCore, MemoryRecall};
+use tinymemory_api::recall::OwnedRecallOpts;
+use tinymemory_api::types::{MemoryCategory, MemoryEntry, MemoryTaint};
 
 use super::caps::{enforce_node_tier_gate, gate_call_for_tier};
 
@@ -63,7 +63,7 @@ const LOG_PREFIX: &str = "[memory-node-host]";
 /// (`RecallOpts.namespace: None` falls back to this same constant inside the
 /// store). Named here explicitly (rather than passing `None`) purely so it
 /// shows up in the debug log.
-const USER_NAMESPACE: &str = tinycortex::memory::GLOBAL_NAMESPACE;
+const USER_NAMESPACE: &str = tinymemory_api::types::GLOBAL_NAMESPACE;
 
 /// Host-injected memory access for `memory` nodes. See the module doc for the
 /// security contract; see [`super::caps::OpenHumanAgentRunner`] for the
@@ -347,7 +347,7 @@ impl MemoryProvider for OpenHumanMemory {
         tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: entry");
         self.tier_gate_read("flavour")?;
 
-        match lookup_flavour(&self.config, slug) {
+        match lookup_flavour(&self.config, slug).await {
             Err(hard) => {
                 tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: rejected (bad slug)");
                 Err(EngineError::Capability(format!("memory node: {hard}")))
@@ -387,7 +387,7 @@ impl MemoryProvider for OpenHumanMemory {
 
         // Reads people through the bound driver, like every other people caller
         // — the store moved behind the loaded module.
-        use crate::openhuman::memory::api::provider::MemoryProvider;
+        use tinymemory_api::provider::MemoryProvider;
         let guard = crate::openhuman::memory::ops::guard::active_memory_guard()
             .await
             .map_err(|e| {
@@ -451,7 +451,7 @@ impl MemoryProvider for OpenHumanMemory {
         // up front rather than spend that approval round-trip on a write
         // that was always going to be rejected (review fix — see #5227).
         let content = value_to_content(&value);
-        if tinymemory_core::store::safety::has_likely_secret(&content) {
+        if crate::openhuman::memory::safety::has_likely_secret(&content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),

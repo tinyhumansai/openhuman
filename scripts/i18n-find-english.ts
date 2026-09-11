@@ -52,7 +52,6 @@ const ALL_LOCALES = [...Object.keys(NATIVE_SCRIPT), ...LATIN_LOCALES];
 // locales. These are reviewed exceptions — a value flagged here is expected, not a bug.
 // A key NOT in this set that the detector flags is a genuine untranslated string to fix.
 const INTENTIONAL_ENGLISH = new Set([
-  "agentWorld.world.title", // "Tiny Place" — brand/product name, same in every locale
   "app.connectionIndicator.coreOffline",
   "channels.activeRouteValue",
   "conversations.backgroundTasks.cronSchedCron", // Cron expression label; Cron is the scheduler name
@@ -79,9 +78,12 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.ai.localModelResolved",
   "settings.ai.localOllama",
   "settings.ai.minutesShort",
+  "settings.ai.loops.cadence.thirtyMin", // "30 min" — identical abbreviation in es/fr/pt/it/pl
+  "settings.ai.loops.cadence.twentyMin", // "20 min" — identical abbreviation in es/fr/pt/it/pl
   "settings.ai.openAiUrlLabel",
   "settings.appearance.fontSizeUnit", // "px" — CSS unit, identical in every locale
   "settings.billing.inferenceBudget.dailySpendPoint",
+  "settings.gateway.identityPlaceholder", // "~/.ssh/id_ed25519" — a file-path example; the leading ~ makes it fail the single-token technical test, but it is not prose
   "settings.localModel.download.embeddingModel",
   "settings.localModel.download.ttsOutput",
   "settings.localModel.status.contextOkBadge",

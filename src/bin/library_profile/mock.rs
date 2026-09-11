@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use openhuman_core::openhuman::inference::provider::types::{ChatResponse, ToolCall};
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
-use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall as TinyAgentsToolCall;
+use tinyinference::message::{AssistantMessage, ContentBlock, Message};
+use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall as TinyAgentsToolCall;
 
 /// A plain `ChatResponse` carrying only text (no tool calls).
 pub fn response(text: &str) -> ChatResponse {
@@ -181,22 +181,6 @@ pub struct SubagentMock {
 }
 
 impl SubagentMock {
-    /// Two researchers, no injected latency (the original `subagents` shape).
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            prompts: Mutex::new(Vec::new()),
-            researcher_latencies_ms: Mutex::new(Vec::new()),
-            width: 2,
-            latency: LatencyKnobs {
-                mean_ms: 0,
-                jitter_ms: 0,
-                counter: AtomicU64::new(0),
-            },
-            orchestrator_driven: false,
-            spawn_nonce: AtomicU64::new(0),
-        })
-    }
-
     /// K researchers with per-researcher latency drawn from the env knobs, driven
     /// directly against the orchestrator agent (full agent-aware chain).
     pub fn with_width(width: usize) -> Arc<Self> {
@@ -335,7 +319,7 @@ impl ChatModel<()> for SubagentMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         Ok(model_response(
             self.dispatch(&joined_request(&request)).await,
         ))
@@ -392,7 +376,7 @@ impl ChatModel<()> for LatencyMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         self.latency.sleep_sampled().await;
         let joined = joined_request(&request);
         record(&self.prompts, &joined);
@@ -422,7 +406,7 @@ impl ChatModel<()> for PlainTextMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         let joined = joined_request(&request);
         record(&self.prompts, &joined);
         Ok(model_response(response(&self.text)))
@@ -508,7 +492,7 @@ impl ChatModel<()> for SkillRunMock {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> Result<ModelResponse, tinyinference::Error> {
         Ok(model_response(self.reply(&joined_request(&request))))
     }
 }

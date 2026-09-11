@@ -256,11 +256,16 @@ describe('ConnectAuthModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('closes on backdrop mousedown', async () => {
+  it('closes on Escape', async () => {
     const onClose = vi.fn();
     render(<ConnectAuthModal server={BASE_SERVER} onClose={onClose} onConnected={() => {}} />);
     const dialog = await screen.findByRole('dialog');
-    fireEvent.mouseDown(dialog);
+    // Migrated onto the shared `ModalShell` / Radix `Dialog` (#radix-ui-foundation):
+    // dismissal is now Escape or backdrop pointerdown-outside rather than a
+    // manual mousedown-on-self handler, so this exercises the Radix
+    // escape-key path instead of firing mousedown directly on the dialog role
+    // element (which is now the Content, not the old full-screen backdrop div).
+    fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -272,8 +277,10 @@ describe('ConnectAuthModal', () => {
     // ConfigHelpModal, which renders its own dialog with the same label.
     fireEvent.click(screen.getByRole('button', { name: 'Help & configure' }));
     await waitFor(() => {
-      // Two dialogs now: the connect modal + the stacked help modal.
-      expect(screen.getAllByRole('dialog').length).toBeGreaterThan(1);
+      // Two dialogs now: the connect modal + the stacked help modal. Query
+      // with `{ hidden: true }` — Radix correctly marks the lower dialog
+      // `aria-hidden` while the stacked one is on top of it.
+      expect(screen.getAllByRole('dialog', { hidden: true }).length).toBeGreaterThan(1);
     });
   });
 
@@ -410,8 +417,12 @@ describe('ConnectAuthModal', () => {
     await screen.findByRole('dialog');
     fireEvent.click(screen.getByRole('button', { name: /Where do I get the token/ }));
     await waitFor(() => {
-      // The connect modal plus the stacked config-help modal.
-      expect(screen.getAllByRole('dialog').length).toBeGreaterThan(1);
+      // The connect modal plus the stacked config-help modal. Both dialogs are
+      // Radix `Dialog`s portalled to `document.body` now, so opening the
+      // second correctly marks the first `aria-hidden` for assistive tech
+      // (real background content while a modal is on top of it) — query with
+      // `{ hidden: true }` to still see it in the accessibility-tree count.
+      expect(screen.getAllByRole('dialog', { hidden: true }).length).toBeGreaterThan(1);
     });
   });
 

@@ -76,7 +76,7 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
 
 /// Seed `cloud_providers` with an OpenHuman entry (and optionally a Custom
 /// entry derived from a legacy `inference_url`).
-fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationStats) {
+pub(super) fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationStats) {
     if !config.cloud_providers.is_empty() {
         log::debug!(
             "[migrations][unify-ai] cloud_providers already populated ({} entries), skipping seed",

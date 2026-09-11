@@ -11,10 +11,9 @@ import { LuCheck, LuPencil, LuPlus, LuSparkles, LuTrash2, LuX } from 'react-icon
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type GoalItem, goalsApi } from '../../services/api/goalsApi';
+import { Card } from '../ui';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
-
-const cardClass = 'rounded-lg border border-line bg-surface p-4';
 
 export default function GoalsPanel() {
   const { t } = useT();
@@ -154,7 +153,7 @@ export default function GoalsPanel() {
 
   return (
     <div className="space-y-3 animate-fade-up">
-      <div className={cardClass}>
+      <Card padded divided={false}>
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -212,7 +211,7 @@ export default function GoalsPanel() {
         <div className="mt-4">
           {loading ? (
             <div className="flex items-center justify-center py-8 text-content-faint">
-              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
+              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
               <span className="text-sm">{t('common.loading')}</span>
             </div>
           ) : error ? (
@@ -222,7 +221,7 @@ export default function GoalsPanel() {
           ) : goals.length === 0 ? (
             <p className="py-6 text-center text-sm text-content-faint">{t('brain.goals.empty')}</p>
           ) : (
-            <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line dark:divide-neutral-800">
+            <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
               {goals.map(goal => (
                 <li key={goal.id} className="bg-surface px-3 py-2.5">
                   {editingId === goal.id ? (
@@ -288,7 +287,7 @@ export default function GoalsPanel() {
             </ul>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

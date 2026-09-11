@@ -81,7 +81,7 @@ const MobileTabBar = () => {
 
   return (
     <nav
-      className="flex-shrink-0 flex justify-around items-stretch border-t border-neutral-800 bg-[#0f1117]/95 backdrop-blur-md"
+      className="shrink-0 flex justify-around items-stretch border-t border-neutral-800 bg-[#0f1117]/95 backdrop-blur-md"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       aria-label={t('mobile.nav.ariaLabel')}>
       {tabs.map(tab => {

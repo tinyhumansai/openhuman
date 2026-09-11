@@ -5,9 +5,9 @@ use serde_json::{json, Map, Value};
 use crate::core::all;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::Config;
+use crate::openhuman::mcp::audit::McpWriteListQuery;
 use crate::openhuman::mcp::server::McpToolSpec;
 use crate::rpc::RpcOutcome;
-use tinymemory_core::store::chunks::store as chunk_store;
 
 use super::providers::capability_provider_diagnostics;
 use super::types::{
@@ -51,7 +51,7 @@ pub async fn diagnostics() -> Result<RpcOutcome<ToolPolicyDiagnostics>, String> 
 pub fn diagnostics_for_config(config: &Config) -> RpcOutcome<ToolPolicyDiagnostics> {
     log::debug!("[tool_registry] diagnostics_for_config start");
 
-    let tools = registry_entries();
+    let tools = registry_entries_for_config(config);
     let total_tools = tools.len();
     let enabled_tools = tools.iter().filter(|entry| entry.enabled).count();
     let mcp_stdio_tools = tools
@@ -150,18 +150,35 @@ fn mcp_allowlists_from_config(config: &Config) -> McpAllowlistDiagnostics {
     }
 }
 
+/// How many recent writes the audit log is asked for.
+///
+/// The store has no count method, so the probe lists and counts. The value is
+/// therefore a floor: `recent_rows` saturates here rather than reporting a
+/// true total, which is enough for the question this health field answers —
+/// is the audit log receiving writes at all.
+const RECENT_WRITE_SAMPLE: u64 = tinymcp_bus::MAX_LIST_LIMIT;
+
+/// Whether the write-audit log is recording, and roughly how much.
+///
+/// Reads through `mcp::audit`, which is where the writer puts rows. It used to
+/// query the `mcp_writes` table inside the memory engine's chunk database
+/// directly; when the log moved to its own store, that query stayed behind and
+/// began counting a table nothing writes any more — so this reported zero
+/// writes in the last 24 hours on every install, indefinitely, while the log
+/// underneath it was healthy. A diagnostic that cannot fail loudly must at
+/// least read the same place the writer wrote.
 fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
-    let result = chunk_store::with_connection(config, |conn| {
-        let since_ms = chrono::Utc::now()
-            .timestamp_millis()
-            .saturating_sub(24 * 60 * 60 * 1000);
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mcp_writes WHERE timestamp_ms >= ?1",
-            rusqlite::params![since_ms],
-            |row| row.get::<_, i64>(0),
-        )?;
-        Ok(u64::try_from(count).unwrap_or(0))
-    });
+    let since_ms = chrono::Utc::now()
+        .timestamp_millis()
+        .saturating_sub(24 * 60 * 60 * 1000);
+    let query = McpWriteListQuery {
+        limit: Some(RECENT_WRITE_SAMPLE),
+        offset: None,
+        since_ms: u64::try_from(since_ms).ok(),
+        ..Default::default()
+    };
+    let result =
+        crate::openhuman::mcp::audit::list_writes(config, &query).map(|writes| writes.len() as u64);
 
     match result {
         Ok(count) => McpWriteAuditHealth {
@@ -203,7 +220,30 @@ pub fn get_tool(tool_id: &str) -> Result<RpcOutcome<ToolRegistryEntry>, String> 
 /// 1. MCP stdio server tools (existing `mcp::server` surface)
 /// 2. Controller-backed tools (existing `tools` namespace)
 /// 3. Connected MCP client server tools (new `mcp_clients` domain)
+///
+/// The connected-client tools come from whichever workspace `mcp::init` claimed
+/// as the process default. That is right for the shipped app, which opens one;
+/// a caller that holds a `Config` should prefer
+/// [`registry_entries_for_config`], which names the workspace it means.
 pub fn registry_entries() -> Vec<ToolRegistryEntry> {
+    build_registry_entries(None)
+}
+
+/// The same snapshot, with connected-client tools read from `config`'s
+/// workspace rather than the process default.
+///
+/// The two differ only when more than one workspace is open in a process.
+/// `mcp::host::resolve` returns a lone host but `None` once a second exists, so
+/// the ambient form silently reports nothing connected in a test binary where
+/// several cases each open their own temporary workspace — which is how
+/// `tool_registry_entries_include_connected_mcp_client_tools` came to pass
+/// alone and fail beside its neighbours.
+pub fn registry_entries_for_config(config: &Config) -> Vec<ToolRegistryEntry> {
+    build_registry_entries(Some(config))
+}
+
+/// The shared body. `config` selects the MCP host; everything else is identical.
+fn build_registry_entries(config: Option<&Config>) -> Vec<ToolRegistryEntry> {
     let mut entries = BTreeMap::new();
 
     for spec in crate::openhuman::mcp::server::tool_specs() {
@@ -228,7 +268,14 @@ pub fn registry_entries() -> Vec<ToolRegistryEntry> {
                 // (kind = CurrentThread) panics on block_in_place.
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
                     tokio::task::block_in_place(|| {
-                        handle.block_on(connections::all_connected_tools())
+                        handle.block_on(async {
+                            match config {
+                                Some(config) => {
+                                    connections::all_connected_tools_for_config(config).await
+                                }
+                                None => connections::all_connected_tools().await,
+                            }
+                        })
                     })
                 } else {
                     Vec::new()

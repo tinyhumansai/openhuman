@@ -33,6 +33,7 @@ import {
   type ThemeVariant,
   upsertCustomTheme,
 } from '../../../store/themeSlice';
+import { Button, TextArea, TextField, ToggleGroupItem, ToggleGroupRoot } from '../../ui';
 import { SettingsSection, SettingsSelect } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import ColorTokenField from './theme/ColorTokenField';
@@ -87,6 +88,36 @@ function tileCanvas(theme: Theme): string {
   return theme.gradient?.canvas ?? channelsToCss(swatchChannels(theme, 'surface-canvas'));
 }
 
+/**
+ * Is this a usable colour map — an object of `token -> "r g b"` strings?
+ *
+ * The bug this exists for (#5901): the old check was
+ * `typeof parsed.colors !== 'object'`, which passes for `null` AND for an
+ * array, since `typeof null` and `typeof []` are both `'object'`. Execution
+ * then reached `colors: { ...(parsed.colors) }`; spreading either yields `{}`
+ * silently, so a malformed paste was accepted as a theme.
+ *
+ * An EMPTY object is deliberately allowed. `CLASSIC_LIGHT` and `CLASSIC_DARK`
+ * both carry `colors: {}` on purpose (`lib/theme/presets.ts:63-78`) — they
+ * inherit the base stylesheet tokens and carry their meaning in `isDark`, which
+ * `applyTheme` applies independently of any colour
+ * (`providers/ThemeProvider.tsx:48-50`). The panel's own export serialises the
+ * effective theme, so rejecting `{}` would break its export -> import round trip
+ * for the two most common themes, and would also refuse legitimate
+ * font-, gradient- or backdrop-only themes.
+ *
+ * Every value must be a string. `swatchChannels` falls back only on
+ * `null`/`undefined` (`??`), so a non-string like `{"surface": 42}` reaches
+ * `channelsToCss`, which calls `.trim()` on it and throws — crashing the panel
+ * on a theme that was already stored.
+ */
+function isValidColorMap(colors: unknown): colors is Record<string, string> {
+  if (typeof colors !== 'object' || colors === null || Array.isArray(colors)) {
+    return false;
+  }
+  return Object.values(colors).every(value => typeof value === 'string');
+}
+
 function importedGradient(parsed: Partial<Theme>): Theme['gradient'] {
   if (!parsed.gradient || typeof parsed.gradient !== 'object') return undefined;
   return typeof parsed.gradient.canvas === 'string' ? { canvas: parsed.gradient.canvas } : {};
@@ -99,11 +130,15 @@ function importedBackdrop(parsed: Partial<Theme>): Theme['backdrop'] {
   return {
     kind,
     imageUrl: typeof parsed.backdrop.imageUrl === 'string' ? parsed.backdrop.imageUrl : undefined,
-    dots: typeof parsed.backdrop.dots === 'boolean' ? parsed.backdrop.dots : undefined,
   };
 }
 
-const ThemeStudioPanel = () => {
+interface ThemeStudioPanelProps {
+  /** Render the sections only — the host draws the page header. */
+  embedded?: boolean;
+}
+
+const ThemeStudioPanel = ({ embedded = false }: ThemeStudioPanelProps = {}) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const families = selectThemeFamilies();
@@ -143,7 +178,7 @@ const ThemeStudioPanel = () => {
     setImportError('');
     try {
       const parsed = JSON.parse(importText) as Partial<Theme>;
-      if (!parsed || typeof parsed !== 'object' || typeof parsed.colors !== 'object') {
+      if (!parsed || typeof parsed !== 'object' || !isValidColorMap(parsed.colors)) {
         throw new Error('shape');
       }
       const theme: Theme = {
@@ -175,37 +210,33 @@ const ThemeStudioPanel = () => {
       channelLuminance(readToken('content')) - channelLuminance(readToken('surface-canvas'))
     ) < 0.2;
 
-  return (
-    <SettingsPanel description={t('settings.theme.menuDesc', 'Customize colours and fonts.')}>
+  const body = (
+    <>
       {/* ── Theme gallery: family tiles + one Light/Dark/Auto toggle ──── */}
       <div>
         <div className="mb-2 flex items-center justify-between px-1">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint">
+          <h3 className="font-title text-sm font-semibold text-content">
             {t('settings.theme.presetsHeading', 'Themes')}
           </h3>
-          <div
-            className="inline-flex overflow-hidden rounded-lg border border-line"
-            role="radiogroup"
-            aria-label={t('settings.theme.variantAria', 'Theme variant')}>
-            {VARIANT_OPTIONS.map(opt => {
-              const sel = opt.id === variant;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={sel}
-                  onClick={() => dispatch(setThemeVariant(opt.id))}
-                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
-                    sel
-                      ? 'bg-primary-500 text-content-inverted'
-                      : 'text-content-secondary hover:bg-surface-hover'
-                  }`}>
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
+          <ToggleGroupRoot
+            type="single"
+            variant="secondary"
+            size="xs"
+            value={variant}
+            onValueChange={next => {
+              if (next) dispatch(setThemeVariant(next as ThemeVariant));
+            }}
+            aria-label={t('settings.theme.variantAria', 'Theme variant')}
+            className="overflow-hidden rounded-lg border border-line gap-0 *:rounded-none *:border-0">
+            {VARIANT_OPTIONS.map(opt => (
+              <ToggleGroupItem
+                key={opt.id}
+                value={opt.id}
+                className="h-auto px-2.5 py-1 text-xs font-medium data-[state=on]:bg-primary-500 data-[state=on]:text-content-inverted">
+                {opt.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroupRoot>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {families.map(fam => {
@@ -226,7 +257,7 @@ const ThemeStudioPanel = () => {
                   className="flex h-10 items-center gap-1 rounded-lg px-2"
                   style={{ background: tileCanvas(preview) }}>
                   <span
-                    className="h-5 w-5 rounded-full border border-black/10"
+                    className="h-5 w-5 rounded-full border border-line-subtle"
                     style={{ background: channelsToCss(swatchChannels(preview, 'surface')) }}
                   />
                   <span
@@ -259,7 +290,7 @@ const ThemeStudioPanel = () => {
                   className="flex h-10 items-center gap-1 rounded-lg px-2"
                   style={{ background: tileCanvas(th) }}>
                   <span
-                    className="h-5 w-5 rounded-full border border-black/10"
+                    className="h-5 w-5 rounded-full border border-line-subtle"
                     style={{ background: channelsToCss(swatchChannels(th, 'surface')) }}
                   />
                   <span
@@ -273,7 +304,7 @@ const ThemeStudioPanel = () => {
                 </span>
                 <span className="flex items-center justify-between gap-1">
                   <span className="text-sm font-medium text-content truncate">{th.name}</span>
-                  <span className="text-[10px] uppercase tracking-wide text-content-faint">
+                  <span className="text-[11px] text-content-faint">
                     {t('settings.theme.customBadge', 'Custom')}
                   </span>
                 </span>
@@ -306,7 +337,9 @@ const ThemeStudioPanel = () => {
       {/* ── Colour editor ──────────────────────────────────────────── */}
       {COLOR_GROUPS.map(group => (
         <SettingsSection key={group.id} title={t(group.i18nKey, humanize(group.id))}>
-          <div className="px-1">
+          {/* A ruled list, matching the billing panel: the hairlines do the
+              separating so each row needs no box of its own. */}
+          <div className="divide-y divide-line-subtle px-4">
             {group.keys.map(key => (
               <ColorTokenField
                 key={key}
@@ -397,7 +430,7 @@ const ThemeStudioPanel = () => {
             role="radiogroup"
             aria-label={t('settings.theme.backdropHeading', 'Background')}>
             {(['mesh', 'solid', 'image'] as BackdropKind[]).map(kind => {
-              const current = effectiveTheme.backdrop?.kind ?? 'mesh';
+              const current = effectiveTheme.backdrop?.kind ?? 'solid';
               const sel = current === kind;
               return (
                 <button
@@ -422,8 +455,9 @@ const ThemeStudioPanel = () => {
             })}
           </div>
           {effectiveTheme.backdrop?.kind === 'image' && (
-            <input
+            <TextField
               type="url"
+              inputSize="sm"
               disabled={false}
               value={effectiveTheme.backdrop?.imageUrl ?? ''}
               placeholder="https://…/background.jpg"
@@ -431,18 +465,9 @@ const ThemeStudioPanel = () => {
               onChange={e =>
                 dispatch(setThemeBackdrop({ kind: 'image', imageUrl: e.target.value }))
               }
-              className="w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-content"
+              className="text-xs"
             />
           )}
-          <label className="flex items-center gap-2 text-xs text-content-secondary">
-            <input
-              type="checkbox"
-              checked={effectiveTheme.backdrop?.dots !== false}
-              onChange={e => dispatch(setThemeBackdrop({ dots: e.target.checked }))}
-              className="h-3.5 w-3.5 accent-primary-500"
-            />
-            {t('settings.theme.backdropDots', 'Show background dots')}
-          </label>
           <p className="text-[11px] text-content-faint">
             {t(
               'settings.theme.backdropHint',
@@ -456,34 +481,29 @@ const ThemeStudioPanel = () => {
       {isActiveCustom && (
         <SettingsSection title={t('settings.theme.actions', 'Manage theme')}>
           <div className="flex flex-wrap gap-2 px-1">
-            <button
-              type="button"
-              onClick={() => dispatch(resetActiveTheme())}
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-content-secondary hover:bg-surface-hover">
+            <Button variant="secondary" size="sm" onClick={() => dispatch(resetActiveTheme())}>
               {t('settings.theme.reset', 'Reset overrides')}
-            </button>
-            <button
-              type="button"
-              onClick={() => dispatch(deleteCustomTheme(activeThemeId))}
-              className="rounded-lg border border-coral-200 px-3 py-1.5 text-sm text-coral-600 hover:bg-coral-50 dark:border-coral-500/30 dark:text-coral-300 dark:hover:bg-coral-500/10">
+            </Button>
+            <Button
+              variant="secondary"
+              tone="danger"
+              size="sm"
+              onClick={() => dispatch(deleteCustomTheme(activeThemeId))}>
               {t('settings.theme.delete', 'Delete theme')}
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              className="rounded-lg border border-line px-3 py-1.5 text-sm text-content-secondary hover:bg-surface-hover">
+            </Button>
+            <Button variant="secondary" size="sm" onClick={handleExport}>
               {copied
                 ? t('settings.theme.copied', 'Copied!')
                 : t('settings.theme.export', 'Copy JSON')}
-            </button>
+            </Button>
           </div>
           <div className="px-1 pt-2">
-            <textarea
+            <TextArea
               readOnly
               value={exportJson}
               rows={4}
               aria-label={t('settings.theme.export', 'Copy JSON')}
-              className="w-full resize-none rounded-lg border border-line bg-surface-muted p-2 font-mono text-[11px] text-content-secondary"
+              className="resize-none bg-surface-muted p-2 font-mono text-[11px] text-content-secondary"
             />
           </div>
         </SettingsSection>
@@ -497,26 +517,36 @@ const ThemeStudioPanel = () => {
           'Paste exported theme JSON to add it as a custom theme.'
         )}>
         <div className="space-y-2 px-1">
-          <textarea
+          <TextArea
             value={importText}
             onChange={e => setImportText(e.target.value)}
             rows={4}
             placeholder='{ "name": "...", "isDark": false, "colors": { ... } }'
             aria-label={t('settings.theme.import', 'Import theme')}
-            className="w-full resize-none rounded-lg border border-line bg-surface p-2 font-mono text-[11px] text-content"
+            className="resize-none p-2 font-mono text-[11px]"
           />
           {importError && (
             <p className="text-xs text-coral-600 dark:text-coral-300">{importError}</p>
           )}
-          <button
-            type="button"
-            onClick={handleImport}
-            disabled={!importText.trim()}
-            className="rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-content-inverted hover:bg-primary-600 disabled:opacity-50">
+          <Button size="sm" onClick={handleImport} disabled={!importText.trim()}>
             {t('settings.theme.importApply', 'Import')}
-          </button>
+          </Button>
         </div>
       </SettingsSection>
+    </>
+  );
+
+  // Embedded: the Appearance page owns the header and renders these sections
+  // among its own. That is the only host today — `/settings/theme` redirects to
+  // `/settings/appearance`, because a separate "Theme studio" page split one
+  // subject across two sidebar rows whose light/dark toggles wrote the same two
+  // slice fields (`setThemeMode` and `setThemeVariant` are identical). The
+  // unembedded branch is kept for a standalone host.
+  if (embedded) return body;
+
+  return (
+    <SettingsPanel description={t('settings.theme.menuDesc', 'Customize colours and fonts.')}>
+      {body}
     </SettingsPanel>
   );
 };

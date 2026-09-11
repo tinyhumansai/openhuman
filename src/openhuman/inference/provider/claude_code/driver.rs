@@ -16,14 +16,86 @@ use tokio::sync::mpsc;
 
 /// Hard timeout per turn (PLAN §8). If the CLI hangs (network stall,
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
-const TURN_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_TURN_TIMEOUT_SECS: u64 = 900;
+
+/// Hard timeout per turn, overridable with
+/// `OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS`.
+///
+/// The default matches the harness's own 900s wall-clock backstop. It used to
+/// be 300s, which is shorter than a turn the CLI is *expected* to take once
+/// full access lets it run its own tools: the child was killed mid-work and the
+/// turn surfaced as a provider timeout rather than a slow answer.
+fn turn_timeout() -> Duration {
+    let secs = std::env::var("OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Classify the shape of an unparsable stream line without quoting it.
+///
+/// This says whether Claude spoke JSON at all - the one thing that tells a
+/// crashed CLI apart from a protocol change - and nothing about what the line
+/// said.
+fn parse_error_line_shape(line: &str) -> &'static str {
+    match line.trim_start().chars().next() {
+        Some('{') => "json object",
+        Some('[') => "json array",
+        Some('"') => "json string",
+        Some(_) => "non-json",
+        None => "blank",
+    }
+}
+
+/// Render the log line for a `ParseError` event, or `None` for anything else.
+///
+/// The parser keeps `ParseError` precisely so an unparsable line is reported
+/// instead of vanishing, but the event mapper turns it into no deltas - so the
+/// driver loop is the only place left that can say anything about it.
+///
+/// The line itself is never quoted. It is whatever Claude Code wrote to
+/// stdout (a malformed event, or a well-formed one of an unknown type), so it
+/// can carry the user's prompt, the model's reply, or a credential, and the
+/// desktop build routes `log` into rotating support logs and Sentry
+/// breadcrumbs. Shape, size, and the parser's own reason are enough to act on;
+/// content is not.
+fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
+    let ClaudeCodeEvent::ParseError { line, reason } = ev else {
+        return None;
+    };
+    Some(format!(
+        "[claude-code][driver] dropping unparsable stream line ({reason}): {} of {} bytes",
+        parse_error_line_shape(line),
+        line.len()
+    ))
+}
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
 use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
-use super::stream_parser::StreamJsonParser;
+use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
+
+/// True if the `claude` CLI still has an on-disk conversation for `session_id`.
+fn cc_session_exists(session_id: &str) -> bool {
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+    base.map(|b| cc_session_exists_in(&b, session_id))
+        .unwrap_or(false)
+}
+
+/// Scan `<config_dir>/projects/*` for a session JSONL file.
+fn cc_session_exists_in(config_dir: &std::path::Path, session_id: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
+        return false;
+    };
+    let file = format!("{session_id}.jsonl");
+    entries.flatten().any(|e| e.path().join(&file).is_file())
+}
 
 /// Tools withheld in the DEFAULT (`acceptEdits`) posture: Claude Code can
 /// read/edit files in the project, but not run shell, hit the network, or
@@ -223,48 +295,22 @@ fn append_system_prompt_args(
     ])
 }
 
-/// True if the `claude` CLI still has an on-disk conversation for `session_id`.
-///
-/// Claude persists sessions at `<config>/projects/<encoded-cwd>/<uuid>.jsonl`,
-/// where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`. We scan every
-/// project dir rather than reconstruct the cwd-encoding (a CLI-internal detail);
-/// a single `read_dir` is cheap next to spawning the process.
-fn cc_session_exists(session_id: &str) -> bool {
-    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
-    base.map(|b| cc_session_exists_in(&b, session_id))
-        .unwrap_or(false)
-}
-
-/// Inner, testable half of [`cc_session_exists`]: scan `<config_dir>/projects/*`
-/// for a `<session_id>.jsonl` conversation file.
-fn cc_session_exists_in(config_dir: &std::path::Path, session_id: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
-        return false;
-    };
-    let file = format!("{session_id}.jsonl");
-    entries.flatten().any(|e| e.path().join(&file).is_file())
-}
-
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards
 /// `ProviderDelta`s through `ctx.stream` as they arrive and returns the
 /// aggregated `ChatResponse` when done.
 pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     let stored = ctx.session_store.get(&ctx.thread_id);
     let stored_valid = stored.as_deref().map(is_uuid_v4).unwrap_or(false);
-    // A persisted id is only *resumable* if the CLI still has that session on
-    // disk. We persist the id before the creating turn runs, so a create that
-    // fails (transient error, cancelled turn, cleared CLI store) leaves a
-    // valid-looking id that was never created — and resuming it then loops on
-    // `No conversation found with session ID: <uuid>` forever with no recovery.
-    // Treat a missing session as new: recreate it (reusing the same id so the
-    // thread's mapping stays stable) with `--session-id` and full context.
+    // A persisted id is resumable only when the CLI still has its session.
+    // Failed or cancelled creation can otherwise leave a valid-looking id
+    // that makes every later turn fail with "No conversation found".
     let resumable = stored_valid && stored.as_deref().map(cc_session_exists).unwrap_or(false);
     let is_new = !resumable;
     let cc_session_id = if is_new {
+        // Reuse a valid mapping when recreating the CLI session so the
+        // OpenHuman thread id remains stable.
         let id = match stored {
-            Some(s) if stored_valid => s, // reuse the valid id; recreate its session
+            Some(s) if stored_valid => s,
             _ => generate_uuid_v4(),
         };
         if let Err(e) = ctx.session_store.set(&ctx.thread_id, &id) {
@@ -467,7 +513,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 
     // Wrap the streaming + wait in a timeout so a stuck CLI doesn't
     // block this task forever (PLAN §8).
-    let timed = tokio::time::timeout(TURN_TIMEOUT, async {
+    let timed = tokio::time::timeout(turn_timeout(), async {
         loop {
             let n = stdout
                 .read(&mut buf)
@@ -477,6 +523,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
                 break;
             }
             for ev in parser.feed_bytes(&buf[..n]) {
+                if let Some(msg) = parse_error_log_line(&ev) {
+                    log::warn!("{msg}");
+                }
                 for delta in mapper.handle(ev) {
                     if let Some(tx) = ctx.stream {
                         let _ = tx.send(delta).await;
@@ -485,6 +534,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
             }
         }
         for ev in parser.end() {
+            if let Some(msg) = parse_error_log_line(&ev) {
+                log::warn!("{msg}");
+            }
             for delta in mapper.handle(ev) {
                 if let Some(tx) = ctx.stream {
                     let _ = tx.send(delta).await;
@@ -504,14 +556,15 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
         Ok(inner) => inner?,
         Err(_elapsed) => {
             log::error!(
-                "[claude-code][driver] turn timeout ({TURN_TIMEOUT:?}) exceeded; killing child"
+                "[claude-code][driver] turn timeout ({:?}) exceeded; killing child",
+                turn_timeout()
             );
             // kill_on_drop handles cleanup, but explicit kill gives us
             // a chance to collect stderr.
             let _ = child.kill().await;
             anyhow::bail!(
                 "[claude-code][driver] turn timed out after {:?}",
-                TURN_TIMEOUT
+                turn_timeout()
             );
         }
     };
@@ -533,204 +586,5 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn write_mcp_http_config_emits_http_url_with_bearer_header() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
-        let path = write_mcp_http_config(dir.path(), addr, "tok-abc123").expect("write config");
-        let raw = std::fs::read_to_string(&path).expect("read config");
-        let v: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
-        let server = &v["mcpServers"]["openhuman"];
-        assert_eq!(
-            server["type"], "http",
-            "MCP transport must be http (out-of-jail)"
-        );
-        assert_eq!(server["url"], "http://127.0.0.1:54321/");
-        // The loopback server is authenticated — the config must carry the bearer.
-        assert_eq!(server["headers"]["Authorization"], "Bearer tok-abc123");
-        // It must NOT spawn a stdio child (the old jailed path).
-        assert!(server.get("command").is_none());
-    }
-
-    #[test]
-    fn large_system_prompt_is_written_to_file_instead_of_argv() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let prompt = "system instruction\n".repeat(2_500);
-        assert!(prompt.len() > 32_767);
-
-        let args = append_system_prompt_args(dir.path(), Some(&prompt)).expect("prompt args");
-
-        assert_eq!(args[0], "--append-system-prompt-file");
-        assert_eq!(args.len(), 2);
-        assert!(!args.iter().any(|arg| arg.contains(&prompt)));
-        assert_eq!(
-            std::fs::read_to_string(&args[1]).expect("read prompt file"),
-            prompt
-        );
-    }
-
-    #[test]
-    fn empty_system_prompt_does_not_add_an_argument() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let args = append_system_prompt_args(dir.path(), Some("  \n ")).expect("prompt args");
-
-        assert!(args.is_empty());
-        assert!(!dir.path().join("append-system-prompt.txt").exists());
-    }
-
-    #[test]
-    fn system_prompt_write_error_is_propagated() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let not_a_directory = dir.path().join("file");
-        std::fs::write(&not_a_directory, "occupied").expect("write blocking file");
-
-        let error = append_system_prompt_args(&not_a_directory, Some("system prompt"))
-            .expect_err("non-directory parent must fail");
-
-        assert!(!error.to_string().is_empty());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn seatbelt_profile_denies_whole_openhuman_root_not_just_subdir() {
-        // Driver passes the per-user subdir; the jail must deny the WHOLE
-        // `.openhuman-staging` tree (so root-level core.token/credentials are
-        // protected), not just the subdir.
-        let ws = std::path::Path::new("/Users/test/.openhuman-staging/users/abc/workspace");
-        let p = seatbelt_profile(ws);
-        assert!(
-            p.contains("(allow default)"),
-            "CC does everything by default"
-        );
-        assert!(p.contains("(deny file-write*"), "must deny writes");
-        assert!(
-            p.contains("(deny file-read*"),
-            "must deny reads (no token exfil)"
-        );
-        // Denied path is the ROOT, not the per-user subdir.
-        assert!(
-            p.contains("/Users/test/.openhuman-staging\""),
-            "deny subpath must be the .openhuman root: {p}"
-        );
-        assert!(
-            !p.contains("users/abc"),
-            "deny must NOT be scoped to the narrow subdir: {p}"
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn openhuman_internal_root_walks_up_to_dotopenhuman() {
-        let r = openhuman_internal_root(std::path::Path::new(
-            "/Users/x/.openhuman/users/id/workspace/memory",
-        ));
-        assert_eq!(r, std::path::Path::new("/Users/x/.openhuman"));
-        // Fallback: no `.openhuman*` ancestor → returns the input.
-        let r2 = openhuman_internal_root(std::path::Path::new("/tmp/custom/ws"));
-        assert_eq!(r2, std::path::Path::new("/tmp/custom/ws"));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn seatbelt_available_honors_opt_out() {
-        let _env = super::super::ENV_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var("OPENHUMAN_CLAUDE_CODE_SANDBOX").ok();
-        std::env::set_var("OPENHUMAN_CLAUDE_CODE_SANDBOX", "0");
-        assert!(
-            !seatbelt_available(),
-            "explicit opt-out must disable the jail"
-        );
-        match prev {
-            Some(v) => std::env::set_var("OPENHUMAN_CLAUDE_CODE_SANDBOX", v),
-            None => std::env::remove_var("OPENHUMAN_CLAUDE_CODE_SANDBOX"),
-        }
-    }
-
-    #[test]
-    fn cc_session_exists_in_detects_present_and_absent() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let id = "11111111-2222-4333-8444-555555555555";
-        // Nothing on disk yet → absent. This is the poisoned-resume case the
-        // driver must recreate with --session-id rather than --resume.
-        assert!(!cc_session_exists_in(dir.path(), id));
-        // Create <config>/projects/<encoded-cwd>/<id>.jsonl → detected.
-        let proj = dir.path().join("projects").join("-Users-someone-project");
-        std::fs::create_dir_all(&proj).expect("mkdir projects");
-        std::fs::write(proj.join(format!("{id}.jsonl")), b"{}").expect("write session");
-        assert!(cc_session_exists_in(dir.path(), id));
-        // A different id stays absent even with one session present.
-        assert!(!cc_session_exists_in(
-            dir.path(),
-            "99999999-2222-4333-8444-555555555555"
-        ));
-    }
-
-    #[test]
-    fn full_access_defaults_off_and_opts_in_via_env() {
-        let _env = super::super::ENV_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // Empty workspace (no persisted toggle) → file layer resolves to OFF.
-        let ws = std::env::temp_dir().join("oh_cc_fullaccess_env_test");
-        let _ = std::fs::remove_dir_all(&ws);
-        let key = "OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE";
-        let prev = std::env::var(key).ok();
-        std::env::remove_var(key);
-        assert!(
-            !claude_code_full_access(&ws),
-            "default posture must be acceptEdits (full access OFF)"
-        );
-        std::env::set_var(key, "bypass");
-        assert!(
-            claude_code_full_access(&ws),
-            "explicit opt-in (`bypass`) enables full access"
-        );
-        std::env::set_var(key, "acceptEdits");
-        assert!(
-            !claude_code_full_access(&ws),
-            "acceptEdits env override keeps the default (limited) posture"
-        );
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
-    }
-
-    #[test]
-    fn full_access_reads_persisted_toggle_when_env_unset() {
-        use super::super::settings::{self, ClaudeCodeSettings};
-        let _env = super::super::ENV_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let ws = std::env::temp_dir().join("oh_cc_fullaccess_file_test");
-        let _ = std::fs::remove_dir_all(&ws);
-        std::fs::create_dir_all(&ws).unwrap();
-        let key = "OPENHUMAN_CLAUDE_CODE_PERMISSION_MODE";
-        let prev = std::env::var(key).ok();
-        std::env::remove_var(key);
-
-        settings::save(&ws, &ClaudeCodeSettings { full_access: true }).unwrap();
-        assert!(
-            claude_code_full_access(&ws),
-            "persisted toggle ON must enable full access when env is unset"
-        );
-
-        // Env override beats the persisted toggle.
-        std::env::set_var(key, "acceptEdits");
-        assert!(
-            !claude_code_full_access(&ws),
-            "env override OFF must beat a persisted ON toggle"
-        );
-
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
-        let _ = std::fs::remove_dir_all(&ws);
-    }
-}
+#[path = "driver_tests.rs"]
+mod tests;

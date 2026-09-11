@@ -10,7 +10,7 @@ test.describe('Webhooks ingress surface (stub-level)', () => {
 
   test('reaches the app shell after onboarding', async ({ page }) => {
     await waitForAppReady(page);
-    await expect(page.getByTestId('send-message-button')).toBeVisible();
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
   test('exposes the stub webhook RPC surface with stable result and log shapes', async () => {

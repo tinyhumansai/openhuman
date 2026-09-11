@@ -9,6 +9,7 @@ import {
   selectMascotVoiceGender,
   setMascotVoice,
 } from '../../../store/mascotSlice';
+import { Alert, AlertDescription, Card } from '../../ui';
 import Button from '../../ui/Button';
 import { SettingsSelect, SettingsTextField } from '../controls';
 import { ELEVENLABS_VOICE_PRESETS, isCuratedVoicePreset } from './elevenlabsVoicePresets';
@@ -151,94 +152,97 @@ const PerMascotVoiceRow = ({ mascotId, label, testIdPrefix }: PerMascotVoiceRowP
   };
 
   return (
-    <div className="bg-surface rounded-xl border border-line p-4 space-y-3">
-      <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-        {label}
-      </span>
-
-      {/* Preset dropdown — mirrors the primary control's label + select combo */}
-      <label className="block space-y-1">
-        <span className="sr-only">{t('settings.mascot.voice.presetHeading')}</span>
-        <SettingsSelect
-          aria-label={`${label} — ${t('settings.mascot.voice.presetHeading')}`}
-          data-testid={`${testIdPrefix}-select`}
-          value={isCustomVoice ? '__custom__' : currentVoiceId}
-          onChange={e => onPresetChange(e.target.value)}
-          className="w-full">
-          {visiblePresets.map(v => (
-            <option key={v.id} value={v.id}>
-              {v.label}
-            </option>
-          ))}
-          <option value="__custom__">{t('settings.mascot.voice.customOption')}</option>
-        </SettingsSelect>
-      </label>
-
-      {isCustomVoice && (
-        <label className="block space-y-1">
-          <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-            {t('settings.mascot.voice.customHeading')}
-          </span>
-          <div className="flex gap-2">
-            <SettingsTextField
-              aria-label={`${label} — ${t('settings.mascot.voice.customHeading')}`}
-              data-testid={`${testIdPrefix}-input`}
-              value={voiceDraft}
-              placeholder={t('settings.mascot.voice.customPlaceholder')}
-              onChange={e => setVoiceDraft(e.target.value)}
-              className="flex-1"
-            />
-            <Button
-              type="button"
-              variant="primary"
-              size="xs"
-              data-testid={`${testIdPrefix}-save-paste`}
-              onClick={onSavePaste}
-              disabled={voiceDraft.trim() === (overrideVoiceId ?? '').trim()}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </label>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="primary"
-          size="xs"
-          data-testid={`${testIdPrefix}-preview`}
-          onClick={() => void onVoicePreview()}
-          disabled={isPreviewingVoice}
-          className="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500">
-          {isPreviewingVoice
-            ? t('settings.mascot.voice.previewing')
-            : t('settings.mascot.voice.preview')}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="xs"
-          data-testid={`${testIdPrefix}-reset`}
-          onClick={onVoiceReset}
-          disabled={overrideVoiceId == null}>
-          {t('settings.mascot.voice.reset')}
-        </Button>
-        <span
-          data-testid={`${testIdPrefix}-current`}
-          className="ml-1 text-[11px] text-content-muted truncate max-w-[18rem]"
-          title={currentVoiceId}>
-          {t('settings.mascot.voice.current')}: <code className="font-mono">{currentVoiceId}</code>
+    <Card padded divided={false}>
+      <div className="space-y-3">
+        <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+          {label}
         </span>
-      </div>
 
-      {voicePreviewError && (
-        <div
-          data-testid={`${testIdPrefix}-preview-error`}
-          className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-          {t('settings.mascot.voice.previewError')}: {voicePreviewError}
+        {/* Preset dropdown — mirrors the primary control's label + select combo */}
+        <label className="block space-y-1">
+          <span className="sr-only">{t('settings.mascot.voice.presetHeading')}</span>
+          <SettingsSelect
+            aria-label={`${label} — ${t('settings.mascot.voice.presetHeading')}`}
+            data-testid={`${testIdPrefix}-select`}
+            value={isCustomVoice ? '__custom__' : currentVoiceId}
+            onChange={e => onPresetChange(e.target.value)}
+            className="w-full">
+            {visiblePresets.map(v => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
+            <option value="__custom__">{t('settings.mascot.voice.customOption')}</option>
+          </SettingsSelect>
+        </label>
+
+        {isCustomVoice && (
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+              {t('settings.mascot.voice.customHeading')}
+            </span>
+            <div className="flex gap-2">
+              <SettingsTextField
+                aria-label={`${label} — ${t('settings.mascot.voice.customHeading')}`}
+                data-testid={`${testIdPrefix}-input`}
+                value={voiceDraft}
+                placeholder={t('settings.mascot.voice.customPlaceholder')}
+                onChange={e => setVoiceDraft(e.target.value)}
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                data-testid={`${testIdPrefix}-save-paste`}
+                onClick={onSavePaste}
+                disabled={voiceDraft.trim() === (overrideVoiceId ?? '').trim()}>
+                {t('common.save')}
+              </Button>
+            </div>
+          </label>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="primary"
+            size="xs"
+            data-testid={`${testIdPrefix}-preview`}
+            onClick={() => void onVoicePreview()}
+            disabled={isPreviewingVoice}
+            className="bg-sage-600 hover:bg-sage-700 dark:bg-sage-600 dark:hover:bg-sage-500">
+            {isPreviewingVoice
+              ? t('settings.mascot.voice.previewing')
+              : t('settings.mascot.voice.preview')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            data-testid={`${testIdPrefix}-reset`}
+            onClick={onVoiceReset}
+            disabled={overrideVoiceId == null}>
+            {t('settings.mascot.voice.reset')}
+          </Button>
+          <span
+            data-testid={`${testIdPrefix}-current`}
+            className="ml-1 text-[11px] text-content-muted truncate max-w-[18rem]"
+            title={currentVoiceId}>
+            {t('settings.mascot.voice.current')}:{' '}
+            <code className="font-mono">{currentVoiceId}</code>
+          </span>
         </div>
-      )}
-    </div>
+
+        {voicePreviewError && (
+          <Alert variant="warning" density="compact" data-testid={`${testIdPrefix}-preview-error`}>
+            <AlertDescription>
+              {t('settings.mascot.voice.previewError')}: {voicePreviewError}
+            </AlertDescription>
+          </Alert>
+        )}
+      </div>
+    </Card>
   );
 };
 

@@ -6,9 +6,9 @@ use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
-use tinyagents::harness::message::{AssistantMessage, Message};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall;
+use tinyinference::message::{AssistantMessage, Message};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall;
 
 struct MockCalendarModel {
     captured_messages: Arc<Mutex<Vec<Message>>>,
@@ -26,7 +26,7 @@ impl ChatModel<()> for MockCalendarModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         let mut count = self.iter_count.lock();
         *count += 1;
 
@@ -162,7 +162,11 @@ async fn test_integrations_agent_has_current_date_context() -> Result<()> {
         turn_model_source:
             openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(vec![Box::new(MockCalendarTool)]),
-        all_tool_specs: Arc::new(vec![MockCalendarTool.spec()]),
+        all_tool_specs: Arc::new(vec![Arc::new(MockCalendarTool.spec())]),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),

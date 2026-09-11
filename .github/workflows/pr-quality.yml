@@ -94,7 +94,12 @@ jobs:
           fetch-depth: 1
       - name: Install patchelf
         run: sudo apt-get update -qq && sudo apt-get install -y -qq patchelf
-      - name: Syntax check release script
-        run: bash -n scripts/release/strip-appimage-graphics-libs.sh
+      - name: Syntax check release scripts
+        run: |
+          bash -n scripts/release/strip-appimage-graphics-libs.sh
+          bash -n scripts/release/upload-macos-artifacts.sh
+          bash -n scripts/release/tauri-signer.sh
       - name: Run AppImage RPATH sanitize + libxdo guard test (issue #3224)
         run: bash scripts/release/test-strip-appimage-rpaths.sh
+      - name: Run updater-signing guard test (issue #5658)
+        run: bash scripts/release/test-tauri-signer.sh

@@ -31,6 +31,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use serde::Deserialize;
 use tinybus::stream::StreamRef;
+use tinydocs_bus::names::methods;
 
 use super::{host, ops, registry};
 use crate::openhuman::config::Config;
@@ -101,7 +102,7 @@ pub async fn generate_docx(
     let (runtime, record) = ready(config).await?;
     let proxy = proxy(runtime, record)?;
     let handle: OutputRef = proxy
-        .call("GenerateDocx", (spec,))
+        .call(methods::GENERATE_DOCX, (spec,))
         .await
         .map_err(|error| classify(&error))?;
     collect(&proxy, handle).await
@@ -128,7 +129,7 @@ pub async fn generate_pptx(
         // A text-only deck opens no stream: there is nothing to send, and an
         // empty stream is a round trip for nothing.
         proxy
-            .call("GeneratePptx", (deck, Option::<StreamRef>::None))
+            .call(methods::GENERATE_PPTX, (deck, Option::<StreamRef>::None))
             .await
             .map_err(|error| classify(&error))?
     } else {
@@ -139,7 +140,7 @@ pub async fn generate_pptx(
                 destination,
                 path,
                 interface,
-                member("GeneratePptx")?,
+                member(methods::GENERATE_PPTX)?,
                 |stream| serde_json::json!([deck, stream]),
                 images,
             )
@@ -166,7 +167,7 @@ pub async fn extract_text(config: &Config, document: &[u8]) -> Result<String, Do
             destination,
             path,
             interface,
-            member("ExtractText")?,
+            member(methods::EXTRACT_TEXT)?,
             |stream| serde_json::json!([stream]),
             document,
         )
@@ -252,7 +253,7 @@ fn member(name: &str) -> Result<tinybus::MemberName, DocumentCallError> {
 async fn collect(proxy: &tinybus::Proxy, handle: OutputRef) -> Result<Vec<u8>, DocumentCallError> {
     let result = read_all(proxy, &handle).await;
     if let Err(error) = proxy
-        .call::<()>("ReleaseOutput", (handle.output_id.clone(),))
+        .call::<()>(methods::RELEASE_OUTPUT, (handle.output_id.clone(),))
         .await
     {
         // Not fatal: the module expires what nobody reads. Worth a line, because
@@ -282,7 +283,7 @@ async fn read_all(
     while (out.len() as u64) < handle.total_bytes {
         let encoded: String = proxy
             .call(
-                "ReadOutput",
+                methods::READ_OUTPUT,
                 (handle.output_id.clone(), out.len() as u64, READ_CHUNK),
             )
             .await

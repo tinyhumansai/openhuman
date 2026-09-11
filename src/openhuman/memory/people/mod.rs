@@ -1,11 +1,42 @@
-//! Host layer over [`tinymemory_core::people`].
+//! Host layer over the people domain: its JSON-RPC surface, and nothing else.
 //!
-//! The domain itself lives in the extracted crate; what stays here is its
-//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
-//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
-//! The glob re-export keeps every historical `memory::people::…` path resolving.
-
-pub use tinymemory_core::people::*;
+//! Handlers and controller schemas name OpenHuman's `RpcOutcome` and
+//! `ControllerSchema`, which the driver cannot see; the ranking, scoring and
+//! address-book work happens driver-side, behind
+//! [`MemoryPeople`](crate::openhuman::memory::api::provider::MemoryPeople).
+//!
+//! # The re-export is gone, because it had no readers left (#5560)
+//!
+//! This module opened with `pub use tinycortex::memory::people::*;` — six
+//! engine modules (`address_book`, `migrations`, `resolver`, `scorer`, `store`,
+//! `types`) poured into `memory::people::*` so every historical path kept
+//! resolving. That was worth keeping while something walked those paths.
+//!
+//! Nothing does. [`rpc`] took the family instead of a `PeopleStore` when it
+//! migrated, and it was the only production caller — a `grep` for the six names
+//! across `src/` now finds prose in `binding`'s module docs (an analogy to
+//! `people::store`'s workspace-keyed cache shape) and the `#[cfg(test)]`
+//! contacts gate below. A glob re-export with no consumer is not a
+//! compatibility surface; it is a dependency edge that keeps the engine crate
+//! named in production for the benefit of no call site.
+//!
+//! **The `contacts` gate name outlives the forwarding it used to do.** The
+//! macOS `CNContactStore` reader is `#[cfg(all(target_os = "macos", feature =
+//! "contacts"))]` *inside the engine*, and this crate's `contacts` feature once
+//! had to forward there or the reader was compiled out while
+//! `refresh_address_book` reported success having seeded nothing. That reader
+//! now lives in the `tinymemory` module, whose own manifest enables
+//! `tinycortex/contacts`, and `refresh_address_book` reaches it through
+//! `MemoryPeople::seed_from_address_book` over the bus — so `contacts = []`
+//! here is correct rather than broken, and the name is kept only because the
+//! Feature Forwarding Gate asserts the product list and the shell's list are
+//! equal.
+//!
+//! `mod_contacts_gate_tests_tests.rs` asserted the old forward by naming the
+//! engine crate from `#[cfg(test)]`. It went with the engine
+//! (openhuman#6161), and its subject had already moved to the module before
+//! that: a test that links `tinycortex` directly proves nothing about what
+//! this crate forwards once this crate no longer depends on it.
 
 pub mod rpc;
 pub mod schemas;
@@ -19,55 +50,3 @@ pub use schemas::{
 
 #[cfg(test)]
 mod schemas_tests;
-
-#[cfg(test)]
-mod contacts_gate_tests {
-    /// The `contacts` gate must reach the engine, not stop at this crate.
-    ///
-    /// The macOS address-book reader lives in the memory engine, several crates
-    /// below this one, behind `#[cfg(all(target_os = "macos", feature =
-    /// "contacts"))]`. This crate's `contacts` feature once enabled four
-    /// `objc2` crates *locally* — none of which any file in `src/` names — and
-    /// never forwarded, so the reader was always compiled out. Nothing failed:
-    /// `refresh_address_book` returned success having seeded zero contacts, and
-    /// the only visible symptom was an address book that stayed empty.
-    ///
-    /// So this asserts the property that was actually missing — that turning
-    /// the feature on *here* changes what the reader does *there*. A build with
-    /// `contacts` on, on macOS, must reach the real `CNContactStore` arm; the
-    /// stub returns `Ok(vec![])` unconditionally, and the real arm cannot,
-    /// because it can fail on permission.
-    ///
-    /// Deliberately not a `cfg!(feature = ...)` self-assertion: that would pass
-    /// while the forward is broken, which is the entire bug.
-    #[test]
-    #[cfg(all(target_os = "macos", feature = "contacts"))]
-    fn contacts_feature_reaches_the_engine_reader() {
-        use super::address_book::{AddressBookError, ContactsSource, SystemContactsSource};
-
-        // The stub arm returns Ok(vec![]) and can never report a permission
-        // failure. Reaching a `PermissionDenied` — or real contacts — proves the
-        // macOS arm compiled in. On a CI box with no Contacts authorisation the
-        // permission error is the expected outcome.
-        match SystemContactsSource.fetch_contacts() {
-            Err(AddressBookError::PermissionDenied) => {}
-            Ok(_) => {}
-            Err(other) => panic!("address book read failed unexpectedly: {other:?}"),
-        }
-    }
-
-    /// Off macOS the gate is a documented no-op, and the stub is correct.
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn contacts_gate_is_a_no_op_off_macos() {
-        use super::address_book::{ContactsSource, SystemContactsSource};
-
-        assert_eq!(
-            SystemContactsSource
-                .fetch_contacts()
-                .expect("stub never fails"),
-            vec![],
-            "off macOS the reader must be the empty stub"
-        );
-    }
-}

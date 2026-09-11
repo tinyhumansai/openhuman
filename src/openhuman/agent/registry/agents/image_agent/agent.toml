@@ -1,14 +1,13 @@
 id = "image_agent"
 display_name = "Image Creator"
 delegate_name = "create_image"
-when_to_use = "Image-generation specialist — create new images from a text prompt, or edit/restyle reference images, using the hosted GMI models (Seedream / SeedEdit). Route here for make/generate/draw an image, create a logo/illustration/photo, or edit this image requests. It rides the multimodal `vision-v1` tier, so it can also inspect the images it produces. It saves each result to the workspace and returns the local file path."
+when_to_use = "Image-generation specialist: create images from a prompt, or edit/restyle a reference image. Route make/generate/draw/edit-an-image requests here. Saves each result to the workspace and returns the local path."
 temperature = 0.6
 max_iterations = 8
 agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
 omit_profile = true
 omit_memory_md = true
 

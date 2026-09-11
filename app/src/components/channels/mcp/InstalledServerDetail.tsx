@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import Button from '../../ui/Button';
+import TextField from '../../ui/TextField';
 import { clearConfigChat } from './ConfigAssistantPanel';
 import ConfigHelpModal from './ConfigHelpModal';
 import ConnectAuthModal, { authHintMessageKey } from './ConnectAuthModal';
@@ -354,13 +355,14 @@ const InstalledServerDetail = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-content-secondary">{t('mcp.detail.envVars')}</p>
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               disabled={busy}
               onClick={() => (reconfigOpen ? setReconfigOpen(false) : openReconfigure())}
-              className="text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50">
+              className="h-auto p-0 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400">
               {reconfigOpen ? t('common.cancel') : t('mcp.detail.reconfigure')}
-            </button>
+            </Button>
           </div>
           {!reconfigOpen && (
             <div className="flex flex-wrap gap-1.5">
@@ -384,8 +386,9 @@ const InstalledServerDetail = ({
                     {key}
                   </label>
                   <div className="flex gap-2">
-                    <input
+                    <TextField
                       id={`reconfig-${key}`}
+                      inputSize="sm"
                       type={showReconfig[key] ? 'text' : 'password'}
                       value={reconfigValues[key] ?? ''}
                       onChange={e =>
@@ -393,7 +396,7 @@ const InstalledServerDetail = ({
                       }
                       placeholder={t('mcp.install.enterValue').replace('{key}', key)}
                       disabled={busy}
-                      className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50"
+                      className="flex-1"
                     />
                     <Button
                       variant="secondary"

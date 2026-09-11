@@ -1,6 +1,6 @@
 id = "tools_agent"
 display_name = "Tools Agent"
-when_to_use = "Generalist for heavyweight ad-hoc execution that does NOT touch a code repository — host shell, HTTP/web fetch, web search, memory helpers, file READS (`file_read` / `grep` / `glob`). Lacks `edit` / `apply_patch` / `file_write` / `git_operations` — do **not** use for any task scoped to a code repo (cloning, locating, modifying, building, testing, git, push, PR); those route to `delegate_run_code` end-to-end. Do not use for managed Composio OAuth integrations either — those route to `integrations_agent` with a `toolkit` argument."
+when_to_use = "Generalist for heavyweight ad-hoc execution that does NOT touch a code repository: host shell, HTTP, web search, file reads. It cannot edit files or use git, so repo-scoped work goes to the code worker and managed Composio integrations go to the integrations agent."
 temperature = 0.4
 max_iterations = 10
 iteration_policy = "extended"
@@ -8,13 +8,6 @@ sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
-
-# Specialist-owned external action families own their own prompts and approval
-# contracts. Disallow them here so the generalist's wildcard inventory doesn't
-# surface a second, weaker route to the same capability. `tools_agent` retains
-# every other built-in tool through the wildcard.
-disallowed_tools = ["tinyplace_*"]
 
 [model]
 hint = "burst"
@@ -24,7 +17,7 @@ hint = "burst"
 # surface. Composio meta-tools and dynamic `<TOOLKIT>_*` action tools are
 # stripped at runtime (see `filter_non_composio_indices` in the subagent
 # runner), so the LLM never sees integration-specific tools here; those belong
-# to `integrations_agent`. Specialist-owned trading/tiny.place tools are also
+# to `integrations_agent`. Specialist-owned trading tools are also
 # stripped via `disallowed_tools` above so they route through their dedicated
 # agents exclusively.
 wildcard = {}

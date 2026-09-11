@@ -2,8 +2,13 @@
 //!
 //! Wired into `src/core/all.rs` via the `all_memory_sync_status_*`
 //! re-exports in `super::mod`. Single method now — see `rpc.rs` for the
-//! simplified design (#1136 rewrite). The wire types are engine-owned
-//! (`tinycortex::memory::sync`).
+//! simplified design (#1136 rewrite).
+//!
+//! The `MemorySyncStatus` this schema names as its output type is
+//! [`super::MemorySyncStatus`] — the host's own wire type. It was the engine's
+//! until #5560; the row now comes from the driver's `sync_statuses` and is
+//! carried across by `rpc::into_wire`, so the schema and the type it advertises
+//! live in the same module.
 
 use serde_json::{Map, Value};
 
@@ -57,29 +62,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn registers_only_status_list() {
-        let regs = all_registered_controllers();
-        assert_eq!(regs.len(), 1);
-        assert_eq!(regs[0].schema.function, "status_list");
-    }
-
-    #[test]
-    fn schema_status_list_has_no_inputs_and_one_output() {
-        let s = schemas("status_list");
-        assert_eq!(s.namespace, "memory_sync");
-        assert_eq!(s.function, "status_list");
-        assert!(s.inputs.is_empty());
-        assert_eq!(s.outputs.len(), 1);
-        assert_eq!(s.outputs[0].name, "statuses");
-    }
-
-    #[test]
-    #[should_panic(expected = "unknown memory_sync schema function")]
-    fn schemas_panics_on_unknown_function() {
-        schemas("nope");
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

@@ -23,7 +23,7 @@ use crate::openhuman::memory::guard::test_support::{
     RecordingProvider,
 };
 use crate::openhuman::memory::guard::GuardPolicy;
-use tinymemory_core::source_scope::with_source_scope;
+use crate::openhuman::memory::source_scope::with_source_scope;
 
 fn budgeted(recall_max_chars: usize, capture_max_chars: usize) -> GuardPolicy {
     GuardPolicy::new(

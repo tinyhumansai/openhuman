@@ -18,8 +18,8 @@ const EXPECTED_STATUS_PRESENTATION: Record<
 > = {
   running: {
     accent:
-      'border-ocean-200 bg-ocean-50 text-ocean-700 dark:border-ocean-500/30 dark:bg-ocean-500/10 dark:text-ocean-300',
-    dot: 'bg-ocean-500 animate-pulse',
+      'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300',
+    dot: 'bg-primary-500 animate-pulse',
     key: 'flowRuns.status.running',
   },
   completed: {

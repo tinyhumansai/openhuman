@@ -165,9 +165,9 @@ impl Agent {
         // via per-turn recall (Lane B). The legacy `user_profile` pinned namespace
         // is no longer read here; explicit prefs now live in `user_pref_general`.
         if !self.learning_enabled && self.explicit_preferences_enabled {
-            let general = tinymemory_core::preferences::load_general_preferences(
+            let general = crate::openhuman::memory::preferences::load_general_preferences_on(
                 &self.memory,
-                tinymemory_core::preferences::STANDING_PREFS_LIMIT,
+                crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
             )
             .await;
             tracing::debug!(
@@ -210,9 +210,9 @@ impl Agent {
         // injected as ground truth. A high-confidence inferred facet should be
         // *proposed* to the user (and pinned via `save_preference` on
         // confirmation), not silently treated as a standing preference.
-        let general = tinymemory_core::preferences::load_general_preferences(
+        let general = crate::openhuman::memory::preferences::load_general_preferences_on(
             &self.memory,
-            tinymemory_core::preferences::STANDING_PREFS_LIMIT,
+            crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
 
@@ -234,9 +234,10 @@ impl Agent {
         // Pull every namespace's root-level summary from the tree
         // summarizer. This is the densest user memory we can hand the
         // orchestrator: each root holds up to 20 000 tokens of distilled
-        // long-term context. Done synchronously here because the calls
-        // are filesystem reads, not provider/network round-trips, and
-        // happen exactly once per session (only on the first turn).
+        // long-term context. Awaited inline, alongside the four memory reads
+        // above: the shared tree's roots come from the bound driver now
+        // (#5560) rather than from a host-side filesystem scan, and this
+        // happens exactly once per session (only on the first turn).
         //
         // Per-namespace + total caps come from the user-facing memory
         // window preset on `AgentConfig` so changing the slider in the
@@ -247,7 +248,8 @@ impl Agent {
             &self.memory_subdir,
             limits.per_namespace_max_chars,
             limits.total_tree_max_chars,
-        );
+        )
+        .await;
 
         LearnedContextData {
             observations: obs_entries
@@ -279,15 +281,28 @@ impl Agent {
     /// instructions and learned context.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
         let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
+        // `visible_tool_specs` holds shared `Arc<ToolSpec>` leaves (they are the
+        // same schema objects the durable and full views point at), while the
+        // `ToolDispatcher` trait — which embedders implement — takes an owned
+        // `&[ToolSpec]`. Materialise a borrow-slice for the call: this is one
+        // transient copy per system-prompt build, not a per-agent resident one,
+        // and keeping it here is what lets the trait stay source-compatible.
+        let visible_specs_owned: Vec<crate::openhuman::tools::ToolSpec> = self
+            .visible_tool_specs
+            .iter()
+            .map(|spec| spec.as_ref().clone())
+            .collect();
         let instructions = self
             .tool_dispatcher
-            .prompt_instructions_for_specs(self.visible_tool_specs.as_slice())
+            .prompt_instructions_for_specs(&visible_specs_owned)
             .unwrap_or_else(|| self.tool_dispatcher.prompt_instructions(tools_slice));
-        // Adapt the owned Box<dyn Tool> slice into the shared PromptTool
+        // Adapt the agent's whole callable surface into the shared PromptTool
         // shape that every prompt-building call-site uses. Temporary vec
-        // borrows from `tools_slice` and lives for the duration of the
-        // prompt build.
-        let prompt_tools = PromptTool::from_tools(tools_slice);
+        // borrows from the two tool `Arc`s and lives for the duration of the
+        // prompt build. The synthesised delegates belong here: the catalogue
+        // this renders is what tells the model a `delegate_*` tool exists.
+        let all_tools = self.all_tool_refs();
+        let prompt_tools = PromptTool::from_tool_refs(all_tools.iter().copied());
         let prompt_visible_tool_names = self.tool_policy_session.visible_tool_names_for_prompt();
         // Load AGENTS.md instruction layers once per system-prompt build (never
         // re-read per turn — the caller builds the prompt once at session start
@@ -335,10 +350,35 @@ impl Agent {
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
         // channel runtimes — shares one builder configuration.
-        let mut prompt = self.context.build_system_prompt(&ctx)?;
-        if let Some(boundary) = render_tool_policy_boundary(&self.tool_policy_session, 2048) {
-            prompt = format!("{boundary}\n\n{prompt}");
-        }
-        Ok(prompt)
+        let prompt = self.context.build_system_prompt(&ctx)?;
+        // Appended, not prepended (#5704). Every line of this block is
+        // session-scoped — agent id, channel, entry point, risk level, the
+        // allowed-tool list — so putting it first moves the prompt's first
+        // diverging byte to offset 0 and costs the inference backend's
+        // automatic prefix cache everything behind it. That is the same
+        // concern that keeps DateTimeSection out of `for_subagent` and keeps
+        // the connected-server overview sorted. The model reads the whole
+        // system message either way.
+        //
+        // It also keeps the archetype/persona as the prompt's opening line,
+        // which the prepend had replaced with a constant heading for every
+        // agent.
+        let boundary = render_tool_policy_boundary(&self.tool_policy_session, 2048);
+        Ok(append_tool_policy_boundary(prompt, boundary))
     }
 }
+
+/// Place the tool-policy boundary block relative to the assembled prompt.
+///
+/// Separated from [`Agent`] so the ordering can be tested without standing up a
+/// session: everything that decides the placement is in these two arguments.
+fn append_tool_policy_boundary(prompt: String, boundary: Option<String>) -> String {
+    match boundary {
+        Some(boundary) => format!("{prompt}\n\n{boundary}"),
+        None => prompt,
+    }
+}
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod tool_policy_boundary_placement_tests;

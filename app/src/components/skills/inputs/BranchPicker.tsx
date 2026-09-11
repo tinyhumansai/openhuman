@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { execute as composioExecute } from '../../../lib/composio/composioApi';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { NativeSelect } from '../../ui';
 
 const log = createDebug('app:skills:BranchPicker');
 
@@ -112,17 +113,14 @@ const BranchPicker = ({ value, onChange, repo, id, placeholder, disabled }: Bran
     void loadBranches();
   }, [loadBranches]);
 
-  const selectClass =
-    'w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100';
-
   return (
     <div>
-      <select
+      <NativeSelect
         id={id}
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled || loading || !repo}
-        className={selectClass}>
+        className="w-full">
         <option value="">
           {!repo
             ? t('settings.skillsRunner.branchPicker.needRepo')
@@ -135,8 +133,8 @@ const BranchPicker = ({ value, onChange, repo, id, placeholder, disabled }: Bran
             {b.name}
           </option>
         ))}
-      </select>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{error}</p>}
+      </NativeSelect>
+      {error && <p className="text-xs text-coral-500 mt-1">{error}</p>}
     </div>
   );
 };

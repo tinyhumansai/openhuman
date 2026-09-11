@@ -31,7 +31,7 @@ export function InterruptedAnswer({ content, thinking }: { content: string; thin
               </span>
               <span>{t('chat.thinking')}</span>
             </summary>
-            <pre className="mt-1.5 font-sans text-[11px] break-words whitespace-pre-wrap text-content-muted">
+            <pre className="mt-1.5 font-sans text-[11px] wrap-break-word whitespace-pre-wrap text-content-muted">
               {trimmedThinking}
             </pre>
           </details>

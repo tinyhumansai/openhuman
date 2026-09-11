@@ -6,6 +6,7 @@
  */
 import debug from 'debug';
 
+import { redactRpcUrlForLog } from '../../utils/redactRpcUrlForLog';
 import type { CoreTransport } from './CoreTransport';
 
 const log = debug('transport:cloud');
@@ -35,10 +36,21 @@ export class CloudHttpTransport implements CoreTransport {
     private readonly bearerToken: string | null = null,
     private readonly timeoutMs: number = 30_000
   ) {
-    log('[transport:cloud] created rpcUrl=%s token=%s', rpcUrl, bearerToken ? 'set' : 'none');
+    // The bearer token is already reported by presence only; the URL needs the same
+    // care, because a profile rpcUrl may carry `user:pass@` or `?token=` (see the
+    // redactRpcUrlForLog test) and this line ran before any of it was stripped.
+    log(
+      '[transport:cloud] created rpcUrl=%s token=%s',
+      redactRpcUrlForLog(rpcUrl),
+      bearerToken ? 'set' : 'none'
+    );
   }
 
-  async call<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+  async call<T>(
+    method: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T> {
     const id = _nextId++;
     const payload: JsonRpcRequestBody = { jsonrpc: '2.0', id, method, params: params ?? {} };
 
@@ -49,8 +61,9 @@ export class CloudHttpTransport implements CoreTransport {
       headers.Authorization = `Bearer ${this.bearerToken}`;
     }
 
+    const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     opts?.signal?.addEventListener('abort', () => controller.abort());
 
     let response: Response;
@@ -63,7 +76,7 @@ export class CloudHttpTransport implements CoreTransport {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`[transport:cloud] ${method} timed out after ${this.timeoutMs}ms`);
+        throw new Error(`[transport:cloud] ${method} timed out after ${timeoutMs}ms`);
       }
       throw err;
     } finally {

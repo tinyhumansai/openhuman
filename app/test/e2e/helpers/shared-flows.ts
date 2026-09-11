@@ -91,6 +91,18 @@ export async function waitForHomePage(timeout = 15_000) {
   ];
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    // The unified chat surface can legitimately render without a greeting
+    // marker (for example while its thread data is still loading). Once the
+    // authenticated root shell is mounted, the post-onboarding route is ready
+    // for the caller to navigate to its feature under test.
+    if (
+      supportsExecuteScript() &&
+      (await browser.execute(
+        () => document.querySelector('[data-testid="root-shell-sidebar"]') !== null
+      ))
+    ) {
+      return 'application shell';
+    }
     for (const text of candidates) {
       if (await textExists(text)) return text;
     }
@@ -160,12 +172,14 @@ const HASH_REDIRECTS = {
   '/settings/composio-triggers': '/connections?tab=composio-key',
   '/settings/autonomy': '/settings/agent-access',
   '/settings/composio-routing': '/connections?tab=composio-key',
-  '/settings/agent-chat': '/connections?tab=llm#agent-chat',
-  '/settings/local-model-debug': '/connections?tab=llm#local-model',
+  // The retired debug panels both redirect to the surviving LLM surface.
+  // Do not append their former fragment identifiers: the browser treats a
+  // second `#` as part of the hash and the router intentionally removes it.
+  '/settings/agent-chat': '/connections?tab=llm',
+  '/settings/local-model-debug': '/connections?tab=llm',
   '/settings/llm': '/connections?tab=llm',
   '/settings/voice': '/connections?tab=voice',
   '/settings/search': '/connections?tab=search',
-  '/agent-world': '/agent-world/welcome',
 };
 
 /** Resolve a requested hash to where the router actually settles. */
@@ -404,7 +418,15 @@ export async function navigateToSettings() {
 }
 
 export async function navigateToBilling() {
-  await navigateViaHash('/settings/billing');
+  // Direct hash navigation can fail transiently while the settings shell is
+  // still settling after a deep-link auth flow. Keep going so the established
+  // Settings → Billing recovery path below can make a second, UI-driven
+  // attempt instead of making that recovery unreachable.
+  try {
+    await navigateViaHash('/settings/billing');
+  } catch (err) {
+    console.log('[E2E] Initial billing navigation failed; running fallback:', err);
+  }
 
   const billingMarkers = ['Billing moved to the web', 'Open billing dashboard', 'Open dashboard'];
   const deadline = Date.now() + 15_000;
@@ -749,6 +771,10 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
     if (status === 'gone') {
       console.log(`${logPrefix} Onboarding dismissed after ${step} step(s)`);
       await waitForPostOnboardingHome(logPrefix);
+      // Completing routed onboarding starts the app-wide Joyride tour
+      // asynchronously. Dismiss it before a caller navigates, otherwise the
+      // tour's own route transitions can race a spec and take it back to Chat.
+      await dismissWalkthroughIfVisible(8_000);
       return;
     }
     if (status === 'gone-but-onboarding-hash') {

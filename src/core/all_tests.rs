@@ -376,18 +376,6 @@ fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
 }
 
 #[test]
-fn schema_for_rpc_method_finds_internal_orchestration_pairing_link_session() {
-    let schema = schema_for_rpc_method("openhuman.orchestration_pairing_link_session");
-    assert!(
-        schema.is_some(),
-        "orchestration_pairing.link_session should be internally routable"
-    );
-    let s = schema.unwrap();
-    assert_eq!(s.namespace, "orchestration_pairing");
-    assert_eq!(s.function, "link_session");
-}
-
-#[test]
 fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
     assert!(
         rpc_method_from_parts("mcp_audit", "list").is_none(),
@@ -1012,10 +1000,6 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
     #[cfg(feature = "web3")]
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
-    // `meet` is compiled out under `--no-default-features`, so the registry has
-    // no entry to map (#4800).
-    #[cfg(feature = "meet")]
-    assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
     // Internal-only registry is grouped too (mcp_audit → Mcp).
     // Compiled out with the `mcp` feature: `group_for_namespace` reads the LIVE
     // registry, and the gate unregisters the mcp_audit controller entirely.
@@ -1106,24 +1090,6 @@ fn flows_controllers_absent_when_feature_off() {
     );
 }
 
-/// All three Meet namespaces register when the `meet` feature is on (#4800).
-///
-/// Paired with `meet_controllers_absent_when_feature_off` below: together they
-/// pin *both* directions of the compile-time gate. The negative half is the one
-/// that actually proves the gate does something — a gate that never removes
-/// anything would still pass this positive test.
-#[cfg(feature = "meet")]
-#[test]
-fn meet_controllers_registered_when_feature_on() {
-    for ns in ["meet", "agent_meetings", "meet_agent"] {
-        assert_eq!(
-            group_for_namespace(ns),
-            Some(DomainGroup::Meet),
-            "`{ns}` must register under DomainGroup::Meet when the `meet` feature is on"
-        );
-    }
-}
-
 /// The `modules` namespace registers when the `modules` feature is on.
 #[cfg(feature = "modules")]
 #[test]
@@ -1148,22 +1114,6 @@ fn modules_controllers_absent_when_feature_off() {
         None,
         "`modules` must leave no trace in the registry when the feature is off"
     );
-}
-
-/// No Meet namespace registers when the `meet` feature is off (#4800).
-///
-/// This is the half that proves the gate: with `meet` compiled out the three
-/// domains must leave zero trace in either the public or the internal registry.
-#[cfg(not(feature = "meet"))]
-#[test]
-fn meet_controllers_absent_when_feature_off() {
-    for ns in ["meet", "agent_meetings", "meet_agent"] {
-        assert_eq!(
-            group_for_namespace(ns),
-            None,
-            "`{ns}` must not register when the `meet` feature is off"
-        );
-    }
 }
 
 /// The external-channel namespace registers when the `channels` feature is on
@@ -1191,9 +1141,8 @@ fn channels_controllers_registered_when_feature_on() {
 /// namespace) stays present, pinning the #5002 decoupling: turning off external
 /// messaging must NOT take down core in-app chat.
 ///
-/// This is the half that proves the gate does something. The 3 `whatsapp_data`
-/// agent tools are pinned separately in `tools::ops_tests` (that module has the
-/// full-tool-list machinery); here we assert the controller surface.
+/// This is the half that proves the gate does something: here we assert the
+/// controller surface.
 #[cfg(not(feature = "channels"))]
 #[test]
 fn channels_controllers_absent_when_feature_off() {
@@ -1309,19 +1258,16 @@ fn carved_out_families_report_their_own_group() {
         #[cfg(feature = "flows")]
         ("flows", DomainGroup::Flows),
         ("cron", DomainGroup::Automation),
-        ("heartbeat", DomainGroup::Automation),
         ("composio", DomainGroup::Integrations),
         ("task_sources", DomainGroup::Integrations),
         ("billing", DomainGroup::Hosted),
         ("team", DomainGroup::Hosted),
-        ("tinyplace", DomainGroup::Relay),
         ("dashboard", DomainGroup::Desktop),
         ("notification", DomainGroup::Desktop),
         ("sandbox", DomainGroup::Runtimes),
         // Mis-tagged before the realignment: these live inside a named family
         // directory but answered `Platform`, so `harness()` registered nothing
         // for them despite claiming to enable their family.
-        ("agentbox", DomainGroup::Agent),
         ("harness_init", DomainGroup::Agent),
         ("ai", DomainGroup::Agent),
         ("auth", DomainGroup::Security),
@@ -1358,18 +1304,15 @@ fn platform_holds_only_kernel_surfaces() {
             !matches!(
                 *ns,
                 "cron"
-                    | "heartbeat"
                     | "composio"
                     | "task_sources"
                     | "billing"
                     | "team"
                     | "referral"
                     | "announcements"
-                    | "tinyplace"
                     | "dashboard"
                     | "notification"
                     | "sandbox"
-                    | "agentbox"
                     | "harness_init"
                     | "ai"
                     | "auth"
@@ -1390,7 +1333,6 @@ fn platform_holds_only_kernel_surfaces() {
 fn harness_preset_registers_the_families_it_claims() {
     let harness = crate::core::runtime::DomainSet::harness();
     for ns in [
-        "agentbox",
         "harness_init",
         "ai",
         "auth",
@@ -1427,7 +1369,6 @@ fn kernel_preset_is_the_floor() {
         ("runtimes", k.runtimes),
         ("desktop", k.desktop),
         ("hosted", k.hosted),
-        ("relay", k.relay),
         ("platform", k.platform),
     ] {
         assert!(!on, "kernel() must leave `{name}` off");
@@ -1445,11 +1386,10 @@ fn embedded_preset_excludes_desktop_and_hosted() {
         !e.hosted,
         "embedded() must not enable hosted-backend clients"
     );
-    assert!(!e.relay, "embedded() must not enable the relay surface");
     // Still needs these: skills run on the managed runtimes, and the session
-    // loop is driven by cron/heartbeat.
+    // loop is driven by cron.
     assert!(e.runtimes, "embedded() needs the code-execution runtimes");
-    assert!(e.automation, "embedded() needs cron + subconscious");
+    assert!(e.automation, "embedded() needs cron");
     assert!(e.inference, "embedded() needs inference");
     assert!(e.integrations, "embedded() needs external integrations");
 }
@@ -1519,7 +1459,6 @@ fn every_domain_group_is_accounted_for_in_store_init_plan() {
         DomainGroup::Security,
         DomainGroup::Flows,
         DomainGroup::Mcp,
-        DomainGroup::Meet,
         DomainGroup::Channels,
         DomainGroup::Web3,
         DomainGroup::Voice,
@@ -1531,7 +1470,6 @@ fn every_domain_group_is_accounted_for_in_store_init_plan() {
         DomainGroup::Runtimes,
         DomainGroup::Desktop,
         DomainGroup::Hosted,
-        DomainGroup::Relay,
         // The registry is a compiled-in `const` table and the loaded-module set
         // lives in tinybus's own `ModuleHost`, so there is nothing for
         // `init_stores` to stand up.
@@ -1570,7 +1508,6 @@ fn every_domain_group_is_accounted_for_in_subscriber_plan() {
         DomainGroup::Channels,
         DomainGroup::Flows,
         DomainGroup::Memory,
-        DomainGroup::Meet,
         DomainGroup::Agent,
         DomainGroup::Mcp,
         DomainGroup::Integrations,
@@ -1589,7 +1526,6 @@ fn every_domain_group_is_accounted_for_in_subscriber_plan() {
         DomainGroup::Automation,
         DomainGroup::Runtimes,
         DomainGroup::Hosted,
-        DomainGroup::Relay,
         // Modules run on their own in-process broker, so they cannot publish a
         // `DomainEvent` and there is nothing on the core bus to subscribe to.
         DomainGroup::Modules,
@@ -1653,7 +1589,7 @@ fn memory_controllers_form_one_contiguous_run_in_aggregator_order() {
 // present and failing, because a registered-but-failing method teaches a model
 // the capability exists and makes it retry.
 
-use crate::openhuman::memory::api::capabilities::Capability;
+use tinymemory_api::capabilities::Capability;
 
 /// A workspace path unique to one test.
 ///
@@ -1698,8 +1634,6 @@ const MEMORY_NAMESPACE_CAPABILITY: &[(&str, Option<Capability>)] = &[
     ("slack_memory", Some(Capability::Sources)),
     ("memory_sync", Some(Capability::Sources)),
     ("memory_sources", Some(Capability::Sources)),
-    #[cfg(feature = "memory-git")]
-    ("memory_diff", Some(Capability::Diff)),
 ];
 
 /// The `memory` namespace, function by function. Core and recall share the
@@ -1710,6 +1644,9 @@ const MEMORY_FUNCTION_CAPABILITY: &[(&str, Option<Capability>)] = &[
     ("init", Some(Capability::Core)),
     ("list_documents", Some(Capability::Core)),
     ("list_namespaces", Some(Capability::Core)),
+    // Same tier as list_namespaces beside it: the per-namespace counts are
+    // the sync-verification surface, gated with the core partition.
+    ("namespace_summaries", Some(Capability::Core)),
     ("delete_document", Some(Capability::Core)),
     ("query_namespace", Some(Capability::Core)),
     ("recall_context", Some(Capability::Core)),
@@ -1739,6 +1676,11 @@ const MEMORY_FUNCTION_CAPABILITY: &[(&str, Option<Capability>)] = &[
     ("sync_channel", Some(Capability::Sources)),
     ("sync_all", Some(Capability::Sources)),
     ("ingestion_status", Some(Capability::Sources)),
+    // Sources, with the rest of its schema family (one push_cap site): the
+    // override exists so user-requested source maintenance runs while the
+    // gate is paused, and a driver serving no Sources family has nothing the
+    // window would unblock.
+    ("scheduler_override", Some(Capability::Sources)),
     // the tree summarizer, NOT ingestion
     ("learn_all", Some(Capability::Tree)),
     // never gated: this is the RPC that reports the capability set
@@ -1808,11 +1750,6 @@ fn memory_capability_map_has_no_stale_entries() {
         .collect();
 
     for (ns, _) in MEMORY_NAMESPACE_CAPABILITY {
-        // `memory_diff` only registers when `memory-git` is compiled in; no CI
-        // lane enables it, so it would otherwise read as a stale table entry.
-        if *ns == "memory_diff" && !cfg!(feature = "memory-git") {
-            continue;
-        }
         assert!(
             live.iter().any(|(n, _)| n == ns),
             "MEMORY_NAMESPACE_CAPABILITY names `{ns}`, which registers no Memory controller"
@@ -1852,15 +1789,25 @@ fn every_capability_family_is_accounted_for_in_the_rpc_surface() {
             | Capability::Goals
             | Capability::ToolMemory
             | Capability::Sources => true,
-            #[cfg(feature = "memory-git")]
-            Capability::Diff => true,
-            #[cfg(not(feature = "memory-git"))]
+            // The `memory_diff` controllers were deleted with the
+            // `memory-git` gate, so this capability owns no RPC surface. The
+            // bus contract still defines the variant, and a driver may still
+            // advertise it — there is simply nothing here to register.
             Capability::Diff => false,
             // `Core` gates the combined core + recall controller partition so
             // a null driver removes the entire driver-backed surface. Recall
             // is represented by that same partition; Portability is RPC-less.
             Capability::Core => true,
             Capability::Recall | Capability::Portability => false,
+            // v1.13.7's ingestion round: engine-side families (typed document
+            // /conversation/learning/event ingest and the answer surface) the
+            // host reaches through existing controllers, not per-family RPC
+            // namespaces — no controller carries these tags yet.
+            Capability::DocumentIngest
+            | Capability::ConversationIngest
+            | Capability::LearningIngest
+            | Capability::EventIngest
+            | Capability::Answer => false,
             // Folded into `Tree`: the tree registry's ~25 methods span tree,
             // entities, graph and maintenance and are tagged as ONE family.
             // See the push site in `all.rs` for why that trade was chosen.
@@ -1877,6 +1824,13 @@ fn every_capability_family_is_accounted_for_in_the_rpc_surface() {
             // through `as_people()`. See
             // `docs/specs/2026-08-13-memory-module-port.md` stage 2.
             Capability::People => false,
+            // New in tinymemory v1.7.0, and false for the same reason as
+            // `People`: the sync and coding-session handlers still call the
+            // engine in-process rather than through `as_source_sync()` /
+            // `as_sessions()`, so gating their controllers on these families
+            // would unregister RPC methods that work today. Both flip in the
+            // change that routes those handlers through the driver.
+            Capability::SourceSync | Capability::CodingSessions => false,
             // Same as `People`: the chunk-tier and retrieval primitives back
             // agent tools that still call the engine in-process, so nothing is
             // gated on these families yet. Both flip to reflect reality in the
@@ -1889,6 +1843,10 @@ fn every_capability_family_is_accounted_for_in_the_rpc_surface() {
             // its only caller is the archivist post-turn hook, which runs
             // in-process on the turn path rather than answering an RPC.
             Capability::Episodic => false,
+            // Scoring operations are routed through the module bus but have no
+            // RPC controller of their own — callers reach the driver directly
+            // via `as_scoring()`.
+            Capability::Scoring => false,
         };
         assert_eq!(
             gated.contains(&cap),
@@ -2023,13 +1981,6 @@ async fn memory_families_registered_when_capabilities_advertised() {
             "`{present}` must be present under a full-capability driver"
         );
     }
-    // `memory_diff` only registers when `memory-git` is compiled in.
-    if cfg!(feature = "memory-git") {
-        assert!(
-            ns.contains("memory_diff"),
-            "`memory_diff` must be present under a full-capability driver when `memory-git` is on"
-        );
-    }
     for present in [
         "doc_put",
         "doc_ingest",
@@ -2062,7 +2013,6 @@ async fn memory_families_absent_when_capabilities_not_advertised() {
         "tree_summarizer",
         "memory_sync",
         "memory_sources",
-        "memory_diff",
         "slack_memory",
     ] {
         assert!(
@@ -2465,11 +2415,6 @@ fn sole_capability_for_namespace_reports_a_single_family_namespace() {
         sole_capability_for_namespace("memory_tree"),
         Some(Capability::Tree)
     );
-    #[cfg(feature = "memory-git")]
-    assert_eq!(
-        sole_capability_for_namespace("memory_diff"),
-        Some(Capability::Diff)
-    );
 }
 
 #[test]
@@ -2511,46 +2456,84 @@ fn javascript_controllers_absent_when_feature_off() {
     );
 }
 
-// ---- memory-git gate -------------------------------------------------------
+// ---- memory_diff removal ---------------------------------------------------
 
-/// `memory-git` ON: the git-backed diff surface is registered.
-#[cfg(feature = "memory-git")]
-#[test]
-fn memory_diff_controllers_registered_when_feature_on() {
-    let namespaces: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.namespace)
-        .collect();
-    assert!(
-        namespaces.contains(&"memory_diff"),
-        "with the `memory-git` feature ON the `memory_diff` controllers must be registered"
-    );
-}
-
-/// `memory-git` OFF: `memory_diff` leaves no trace in the registry, while the
-/// rest of the memory surface stays.
+/// The `memory_diff` controllers were deleted along with the `memory-git`
+/// feature, and must stay gone — while the rest of the memory surface stays.
 ///
-/// This is the half that proves the gate does something. The stub's schema
-/// aggregators return empty vecs rather than always-erroring handlers, so the
-/// namespace must be genuinely unknown-method — not present-but-broken, which
-/// would still advertise itself on `/schema`.
-///
-/// `memory` is asserted present in the same test on purpose: the gate is
-/// supposed to remove the git ledger, not the memory domain. Splitting that
-/// into a separate test would let one pass while the other silently regressed.
-#[cfg(not(feature = "memory-git"))]
+/// `memory` is asserted present in the same test on purpose: the removal took
+/// the git ledger, not the memory domain. Splitting that into a separate test
+/// would let one pass while the other silently regressed. This replaces the
+/// `{registered_when_feature_on,absent_when_feature_off}` pair that pinned the
+/// gate while it existed.
 #[test]
-fn memory_diff_controllers_absent_when_feature_off() {
+fn memory_diff_controllers_are_gone_and_memory_survives() {
     let namespaces: Vec<&str> = all_controller_schemas()
         .iter()
         .map(|s| s.namespace)
         .collect();
     assert!(
         !namespaces.contains(&"memory_diff"),
-        "with `memory-git` OFF the `memory_diff` controllers must not be registered, got: {namespaces:?}"
+        "`memory_diff` was removed and must not be registered, got: {namespaces:?}"
     );
     assert!(
         namespaces.contains(&"memory"),
-        "the `memory-git` gate must remove the git ledger, not the memory domain"
+        "removing the git ledger must not remove the memory domain"
+    );
+}
+
+// ---- session_db removal (#6082) --------------------------------------------
+
+/// The six read-only `session_db` controllers were removed in #6082: they
+/// queried a session index that nothing in `src/` ever writes (permanently
+/// empty in production, no frontend consumer). The three `run_ledger`
+/// controllers live in the same module and read a table that *is* written
+/// (from `web_chat::progress_bridge` and `agent::progress_tracing`), so they
+/// must stay fully registered.
+///
+/// `run_ledger` is asserted present in the same test on purpose: the removal
+/// took the dead read surface, not the run-ledger domain. Splitting that into a
+/// separate test would let one pass while the other silently regressed.
+#[test]
+fn session_db_controllers_are_gone_and_run_ledger_survives() {
+    let methods: Vec<String> = all_controller_schemas()
+        .iter()
+        .map(rpc_method_name)
+        .collect();
+
+    for removed in [
+        "openhuman.session_db_list",
+        "openhuman.session_db_get",
+        "openhuman.session_db_search",
+        "openhuman.session_db_get_messages",
+        "openhuman.session_db_get_tool_calls",
+        "openhuman.session_db_get_children",
+    ] {
+        assert!(
+            !methods.contains(&removed.to_string()),
+            "removed session_db controller `{removed}` must be absent \
+             (unknown-method over /rpc, omitted from /schema), got: {methods:?}"
+        );
+    }
+
+    for kept in [
+        "openhuman.run_ledger_list",
+        "openhuman.run_ledger_get",
+        "openhuman.run_ledger_events",
+    ] {
+        assert!(
+            methods.contains(&kept.to_string()),
+            "run_ledger controller `{kept}` must stay registered — removing the \
+             dead session_db read surface must not touch the run ledger"
+        );
+    }
+
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(
+        !namespaces.contains(&"session_db"),
+        "the `session_db` namespace was removed and must not be registered, got: {namespaces:?}"
     );
 }

@@ -1,73 +1,41 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import ChipTabs from '../../layout/ChipTabs';
-import PageSectionHeader from '../../layout/PageSectionHeader';
-import AgentChatPanel from './AgentChatPanel';
-import AIPanel from './AIPanel';
-import LocalModelDebugPanel from './LocalModelDebugPanel';
-
-type LlmChip = 'api-keys' | 'local-model' | 'agent-chat';
-
-const LLM_CHIPS: readonly LlmChip[] = ['api-keys', 'local-model', 'agent-chat'];
+import SettingsTabbedPage from '../layout/SettingsTabbedPage';
+import AIPanel, { type AIPanelTab } from './AIPanel';
 
 /**
- * The Connections → LLM surface as a three-chip page:
- *   - **API keys** — the main AI provider / model configuration (AIPanel).
- *   - **Local Model Debug** — local runtime status + per-capability testers.
- *   - **Agent Chat Debug** — the raw agent-chat tester.
+ * The Connections → LLM surface: provider credentials and workload routing.
  *
- * Local Model Debug and Agent Chat used to be standalone Developer Options
- * pages; they're folded in here so everything LLM-related lives on one page.
- * The active chip is hash-backed so legacy diagnostics deep links select the
- * intended surface and chip selection remains shareable.
+ * This was a three-chip page — API keys plus two developer diagnostics, Local
+ * Model Debug and Agent Chat Debug, which had been folded in here when they
+ * were retired as standalone Developer Options pages. Both are gone now, so
+ * there is one surface and nothing to switch between: `ChipTabs` over a single
+ * item is a control that cannot do anything, and the hash it was backed by
+ * addressed panels that no longer exist. `AIPanel` renders directly.
  *
- * Each chip renders its underlying panel unembedded so it keeps the same
- * PanelPage chrome + `p-4` padding as the sibling Connections tabs (Voice,
- * Embeddings, …); the two-pane shell hides the redundant back button.
+ * It renders unembedded, so it keeps the same PanelPage chrome and `p-4`
+ * padding as the sibling Connections tabs (Voice, Embeddings, …); the two-pane
+ * shell hides the redundant back button.
  */
 const LlmConnectionsPanel = () => {
   const { t } = useT();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const requestedChip = location.hash.slice(1);
-  const chip: LlmChip = LLM_CHIPS.includes(requestedChip as LlmChip)
-    ? (requestedChip as LlmChip)
-    : 'api-keys';
-
-  const setChip = (next: LlmChip) => {
-    navigate(
-      { pathname: location.pathname, search: location.search, hash: `#${next}` },
-      { replace: true }
-    );
-  };
+  const [tab, setTab] = useState<AIPanelTab>('providers');
 
   return (
-    <div className="flex h-full flex-col gap-4">
-      <PageSectionHeader
-        title={t('pages.settings.ai.llm')}
-        description={t('connections.header.llm')}
-        tabs={
-          <ChipTabs<LlmChip>
-            ariaLabel={t('pages.settings.ai.llm')}
-            testIdPrefix="llm-chip"
-            className="inline-flex flex-wrap items-center gap-1.5"
-            value={chip}
-            onChange={setChip}
-            items={[
-              { id: 'api-keys', label: t('connections.llm.apiKeys') },
-              { id: 'local-model', label: t('settings.developerMenu.localModelDebug.title') },
-              { id: 'agent-chat', label: t('settings.developerMenu.agentChat.title') },
-            ]}
-          />
-        }
-      />
-      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-subtle">
-        {chip === 'api-keys' && <AIPanel />}
-        {chip === 'local-model' && <LocalModelDebugPanel />}
-        {chip === 'agent-chat' && <AgentChatPanel />}
-      </div>
-    </div>
+    <SettingsTabbedPage
+      title={t('pages.settings.ai.llm')}
+      description={t('connections.header.llm')}
+      tabs={[
+        { id: 'providers', label: t('settings.ai.llmProviders') },
+        { id: 'routing', label: t('settings.ai.routing') },
+      ]}
+      value={tab}
+      onChange={setTab}
+      tabsAriaLabel={t('pages.settings.ai.llm')}
+      tabsTestIdPrefix="ai-tab">
+      <AIPanel tab={tab} onTabChange={setTab} hideTabChrome />
+    </SettingsTabbedPage>
   );
 };
 

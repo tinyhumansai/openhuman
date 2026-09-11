@@ -61,7 +61,7 @@ PRs must clear the **≥ 80% coverage on changed lines** gate. Add tests for new
 - [**Workflows**](../features/workflows.md). The tinyflows-backed `flows` domain: triggers, trust origins, approval-gated runs, and the `flows_*` RPC surface.
 - [**Chromium Embedded Framework**](cef.md). How embedded provider webviews work, why they don't run injected JS, and what the per-provider scanners do instead.
 
-For features still being built, the [Subconscious Loop](../features/subconscious.md) page covers the background task evaluation system end-to-end.
+For features still being built, the Subconscious Loop page covers the background task evaluation system end-to-end.
 
 ---
 

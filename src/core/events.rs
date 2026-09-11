@@ -126,15 +126,6 @@ pub enum DomainEvent {
         orchestration_id: String,
         reason: Option<String>,
     },
-    /// A tiny.place contact edge changed for a wrapped orchestration session.
-    /// Payload is intentionally metadata only; contact graph details stay behind
-    /// the signed tiny.place API.
-    OrchestrationPairingChanged {
-        agent_id: String,
-        status: String,
-        source: String,
-    },
-
     // ── Subconscious orchestrator ───────────────────────────────────────
     /// A subconscious trigger finished gate evaluation (promote or drop).
     /// Observability only — lets dashboards see ingestion volume and the
@@ -390,7 +381,7 @@ pub enum DomainEvent {
         thread_ts: Option<String>,
         /// Provider-neutral envelope projected from the inbound channel message.
         /// Legacy publishers may omit it until they adopt TinyChannels.
-        inbound_envelope: Option<tinychannels::ChannelInboundEnvelope>,
+        inbound_envelope: Option<tinychannels_bus::ChannelInboundEnvelope>,
         /// Workspace directory active when this event was published.
         /// Subscribers that persist data must reject events whose
         /// `workspace_dir` does not match their own workspace binding.
@@ -1018,7 +1009,7 @@ pub enum DomainEvent {
     /// A document (chat batch, email thread, or standalone document) was
     /// fully canonicalised and its chunks written to the memory tree.
     ///
-    /// Emitted by `memory::tree::ingest::persist()` after the chunk upsert
+    /// Emitted by `tinymemory_core::tree::ingest::persist()` after the chunk upsert
     /// and extract-job enqueue complete. Subscribers (Phase 2 producers such
     /// as the email-signature parser) react to this to inspect the
     /// canonicalised content.
@@ -1108,6 +1099,119 @@ pub enum DomainEvent {
         reason: String,
     },
 
+    // ── MCP reconnect supervisor (#5931) ───────────────────────────────
+    //
+    // Published by `mcp::registry::supervisor_events` from the report
+    // `tinymcp::Supervisor::tick` hands back each minute. They are what puts
+    // a probe outcome on the developer Event Log, and what the notification
+    // bridge reads to tell the user about a server that stays down. An
+    // answered probe is deliberately not an event: one row per server per
+    // minute would bury everything else in the log.
+    /// A connected MCP server did not answer its liveness probe inside the
+    /// window, but the session was kept: a single slow answer is not
+    /// evidence of a drop. Only `teardown_after` consecutive timeouts end
+    /// the session, and that tick publishes
+    /// [`Self::McpServerTransportDropped`] instead of this.
+    McpServerProbeTimedOut {
+        server_id: String,
+        /// The registry's qualified name, e.g. `"ac.inference.sh/mcp"`.
+        qualified_name: String,
+        /// The probe window that elapsed, in seconds.
+        probe_timeout_secs: u64,
+        /// How many probes in a row have now timed out, this one included.
+        consecutive_timeouts: u32,
+        /// The streak length at which the session is torn down.
+        teardown_after: u32,
+        /// Workspace the supervised host belongs to.
+        ///
+        /// One process supervises every workspace it has opened over its life
+        /// (`mcp::host::all_hosts`), and a workspace switch leaves the old
+        /// host open and still supervised. A subscriber that persists one of
+        /// these must therefore address the store by *this* field rather than
+        /// by its own workspace binding: the two disagree after a switch, in
+        /// whichever direction, and using the binding files one account's
+        /// outage under another's.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor ended an MCP server's session because its liveness
+    /// probe found the transport unusable. A reconnect follows in the same
+    /// tick and reports as [`Self::McpServerReconnected`],
+    /// [`Self::McpServerReconnectFailed`] or [`Self::McpServerParked`].
+    McpServerTransportDropped {
+        server_id: String,
+        qualified_name: String,
+        /// What the probe observed: `"broken"` (the transport answered with
+        /// an error), `"timed_out"` (the timeout streak reached its limit)
+        /// or `"missing"` (the entry went away between the membership check
+        /// and the probe).
+        outcome: String,
+        /// The transport error, already rendered and endpoint-redacted by
+        /// `tinymcp`. `None` unless `outcome` is `"broken"`.
+        detail: Option<String>,
+        /// How long the failing probe took, or the window that elapsed for a
+        /// timeout, in milliseconds. `None` for `"missing"`.
+        elapsed_ms: Option<u64>,
+        /// The timeout streak that ended the session; zero unless `outcome`
+        /// is `"timed_out"`.
+        consecutive_timeouts: u32,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor connected an MCP server, either rebuilding a session
+    /// it had just ended or bringing back one that had stayed down.
+    McpServerReconnected {
+        server_id: String,
+        qualified_name: String,
+        tool_count: u32,
+        /// How many consecutive attempts had failed before this one. Zero
+        /// means the session was rebuilt within the tick that ended it and
+        /// nobody noticed; anything else means the server's tools had been
+        /// unavailable across at least one whole tick, which is what the
+        /// notification bridge keys off to announce a recovery.
+        after_failures: u32,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor failed to connect an MCP server and will retry after
+    /// a backoff. Until a retry succeeds the server's tools are unavailable
+    /// to the agent.
+    ///
+    /// Published once per attempt; the notification bridge notifies on the
+    /// first failure of an episode (`failures == 1`) only.
+    McpServerReconnectFailed {
+        server_id: String,
+        qualified_name: String,
+        /// The connection error, already rendered and endpoint-redacted.
+        error: String,
+        /// How many consecutive attempts have now failed, this one included.
+        failures: u32,
+        /// Seconds until the next attempt.
+        retry_in_secs: u64,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+    /// The supervisor gave up on an MCP server because the failure is one
+    /// retrying cannot fix — today, the launcher runtime (`npx` / `uvx`) is
+    /// not installed. The server stays parked until it is disabled and
+    /// re-enabled.
+    McpServerParked {
+        server_id: String,
+        qualified_name: String,
+        /// The failure, already rendered, including the install guidance
+        /// `tinymcp` attaches to a missing runtime.
+        error: String,
+        /// Workspace the supervised host belongs to — see
+        /// [`Self::McpServerProbeTimedOut::workspace_dir`] for the rule
+        /// subscribers must apply.
+        workspace_dir: std::path::PathBuf,
+    },
+
     /// An `OPENHUMAN_APPROVAL_GATE=0` env override was observed but
     /// IGNORED because the host is the Tauri desktop shell. The gate is
     /// always installed under the desktop host; this event lets the UI
@@ -1152,6 +1256,34 @@ pub enum DomainEvent {
     /// `SecurityPolicy` is hot-swapped in-band; this broadcast lets other
     /// listeners observe the change.
     AgentPathsChanged,
+    /// The process switched to a different workspace (#5966).
+    ///
+    /// One process serves more than one workspace over its life — desktop
+    /// login, logout and pending-session revalidation all re-resolve it — and
+    /// until now that happened silently. Long-lived consumers had no way to
+    /// learn about a switch other than to re-read the marker on a timer, and a
+    /// process-wide stream like the Event Log had no way at all: it would keep
+    /// presenting the previous workspace's rows as the current ones.
+    ///
+    /// Published by the config loader's cached-workspace write-through, and
+    /// only when the value actually changes — the loader itself runs on far
+    /// more than switches, and announcing every load would bury the real ones.
+    ///
+    /// `workspace_dir` is for in-process consumers. Anything crossing to a
+    /// client sends
+    /// [`workspace_handle`](crate::openhuman::config::workspace_handle)
+    /// instead, since the path is under the user's home directory.
+    ActiveWorkspaceChanged {
+        workspace_dir: std::path::PathBuf,
+        /// Monotonic revision of this transition.
+        ///
+        /// The connect-time snapshot a client is seeded with and this
+        /// broadcast travel on separate tasks, so a snapshot resolved before
+        /// a switch can be delivered after it. Carrying the revision lets a
+        /// client keep the highest it has seen and discard anything older,
+        /// rather than being talked back into the previous workspace.
+        revision: u64,
+    },
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -1257,139 +1389,22 @@ pub enum DomainEvent {
     },
     /// A thread's goal was cleared (deleted).
     ThreadGoalCleared { thread_id: String },
-
-    // ── Backend Meet Bot ──────────────────────────────────────────────
-    /// Backend gmeet bot successfully joined the meeting.
-    BackendMeetJoined {
-        meet_url: String,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot left the meeting.
-    BackendMeetLeft {
-        reason: String,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot produced a spoken reply.
-    BackendMeetReply {
-        transcript: String,
-        reply: String,
-        emotion: String,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot needs the harness to execute a tool instruction.
-    BackendMeetHarness {
-        transcript: String,
-        instruction: String,
-        emotion: String,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot sent the full meeting transcript on close.
-    BackendMeetTranscript {
-        turns: Vec<BackendMeetTurn>,
-        duration_ms: u64,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot emitted an incremental transcript turn mid-call
-    /// (`bot:transcript_delta`, issue #4304). Relayed live to the renderer so
-    /// the active-call UI can render turns as they're spoken. `is_partial`
-    /// marks a not-yet-finalized line at `index`; a later delta (partial or
-    /// final) at the same `index` supersedes it. The terminal
-    /// `BackendMeetTranscript` stays authoritative for thread/summary.
-    BackendMeetTranscriptDelta {
-        turn: BackendMeetTurn,
-        index: u64,
-        is_partial: bool,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot emitted an error.
-    BackendMeetError {
-        error: String,
-        correlation_id: Option<String>,
-    },
-    /// Backend gmeet bot detected a wake-phrase command from a participant.
-    BackendMeetInCallRequest {
-        correlation_id: Option<String>,
-        speaker: String,
-        command_text: String,
-        recent_transcript: Vec<BackendMeetTurn>,
-        timestamp_ms: u64,
-        /// Dual-mascot name addressing (#4277 follow-up): slot (0 = primary,
-        /// 1 = secondary) whose mascot name was addressed, or `None` when no
-        /// specific mascot was named. Forwarded to `bot:speak` as `mascotSlot`.
-        mascot_slot: Option<u8>,
-    },
-    /// Core asked the backend bot to speak into the call (`bot:speak`).
-    /// Published for observability after the Socket.IO emit succeeds.
-    BackendMeetSpeak {
-        text: String,
-        correlation_id: Option<String>,
-    },
-    /// An approval was parked during a live-meeting orchestrator turn
-    /// (issue #3513). The meeting bus speaks the prompt into the call;
-    /// the decision arrives by voice ("Hey Tiny, approve") or the
-    /// standard thread approval card — first response wins.
-    InCallApprovalRequested {
-        request_id: String,
-        tool_name: String,
-        action_summary: String,
-        correlation_id: Option<String>,
-    },
-    /// A Google Calendar event with a Meet link was detected and the
-    /// auto-join policy is "ask" — the UI should prompt the user.
-    MeetAutoJoinPrompt {
-        meet_url: String,
-        event_title: String,
-    },
-    /// A new meeting session was created (Pending) after a calendar Meet
-    /// link was detected and the auto-join prompt was surfaced (issue #3507).
-    MeetingSessionCreated {
-        meeting_id: String,
-        meet_url: String,
-        title: String,
-        /// Origin of the session: "calendar" | "manual" | "api".
-        source: String,
-    },
-    /// Auto-join was triggered for a meeting — either policy == Always or the
-    /// user clicked a join action on the auto-join prompt (issue #3507).
-    MeetingAutoJoinTriggered {
-        meeting_id: String,
-        meet_url: String,
-        listen_only: bool,
-        correlation_id: String,
-    },
-    /// Reserved for PR-4: a post-meeting summary was generated from the
-    /// transcript (action items, key decisions, etc.).
-    MeetingSummaryGenerated {
-        thread_id: String,
-        correlation_id: Option<String>,
-        summary: String,
-    },
-    /// A JSON message arrived on a tinyplace WebSocket stream.
-    /// Published by the stream manager's recv loop. Carries the raw
-    /// server-sent JSON value (inbox item, conversation message, etc.)
-    /// so the Socket.IO bridge can forward it to the renderer.
-    TinyPlaceStreamMessage {
-        /// Stream identifier (e.g. `"inbox"`, `"conversation:abc123"`).
-        stream_id: String,
-        /// Stream kind for routing.
-        kind: String,
-        /// The raw JSON message from the tinyplace server.
-        message: serde_json::Value,
-    },
-    /// A tinyplace WebSocket stream changed lifecycle status.
-    /// Published by the stream manager on connect, disconnect, and failure.
-    TinyPlaceStreamStatusChanged {
-        /// Stream identifier.
-        stream_id: String,
-        /// New status: `"connecting"`, `"connected"`, `"disconnected"`, `"failed"`.
-        status: String,
-    },
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BackendMeetTurn {
-    pub role: String,
-    pub content: String,
+/// Truncate to `max` characters, appending `…` when anything was dropped.
+///
+/// Counted in `char`s, so a multi-byte error cannot be split mid-character.
+/// The ellipsis is the point: without it a clipped provider error reads as if
+/// it ended where it was cut, and a reader cannot tell a complete message from
+/// a truncated one. Shared so the Event Log summary and the notification
+/// bodies cannot drift into three different truncation rules — they had.
+#[must_use]
+pub fn clip_to_chars(text: &str, max: usize) -> String {
+    let mut out: String = text.chars().take(max).collect();
+    if text.chars().nth(max).is_some() {
+        out.push('…');
+    }
+    out
 }
 
 impl DomainEvent {
@@ -1407,7 +1422,6 @@ impl DomainEvent {
             | Self::AgentOrchestrationCompleted { .. }
             | Self::AgentOrchestrationFailed { .. }
             | Self::AgentOrchestrationClosed { .. }
-            | Self::OrchestrationPairingChanged { .. }
             | Self::RunQueueMessageQueued { .. }
             | Self::RunQueueFollowupDispatched { .. }
             | Self::RunQueueInterrupted { .. }
@@ -1498,6 +1512,7 @@ impl DomainEvent {
             | Self::SystemShutdownRequested { .. }
             | Self::AutonomyConfigChanged
             | Self::AgentPathsChanged
+            | Self::ActiveWorkspaceChanged { .. }
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. }
             | Self::HarnessInitProgress { .. }
@@ -1538,26 +1553,12 @@ impl DomainEvent {
             | Self::McpServerDisconnected { .. }
             | Self::McpClientToolExecuted { .. }
             | Self::McpSetupSecretRequested { .. }
-            | Self::McpToolRejected { .. } => "mcp_client",
-
-            Self::BackendMeetJoined { .. }
-            | Self::BackendMeetLeft { .. }
-            | Self::BackendMeetReply { .. }
-            | Self::BackendMeetHarness { .. }
-            | Self::BackendMeetTranscript { .. }
-            | Self::BackendMeetTranscriptDelta { .. }
-            | Self::BackendMeetError { .. }
-            | Self::BackendMeetInCallRequest { .. }
-            | Self::BackendMeetSpeak { .. }
-            | Self::InCallApprovalRequested { .. }
-            | Self::MeetAutoJoinPrompt { .. }
-            | Self::MeetingSessionCreated { .. }
-            | Self::MeetingAutoJoinTriggered { .. }
-            | Self::MeetingSummaryGenerated { .. } => "agent_meetings",
-
-            Self::TinyPlaceStreamMessage { .. } | Self::TinyPlaceStreamStatusChanged { .. } => {
-                "tinyplace"
-            }
+            | Self::McpToolRejected { .. }
+            | Self::McpServerProbeTimedOut { .. }
+            | Self::McpServerTransportDropped { .. }
+            | Self::McpServerReconnected { .. }
+            | Self::McpServerReconnectFailed { .. }
+            | Self::McpServerParked { .. } => "mcp_client",
         }
     }
 
@@ -1575,7 +1576,6 @@ impl DomainEvent {
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
-            Self::OrchestrationPairingChanged { .. } => "OrchestrationPairingChanged",
             Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
@@ -1654,6 +1654,7 @@ impl DomainEvent {
             Self::SystemShutdownRequested { .. } => "SystemShutdownRequested",
             Self::AutonomyConfigChanged => "AutonomyConfigChanged",
             Self::AgentPathsChanged => "AgentPathsChanged",
+            Self::ActiveWorkspaceChanged { .. } => "ActiveWorkspaceChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::HarnessInitProgress { .. } => "HarnessInitProgress",
@@ -1678,6 +1679,11 @@ impl DomainEvent {
             Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
             Self::McpToolRejected { .. } => "McpToolRejected",
+            Self::McpServerProbeTimedOut { .. } => "McpServerProbeTimedOut",
+            Self::McpServerTransportDropped { .. } => "McpServerTransportDropped",
+            Self::McpServerReconnected { .. } => "McpServerReconnected",
+            Self::McpServerReconnectFailed { .. } => "McpServerReconnectFailed",
+            Self::McpServerParked { .. } => "McpServerParked",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
             Self::ProviderApiKeyRejected { .. } => "ProviderApiKeyRejected",
             Self::TaskSourceFetched { .. } => "TaskSourceFetched",
@@ -1687,22 +1693,6 @@ impl DomainEvent {
             Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
             Self::ThreadGoalUpdated { .. } => "ThreadGoalUpdated",
             Self::ThreadGoalCleared { .. } => "ThreadGoalCleared",
-            Self::BackendMeetJoined { .. } => "BackendMeetJoined",
-            Self::BackendMeetLeft { .. } => "BackendMeetLeft",
-            Self::BackendMeetReply { .. } => "BackendMeetReply",
-            Self::BackendMeetHarness { .. } => "BackendMeetHarness",
-            Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
-            Self::BackendMeetTranscriptDelta { .. } => "BackendMeetTranscriptDelta",
-            Self::BackendMeetError { .. } => "BackendMeetError",
-            Self::BackendMeetInCallRequest { .. } => "BackendMeetInCallRequest",
-            Self::BackendMeetSpeak { .. } => "BackendMeetSpeak",
-            Self::InCallApprovalRequested { .. } => "InCallApprovalRequested",
-            Self::MeetAutoJoinPrompt { .. } => "MeetAutoJoinPrompt",
-            Self::MeetingSessionCreated { .. } => "MeetingSessionCreated",
-            Self::MeetingAutoJoinTriggered { .. } => "MeetingAutoJoinTriggered",
-            Self::MeetingSummaryGenerated { .. } => "MeetingSummaryGenerated",
-            Self::TinyPlaceStreamMessage { .. } => "TinyPlaceStreamMessage",
-            Self::TinyPlaceStreamStatusChanged { .. } => "TinyPlaceStreamStatusChanged",
             Self::Voice(_) => "Voice",
         }
     }
@@ -1720,9 +1710,6 @@ impl DomainEvent {
             | Self::AgentOrchestrationSpawned { agent_id, .. }
             | Self::AgentOrchestrationCompleted { agent_id, .. }
             | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
-            Self::AgentOrchestrationClosed {
-                orchestration_id, ..
-            } => Some(orchestration_id.as_str()),
             Self::ChannelMessageReceived { channel, .. }
             | Self::ChannelConnected { channel, .. }
             | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
@@ -1739,6 +1726,158 @@ impl DomainEvent {
             Self::MonitorStatusChanged { thread_id, .. } | Self::MonitorLine { thread_id, .. } => {
                 thread_id.as_deref()
             }
+            // The Event Log's "agent" column is the only per-row context the
+            // stream carries, so an MCP row names its server there: the
+            // install id for the RPC-driven lifecycle, the registry name
+            // (`ac.inference.sh/mcp`) for the supervisor's verdicts, which is
+            // how a user knows the server and how the log lines name it.
+            Self::McpServerInstalled { server_id, .. }
+            | Self::McpServerConnected { server_id, .. }
+            | Self::McpServerDisconnected { server_id, .. } => Some(server_id.as_str()),
+            Self::McpServerProbeTimedOut { qualified_name, .. }
+            | Self::McpServerTransportDropped { qualified_name, .. }
+            | Self::McpServerReconnected { qualified_name, .. }
+            | Self::McpServerReconnectFailed { qualified_name, .. }
+            | Self::McpServerParked { qualified_name, .. } => Some(qualified_name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// A one-line summary for the developer Event Log, for the variants whose
+    /// name and [`Self::agent_hint`] are not enough to act on.
+    ///
+    /// The Event Log envelope (`GET /events/domain`) carries the domain, the
+    /// variant name, the agent hint and a timestamp — no payload. A variant
+    /// whose whole point is a failure *reason* would otherwise reach the UI
+    /// with the reason discarded: a transport that broke and one that timed
+    /// out are the same row (#5931). This is the opt-in escape hatch. A
+    /// variant with something a reader needs returns a short rendering of it;
+    /// every other variant returns `None` and its row is unchanged.
+    ///
+    /// What comes back is shown verbatim to anyone who can open the Event Log
+    /// and lands in the log's NDJSON download, so it carries no payload
+    /// content, no credentials and no un-redacted endpoint — the MCP arms
+    /// pass through strings `tinymcp` has already rendered and
+    /// endpoint-redacted — and no `workspace_dir`, which is on the event for
+    /// subscribers to filter on, not for a shared panel to print.
+    #[must_use]
+    pub fn log_detail(&self) -> Option<String> {
+        /// Long enough for a rendered transport error, short enough that one
+        /// row cannot push the rest of the log off the screen. Counted in
+        /// `char`s, so a multi-byte error cannot be split mid-character.
+        const MAX_DETAIL_CHARS: usize = 160;
+
+        let clip = |text: &str| clip_to_chars(text, MAX_DETAIL_CHARS);
+
+        match self {
+            Self::McpServerProbeTimedOut {
+                probe_timeout_secs,
+                consecutive_timeouts,
+                teardown_after,
+                ..
+            } => Some(format!(
+                "no answer in {probe_timeout_secs}s; timeout {consecutive_timeouts} of \
+                 {teardown_after} before teardown"
+            )),
+            Self::McpServerTransportDropped {
+                outcome,
+                detail,
+                elapsed_ms,
+                ..
+            } => {
+                let mut summary = format!("session ended: {outcome}");
+                if let Some(elapsed_ms) = elapsed_ms {
+                    summary.push_str(&format!(" after {elapsed_ms}ms"));
+                }
+                if let Some(detail) = detail {
+                    summary.push_str(" — ");
+                    summary.push_str(&clip(detail));
+                }
+                Some(summary)
+            }
+            Self::McpServerReconnected {
+                tool_count,
+                after_failures,
+                ..
+            } => Some(format!(
+                "connected with {tool_count} tools after {after_failures} failed attempt(s)"
+            )),
+            Self::McpServerReconnectFailed {
+                error,
+                failures,
+                retry_in_secs,
+                ..
+            } => Some(format!(
+                "attempt {failures} failed, retrying in {retry_in_secs}s — {}",
+                clip(error)
+            )),
+            Self::McpServerParked { error, .. } => {
+                Some(format!("parked, not retrying — {}", clip(error)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The workspace this event belongs to, for the variants bound to one.
+    ///
+    /// One process serves more than one workspace over its life, so a
+    /// process-wide consumer — the Event Log, the `core_notification`
+    /// broadcast — has to be able to ask which workspace a given event came
+    /// from. Three families already carry the answer and each used to be read
+    /// by whoever happened to need it: `desktop::notifications` matched the
+    /// MCP arms in a private helper of its own, and silently did not gate the
+    /// channel and artifact families that carry the same field. This is the
+    /// one place that question is answered, so a consumer cannot cover a
+    /// subset by accident and a new workspace-bound variant has one arm to
+    /// add rather than several to find (#5966).
+    ///
+    /// `None` means "not workspace-bound", which is the common case and is
+    /// **not** the same as "unknown workspace": a consumer filtering by
+    /// workspace should let these through rather than drop them.
+    ///
+    /// The value is an absolute path under the user's home directory. It is
+    /// for in-process comparison only — anything that reaches a client or an
+    /// export sends
+    /// [`workspace_handle`](crate::openhuman::config::workspace_handle)
+    /// instead.
+    #[must_use]
+    pub fn workspace_dir(&self) -> Option<&std::path::Path> {
+        match self {
+            // Channel — the workspace the inbound message was received under.
+            Self::ChannelMessageReceived { workspace_dir, .. }
+            | Self::ChannelMessageProcessed { workspace_dir, .. } => Some(workspace_dir.as_path()),
+
+            // Artifact — carried as a `String` because the producer takes it
+            // from a config field it already has as text; same meaning.
+            //
+            // An empty string reads back as "bound to the empty path", which
+            // matches no workspace and would therefore hide the event from
+            // every scoped consumer — a worse failure than not knowing. Today
+            // the producers pass a real `Path`, so this is a guard against a
+            // future one that does not, not a case that occurs.
+            Self::ArtifactReady { workspace_dir, .. }
+            | Self::ArtifactFailed { workspace_dir, .. }
+            | Self::ArtifactPending { workspace_dir, .. } => {
+                if workspace_dir.is_empty() {
+                    None
+                } else {
+                    Some(std::path::Path::new(workspace_dir))
+                }
+            }
+
+            // MCP reconnect supervisor (#5931).
+            Self::McpServerProbeTimedOut { workspace_dir, .. }
+            | Self::McpServerTransportDropped { workspace_dir, .. }
+            | Self::McpServerReconnected { workspace_dir, .. }
+            | Self::McpServerReconnectFailed { workspace_dir, .. }
+            | Self::McpServerParked { workspace_dir, .. } => Some(workspace_dir.as_path()),
+
+            // The switch itself is *about* a workspace rather than bound to
+            // one: it is what tells a consumer the active workspace changed,
+            // so filtering it out by the very rule it announces would hide
+            // the announcement from everyone who is not already up to date.
+            Self::ActiveWorkspaceChanged { .. } => None,
+
             _ => None,
         }
     }

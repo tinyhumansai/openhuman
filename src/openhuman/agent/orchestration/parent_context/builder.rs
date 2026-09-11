@@ -1,9 +1,8 @@
 //! Shared root [`ParentExecutionContext`] builder for controller-spawned
 //! orchestration tasks (#3374 PR4, extracted from the #3375 workflow engine).
 //!
-//! The workflow-run engine ([`workflow_runs::engine`]), the agent-team runtime
-//! ([`agent_teams::runtime`]), and the subconscious tick
-//! ([`crate::openhuman::subconscious`]) all need to spawn real sub-agents from a
+//! The workflow-run engine ([`workflow_runs::engine`]) and the agent-team
+//! runtime ([`agent_teams::runtime`]) both need to spawn real sub-agents from a
 //! background task that has **no** enclosing agent turn on the stack. Those
 //! spawns read their parent execution context from a task-local
 //! ([`current_parent`]) that is only set inside an agent turn — so a naive spawn
@@ -96,10 +95,13 @@ pub(crate) async fn build_root_parent(
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: agent.turn_model_source(),
         all_tools: agent.tools_arc(),
-        all_tool_specs: agent.tool_specs_arc(),
+        all_tool_specs: agent.durable_tool_specs_arc(),
         // No visibility filter for this spawned/background builder — empty means
         // "unknown" and callers fall back to the full registry (see field doc).
         visible_tool_names: HashSet::new(),
+        // The agent's advertised surface, delegates included, for consumers
+        // that describe what this parent can call.
+        visible_tool_specs: agent.visible_tool_specs_arc(),
         subagent_tool_ceiling_names: HashSet::new(),
         model_name: agent.model_name().to_string(),
         temperature: agent.temperature(),
@@ -170,76 +172,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::agent::harness::fork_context::current_parent;
-
-    fn test_config() -> (tempfile::TempDir, Config) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config = Config {
-            workspace_dir: dir.path().to_path_buf(),
-            ..Config::default()
-        };
-        (dir, config)
-    }
-
-    /// Baseline for the bug: with no enclosing agent turn there is no ambient
-    /// parent — exactly the state the subconscious tick spawned `context_scout`
-    /// in (TAURI-RUST-HMW / #4337), which made `run_subagent` return
-    /// `NoParentContext`.
-    #[tokio::test]
-    async fn no_ambient_parent_outside_with_root_parent() {
-        assert!(
-            current_parent().is_none(),
-            "no parent context should be installed by default"
-        );
-    }
-
-    /// Regression (TAURI-RUST-HMW / #4337): `with_root_parent` must install a
-    /// real parent for the wrapped future so a background orchestration surface
-    /// (subconscious tick, workflow engine, team runtime) can spawn sub-agents
-    /// without hitting `NoParentContext`. Proven by observing the installed
-    /// parent from inside the future.
-    #[tokio::test]
-    async fn with_root_parent_installs_parent_for_inner_future() {
-        let (_dir, config) = test_config();
-        let observed = with_root_parent(
-            &config,
-            "subconscious",
-            "subconscious",
-            "subconscious",
-            async { current_parent().map(|p| p.agent_definition_id) },
-        )
-        .await
-        .expect("root parent builds from config");
-        assert_eq!(
-            observed.as_deref(),
-            Some("subconscious"),
-            "inner future must observe the installed root parent"
-        );
-    }
-
-    /// When a parent is already installed, `with_root_parent` reuses it instead
-    /// of building a second root — so a surface nested in a turn (or a test
-    /// driving it under a mock parent) runs under the ambient context.
-    #[tokio::test]
-    async fn with_root_parent_reuses_ambient_parent() {
-        let (_dir, config) = test_config();
-        let outer = build_root_parent(&config, "outer", "outer", "outer")
-            .await
-            .expect("build ambient parent");
-        let observed = with_parent_context(outer, async {
-            with_root_parent(&config, "inner", "inner", "inner", async {
-                current_parent().map(|p| p.agent_definition_id)
-            })
-            .await
-            .expect("reuses ambient, no build error")
-        })
-        .await;
-        assert_eq!(
-            observed.as_deref(),
-            Some("outer"),
-            "with_root_parent must reuse the ambient parent, not build a new 'inner' root"
-        );
-    }
-}
+#[path = "builder_tests.rs"]
+mod tests;
