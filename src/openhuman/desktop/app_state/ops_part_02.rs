@@ -3,6 +3,7 @@ async fn finish_revalidated_user_activation(
     target_config: &Config,
     user_id: &str,
     service_rebind_source: Option<&Config>,
+    generation: u64,
 ) {
     if let Err(error) = crate::openhuman::cron::seed::prune_retired_jobs(target_config) {
         warn!("{LOG_PREFIX} failed to prune retired cron jobs after pending session revalidation: {error}");
@@ -30,7 +31,19 @@ async fn finish_revalidated_user_activation(
         target_config.workspace_dir.clone(),
     );
     if let Some(source_config) = service_rebind_source {
+        if current_user_generation() != generation {
+            debug!(
+                "{LOG_PREFIX} skipping stale login-gated service activation after pending session revalidation"
+            );
+            return;
+        }
         crate::openhuman::security::credentials::stop_login_gated_services(source_config).await;
+        if current_user_generation() != generation {
+            debug!(
+                "{LOG_PREFIX} skipping stale login-gated service restart after pending session revalidation"
+            );
+            return;
+        }
         crate::openhuman::security::credentials::start_login_gated_services(target_config).await;
     } else {
         debug!(
@@ -64,60 +77,66 @@ async fn persist_revalidated_session_user(
     user: Value,
     generation: u64,
 ) -> Result<Box<Config>, String> {
-    let _session_mutation_lock = CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
-    if current_user_generation() != generation {
-        return Err("pending session persistence became stale after sign-out".to_string());
-    }
-    let user_id = user_id_from_profile_payload(&user)
-        .ok_or_else(|| "backend user id required before clearing pending validation".to_string())?;
-    let workspace_env_scoped = config_is_workspace_env_scoped(config);
-    let target_config = if !workspace_env_scoped {
-        activate_revalidated_user_dir(&user_id).await?
-    } else {
-        debug!(
-            "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
-        );
-        config.clone()
-    };
-    let source_config = config.clone();
-    let source_moved = !same_config_state_dir(config, &target_config);
-    let token = token.to_string();
-    let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
-    metadata.insert("user_id".to_string(), user_id.clone());
-    metadata.insert("user_json".to_string(), user.to_string());
-
-    let config_for_store = target_config.clone();
-    tokio::task::spawn_blocking(move || {
-        AuthService::from_config(&config_for_store)
-            .store_provider_token(
-                APP_SESSION_PROVIDER,
-                DEFAULT_AUTH_PROFILE_NAME,
-                &token,
-                metadata,
-                true,
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| {
-        Err(format!(
-            "{LOG_PREFIX} revalidated session persist task panicked: {e}"
-        ))
-    })?;
-
-    if source_moved {
-        if let Err(error) = remove_revalidated_source_profile(&source_config).await {
-            warn!(
-                "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
-            );
+    let (target_config, user_id, source_config, source_moved) = {
+        let _session_mutation_lock = CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
+        if current_user_generation() != generation {
+            return Err("pending session persistence became stale after sign-out".to_string());
         }
-    }
+        let user_id = user_id_from_profile_payload(&user).ok_or_else(|| {
+            "backend user id required before clearing pending validation".to_string()
+        })?;
+        let workspace_env_scoped = config_is_workspace_env_scoped(config);
+        let target_config = if !workspace_env_scoped {
+            activate_revalidated_user_dir(&user_id).await?
+        } else {
+            debug!(
+                "{LOG_PREFIX} keeping revalidated pending session in OPENHUMAN_WORKSPACE-scoped config"
+            );
+            config.clone()
+        };
+        let source_config = config.clone();
+        let source_moved = !same_config_state_dir(config, &target_config);
+        let token = token.to_string();
+        let mut metadata: HashMap<String, String> = base_metadata.into_iter().collect();
+        metadata.insert("user_id".to_string(), user_id.clone());
+        metadata.insert("user_json".to_string(), user.to_string());
+
+        let config_for_store = target_config.clone();
+        tokio::task::spawn_blocking(move || {
+            AuthService::from_config(&config_for_store)
+                .store_provider_token(
+                    APP_SESSION_PROVIDER,
+                    DEFAULT_AUTH_PROFILE_NAME,
+                    &token,
+                    metadata,
+                    true,
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(format!(
+                "{LOG_PREFIX} revalidated session persist task panicked: {e}"
+            ))
+        })?;
+
+        if source_moved {
+            if let Err(error) = remove_revalidated_source_profile(&source_config).await {
+                warn!(
+                    "{LOG_PREFIX} failed to remove source pending session profile after user activation: {error}"
+                );
+            }
+        }
+
+        (target_config, user_id, source_config, source_moved)
+    };
 
     finish_revalidated_user_activation(
         &target_config,
         &user_id,
         source_moved.then_some(&source_config),
+        generation,
     )
     .await;
 

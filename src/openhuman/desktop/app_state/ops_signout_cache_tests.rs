@@ -36,7 +36,7 @@ async fn signing_out_forgets_both_current_user_caches() {
     let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _reset = CurrentUserFailureResetGuard;
 
@@ -101,7 +101,7 @@ async fn pending_revalidation_completing_after_logout_does_not_restore_the_sessi
     let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _reset = CurrentUserFailureResetGuard;
 
@@ -159,7 +159,7 @@ async fn pending_revalidation_completing_after_logout_does_not_restore_the_sessi
 
 #[test]
 fn forget_current_user_caches_clears_the_positive_snapshot() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
     let _reset = CurrentUserFailureResetGuard;
 
@@ -184,7 +184,7 @@ fn forget_current_user_caches_clears_the_positive_snapshot() {
 
 #[test]
 fn forget_current_user_caches_clears_the_freshness_stamp() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
     let _reset = CurrentUserStalenessResetGuard;
 
@@ -208,7 +208,7 @@ fn forget_current_user_caches_clears_the_freshness_stamp() {
 
 #[test]
 fn forget_current_user_caches_clears_the_negative_failure() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
     let _reset = CurrentUserFailureResetGuard;
 
@@ -289,7 +289,7 @@ async fn spawn_racing_backend(
 
 #[tokio::test]
 async fn a_successful_refresh_that_races_sign_out_does_not_repopulate_the_snapshot() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _reset = CurrentUserFailureResetGuard;
 
@@ -339,7 +339,7 @@ async fn a_successful_refresh_that_races_sign_out_does_not_repopulate_the_snapsh
 
 #[tokio::test]
 async fn a_failed_refresh_that_races_sign_out_does_not_record_a_failure() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _reset = CurrentUserFailureResetGuard;
 
@@ -382,7 +382,7 @@ async fn a_failed_refresh_that_races_sign_out_does_not_record_a_failure() {
 
 #[tokio::test]
 async fn a_sign_out_landing_after_the_generation_check_still_wins_the_snapshot() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     // Both globals are touched here, so both guards are needed. The failure
     // lock is async, which is why these three were sync-only and unguarded.
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
@@ -411,7 +411,7 @@ async fn a_sign_out_landing_after_the_generation_check_still_wins_the_snapshot()
 
 #[tokio::test]
 async fn a_sign_out_landing_after_the_generation_check_still_wins_the_failure_record() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     // Both globals are touched here, so both guards are needed. The failure
     // lock is async, which is why these three were sync-only and unguarded.
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
@@ -437,7 +437,7 @@ async fn a_sign_out_landing_after_the_generation_check_still_wins_the_failure_re
 
 #[tokio::test]
 async fn publishing_under_the_current_generation_still_clears_a_recorded_outage() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     // Both globals are touched here, so both guards are needed. The failure
     // lock is async, which is why these three were sync-only and unguarded.
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
@@ -485,7 +485,7 @@ async fn publishing_under_the_current_generation_still_clears_a_recorded_outage(
 /// the generation handed to the refresh is the one read before it.
 #[tokio::test]
 async fn a_sign_out_between_the_token_load_and_the_refresh_still_wins() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock().await;
     let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
     let _reset = CurrentUserFailureResetGuard;
 
