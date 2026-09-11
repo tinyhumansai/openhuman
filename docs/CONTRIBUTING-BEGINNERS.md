@@ -2,7 +2,7 @@
 
 New to open source or coding? This guide walks you through everything from zero to your first pull request — based on real setup pain points that new contributors hit.
 
-For the full contributor reference, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+For the full contributor reference, see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ---
 
@@ -477,6 +477,6 @@ The desktop build requires the full Rust toolchain and vendored Tauri setup. For
 
 - Join the [Discord](https://discord.tinyhumans.ai/) and ask in the contributors channel
 - Comment on the issue you're working on
-- Check [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md) for deeper setup docs
+- Check [`gitbooks/developing/getting-set-up.md`](../gitbooks/developing/getting-set-up.md) for deeper setup docs
 
 Thank you for contributing to OpenHuman!

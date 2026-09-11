@@ -786,8 +786,8 @@ filetime = "0.2"
 # beat without real-time waits. Test-only — the runtime feature set in
 # `[dependencies]` (`full`) intentionally excludes it.
 tokio = { version = "1", features = ["test-util"] }
-# Property-based testing for the adversarial-input surfaces (command classifier,
-# encryption round-trip) — plan.md §6.3. Version already resolved in Cargo.lock.
+# Property-based testing for adversarial command-classifier and encryption
+# round-trip inputs. Version already resolved in Cargo.lock.
 proptest = "1"
 
 [features]

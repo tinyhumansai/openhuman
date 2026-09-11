@@ -12,7 +12,7 @@ Pick the channel by what you have, and bring the evidence the form asks for.
 | A model or provider misbehaving | [Models & providers](https://github.com/tinyhumansai/openhuman/discussions/categories/models-and-providers) |
 | Something you built and want people to use | [Show & tell](https://github.com/tinyhumansai/openhuman/discussions/categories/show-and-tell) |
 | Reproducible behavior that should change | [An issue](https://github.com/tinyhumansai/openhuman/issues/new/choose) |
-| A vulnerability | [The security policy](SECURITY.md) — never a public thread |
+| A vulnerability | [The security policy](../SECURITY.md) — never a public thread |
 | A conversation | [Discord](https://discord.tinyhumans.ai/) |
 
 Discord is for talking; Discussions is for anything that should still be
@@ -37,7 +37,7 @@ later does not un-publish a key.
 Maintainers work a triage queue rather than the feed. A thread with community
 replies and no maintainer reply gets `awaiting maintainer` and is worked
 oldest-first — see
-[docs/community/discussions.md](docs/community/discussions.md).
+[docs/community/discussions.md](community/discussions.md).
 
 Not everything belongs in core. If the answer is "that should be a plugin", the
 thread gets `plugin, not core` and stays open so the plugin can be linked from
