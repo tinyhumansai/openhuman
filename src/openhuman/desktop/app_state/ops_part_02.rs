@@ -62,7 +62,12 @@ async fn persist_revalidated_session_user(
     token: &str,
     base_metadata: BTreeMap<String, String>,
     user: Value,
+    generation: u64,
 ) -> Result<Box<Config>, String> {
+    let _session_mutation_lock = CURRENT_USER_SESSION_MUTATION_LOCK.lock().await;
+    if current_user_generation() != generation {
+        return Err("pending session persistence became stale after sign-out".to_string());
+    }
     let user_id = user_id_from_profile_payload(&user)
         .ok_or_else(|| "backend user id required before clearing pending validation".to_string())?;
     let workspace_env_scoped = config_is_workspace_env_scoped(config);
