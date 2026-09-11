@@ -110,6 +110,22 @@ impl ToolMiddleware<()> for ToolPolicyMiddleware {
     }
 }
 
+impl ToolPolicyMiddleware {
+    fn generated_context(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
+        self.tool_sets
+            .iter()
+            .flat_map(|set| set.iter())
+            .find(|t| t.name() == name)
+            .and_then(|t| {
+                crate::openhuman::tools::traits::generated_runtime_context(t.as_ref(), args)
+            })
+    }
+}
+
 /// `after_tool`: capture each tool call's execution outcome (success + content)
 /// into a shared sink before the harness folds the result into a `Message::tool`
 /// that drops the `error` flag (issue #4249). Without this, a post-turn
