@@ -14,7 +14,7 @@
 //! journalled event, made possible by the crate carrying tool outcome
 //! (`duration_ms`/`output_bytes`/`error`) on `ToolCompleted` (tinyagents#18).
 //!
-//! Known parity gaps (see `docs/.../C4-journal-progress-parity-plan.md` §2a):
+//! Known parity gaps:
 //! - **Cost is an estimate, not the charge.** The provider's charged USD
 //!   reaches the live path through the `usage_carry` side-channel, which is not
 //!   an `AgentEvent` and is not journalled, so both the per-call

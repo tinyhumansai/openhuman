@@ -1,6 +1,6 @@
 # Audio assets
 
-Short UI chimes for the push-to-talk feature (`docs/superpowers/specs/2026-06-02-global-ptt-design.md`).
+Short UI chimes for the push-to-talk feature.
 
 | File            | Purpose                                                     | Source                                                                     | License              |
 | --------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------- |

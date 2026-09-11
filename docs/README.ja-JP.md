@@ -152,7 +152,7 @@ n8n と Zapier に強くインスパイアされた[ワークフロー](https://
 
 ## ソースからのコントリビュート
 
-新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
+新しいコントリビューターの方は、まず [`CONTRIBUTING.md`](../CONTRIBUTING.md) で fork/PR ワークフローとローカル検証コマンドを確認するか、[`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) のコピー&ペーストできる AI エージェント向けプロンプトを使ってください。最短経路は以下のとおりです:
 
 1. Git、Node.js 24+、pnpm 10.10.0、Rust 1.96.1（`rustfmt` + `clippy`）、CMake、Ninja、ripgrep、プラットフォーム向けデスクトップビルドの前提条件をインストールします。
 2. リポジトリを fork してクローンし、`pnpm install` の前に `git submodule update --init --recursive` を実行して、ベンダー化された Tauri/CEF のソースを取得します。
