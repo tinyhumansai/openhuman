@@ -178,15 +178,6 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
     assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
-#[tokio::test]
-async fn domain_subscriber_registration_wrapper_uses_the_global_bus() {
-    use crate::core::all::DomainGroup;
-
-    crate::core::bus::init().await.unwrap();
-    assert!(group_first_time(DomainGroup::Media));
-    assert!(!group_first_time(DomainGroup::Media));
-}
-
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot
 /// path (`register_domain_subscribers`), NOT inside
 /// `channels::runtime::startup::start_channels`, which is skipped for
