@@ -92,7 +92,7 @@ describe('graphAdapter', () => {
       const { nodes } = workflowGraphToXyflow(g);
       const byId = Object.fromEntries(nodes.map(n => [n.id, n.position]));
       expect(byId.t).toEqual({ x: 0, y: 0 });
-      expect(byId.a).toEqual({ x: 0, y: 160 });
+      expect(byId.a).toEqual({ x: 0, y: 132 });
     });
 
     it('derives effective input/output ports for a switch node from its edges, not just declared ports', () => {
@@ -346,8 +346,8 @@ describe('graphAdapter', () => {
       ];
       const positions = autoLayout(nodes, edges);
       expect(positions.get('t')).toEqual({ x: 0, y: 0 });
-      expect(positions.get('a')).toEqual({ x: 0, y: 160 });
-      expect(positions.get('b')).toEqual({ x: 0, y: 320 });
+      expect(positions.get('a')).toEqual({ x: 0, y: 132 });
+      expect(positions.get('b')).toEqual({ x: 0, y: 264 });
     });
 
     it('places parallel branches at the same depth in separate columns', () => {
@@ -358,8 +358,8 @@ describe('graphAdapter', () => {
       ];
       const positions = autoLayout(nodes, edges);
       expect(positions.get('t')).toEqual({ x: 0, y: 0 });
-      expect(positions.get('a')).toEqual({ x: 0, y: 160 });
-      expect(positions.get('b')).toEqual({ x: 280, y: 160 });
+      expect(positions.get('a')).toEqual({ x: 0, y: 132 });
+      expect(positions.get('b')).toEqual({ x: 240, y: 132 });
     });
 
     it('gives every node a position, even a fully disconnected graph', () => {

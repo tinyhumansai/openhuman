@@ -1,0 +1,46 @@
+title: ""
+labels: ["harness"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The harness itself, the plugin surface, MCP servers, and tools.
+
+        Building something on OpenHuman rather than changing it? That is the
+        point — post it in **Show & tell** so people can install it.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this about?
+      options:
+        - A plugin I am building
+        - A plugin someone else published
+        - An MCP server
+        - The harness or tool surface itself
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happens instead?
+      description: Include the tool call or plugin manifest if one is involved.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The harness output around the failure, with anything private removed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: OpenHuman version
+    validations:
+      required: true

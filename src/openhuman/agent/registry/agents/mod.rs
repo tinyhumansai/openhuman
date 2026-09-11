@@ -4,7 +4,6 @@ mod loader;
 // legacy `prompt.md` (kept alongside for reference / workspace
 // overrides), and a `prompt.rs` exposing a `pub fn build(&PromptContext)
 // -> Result<String>` that the loader wires into `PromptSource::Dynamic`.
-pub mod account_admin_agent;
 pub mod archivist;
 pub mod code_executor;
 pub mod context_scout;
@@ -16,7 +15,6 @@ pub mod goals_agent;
 pub mod help;
 pub mod image_agent;
 pub mod integrations_agent;
-pub mod markets_agent;
 #[cfg(feature = "mcp")]
 pub mod mcp_agent;
 pub mod mcp_setup;

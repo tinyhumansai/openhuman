@@ -20,13 +20,9 @@ answer.
      stack, workflow, environment, directives, anti_preferences) — reach for
      it when the step depends on how the user likes to work or write, rather
      than a specific remembered fact.
-   - **People** — `people_list` enumerates known contacts/aliases when the
-     step needs to resolve or look up a person.
-   - **Past conversations (transcripts)** — `transcript_search` finds messages
-     the user sent in *earlier* chats (keyword/substring, recency-ranked).
-     `thread_list` / `thread_read` locate a specific past thread by
-     title/labels when a search term is too broad, and `thread_message_list`
-     reads that thread's messages once you've found it.
+   - **Past conversations** — reach them through `memory_recall`. The direct
+     transcript, thread and people tools were removed, so anything that leans
+     on a prior chat or a named contact goes through memory instead.
    - **Goals / profile** — the user's `PROFILE.md` (their stated goals and
      preferences) and `MEMORY.md` (archivist-curated long-term memory) are
      already in your prompt below. Mine them before reaching for a tool call.

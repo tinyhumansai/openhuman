@@ -4,7 +4,7 @@
  * models, keyed by producing `requestId` — the exact shapes
  * `fetchAndHydrateTurnHistory` produces from the legacy `turn_state_history`
  * snapshot ring, so `PastTurnInsights` / `ProcessingTranscriptView` /
- * `ToolTimelineBlock` / `SubagentActivityBlock` are reused unchanged.
+ * assistant-ui tool and delegation cards are reused unchanged.
  *
  * Division of labour (matches how `turnTimelinesByThread` / `PastTurnInsights`
  * anchor today):
@@ -136,7 +136,7 @@ function stringifyArgs(args: unknown): string | undefined {
  * Build a {@link SubagentActivity} from a `subagent` display item's nested
  * items. The nested vocabulary (reasoning / assistantMessage / toolCall)
  * projects onto the sub-agent transcript (`thinking` / `text` / `tool`) plus a
- * flat `toolCalls` list — exactly what `SubagentActivityBlock` reads.
+ * flat `toolCalls` list — exactly what the assistant-ui delegation card reads.
  */
 function buildSubagentActivity(id: string, items: DerivedDisplayItem[]): SubagentActivity {
   const toolCalls: SubagentToolCallEntry[] = [];
@@ -192,12 +192,14 @@ interface TurnAccumulator {
   transcript: ProcessingTranscriptItem[];
   seq: number;
   round: number;
+  /** Row ids already minted for this turn — see {@link uniqueCallId}. */
+  callIds: Set<string>;
 }
 
 function ensureTurn(turns: Map<string, TurnAccumulator>, requestId: string): TurnAccumulator {
   let turn = turns.get(requestId);
   if (!turn) {
-    turn = { entries: [], transcript: [], seq: 0, round: 0 };
+    turn = { entries: [], transcript: [], seq: 0, round: 0, callIds: new Set() };
     turns.set(requestId, turn);
   }
   return turn;
@@ -343,13 +345,41 @@ export function mapDisplayItems(
   return { timelines, transcripts, interrupted };
 }
 
+/**
+ * A row id that is unique within the turn.
+ *
+ * `callId` comes off the persisted session transcript, so it is whatever the
+ * provider wrote — and a provider that emits tool calls without ids writes the
+ * empty string for every one of them. Two such calls in a turn used to collapse
+ * onto one id, which broke twice over: the timeline map keyed by id kept only
+ * the last, so the earlier call vanished from the UI; and the transcript then
+ * held two pointers to that one row, so the assistant-ui projection emitted the
+ * same tool part twice. assistant-ui keys parts as `toolCallId-${id}` and
+ * *throws* on a repeat ("Duplicate key toolCallId- in useResources"), which
+ * takes the whole thread render down on load.
+ *
+ * The fallback is positional, so it is stable across re-derivations of the same
+ * transcript — the id has to survive a remount, not just be unique once.
+ */
+function uniqueCallId(turn: TurnAccumulator, callId: string, seq: number): string {
+  const base = callId || `derived:${turn.round}:${seq}`;
+  if (!turn.callIds.has(base)) {
+    turn.callIds.add(base);
+    return base;
+  }
+  const disambiguated = `${base}#${seq}`;
+  turn.callIds.add(disambiguated);
+  return disambiguated;
+}
+
 /** Push a tool-call display item as both a timeline entry and a transcript
  *  pointer sharing one `seq`, so the tool row orders consistently among the
  *  turn's narration / thinking. */
 function pushToolCall(turn: TurnAccumulator, item: DerivedToolCall): void {
   const seq = turn.seq++;
+  const callId = uniqueCallId(turn, item.callId, seq);
   const entry: ToolTimelineEntry = {
-    id: item.callId,
+    id: callId,
     name: item.name,
     round: turn.round,
     seq,
@@ -367,5 +397,5 @@ function pushToolCall(turn: TurnAccumulator, item: DerivedToolCall): void {
   entry.displayName = formatted.title;
   if (formatted.detail !== undefined) entry.detail = formatted.detail;
   turn.entries.push(entry);
-  turn.transcript.push({ kind: 'toolCall', round: turn.round, seq, callId: item.callId });
+  turn.transcript.push({ kind: 'toolCall', round: turn.round, seq, callId });
 }

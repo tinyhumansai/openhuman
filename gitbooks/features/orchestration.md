@@ -1,18 +1,18 @@
 ---
 description: >-
   OpenHuman is an orchestrator, not a chatbot: durable agent graphs, visual
-  workflows, sub-agent fleets, a split-brain always-on layer, and end-to-end
-  encrypted agent-to-agent sessions, all in one coherent stack.
+  workflows, sub-agent fleets, and a split-brain always-on layer, all in one
+  coherent stack.
 icon: sitemap
 ---
 
 # The Orchestrator
 
-<figure><img src="../.gitbook/assets/orchestration.png" alt=""><figcaption><p>OpenHuman orchestrating a fleet of agents (its own workers and external harnesses alike) over Signal-encrypted agent-to-agent sessions.</p></figcaption></figure>
+<figure><img src="../.gitbook/assets/orchestration.png" alt=""><figcaption><p>OpenHuman orchestrating a fleet of agents.</p></figcaption></figure>
 
 Most harnesses run one agent in one loop. OpenHuman is built as an **orchestrator**: a stack for coordinating many agents, over long horizons, across machines. It does this durably, observably, and under your control.
 
-Five layers make that real:
+Four layers make that real:
 
 ## 1. Graphs, not loops
 
@@ -30,12 +30,6 @@ The orchestrator spawns specialized sub-agents (up to 3 levels deep), reuses com
 
 Inbound traffic hits a **fast reflex agent** that triages in seconds and hands a deep **reasoning core** a concise brief; the core does the multi-step work and delegates to workers. The [subconscious loop](subconscious.md) reviews compressed session history and injects steering directives, keeping the always-on layer aligned with your goals, while 20:1 compression keeps week-long sessions bounded.
 
-## 5. Encrypted orchestration across machines
-
-OpenHuman instances collaborate through [tiny.place](tinyplace.md) sessions secured with the **Signal protocol**: real end-to-end encryption, with keys derived on-device and never persisted. Pairing is consent-based and fails closed: an unlinked agent's message is just a message, never an instruction. Your agent can orchestrate other agents (and be orchestrated) without a server ever seeing plaintext.
-
-Because the transport is plain Signal-encrypted messaging, the other side doesn't have to be OpenHuman. Connect **Claude Code, Codex, OpenClaw, Hermes**, or anything that can hold a session, and use OpenHuman as the conductor for all of your agents and tools.
-
 ## What's next: RLMs
 
 The direction we're building toward: **Rhai-backed language workflows**. These are agents that express orchestration as small programs in a sandboxed REPL, rather than a fixed graph, so control flow itself becomes something the model writes, inspects, and repairs. The graph engine, checkpointing, and trust model above are the substrate for it.
@@ -50,10 +44,9 @@ The direction we're building toward: **Rhai-backed language workflows**. These a
 | Parallelism     | Manual / plugin                                        | Native sub-agent fleets, map-reduce fan-out, worker reuse       |
 | Automation      | Scripts & cron                                         | Visual, durable, approval-gated workflows                       |
 | Always-on       | None                                                   | Split-brain reflex + reasoning core, subconscious steering      |
-| Agent-to-agent  | None                                                   | Signal-encrypted sessions, consent-based pairing, x402 payments |
 
 ## See also
 
-- [Workflows](workflows.md) · [Subconscious Loop](subconscious.md) · [tiny.place Agent Economy](tinyplace.md)
+- [Workflows](workflows.md) · [Subconscious Loop](subconscious.md)
 - [Agent Harness](../developing/architecture/agent-harness.md): the developer deep-dive on graphs, breakers, journals.
 - [Agent Coordination tools](native-tools/agent-coordination.md): the user-facing spawn/delegate surface.

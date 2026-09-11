@@ -78,6 +78,20 @@ describe('DeveloperOptionsPanel — CoreModeBadge', () => {
     expect(screen.getByText(/Embedded core sidecar/i)).toBeInTheDocument();
   });
 
+  test('shows the gateway id, and no URL or token, when coreMode is a gateway', async () => {
+    // A provisioned gateway's URL and bearer are the shell's — minted per
+    // activation and never persisted here — so the id is all this panel has,
+    // and all a developer needs in order to find it in Settings.
+    const Panel = (await import('../DeveloperOptionsPanel')).default;
+
+    renderWithProviders(<Panel />, {
+      preloadedState: { coreMode: { mode: { kind: 'gateway', gatewayId: 'builder' } } },
+    });
+
+    expect(await screen.findByText('builder')).toBeInTheDocument();
+    expect(screen.queryByText(/^http/)).not.toBeInTheDocument();
+  });
+
   test('shows "Cloud" pill plus URL and masked token tail when coreMode is cloud', async () => {
     vi.resetModules();
     const Panel = await importPanel();

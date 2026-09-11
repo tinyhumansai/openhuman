@@ -165,9 +165,11 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
     config.save().await.expect("save temp config");
 
     assert_eq!(provider_for_role("chat", &config), "custom:demo-chat@0.4");
+    // #6109: an unset route no longer borrows a sibling's BYOK provider; with no
+    // `primary_cloud` configured it falls through to the managed backend.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "custom:demo-chat@0.4"
+        "openhuman"
     );
 
     let (_provider, model) =
@@ -252,7 +254,6 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
     config.local_ai.preload_vision_model = false;
     config.local_ai.preload_stt_model = false;
     config.local_ai.preload_tts_voice = false;
-    config.local_ai.whisper_in_process = false;
 
     let service = LocalAiService::new(&config);
     let prompt = service
@@ -284,7 +285,6 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "ready");
     assert_eq!(assets.embedding.state, "ready");
-    assert!(matches!(assets.stt.state.as_str(), "ondemand" | "missing"));
     assert!(matches!(
         assets.tts.state.as_str(),
         "ready" | "ondemand" | "missing"

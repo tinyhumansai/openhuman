@@ -44,7 +44,7 @@ pub struct ReflectionHook {
     config: LearningConfig,
     full_config: Arc<Config>,
     memory: Arc<dyn Memory>,
-    provider: Option<Arc<dyn tinyagents::harness::model::ChatModel<()>>>,
+    provider: Option<Arc<dyn tinyinference::model::ChatModel<()>>>,
     /// Per-session reflection counts for throttling. Key is session_id (or "__global__").
     session_counts: Mutex<HashMap<String, usize>>,
 }
@@ -56,11 +56,11 @@ pub struct ReflectionHook {
 /// user turn with no per-request overrides — the [`ChatModel`] equivalent of the
 /// former `simple_chat(prompt, "hint:reasoning", 0.3)`.
 async fn invoke_cloud_reflection(
-    provider: &Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    provider: &Arc<dyn tinyinference::model::ChatModel<()>>,
     prompt: &str,
 ) -> anyhow::Result<String> {
-    use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::ModelRequest;
+    use tinyinference::message::Message;
+    use tinyinference::model::ModelRequest;
     Ok(provider
         .invoke(
             &(),
@@ -75,7 +75,7 @@ impl ReflectionHook {
         config: LearningConfig,
         full_config: Arc<Config>,
         memory: Arc<dyn Memory>,
-        provider: Option<Arc<dyn tinyagents::harness::model::ChatModel<()>>>,
+        provider: Option<Arc<dyn tinyinference::model::ChatModel<()>>>,
     ) -> Self {
         Self {
             config,

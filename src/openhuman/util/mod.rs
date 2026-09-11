@@ -14,6 +14,9 @@
 //! `openhuman::util::<fn>` paths (including the `truncate_with_ellipsis`
 //! doctest) still resolve.
 
+/// PII redaction for log output. See the module docs for why this is here and
+/// not taken from the memory engine.
+pub mod redact;
 pub mod retry;
 pub mod sanitize;
 pub mod text;

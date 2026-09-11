@@ -1,8 +1,8 @@
 /**
- * Guard: the flow canvas draws every one of its status rings with `outline`,
- * so a global `outline` suppression silently kills all of them at once.
+ * Guard: the flow canvas draws every one of its status rings with `outline-solid`,
+ * so a global `outline-solid` suppression silently kills all of them at once.
  *
- * `app/src/index.css` previously carried `outline: none !important` on the bare
+ * `app/src/index.css` previously carried `outline-solid: none !important` on the bare
  * universal selector. Its comment says it exists to hide the browser focus
  * ring — but `!important` on `*` outranks every component rule, so it also
  * suppressed the live run overlay (`.flow-node-running` / `-success` /
@@ -29,21 +29,21 @@ function withoutComments(css: string): string {
 }
 
 describe('flow canvas status rings', () => {
-  it('are not suppressed by an unconditional universal outline reset', () => {
+  it('are not suppressed by an unconditional universal outline-solid reset', () => {
     const css = withoutComments(readFileSync(INDEX_CSS, 'utf8'));
     // Find every `*` block that is NOT tied to a focus state.
     const universalBlocks = [...css.matchAll(/(^|\})\s*\*\s*\{([^}]*)\}/g)].map(m => m[2]);
     for (const block of universalBlocks) {
       expect(
         /outline\s*:/.test(block),
-        'index.css must not set `outline` on the bare `*` selector — with `!important` it ' +
-          'outranks every flow-node ring rule and silently blanks the canvas overlays. ' +
+        'index.css must not set `outline-solid` on the bare `*` selector — with `!important` it ' +
+          'outranks every flow-node ring-3 rule and silently blanks the canvas overlays. ' +
           'Scope focus-ring suppression to `*:focus` (and the explicit element list) instead.'
       ).toBe(false);
     }
   });
 
-  it('still declare an outline for each run/validation/diff state', () => {
+  it('still declare an outline-solid for each run/validation/diff state', () => {
     const css = withoutComments(readFileSync(CANVAS_CSS, 'utf8'));
     for (const cls of [
       'flow-node-running',
@@ -54,7 +54,7 @@ describe('flow canvas status rings', () => {
       'flow-node-removed',
     ]) {
       const rule = new RegExp(`\\.${cls}\\s*\\{[^}]*outline\\s*:`);
-      expect(rule.test(css), `${cls} must declare an outline`).toBe(true);
+      expect(rule.test(css), `${cls} must declare an outline-solid`).toBe(true);
     }
   });
 

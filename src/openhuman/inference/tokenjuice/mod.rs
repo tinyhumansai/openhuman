@@ -1,56 +1,34 @@
-//! OpenHuman adapter for the vendored TinyJuice compression engine.
-//!
-//! TinyJuice owns the host-agnostic TokenJuice engine: detection, compressors,
-//! CCR cache, rule loading, text helpers, and token estimates. This module keeps
-//! the OpenHuman-facing seam stable and owns only host concerns: config mapping,
-//! JSON-RPC controllers, settings patching, retrieve tool integration, savings
-//! pricing, and the Kompress runtime bridge.
-
-use std::sync::Arc;
+//! OpenHuman host adapter for the separately released TinyJuice module.
 
 pub mod config_patch;
 pub mod ml;
 pub mod savings;
 pub mod schemas;
 pub mod tools;
+pub mod types;
 
-pub use tinyjuice::{
-    cache, classify, compress, compressors, detect, reduce, rules, text, tokens, tool_integration,
-    types,
-};
+use tinyjuice_bus::names::methods;
 
-/// Install the full TokenJuice runtime from a [`Config`] in one call: router /
-/// compressor options + CCR cache limits + disk tier, savings attribution +
-/// snapshot path, and the ML backend config snapshot. Used at startup and after
-/// a live settings update.
-///
-/// Note: toggling `ml_compression_enabled` and the live compressor/CCR flags
-/// takes effect immediately; the ML model id / device snapshot is read once and
-/// only changes on restart.
-pub fn install_from_config(config: &crate::openhuman::config::Config) {
+pub use tools::TokenjuiceRetrieveTool;
+pub use types::{AgentTokenjuiceCompression, CompressorKind, ContentKind};
+
+use types::InstallRequest;
+
+pub const RETRIEVE_TOOL_NAME: &str = "tinyjuice_retrieve";
+pub const LEGACY_RETRIEVE_TOOL_NAME: &str = "retrieve_tool_output";
+pub const RECOVERY_TOOL_NAMES: &[&str] = &[
+    RETRIEVE_TOOL_NAME,
+    "tokenjuice_retrieve",
+    LEGACY_RETRIEVE_TOOL_NAME,
+];
+
+pub fn is_recovery_tool(name: &str) -> bool {
+    RECOVERY_TOOL_NAMES.contains(&name)
+}
+
+pub async fn install_from_config(config: &crate::openhuman::config::Config) -> Result<(), String> {
     let tj = &config.tokenjuice;
-    let options = tinyjuice::types::CompressOptions {
-        router_enabled: tj.router_enabled,
-        ccr_enabled: tj.ccr_enabled,
-        search_enabled: tj.search_enabled,
-        code_enabled: tj.code_enabled,
-        html_enabled: tj.html_enabled,
-        ml_text_enabled: tj.ml_compression_enabled,
-        min_bytes_to_compress: tj.min_bytes_to_compress,
-        ccr_min_tokens: tj.ccr_min_tokens,
-        max_inline_chars: None,
-        ..Default::default()
-    };
-    let disk_root = tj
-        .ccr_disk_enabled
-        .then(|| config.workspace_dir.join(".tokenjuice").join("ccr"));
-    tinyjuice::tool_integration::install_config(
-        options,
-        tj.max_cache_entries,
-        tj.max_cache_bytes,
-        tj.ccr_ttl_secs,
-        disk_root,
-    );
+    ml::configure(config.clone());
     savings::configure(
         config
             .default_model
@@ -58,49 +36,216 @@ pub fn install_from_config(config: &crate::openhuman::config::Config) {
             .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string()),
         &config.workspace_dir,
     );
-    tinyjuice::savings::configure_recorder(Some(Arc::new(
-        |content_kind, compressor, original_tokens, compacted_tokens| {
-            savings::record(content_kind, compressor, original_tokens, compacted_tokens);
+    let request = InstallRequest {
+        options: types::CompressOptions {
+            router_enabled: tj.router_enabled,
+            ccr_enabled: tj.ccr_enabled,
+            search_enabled: tj.search_enabled,
+            code_enabled: tj.code_enabled,
+            html_enabled: tj.html_enabled,
+            ml_text_enabled: tj.ml_compression_enabled,
+            min_bytes_to_compress: tj.min_bytes_to_compress,
+            ccr_min_tokens: tj.ccr_min_tokens,
+            ..types::CompressOptions::default()
         },
-    )));
-    ml::configure(config.clone());
-    tinyjuice::ml::configure_callback(Some(Arc::new(
-        |text: String, opts: tinyjuice::types::CompressOptions| {
-            Box::pin(async move {
-                ml::compress(&text, &opts)
-                    .await
-                    .map_err(|err| format!("{err:#}"))
-            })
-        },
-    )));
+        max_cache_entries: tj.max_cache_entries,
+        max_cache_bytes: tj.max_cache_bytes,
+        ccr_ttl_secs: tj.ccr_ttl_secs,
+        disk_tier_root: tj
+            .ccr_disk_enabled
+            .then(|| config.workspace_dir.join(".tokenjuice").join("ccr"))
+            .map(|path| path.to_string_lossy().into_owned()),
+    };
+    let fingerprint = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    static INSTALLED: std::sync::OnceLock<tokio::sync::Mutex<Option<Vec<u8>>>> =
+        std::sync::OnceLock::new();
+    let mut installed = INSTALLED
+        .get_or_init(|| tokio::sync::Mutex::new(None))
+        .lock()
+        .await;
+    if installed.as_ref() == Some(&fingerprint) {
+        return Ok(());
+    }
+    proxy(config)
+        .await?
+        .call::<()>(methods::INSTALL, (request,))
+        .await
+        .map_err(|e| e.to_string())?;
+    *installed = Some(fingerprint);
+    Ok(())
 }
 
-/// All read-only TokenJuice debug controllers (detect / compress / cache_stats
-/// / retrieve), for registration in `src/core/all.rs`.
+#[cfg(feature = "modules")]
+pub(super) async fn proxy(
+    config: &crate::openhuman::config::Config,
+) -> Result<tinybus::Proxy, String> {
+    let config = {
+        let mut test_config = config.clone();
+        if let Some(path) = std::env::var_os("TINYJUICE_TEST_MODULE") {
+            // An explicit fixture is an opt-in to module execution even when
+            // the ambient test workspace has persisted modules = disabled.
+            test_config.modules.enabled = true;
+            test_config
+                .modules
+                .overrides
+                .push(crate::openhuman::config::schema::ModuleOverride {
+                    id: "tinyjuice".to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                });
+        }
+        test_config
+    };
+    let config = &config;
+
+    crate::openhuman::modules::ensure_loaded(config, "tinyjuice").await?;
+    let record = crate::openhuman::modules::registry::find("tinyjuice")
+        .ok_or_else(|| "unknown module 'tinyjuice'".to_string())?;
+    crate::openhuman::modules::host::runtime()
+        .await
+        .map_err(|e| e.to_string())?
+        .proxy(record.bus_name, record.object_path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "modules"))]
+pub(super) async fn proxy(
+    _config: &crate::openhuman::config::Config,
+) -> Result<tinybus::Proxy, String> {
+    Err("native modules are not compiled into this build".to_string())
+}
+
+pub async fn compact_output_with_policy(
+    content: String,
+    tool_name: &str,
+    enabled: bool,
+    profile: AgentTokenjuiceCompression,
+) -> String {
+    if !enabled || profile == AgentTokenjuiceCompression::Off {
+        return content;
+    }
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(config) => config,
+        Err(error) => {
+            log::debug!("[tokenjuice] config unavailable, passing through: {error}");
+            return content;
+        }
+    };
+    #[cfg(test)]
+    let config = if std::env::var_os("TINYJUICE_TEST_MODULE").is_some() {
+        // The released-module regression must not inherit an operator's
+        // persisted compression thresholds or disabled router flags.
+        crate::openhuman::config::Config::default()
+    } else {
+        config
+    };
+    if let Err(error) = install_from_config(&config).await {
+        log::debug!("[tokenjuice] module configuration failed, passing through: {error}");
+        return content;
+    }
+    let proxy = match proxy(&config).await {
+        Ok(proxy) => proxy,
+        Err(error) => {
+            log::debug!("[tokenjuice] module unavailable, passing through: {error}");
+            return content;
+        }
+    };
+    let response: types::CompactResponse = match proxy
+        .call(
+            methods::COMPACT,
+            (content.clone(), tool_name.to_string(), enabled, profile),
+        )
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            log::debug!("[tokenjuice] module compaction failed, passing through: {error}");
+            return content;
+        }
+    };
+    record_savings(&response);
+    response.text
+}
+
+fn record_savings(response: &types::CompactResponse) {
+    use std::str::FromStr as _;
+    let kind = ContentKind::from_str(&response.content_kind).unwrap_or(ContentKind::PlainText);
+    let compressor = CompressorKind::from_str(&response.compressor).unwrap_or(CompressorKind::None);
+    savings::record(
+        kind,
+        compressor,
+        response.original_tokens,
+        response.compacted_tokens,
+    );
+}
+
+pub async fn detect(content: String, hint: types::ContentHint) -> Result<String, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| error.to_string())?;
+    proxy(&config)
+        .await?
+        .call(methods::DETECT, (content, hint))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub async fn compress(
+    content: String,
+    hint: types::ContentHint,
+) -> Result<types::CompressedOutput, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| error.to_string())?;
+    install_from_config(&config).await?;
+    let response: types::CompressedOutput = proxy(&config)
+        .await?
+        .call(methods::COMPRESS, (content, hint))
+        .await
+        .map_err(|error| error.to_string())?;
+    savings::record(
+        response.content_kind,
+        response.compressor,
+        (response.original_bytes as u64).div_ceil(4),
+        (response.compacted_bytes as u64).div_ceil(4),
+    );
+    Ok(response)
+}
+
+pub async fn retrieve(
+    token: String,
+    range: Option<types::RetrieveRange>,
+) -> Result<Option<String>, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| error.to_string())?;
+    install_from_config(&config).await?;
+    proxy(&config)
+        .await?
+        .call(methods::RETRIEVE, (token, range))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub async fn cache_stats() -> Result<types::CacheStats, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| error.to_string())?;
+    install_from_config(&config).await?;
+    proxy(&config)
+        .await?
+        .call(methods::CACHE_STATS, ())
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub fn all_tokenjuice_registered_controllers() -> Vec<crate::core::all::RegisteredController> {
     schemas::all_registered_controllers()
 }
 
-/// Declared schemas for the TokenJuice debug controllers.
 pub fn all_tokenjuice_controller_schemas() -> Vec<crate::core::ControllerSchema> {
     schemas::all_controller_schemas()
 }
 
-pub use cache::{
-    is_recovery_tool, LEGACY_RETRIEVE_TOOL_NAME, NEVER_COMPACT_TOOLS, RECOVERY_TOOL_NAMES,
-    RETRIEVE_TOOL_NAME,
-};
-pub use compress::{compress_content, route};
-pub use compressors::{compressor_for, generic_compressor, Compressor};
-pub use detect::detect_content_kind;
-pub use reduce::reduce_execution_with_rules;
-pub use rules::{load_builtin_rules, load_rules, LoadRuleOptions};
-pub use tool_integration::{
-    compact_output, compact_output_with_policy, compact_tool_output_with_policy, configure,
-    current_options, install_config, CompactionStats,
-};
-pub use tools::TokenjuiceRetrieveTool;
-pub use types::{
-    AgentTokenjuiceCompression, CompactResult, CompressInput, CompressOptions, CompressOutput,
-    CompressedOutput, CompressorKind, ContentHint, ContentKind, ReduceOptions, ToolExecutionInput,
-};
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

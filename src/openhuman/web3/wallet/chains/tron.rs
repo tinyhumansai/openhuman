@@ -5,13 +5,9 @@
 //! Derivation: BIP44 m/44'/195'/0'/0/0 → secp256k1 key. Tron addresses are
 //! `sha3_256(uncompressed_pubkey[1..])[12..]` prefixed with 0x41, base58check.
 
-use bitcoin::secp256k1::{Message, Secp256k1, SecretKey};
-use ethers_core::utils::keccak256;
-use hmac::{Hmac, Mac};
 use log::debug;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256, Sha512};
 
 use crate::openhuman::config::rpc as config_rpc;
 
@@ -29,30 +25,43 @@ const TRON_PREFIX: u8 = 0x41;
 /// Fixed TRC20 fee_limit (15 TRX = 15_000_000 SUN). Safe upper bound.
 const TRC20_FEE_LIMIT_SUN: u64 = 15_000_000;
 
+/// Validate a Tron mainnet base58check address.
+///
+/// Delegates to the vendored [`tinywallet_bus`] crate, which owns the address
+/// format; this wrapper keeps the `Result<_, String>` shape the rest of the
+/// domain speaks.
 pub fn validate_tron_address(addr: &str) -> Result<String, String> {
-    let trimmed = addr.trim();
-    if trimmed.is_empty() {
-        return Err("Tron address is empty".to_string());
-    }
-    let bytes = bs58::decode(trimmed)
-        .with_check(Some(TRON_PREFIX))
-        .into_vec()
-        .map_err(|e| format!("invalid Tron address '{trimmed}': {e}"))?;
-    if bytes.len() != 21 {
-        return Err(format!(
-            "invalid Tron address '{trimmed}': expected 21 bytes after base58check, got {}",
-            bytes.len()
-        ));
-    }
-    Ok(trimmed.to_string())
+    let result = tinywallet_bus::address::tron::validate(addr).map_err(|e| e.to_string());
+    debug!(
+        "{LOG_PREFIX} validate_address result={}",
+        if result.is_ok() {
+            "accepted"
+        } else {
+            "rejected"
+        }
+    );
+    result
 }
 
+/// Convert a base58check Tron address into the 42-hex-digit form the TronGrid
+/// API expects, version prefix included.
+///
+/// Delegates to [`tinywallet_bus`]. Note this now validates the address before
+/// converting, where the previous local implementation decoded without a
+/// length check — a malformed address that happened to base58check-decode to
+/// the wrong length used to produce a short hex string and fail further
+/// downstream at the API call.
 pub fn tron_address_to_hex(addr: &str) -> Result<String, String> {
-    let bytes = bs58::decode(addr)
-        .with_check(Some(TRON_PREFIX))
-        .into_vec()
-        .map_err(|e| format!("invalid Tron address '{addr}': {e}"))?;
-    Ok(hex::encode(&bytes))
+    let result = tinywallet_bus::address::tron::to_hex(addr).map_err(|e| e.to_string());
+    debug!(
+        "{LOG_PREFIX} address_to_hex result={}",
+        if result.is_ok() {
+            "accepted"
+        } else {
+            "rejected"
+        }
+    );
+    result
 }
 
 pub async fn native_balance(address: &str) -> Result<u128, String> {
@@ -81,93 +90,77 @@ struct TriggerSmartContractResponse {
     transaction: CreateTransactionResponse,
 }
 
-fn derive_tron_keypair(
-    mnemonic: &str,
-    derivation_path: &str,
-) -> Result<(SecretKey, String), String> {
-    use coins_bip39::{English, Mnemonic};
-    let mnemonic_obj: Mnemonic<English> = mnemonic
-        .trim()
-        .parse()
-        .map_err(|e| format!("invalid BIP39 mnemonic: {e}"))?;
-    let seed = mnemonic_obj
-        .to_seed(None)
-        .map_err(|e| format!("failed to derive BIP39 seed: {e}"))?;
+/// What the node was asked to build, for verifying what it returned.
+///
+/// [`tinywallet_bus::wire::TronTransfer`] is that type — it is already on the
+/// host/module wire contract, so a second local mirror of it would be one more
+/// thing to keep in step for no gain. The one thing it deliberately does not
+/// carry is the fee limit, because only the caller knows what it pinned; that
+/// rides alongside as [`verify_contract`]'s last argument.
+type TronTransferVerification = tinywallet_bus::wire::TronTransfer;
 
-    // BIP32 derivation (secp256k1) — same algorithm as BTC, distinct from Solana.
-    type HmacSha512 = Hmac<Sha512>;
-    let mut mac = HmacSha512::new_from_slice(b"Bitcoin seed")
-        .map_err(|e| format!("HMAC init failed: {e}"))?;
-    mac.update(&seed);
-    let i = mac.finalize().into_bytes();
-    let mut key = [0u8; 32];
-    let mut chain_code = [0u8; 32];
-    key.copy_from_slice(&i[..32]);
-    chain_code.copy_from_slice(&i[32..]);
+/// Check a node-built Tron transaction, then describe it for the signer.
+///
+/// The verification itself lives in [`tinywallet_bus::tx::tron::verify_contract`],
+/// which parses `raw_data` structurally. The protobuf reader, the contract
+/// unwrapping and the per-contract field checks used to be hand-rolled here;
+/// they are the same rules for every host, so they moved into the crate. What
+/// stays is the part that is OpenHuman's: the fee limit this client pins, and
+/// the [`tinywallet_bus::wire::TransactionSpec`] handed to the wallet module.
+fn tron_transaction_spec(
+    raw_tx: &CreateTransactionResponse,
+    expected_to: String,
+    transfer: &TronTransferVerification,
+) -> Result<tinywallet_bus::wire::TransactionSpec, String> {
+    let recomputed_txid = tinywallet_bus::tx::tron::recompute_txid(&raw_tx.raw_data_hex)
+        .map_err(|error| format!("invalid Tron raw_data_hex: {error}"))?;
 
-    let segments = parse_bip32_path(derivation_path)?;
-    let secp = Secp256k1::signing_only();
-    for (idx, hardened) in segments {
-        let mut mac = HmacSha512::new_from_slice(&chain_code)
-            .map_err(|e| format!("HMAC init failed: {e}"))?;
-        if hardened {
-            mac.update(&[0u8]);
-            mac.update(&key);
-        } else {
-            let sk = SecretKey::from_slice(&key).map_err(|e| format!("bad sk: {e}"))?;
-            let pk = sk.public_key(&secp);
-            mac.update(&pk.serialize());
-        }
-        let composite = idx | if hardened { 0x8000_0000 } else { 0 };
-        mac.update(&composite.to_be_bytes());
-        let i = mac.finalize().into_bytes();
-        let mut il = [0u8; 32];
-        il.copy_from_slice(&i[..32]);
-        // child = (parent + IL) mod n
-        let mut child_sk = SecretKey::from_slice(&il).map_err(|e| format!("bad il: {e}"))?;
-        let parent = bitcoin::secp256k1::Scalar::from_be_bytes(key)
-            .map_err(|e| format!("scalar from key: {e}"))?;
-        child_sk = child_sk
-            .add_tweak(&parent)
-            .map_err(|e| format!("child tweak failed: {e}"))?;
-        key = child_sk.secret_bytes();
-        chain_code.copy_from_slice(&i[32..]);
-    }
+    // The fee limit is ours, not the crate's: it is what this client pinned in
+    // the `createtransaction` request, and only a TRC-20 trigger carries one.
+    let fee_limit_sun = match transfer {
+        TronTransferVerification::Native { .. } => None,
+        TronTransferVerification::Trc20 { .. } => Some(TRC20_FEE_LIMIT_SUN),
+    };
 
-    let sk = SecretKey::from_slice(&key).map_err(|e| format!("bad final sk: {e}"))?;
-    let secp_all = Secp256k1::new();
-    let pk = sk.public_key(&secp_all);
-    let uncompressed = pk.serialize_uncompressed();
-    // Drop the 0x04 prefix, then keccak256 the 64-byte payload.
-    let hash = keccak256(&uncompressed[1..]);
-    // Tron address = TRON_PREFIX || hash[12..]
-    let mut addr_bytes = [0u8; 21];
-    addr_bytes[0] = TRON_PREFIX;
-    addr_bytes[1..].copy_from_slice(&hash[12..]);
-    let address = bs58::encode(&addr_bytes).with_check().into_string();
-    Ok((sk, address))
+    tinywallet_bus::tx::tron::verify_contract(
+        &raw_tx.raw_data_hex,
+        &expected_to,
+        &raw_tx.tx_id,
+        transfer,
+        fee_limit_sun,
+    )
+    .map_err(|error| format!("Tron node response rejected: {error}"))?;
+
+    Ok(tinywallet_bus::wire::TransactionSpec::Tron {
+        raw_data_hex: raw_tx.raw_data_hex.clone(),
+        expected_to,
+        expected_txid: recomputed_txid,
+        // Carried onto the wire so the wallet module re-checks it against the
+        // bytes it is about to sign, rather than trusting this side's verdict.
+        transfer: transfer.clone(),
+    })
 }
 
-fn parse_bip32_path(path: &str) -> Result<Vec<(u32, bool)>, String> {
-    let trimmed = path.trim();
-    let mut iter = trimmed.split('/');
-    match iter.next() {
-        Some("m") => {}
-        _ => return Err(format!("BIP32 path '{path}' must start with 'm'")),
-    }
-    let mut out = Vec::new();
-    for seg in iter {
-        let (idx_str, hardened) = if let Some(stripped) = seg.strip_suffix('\'') {
-            (stripped, true)
-        } else {
-            (seg, false)
-        };
-        let v: u32 = idx_str
-            .parse()
-            .map_err(|e| format!("BIP32 path '{path}' segment '{seg}': {e}"))?;
-        out.push((v, hardened));
-    }
-    Ok(out)
+/// Derive the Tron signing key and its base58check address.
+///
+/// Test-only, and deliberately on the **root** `tinywallet` crate rather than
+/// `tinywallet-bus`: `key` is one of the gates that did not move into the
+/// contract crate. The root crate is a dev-dependency here, so this derivation
+/// stack is not linked into the shipped binary. Production derives inside the
+/// wallet module, via `modules::wallet::derive_account`.
+///
+/// The root crate owns BIP-32 secp256k1 derivation and the
+/// Keccak-then-base58check address construction; the hand-rolled BIP-32 walk
+/// and path parser that used to live here moved there wholesale. Custody stays
+/// here.
+#[cfg(test)]
+fn derive_tron_keypair(mnemonic: &str, derivation_path: &str) -> Result<(Vec<u8>, String), String> {
+    let derived = tinywallet::key::derive(tinywallet::Chain::Tron, mnemonic, derivation_path)
+        .map_err(|e| e.to_string())?;
+    Ok((
+        derived.secret_bytes().to_vec(),
+        derived.address().to_string(),
+    ))
 }
 
 fn pad_left_32(bytes: &[u8]) -> Vec<u8> {
@@ -260,7 +253,19 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
     )
     .await?
     .value;
-    let (sk, derived_addr) = derive_tron_keypair(&mnemonic, &secret.derivation_path)?;
+    // Derivation and signing both happen in the loaded wallet module now, so
+    // this process never holds the key. The phrase goes over a confidential
+    // call, and only to a module that has proved it is an artifact this build
+    // pinned — see `modules::wallet::attested_proxy`.
+    let signing_secret = tinywallet_bus::wire::SecretMaterial {
+        mnemonic,
+        derivation_path: secret.derivation_path.clone(),
+        chain: tinywallet_bus::Chain::Tron,
+    };
+    let derived_addr = crate::openhuman::modules::wallet::derive_account(&config, &signing_secret)
+        .await
+        .map_err(|e| format!("failed to derive the Tron account: {e}"))?
+        .address;
     if derived_addr != quote.from_address {
         return Err(format!(
             "Tron key derivation mismatch: derived {derived_addr} but expected {}",
@@ -268,12 +273,22 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
         ));
     }
 
-    let raw_tx = match quote.kind {
+    // Which address the *transaction* pays, which is not always the address the
+    // user is paying. A native transfer pays the recipient; a TRC20 transfer
+    // pays the token contract and carries the recipient inside the call
+    // parameter, left-padded to 32 bytes and so without the `41` prefix that
+    // appears in `raw_data` for a native transfer. Verifying a TRC20 against
+    // the user's recipient would therefore never match.
+    let (verified_recipient, transfer, raw_tx) = match quote.kind {
         PreparedKind::NativeTransfer => {
             let amount_sun: u64 = amount
                 .try_into()
                 .map_err(|_| format!("Tron amount {amount} exceeds u64"))?;
-            create_native_transaction(&owner_hex, &to_hex, amount_sun).await?
+            (
+                quote.to_address.clone(),
+                TronTransferVerification::Native { amount_sun },
+                create_native_transaction(&owner_hex, &to_hex, amount_sun).await?,
+            )
         }
         PreparedKind::TokenTransfer => {
             let contract = quote
@@ -283,25 +298,48 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
             validate_tron_address(contract)?;
             let contract_hex = tron_address_to_hex(contract)?;
             let parameter = encode_trc20_transfer_param(&to_hex, amount)?;
-            trigger_trc20_transfer(&owner_hex, &contract_hex, &parameter).await?
+            (
+                contract.to_string(),
+                TronTransferVerification::Trc20 {
+                    parameter_hex: parameter.clone(),
+                },
+                trigger_trc20_transfer(&owner_hex, &contract_hex, &parameter).await?,
+            )
         }
     };
 
-    // Tron signs sha256(raw_data_hex bytes).
-    let raw_bytes = hex::decode(&raw_tx.raw_data_hex)
-        .map_err(|e| format!("invalid raw_data_hex from Tron: {e}"))?;
-    let mut hasher = Sha256::new();
-    hasher.update(&raw_bytes);
-    let hash: [u8; 32] = hasher.finalize().into();
-
-    let secp = Secp256k1::new();
-    let msg = Message::from_digest(hash);
-    let sig = secp.sign_ecdsa_recoverable(&msg, &sk);
-    let (rec_id, compact) = sig.serialize_compact();
-    let mut sig_bytes = [0u8; 65];
-    sig_bytes[..64].copy_from_slice(&compact);
-    sig_bytes[64] = rec_id.to_i32() as u8;
-    let sig_hex = hex::encode(sig_bytes);
+    // The node builds the transaction, so verify every requested field here
+    // before the module hands back a digest to sign. The module independently
+    // rechecks the locally recomputed txid and recipient; the host additionally
+    // binds the native amount or full TRC20 parameter.
+    let transfer_kind = match &transfer {
+        TronTransferVerification::Native { .. } => "native",
+        TronTransferVerification::Trc20 { .. } => "trc20",
+    };
+    let transaction = match tron_transaction_spec(&raw_tx, verified_recipient, &transfer) {
+        Ok(transaction) => {
+            debug!(
+                "{LOG_PREFIX} validation=accepted quote_id={} txid={} kind={transfer_kind}",
+                quote.quote_id, raw_tx.tx_id
+            );
+            transaction
+        }
+        Err(error) => {
+            debug!(
+                "{LOG_PREFIX} validation=rejected quote_id={} txid={} kind={transfer_kind} reason={error}",
+                quote.quote_id, raw_tx.tx_id
+            );
+            return Err(error);
+        }
+    };
+    let signed = crate::openhuman::modules::wallet::sign_transaction_in_module(
+        &config,
+        &transaction,
+        &signing_secret,
+    )
+    .await
+    .map_err(|e| format!("failed to sign Tron transaction: {e}"))?;
+    let sig_hex = signed.raw;
 
     let mut tx_with_sig = serde_json::to_value(serde_json::json!({
         "txID": raw_tx.tx_id,
@@ -466,359 +504,5 @@ pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::web3::wallet::execution::{
-        insert_quote_for_test, now_ms, reset_quote_store_for_tests, PreparedKind, PreparedStatus,
-        PreparedTransaction,
-    };
-    use crate::openhuman::web3::wallet::test_support::{
-        sample_tron_address, setup_wallet_in, TEST_LOCK,
-    };
-    use axum::{routing::post, Router};
-    use std::sync::Arc;
-    use tempfile::TempDir;
-    use tokio::net::TcpListener;
-
-    #[derive(Clone, Default)]
-    struct TronMockRecord {
-        create_calls: Arc<parking_lot::Mutex<Vec<Value>>>,
-        trigger_calls: Arc<parking_lot::Mutex<Vec<Value>>>,
-        broadcast_calls: Arc<parking_lot::Mutex<Vec<Value>>>,
-    }
-
-    async fn start_tron_mock(record: TronMockRecord) -> std::net::SocketAddr {
-        let create = record.create_calls.clone();
-        let trigger = record.trigger_calls.clone();
-        let broadcast = record.broadcast_calls.clone();
-        // Fixed raw_data_hex shape — minimal but valid hex so sha256 + sign work.
-        let canned_tx = json!({
-            "txID": "ab".repeat(32),
-            "raw_data": {"contract": []},
-            "raw_data_hex": "0a02ab1d2208deadbeef00deadbe40c89efd8a82325802",
-        });
-        let canned_tx_create = canned_tx.clone();
-        let canned_tx_trigger = canned_tx.clone();
-        let app = Router::new()
-            .route(
-                "/wallet/createtransaction",
-                post(move |axum::Json(payload): axum::Json<Value>| {
-                    let create = create.clone();
-                    let canned = canned_tx_create.clone();
-                    async move {
-                        create.lock().push(payload);
-                        axum::Json(canned)
-                    }
-                }),
-            )
-            .route(
-                "/wallet/triggersmartcontract",
-                post(move |axum::Json(payload): axum::Json<Value>| {
-                    let trigger = trigger.clone();
-                    let canned = canned_tx_trigger.clone();
-                    async move {
-                        trigger.lock().push(payload);
-                        axum::Json(json!({ "transaction": canned }))
-                    }
-                }),
-            )
-            .route(
-                "/wallet/broadcasttransaction",
-                post(move |axum::Json(payload): axum::Json<Value>| {
-                    let broadcast = broadcast.clone();
-                    async move {
-                        broadcast.lock().push(payload);
-                        axum::Json(json!({
-                            "result": true,
-                            "txid": "ab".repeat(32),
-                        }))
-                    }
-                }),
-            );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        addr
-    }
-
-    #[tokio::test]
-    async fn execute_tron_quote_signs_and_broadcasts_native_transfer() {
-        let _guard = TEST_LOCK.lock();
-        reset_quote_store_for_tests();
-        let temp = TempDir::new().unwrap();
-        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
-
-        let record = TronMockRecord::default();
-        let addr = start_tron_mock(record.clone()).await;
-        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
-
-        let now = now_ms();
-        let quote = PreparedTransaction {
-            quote_id: "q_tron_native_1".to_string(),
-            kind: PreparedKind::NativeTransfer,
-            chain: WalletChain::Tron,
-            evm_network: None,
-            from_address: sample_tron_address().to_string(),
-            to_address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t".to_string(),
-            asset_symbol: "TRX".to_string(),
-            amount_raw: "1000000".to_string(),
-            amount_formatted: "1.000000".to_string(),
-            receive_symbol: None,
-            min_receive_raw: None,
-            calldata: None,
-            token_address: None,
-            estimated_fee_raw: "1000000".to_string(),
-            status: PreparedStatus::AwaitingConfirmation,
-            created_at_ms: now,
-            expires_at_ms: now + 60_000,
-            notes: vec![],
-            owner: None,
-        };
-        insert_quote_for_test(quote.clone());
-
-        let result = execute_tron_quote(quote).await.expect("tron broadcast ok");
-        assert_eq!(result.status, PreparedStatus::Broadcasted);
-        assert_eq!(result.transaction_hash, "ab".repeat(32));
-        assert_eq!(record.create_calls.lock().len(), 1);
-        assert_eq!(record.trigger_calls.lock().len(), 0);
-        assert_eq!(record.broadcast_calls.lock().len(), 1);
-        // Signed broadcast carries a 65-byte signature (hex = 130 chars).
-        let payload = record.broadcast_calls.lock()[0].clone();
-        let sig = payload
-            .get("signature")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .unwrap();
-        assert_eq!(sig.len(), 130, "expected 65-byte signature, got: {sig}");
-    }
-
-    #[tokio::test]
-    async fn execute_tron_quote_signs_and_broadcasts_trc20_transfer() {
-        let _guard = TEST_LOCK.lock();
-        reset_quote_store_for_tests();
-        let temp = TempDir::new().unwrap();
-        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
-
-        let record = TronMockRecord::default();
-        let addr = start_tron_mock(record.clone()).await;
-        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
-
-        let now = now_ms();
-        let quote = PreparedTransaction {
-            quote_id: "q_tron_trc20_1".to_string(),
-            kind: PreparedKind::TokenTransfer,
-            chain: WalletChain::Tron,
-            evm_network: None,
-            from_address: sample_tron_address().to_string(),
-            to_address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t".to_string(),
-            asset_symbol: "USDT".to_string(),
-            amount_raw: "5000000".to_string(),
-            amount_formatted: "5.000000".to_string(),
-            receive_symbol: None,
-            min_receive_raw: None,
-            calldata: None,
-            token_address: Some("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t".to_string()),
-            estimated_fee_raw: "15000000".to_string(),
-            status: PreparedStatus::AwaitingConfirmation,
-            created_at_ms: now,
-            expires_at_ms: now + 60_000,
-            notes: vec![],
-            owner: None,
-        };
-        insert_quote_for_test(quote.clone());
-
-        let result = execute_tron_quote(quote).await.expect("trc20 broadcast ok");
-        assert_eq!(result.status, PreparedStatus::Broadcasted);
-        assert_eq!(record.create_calls.lock().len(), 0);
-        assert_eq!(record.trigger_calls.lock().len(), 1);
-        assert_eq!(record.broadcast_calls.lock().len(), 1);
-        // The triggersmartcontract payload must carry the ABI parameter and
-        // selector for transfer(address,uint256).
-        let trigger = record.trigger_calls.lock()[0].clone();
-        assert_eq!(
-            trigger.get("function_selector").and_then(|v| v.as_str()),
-            Some("transfer(address,uint256)")
-        );
-        let param = trigger.get("parameter").and_then(|v| v.as_str()).unwrap();
-        assert_eq!(param.len(), 128, "64-byte ABI args, hex-encoded");
-    }
-
-    #[tokio::test]
-    async fn execute_tron_quote_surfaces_node_rejection() {
-        let _guard = TEST_LOCK.lock();
-        reset_quote_store_for_tests();
-        let temp = TempDir::new().unwrap();
-        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
-
-        // Custom mock returning result=false on broadcast.
-        let app = Router::new()
-            .route(
-                "/wallet/createtransaction",
-                post(|| async {
-                    axum::Json(json!({
-                        "txID": "cd".repeat(32),
-                        "raw_data": {"contract": []},
-                        "raw_data_hex": "0a02ab1d2208deadbeef00deadbe40c89efd8a82325802",
-                    }))
-                }),
-            )
-            .route(
-                "/wallet/broadcasttransaction",
-                post(|| async {
-                    axum::Json(json!({
-                        "result": false,
-                        "code": "BANDWIDTH_ERROR",
-                        "message": "not enough bandwidth",
-                    }))
-                }),
-            );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
-
-        let now = now_ms();
-        let quote = PreparedTransaction {
-            quote_id: "q_tron_reject_1".to_string(),
-            kind: PreparedKind::NativeTransfer,
-            chain: WalletChain::Tron,
-            evm_network: None,
-            from_address: sample_tron_address().to_string(),
-            to_address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t".to_string(),
-            asset_symbol: "TRX".to_string(),
-            amount_raw: "1000000".to_string(),
-            amount_formatted: "1.000000".to_string(),
-            receive_symbol: None,
-            min_receive_raw: None,
-            calldata: None,
-            token_address: None,
-            estimated_fee_raw: "1000000".to_string(),
-            status: PreparedStatus::AwaitingConfirmation,
-            created_at_ms: now,
-            expires_at_ms: now + 60_000,
-            notes: vec![],
-            owner: None,
-        };
-        let err = execute_tron_quote(quote).await.unwrap_err();
-        assert!(err.contains("BANDWIDTH_ERROR"), "got: {err}");
-    }
-
-    #[test]
-    fn validate_tron_address_accepts_known_address() {
-        // USDT TRC20 contract address — real mainnet, valid base58check.
-        let addr = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
-        assert_eq!(validate_tron_address(addr).unwrap(), addr);
-    }
-
-    #[test]
-    fn validate_tron_address_rejects_btc_format() {
-        let err = validate_tron_address("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").unwrap_err();
-        assert!(err.contains("invalid"), "got: {err}");
-    }
-
-    #[test]
-    fn tron_address_to_hex_roundtrips_prefix_byte() {
-        let addr = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
-        let h = tron_address_to_hex(addr).unwrap();
-        assert!(h.starts_with("41"), "expected 0x41 prefix, got: {h}");
-        assert_eq!(h.len(), 42); // 21 bytes * 2 hex chars
-    }
-
-    #[test]
-    fn derive_tron_address_for_known_test_mnemonic() {
-        // BIP44 m/44'/195'/0'/0/0 from the standard "abandon × 11 about" mnemonic.
-        // Deterministic output of our SLIP-44 / secp256k1 / keccak256 / base58check
-        // pipeline — pinning here so regressions in any of those primitives are caught.
-        let mnemonic =
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let (_sk, addr) = derive_tron_keypair(mnemonic, "m/44'/195'/0'/0/0").unwrap();
-        assert_eq!(addr, "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH");
-        // Address must be a valid base58check 0x41 mainnet address.
-        validate_tron_address(&addr).expect("derived addr passes validation");
-    }
-
-    #[test]
-    fn encode_trc20_transfer_param_pads_addr_and_amount() {
-        let to_hex = tron_address_to_hex("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t").unwrap();
-        let param = encode_trc20_transfer_param(&to_hex, 12345).unwrap();
-        // 64 bytes hex = 32 bytes addr param + 32 bytes amount param = 128 hex chars.
-        assert_eq!(param.len(), 128);
-        // First 12 bytes = 24 hex chars zero-padded.
-        assert!(
-            param.starts_with("000000000000000000000000"),
-            "expected 12-byte zero padding, got: {param}"
-        );
-        // Amount 12345 = 0x3039 → last 8 hex chars should be "00003039".
-        assert!(param.ends_with("00003039"), "got: {param}");
-    }
-
-    #[test]
-    fn pad_left_32_zero_pads_short_input() {
-        let p = pad_left_32(&[1, 2, 3]);
-        assert_eq!(p.len(), 32);
-        assert_eq!(&p[..29], &[0u8; 29]);
-        assert_eq!(&p[29..], &[1, 2, 3]);
-    }
-
-    #[tokio::test]
-    async fn tx_status_confirmed_from_info() {
-        let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let app = Router::new().route(
-            "/wallet/gettransactioninfobyid",
-            post(|| async {
-                axum::Json(json!({
-                    "id": "ab".repeat(32),
-                    "blockNumber": 555u64,
-                    "receipt": {"result": "SUCCESS"},
-                    "fee": 1100u64
-                }))
-            }),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
-        let info = tx_status("ab").await.unwrap();
-        assert_eq!(info.state, TxState::Confirmed);
-        assert_eq!(info.block_number, Some(555));
-        let receipt = tx_receipt("ab").await.unwrap();
-        assert!(receipt.found);
-        assert_eq!(receipt.success, Some(true));
-        assert_eq!(receipt.fee_raw.as_deref(), Some("1100"));
-    }
-
-    #[tokio::test]
-    async fn tx_status_not_found_on_empty_info() {
-        let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let app = Router::new()
-            .route(
-                "/wallet/gettransactioninfobyid",
-                post(|| async { axum::Json(json!({})) }),
-            )
-            .route(
-                "/wallet/gettransactionbyid",
-                post(|| async { axum::Json(json!({})) }),
-            );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
-        let info = tx_status("missing").await.unwrap();
-        assert_eq!(info.state, TxState::NotFound);
-    }
-}
+#[path = "tron_tests.rs"]
+mod tests;

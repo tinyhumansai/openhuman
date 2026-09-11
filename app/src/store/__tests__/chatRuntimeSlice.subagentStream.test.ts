@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   appendSubagentStreamDelta,
+  hydrateRuntimeFromSnapshot,
   markSubagentCancelled,
   recordSubagentTranscriptTool,
   resolveSubagentTranscriptTool,
@@ -212,5 +214,72 @@ describe('markSubagentCancelled', () => {
     expect(
       reducer(base, markSubagentCancelled({ threadId: 'other-thread', taskId: 'sub-1' }))
     ).toEqual(base);
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — sub-agent child tool arguments', () => {
+  function settledSnapshot(args: unknown): PersistedTurnState {
+    return {
+      threadId: THREAD,
+      requestId: 'req-1',
+      lifecycle: 'completed',
+      iteration: 1,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      startedAt: '2026-09-03T00:00:00Z',
+      updatedAt: '2026-09-03T00:00:00Z',
+      toolTimeline: [
+        {
+          id: ROW_ID,
+          name: 'subagent:researcher',
+          round: 1,
+          status: 'success',
+          subagent: {
+            taskId: 'sub-1',
+            agentId: 'researcher',
+            toolCalls: [
+              {
+                callId: 'c1',
+                toolName: 'tool',
+                status: 'success',
+                iteration: 1,
+                args,
+                output: '3 hits',
+              },
+            ],
+            transcript: [
+              { kind: 'tool', iteration: 1, callId: 'c1', toolName: 'tool', status: 'success' },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  it('restores the child call arguments onto the call row and its transcript item', () => {
+    const state = reducer(
+      undefined,
+      hydrateRuntimeFromSnapshot({ snapshot: settledSnapshot({ query: 'turn state' }) })
+    );
+    const subagent = state.toolTimelineByThread[THREAD][0].subagent;
+    expect(subagent?.toolCalls[0].args).toEqual({ query: 'turn state' });
+    // The transcript item has no `args` of its own in the snapshot — it is
+    // grafted from the matching call by `callId`, the same way `output` and
+    // `failure` already are.
+    const item = subagent?.transcript?.[0];
+    expect(item?.kind).toBe('tool');
+    expect(item && item.kind === 'tool' ? item.args : undefined).toEqual({ query: 'turn state' });
+  });
+
+  it('leaves the arguments undefined for a snapshot written before the field existed', () => {
+    const snapshot = settledSnapshot(undefined);
+    delete snapshot.toolTimeline[0].subagent!.toolCalls[0].args;
+    const state = reducer(undefined, hydrateRuntimeFromSnapshot({ snapshot }));
+    const subagent = state.toolTimelineByThread[THREAD][0].subagent;
+    expect(subagent?.toolCalls[0].args).toBeUndefined();
+    // The rest of the row still rehydrates — a legacy snapshot must not be
+    // rejected, only rendered without an input block.
+    expect(subagent?.toolCalls[0].result).toBe('3 hits');
   });
 });

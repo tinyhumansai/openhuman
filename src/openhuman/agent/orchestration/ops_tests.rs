@@ -4,14 +4,14 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::tools::{Tool, ToolSpec};
+use crate::openhuman::tools::Tool;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tokio::time::Duration;
 
 #[derive(Default)]
@@ -88,7 +88,8 @@ fn parent_context(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
                 },
             ),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
-        all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".to_string(),
@@ -135,7 +136,7 @@ impl ChatModel<()> for CodingQuestionModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         let flattened = request
             .messages
             .iter()
@@ -225,7 +226,7 @@ impl ChatModel<()> for ParallelCodingModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.state.calls.fetch_add(1, Ordering::SeqCst);
         let current = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.record_peak(current);
@@ -258,22 +259,8 @@ impl ChatModel<()> for ParallelCodingModel {
 
 #[test]
 fn unit_status_serializes_as_snake_case() {
-    let value = serde_json::to_value(AgentStatus::Completed).expect("serialize status");
+    let value = serde_json::to_value(OrchestrationTaskStatus::Completed).expect("serialize status");
     assert_eq!(value, serde_json::json!("completed"));
-}
-
-#[tokio::test]
-async fn unit_message_agent_rejects_empty_parent_reply() {
-    let session = AgentOrchestrationSession::new("unit-session");
-    let error = session
-        .message_agent(MessageAgentRequest {
-            orchestration_id: "agent-1".to_string(),
-            content: "   ".to_string(),
-        })
-        .await
-        .unwrap_err();
-
-    assert!(matches!(error, OrchestrationError::InvalidMessage));
 }
 
 #[tokio::test]
@@ -309,33 +296,26 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
         .await
         .expect("wait first child");
     let first_child = &first_wait.agents[0];
-    assert_eq!(first_child.status, AgentStatus::Completed);
+    assert_eq!(first_child.status, OrchestrationTaskStatus::Completed);
     assert!(first_child
         .result_summary
         .as_deref()
         .unwrap_or_default()
         .contains("CODE_AGENT_QUESTION"));
 
-    let answered_snapshot = session
-        .message_agent(MessageAgentRequest {
-            orchestration_id: first.orchestration_id.clone(),
-            content: "ORCH_ANSWER_USE_RPC: use controller registry, not direct jsonrpc branch"
-                .to_string(),
-        })
-        .await
-        .expect("orchestrator records answer");
-    assert_eq!(answered_snapshot.status, AgentStatus::Completed);
-    assert_eq!(answered_snapshot.messages.len(), 1);
-    assert!(answered_snapshot.messages[0]
-        .content
-        .contains("ORCH_ANSWER_USE_RPC"));
-
+    // `message_agent`/`follow_up` are gone (superseded by the durable verbs in
+    // `command_center::control`). The orchestrator now records its answer by
+    // spawning the linked continuation child directly — the same thing
+    // `follow_up` did internally.
     let follow_up = with_parent_context(parent, async {
         session
-            .follow_up(FollowUpRequest {
-                orchestration_id: first.orchestration_id.clone(),
+            .spawn_agent(SpawnAgentRequest {
+                agent_id: "code_executor".to_string(),
                 prompt: "Continue after the orchestrator answered: ORCH_ANSWER_USE_RPC".to_string(),
                 context: Some("Parent answered: use controller registry".to_string()),
+                model: Some("test-model".to_string()),
+                parent_agent_id: Some(first.orchestration_id.clone()),
+                ..Default::default()
             })
             .await
     })
@@ -354,7 +334,7 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
         final_child.parent_agent_id.as_deref(),
         Some(first.orchestration_id.as_str())
     );
-    assert_eq!(final_child.status, AgentStatus::Completed);
+    assert_eq!(final_child.status, OrchestrationTaskStatus::Completed);
     assert!(final_child
         .result_summary
         .as_deref()
@@ -427,7 +407,7 @@ async fn e2e_orchestrator_waits_for_multiple_parallel_coding_subagents() {
     assert!(waited
         .agents
         .iter()
-        .all(|agent| agent.status == AgentStatus::Completed));
+        .all(|agent| agent.status == OrchestrationTaskStatus::Completed));
     let outputs = waited
         .agents
         .iter()
@@ -447,4 +427,127 @@ async fn e2e_orchestrator_waits_for_multiple_parallel_coding_subagents() {
     assert!(prompts.contains("PARALLEL_ALPHA"));
     assert!(prompts.contains("PARALLEL_BETA"));
     assert!(prompts.contains("PARALLEL_GAMMA"));
+}
+
+/// A model that parks long enough for `abort_all` to land while the child is
+/// still running.
+#[derive(Clone, Default)]
+struct BlockingModel;
+
+#[async_trait]
+impl ChatModel<()> for BlockingModel {
+    async fn invoke(
+        &self,
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyinference::Result<ModelResponse> {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        Ok(text_response("NEVER_REACHED"))
+    }
+}
+
+#[tokio::test]
+async fn unit_wait_agents_with_no_ids_returns_an_empty_complete_response() {
+    let session = AgentOrchestrationSession::new("empty-session");
+    let response = session
+        .wait_agents(WaitAgentOptions::default())
+        .await
+        .expect("empty wait succeeds");
+
+    assert!(response.completed);
+    assert!(response.agents.is_empty());
+}
+
+#[tokio::test]
+async fn unit_wait_agents_rejects_an_unknown_child() {
+    let session = AgentOrchestrationSession::new("unknown-session");
+    let error = session
+        .wait_agents(WaitAgentOptions {
+            orchestration_ids: vec!["agent-does-not-exist".to_string()],
+            timeout_ms: Some(50),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, OrchestrationError::AgentNotFound(id) if id == "agent-does-not-exist"),
+        "unexpected error: {error:?}"
+    );
+}
+
+/// `abort_all` must publish a terminal `Cancelled` status on each live child's
+/// watch channel *before* the crate registry hard-aborts it, so a waiter in
+/// flight resolves with a cancellation rather than a closed status channel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_abort_all_cancels_an_in_flight_child_for_a_concurrent_waiter() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let parent = parent_context(Arc::new(BlockingModel));
+    let session = AgentOrchestrationSession::new("abort-session");
+
+    let spawned = with_parent_context(parent, async {
+        session
+            .spawn_agent(SpawnAgentRequest {
+                agent_id: "code_executor".to_string(),
+                prompt: "Park until the orchestrator interrupts".to_string(),
+                model: Some("test-model".to_string()),
+                ..Default::default()
+            })
+            .await
+    })
+    .await
+    .expect("spawn blocking child");
+
+    let waiter = {
+        let session = session.clone();
+        let id = spawned.orchestration_id.clone();
+        tokio::spawn(async move {
+            session
+                .wait_agents(WaitAgentOptions {
+                    orchestration_ids: vec![id],
+                    timeout_ms: Some(30_000),
+                })
+                .await
+        })
+    };
+
+    // Readiness handshake instead of a fixed sleep: `cancel_all` removes the
+    // registry entry outright, so calling `abort_all` before the child has
+    // observably reached `Running` risks the waiter's own lookup racing the
+    // removal and surfacing `AgentNotFound` instead of `Cancelled`. Poll with
+    // short, non-terminal `wait_agents` calls (the crate only prunes a
+    // *terminal* entry, so polling a still-running child is side-effect-free)
+    // until `Running` is observed, bounded so a genuine regression fails fast
+    // rather than hanging.
+    let observed_running = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let response = session
+                .wait_agents(WaitAgentOptions {
+                    orchestration_ids: vec![spawned.orchestration_id.clone()],
+                    timeout_ms: Some(5),
+                })
+                .await
+                .expect("poll for readiness succeeds while the child is still live");
+            if response.agents[0].status == OrchestrationTaskStatus::Running {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        observed_running.is_ok(),
+        "child never reached Running before the readiness timeout"
+    );
+    session.abort_all().await;
+
+    let response = waiter
+        .await
+        .expect("waiter task")
+        .expect("wait resolves after abort_all");
+    assert!(response.completed);
+    assert_eq!(response.agents.len(), 1);
+    assert_eq!(
+        response.agents[0].status,
+        OrchestrationTaskStatus::Cancelled
+    );
 }

@@ -778,9 +778,9 @@ interface MeetingMascotVoicePair {
 
 /**
  * Resolve the (up to two) mascots + voices a meeting join should use
- * (issue #4277). Single source of truth for both join paths — the CEF
- * `meet_call_open_window` sender and the backend `agent_meetings_join`
- * sender — and for tests, so they can't drift.
+ * (issue #4277). Single source of truth for the backend
+ * `agent_meetings_join` sender and for tests, so they can't drift.
+ * (The in-app CEF join path was removed in #5478.)
  *
  * `secondary` is non-null only when a distinct second mascot is enabled
  * (`selectDualMascotEnabled`). Each slot's voice is its per-mascot

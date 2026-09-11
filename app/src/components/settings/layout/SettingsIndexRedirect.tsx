@@ -1,4 +1,4 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 
 import { useMediaQuery } from '../../../hooks/useMediaQuery';
 
@@ -14,10 +14,7 @@ import { useMediaQuery } from '../../../hooks/useMediaQuery';
  */
 const SettingsIndexRedirect = () => {
   const isWide = useMediaQuery('(min-width: 768px)');
-  const location = useLocation();
-  // Preserve nav state (notably the desktop modal's `backgroundLocation`) so the
-  // index redirect doesn't drop the backdrop. Harmless on iOS.
-  if (isWide) return <Navigate to="/settings/account" replace state={location.state} />;
+  if (isWide) return <Navigate to="/settings/account" replace />;
   return null;
 };
 

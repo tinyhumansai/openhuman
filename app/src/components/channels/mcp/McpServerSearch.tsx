@@ -11,6 +11,8 @@
  * Users focus the input by clicking or tabbing.
  */
 import { useT } from '../../../lib/i18n/I18nContext';
+import Button from '../../ui/Button';
+import TextField from '../../ui/TextField';
 
 interface McpServerSearchProps {
   value: string;
@@ -22,20 +24,23 @@ const McpServerSearch = ({ value, onChange }: McpServerSearchProps) => {
   const hasValue = value.length > 0;
   return (
     <div role="search" aria-label={t('mcp.installed.search.landmarkAria')} className="relative">
-      <input
+      <TextField
         type="search"
+        inputSize="sm"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={t('mcp.installed.search.placeholder')}
         aria-label={t('mcp.installed.search.inputAria')}
-        className="w-full rounded-lg border border-line bg-surface px-3 py-1.5 pr-7 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400"
+        className="w-full pr-7 text-xs"
       />
       {hasValue && (
-        <button
-          type="button"
+        <Button
+          iconOnly
+          variant="tertiary"
+          size="xs"
           onClick={() => onChange('')}
           aria-label={t('mcp.installed.search.clearAria')}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-content-faint hover:text-content-secondary transition-colors">
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 h-auto w-auto rounded p-0.5 text-content-faint hover:bg-transparent hover:text-content-secondary">
           <svg
             className="w-3 h-3"
             fill="none"
@@ -45,7 +50,7 @@ const McpServerSearch = ({ value, onChange }: McpServerSearchProps) => {
             aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
-        </button>
+        </Button>
       )}
     </div>
   );

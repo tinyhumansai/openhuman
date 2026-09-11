@@ -35,10 +35,6 @@ const PROVIDER_COLOR: Record<AccountProvider, string> = {
   browserscan: '#6B7280',
 };
 
-export const AgentIcon = ({ className }: { className?: string }) => (
-  <img src="/alpha.svg" alt="" className={className} draggable={false} />
-);
-
 export const ProviderIcon = ({
   provider,
   className,

@@ -35,6 +35,32 @@ export interface RuntimeErrorSignal {
 }
 
 /**
+ * The durable form of the corrupt-store notice (openhuman#5820).
+ *
+ * Same kind, scope and therefore the same descriptor id as the live
+ * `memory_store_corrupt` socket broadcast, so the two paths collapse into
+ * one NoticeCenter entry: the socket reaches a connected renderer instantly,
+ * and the status poll replays it for a renderer that was not connected when
+ * the quarantine happened (a boot-time integrity check). `null` once the
+ * user has re-synced — the caller resolves the entry then.
+ */
+export function classifyMemoryQuarantine(
+  quarantine: { resynced: boolean } | null | undefined
+): UserErrorDescriptor | null {
+  if (!quarantine || quarantine.resynced) return null;
+  return {
+    id: userErrorId('memory_store_corrupt', 'memory'),
+    kind: 'memory_store_corrupt',
+    severity: 'error',
+    scope: 'memory',
+    sourceDomain: 'memory',
+    titleKey: 'userErrors.memoryStoreCorrupt.title',
+    bodyKey: 'userErrors.memoryStoreCorrupt.body',
+    action: 'open_memory_sync',
+  };
+}
+
+/**
  * #5324: the memory pipeline's typed `budget_exhausted` cause, promoted to a
  * first-class user-actionable error.
  *
@@ -64,6 +90,64 @@ export function classifyMemoryPipelineFailure(
     titleKey: 'userErrors.memoryBudgetExhausted.title',
     bodyKey: 'userErrors.memoryBudgetExhausted.body',
     action: 'open_embeddings_settings',
+  };
+}
+
+/**
+ * A third-party integration is failing, so the connection state on screen is
+ * stale (#composio).
+ *
+ * Unlike the matchers below this does not sniff the prose: the caller already
+ * knows the integration errored, and the message is the backend's own
+ * user-facing explanation. It rides on `detail` verbatim rather than being
+ * pattern-matched into a billing entry — "your credits are exhausted" and
+ * "your connected tools have silently stopped" are different things to tell
+ * someone, and only the second explains why their agent stopped acting.
+ *
+ * @param message The integration client's user-facing error text.
+ * @param provider Integration slug (e.g. `composio`) — metadata only.
+ */
+export function classifyIntegrationError(
+  message: string | null | undefined,
+  provider: string
+): UserErrorDescriptor | null {
+  const detail = message?.trim();
+  if (!detail) return null;
+  return {
+    id: userErrorId('integration_degraded', 'integration', provider),
+    kind: 'integration_degraded',
+    severity: 'warning',
+    scope: 'integration',
+    sourceDomain: provider,
+    provider,
+    titleKey: 'userErrors.integrationDegraded.title',
+    bodyKey: 'userErrors.integrationDegraded.body',
+    detail,
+    action: 'open_connections',
+  };
+}
+
+/**
+ * #6034: a completed reply that reached neither writer, so there is nothing to
+ * render and nothing to re-read.
+ *
+ * The caller already knows this happened — it just failed an append and a
+ * refetch — so, like the two constructors above, this takes the fact rather
+ * than sniffing prose. Scoped per thread so two different lost replies are two
+ * entries, and one thread failing repeatedly is one entry with a count.
+ */
+export function classifyReplyDeliveryFailure(threadId: string): UserErrorDescriptor | null {
+  const thread = threadId?.trim();
+  if (!thread) return null;
+  return {
+    id: userErrorId('reply_delivery_failed', 'chat', thread),
+    kind: 'reply_delivery_failed',
+    severity: 'error',
+    scope: 'chat',
+    sourceDomain: 'chat',
+    titleKey: 'userErrors.replyDeliveryFailed.title',
+    bodyKey: 'userErrors.replyDeliveryFailed.body',
+    action: 'dismiss',
   };
 }
 
@@ -156,6 +240,28 @@ export function classifyUserActionableError(
       titleKey: 'userErrors.apiKeyMissing.title',
       bodyKey: 'userErrors.apiKeyMissing.body',
       action: 'open_provider_settings',
+    };
+  }
+
+  // The memory-tree store was corrupt and has been quarantined + rebuilt
+  // empty (openhuman#5820). Token-only on purpose: the only producer is the
+  // core's `STORE_CORRUPT_KIND` broadcast, and the underlying SQLite prose
+  // ("database disk image is malformed") also appears in raw logs other
+  // domains relay — promoting prose here could turn an unrelated relay into
+  // a "your memory was quarantined" panel entry.
+  if (text.includes('memory_store_corrupt')) {
+    return {
+      id: userErrorId('memory_store_corrupt', scope, signal.provider),
+      kind: 'memory_store_corrupt',
+      severity: 'error',
+      scope,
+      sourceDomain: signal.sourceDomain,
+      provider: signal.provider,
+      titleKey: 'userErrors.memoryStoreCorrupt.title',
+      bodyKey: 'userErrors.memoryStoreCorrupt.body',
+      // Re-syncing sources is the remediation — the rebuilt store is empty
+      // and repopulates from there.
+      action: 'open_memory_sync',
     };
   }
 

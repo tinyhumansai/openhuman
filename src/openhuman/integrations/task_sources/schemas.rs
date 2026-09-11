@@ -250,7 +250,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "fetch" => ControllerSchema {
             namespace: "task_sources",
             function: "fetch",
-            description: "Fetch one source immediately, route new tasks, and prune tasks no longer returned by the source.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so this call \
+                          always fails. When it works again it fetches one source immediately, \
+                          routes new tasks, and prunes tasks no longer returned by the source.",
             inputs: vec![source_id_input(
                 "Identifier of the task source to fetch now.",
             )],
@@ -264,7 +267,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "sync" => ControllerSchema {
             namespace: "task_sources",
             function: "sync",
-            description: "Fetch every enabled source immediately, route new tasks, and prune tasks no longer returned by their source.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so every source \
+                          in the sweep fails. When it works again it fetches every enabled \
+                          source immediately, routes new tasks, and prunes tasks no longer \
+                          returned by their source.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "outcomes",
@@ -296,7 +303,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "preview_filter" => ControllerSchema {
             namespace: "task_sources",
             function: "preview_filter",
-            description: "Dry-run a filter and return matching tasks WITHOUT routing them.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so this call \
+                          always fails. When it works again it dry-runs a filter and returns \
+                          matching tasks WITHOUT routing them.",
             inputs: vec![
                 provider_input(),
                 filter_input(),
@@ -323,7 +333,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "list_databases" => ControllerSchema {
             namespace: "task_sources",
             function: "list_databases",
-            description: "List selectable containers (e.g. Notion databases) for a provider/connection so the UI can offer a picker.",
+            description: "UNAVAILABLE: the container-listing path was removed with \
+                          `ComposioProvider::list_databases` (tinymemory v1.13.4), so this call \
+                          always fails. It only ever had a Notion implementation. When it works \
+                          again it lists selectable containers (e.g. Notion databases) for a \
+                          provider/connection so the UI can offer a picker.",
             inputs: vec![
                 provider_input(),
                 FieldSchema {
@@ -561,77 +575,5 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn all_controller_schemas_covers_every_function() {
-        let names: Vec<_> = all_controller_schemas()
-            .into_iter()
-            .map(|s| s.function)
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "list",
-                "get",
-                "add",
-                "update",
-                "remove",
-                "fetch",
-                "sync",
-                "list_tasks",
-                "preview_filter",
-                "list_databases",
-                "status"
-            ]
-        );
-    }
-
-    #[test]
-    fn all_registered_controllers_has_handler_per_schema() {
-        let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), all_controller_schemas().len());
-        assert!(controllers
-            .iter()
-            .all(|c| c.schema.namespace == "task_sources"));
-    }
-
-    #[test]
-    fn schemas_add_requires_provider_and_filter() {
-        let s = schemas("add");
-        let names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
-        assert!(names.contains(&"provider"));
-        assert!(names.contains(&"filter"));
-        let provider = s.inputs.iter().find(|f| f.name == "provider").unwrap();
-        assert!(provider.required);
-    }
-
-    #[test]
-    fn schemas_unknown_function_returns_placeholder() {
-        let s = schemas("nope");
-        assert_eq!(s.function, "unknown");
-        assert_eq!(s.outputs[0].name, "error");
-    }
-
-    #[test]
-    fn read_provider_parses_known_and_rejects_unknown() {
-        let mut params = Map::new();
-        params.insert("provider".into(), json!("notion"));
-        assert_eq!(read_provider(&params).unwrap(), ProviderSlug::Notion);
-
-        params.insert("provider".into(), json!("jira"));
-        assert!(read_provider(&params).is_err());
-    }
-
-    #[test]
-    fn read_optional_handles_absent_null_and_value() {
-        let mut params = Map::new();
-        assert_eq!(read_optional::<u64>(&params, "limit").unwrap(), None);
-        params.insert("limit".into(), Value::Null);
-        assert_eq!(read_optional::<u64>(&params, "limit").unwrap(), None);
-        params.insert("limit".into(), json!(7));
-        assert_eq!(read_optional::<u64>(&params, "limit").unwrap(), Some(7));
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

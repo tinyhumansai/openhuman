@@ -3,12 +3,12 @@
 use std::sync::LazyLock;
 
 use async_trait::async_trait;
-use tinyagents::harness::context::RunContext;
-use tinyagents::harness::events::AgentEvent;
-use tinyagents::harness::middleware::{MiddlewareModelOutcome, ModelHandler, ModelMiddleware};
-use tinyagents::harness::model::{CapabilitySet, ModelRequest};
-use tinyagents::harness::retry::FallbackPolicy;
-use tinyagents::registry::{ModelRouter, WorkloadRoute};
+use tinyagents_harness::context::RunContext;
+use tinyagents_harness::events::AgentEvent;
+use tinyagents_harness::middleware::{MiddlewareModelOutcome, ModelHandler, ModelMiddleware};
+use tinyagents_harness::retry::FallbackPolicy;
+use tinyagents_registry::{ModelRouter, WorkloadRoute};
+use tinyinference::model::{CapabilitySet, ModelRequest};
 
 use crate::openhuman::config::{
     MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
@@ -34,7 +34,7 @@ pub(super) const WORKLOAD_ROUTE_TIERS: &[&str] = &[
 ];
 
 /// The OpenHuman workload-tier routing table as a crate
-/// [`ModelRouter`](tinyagents::registry::ModelRouter) — the single declarative
+/// [`ModelRouter`](tinyagents_registry::ModelRouter) — the single declarative
 /// source for cross-route **fallback chains** and per-tier **required-capability
 /// gates** (issue #4249, Phase 3 routing consolidation).
 ///
@@ -133,7 +133,7 @@ impl ModelMiddleware<()> for RequiredCapabilitiesMiddleware {
         state: &(),
         mut request: ModelRequest,
         next: ModelHandler<'_, (), ()>,
-    ) -> tinyagents::Result<MiddlewareModelOutcome> {
+    ) -> tinyagents_harness::Result<MiddlewareModelOutcome> {
         if request.required_capabilities.is_none() {
             request = request.with_required_capabilities(self.required.clone());
         }
@@ -167,12 +167,12 @@ pub(super) fn route_fallback_policy(model: &str) -> Option<FallbackPolicy> {
 }
 
 /// Around-model middleware that makes the crate's registry-backed
-/// [`RunPolicy::fallback`][tinyagents::harness::runtime::RunPolicy] traversal
+/// [`RunPolicy::fallback`][tinyagents_harness::runtime::RunPolicy] traversal
 /// **event-visible** (issue #4249, Workstream 02.2).
 ///
 /// The harness performs the cross-route fallback swap inside its model-resolving
 /// core (`agent_loop::invoke_model_resolving`) but — unlike the
-/// [`ModelFallbackMiddleware`][tinyagents::harness::middleware::ModelFallbackMiddleware]
+/// [`ModelFallbackMiddleware`][tinyagents_harness::middleware::ModelFallbackMiddleware]
 /// primitive — that native path emits **no**
 /// [`AgentEvent::FallbackSelected`]. This observer wraps the resolving core, and
 /// on success compares the response's `resolved_model` against the turn's primary
@@ -204,7 +204,7 @@ impl ModelMiddleware<()> for FallbackObserverMiddleware {
         state: &(),
         request: ModelRequest,
         next: ModelHandler<'_, (), ()>,
-    ) -> tinyagents::Result<MiddlewareModelOutcome> {
+    ) -> tinyagents_harness::Result<MiddlewareModelOutcome> {
         let outcome = next.run(ctx, state, request).await?;
         let response = outcome.into_response();
         if let Some(resolved) = response.resolved_model.as_ref() {
@@ -261,7 +261,7 @@ impl ModelMiddleware<()> for UsageCarryMiddleware {
         state: &(),
         request: ModelRequest,
         next: ModelHandler<'_, (), ()>,
-    ) -> tinyagents::Result<MiddlewareModelOutcome> {
+    ) -> tinyagents_harness::Result<MiddlewareModelOutcome> {
         let outcome = next.run(ctx, state, request).await?;
         let response = outcome.into_response();
         if let Some(usage) = super::model::usage_info_from_response(&response) {
@@ -275,78 +275,5 @@ impl ModelMiddleware<()> for UsageCarryMiddleware {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The fallback chain for every tier must lead with the primary and carry the
-    /// single same-family alternate the legacy static table encoded — the crate
-    /// `ModelRouter` projection is exactly behavior-neutral.
-    #[test]
-    fn route_fallback_policy_matches_legacy_chains() {
-        let cases: &[(&str, Option<&[&str]>)] = &[
-            (MODEL_CHAT_V1, Some(&[MODEL_CHAT_V1, MODEL_BURST_V1])),
-            (MODEL_BURST_V1, Some(&[MODEL_BURST_V1, MODEL_CHAT_V1])),
-            (
-                MODEL_REASONING_V1,
-                Some(&[MODEL_REASONING_V1, MODEL_AGENTIC_V1]),
-            ),
-            (
-                MODEL_AGENTIC_V1,
-                Some(&[MODEL_AGENTIC_V1, MODEL_REASONING_V1]),
-            ),
-            (MODEL_CODING_V1, Some(&[MODEL_CODING_V1, MODEL_AGENTIC_V1])),
-            (
-                MODEL_SUMMARIZATION_V1,
-                Some(&[MODEL_SUMMARIZATION_V1, MODEL_CHAT_V1]),
-            ),
-            // Vision is primary-only (an image_in gate no text tier can satisfy).
-            (MODEL_VISION_V1, None),
-            ("hint:vision", None),
-            // A raw non-tier model installs no chain.
-            ("gpt-4o", None),
-        ];
-        for (model, expected) in cases {
-            let got = route_fallback_policy(model).map(|p| p.models);
-            let want =
-                expected.map(|chain| chain.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-            assert_eq!(got, want, "fallback chain mismatch for {model}");
-        }
-    }
-
-    /// Only the vision tier (and its hint form) imposes an `image_in` gate; the
-    /// common text turn stays ungated.
-    #[test]
-    fn turn_required_capabilities_gates_only_vision() {
-        let vision = turn_required_capabilities(MODEL_VISION_V1).expect("vision is gated");
-        assert!(vision.image_in);
-        let hint = turn_required_capabilities("hint:vision").expect("hint:vision is gated");
-        assert!(hint.image_in);
-        for model in [
-            MODEL_CHAT_V1,
-            MODEL_REASONING_V1,
-            MODEL_AGENTIC_V1,
-            MODEL_CODING_V1,
-            MODEL_BURST_V1,
-            MODEL_SUMMARIZATION_V1,
-            "gpt-4o",
-        ] {
-            assert!(
-                turn_required_capabilities(model).is_none(),
-                "{model} must not be capability-gated"
-            );
-        }
-    }
-
-    /// The router covers exactly the projected tier inventory (plus the hint:vision
-    /// gate alias), so the fallback/capability source of truth stays aligned with
-    /// `WORKLOAD_ROUTE_TIERS`.
-    #[test]
-    fn router_covers_the_workload_tier_inventory() {
-        for tier in WORKLOAD_ROUTE_TIERS {
-            assert!(
-                OH_WORKLOAD_ROUTER.route(tier).is_some(),
-                "router missing tier {tier}"
-            );
-        }
-    }
-}
+#[path = "routes_tests.rs"]
+mod tests;

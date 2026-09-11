@@ -1,12 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "src/main.tsx",
     "src/features/conversations/index.ts",
-    "vite.config.ts",
-    "test/vitest.config.ts",
     "test/wdio.conf.ts",
-    "playwright.config.ts",
     "test/e2e/specs/**/*.spec.ts",
     "test/playwright/specs/**/*.spec.ts"
   ],
@@ -18,10 +14,14 @@
     "@wdio/local-runner",
     "@wdio/mocha-framework",
     "@wdio/spec-reporter",
+    "@tailwindcss/forms",
+    "@tailwindcss/typography",
     "buffer",
     "husky",
     "os-browserify",
     "process",
+    "tailwindcss",
+    "tw-animate-css",
     "util"
   ],
   "ignoreBinaries": ["open"]

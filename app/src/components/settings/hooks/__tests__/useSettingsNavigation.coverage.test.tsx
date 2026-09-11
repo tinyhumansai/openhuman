@@ -52,7 +52,11 @@ describe('home route', () => {
 describe('account section leaves', () => {
   test('privacy resolves to privacy', () => expectRoute('/settings/privacy', 'privacy'));
   test('security resolves to security', () => expectRoute('/settings/security', 'security'));
-  test('team resolves to team', () => expectRoute('/settings/team', 'team'));
+  // 'team' was removed with the Team settings surface; its slug now falls
+  // through to home (the redirect to /settings/account lives in the
+  // route-elements layer).
+  test('team (retired) resolves to home', () => expectRoute('/settings/team', 'home'));
+  test('migration resolves to migration', () => expectRoute('/settings/migration', 'migration'));
 });
 
 describe('ai section leaves', () => {
@@ -67,7 +71,6 @@ describe('agents section leaves', () => {
 
 describe('features section leaves', () => {
   test('tools resolves to tools', () => expectRoute('/settings/tools', 'tools'));
-  test('companion resolves to companion', () => expectRoute('/settings/companion', 'companion'));
 });
 
 describe('integrations (retired)', () => {
@@ -89,7 +92,9 @@ describe('crypto section leaves', () => {
 });
 
 describe('developer section leaves', () => {
-  test('cron-jobs resolves to cron-jobs', () => expectRoute('/settings/cron-jobs', 'cron-jobs'));
+  // Cron moved to the Workflows module (`/flows?view=schedules`), so the old
+  // settings slug falls through to home the same way 'intelligence' does.
+  test('cron-jobs (retired) resolves to home', () => expectRoute('/settings/cron-jobs', 'home'));
   // 'intelligence' was retired with the Brain Knowledge & Memory cleanup — the
   // old settings slug now falls through to home (redirect handled at the
   // route-elements layer, which bounces it to /brain).

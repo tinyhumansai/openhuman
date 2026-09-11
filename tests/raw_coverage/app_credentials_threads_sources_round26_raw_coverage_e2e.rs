@@ -259,10 +259,7 @@ async fn round26_threads_generate_fallback_titles_and_migrate_in_place_transcrip
     .value
     .data
     .expect("titled thread");
-    assert_eq!(
-        titled.title,
-        "please summarize this long launch checklist for me"
-    );
+    assert_eq!(titled.title, "summarize long launch");
 
     let custom = thread_upsert(UpsertConversationThreadRequest {
         id: "round26-custom-title".to_string(),

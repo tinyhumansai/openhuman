@@ -11,12 +11,33 @@ use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::orchestration::running_subagents::{
     self, SubagentStatus, WaitError, WaitOutcome,
 };
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 use async_trait::async_trait;
 use serde_json::json;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
-const MAX_TIMEOUT_SECS: u64 = 600;
+/// Ceiling on a single wait. Matches Codex's `wait_agent` maximum of one hour:
+/// a wait that is long is fine, because reaching it is a *successful* "still
+/// running" result the model can act on, not a failure.
+const MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// The wait this call should perform, resolved identically for the harness
+/// deadline ([`WaitSubagentTool::timeout_policy`]) and the wait itself.
+///
+/// These two MUST agree. This tool is designed to be polled: on expiry it
+/// returns [`ToolResult::success`] saying the sub-agent is still running and
+/// inviting another call. That graceful path is only reachable if the tool
+/// out-lives its own wait — under the default [`ToolTimeout::Inherit`] the
+/// generic 120s per-tool-call deadline killed the *tool* first, turning a
+/// designed success into an `error` result. The repeated-failure breaker then
+/// classifies "timed out" as transient, retries the identical call 8 times and
+/// halts the turn — which is how a working coding sub-agent lost its work.
+fn requested_timeout_secs(args: &serde_json::Value) -> u64 {
+    args.get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+        .clamp(1, MAX_TIMEOUT_SECS)
+}
 
 pub struct WaitSubagentTool;
 
@@ -39,10 +60,20 @@ impl Tool for WaitSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Block until an async sub-agent (started with spawn_async_subagent) \
-         finishes, then return its final result. Optionally bound the wait with \
-         `timeout_secs` (default 120, max 600); on timeout it reports the \
-         sub-agent is still running and you can call wait_subagent again."
+        "Block until an async sub-agent finishes and return its result. `timeout_secs` defaults to 120, max 3600; timing out is a normal outcome you can retry, so prefer one long wait over tight polling."
+    }
+
+    /// Let the wait own its own deadline instead of inheriting the generic
+    /// per-tool-call one.
+    ///
+    /// Without this the harness kills the tool at the global `Inherit` timeout
+    /// (120s by default) *before* the wait can return its "still running"
+    /// success, so a legitimate long wait is reported as a tool failure. The
+    /// harness adds its own small grace on top of `Secs`, so the tool always
+    /// gets to finish and report first. Same reasoning as
+    /// `spawn_parallel_agents`, which opts out for the same class of bug.
+    fn timeout_policy(&self, args: &serde_json::Value) -> ToolTimeout {
+        ToolTimeout::Secs(requested_timeout_secs(args))
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -91,11 +122,7 @@ impl Tool for WaitSubagentTool {
             ));
         }
 
-        let timeout_secs = args
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_TIMEOUT_SECS)
-            .clamp(1, MAX_TIMEOUT_SECS);
+        let timeout_secs = requested_timeout_secs(&args);
 
         let parent = match current_parent() {
             Some(parent) => parent,
@@ -366,49 +393,5 @@ fn wait_status_payload(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schema_requires_task_id() {
-        let schema = WaitSubagentTool::new().parameters_schema();
-        let required = schema
-            .get("required")
-            .and_then(|v| v.as_array())
-            .expect("required list");
-        assert!(required.is_empty());
-    }
-
-    #[tokio::test]
-    async fn missing_task_id_is_rejected() {
-        let res = WaitSubagentTool::new().execute(json!({})).await.unwrap();
-        assert!(res.is_error);
-        assert!(res.output().contains("subagent_session_id"));
-    }
-
-    #[tokio::test]
-    async fn outside_agent_turn_is_rejected() {
-        let res = WaitSubagentTool::new()
-            .execute(json!({ "task_id": "sub-1" }))
-            .await
-            .unwrap();
-        assert!(res.is_error);
-        assert!(res.output().contains("outside of an agent turn"));
-    }
-
-    #[test]
-    fn running_wait_message_includes_agent_id_and_tick_instruction() {
-        let reference = running_subagents::SubagentResumeRef {
-            task_id: "sub-1".into(),
-            agent_id: "researcher".into(),
-            subagent_session_id: Some("subsess-1".into()),
-        };
-        let message = format_running_wait_message(Some(&reference), "sub-1", 1);
-
-        assert!(message.contains("Sub-agent `researcher` is still running"));
-        assert!(message.contains("[subagent_wait_result]"));
-        assert!(message.contains("\"agentId\":\"researcher\""));
-        assert!(message.contains("\"timeout_tick\""));
-        assert!(message.contains("\"timeout_secs\":1"));
-    }
-}
+#[path = "wait_subagent_tests.rs"]
+mod tests;

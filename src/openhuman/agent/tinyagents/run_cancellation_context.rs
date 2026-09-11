@@ -5,7 +5,7 @@
 //! metadata. OpenHuman tools that need to fan out nested graph work can read this
 //! scoped token and pass the same live cancellation signal into graph helpers.
 
-use tinyagents::CancellationToken;
+use tinyagents_harness::CancellationToken;
 
 tokio::task_local! {
     static CURRENT_RUN_CANCELLATION: CancellationToken;

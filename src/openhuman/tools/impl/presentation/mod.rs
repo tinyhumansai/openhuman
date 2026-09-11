@@ -27,6 +27,7 @@
 //! #3026 Files panel, and the orchestrator grounding rule in #3029
 //! continue to work without change.
 
+use crate::openhuman::tools::implementations::document::format::spec::ImageFormat;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,11 +42,10 @@ use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 mod engine;
-mod image_util;
 mod types;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "presentation_tests.rs"]
 mod tests;
 
 use self::types::{
@@ -67,6 +67,11 @@ pub const TOOL_NAME: &str = "generate_presentation";
 /// One-shot `.pptx` generator. See module docs for the request flow.
 pub struct PresentationTool {
     workspace_dir: PathBuf,
+    /// Existing host config when the caller already owns the authoritative
+    /// runtime snapshot. Keeping this optional preserves the ordinary agent
+    /// constructor while avoiding a process-global config reload during
+    /// artifact regeneration.
+    config: Option<crate::openhuman::config::Config>,
     /// Security policy used to validate agent-supplied `File` image paths
     /// before any filesystem read — an image path must pass the same
     /// `validate_path` checks (allowed-location, symlink-escape, forbidden
@@ -82,6 +87,20 @@ impl PresentationTool {
     pub fn new(workspace_dir: PathBuf, security: Arc<SecurityPolicy>) -> Self {
         Self {
             workspace_dir,
+            config: None,
+            security,
+        }
+    }
+
+    /// Construct the tool with an authoritative host config snapshot.
+    pub(crate) fn with_config(
+        workspace_dir: PathBuf,
+        security: Arc<SecurityPolicy>,
+        config: crate::openhuman::config::Config,
+    ) -> Self {
+        Self {
+            workspace_dir,
+            config: Some(config),
             security,
         }
     }
@@ -263,7 +282,14 @@ impl Tool for PresentationTool {
             );
         }
 
-        let bytes = match engine::generate(&input, &resolved_images, GENERATION_TIMEOUT).await {
+        let bytes = match engine::generate(
+            &input,
+            &resolved_images,
+            GENERATION_TIMEOUT,
+            self.config.as_ref(),
+        )
+        .await
+        {
             Ok(bytes) => bytes,
             Err(err) => {
                 let _ = fail_artifact(&self.workspace_dir, &meta.id, &err.to_string()).await;
@@ -429,11 +455,17 @@ impl PresentationTool {
             ));
         }
 
-        let format = image_util::sniff_format(&bytes).ok_or_else(|| {
+        // Identification and measurement live in `crate::openhuman::tools::implementations::document::format::spec::image`, which
+        // is ungated: a host resolving image bytes has to do this to build a
+        // spec, and it must not need the writer to do it. One implementation
+        // also means the host and the module cannot disagree about what is
+        // embeddable.
+        let format = ImageFormat::sniff(&bytes).ok_or_else(|| {
             "unsupported image type (only PNG and JPEG are embeddable)".to_string()
         })?;
 
-        let (width_px, height_px) = image_util::pixel_dimensions(&bytes, format)
+        let (width_px, height_px) = format
+            .dimensions(&bytes)
             .ok_or_else(|| format!("could not read {format} dimensions (corrupt header?)"))?;
 
         Ok(ResolvedSlideImage {

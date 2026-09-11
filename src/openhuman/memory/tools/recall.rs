@@ -1,18 +1,28 @@
-use crate::openhuman::memory::Memory;
+use crate::openhuman::agent::tinyagents::host::agent_memory::DEFAULT_AGENT_MEMORY_NAMESPACE;
+use crate::openhuman::memory::api::provider::MemoryRecall;
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write;
-use std::sync::Arc;
 
-/// Let the agent search its own memory
-pub struct MemoryRecallTool {
-    memory: Arc<dyn Memory>,
-}
+/// Let the agent search its own memory.
+///
+/// Holds no memory handle: it resolves the guarded driver per call, like every
+/// other memory tool in this port. That is what lets the session builder stop
+/// threading an `Arc<dyn Memory>` through tool construction.
+pub struct MemoryRecallTool;
 
 impl MemoryRecallTool {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
-        Self { memory }
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for MemoryRecallTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -23,7 +33,8 @@ impl Tool for MemoryRecallTool {
     }
 
     fn description(&self) -> &str {
-        "Search memory for relevant facts in a namespace. Returns scored results ranked by relevance."
+        "Search memory for relevant facts: stored notes and ingested sources alike. Returns scored \
+         results ranked by relevance. Searches the default scope unless a namespace is given."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -36,26 +47,19 @@ impl Tool for MemoryRecallTool {
                 },
                 "namespace": {
                     "type": "string",
-                    "description": "Namespace to search (e.g. 'global', 'background', 'autocomplete', or 'skill-{id}')"
+                    "description": "Namespace to search. Omit for the default scope ('global'); others include 'background', 'autocomplete', 'skill-{id}', or a connector source namespace"
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Max results to return (default: 5)"
                 }
             },
-            "required": ["namespace", "query"]
+            "required": ["query"]
         })
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let namespace = args
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?
-            .trim();
-        if namespace.is_empty() {
-            return Err(anyhow::anyhow!("namespace cannot be empty"));
-        }
+        let namespace = resolve_namespace(&args)?;
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -75,11 +79,16 @@ impl Tool for MemoryRecallTool {
         // string would add a redundant token matching almost every row. Instead,
         // namespace scoping belongs in RecallOpts so the backend restricts the
         // search to the correct namespace column.
-        let recall_opts = crate::openhuman::memory::RecallOpts {
-            namespace: Some(namespace),
-            ..crate::openhuman::memory::RecallOpts::default()
+        let recall_opts = crate::openhuman::memory::api::recall::OwnedRecallOpts {
+            namespace: Some(namespace.to_string()),
+            ..Default::default()
         };
-        match self.memory.recall(query, limit, recall_opts).await {
+        let guard = active_memory_guard()
+            .await
+            .map_err(|e| anyhow::anyhow!("memory_recall: {e}"))?;
+        // `None` scope: the guard intersects it with the ambient per-turn
+        // allowlist, so this can only ever be narrowed, never widened.
+        match guard.recall(query, limit, &recall_opts, None).await {
             Ok(entries) if entries.is_empty() => Ok(ToolResult::success(
                 "No memories found matching that query.",
             )),
@@ -102,101 +111,26 @@ impl Tool for MemoryRecallTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::inference::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::store::UnifiedMemory;
-    use crate::openhuman::memory::MemoryCategory;
-    use tempfile::TempDir;
-
-    fn seeded_mem() -> (TempDir, Arc<dyn Memory>) {
-        let tmp = TempDir::new().unwrap();
-        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-        (tmp, Arc::new(mem))
+/// The namespace a call searches: the one it names, or the default scope when
+/// it names none. An explicit empty string is a caller mistake, not a request
+/// for the default — the model had a namespace in mind and lost it.
+pub(crate) fn resolve_namespace(args: &serde_json::Value) -> anyhow::Result<&str> {
+    // Presence first, then type: the tool path hands the model's arguments
+    // over without schema validation, so a `null` or numeric namespace must
+    // be refused rather than silently read as "search the default scope".
+    let Some(value) = args.get("namespace") else {
+        return Ok(DEFAULT_AGENT_MEMORY_NAMESPACE);
+    };
+    let namespace = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("namespace must be a string"))?
+        .trim();
+    if namespace.is_empty() {
+        return Err(anyhow::anyhow!("namespace cannot be empty"));
     }
-
-    #[tokio::test]
-    async fn recall_empty() {
-        let (_tmp, mem) = seeded_mem();
-        let tool = MemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"namespace": "global", "query": "anything"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("No memories found"));
-    }
-
-    #[tokio::test]
-    async fn recall_finds_match() {
-        let (_tmp, mem) = seeded_mem();
-        mem.store(
-            "global",
-            "lang",
-            "User prefers Rust",
-            MemoryCategory::Core,
-            None,
-        )
-        .await
-        .unwrap();
-        mem.store(
-            "global",
-            "tz",
-            "Timezone is EST",
-            MemoryCategory::Core,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let tool = MemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"namespace": "global", "query": "Rust"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("Rust"));
-        assert!(result.output().contains("Found 1"));
-    }
-
-    #[tokio::test]
-    async fn recall_respects_limit() {
-        let (_tmp, mem) = seeded_mem();
-        for i in 0..10 {
-            mem.store(
-                "global",
-                &format!("k{i}"),
-                &format!("Rust fact {i}"),
-                MemoryCategory::Core,
-                None,
-            )
-            .await
-            .unwrap();
-        }
-
-        let tool = MemoryRecallTool::new(mem);
-        let result = tool
-            .execute(json!({"namespace": "global", "query": "Rust", "limit": 3}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("Found 3"));
-    }
-
-    #[tokio::test]
-    async fn recall_missing_query() {
-        let (_tmp, mem) = seeded_mem();
-        let tool = MemoryRecallTool::new(mem);
-        let result = tool.execute(json!({})).await;
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn name_and_schema() {
-        let (_tmp, mem) = seeded_mem();
-        let tool = MemoryRecallTool::new(mem);
-        assert_eq!(tool.name(), "memory_recall");
-        assert!(tool.parameters_schema()["properties"]["query"].is_object());
-    }
+    Ok(namespace)
 }
+
+#[cfg(test)]
+#[path = "recall_tests.rs"]
+mod tests;

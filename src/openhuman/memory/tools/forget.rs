@@ -1,4 +1,5 @@
-use crate::openhuman::memory::Memory;
+use crate::openhuman::memory::api::provider::MemoryCore;
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
@@ -8,13 +9,14 @@ use std::sync::Arc;
 
 /// Let the agent forget/delete a memory entry
 pub struct MemoryForgetTool {
-    memory: Arc<dyn Memory>,
     security: Arc<SecurityPolicy>,
 }
 
 impl MemoryForgetTool {
-    pub fn new(memory: Arc<dyn Memory>, security: Arc<SecurityPolicy>) -> Self {
-        Self { memory, security }
+    /// Holds no memory handle — the guarded driver is resolved per call.
+    #[must_use]
+    pub fn new(security: Arc<SecurityPolicy>) -> Self {
+        Self { security }
     }
 }
 
@@ -71,9 +73,12 @@ impl Tool for MemoryForgetTool {
         // Try the new split namespace/key first (covers post-migration rows),
         // then fall back to the legacy packed-key shape for rows that were
         // stored before the boot migration ran (Phase A compatibility).
-        let deleted = match self.memory.forget(namespace, key).await {
+        let guard = active_memory_guard()
+            .await
+            .map_err(|e| anyhow::anyhow!("memory_forget: {e}"))?;
+        let deleted = match guard.forget(namespace, key).await {
             Ok(true) => true,
-            Ok(false) => match self.memory.forget("", &legacy_key).await {
+            Ok(false) => match guard.forget("", &legacy_key).await {
                 Ok(deleted) => deleted,
                 Err(e) => return Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
             },
@@ -91,125 +96,5 @@ impl Tool for MemoryForgetTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::inference::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::store::UnifiedMemory;
-    use crate::openhuman::memory::MemoryCategory;
-    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
-    use tempfile::TempDir;
-
-    fn test_security() -> Arc<SecurityPolicy> {
-        Arc::new(SecurityPolicy::default())
-    }
-
-    fn test_mem() -> (TempDir, Arc<dyn Memory>) {
-        let tmp = TempDir::new().unwrap();
-        let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-        (tmp, Arc::new(mem))
-    }
-
-    #[test]
-    fn name_and_schema() {
-        let (_tmp, mem) = test_mem();
-        let tool = MemoryForgetTool::new(mem, test_security());
-        assert_eq!(tool.name(), "memory_forget");
-        assert!(tool.parameters_schema()["properties"]["key"].is_object());
-    }
-
-    #[tokio::test]
-    async fn forget_existing() {
-        let (_tmp, mem) = test_mem();
-        mem.store(
-            "",
-            "global/temp",
-            "temporary",
-            MemoryCategory::Conversation,
-            None,
-        )
-        .await
-        .unwrap();
-
-        let tool = MemoryForgetTool::new(mem.clone(), test_security());
-        let result = tool
-            .execute(json!({"namespace": "global", "key": "temp"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("Forgot"));
-
-        assert!(mem.get("", "global/temp").await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn forget_nonexistent() {
-        let (_tmp, mem) = test_mem();
-        let tool = MemoryForgetTool::new(mem, test_security());
-        let result = tool
-            .execute(json!({"namespace": "global", "key": "nope"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("No memory found"));
-    }
-
-    #[tokio::test]
-    async fn forget_missing_key() {
-        let (_tmp, mem) = test_mem();
-        let tool = MemoryForgetTool::new(mem, test_security());
-        let result = tool.execute(json!({})).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn forget_blocked_in_readonly_mode() {
-        let (_tmp, mem) = test_mem();
-        mem.store(
-            "",
-            "global/temp",
-            "temporary",
-            MemoryCategory::Conversation,
-            None,
-        )
-        .await
-        .unwrap();
-        let readonly = Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::ReadOnly,
-            ..SecurityPolicy::default()
-        });
-        let tool = MemoryForgetTool::new(mem.clone(), readonly);
-        let result = tool
-            .execute(json!({"namespace": "global", "key": "temp"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("read-only mode"));
-        assert!(mem.get("", "global/temp").await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn forget_blocked_when_rate_limited() {
-        let (_tmp, mem) = test_mem();
-        mem.store(
-            "",
-            "global/temp",
-            "temporary",
-            MemoryCategory::Conversation,
-            None,
-        )
-        .await
-        .unwrap();
-        let limited = Arc::new(SecurityPolicy {
-            max_actions_per_hour: 0,
-            ..SecurityPolicy::default()
-        });
-        let tool = MemoryForgetTool::new(mem.clone(), limited);
-        let result = tool
-            .execute(json!({"namespace": "global", "key": "temp"}))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.output().contains("Rate limit exceeded"));
-        assert!(mem.get("", "global/temp").await.unwrap().is_some());
-    }
-}
+#[path = "forget_tests.rs"]
+mod tests;

@@ -11,10 +11,25 @@ describe('ModelQualityPill', () => {
     expect(screen.getByText('OpenHuman')).toBeInTheDocument();
   });
 
-  it('renders quality indicator', () => {
-    render(<ModelQualityPill />);
-    // The quality value comes through t('composer.qualityHigh') which returns the key in test
-    expect(screen.getByText('composer.qualityHigh')).toBeInTheDocument();
+  /**
+   * Managed passthrough ids are encoded bare (no `providerSlug:` prefix). The
+   * label must not split them on `:` — doing so rendered
+   * `openrouter/nex-agi/nex-n2.5-mini:free` as just "free".
+   */
+  it('labels a managed passthrough model without stripping at the colon', () => {
+    render(<ModelQualityPill value="openrouter/nex-agi/nex-n2.5-mini:free" />);
+    expect(screen.getByText('nex-n2.5-mini:free')).toBeInTheDocument();
+  });
+
+  it('labels a managed passthrough model with no variant tag', () => {
+    render(<ModelQualityPill value="openrouter/deepseek/deepseek-v4-flash" />);
+    expect(screen.getByText('deepseek-v4-flash')).toBeInTheDocument();
+  });
+
+  /** A BYOK value still shows just the model, as before. */
+  it('still strips the provider prefix from a BYOK value', () => {
+    render(<ModelQualityPill value="openai:gpt-4o-mini" />);
+    expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
   });
 
   it('has chevron icon', () => {
@@ -29,7 +44,7 @@ describe('ModelQualityPill', () => {
     // Horizontal padding + rounded shape keep the trailing chevron fully
     // inside the pill instead of flush against its right edge.
     expect(button).toHaveClass('px-2');
-    expect(button).toHaveClass('rounded-full');
+    expect(button).toHaveClass('rounded-md');
     // The chevron itself must not shrink/clip when space is tight.
     const svg = button.querySelector('svg');
     expect(svg).toHaveClass('shrink-0');

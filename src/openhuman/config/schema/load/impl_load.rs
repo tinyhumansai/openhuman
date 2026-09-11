@@ -267,6 +267,7 @@ impl Config {
             &ProcessEnv,
         )
         .await
+        .inspect(super::active_workspace::publish_loaded_workspace)
     }
 
     pub(crate) async fn load_or_init_with_env_lookup(
@@ -490,6 +491,16 @@ impl Config {
                 schema_version: crate::openhuman::config::migrations::CURRENT_SCHEMA_VERSION,
                 ..Default::default()
             };
+            // A workspace created here is stamped at the *current* schema
+            // version, so the `run_pending` call below has no gate left to
+            // cross — including the `== 1` step that is the only place the
+            // managed `openhuman` cloud provider has ever been seeded. Without
+            // this, every fresh install starts with `cloud_providers = []` and
+            // can never acquire the entry, which is what left real workspaces
+            // failing `inference_list_models("openhuman")` before any request
+            // was made. Seed before the first `save` so the entry is on disk
+            // from the very first write rather than on some later one.
+            crate::openhuman::config::migrations::seed_new_workspace(&mut config);
             config.save().await?;
 
             #[cfg(unix)]
@@ -615,6 +626,7 @@ impl Config {
 
     pub async fn save(&self) -> Result<()> {
         let mut config_to_save = self.clone();
+        super::super::cli_overrides::restore_persisted_inference_fields(&mut config_to_save);
         encrypt_config_secrets(&mut config_to_save)?;
 
         let toml_str =
@@ -690,29 +702,17 @@ impl Config {
             .context("Failed to fsync temporary config file")?;
         drop(temp_file);
 
-        let had_existing_config = tokio::fs::try_exists(&self.config_path)
-            .await
-            .unwrap_or(false);
-        if had_existing_config {
-            fs::copy(&temp_path, &backup_path).await.with_context(|| {
-                format!(
-                    "Failed to create config backup before atomic replace: {}",
-                    backup_path.display()
-                )
-            })?;
-        }
-
-        if let Err(e) = fs::rename(&temp_path, &self.config_path).await {
-            let _ = fs::remove_file(&temp_path).await;
-            if had_existing_config && backup_path.exists() {
-                fs::copy(&backup_path, &self.config_path)
-                    .await
-                    .context("Failed to restore config backup")?;
-            }
-            anyhow::bail!("Failed to atomically replace config file: {e}");
-        }
-
-        super::sync_directory(parent_dir).await?;
+        // Everything above can still fail with the live config untouched.
+        // `commit_replacement` owns the swap, and returns `Err` only while the
+        // old config is still in place — see its docs for why callers that roll
+        // back on `Err` depend on that.
+        super::atomic_commit::commit_replacement(
+            &temp_path,
+            &self.config_path,
+            parent_dir,
+            &backup_path,
+        )
+        .await?;
 
         Ok(())
     }

@@ -1,7 +1,7 @@
 id = "settings_agent"
 display_name = "Settings Agent"
 delegate_name = "manage_settings"
-when_to_use = "Settings and system specialist — inspects app/core config, health, model diagnostics, service lifecycle, daemon preferences, proxy setup, updates, cost dashboards, and security policy. Use for 'change settings', 'is the app healthy', 'restart/install/stop the service', 'update OpenHuman', proxy/runtime questions, or local diagnostic requests."
+when_to_use = "Settings and system specialist: app/core config, health and model diagnostics, service lifecycle, proxy, updates, cost dashboards, security policy. Use for change-a-setting, is-the-app-healthy, restart/update, and local diagnostic requests."
 temperature = 0.2
 max_iterations = 8
 sandbox_mode = "none"
@@ -9,7 +9,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
 omit_profile = true
 omit_memory_md = true
 
@@ -47,5 +46,16 @@ named = [
     "update_check",
     "update_apply",
     "current_time",
+    # Session / credential / OAuth reads, inherited when `account_admin_agent`
+    # was removed with the billing and team tool families. These are read-only
+    # account *state* — which account is signed in, which providers are
+    # connected — which is settings territory; they have nothing to do with
+    # money movement or team administration, the two things that went away.
+    # `credential_list` returns non-secret metadata only.
+    "session_state",
+    "session_get_user",
+    "credential_list",
+    "oauth_connect_url",
+    "oauth_list",
     "ask_user_clarification",
 ]

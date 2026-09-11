@@ -50,6 +50,74 @@ canonical tokens. Don't add new colours there.
   they're themeable with no extra work.
 - Avoid hardcoded hex in `className` or inline `style`, since those bypass theming.
 
+## Colour as identity: the four-ramp ceiling
+
+A recurring shape in this codebase is a lookup table that answers "which thing
+is this?" with a colour — a skill category, an event-log domain, a notification
+provider, a catalogue source. Those tables are where stock Tailwind ramps keep
+creeping back in, because a table with nine rows wants nine hues and the app
+ships four.
+
+**There are exactly four themeable ramps: `primary`, `sage`, `amber`, `coral`.**
+Everything else in Tailwind's default palette (`emerald`, `violet`, `sky`,
+`teal`, `indigo`, `cyan`, `rose`, `pink`, `purple`, …) resolves to a fixed oklch
+value that ignores the user's active theme entirely. A table built on those hues
+looks fine in the default skin and falls apart in every other one.
+
+### The rule
+
+1. **Map a stock ramp to its themeable equivalent at the same shade step:**
+   `red → coral`, `green`/`emerald` → `sage`, `orange → amber`, `blue → primary`.
+   `bg-emerald-50 text-emerald-700` becomes `bg-sage-50 text-sage-700`.
+
+2. **Hues that have no equivalent do not get one.** `violet`, `teal`, `sky`,
+   `cyan`, `indigo`, `pink` and `purple` are not "nearly primary" or "nearly
+   sage". Do not invent a fifth ramp, do not duplicate an existing one under a
+   new name, and do not reach for `--accent-lavender` and friends — those are
+   fixed hexes, not ramps.
+
+3. **When a table needs more than four distinct hues, send the surplus rows to
+   the neutral pair the table already defines** (`bg-surface-subtle
+text-content-secondary`, or whatever that table's "unknown"/"other" row
+   uses). Never let two rows collide on the same ramp: two domains rendering
+   identically destroys the exact distinction the table exists to encode, which
+   is strictly worse than rendering one of them in neutral.
+
+4. **Decide which rows keep a hue by which distinction a reader acts on.** The
+   badge almost always prints its own label, so colour is a scanning aid, not
+   the information itself. Spend the four ramps on the readings that change what
+   someone does, and let the rest go neutral. Keep the semantics honest while
+   you are at it: `coral` reads as failure, so an ordinary row painted coral
+   makes routine state look broken. Leaving a ramp unassigned is a legitimate
+   outcome.
+
+Worked examples in the tree:
+
+| Table                                                     | Rows            | Kept a hue                                                                                  | Why                                                                                                                                           |
+| --------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills/skillIcons.tsx` `CATEGORY_META`                   | 9               | `Built-in` (primary), `Productivity` (sage), `Social` (coral), `Tools & Automation` (amber) | `Channels`, `Chat` and `Platform` share the neutral tone of `All` / `Other`                                                                   |
+| `skills/SkillsExplorerTab.tsx` `SOURCE_COLORS`            | 6               | `built-in` (sage), `optional` (primary)                                                     | The four remote catalogues print their own name; provenance tier is the distinction that matters                                              |
+| `skills/SkillsExplorerTab.tsx` `FORMAT_MAP`               | 5 rows, 3 tones | Hermes family (primary), ClawHub family (sage), `legacy` (amber)                            | Three tones fit under the ceiling, so nothing is lost                                                                                         |
+| `settings/panels/EventLogPanel.tsx` `DOMAIN_BADGE_COLORS` | 11              | `tool` (primary), `agent` (sage), `approval` (amber)                                        | Who acted, and what waits on a human. Coral stays unassigned — no domain means failure                                                        |
+| `notifications/NotificationCard.tsx` provider badge       | 6               | none                                                                                        | The importance badge in the same row already spends coral/amber/sage on high/medium/low; a coral provider would read as a failed notification |
+
+### Brand tints are a separate question
+
+A few plates are a third party's brand colour, not an app hue — Telegram's
+`#249CD8`, Discord's `#5865F2`, iMessage's `#34C759` in
+`skills/skillIcons.tsx`. Flattening those to `bg-surface-subtle` erases them
+into the generic badge beside them, so they are deliberately left as hex.
+Giving them a themeable home means **adding brand tokens**, which is a product
+decision rather than a cleanup. The same applies to the provider badges in
+`NotificationCard.tsx`: reaching back for a stock ramp is not the fix.
+
+### Do not repaint a primitive's variant
+
+`<Button variant="primary" className="bg-violet-500">` is the same bug wearing a
+different hat: the variant already paints the accent ramp, and the override
+both freezes the colour and desynchronises hover, focus and disabled states.
+Retint the surface around it instead, and drop the override.
+
 ## The migration codemod
 
 `scripts/theme-codemod/` collapses audited `light dark:` Tailwind pairings into

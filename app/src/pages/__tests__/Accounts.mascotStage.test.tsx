@@ -15,10 +15,6 @@ let activeAccountId = '__agent__';
 
 const state = () => ({ accounts: { accounts: {}, order: [], activeAccountId } });
 
-vi.mock('../../hooks/usePrewarmMostRecentAccount', () => ({
-  usePrewarmMostRecentAccount: vi.fn(),
-}));
-vi.mock('../../services/webviewAccountService', () => ({ startWebviewAccountService: vi.fn() }));
 vi.mock('../../store/hooks', () => ({
   useAppDispatch: () => mockDispatch,
   useAppSelector: (selector: (s: ReturnType<typeof state>) => unknown) => selector(state()),
@@ -111,17 +107,14 @@ describe('Accounts — merged chat + mascot surface', () => {
     expect(screen.getByTestId('chat-mascot-stage-column').style.transition).toContain('width');
   });
 
-  it('drops the mascot entirely while a connected app is selected', () => {
-    // HTML paints *behind* the native CEF provider webviews, so a fixed overlay
-    // left alive under WhatsApp/Slack would be an invisible canvas still
-    // burning frames.
+  it('keeps the chat and mascot available when stale provider selection remains', () => {
     mascotExpanded = true;
     activeAccountId = 'acct-whatsapp';
     renderPage();
 
-    expect(screen.queryByTestId('chat-mascot-overlay')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('chat-mascot-stage')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('agent-chat-panel')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chat-mascot-overlay')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-mascot-stage')).toBeInTheDocument();
+    expect(screen.getByTestId('agent-chat-panel')).toBeInTheDocument();
   });
 
   it('unmounts the mascot entirely once dismissed', () => {

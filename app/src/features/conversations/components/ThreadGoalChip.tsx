@@ -27,7 +27,7 @@ import {
 const POLL_INTERVAL_MS = 10_000;
 
 /** Shared controller returned by {@link useThreadGoal}. */
-interface ThreadGoalController {
+export interface ThreadGoalController {
   threadId: string | null;
   goal: ThreadGoal | null;
   /** Whether the editor panel (above the composer) is open. */
@@ -309,7 +309,7 @@ export function ThreadGoalEditorPanel({
         }}
         placeholder={t('conversations.threadGoal.placeholder')}
         aria-label={t('conversations.threadGoal.placeholder')}
-        className="w-full border-0 bg-transparent text-sm text-content outline-none focus:outline-none focus:ring-0 placeholder:text-stone-400"
+        className="w-full border-0 bg-transparent text-sm text-content outline-hidden focus:outline-hidden focus:ring-0 placeholder:text-content-faint"
       />
     </div>
   );

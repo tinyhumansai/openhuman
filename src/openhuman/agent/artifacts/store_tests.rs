@@ -194,11 +194,12 @@ async fn validate_artifact_id_rejects_slashes() {
 
 // ── create_artifact event publication (#3162) ─────────────────────────────
 
-use crate::core::event_bus::{
-    init_global, subscribe_global, DomainEvent, EventHandler, SubscriptionHandle,
-};
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex as StdMutex};
+use tinybus::EventHandler;
+use tinybus::SubscriptionHandle;
 
 #[derive(Clone)]
 struct PendingCollector {
@@ -213,7 +214,7 @@ impl PendingCollector {
     }
 
     fn subscribe(&self) -> Option<SubscriptionHandle> {
-        subscribe_global(Arc::new(self.clone()))
+        BUS.subscribe(Arc::new(self.clone()))
     }
 
     fn snapshot(&self) -> Vec<DomainEvent> {
@@ -222,7 +223,7 @@ impl PendingCollector {
 }
 
 #[async_trait]
-impl EventHandler for PendingCollector {
+impl EventHandler<DomainEvent> for PendingCollector {
     fn name(&self) -> &str {
         "test::pending_collector"
     }
@@ -254,7 +255,7 @@ impl EventHandler for PendingCollector {
 /// in-progress "Generating…" card before the file lands on disk.
 #[tokio::test]
 async fn create_artifact_publishes_artifact_pending_event() {
-    init_global(256);
+    crate::core::bus::init().await.expect("bus init");
     let collector = PendingCollector::new();
     let _handle = collector.subscribe();
 

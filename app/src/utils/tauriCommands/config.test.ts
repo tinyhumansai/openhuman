@@ -10,20 +10,16 @@ describe('tauriCommands/config', () => {
   const mockIsTauri = isTauri as Mock;
   const mockCallCoreRpc = callCoreRpc as Mock;
   let openhumanGetAutonomySettings: typeof import('./config').openhumanGetAutonomySettings;
-  let openhumanGetMeetSettings: typeof import('./config').openhumanGetMeetSettings;
   let openhumanUpdateAutonomySettings: typeof import('./config').openhumanUpdateAutonomySettings;
   let openhumanUpdateLocalAiSettings: typeof import('./config').openhumanUpdateLocalAiSettings;
-  let openhumanUpdateMeetSettings: typeof import('./config').openhumanUpdateMeetSettings;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     mockIsTauri.mockReturnValue(true);
     const actual = await vi.importActual<typeof import('./config')>('./config');
     openhumanGetAutonomySettings = actual.openhumanGetAutonomySettings;
-    openhumanGetMeetSettings = actual.openhumanGetMeetSettings;
     openhumanUpdateAutonomySettings = actual.openhumanUpdateAutonomySettings;
     openhumanUpdateLocalAiSettings = actual.openhumanUpdateLocalAiSettings;
-    openhumanUpdateMeetSettings = actual.openhumanUpdateMeetSettings;
   });
 
   afterEach(() => {
@@ -59,82 +55,6 @@ describe('tauriCommands/config', () => {
         method: 'openhuman.inference_update_local_settings',
         params: patch,
       });
-    });
-  });
-
-  describe('openhumanUpdateMeetSettings (#1299)', () => {
-    test('throws when not running in Tauri', async () => {
-      mockIsTauri.mockReturnValue(false);
-      await expect(
-        openhumanUpdateMeetSettings({ auto_orchestrator_handoff: true })
-      ).rejects.toThrow('Not running in Tauri');
-      expect(mockCallCoreRpc).not.toHaveBeenCalled();
-    });
-
-    test('forwards the patch to openhuman.config_update_meet_settings', async () => {
-      mockCallCoreRpc.mockResolvedValue({
-        result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
-        logs: [],
-      });
-      await openhumanUpdateMeetSettings({ auto_orchestrator_handoff: true });
-      expect(mockCallCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.config_update_meet_settings',
-        params: { auto_orchestrator_handoff: true },
-      });
-    });
-
-    test('forwards the Meeting Assistant fields (issue #3511)', async () => {
-      mockCallCoreRpc.mockResolvedValue({
-        result: { config: {}, workspace_dir: '/tmp', config_path: '/tmp/cfg.toml' },
-        logs: [],
-      });
-      await openhumanUpdateMeetSettings({
-        auto_join_policy: 'always',
-        auto_summarize_policy: 'never',
-        listen_only_default: false,
-        ingest_backend_transcripts: true,
-      });
-      expect(mockCallCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.config_update_meet_settings',
-        params: {
-          auto_join_policy: 'always',
-          auto_summarize_policy: 'never',
-          listen_only_default: false,
-          ingest_backend_transcripts: true,
-        },
-      });
-    });
-  });
-
-  describe('openhumanGetMeetSettings (#1299)', () => {
-    test('throws when not running in Tauri', async () => {
-      mockIsTauri.mockReturnValue(false);
-      await expect(openhumanGetMeetSettings()).rejects.toThrow('Not running in Tauri');
-      expect(mockCallCoreRpc).not.toHaveBeenCalled();
-    });
-
-    test('reads via openhuman.config_get_meet_settings', async () => {
-      mockCallCoreRpc.mockResolvedValue({
-        result: {
-          auto_orchestrator_handoff: true,
-          auto_join_policy: 'always',
-          auto_summarize_policy: 'never',
-          listen_only_default: false,
-          ingest_backend_transcripts: true,
-          calendar_provider: 'recall',
-        },
-        logs: [],
-      });
-      const out = await openhumanGetMeetSettings();
-      expect(mockCallCoreRpc).toHaveBeenCalledWith({
-        method: 'openhuman.config_get_meet_settings',
-      });
-      expect(out.result.auto_orchestrator_handoff).toBe(true);
-      expect(out.result.auto_join_policy).toBe('always');
-      expect(out.result.auto_summarize_policy).toBe('never');
-      expect(out.result.listen_only_default).toBe(false);
-      expect(out.result.ingest_backend_transcripts).toBe(true);
-      expect(out.result.calendar_provider).toBe('recall');
     });
   });
 

@@ -16,7 +16,7 @@
 //!      launches only when `enabled_backends` is non-empty.
 //!   4. `node_runtime`   — managed Node.js (skills / MCP).
 //!
-//! Voice models (Whisper, Piper) and Ollama stay lazy/opt-in and are
+//! Voice models (Piper) and Ollama stay lazy/opt-in and are
 //! intentionally NOT registered here; they can be added later as steps.
 
 use std::future::Future;
@@ -62,6 +62,9 @@ pub fn all_steps() -> Vec<HarnessInitStep> {
         spacy_step(),
         kompress_step(),
         runtime_python_server_step(),
+        // Registration-site gate: no managed toolchain to provision when
+        // `runtime-node` is compiled out, so the step is absent.
+        #[cfg(feature = "runtime-node")]
         node_runtime_step(),
     ]
 }
@@ -99,7 +102,7 @@ async fn python_is_done(config: &Config) -> bool {
     // `try_cached`), so an already-installed interpreter is detected without
     // entering a user-visible provisioning run (GH-5047). Never downloads.
     use crate::openhuman::runtime::python::PythonBootstrap;
-    PythonBootstrap::new(config.runtime_python.clone())
+    PythonBootstrap::new(std::sync::Arc::new(config.clone()))
         .probe_installed()
         .await
         .is_some()
@@ -110,7 +113,7 @@ async fn python_run(config: &Config) -> Result<(), String> {
         return Ok(());
     }
     use crate::openhuman::runtime::python::PythonBootstrap;
-    PythonBootstrap::new(config.runtime_python.clone())
+    PythonBootstrap::new(std::sync::Arc::new(config.clone()))
         .resolve()
         .await
         .map(|resolved| {
@@ -232,6 +235,7 @@ async fn kompress_run(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("{e:#}"))
 }
 
+#[cfg(feature = "runtime-node")]
 fn node_runtime_step() -> HarnessInitStep {
     HarnessInitStep {
         id: "node_runtime",
@@ -243,14 +247,12 @@ fn node_runtime_step() -> HarnessInitStep {
     }
 }
 
+#[cfg(feature = "runtime-node")]
 fn build_node_bootstrap(config: &Config) -> crate::openhuman::runtime::node::NodeBootstrap {
-    crate::openhuman::runtime::node::NodeBootstrap::new(
-        config.node.clone(),
-        config.workspace_dir.clone(),
-        reqwest::Client::new(),
-    )
+    crate::openhuman::runtime::node::NodeBootstrap::new(std::sync::Arc::new(config.clone()))
 }
 
+#[cfg(feature = "runtime-node")]
 async fn node_is_done(config: &Config) -> bool {
     if !config.node.enabled {
         return true;
@@ -264,6 +266,7 @@ async fn node_is_done(config: &Config) -> bool {
         .is_some()
 }
 
+#[cfg(feature = "runtime-node")]
 async fn node_run(config: &Config) -> Result<(), String> {
     if !config.node.enabled {
         return Ok(());
@@ -282,98 +285,5 @@ async fn node_run(config: &Config) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_steps_have_stable_ids_and_are_non_required() {
-        let steps = all_steps();
-        let ids: Vec<_> = steps.iter().map(|s| s.id).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "python_runtime",
-                "spacy",
-                "kompress",
-                "runtime_python_server",
-                "node_runtime"
-            ]
-        );
-        assert!(steps.iter().all(|s| !s.required));
-        assert!(steps.iter().all(|s| !s.label.is_empty()));
-    }
-
-    /// GH-5047: only genuine install/download steps may surface the blocking
-    /// overlay. `runtime_python_server` is routine service startup and must be
-    /// classified non-provisioning so a warm restart never re-shows setup.
-    #[test]
-    fn provisioning_classification_excludes_service_startup() {
-        for step in all_steps() {
-            let expected = step.id != "runtime_python_server";
-            assert_eq!(
-                step.provisioning, expected,
-                "step {} provisioning flag mismatch",
-                step.id
-            );
-        }
-    }
-
-    /// #5056: on a fresh install (`Config::default()`) `runtime_python.enabled`
-    /// is `true` but no Python backend (spaCy/Kompress) is on, so the
-    /// `python_runtime` step must report itself already `Done` and `run` must
-    /// be a no-op — proving the eager managed-CPython download is skipped
-    /// when nothing at boot needs it. This is a pure gating check
-    /// (`python_needed_eagerly` returns `false`): it never touches disk or
-    /// resolves a real interpreter, so it stays hermetic.
-    #[tokio::test]
-    async fn python_runtime_step_is_done_by_default_with_no_backend_enabled() {
-        let config = Config::default();
-        assert!(
-            !python_needed_eagerly(&config),
-            "default config should not need Python eagerly (no backend enabled)"
-        );
-        assert!(
-            python_is_done(&config).await,
-            "python_runtime step should be Done without provisioning when no backend is enabled"
-        );
-        assert!(
-            python_run(&config).await.is_ok(),
-            "python_runtime run should no-op when no backend is enabled"
-        );
-    }
-
-    /// Inverse of the above: once a backend (spaCy) is enabled, the step must
-    /// no longer be trivially `Done` via the eager-skip branch — proving the
-    /// gate still allows provisioning when a backend genuinely needs Python.
-    /// We only assert the gating predicate here (not `is_done`/`run`), so the
-    /// test never attempts a real interpreter probe/download.
-    #[test]
-    fn python_needed_eagerly_true_when_spacy_backend_enabled() {
-        let mut config = Config::default();
-        config.runtime_python.enabled = true;
-        config.memory_tree.spacy_enabled = true;
-        assert!(
-            python_needed_eagerly(&config),
-            "python should be needed eagerly once a Python backend is enabled"
-        );
-    }
-
-    #[tokio::test]
-    async fn disabled_runtimes_report_done_without_work() {
-        let mut config = Config::default();
-        config.runtime_python.enabled = false;
-        config.node.enabled = false;
-        for step in all_steps() {
-            assert!(
-                (step.is_done)(&config).await,
-                "step {} should be done when its runtime is disabled",
-                step.id
-            );
-            assert!(
-                (step.run)(&config).await.is_ok(),
-                "step {} run should no-op when disabled",
-                step.id
-            );
-        }
-    }
-}
+#[path = "registry_tests.rs"]
+mod tests;

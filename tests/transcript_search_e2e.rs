@@ -3,7 +3,8 @@
 //! Proves the path the context scout (and any agent) actually walks when it
 //! "goes through chat messages": persist real conversation threads + messages
 //! via `ConversationStore`, then exercise both the `threads::ops::transcript_search`
-//! op and the agent-facing `transcript_search` tool (`ThreadTranscriptSearchTool`)
+//! op. The agent-facing `transcript_search` tool was removed with the rest of
+//! the `thread_*` tool family; the op below still backs the RPC surface.
 //! against that on-disk data under a per-test temp `OPENHUMAN_WORKSPACE`.
 //!
 //! This is the Rust contract counterpart to the live-session audit in
@@ -22,8 +23,6 @@ use openhuman_core::openhuman::memory::conversations::{
     ConversationMessage, ConversationStore, CreateConversationThread,
 };
 use openhuman_core::openhuman::threads::ops::transcript_search;
-use openhuman_core::openhuman::threads::tools::ThreadTranscriptSearchTool;
-use openhuman_core::openhuman::tools::traits::Tool;
 
 // ── Env isolation (mirrors tests/memory_roundtrip_e2e.rs) ────────────────────
 
@@ -208,129 +207,4 @@ async fn transcript_search_op_returns_empty_on_no_match() {
         .expect("transcript_search op");
 
     assert!(hits.is_empty(), "no message should match — got {hits:?}");
-}
-
-/// The agent-facing tool (`transcript_search`) — the exact entry point the
-/// context scout calls — formats hits into a readable block that names the
-/// source thread and quotes a snippet of the matched message.
-#[tokio::test]
-async fn transcript_search_tool_formats_hits_for_the_agent() {
-    let _lock = env_lock().await;
-    let tmp = tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).expect("create workspace");
-    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    seed_workspace(&workspace);
-
-    let result = ThreadTranscriptSearchTool
-        .execute(json!({ "query": "Postgres migration", "limit": 5 }))
-        .await
-        .expect("transcript_search tool");
-    assert!(!result.is_error, "tool should succeed: {}", result.output());
-    let out = result.output();
-    assert!(
-        out.contains("matched"),
-        "output should announce matches — got: {out}"
-    );
-    assert!(
-        out.contains("thread-pg"),
-        "output should name the source thread — got: {out}"
-    );
-    assert!(
-        out.contains("db/migrate_2026.sql"),
-        "output should quote the matched message snippet — got: {out}"
-    );
-}
-
-/// The tool reports a clean "no match" line (rather than an error) so the scout
-/// can record "nothing in past chats" and move on.
-#[tokio::test]
-async fn transcript_search_tool_reports_no_match_cleanly() {
-    let _lock = env_lock().await;
-    let tmp = tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).expect("create workspace");
-    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    seed_workspace(&workspace);
-
-    let result = ThreadTranscriptSearchTool
-        .execute(json!({ "query": "nonexistent-term-xyzzy" }))
-        .await
-        .expect("transcript_search tool");
-    assert!(
-        !result.is_error,
-        "no-match is not an error: {}",
-        result.output()
-    );
-    assert!(
-        result.output().contains("No past messages matched"),
-        "expected the clean no-match line — got: {}",
-        result.output()
-    );
-}
-
-/// Passing an explicit `exclude_thread_id` drops that thread from the tool's
-/// results. "migration" lives only in thread-pg, so excluding it yields the
-/// clean no-match line.
-#[tokio::test]
-async fn transcript_search_tool_excludes_named_thread() {
-    let _lock = env_lock().await;
-    let tmp = tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).expect("create workspace");
-    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    seed_workspace(&workspace);
-
-    let result = ThreadTranscriptSearchTool
-        .execute(json!({ "query": "migration", "exclude_thread_id": "thread-pg" }))
-        .await
-        .expect("transcript_search tool");
-    assert!(!result.is_error, "tool should succeed: {}", result.output());
-    assert!(
-        result.output().contains("No past messages matched"),
-        "excluding the only matching thread should yield no matches — got: {}",
-        result.output()
-    );
-}
-
-/// An explicit empty `exclude_thread_id` is the opt-out: search every thread.
-/// (With no active-thread context set in this test, the default path also
-/// searches all — this pins the empty-string contract regardless.)
-#[tokio::test]
-async fn transcript_search_tool_empty_exclude_searches_all_threads() {
-    let _lock = env_lock().await;
-    let tmp = tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).expect("create workspace");
-    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    seed_workspace(&workspace);
-
-    let result = ThreadTranscriptSearchTool
-        .execute(json!({ "query": "migration", "exclude_thread_id": "" }))
-        .await
-        .expect("transcript_search tool");
-    assert!(!result.is_error, "tool should succeed: {}", result.output());
-    assert!(
-        result.output().contains("thread-pg"),
-        "empty exclude must still surface the matching thread — got: {}",
-        result.output()
-    );
-}
-
-/// A missing `query` is a tool error, not a panic — guards the agent against
-/// malformed calls.
-#[tokio::test]
-async fn transcript_search_tool_requires_query() {
-    let err = ThreadTranscriptSearchTool
-        .execute(json!({}))
-        .await
-        .expect_err("missing query must error");
-    assert!(
-        err.to_string().contains("query"),
-        "error should mention `query`: {err}"
-    );
 }

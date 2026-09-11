@@ -1,0 +1,675 @@
+use crate::openhuman::config::Config;
+use crate::openhuman::cron::{
+    next_run_for_schedule, schedule_cron_expression, validate_agent_schedule, validate_schedule,
+    CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
+};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection};
+use uuid::Uuid;
+
+const MAX_CRON_OUTPUT_BYTES: usize = 16 * 1024;
+const TRUNCATED_OUTPUT_MARKER: &str = "\n...[truncated]";
+
+pub fn add_job(config: &Config, expression: &str, command: &str) -> Result<CronJob> {
+    let schedule = Schedule::Cron {
+        expr: expression.to_string(),
+        tz: None,
+        active_hours: None,
+    };
+    add_shell_job(config, None, schedule, command)
+}
+
+pub fn add_shell_job(
+    config: &Config,
+    name: Option<String>,
+    schedule: Schedule,
+    command: &str,
+) -> Result<CronJob> {
+    let now = Utc::now();
+    validate_schedule(&schedule, now)?;
+    let next_run = next_run_for_schedule(&schedule, now)?;
+    let id = Uuid::new_v4().to_string();
+    let expression = schedule_cron_expression(&schedule).unwrap_or_default();
+    let schedule_json = serde_json::to_string(&schedule)?;
+
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO cron_jobs (
+                id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                enabled, delivery, delete_after_run, created_at, next_run
+             ) VALUES (?1, ?2, ?3, ?4, 'shell', NULL, ?5, 'isolated', NULL, 1, ?6, 0, ?7, ?8)",
+            params![
+                id,
+                expression,
+                command,
+                schedule_json,
+                name,
+                serde_json::to_string(&DeliveryConfig::default())?,
+                now.to_rfc3339(),
+                next_run.to_rfc3339(),
+            ],
+        )
+        .context("Failed to insert cron shell job")?;
+        Ok(())
+    })?;
+
+    get_job(config, &id)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn add_agent_job(
+    config: &Config,
+    name: Option<String>,
+    schedule: Schedule,
+    prompt: &str,
+    session_target: SessionTarget,
+    model: Option<String>,
+    delivery: Option<DeliveryConfig>,
+    delete_after_run: bool,
+) -> Result<CronJob> {
+    add_agent_job_with_definition(
+        config,
+        name,
+        schedule,
+        prompt,
+        session_target,
+        model,
+        delivery,
+        delete_after_run,
+        None,
+        true,
+        None,
+    )
+}
+
+/// Like [`add_agent_job`] but accepts an optional built-in agent definition
+/// ID. When set, the scheduler resolves the agent definition from the
+/// registry and runs with its prompt, tool allowlist, and iteration cap.
+#[allow(clippy::too_many_arguments)]
+pub fn add_agent_job_with_definition(
+    config: &Config,
+    name: Option<String>,
+    schedule: Schedule,
+    prompt: &str,
+    session_target: SessionTarget,
+    model: Option<String>,
+    delivery: Option<DeliveryConfig>,
+    delete_after_run: bool,
+    agent_id: Option<String>,
+    enabled: bool,
+    profile_id: Option<String>,
+) -> Result<CronJob> {
+    let now = Utc::now();
+    // Agent runs are inference turns: on top of the generic checks, refuse a
+    // schedule tighter than `MIN_AGENT_JOB_INTERVAL` (#6158).
+    validate_agent_schedule(&schedule, now)?;
+    let next_run = next_run_for_schedule(&schedule, now)?;
+    let id = Uuid::new_v4().to_string();
+    let expression = schedule_cron_expression(&schedule).unwrap_or_default();
+    let schedule_json = serde_json::to_string(&schedule)?;
+    let delivery = delivery.unwrap_or_default();
+
+    with_connection(config, |conn| {
+        // `enabled` is bound (?13) rather than hard-coded so callers can insert a
+        // job in its final disabled state in one statement — important for opt-in
+        // jobs (e.g. the autopilot) where a create-then-disable sequence could
+        // leave the row enabled if the process died between the two writes.
+        conn.execute(
+            "INSERT INTO cron_jobs (
+                id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                enabled, delivery, delete_after_run, created_at, next_run, agent_id, profile_id
+             ) VALUES (?1, ?2, '', ?3, 'agent', ?4, ?5, ?6, ?7, ?13, ?8, ?9, ?10, ?11, ?12, ?14)",
+            params![
+                id,
+                expression,
+                schedule_json,
+                prompt,
+                name,
+                session_target.as_str(),
+                model,
+                serde_json::to_string(&delivery)?,
+                if delete_after_run { 1 } else { 0 },
+                now.to_rfc3339(),
+                next_run.to_rfc3339(),
+                agent_id,
+                if enabled { 1 } else { 0 },
+                profile_id,
+            ],
+        )
+        .context("Failed to insert cron agent job")?;
+        Ok(())
+    })?;
+
+    get_job(config, &id)
+}
+
+/// Registers the cron job that fires a `flows::Flow`'s `schedule` trigger
+/// (issue B2). The flow's id is stored in `command` — a flow-schedule job has
+/// no shell command / agent prompt of its own, it only needs to name which
+/// flow to tick (see `JobType::Flow`'s doc). On fire the scheduler publishes
+/// `DomainEvent::FlowScheduleTick { flow_id: command }` instead of running
+/// anything; `flows::bus::FlowTriggerSubscriber` does the actual dispatch.
+///
+/// Race-safe / idempotent: `bind_schedule_trigger` does check-then-act
+/// (`find_flow_schedule_job` then this function), so two concurrent binds for
+/// the same flow can both observe "no job yet". The `idx_cron_jobs_flow_command`
+/// partial unique index (flow jobs only) turns the loser's `INSERT` into a
+/// no-op via `ON CONFLICT ... DO NOTHING`, and that loser then looks up and
+/// returns the winner's row instead of erroring — callers always get back
+/// exactly one cron job for `flow_id`, never a duplicate and never a
+/// constraint-violation error.
+pub fn add_flow_schedule_job(
+    config: &Config,
+    flow_id: &str,
+    schedule: Schedule,
+) -> Result<CronJob> {
+    let now = Utc::now();
+    validate_schedule(&schedule, now)?;
+    let next_run = next_run_for_schedule(&schedule, now)?;
+    let id = Uuid::new_v4().to_string();
+    let expression = schedule_cron_expression(&schedule).unwrap_or_default();
+    let schedule_json = serde_json::to_string(&schedule)?;
+    let name = format!("flow:{flow_id}");
+
+    let inserted_rows = with_connection(config, |conn| {
+        let rows = conn
+            .execute(
+                "INSERT INTO cron_jobs (
+                    id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run
+                 ) VALUES (?1, ?2, ?3, ?4, 'flow', NULL, ?5, 'isolated', NULL, 1, ?6, 0, ?7, ?8)
+                 ON CONFLICT (command) WHERE job_type = 'flow' DO NOTHING",
+                params![
+                    id,
+                    expression,
+                    flow_id,
+                    schedule_json,
+                    name,
+                    serde_json::to_string(&DeliveryConfig::default())?,
+                    now.to_rfc3339(),
+                    next_run.to_rfc3339(),
+                ],
+            )
+            .context("Failed to insert cron flow-schedule job")?;
+        Ok(rows)
+    })?;
+
+    if inserted_rows > 0 {
+        get_job(config, &id)
+    } else {
+        // Lost the race — another caller already holds the flow-schedule job
+        // for this flow_id/command. Return its row rather than erroring so
+        // `add_flow_schedule_job` is safe to call twice concurrently.
+        tracing::debug!(
+            target: "cron",
+            %flow_id,
+            "[cron] add_flow_schedule_job: insert conflicted with an existing flow job — returning the existing binding"
+        );
+        find_flow_schedule_job(config, flow_id)?.with_context(|| {
+            format!(
+                "add_flow_schedule_job: insert for flow '{flow_id}' conflicted but no existing \
+                 flow-schedule job was found"
+            )
+        })
+    }
+}
+
+/// Finds the cron job (if any) registered for a flow's `schedule` trigger —
+/// used by `flows::ops::flows_set_enabled` to make enable/disable idempotent
+/// (re-use the existing binding rather than creating a duplicate) and to tear
+/// it down on disable.
+pub fn find_flow_schedule_job(config: &Config, flow_id: &str) -> Result<Option<CronJob>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run, last_run, last_status, last_output,
+                    agent_id, profile_id
+             FROM cron_jobs WHERE job_type = 'flow' AND command = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![flow_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(map_cron_job_row(row)?)),
+            None => Ok(None),
+        }
+    })
+}
+
+pub fn list_jobs(config: &Config) -> Result<Vec<CronJob>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run, last_run, last_status, last_output,
+                    agent_id, profile_id
+             FROM cron_jobs ORDER BY next_run ASC",
+        )?;
+
+        let rows = stmt.query_map([], map_cron_job_row)?;
+
+        let mut jobs = Vec::new();
+        for row in rows {
+            jobs.push(row?);
+        }
+        Ok(jobs)
+    })
+}
+
+pub fn get_job(config: &Config, job_id: &str) -> Result<CronJob> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run, last_run, last_status, last_output,
+                    agent_id, profile_id
+             FROM cron_jobs WHERE id = ?1",
+        )?;
+
+        let mut rows = stmt.query(params![job_id])?;
+        if let Some(row) = rows.next()? {
+            map_cron_job_row(row).map_err(Into::into)
+        } else {
+            anyhow::bail!("Cron job '{job_id}' not found")
+        }
+    })
+}
+
+pub fn remove_job(config: &Config, id: &str) -> Result<()> {
+    let changed = with_connection(config, |conn| {
+        conn.execute("DELETE FROM cron_jobs WHERE id = ?1", params![id])
+            .context("Failed to delete cron job")
+    })?;
+
+    if changed == 0 {
+        anyhow::bail!("Cron job '{id}' not found");
+    }
+
+    println!("✅ Removed cron job {id}");
+    Ok(())
+}
+
+/// Deletes every cron job in the workspace. Returns the number of rows removed.
+///
+/// Intended for the `openhuman.test_reset` RPC used by E2E specs to wipe state
+/// between tests without restarting the sidecar. The cron scheduler picks up
+/// the empty table on its next tick — no in-memory cache to invalidate.
+pub fn clear_all_jobs(config: &Config) -> Result<usize> {
+    let removed = with_connection(config, |conn| {
+        conn.execute("DELETE FROM cron_jobs", params![])
+            .context("Failed to clear cron jobs")
+    })?;
+    log::info!("[cron] cleared all cron jobs (removed {removed} rows)");
+    Ok(removed)
+}
+
+/// Remove duplicate cron jobs that share the same `name`.
+///
+/// Older builds used a non-atomic check-then-insert in `seed_proactive_agents`,
+/// which allowed two identical rows (e.g. two `morning_briefing` entries) to
+/// land in the database when the function raced or was called twice before the
+/// first insert committed. The `cron_jobs` table has no `UNIQUE` constraint on
+/// `name`, so both rows persist and the Routines screen renders two cards.
+///
+/// For each duplicated name this function keeps the row with the most
+/// `cron_runs` history (ties broken by earliest `created_at`) and deletes
+/// all others. Returns the total number of rows removed across all names.
+///
+/// Idempotent: calling it on a database with no duplicates removes nothing
+/// and returns `Ok(0)`.
+pub fn dedup_named_jobs(config: &Config) -> Result<usize> {
+    with_connection(config, |conn| {
+        // 1. Find all names that appear more than once.
+        let duplicated_names: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT name FROM cron_jobs \
+                 WHERE name IS NOT NULL \
+                 GROUP BY name \
+                 HAVING COUNT(*) > 1",
+            )?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for n in names {
+                out.push(n?);
+            }
+            out
+        };
+
+        if duplicated_names.is_empty() {
+            return Ok(0);
+        }
+
+        let mut canonical_stmt = conn.prepare(
+            "SELECT j.id \
+             FROM cron_jobs j \
+             LEFT JOIN cron_runs r ON r.job_id = j.id \
+             WHERE j.name = ?1 \
+             GROUP BY j.id \
+             ORDER BY COUNT(r.id) DESC, j.created_at ASC, j.id ASC \
+             LIMIT 1",
+        )?;
+
+        let mut total_removed = 0usize;
+        for name in &duplicated_names {
+            // 2. Find the canonical id: most run history, tie-break earliest created_at.
+            let canonical_id: Option<String> = {
+                let mut rows = canonical_stmt.query(params![name])?;
+                rows.next()?.map(|r| r.get::<_, String>(0)).transpose()?
+            };
+
+            let Some(keep_id) = canonical_id else {
+                continue;
+            };
+
+            // 3. Delete every other row sharing this name.
+            let deleted = conn.execute(
+                "DELETE FROM cron_jobs WHERE name = ?1 AND id != ?2",
+                params![name, keep_id],
+            )?;
+            log::info!(
+                "[cron] dedup_named_jobs: removed {deleted} duplicate(s) of '{name}' \
+                 (keeping id={keep_id})"
+            );
+            total_removed += deleted;
+        }
+
+        Ok(total_removed)
+    })
+}
+
+pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
+    let lim = i64::try_from(config.scheduler.max_tasks.max(1))
+        .context("Scheduler max_tasks overflows i64")?;
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run, last_run, last_status, last_output,
+                    agent_id, profile_id
+             FROM cron_jobs
+             WHERE enabled = 1 AND next_run <= ?1
+             ORDER BY next_run ASC
+             LIMIT ?2",
+        )?;
+
+        let rows = stmt.query_map(params![now.to_rfc3339(), lim], map_cron_job_row)?;
+
+        let mut jobs = Vec::new();
+        for row in rows {
+            jobs.push(row?);
+        }
+        Ok(jobs)
+    })
+}
+
+pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<CronJob> {
+    let mut job = get_job(config, job_id)?;
+    let was_enabled = job.enabled;
+    let mut schedule_changed = false;
+
+    if let Some(schedule) = patch.schedule {
+        // The agent-only floor applies whenever the schedule is (re)set, so a
+        // row that predates it keeps running untouched until its schedule is
+        // edited — and then has to comply like a new job.
+        match job.job_type {
+            JobType::Agent => validate_agent_schedule(&schedule, Utc::now())?,
+            JobType::Shell | JobType::Flow => validate_schedule(&schedule, Utc::now())?,
+        }
+        job.schedule = schedule;
+        job.expression = schedule_cron_expression(&job.schedule).unwrap_or_default();
+        schedule_changed = true;
+    }
+    if let Some(command) = patch.command {
+        job.command = command;
+    }
+    if let Some(prompt) = patch.prompt {
+        job.prompt = Some(prompt);
+    }
+    if let Some(name) = patch.name {
+        job.name = Some(name);
+    }
+    if let Some(enabled) = patch.enabled {
+        job.enabled = enabled;
+    }
+    if let Some(delivery) = patch.delivery {
+        job.delivery = delivery;
+    }
+    if let Some(model) = patch.model {
+        job.model = Some(model);
+    }
+    if let Some(target) = patch.session_target {
+        job.session_target = target;
+    }
+    if let Some(delete_after_run) = patch.delete_after_run {
+        job.delete_after_run = delete_after_run;
+    }
+    if let Some(agent_id) = patch.agent_id {
+        job.agent_id = agent_id;
+    }
+    if let Some(profile_id) = patch.profile_id {
+        job.profile_id = profile_id;
+    }
+
+    if schedule_changed {
+        job.next_run = next_run_for_schedule(&job.schedule, Utc::now())?;
+    } else if job.enabled && !was_enabled {
+        // Disabled→enabled transition (e.g. opting into a seeded morning
+        // briefing). A job that sat disabled past its originally computed
+        // next_run would otherwise fire immediately on opt-in, because the
+        // scheduler selects `enabled = 1 AND next_run <= now`. Refresh a stale
+        // next_run so the first run lands on the next scheduled occurrence
+        // rather than firing the instant the user flips the switch.
+        let now = Utc::now();
+        if job.next_run <= now {
+            let refreshed = next_run_for_schedule(&job.schedule, now)?;
+            tracing::debug!(
+                job_id = %job.id,
+                stale_next_run = %job.next_run.to_rfc3339(),
+                next_run = %refreshed.to_rfc3339(),
+                "[cron::update_job] refreshed stale next_run on disabled→enabled transition"
+            );
+            job.next_run = refreshed;
+        }
+    }
+
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs
+             SET expression = ?1, command = ?2, schedule = ?3, job_type = ?4, prompt = ?5, name = ?6,
+                 session_target = ?7, model = ?8, enabled = ?9, delivery = ?10, delete_after_run = ?11,
+                 next_run = ?12, agent_id = ?14, profile_id = ?15
+             WHERE id = ?13",
+            params![
+                job.expression,
+                job.command,
+                serde_json::to_string(&job.schedule)?,
+                job.job_type.as_str(),
+                job.prompt,
+                job.name,
+                job.session_target.as_str(),
+                job.model,
+                if job.enabled { 1 } else { 0 },
+                serde_json::to_string(&job.delivery)?,
+                if job.delete_after_run { 1 } else { 0 },
+                job.next_run.to_rfc3339(),
+                job.id,
+                job.agent_id,
+                job.profile_id,
+            ],
+        )
+        .context("Failed to update cron job")?;
+        Ok(())
+    })?;
+
+    get_job(config, job_id)
+}
+
+pub fn record_last_run(
+    config: &Config,
+    job_id: &str,
+    finished_at: DateTime<Utc>,
+    success: bool,
+    output: &str,
+) -> Result<()> {
+    let status = if success { "ok" } else { "error" };
+    let bounded_output = truncate_cron_output(output);
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs
+             SET last_run = ?1, last_status = ?2, last_output = ?3
+             WHERE id = ?4",
+            params![finished_at.to_rfc3339(), status, bounded_output, job_id],
+        )
+        .context("Failed to update cron last run fields")?;
+        Ok(())
+    })
+}
+
+pub fn reschedule_after_run(
+    config: &Config,
+    job: &CronJob,
+    success: bool,
+    output: &str,
+) -> Result<()> {
+    let now = Utc::now();
+    let next_run = next_run_for_schedule(&job.schedule, now)?;
+    let status = if success { "ok" } else { "error" };
+    let bounded_output = truncate_cron_output(output);
+
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs
+             SET next_run = ?1, last_run = ?2, last_status = ?3, last_output = ?4
+             WHERE id = ?5",
+            params![
+                next_run.to_rfc3339(),
+                now.to_rfc3339(),
+                status,
+                bounded_output,
+                job.id
+            ],
+        )
+        .context("Failed to update cron job run state")?;
+        Ok(())
+    })
+}
+
+pub fn record_run(
+    config: &Config,
+    job_id: &str,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    status: &str,
+    output: Option<&str>,
+    duration_ms: i64,
+) -> Result<()> {
+    let bounded_output = output.map(truncate_cron_output);
+    with_connection(config, |conn| {
+        // Wrap INSERT + pruning DELETE in an explicit transaction so that
+        // if the DELETE fails, the INSERT is rolled back and the run table
+        // cannot grow unboundedly.
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute(
+            "INSERT INTO cron_runs (job_id, started_at, finished_at, status, output, duration_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                job_id,
+                started_at.to_rfc3339(),
+                finished_at.to_rfc3339(),
+                status,
+                bounded_output.as_deref(),
+                duration_ms,
+            ],
+        )
+        .context("Failed to insert cron run")?;
+
+        let keep = config.cron.max_run_history.max(1) as i64;
+        tx.execute(
+            "DELETE FROM cron_runs
+             WHERE job_id = ?1
+               AND id NOT IN (
+                 SELECT id FROM cron_runs
+                 WHERE job_id = ?1
+                 ORDER BY started_at DESC, id DESC
+                 LIMIT ?2
+               )",
+            params![job_id, keep],
+        )
+        .context("Failed to prune cron run history")?;
+
+        tx.commit()
+            .context("Failed to commit cron run transaction")?;
+        Ok(())
+    })
+}
+
+/// Remove all "queued" placeholder records for a given job so that only the
+/// real (ok/error) result row remains in the run history.
+pub fn delete_queued_runs(config: &Config, job_id: &str) -> Result<usize> {
+    with_connection(config, |conn| {
+        let deleted = conn.execute(
+            "DELETE FROM cron_runs WHERE job_id = ?1 AND status = 'queued'",
+            params![job_id],
+        )?;
+        Ok(deleted)
+    })
+}
+
+fn truncate_cron_output(output: &str) -> String {
+    if output.len() <= MAX_CRON_OUTPUT_BYTES {
+        return output.to_string();
+    }
+
+    if MAX_CRON_OUTPUT_BYTES <= TRUNCATED_OUTPUT_MARKER.len() {
+        return TRUNCATED_OUTPUT_MARKER.to_string();
+    }
+
+    let mut cutoff = MAX_CRON_OUTPUT_BYTES - TRUNCATED_OUTPUT_MARKER.len();
+    while cutoff > 0 && !output.is_char_boundary(cutoff) {
+        cutoff -= 1;
+    }
+
+    let mut truncated = output[..cutoff].to_string();
+    truncated.push_str(TRUNCATED_OUTPUT_MARKER);
+    truncated
+}
+
+pub fn list_runs(config: &Config, job_id: &str, limit: usize) -> Result<Vec<CronRun>> {
+    with_connection(config, |conn| {
+        let lim = i64::try_from(limit.max(1)).context("Run history limit overflow")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, started_at, finished_at, status, output, duration_ms
+             FROM cron_runs
+             WHERE job_id = ?1
+             ORDER BY started_at DESC, id DESC
+             LIMIT ?2",
+        )?;
+
+        let rows = stmt.query_map(params![job_id, lim], |row| {
+            Ok(CronRun {
+                id: row.get(0)?,
+                job_id: row.get(1)?,
+                started_at: parse_rfc3339(&row.get::<_, String>(2)?)
+                    .map_err(sql_conversion_error)?,
+                finished_at: parse_rfc3339(&row.get::<_, String>(3)?)
+                    .map_err(sql_conversion_error)?,
+                status: row.get(4)?,
+                output: row.get(5)?,
+                duration_ms: row.get(6)?,
+            })
+        })?;
+
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(row?);
+        }
+        Ok(runs)
+    })
+}
+
+fn parse_rfc3339(raw: &str) -> Result<DateTime<Utc>> {
+    let parsed = DateTime::parse_from_rfc3339(raw)
+        .with_context(|| format!("Invalid RFC3339 timestamp in cron DB: {raw}"))?;
+    Ok(parsed.with_timezone(&Utc))
+}
+
+fn sql_conversion_error(err: anyhow::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(err.into())
+}

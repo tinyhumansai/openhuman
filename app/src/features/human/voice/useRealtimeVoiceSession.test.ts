@@ -1,6 +1,11 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  clearAllProactiveThreadPins,
+  PROACTIVE_VOICE_THREAD_ID,
+  proactiveThreadPins,
+} from '../../../providers/proactiveThreadPins';
 import { fetchVoiceAgentSignedUrl } from '../../../services/api/voiceAgentApi';
 import { useRealtimeVoiceSession } from './useRealtimeVoiceSession';
 
@@ -12,11 +17,31 @@ interface CapturedProps {
 let captured: CapturedProps | null = null;
 const startSession = vi.fn();
 const endSession = vi.fn();
+const sendUserMessage = vi.fn();
 
 vi.mock('@elevenlabs/react', () => ({
   useConversation: (props: CapturedProps) => {
     captured = props;
-    return { startSession, endSession, isSpeaking: false, mode: 'listening' as const };
+    return {
+      startSession,
+      endSession,
+      sendUserMessage,
+      isSpeaking: false,
+      mode: 'listening' as const,
+    };
+  },
+}));
+
+// Capture the `voice_speak` subscription so a test can drive the speak-back path.
+const socketHandlers: Record<string, (payload: unknown) => void> = {};
+vi.mock('../../../services/socketService', () => ({
+  socketService: {
+    on: vi.fn((event: string, handler: (payload: unknown) => void) => {
+      socketHandlers[event] = handler;
+    }),
+    off: vi.fn((event: string) => {
+      delete socketHandlers[event];
+    }),
   },
 }));
 
@@ -29,6 +54,8 @@ describe('useRealtimeVoiceSession', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     captured = null;
+    Object.keys(socketHandlers).forEach(k => delete socketHandlers[k]);
+    clearAllProactiveThreadPins();
   });
 
   it('fetches a signed URL and opens a WebSocket session with the voice override', async () => {
@@ -101,6 +128,20 @@ describe('useRealtimeVoiceSession', () => {
     expect(result.current.state).toBe('idle');
   });
 
+  it('clears the voice thread pin when a new session begins', async () => {
+    // A prior session pinned proactive:voice to some thread. Starting a new
+    // session must drop that pin so this session's deferred answers resolve to a
+    // fresh/current thread rather than appending to the previous (now off-screen)
+    // one. See resolveVisibleThreadForProactive in ChatRuntimeProvider.
+    proactiveThreadPins.set(PROACTIVE_VOICE_THREAD_ID, 'previous-session-thread');
+    mockFetch.mockResolvedValueOnce({ signedUrl: 'wss://x', agentId: 'a1', userToken: 'tok-1' });
+    const { result } = renderHook(() => useRealtimeVoiceSession());
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(proactiveThreadPins.get(PROACTIVE_VOICE_THREAD_ID)).toBeUndefined();
+  });
+
   it('surfaces an SDK onError', () => {
     const { result } = renderHook(() => useRealtimeVoiceSession());
     act(() => captured?.onError('microphone blocked'));
@@ -136,5 +177,69 @@ describe('useRealtimeVoiceSession', () => {
     const { unmount } = renderHook(() => useRealtimeVoiceSession());
     unmount();
     expect(endSession).not.toHaveBeenCalled();
+  });
+
+  it('reads a deferred result aloud when voice_speak arrives during a live call', async () => {
+    mockFetch.mockResolvedValueOnce({ signedUrl: 'wss://x', agentId: 'a1', userToken: 'tok-1' });
+    const { result } = renderHook(() => useRealtimeVoiceSession());
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => captured?.onConnect()); // liveRef becomes true
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'Your inbox summary.' }));
+    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    // Wrapped in the verbatim read-back prefix so the agent reads it aloud.
+    expect(sendUserMessage.mock.calls[0][0]).toContain('Your inbox summary.');
+    expect(sendUserMessage.mock.calls[0][0]).toContain('Please read the following');
+  });
+
+  // Each read-back is a real agent turn, so a repeat queues behind the first and
+  // pushes the call towards the provider's per-turn ceiling.
+  it('reads a redelivered answer aloud only once per call', async () => {
+    mockFetch.mockResolvedValue({ signedUrl: 'wss://x', agentId: 'a1', userToken: 'tok-1' });
+    const { result } = renderHook(() => useRealtimeVoiceSession());
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => captured?.onConnect());
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'Your inbox summary.' }));
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'Your inbox summary.' }));
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'A different answer.' }));
+    expect(sendUserMessage).toHaveBeenCalledTimes(2);
+
+    // A later call is a fresh conversation: the same answer may legitimately be
+    // asked for and spoken again.
+    act(() => captured?.onDisconnect());
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => captured?.onConnect());
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'Your inbox summary.' }));
+    expect(sendUserMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores voice_speak when no call is live', () => {
+    renderHook(() => useRealtimeVoiceSession()); // never connected → liveRef stays false
+    act(() => socketHandlers['voice_speak']?.({ full_response: 'ignored' }));
+    expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores an empty or missing voice_speak payload', async () => {
+    mockFetch.mockResolvedValueOnce({ signedUrl: 'wss://x', agentId: 'a1', userToken: 'tok-1' });
+    const { result } = renderHook(() => useRealtimeVoiceSession());
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => captured?.onConnect());
+    act(() => socketHandlers['voice_speak']?.({ full_response: '   ' }));
+    act(() => socketHandlers['voice_speak']?.(undefined));
+    expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('unsubscribes from voice_speak on unmount', () => {
+    const { unmount } = renderHook(() => useRealtimeVoiceSession());
+    expect(socketHandlers['voice_speak']).toBeDefined();
+    unmount();
+    expect(socketHandlers['voice_speak']).toBeUndefined();
   });
 });

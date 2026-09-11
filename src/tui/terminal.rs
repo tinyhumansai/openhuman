@@ -26,25 +26,31 @@ pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 /// restores the terminal on drop.
 pub struct TerminalGuard {
     terminal: Tui,
+    alternate_screen: bool,
 }
 
 impl TerminalGuard {
-    /// Enter the alternate screen, enable raw mode, install the panic hook, and
-    /// return a ready-to-draw terminal wrapped in a restoring guard.
-    pub fn enter() -> io::Result<Self> {
-        install_panic_hook();
+    pub fn enter_with_options(alternate_screen: bool) -> io::Result<Self> {
+        install_panic_hook(alternate_screen);
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableMouseCapture,
-            EnableBracketedPaste
-        )?;
+        if alternate_screen {
+            execute!(
+                stdout,
+                EnterAlternateScreen,
+                EnableMouseCapture,
+                EnableBracketedPaste
+            )?;
+        } else {
+            execute!(stdout, EnableBracketedPaste)?;
+        }
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend)?;
         log::debug!("[tui] terminal: entered alternate screen + raw mode");
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            alternate_screen,
+        })
     }
 
     /// Mutable access to the underlying terminal for drawing.
@@ -55,7 +61,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        if let Err(e) = restore() {
+        if let Err(e) = restore(self.alternate_screen) {
             // The subscriber writes to a file (never the terminal), so this is
             // safe to log here.
             log::warn!("[tui] terminal: restore on drop failed: {e}");
@@ -68,14 +74,18 @@ impl Drop for TerminalGuard {
 /// Undo everything [`TerminalGuard::enter`] did. Best-effort — each step is
 /// attempted even if an earlier one fails, so a partial setup still gets torn
 /// down as far as possible.
-fn restore() -> io::Result<()> {
+fn restore(alternate_screen: bool) -> io::Result<()> {
     let mut stdout = io::stdout();
-    let _ = execute!(
-        stdout,
-        DisableBracketedPaste,
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    );
+    if alternate_screen {
+        let _ = execute!(
+            stdout,
+            DisableBracketedPaste,
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
+    } else {
+        let _ = execute!(stdout, DisableBracketedPaste);
+    }
     disable_raw_mode()
 }
 
@@ -86,10 +96,10 @@ fn restore() -> io::Result<()> {
 /// Idempotent in effect: called once from [`TerminalGuard::enter`]. If it were
 /// ever called twice, the second restore would simply be a no-op on an
 /// already-restored terminal.
-fn install_panic_hook() {
+fn install_panic_hook(alternate_screen: bool) {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = restore();
+        let _ = restore(alternate_screen);
         original(info);
     }));
 }

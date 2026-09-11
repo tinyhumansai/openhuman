@@ -30,4 +30,9 @@ fi
 echo "Building web E2E bundle with backend ${VITE_BACKEND_URL}"
 pnpm run build:web
 echo "Building standalone openhuman-core for web E2E into ${E2E_WEB_CORE_TARGET_DIR}..."
-CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" bash "$REPO_ROOT/scripts/ci-cancel-aware.sh" "$CARGO_BIN" build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core
+# A bare core build uses the contributor feature set, which intentionally
+# omits product domains such as voice, web3, documents and crash reporting.
+# The web suite exercises the shipped desktop surface, so compile the same
+# explicit product gates that the Tauri shell and product CI lanes forward.
+PRODUCT_FEATURES="$(bash "$REPO_ROOT/scripts/ci/product-features.sh")"
+CARGO_TARGET_DIR="$E2E_WEB_CORE_TARGET_DIR" bash "$REPO_ROOT/scripts/ci-cancel-aware.sh" "$CARGO_BIN" build --manifest-path "$REPO_ROOT/Cargo.toml" --bin openhuman-core --features "$PRODUCT_FEATURES"

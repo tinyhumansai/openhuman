@@ -234,14 +234,14 @@ describe('safeInvoke (tauriCommands/common)', () => {
       throw cefThrow;
     });
 
-    const err = await safeInvoke<void>('webview_account_hide').catch((e: unknown) => e);
+    const err = await safeInvoke<void>('mascot_window_hide').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(IpcUnavailableError);
     const typed = err as IpcUnavailableError;
     expect(typed.name).toBe('IpcUnavailableError');
-    expect(typed.cmd).toBe('webview_account_hide');
+    expect(typed.cmd).toBe('mascot_window_hide');
     expect(typed.cause).toBe(cefThrow);
-    expect(typed.message).toContain('webview_account_hide');
+    expect(typed.message).toContain('mascot_window_hide');
     expect(typed.message).toContain('postMessage');
   });
 
@@ -267,10 +267,10 @@ describe('safeInvoke (tauriCommands/common)', () => {
     const cefThrow = new TypeError("Cannot read properties of undefined (reading 'postMessage')");
     coreInvokeMock.mockRejectedValue(cefThrow);
 
-    const err = await safeInvoke<void>('webview_account_reveal').catch((e: unknown) => e);
+    const err = await safeInvoke<void>('mascot_window_show').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(IpcUnavailableError);
-    expect((err as IpcUnavailableError).cmd).toBe('webview_account_reveal');
+    expect((err as IpcUnavailableError).cmd).toBe('mascot_window_show');
   });
 
   // #5155: the dereference is now *guarded* — the vendored bootstrap and

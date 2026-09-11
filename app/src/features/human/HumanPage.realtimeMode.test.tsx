@@ -1,35 +1,60 @@
 /**
- * Unit tests for HumanPage's realtime voice overlay gate (#5399). The overlay
- * renders only when the build flag is on AND the persisted mascot voice mode is
- * `realtime`; the classic push-to-talk path is always present. Config is mocked
- * with the flag ON here (the global setup mock ships it OFF), and
- * RealtimeVoiceControls is stubbed so the ElevenLabs SDK never loads.
+ * Unit test for the Human tab's voice entry point (#5399). The realtime
+ * "Start voice chat" control now lives in the chat card's composer slot — the
+ * one the classic push-to-talk mic used to own — and which of the two renders is
+ * decided by two build flags. This pins the wiring from those flags through to
+ * the props HumanPage hands Conversations; the controls themselves and the
+ * precedence rule are covered separately (RealtimeVoiceControls.test.tsx,
+ * voiceEntry.test.ts). RealtimeVoiceControls is stubbed so the ElevenLabs SDK
+ * never loads.
  */
 import { configureStore } from '@reduxjs/toolkit';
 import { render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
-import mascotReducer, { setVoiceMode } from '../../store/mascotSlice';
+import mascotReducer from '../../store/mascotSlice';
 import threadReducer from '../../store/threadSlice';
-import HumanPage from './HumanPage';
 
-// Flip the realtime gate ON for this file (global setup ships it OFF). Spread
-// the real module so every other config export keeps its production value.
-vi.mock('../../utils/config', async () => {
-  const actual = await vi.importActual<typeof import('../../utils/config')>('../../utils/config');
-  return { ...actual, VOICE_MODE_FLAG_ENABLED: true };
+const flags = { realtimeEnabled: true, showBoth: false };
+
+// The global test setup mocks the whole config module, so override just the two
+// flags this file drives — read through getters so a test can flip them between
+// renders without re-importing the module.
+vi.mock('../../utils/config', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    get HUMAN_VOICE_REALTIME_ENABLED() {
+      return flags.realtimeEnabled;
+    },
+    get HUMAN_VOICE_SHOW_BOTH() {
+      return flags.showBoth;
+    },
+  };
 });
 
-// Stub the overlay so the ElevenLabs `ConversationProvider`/SDK never mounts —
-// this test only pins the render gate, not the controls (covered separately).
 vi.mock('./RealtimeVoiceControls', () => ({
   default: () => <div data-testid="realtime-voice-controls-stub" />,
 }));
 
+// Render the slot props so the test observes what the card would actually show,
+// rather than asserting on prop identity.
 vi.mock('../conversations/Conversations', () => ({
-  default: () => <div data-testid="conversations-stub" />,
+  default: ({
+    voiceChatControl,
+    showMicComposer,
+  }: {
+    voiceChatControl?: React.ReactNode;
+    showMicComposer?: boolean;
+  }) => (
+    <div data-testid="conversations-stub">
+      {voiceChatControl}
+      {showMicComposer && <div data-testid="mic-composer-stub" />}
+    </div>
+  ),
 }));
 
 vi.mock('./Mascot', async importOriginal => {
@@ -46,30 +71,66 @@ vi.mock('./Mascot/manifest/useMascotManifest', () => ({
   useMascotManifest: () => ({ manifest: null, entry: null, loading: false, error: null }),
 }));
 
-function renderWithVoiceMode(mode: 'classic' | 'realtime') {
+async function renderPage() {
+  const { default: HumanPage } = await import('./HumanPage');
   const store = configureStore({
     reducer: { mascot: mascotReducer, thread: threadReducer, chatRuntime: chatRuntimeReducer },
   });
-  store.dispatch(setVoiceMode(mode));
+  // HumanPage routes (the composer's idle action opens /human, and the page
+  // navigates back), so it needs a router in scope.
   return render(
     <Provider store={store}>
-      <HumanPage />
+      <MemoryRouter initialEntries={['/human']}>
+        <HumanPage />
+      </MemoryRouter>
     </Provider>
   );
 }
 
-describe('HumanPage — realtime voice overlay gate', () => {
+describe('HumanPage — voice entry point', () => {
   beforeEach(() => {
     localStorage.clear();
+    flags.realtimeEnabled = true;
+    flags.showBoth = false;
   });
 
-  it('renders the realtime controls when voice mode is realtime and the flag is on', () => {
-    renderWithVoiceMode('realtime');
+  it('shows the realtime control in place of the mic composer by default', async () => {
+    await renderPage();
     expect(screen.getByTestId('realtime-voice-controls-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
   });
 
-  it('hides the realtime controls when voice mode is classic', () => {
-    renderWithVoiceMode('classic');
+  /**
+   * The page is a mascot-only stage now — it no longer embeds the chat rail, so
+   * there is no composer to fall back to. Push-to-talk lived in that rail's
+   * composer and submitted through its send path, so a
+   * `VITE_HUMAN_VOICE_REALTIME=false` build simply has no control to show here.
+   */
+  it('shows a mascot-only stage with no voice control when realtime is off', async () => {
+    flags.realtimeEnabled = false;
+    await renderPage();
     expect(screen.queryByTestId('realtime-voice-controls-stub')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
+  });
+
+  // Comparison mode used to show the realtime control beside the chat rail's
+  // tap-and-speak composer. With the rail gone there is only the one control,
+  // and the assertion that matters is that show-both does not double it.
+  it('still shows a single realtime control when the show-both flag is on', async () => {
+    flags.showBoth = true;
+    await renderPage();
+    expect(screen.getAllByTestId('realtime-voice-controls-stub')).toHaveLength(1);
+    expect(screen.queryByTestId('mic-composer-stub')).not.toBeInTheDocument();
+  });
+
+  // Whichever mode is on, exactly one realtime control exists: the single-control
+  // modes put it in the card, comparison mode floats it — never both at once.
+  it.each([
+    ['realtime', { realtimeEnabled: true, showBoth: false }],
+    ['both', { realtimeEnabled: true, showBoth: true }],
+  ])('renders the realtime control exactly once in %s mode', async (_label, next) => {
+    Object.assign(flags, next);
+    await renderPage();
+    expect(screen.getAllByTestId('realtime-voice-controls-stub')).toHaveLength(1);
   });
 });

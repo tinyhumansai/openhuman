@@ -13,6 +13,7 @@ import {
   fetchWalletStatus,
   type WalletChain,
 } from '../../../services/walletApi';
+import { DataTable, type DataTableColumn, TableCell, TableRow } from '../../ui';
 import Button from '../../ui/Button';
 import { SettingsEmptyState, SettingsSection } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -54,6 +55,22 @@ function truncateAddress(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
+
+/**
+ * Shared column set. Both the real balances and the pre-setup placeholders
+ * render through it, so the two states line up column-for-column instead of
+ * being two differently-shaped lists.
+ *
+ * `cell` is omitted throughout: every row here is custom-rendered (a row owns
+ * its own copy button, its own clipboard state and its own action pair), and
+ * the columns exist to define the header and the alignment.
+ */
+const COLUMNS_FOR = <T,>(t: (key: string) => string): DataTableColumn<T>[] => [
+  { id: 'network', header: t('walletBalances.colNetwork') },
+  { id: 'address', header: t('walletBalances.colAddress') },
+  { id: 'balance', header: t('walletBalances.colBalance'), align: 'right' },
+  { id: 'actions', header: t('walletBalances.colActions'), align: 'right' },
+];
 
 // ---------------------------------------------------------------------------
 // BalanceRow — a single chain/network entry with Send / Receive actions
@@ -104,98 +121,91 @@ const BalanceRow = ({ balance, onSend, onReceive }: BalanceRowProps) => {
   const networkLabel = balanceNetworkLabel(balance);
 
   return (
-    <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        {/* Network badge */}
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold font-mono min-w-[3rem] justify-center shrink-0 ${badgeClass}`}>
-          {balanceBadge(balance)}
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-content-secondary truncate">
-              {networkLabel}
-            </span>
-            {balance.providerStatus !== 'ready' && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                {t('walletBalances.providerMissing')}
-              </span>
-            )}
-          </div>
-          {/* Address + copy button */}
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="font-mono text-[11px] text-content-muted truncate">
-              {truncateAddress(balance.address)}
-            </span>
-            <Button
-              type="button"
-              iconOnly
-              variant="tertiary"
-              size="sm"
-              onClick={() => void handleCopyAddress()}
-              aria-label={t('walletBalances.copyAddress')}
-              className="shrink-0 text-content-faint hover:text-content-secondary dark:hover:text-content-secondary">
-              {copied ? (
-                <svg
-                  className="w-3.5 h-3.5 text-sage-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg
-                  className="w-3.5 h-3.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  />
-                </svg>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* Amount */}
-        <div className="text-right shrink-0">
+    <TableRow data-testid={`wallet-row-${balanceKey(balance)}`}>
+      <TableCell className="whitespace-nowrap">
+        <div className="flex items-center gap-2">
+          {/* Network badge */}
           <span
-            title={t('walletBalances.rawBalance').replace('{raw}', balance.raw)}
-            className="text-sm font-medium text-content font-mono">
-            {balance.formatted}
+            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold font-mono min-w-12 justify-center shrink-0 ${badgeClass}`}>
+            {balanceBadge(balance)}
           </span>
-          <span className="ml-1 text-xs text-content-muted">{balance.assetSymbol}</span>
+          <span className="text-xs font-medium text-content-secondary">{networkLabel}</span>
+          {balance.providerStatus !== 'ready' && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              {t('walletBalances.providerMissing')}
+            </span>
+          )}
         </div>
-      </div>
-
-      {/* Send / Receive actions */}
-      <div className="flex gap-2 mt-2.5">
-        <Button
-          type="button"
-          variant="secondary"
-          size="xs"
-          onClick={() => onSend(balance)}
-          className="flex-1"
-          data-testid={`wallet-send-${balanceKey(balance)}`}>
-          {t('walletBalances.send')}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="xs"
-          onClick={() => onReceive(balance)}
-          className="flex-1"
-          data-testid={`wallet-receive-${balanceKey(balance)}`}>
-          {t('walletBalances.receive')}
-        </Button>
-      </div>
-    </div>
+      </TableCell>
+      <TableCell>
+        {/* Address + copy button */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="font-mono text-[11px] text-content-muted truncate">
+            {truncateAddress(balance.address)}
+          </span>
+          <Button
+            type="button"
+            iconOnly
+            variant="tertiary"
+            size="sm"
+            onClick={() => void handleCopyAddress()}
+            aria-label={t('walletBalances.copyAddress')}
+            className="shrink-0 text-content-faint hover:text-content-secondary dark:hover:text-content-secondary">
+            {copied ? (
+              <svg
+                className="w-3.5 h-3.5 text-sage-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            )}
+          </Button>
+        </div>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right">
+        <span
+          title={t('walletBalances.rawBalance').replace('{raw}', balance.raw)}
+          className="text-sm font-medium text-content font-mono">
+          {balance.formatted}
+        </span>
+        <span className="ml-1 text-xs text-content-muted">{balance.assetSymbol}</span>
+      </TableCell>
+      <TableCell className="w-px whitespace-nowrap text-right">
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            onClick={() => onSend(balance)}
+            data-testid={`wallet-send-${balanceKey(balance)}`}>
+            {t('walletBalances.send')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            onClick={() => onReceive(balance)}
+            data-testid={`wallet-receive-${balanceKey(balance)}`}>
+            {t('walletBalances.receive')}
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 };
 
@@ -218,26 +228,30 @@ const ChainPlaceholderRow = ({
   const badgeClass = badgeClassFor(chain);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3 opacity-70">
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold font-mono min-w-[3rem] justify-center shrink-0 ${badgeClass}`}>
-        {balanceBadge({ chain, evmNetwork })}
-      </span>
-      <div className="min-w-0">
-        <span className="block text-xs font-medium text-content-faint truncate">
-          {balanceNetworkLabel({ chain, evmNetwork })}
-        </span>
-        <span className="font-mono text-[11px] text-content-faint truncate">
+    <TableRow className="opacity-70">
+      <TableCell className="whitespace-nowrap">
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold font-mono min-w-12 justify-center shrink-0 ${badgeClass}`}>
+            {balanceBadge({ chain, evmNetwork })}
+          </span>
+          <span className="text-xs font-medium text-content-faint">
+            {balanceNetworkLabel({ chain, evmNetwork })}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <span className="font-mono text-[11px] text-content-faint">
           {t('walletBalances.notSetUp')}
         </span>
-      </div>
-      <div className="flex-1" />
-      <div className="text-right shrink-0">
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right">
         {/* Em dash placeholder — punctuation, not translatable copy. */}
         <span className="text-sm font-medium text-content-faint font-mono">—</span>
         <span className="ml-1 text-xs text-content-faint">{symbol}</span>
-      </div>
-    </div>
+      </TableCell>
+      <TableCell className="w-px" />
+    </TableRow>
   );
 };
 
@@ -334,7 +348,7 @@ const WalletBalancesPanel = () => {
             role="alert"
             className="flex items-start gap-2.5 p-3 mb-4 rounded-xl bg-coral-50 dark:bg-coral-500/10 border border-coral-200 dark:border-coral-500/30">
             <svg
-              className="w-4 h-4 text-coral-500 flex-shrink-0 mt-0.5"
+              className="w-4 h-4 text-coral-500 shrink-0 mt-0.5"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -371,7 +385,7 @@ const WalletBalancesPanel = () => {
               role="status"
               className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30">
               <svg
-                className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5"
+                className="w-4 h-4 text-amber-500 shrink-0 mt-0.5"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -396,16 +410,19 @@ const WalletBalancesPanel = () => {
               </div>
             </div>
           </div>
-          <div className="divide-y divide-line-subtle dark:divide-neutral-800">
-            {PLACEHOLDER_ROWS.map(row => (
+          <DataTable<(typeof PLACEHOLDER_ROWS)[number]>
+            columns={COLUMNS_FOR<(typeof PLACEHOLDER_ROWS)[number]>(t)}
+            rows={PLACEHOLDER_ROWS}
+            rowKey={row => `${row.chain}-${row.evmNetwork ?? 'native'}`}
+            renderRow={row => (
               <ChainPlaceholderRow
                 key={`${row.chain}-${row.evmNetwork ?? 'native'}`}
                 chain={row.chain}
                 evmNetwork={row.evmNetwork}
                 symbol={row.symbol}
               />
-            ))}
-          </div>
+            )}
+          />
         </div>
       );
     }
@@ -434,16 +451,19 @@ const WalletBalancesPanel = () => {
 
     if (balances && balances.length > 0) {
       return (
-        <div className="divide-y divide-line-subtle dark:divide-neutral-800">
-          {balances.map(balance => (
+        <DataTable<BalanceInfo>
+          columns={COLUMNS_FOR<BalanceInfo>(t)}
+          rows={balances}
+          rowKey={balanceKey}
+          renderRow={balance => (
             <BalanceRow
               key={balanceKey(balance)}
               balance={balance}
               onSend={setSendTarget}
               onReceive={setReceiveTarget}
             />
-          ))}
-        </div>
+          )}
+        />
       );
     }
 

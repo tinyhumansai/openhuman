@@ -19,11 +19,6 @@ import { connectOpenRouterViaOAuth } from '../../../../utils/openrouterOAuth';
 import { openUrl } from '../../../../utils/openUrl';
 // Lazy import so the typed mock is available to individual tests.
 import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
-import {
-  openhumanHeartbeatSettingsGet,
-  openhumanHeartbeatSettingsSet,
-  openhumanHeartbeatTickNow,
-} from '../../../../utils/tauriCommands/heartbeat';
 import AIPanel from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
@@ -72,12 +67,6 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-vi.mock('../../../../utils/tauriCommands/heartbeat', () => ({
-  openhumanHeartbeatSettingsGet: vi.fn(),
-  openhumanHeartbeatSettingsSet: vi.fn(),
-  openhumanHeartbeatTickNow: vi.fn(),
-}));
-
 vi.mock('../../../../services/api/creditsApi', () => ({
   creditsApi: { getTeamUsage: vi.fn(), getTransactions: vi.fn() },
 }));
@@ -120,22 +109,6 @@ const baseSettings = {
 
 const baseLocalSnapshot = { status: null, diagnostics: null, presets: null, installedModels: [] };
 
-const baseHeartbeatSettings = {
-  enabled: true,
-  interval_minutes: 15,
-  inference_enabled: true,
-  notify_meetings: true,
-  notify_reminders: true,
-  notify_relevant_events: false,
-  external_delivery_enabled: false,
-  triggers_enabled: false,
-  max_promotions_per_hour: 30,
-  meeting_lookahead_minutes: 60,
-  max_calendar_connections_per_tick: 2,
-  reminder_lookahead_minutes: 30,
-  subconscious_mode: 'off' as 'off' | 'simple' | 'aggressive',
-};
-
 const baseUsage = {
   remainingUsd: 1.5,
   cycleBudgetUsd: 10,
@@ -165,6 +138,15 @@ const baseUsage = {
 };
 
 describe('AIPanel OMLX connect', () => {
+  const openOmlxConnectDialog = async () => {
+    fireEvent.click(await screen.findByTestId('add-provider-open'));
+    const trigger = await screen.findByTestId('add-provider-select-local');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.keyDown(await screen.findByTestId('add-provider-option-omlx'), { key: 'Enter' });
+    return await screen.findByRole('dialog', { name: /Connect OMLX/i });
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
@@ -180,45 +162,23 @@ describe('AIPanel OMLX connect', () => {
     vi.mocked(completeOpenAiCodexOAuth).mockResolvedValue(undefined);
     vi.mocked(openUrl).mockResolvedValue(undefined);
     vi.mocked(connectOpenRouterViaOAuth).mockResolvedValue('sk-or-oauth');
-    vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
-      result: { settings: baseHeartbeatSettings },
-      logs: [],
-    });
-    vi.mocked(openhumanHeartbeatSettingsSet).mockResolvedValue({
-      result: { settings: baseHeartbeatSettings },
-      logs: [],
-    });
-    vi.mocked(openhumanHeartbeatTickNow).mockResolvedValue({
-      result: {
-        summary: {
-          source_events: 3,
-          deliveries_attempted: 2,
-          deliveries_sent: 1,
-          deliveries_skipped_dedup: 1,
-        },
-      },
-      logs: [],
-    });
     vi.mocked(creditsApi.getTeamUsage).mockResolvedValue(baseUsage);
     vi.mocked(creditsApi.getTransactions).mockResolvedValue({ transactions: [], total: 0 });
     vi.mocked(listComposioConnections).mockResolvedValue({ connections: [] });
   });
 
-  it('renders an OMLX local-runtime chip', async () => {
+  it('offers OMLX in the local-provider catalogue', async () => {
     renderWithProviders(<AIPanel />);
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Connect OMLX/i })).toBeInTheDocument()
-    );
+    fireEvent.click(await screen.findByTestId('add-provider-open'));
+    const trigger = await screen.findByTestId('add-provider-select-local');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    expect(await screen.findByTestId('add-provider-option-omlx')).toBeInTheDocument();
   });
 
   it('toggling OMLX ON shows BOTH an endpoint field (localhost:8000) and an API key field', async () => {
     renderWithProviders(<AIPanel />);
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Connect OMLX/i })).toBeInTheDocument()
-    );
-    fireEvent.click(screen.getByRole('switch', { name: /Connect OMLX/i }));
-
-    const dialog = await screen.findByRole('dialog', { name: /Connect OMLX/i });
+    const dialog = await openOmlxConnectDialog();
     const urlInput = within(dialog).getByLabelText(/Endpoint URL/i) as HTMLInputElement;
     expect(urlInput).toBeInTheDocument();
     expect(urlInput.value).toBe('http://localhost:8000/v1');
@@ -227,12 +187,7 @@ describe('AIPanel OMLX connect', () => {
 
   it('persists provider=omlx with base_url + api_key on confirm', async () => {
     renderWithProviders(<AIPanel />);
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Connect OMLX/i })).toBeInTheDocument()
-    );
-    fireEvent.click(screen.getByRole('switch', { name: /Connect OMLX/i }));
-
-    const dialog = await screen.findByRole('dialog', { name: /Connect OMLX/i });
+    const dialog = await openOmlxConnectDialog();
     fireEvent.change(within(dialog).getByLabelText(/Endpoint URL/i), {
       target: { value: 'http://localhost:8000/v1' },
     });

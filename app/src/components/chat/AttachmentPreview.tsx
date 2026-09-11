@@ -1,5 +1,6 @@
 import { type Attachment, formatFileSize } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
+import { Button } from '../ui';
 
 interface AttachmentPreviewProps {
   attachments: Attachment[];
@@ -26,10 +27,10 @@ export default function AttachmentPreview({
             <img
               src={attachment.previewUri ?? attachment.dataUri}
               alt={attachment.file.name}
-              className="w-8 h-8 rounded object-cover flex-shrink-0"
+              className="w-8 h-8 rounded object-cover shrink-0"
             />
           ) : attachment.kind === 'video' ? (
-            <div className="relative w-8 h-8 flex-shrink-0">
+            <div className="relative w-8 h-8 shrink-0">
               <img
                 src={attachment.previewUri ?? attachment.dataUri}
                 alt={attachment.file.name}
@@ -37,7 +38,7 @@ export default function AttachmentPreview({
               />
               <span className="absolute inset-0 flex items-center justify-center">
                 <svg
-                  className="w-3.5 h-3.5 text-white drop-shadow"
+                  className="w-3.5 h-3.5 text-content-inverted drop-shadow-sm"
                   fill="currentColor"
                   viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
@@ -47,7 +48,7 @@ export default function AttachmentPreview({
           ) : (
             <div
               aria-hidden
-              className="w-8 h-8 rounded border border-line bg-surface flex items-center justify-center flex-shrink-0 text-content-muted">
+              className="w-8 h-8 rounded border border-line bg-surface flex items-center justify-center shrink-0 text-content-muted">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -70,13 +71,15 @@ export default function AttachmentPreview({
               {formatFileSize(attachment.payloadSizeBytes)}
             </span>
           </div>
-          <button
-            type="button"
-            data-analytics-id="chat-attachment-remove"
+          <Button
+            iconOnly
+            variant="secondary"
+            size="xs"
+            analyticsId="chat-attachment-remove"
             aria-label={t('chat.attachment.remove').replace('{name}', attachment.file.name)}
             onClick={() => onRemove(attachment.id)}
             disabled={disabled}
-            className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-stone-400 dark:bg-neutral-600 text-white hover:bg-stone-600 dark:hover:bg-neutral-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0">
+            className="absolute -top-1.5 -right-1.5 h-4! w-4! rounded-full border-0 bg-content-muted text-content-inverted hover:bg-content-secondary shrink-0">
             <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -85,7 +88,7 @@ export default function AttachmentPreview({
                 d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-          </button>
+          </Button>
         </div>
       ))}
     </div>

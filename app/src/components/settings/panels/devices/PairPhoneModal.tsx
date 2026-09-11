@@ -11,11 +11,12 @@
  */
 import createDebug from 'debug';
 import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../../services/coreRpcClient';
 import Button from '../../../ui/Button';
+import { ModalShell } from '../../../ui/ModalShell';
 
 const log = createDebug('app:devices-ui:pair-modal');
 
@@ -76,6 +77,7 @@ function buildPairUrl(session: CreatePairingResponse): string {
 
 const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
   const { t } = useT();
+  const titleId = useId();
   const [state, setState] = useState<ModalState>({ kind: 'loading' });
   const [showDetails, setShowDetails] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -183,74 +185,45 @@ const PairPhoneModal = ({ onClose, onPaired }: PairPhoneModalProps) => {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
-      <div className="bg-surface rounded-2xl max-w-sm w-full border border-line shadow-large overflow-hidden">
-        {/* Header — keep modal structure intact */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-line-subtle">
-          <h3 className="text-base font-semibold text-content">{t('devices.pairModal.title')}</h3>
-          <Button
-            type="button"
-            variant="tertiary"
-            size="xs"
-            onClick={onClose}
-            aria-label={t('common.close')}
-            className="w-6 h-6 rounded-full p-0">
-            <svg
-              className="w-4 h-4 text-content-muted"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+    <ModalShell
+      title={t('devices.pairModal.title')}
+      titleId={titleId}
+      onClose={onClose}
+      maxWidthClassName="max-w-sm"
+      contentClassName="p-5"
+      footer={
+        state.kind === 'qr' || state.kind === 'error' ? (
+          <Button type="button" variant="tertiary" size="md" onClick={onClose} className="w-full">
+            {t('common.cancel')}
           </Button>
-        </div>
-
-        {/* Body */}
-        <div className="p-5">
-          {state.kind === 'loading' && <LoadingBody />}
-          {state.kind === 'error' && (
-            <ErrorBody
-              message={state.message}
-              onRetry={() => {
-                void createSession();
-              }}
-            />
-          )}
-          {state.kind === 'qr' && !state.expired && (
-            <QrBody
-              session={state.session}
-              qrUrl={state.qrUrl}
-              showDetails={showDetails}
-              onToggleDetails={() => setShowDetails(v => !v)}
-            />
-          )}
-          {state.kind === 'qr' && state.expired && (
-            <ExpiredBody
-              onRegenerate={() => {
-                void createSession();
-              }}
-            />
-          )}
-          {state.kind === 'success' && (
-            <SuccessBody label={state.label} channelId={state.channelId} />
-          )}
-        </div>
-
-        {/* Footer */}
-        {(state.kind === 'qr' || state.kind === 'error') && (
-          <div className="px-5 pb-5">
-            <Button type="button" variant="tertiary" size="md" onClick={onClose} className="w-full">
-              {t('common.cancel')}
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
+        ) : undefined
+      }>
+      {state.kind === 'loading' && <LoadingBody />}
+      {state.kind === 'error' && (
+        <ErrorBody
+          message={state.message}
+          onRetry={() => {
+            void createSession();
+          }}
+        />
+      )}
+      {state.kind === 'qr' && !state.expired && (
+        <QrBody
+          session={state.session}
+          qrUrl={state.qrUrl}
+          showDetails={showDetails}
+          onToggleDetails={() => setShowDetails(v => !v)}
+        />
+      )}
+      {state.kind === 'qr' && state.expired && (
+        <ExpiredBody
+          onRegenerate={() => {
+            void createSession();
+          }}
+        />
+      )}
+      {state.kind === 'success' && <SuccessBody label={state.label} channelId={state.channelId} />}
+    </ModalShell>
   );
 };
 
@@ -304,7 +277,7 @@ function QrBody({
       </p>
 
       {/* QR code */}
-      <div className="p-3 bg-surface rounded-xl border border-line shadow-sm">
+      <div className="p-3 bg-surface rounded-xl border border-line shadow-xs">
         <QRCodeSVG value={qrUrl} size={200} level="M" bgColor="#ffffff" fgColor="#1c1917" />
       </div>
 

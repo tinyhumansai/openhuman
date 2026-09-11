@@ -26,8 +26,8 @@ let active: Recorder | null = null;
 let lastMimeType: string | undefined;
 
 function pickMimeType(): string | undefined {
-  // Prefer webm/opus — small, broadly supported. whisper.cpp + cloud STT both
-  // accept it via ffmpeg decode; the core's `extension` hint is "webm".
+  // Prefer webm/opus — small, broadly supported, and accepted by every hosted
+  // STT engine; the core's `extension` hint is "webm".
   const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
   for (const mime of preferred) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {

@@ -1,18 +1,26 @@
 //! Tool that lets the agent query its own tool effectiveness data.
 
 use crate::openhuman::agent::learning::tool_tracker::ToolStats;
-use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
-use std::sync::Arc;
+use tinymemory_api::provider::MemoryCore as _;
+use tinymemory_api::types::MemoryCategory;
 
-pub struct ToolStatsTool {
-    memory: Arc<dyn Memory>,
-}
+/// Holds no memory handle: it resolves the guarded driver per call, so the
+/// tool registry no longer has to be handed an engine just to build this.
+pub struct ToolStatsTool;
 
 impl ToolStatsTool {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
-        Self { memory }
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ToolStatsTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -49,8 +57,10 @@ impl Tool for ToolStatsTool {
             filter.as_deref()
         );
 
-        let entries = self
-            .memory
+        let guard = active_memory_guard()
+            .await
+            .map_err(|e| anyhow::anyhow!("tool_stats: memory unavailable: {e}"))?;
+        let entries = guard
             .list(
                 Some("tool_effectiveness"),
                 Some(&MemoryCategory::Custom("tool_effectiveness".into())),
@@ -130,166 +140,5 @@ impl Tool for ToolStatsTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-    use async_trait::async_trait;
-    use parking_lot::Mutex;
-    use serde_json::json;
-    use std::collections::HashMap;
-
-    #[derive(Default)]
-    struct MockMemory {
-        entries: Mutex<HashMap<String, MemoryEntry>>,
-    }
-
-    #[async_trait]
-    impl Memory for MockMemory {
-        fn name(&self) -> &str {
-            "mock"
-        }
-        async fn store(
-            &self,
-            namespace: &str,
-            key: &str,
-            content: &str,
-            category: MemoryCategory,
-            session_id: Option<&str>,
-        ) -> anyhow::Result<()> {
-            self.entries.lock().insert(
-                key.to_string(),
-                MemoryEntry {
-                    id: key.to_string(),
-                    key: key.to_string(),
-                    content: content.to_string(),
-                    namespace: Some(namespace.to_string()),
-                    category,
-                    timestamp: "now".into(),
-                    session_id: session_id.map(str::to_string),
-                    score: None,
-                    taint: Default::default(),
-                },
-            );
-            Ok(())
-        }
-        async fn recall(
-            &self,
-            _q: &str,
-            _l: usize,
-            _opts: crate::openhuman::memory::RecallOpts<'_>,
-        ) -> anyhow::Result<Vec<MemoryEntry>> {
-            Ok(vec![])
-        }
-        async fn get(&self, _namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
-            Ok(self.entries.lock().get(key).cloned())
-        }
-        async fn list(
-            &self,
-            _namespace: Option<&str>,
-            _cat: Option<&MemoryCategory>,
-            _s: Option<&str>,
-        ) -> anyhow::Result<Vec<MemoryEntry>> {
-            Ok(self.entries.lock().values().cloned().collect())
-        }
-        async fn forget(&self, _namespace: &str, key: &str) -> anyhow::Result<bool> {
-            Ok(self.entries.lock().remove(key).is_some())
-        }
-        async fn namespace_summaries(
-            &self,
-        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
-            Ok(vec![])
-        }
-        async fn count(&self) -> anyhow::Result<usize> {
-            Ok(self.entries.lock().len())
-        }
-        async fn health_check(&self) -> bool {
-            true
-        }
-    }
-
-    fn make_tool() -> ToolStatsTool {
-        ToolStatsTool::new(Arc::new(MockMemory::default()))
-    }
-
-    #[test]
-    fn name_is_correct() {
-        assert_eq!(make_tool().name(), "tool_stats");
-    }
-
-    #[test]
-    fn description_is_non_empty() {
-        assert!(!make_tool().description().is_empty());
-    }
-
-    #[test]
-    fn schema_is_object_type() {
-        let schema = make_tool().parameters_schema();
-        assert_eq!(schema["type"], "object");
-    }
-
-    #[tokio::test]
-    async fn returns_no_data_message_when_empty() {
-        let result = make_tool().execute(json!({})).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("No tool effectiveness data"));
-    }
-
-    #[tokio::test]
-    async fn returns_stats_for_stored_entry() {
-        use crate::openhuman::agent::learning::tool_tracker::ToolStats;
-        let mem = Arc::new(MockMemory::default());
-        let stats = ToolStats {
-            total_calls: 5,
-            successes: 4,
-            failures: 1,
-            avg_duration_ms: 120.0,
-            common_error_patterns: vec![],
-        };
-        mem.store(
-            "tool_effectiveness",
-            "tool/shell",
-            &serde_json::to_string(&stats).unwrap(),
-            MemoryCategory::Custom("tool_effectiveness".into()),
-            None,
-        )
-        .await
-        .unwrap();
-        let tool = ToolStatsTool::new(mem);
-        let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.is_error);
-        let out = result.output();
-        assert!(out.contains("shell"));
-        assert!(out.contains("Calls: 5"));
-    }
-
-    #[tokio::test]
-    async fn filter_by_tool_name_returns_no_data_when_missing() {
-        use crate::openhuman::agent::learning::tool_tracker::ToolStats;
-        let mem = Arc::new(MockMemory::default());
-        let stats = ToolStats {
-            total_calls: 1,
-            successes: 1,
-            failures: 0,
-            avg_duration_ms: 50.0,
-            common_error_patterns: vec![],
-        };
-        mem.store(
-            "tool_effectiveness",
-            "tool/shell",
-            &serde_json::to_string(&stats).unwrap(),
-            MemoryCategory::Custom("tool_effectiveness".into()),
-            None,
-        )
-        .await
-        .unwrap();
-        let tool = ToolStatsTool::new(mem);
-        let result = tool
-            .execute(json!({"tool_name": "file_read"}))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result
-            .output()
-            .contains("No effectiveness data recorded for tool 'file_read'"));
-    }
-}
+#[path = "tool_stats_tests.rs"]
+mod tests;

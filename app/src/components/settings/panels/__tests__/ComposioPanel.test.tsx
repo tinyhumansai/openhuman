@@ -71,15 +71,15 @@ describe('ComposioPanel', () => {
     renderWithProviders(<Panel />);
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
 
-    const backendRadio = screen.getByLabelText(
-      'Managed (OpenHuman handles it for you)'
-    ) as HTMLInputElement;
-    const directRadio = screen.getByLabelText(
-      'Direct (bring your own API key)'
-    ) as HTMLInputElement;
+    // Radix RadioGroup renders each option as a `role="radio"` button (not a
+    // native `<input type="radio">`), so checked-ness is exposed via
+    // `aria-checked`/`data-state` rather than a `.checked` DOM property —
+    // `toBeChecked()` reads either shape.
+    const backendRadio = screen.getByLabelText('Managed (OpenHuman handles it for you)');
+    const directRadio = screen.getByLabelText('Direct (bring your own API key)');
 
-    expect(backendRadio.checked).toBe(true);
-    expect(directRadio.checked).toBe(false);
+    expect(backendRadio).toBeChecked();
+    expect(directRadio).not.toBeChecked();
     // Key field hidden when backend is active.
     expect(screen.queryByLabelText('Composio API key')).toBeNull();
   });
@@ -90,10 +90,8 @@ describe('ComposioPanel', () => {
     renderWithProviders(<Panel />);
     await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
 
-    const directRadio = screen.getByLabelText(
-      'Direct (bring your own API key)'
-    ) as HTMLInputElement;
-    expect(directRadio.checked).toBe(true);
+    const directRadio = screen.getByLabelText('Direct (bring your own API key)');
+    expect(directRadio).toBeChecked();
     // Key field is visible.
     expect(screen.getByLabelText('Composio API key')).toBeInTheDocument();
     // "Key currently stored" indicator shows.

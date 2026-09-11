@@ -9,15 +9,18 @@
 // state — no logging, no Redux, no persistence on this side. The MCP setup
 // agent only sees the opaque `ref://<hex>` ref returned by
 // `mcp_setup_request_secret`; the raw value never enters the LLM context.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../services/coreRpcClient';
+import { Button, ModalShell, TextField } from '../ui';
 
 type Request = { refId: string; keyName: string; prompt: string };
 
 function SecretPromptDialog() {
   const { t } = useT();
+  const titleId = useId();
+  const inputId = useId();
   const [request, setRequest] = useState<Request | null>(null);
   const [value, setValue] = useState('');
   const [reveal, setReveal] = useState(false);
@@ -83,92 +86,84 @@ function SecretPromptDialog() {
   if (!request) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 animate-fade-in"
-      onClick={handleCancel}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t('mcp.setup.secretDialog.title')}>
-      <div
-        className="bg-surface rounded-2xl max-w-md w-full shadow-large border border-line animate-slide-up"
-        onClick={e => e.stopPropagation()}>
-        <form onSubmit={handleSubmit}>
-          <div className="p-6 pb-4">
-            <h2 className="text-lg font-semibold text-content">
-              {t('mcp.setup.secretDialog.title')}
-            </h2>
-            <p className="text-sm text-content-secondary mt-2">
-              {t('mcp.setup.secretDialog.bodyPrefix')}{' '}
-              <code className="px-1.5 py-0.5 rounded bg-surface-subtle text-content font-mono text-xs">
-                {request.keyName}
-              </code>
-              {t('mcp.setup.secretDialog.bodySuffix')}
+    <ModalShell
+      onClose={handleCancel}
+      title={t('mcp.setup.secretDialog.title')}
+      titleId={titleId}
+      closePolicy={{ escape: !submitting, backdrop: !submitting, button: !submitting }}
+      contentClassName="px-0 py-0"
+      footer={
+        <div className="flex items-center justify-end gap-3">
+          <Button variant="tertiary" onClick={handleCancel} disabled={submitting}>
+            {t('mcp.setup.secretDialog.cancel')}
+          </Button>
+          <Button
+            type="submit"
+            form="mcp-setup-secret-form"
+            disabled={submitting || value.length === 0}>
+            {submitting
+              ? t('mcp.setup.secretDialog.submitting')
+              : t('mcp.setup.secretDialog.submit')}
+          </Button>
+        </div>
+      }>
+      <form id="mcp-setup-secret-form" onSubmit={handleSubmit}>
+        <div className="px-6 pt-2 pb-4">
+          <p className="text-sm text-content-secondary">
+            {t('mcp.setup.secretDialog.bodyPrefix')}{' '}
+            <code className="px-1.5 py-0.5 rounded bg-surface-subtle text-content font-mono text-xs">
+              {request.keyName}
+            </code>
+            {t('mcp.setup.secretDialog.bodySuffix')}
+          </p>
+          {request.prompt && (
+            <p className="text-sm text-content-secondary mt-3 whitespace-pre-wrap">
+              {request.prompt}
             </p>
-            {request.prompt && (
-              <p className="text-sm text-content-secondary mt-3 whitespace-pre-wrap">
-                {request.prompt}
-              </p>
-            )}
-          </div>
+          )}
+        </div>
 
-          <div className="px-6 pb-2">
-            <label
-              htmlFor="mcp-setup-secret-input"
-              className="block text-xs font-medium text-content-secondary mb-1">
-              {t('mcp.setup.secretDialog.inputLabel')}
-            </label>
-            <div className="flex items-stretch gap-2">
-              <input
-                id="mcp-setup-secret-input"
-                type={reveal ? 'text' : 'password'}
-                autoComplete="off"
-                autoCorrect="off"
-                spellCheck={false}
-                value={value}
-                onChange={e => setValue(e.target.value)}
-                placeholder={t('mcp.setup.secretDialog.inputPlaceholder')}
-                className="flex-1 px-3 py-2 rounded-lg border border-line-strong bg-surface-muted text-content font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                autoFocus
-                disabled={submitting}
-              />
-              <button
-                type="button"
-                onClick={() => setReveal(v => !v)}
-                disabled={submitting}
-                className="px-3 py-2 text-xs font-medium text-content-secondary rounded-lg border border-line-strong hover:bg-surface-hover">
-                {reveal ? t('mcp.setup.secretDialog.hide') : t('mcp.setup.secretDialog.show')}
-              </button>
-            </div>
-            <p className="text-[11px] text-content-muted dark:text-content-faint mt-2">
-              {t('mcp.setup.secretDialog.privacyNote')}
-            </p>
-            {error && (
-              <p className="text-xs text-coral-500 mt-2">
-                {t('mcp.setup.secretDialog.errorPrefix')} {error}
-              </p>
-            )}
-          </div>
-
-          <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-line">
-            <button
-              type="button"
-              onClick={handleCancel}
+        <div className="px-6 pb-2">
+          <label
+            htmlFor={inputId}
+            className="block text-xs font-medium text-content-secondary mb-1">
+            {t('mcp.setup.secretDialog.inputLabel')}
+          </label>
+          <div className="flex items-stretch gap-2">
+            <TextField
+              id={inputId}
+              type={reveal ? 'text' : 'password'}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={t('mcp.setup.secretDialog.inputPlaceholder')}
+              mono
+              className="flex-1"
+              autoFocus
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-content-secondary hover:text-content rounded-lg hover:bg-surface-hover disabled:opacity-50">
-              {t('mcp.setup.secretDialog.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || value.length === 0}
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-primary-500 hover:bg-primary-600 text-content-inverted disabled:opacity-50">
-              {submitting
-                ? t('mcp.setup.secretDialog.submitting')
-                : t('mcp.setup.secretDialog.submit')}
-            </button>
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setReveal(v => !v)}
+              disabled={submitting}>
+              {reveal ? t('mcp.setup.secretDialog.hide') : t('mcp.setup.secretDialog.show')}
+            </Button>
           </div>
-        </form>
-      </div>
-    </div>
+          <p className="text-[11px] text-content-muted mt-2">
+            {t('mcp.setup.secretDialog.privacyNote')}
+          </p>
+          {error && (
+            <p className="text-xs text-coral-500 mt-2">
+              {t('mcp.setup.secretDialog.errorPrefix')} {error}
+            </p>
+          )}
+        </div>
+      </form>
+    </ModalShell>
   );
 }
 

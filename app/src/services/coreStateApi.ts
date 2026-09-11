@@ -49,7 +49,6 @@ interface AppStateSnapshotResult {
    * normalises the missing case to `false` before returning so callers
    * never observe `undefined` here.
    */
-  meetAutoOrchestratorHandoff?: boolean;
   localState: {
     encryptionKey?: string | null;
     onboardingTasks?: OnboardingTasks | null;
@@ -73,6 +72,20 @@ interface AppStateSnapshotResult {
    * degrade to "no recovery". `CoreStateProvider` raises a one-shot notice.
    */
   configRecovered?: boolean;
+  /**
+   * `true` when `currentUser` came from the core's stored snapshot because the
+   * backend could not be refreshed, so its plan tier, credit balance and
+   * feature flags may be out of date (#5930). Optional so older cores that
+   * omit it degrade to "not stale".
+   */
+  currentUserStale?: boolean;
+  /**
+   * Seconds since the core last got a successful `auth_get_me` answer this
+   * process. Absent when it never has — the stored snapshot then came off
+   * disk and its real age is unknown, which is a different statement from
+   * "zero seconds old".
+   */
+  currentUserStaleSeconds?: number;
 }
 
 /** Raw (snake_case) health payload embedded in the app-state snapshot. */
@@ -111,12 +124,8 @@ export const fetchCoreAppSnapshot = async (): Promise<AppStateSnapshotResult> =>
     timeoutMs: SNAPSHOT_TIMEOUT_MS,
   });
   // Normalise the optional #1299 field at the API boundary so older core
-  // builds without `meetAutoOrchestratorHandoff` still surface the
   // privacy-conservative `false` to callers (e.g. CoreStateProvider).
-  return {
-    ...response.result,
-    meetAutoOrchestratorHandoff: response.result.meetAutoOrchestratorHandoff ?? false,
-  };
+  return { ...response.result };
 };
 
 export const updateCoreLocalState = async (params: UpdateCoreLocalStateParams): Promise<void> => {

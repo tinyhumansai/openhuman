@@ -39,6 +39,7 @@
  */
 import { useT } from '../../lib/i18n/I18nContext';
 import type { CoreCronJob } from '../../utils/tauriCommands/cron';
+import { Badge, Switch } from '../ui';
 import { formatSchedule } from './scheduledCronFormat';
 
 interface ScheduledCronCardProps {
@@ -106,19 +107,20 @@ export default function ScheduledCronCard({
   // dashboard's grouped-skill card.
   const containerClass = `rounded-2xl border shadow-soft transition-colors ${
     isActive
-      ? 'border-sage-200 dark:border-sage-500/30 bg-gradient-to-br from-sage-50 via-white to-sage-100 dark:from-sage-500/10 dark:via-neutral-900 dark:to-sage-500/5'
-      : 'border-line bg-gradient-to-br from-white via-stone-50 to-stone-100/60 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-800/80'
+      ? 'border-sage-200 dark:border-sage-500/30 bg-linear-to-br from-sage-50 via-surface to-sage-100 dark:from-sage-500/10 dark:via-surface dark:to-sage-500/5'
+      : 'border-line bg-linear-to-br from-surface via-surface-subtle to-surface-muted dark:from-surface dark:via-surface dark:to-surface-strong'
   }`;
 
   const headingRow = (
     <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2 min-w-0">
         {activeBadge && (
-          <span
+          <Badge
+            variant="success"
             data-testid={`${rootId}-active-badge`}
-            className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-sage-200 dark:bg-sage-500/30 text-sage-800 dark:text-sage-200 shrink-0">
+            className="uppercase tracking-wide shrink-0">
             {`★ ${t('settings.skillsRunner.schedule.active')}`}
-          </span>
+          </Badge>
         )}
         <span
           data-testid={`${rootId}-title`}
@@ -128,11 +130,9 @@ export default function ScheduledCronCard({
           {heading}
         </span>
         {badgeCount && badgeCount > 1 ? (
-          <span
-            data-testid={`${rootId}-count-badge`}
-            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface-strong text-content-secondary shrink-0">
+          <Badge data-testid={`${rootId}-count-badge`} className="shrink-0">
             ×{badgeCount}
-          </span>
+          </Badge>
         ) : null}
       </div>
       <div
@@ -145,15 +145,12 @@ export default function ScheduledCronCard({
           <span>
             {t('skills.dashboard.lastRun')}: {new Date(job.last_run).toLocaleString()}
             {job.last_status && (
-              <span
+              <Badge
+                variant={job.last_status === 'ok' ? 'success' : 'danger'}
                 data-testid={`${rootId}-last-status`}
-                className={`ml-1.5 px-1 py-0.5 rounded text-[10px] font-medium ${
-                  job.last_status === 'ok'
-                    ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
-                    : 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300'
-                }`}>
+                className="ml-1.5">
                 {job.last_status}
-              </span>
+              </Badge>
             )}
           </span>
         )}
@@ -172,23 +169,15 @@ export default function ScheduledCronCard({
   // a parent card-click handler.
   const toggleBlock = (
     <span className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={job.enabled}
-        aria-label={job.enabled ? t('skills.dashboard.disable') : t('skills.dashboard.enable')}
+      <Switch
+        id={`${rootId}-toggle-input`}
         data-testid={`${rootId}-toggle`}
+        aria-label={job.enabled ? t('skills.dashboard.disable') : t('skills.dashboard.enable')}
+        checked={job.enabled}
         disabled={busy}
-        onClick={() => onToggle(!job.enabled)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors disabled:opacity-50 ${
-          job.enabled ? 'bg-sage-500' : 'bg-surface-strong'
-        }`}>
-        <span
-          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-surface shadow-sm transition-transform mt-0.5 ${
-            job.enabled ? 'translate-x-4' : 'translate-x-0.5'
-          }`}
-        />
-      </button>
+        onCheckedChange={next => onToggle(next)}
+        className="data-[state=checked]:bg-sage-500"
+      />
       <span className="text-[10px] text-content-muted min-w-[44px]">
         {job.enabled ? t('common.enabled') : t('common.disabled')}
       </span>
@@ -228,7 +217,7 @@ export default function ScheduledCronCard({
           onClick();
         }
       }}
-      className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 cursor-pointer rounded-2xl transition-colors hover:bg-surface-subtle/80 dark:hover:bg-surface-muted/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40">
+      className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 cursor-pointer rounded-2xl transition-colors hover:bg-surface-subtle/80 dark:hover:bg-surface-muted/70 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500/40">
       {headingRow}
       {rightCluster}
     </div>

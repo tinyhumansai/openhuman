@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import createDebug from 'debug';
 
+import Badge, { type BadgeVariant } from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
+import { SheetContent, SheetRoot, SheetTitle } from '../../../components/ui/Sheet';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type {
   SubagentActivity,
@@ -9,12 +10,9 @@ import type {
   ToolTimelineEntryStatus,
 } from '../../../store/chatRuntimeSlice';
 import { useBackgroundActivity } from '../hooks/useBackgroundActivity';
-import {
-  CronJobRow,
-  MemorySection,
-  SectionHeader,
-  SubconsciousRow,
-} from './BackgroundActivityRows';
+import { CronJobRow, MemorySection, SectionHeader } from './BackgroundActivityRows';
+
+const log = createDebug('app:conversations:background-processes');
 
 /**
  * A background process = a *detached* sub-agent spawned with
@@ -70,41 +68,49 @@ type StatusLabelKey =
   | 'conversations.backgroundTasks.statusNeedsYou'
   | 'conversations.backgroundTasks.statusCancelled';
 
+/**
+ * Dot fill + label key + shared {@link Badge} tone for one process status.
+ *
+ * The `error` / `awaiting_user` cases used raw Tailwind palette scales
+ * (`bg-red-500`, `text-blue-700`) that do not follow a user's theme; they are
+ * the semantic `coral` / `primary` tokens now, which is what every other
+ * status surface in the conversation panel already used.
+ */
 function statusStyle(status: ToolTimelineEntryStatus): {
   dot: string;
   labelKey: StatusLabelKey;
-  pill: string;
+  variant: BadgeVariant;
 } {
   switch (status) {
     case 'running':
       return {
         dot: 'bg-amber-500 animate-pulse',
         labelKey: 'conversations.backgroundTasks.statusRunning',
-        pill: 'text-amber-700 dark:text-amber-300',
+        variant: 'warning',
       };
     case 'error':
       return {
-        dot: 'bg-red-500',
+        dot: 'bg-coral-500',
         labelKey: 'conversations.backgroundTasks.statusFailed',
-        pill: 'text-red-700 dark:text-red-300',
+        variant: 'danger',
       };
     case 'awaiting_user':
       return {
-        dot: 'bg-blue-500',
+        dot: 'bg-primary-500',
         labelKey: 'conversations.backgroundTasks.statusNeedsYou',
-        pill: 'text-blue-700 dark:text-blue-300',
+        variant: 'primary',
       };
     case 'cancelled':
       return {
-        dot: 'bg-stone-400 dark:bg-neutral-500',
+        dot: 'bg-content-faint',
         labelKey: 'conversations.backgroundTasks.statusCancelled',
-        pill: 'text-content-secondary',
+        variant: 'neutral',
       };
     default:
       return {
         dot: 'bg-sage-500',
         labelKey: 'conversations.backgroundTasks.statusDone',
-        pill: 'text-sage-700 dark:text-sage-300',
+        variant: 'success',
       };
   }
 }
@@ -128,17 +134,8 @@ export function BackgroundProcessesPanel({
   onOpenProcess,
 }: BackgroundProcessesPanelProps) {
   const { t } = useT();
-  // Cron jobs + subconscious + memory syncing — fetched only while open.
+  // Cron jobs + memory syncing — fetched only while open.
   const activity = useBackgroundActivity(open);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -152,22 +149,39 @@ export function BackgroundProcessesPanel({
     String(processes.length)
   );
 
-  // Portaled to `document.body` rather than rendered in place. This is a
-  // viewport-level overlay, but its host tree sits inside `Conversations`'
-  // `relative z-10` wrapper — a stacking context. Left in place, `z-50` only
-  // orders it against its own siblings; from the outside the whole chat subtree
-  // is just "z-10", so any later sibling with a higher z-index paints straight
-  // over it. Portaling lifts it into the root stacking context, where `z-50`
-  // means what it reads like. Same pattern as `components/ui/ModalShell`.
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex justify-end" data-testid="background-processes-panel">
-      <div className="absolute inset-0 bg-stone-900/30 dark:bg-black/50" onClick={onClose} />
-      <aside className="relative flex h-full w-full max-w-sm flex-col bg-surface shadow-xl">
-        <header className="flex items-center justify-between border-b border-line-subtle px-4 py-3">
+  log(
+    'render panel processes=%d running=%d cron=%d',
+    processes.length,
+    running,
+    activity.cronJobs.length
+  );
+
+  // The overlay is the shared Radix-backed `Sheet`: the hand-rolled portal +
+  // backdrop `<div onClick>` + `keydown` listener it replaced had no focus
+  // trap, no scroll lock, no focus restore, and a backdrop that was not
+  // keyboard-reachable at all. `open` is hard-coded because the early return
+  // above already renders nothing when closed — `onOpenChange` routes Escape /
+  // outside-click back to the caller's `onClose`.
+  return (
+    <SheetRoot
+      open
+      onOpenChange={next => {
+        if (!next) onClose();
+      }}>
+      <SheetContent
+        side="right"
+        aria-describedby={undefined}
+        data-testid="background-processes-panel"
+        className="max-w-sm">
+        <header className="flex shrink-0 items-center justify-between border-b border-line-subtle px-4 py-3">
           <div className="flex flex-col">
-            <h2 className="text-sm font-semibold text-content">
-              {t('conversations.backgroundTasks.title')}
-            </h2>
+            {/* `asChild` keeps the historical h2 so the heading role and its
+                accessible name are unchanged. */}
+            <SheetTitle asChild>
+              <h2 className="text-sm font-semibold text-content">
+                {t('conversations.backgroundTasks.title')}
+              </h2>
+            </SheetTitle>
             <span className="text-[11px] text-content-faint">
               {runningLabel} · {totalLabel}
             </span>
@@ -215,9 +229,9 @@ export function BackgroundProcessesPanel({
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-medium text-content">{p.name}</span>
-                      <span className={`shrink-0 text-[11px] font-medium ${s.pill}`}>
+                      <Badge variant={s.variant} className="shrink-0 rounded-full">
                         {t(s.labelKey)}
-                      </span>
+                      </Badge>
                     </span>
                     {p.goal ? (
                       <span className="mt-0.5 line-clamp-2 block text-[12px] text-content-muted">
@@ -247,20 +261,11 @@ export function BackgroundProcessesPanel({
             activity.cronJobs.map(job => <CronJobRow key={job.id} job={job} />)
           )}
 
-          {/* Section 3 — subconscious / background-thinking loop. */}
-          {activity.subconscious ? (
-            <>
-              <SectionHeader title={t('conversations.backgroundTasks.sectionSubconscious')} />
-              <SubconsciousRow summary={activity.subconscious} />
-            </>
-          ) : null}
-
           {/* Section 4 — memory syncing / ingestion. */}
           <SectionHeader title={t('conversations.backgroundTasks.sectionMemory')} />
           <MemorySection memory={activity.memory} />
         </div>
-      </aside>
-    </div>,
-    document.body
+      </SheetContent>
+    </SheetRoot>
   );
 }

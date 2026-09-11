@@ -12,7 +12,7 @@ const log = debugFactory('announcement');
 /**
  * Fetches the latest active announcement once the user is authenticated and,
  * if it hasn't been seen before (per-user, persisted), shows it once over the
- * app. The modal sits at z-[9998] — just below the harness-init overlay
+ * app. The modal sits at z-9998 — just below the harness-init overlay
  * (z-[9999]) — so during first-run setup the init screen covers it and the
  * announcement becomes visible only once init finishes.
  */

@@ -4,6 +4,7 @@
 //! in-memory inputs so coverage reaches production branches without real
 //! channel credentials or external inference providers.
 
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use openhuman_core::openhuman::channels::start_channels;
@@ -18,6 +19,21 @@ use openhuman_core::openhuman::web_chat::{
 use openhuman_core::openhuman::config::Config;
 use tempfile::tempdir;
 use tokio::time::timeout;
+
+static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
+
+fn ensure_memory_seams() {
+    MEMORY_SEAMS_INIT.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("channels-web-startup-raw-coverage-seams".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+            })
+            .expect("spawn channels web startup raw coverage seam installer")
+            .join()
+            .expect("channels web startup raw coverage seam installer panicked");
+    });
+}
 
 fn isolated_config() -> (tempfile::TempDir, Config) {
     let tmp = tempdir().expect("tempdir");
@@ -234,6 +250,7 @@ async fn startup_no_channels_initializes_runtime_and_exits_cleanly() {
     // `dispatch_harness_covers_streaming_history_timeout_and_memory_paths` on
     // `handler_had_progress`. Hold the guard across the whole startup call.
     let _agent_handler_guard = lock_agent_handler().await;
+    ensure_memory_seams();
     let (_tmp, config) = isolated_config();
     timeout(Duration::from_secs(20), start_channels(config))
         .await

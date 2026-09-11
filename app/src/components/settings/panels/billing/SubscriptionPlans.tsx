@@ -1,6 +1,10 @@
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { PlanTier } from '../../../../types/api';
-import { Spinner } from '../../../ui';
+import Alert from '../../../ui/Alert';
+import Badge from '../../../ui/Badge';
+import Button from '../../../ui/Button';
+import Card from '../../../ui/Card';
+import { CheckIcon, Spinner } from '../../../ui/icons';
 import { SettingsSwitch } from '../../controls';
 import { annualSavings, isUpgrade as checkIsUpgrade, displayPrice, PLANS } from '../billingHelpers';
 
@@ -13,6 +17,7 @@ interface SubscriptionPlansProps {
   isPurchasing: boolean;
   purchasingTier: PlanTier | null;
   paymentConfirmed: boolean;
+  upgradesDisabled?: boolean;
   onUpgrade: (tier: PlanTier) => void;
 }
 
@@ -25,12 +30,13 @@ const SubscriptionPlans = ({
   isPurchasing,
   purchasingTier,
   paymentConfirmed,
+  upgradesDisabled = false,
   onUpgrade,
 }: SubscriptionPlansProps) => {
   const { t } = useT();
   return (
     <>
-      <div className="flex flex-col gap-2 rounded-2xl bg-surface p-4 border border-line">
+      <Card className="p-4">
         <h3 className="font-headline text-2xl font-bold tracking-tight text-content">
           {t('settings.billing.subscription.chooseTitle')}
         </h3>
@@ -38,7 +44,7 @@ const SubscriptionPlans = ({
           {t('settings.billing.subscription.chooseSubtitle')}
         </p>
 
-        <div className="flex items-center justify-between mt-4">
+        <div className="mt-4 flex items-center justify-between">
           <div>
             <p className="text-sm font-semibold text-content">
               {t('settings.billing.subscription.cryptoQuestion')}
@@ -53,66 +59,45 @@ const SubscriptionPlans = ({
             onCheckedChange={next => setPaymentMethod(next ? 'crypto' : 'card')}
           />
         </div>
-      </div>
+      </Card>
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="mx-auto inline-flex w-fit rounded-full bg-surface p-1 shadow-sm ring-1 ring-neutral-950/5 lg:mx-0">
-            <button
+          <div className="mx-auto inline-flex w-fit rounded-full bg-surface p-1 shadow-xs ring-1 ring-line lg:mx-0">
+            <Button
+              variant={billingInterval === 'monthly' ? 'primary' : 'tertiary'}
+              size="sm"
+              className="rounded-full"
               onClick={() => {
                 if (paymentMethod !== 'crypto') setBillingInterval('monthly');
               }}
-              disabled={paymentMethod === 'crypto'}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                billingInterval === 'monthly'
-                  ? 'bg-primary-600 text-content-inverted'
-                  : 'text-content-muted hover:text-content dark:hover:text-content dark:text-content'
-              } ${paymentMethod === 'crypto' ? 'cursor-not-allowed opacity-40' : ''}`}>
+              disabled={paymentMethod === 'crypto'}>
               {t('settings.billing.subscription.monthly')}
-            </button>
-            <button
-              onClick={() => setBillingInterval('annual')}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                billingInterval === 'annual'
-                  ? 'bg-primary-600 text-content-inverted'
-                  : 'text-content-muted hover:text-content dark:hover:text-content dark:text-content'
-              }`}>
+            </Button>
+            <Button
+              variant={billingInterval === 'annual' ? 'primary' : 'tertiary'}
+              size="sm"
+              className="rounded-full"
+              onClick={() => setBillingInterval('annual')}>
               {t('settings.billing.subscription.annual')}
-            </button>
+            </Button>
           </div>
         </div>
 
         {paymentConfirmed && (
-          <div className="rounded-2xl border border-sage-500/20 bg-sage-500/10 p-4">
-            <div className="flex items-center gap-2">
-              <svg
-                className="h-4 w-4 flex-shrink-0 text-sage-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-              <p className="text-sm font-medium text-sage-700 dark:text-sage-300">
-                {t('settings.billing.subscription.paymentConfirmed')}
-              </p>
-            </div>
-          </div>
+          <Alert variant="success">
+            <CheckIcon className="h-4 w-4 shrink-0" />
+            <p className="text-sm font-medium">
+              {t('settings.billing.subscription.paymentConfirmed')}
+            </p>
+          </Alert>
         )}
 
         {isPurchasing && (
-          <div className="rounded-2xl border border-amber-500/20 bg-amber-100/90 p-4">
-            <div className="flex items-center gap-2">
-              <Spinner className="h-4 w-4 text-amber-500" />
-              <p className="text-sm text-amber-700 dark:text-amber-300">
-                {t('settings.billing.subscription.waitingPayment')}
-              </p>
-            </div>
-          </div>
+          <Alert variant="warning">
+            <Spinner className="h-4 w-4" />
+            <p className="text-sm">{t('settings.billing.subscription.waitingPayment')}</p>
+          </Alert>
         )}
 
         <div className="space-y-3">
@@ -128,14 +113,14 @@ const SubscriptionPlans = ({
                 key={plan.tier}
                 className={`relative flex flex-col gap-5 rounded-[24px] px-5 py-5 transition-all sm:flex-row sm:items-center sm:justify-between ${
                   isPopular
-                    ? 'bg-primary-50 dark:bg-primary-500/10 ring-2 ring-primary-500 shadow-sm'
+                    ? 'bg-primary-50 dark:bg-primary-500/10 ring-2 ring-primary-500 shadow-xs'
                     : isCurrent
-                      ? 'bg-surface ring-1 ring-primary-200 shadow-sm'
-                      : 'bg-surface ring-1 ring-neutral-950/5 shadow-sm'
+                      ? 'bg-surface ring-1 ring-primary-200 shadow-xs'
+                      : 'bg-surface ring-1 ring-line shadow-xs'
                 }`}>
                 <div className="flex items-start gap-4">
                   <div
-                    className={`flex h-12 w-12 min-h-12 min-w-12 flex-shrink-0 items-center justify-center rounded-full ${
+                    className={`flex h-12 w-12 min-h-12 min-w-12 shrink-0 items-center justify-center rounded-full ${
                       plan.recommended
                         ? 'bg-primary-600 text-content-inverted'
                         : isCurrent
@@ -181,23 +166,28 @@ const SubscriptionPlans = ({
                         {plan.name}
                       </h4>
                       {isPopular && (
-                        <span className="rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-content-inverted">
+                        <Badge
+                          variant="primary"
+                          className="rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-content-inverted">
                           {t('settings.billing.subscription.popular')}
-                        </span>
+                        </Badge>
                       )}
                       {isCurrent && !plan.recommended && (
-                        <span className="rounded-full bg-neutral-900 dark:bg-neutral-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-white">
+                        <Badge
+                          variant="neutral"
+                          className="rounded-full bg-content px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-content-inverted">
                           {t('settings.billing.subscription.current')}
-                        </span>
+                        </Badge>
                       )}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {plan.features.slice(0, 4).map(feature => (
-                        <span
+                        <Badge
                           key={feature.text}
-                          className="rounded-full bg-surface-subtle/50 border border-primary-200 dark:border-primary-500/30 px-3 py-1 text-xs font-medium text-content-secondary">
+                          variant="neutral"
+                          className="rounded-full border-primary-200 bg-surface-subtle/50 px-3 py-1 text-xs font-medium normal-case dark:border-primary-500/30">
                           {feature.text}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
                   </div>
@@ -229,22 +219,22 @@ const SubscriptionPlans = ({
                   </div>
 
                   {isCurrent ? (
-                    <div className="rounded-full bg-primary-600 px-4 py-2 text-xs font-semibold text-content-inverted">
+                    <Badge
+                      variant="primary"
+                      className="rounded-full bg-primary-600 px-4 py-2 text-xs font-semibold normal-case text-content-inverted">
                       {t('settings.billing.subscription.currentPlan')}
-                    </div>
+                    </Badge>
                   ) : isUpgrade ? (
-                    <button
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="rounded-full"
                       onClick={() => onUpgrade(plan.tier)}
-                      disabled={isPurchasing}
-                      className={`rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
-                        isPurchasing
-                          ? 'cursor-not-allowed bg-surface-strong text-content-faint'
-                          : 'bg-neutral-900 dark:bg-neutral-50 text-content-inverted hover:bg-primary-600'
-                      }`}>
+                      disabled={isPurchasing || upgradesDisabled}>
                       {isThisPurchasing
                         ? t('settings.billing.subscription.waiting')
                         : t('settings.billing.subscription.upgrade')}
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>

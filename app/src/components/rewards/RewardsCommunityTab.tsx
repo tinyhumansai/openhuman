@@ -55,19 +55,19 @@ function roleAccentTone(index: number) {
       iconBorder: 'border-amber-100 dark:border-amber-500/20',
     },
     {
-      iconBg: 'bg-blue-50 dark:bg-blue-500/10',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
       iconText: 'text-primary-600 dark:text-primary-300',
-      iconBorder: 'border-blue-100 dark:border-blue-500/20',
+      iconBorder: 'border-primary-100 dark:border-primary-500/20',
     },
     {
-      iconBg: 'bg-slate-100 dark:bg-slate-500/10',
-      iconText: 'text-slate-600 dark:text-slate-300',
-      iconBorder: 'border-slate-200 dark:border-slate-500/20',
+      iconBg: 'bg-surface-subtle dark:bg-surface-strong',
+      iconText: 'text-content-secondary',
+      iconBorder: 'border-line',
     },
     {
-      iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
-      iconText: 'text-emerald-600 dark:text-emerald-300',
-      iconBorder: 'border-emerald-100 dark:border-emerald-500/20',
+      iconBg: 'bg-sage-50 dark:bg-sage-500/10',
+      iconText: 'text-sage-600 dark:text-sage-300',
+      iconBorder: 'border-sage-100 dark:border-sage-500/20',
     },
   ] as const;
 
@@ -263,13 +263,13 @@ export default function RewardsCommunityTab({
 
   return (
     <>
-      <section className="relative overflow-hidden rounded-[1.25rem] bg-gradient-to-br from-[#004ad0] to-[#2b64f1] p-6 text-white shadow-[0_20px_40px_rgba(25,28,30,0.08)]">
+      <section className="relative overflow-hidden rounded-3xl bg-linear-to-br from-[#004ad0] to-[#2b64f1] p-6 text-content-inverted shadow-[0_20px_40px_rgba(25,28,30,0.08)]">
         <div className="relative z-10 space-y-4">
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold tracking-tight text-white">
+            <h1 className="text-2xl font-bold tracking-tight text-content-inverted">
               {t('rewards.community.heroTitle')}
             </h1>
-            <p className="text-sm font-medium leading-relaxed text-white/90">
+            <p className="text-sm font-medium leading-relaxed text-content-inverted/90">
               {t('rewards.community.heroSubtitle')}
             </p>
           </div>
@@ -278,7 +278,7 @@ export default function RewardsCommunityTab({
               <>
                 <div
                   data-testid="rewards-discord-connected"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-surface/15 px-4 py-3 text-sm font-semibold text-white">
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-surface/15 px-4 py-3 text-sm font-semibold text-content-inverted">
                   <svg
                     className="h-4 w-4"
                     viewBox="0 0 24 24"
@@ -293,26 +293,30 @@ export default function RewardsCommunityTab({
                       )
                     : t('rewards.community.discordConnected')}
                 </div>
-                <button
+                <Button
                   onClick={() => {
                     void handleDisconnectDiscord();
                   }}
                   disabled={disconnectState === 'disconnecting'}
                   data-testid="rewards-disconnect-discord"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-surface/10 px-4 py-3 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-70">
+                  variant="secondary"
+                  size="lg"
+                  className="border-content-inverted/20 bg-surface/10 text-content-inverted backdrop-blur-sm hover:bg-content-inverted/15">
                   {disconnectState === 'disconnecting'
                     ? t('rewards.community.disconnectingDiscord')
                     : t('rewards.community.disconnectDiscord')}
-                </button>
+                </Button>
               </>
             ) : (
-              <button
+              <Button
                 onClick={() => {
                   void handleConnectDiscord();
                 }}
                 disabled={connectState === 'connecting'}
                 data-testid="rewards-connect-discord"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-surface px-4 py-3 text-sm font-semibold text-primary-700 dark:text-primary-300 shadow-lg transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70">
+                variant="secondary"
+                size="lg"
+                className="bg-surface text-primary-700 shadow-lg transition-transform active:scale-[0.98] dark:text-primary-300">
                 <svg
                   className="w-4 h-4"
                   fill="none"
@@ -329,24 +333,26 @@ export default function RewardsCommunityTab({
                 {connectState === 'connecting'
                   ? t('rewards.community.connectingDiscord')
                   : t('rewards.community.connectDiscord')}
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               onClick={() => {
                 void openUrl(inviteUrl);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-surface/10 px-4 py-3 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/15">
+              variant="secondary"
+              size="lg"
+              className="border-content-inverted/20 bg-surface/10 text-content-inverted backdrop-blur-sm hover:bg-content-inverted/15">
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20.317 4.369A19.79 19.79 0 0 0 15.885 3c-.191.328-.403.775-.552 1.124a18.27 18.27 0 0 0-5.29 0A11.56 11.56 0 0 0 9.49 3a19.74 19.74 0 0 0-4.433 1.369C2.253 8.51 1.492 12.55 1.872 16.533a19.9 19.9 0 0 0 5.239 2.673c.423-.58.8-1.196 1.123-1.845a12.84 12.84 0 0 1-1.767-.85c.148-.106.292-.217.43-.332c3.408 1.6 7.104 1.6 10.472 0c.14.115.283.226.43.332c-.565.338-1.157.623-1.771.851c.322.648.698 1.264 1.123 1.844a19.84 19.84 0 0 0 5.241-2.673c.446-4.617-.761-8.621-3.787-12.164ZM9.46 14.088c-1.02 0-1.855-.936-1.855-2.084c0-1.148.82-2.084 1.855-2.084c1.044 0 1.87.944 1.855 2.084c0 1.148-.82 2.084-1.855 2.084Zm5.08 0c-1.02 0-1.855-.936-1.855-2.084c0-1.148.82-2.084 1.855-2.084c1.044 0 1.87.944 1.855 2.084c0 1.148-.812 2.084-1.855 2.084Z" />
               </svg>
               {t('rewards.community.joinDiscord')}
-            </button>
+            </Button>
           </div>
           {connectState === 'error' ? (
             <p
               role="alert"
               data-testid="rewards-connect-discord-error"
-              className="text-xs font-medium text-white/90">
+              className="text-xs font-medium text-content-inverted/90">
               {t('rewards.community.connectDiscordError')}
             </p>
           ) : null}
@@ -354,7 +360,7 @@ export default function RewardsCommunityTab({
             <p
               role="alert"
               data-testid="rewards-disconnect-discord-error"
-              className="text-xs font-medium text-white/90">
+              className="text-xs font-medium text-content-inverted/90">
               {t('rewards.community.disconnectDiscordError')}
             </p>
           ) : null}
@@ -372,20 +378,21 @@ export default function RewardsCommunityTab({
             {t('rewards.community.syncUnavailable')} {error}
           </span>
           {onRetry ? (
-            <button
-              type="button"
+            <Button
               data-testid="rewards-retry"
               onClick={onRetry}
               disabled={isLoading}
-              className="rounded-full border border-amber-300 dark:border-amber-500/40 bg-surface px-3 py-1 text-xs font-semibold text-amber-800 dark:text-amber-200 shadow-sm transition-colors hover:bg-amber-100 dark:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60">
+              variant="secondary"
+              size="xs"
+              className="rounded-full border-amber-300 bg-surface text-amber-800 shadow-xs hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/20 dark:text-amber-200">
               {isLoading ? t('rewards.community.retrying') : t('rewards.community.tryAgain')}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
 
       <div className="space-y-4">
-        <section className="rounded-[1.25rem] bg-surface p-6 shadow-[0_4px_20px_rgba(25,28,30,0.04)]">
+        <section className="rounded-3xl bg-surface p-6 shadow-[0_4px_20px_rgba(25,28,30,0.04)]">
           <div className="mb-6 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-bold text-content">
@@ -408,7 +415,7 @@ export default function RewardsCommunityTab({
                   fill="transparent"
                   stroke="currentColor"
                   strokeWidth="4"
-                  className="text-stone-200"
+                  className="text-line-strong"
                 />
                 <circle
                   cx="28"
@@ -433,7 +440,7 @@ export default function RewardsCommunityTab({
                 title={role?.title ?? undefined}
                 aria-label={role?.title ?? undefined}
                 data-testid={role ? `rewards-achievement-badge-${role.id}` : undefined}
-                className={`flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-2 ${
                   role?.unlocked
                     ? 'border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-300'
                     : 'border-dashed border-line-strong bg-surface-subtle text-content-faint'
@@ -456,7 +463,7 @@ export default function RewardsCommunityTab({
             <div
               role="status"
               data-testid="rewards-claim-roles-banner"
-              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 px-4 py-3">
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-100 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-4 py-3">
               <div className="min-w-0">
                 <p className="text-sm font-bold text-content">
                   {t('rewards.community.roleClaimTitle')}
@@ -472,7 +479,7 @@ export default function RewardsCommunityTab({
                 onClick={() => {
                   void openUrl(inviteUrl);
                 }}
-                className="flex-shrink-0">
+                className="shrink-0">
                 {t('rewards.community.joinDiscord')}
               </Button>
             </div>
@@ -493,8 +500,7 @@ export default function RewardsCommunityTab({
                   ? role.discordRoleStatus === 'assigned'
                     ? {
                         label: t('rewards.community.roleAssigned'),
-                        classes:
-                          'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+                        classes: 'bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-300',
                       }
                     : role.discordRoleStatus === 'not_assigned'
                       ? {
@@ -506,7 +512,7 @@ export default function RewardsCommunityTab({
                         ? {
                             label: t('rewards.community.roleJoinToClaim'),
                             classes:
-                              'bg-blue-50 text-primary-700 dark:bg-blue-500/10 dark:text-primary-300',
+                              'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300',
                           }
                         : null
                   : null;
@@ -521,15 +527,15 @@ export default function RewardsCommunityTab({
               return (
                 <div
                   key={role.id}
-                  className={`rounded-[1.25rem] bg-surface p-5 shadow-sm transition-shadow hover:shadow-md ${
+                  className={`rounded-3xl bg-surface p-5 shadow-xs transition-shadow hover:shadow-md ${
                     role.unlocked
                       ? 'ring-1 ring-primary-100 dark:ring-primary-500/20'
-                      : 'ring-1 ring-black/[0.04] dark:ring-white/[0.06]'
+                      : 'ring-1 ring-line/4 dark:ring-line-strong/6'
                   }`}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex gap-4">
                       <div
-                        className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border ${tone.iconBg} ${tone.iconText} ${tone.iconBorder}`}>
+                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border ${tone.iconBg} ${tone.iconText} ${tone.iconBorder}`}>
                         <svg className="h-6 w-6" viewBox="0 0 24 24" aria-hidden="true">
                           {roleGlyph(index)}
                         </svg>
@@ -592,7 +598,7 @@ export default function RewardsCommunityTab({
                         <>
                           <span
                             data-testid={`rewards-claimed-${role.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                            className="inline-flex items-center gap-1.5 rounded-full bg-sage-50 px-3 py-1.5 text-xs font-semibold text-sage-700 dark:bg-sage-500/10 dark:text-sage-300">
                             <svg
                               className="h-3.5 w-3.5"
                               viewBox="0 0 24 24"
@@ -606,7 +612,7 @@ export default function RewardsCommunityTab({
                             <span
                               role="status"
                               data-testid={`rewards-claim-credited-${role.id}`}
-                              className="text-xs font-semibold text-emerald-600 dark:text-emerald-300">
+                              className="text-xs font-semibold text-sage-600 dark:text-sage-300">
                               {t('rewards.community.claimCredited').replace('{amount}', feedback)}
                             </span>
                           ) : null}
@@ -659,7 +665,7 @@ export default function RewardsCommunityTab({
             so the two are no longer conflated in a single list. */}
         <section
           data-testid="rewards-discord-stats"
-          className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
+          className="rounded-3xl bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
           <h2 className="mb-3 text-sm font-bold text-content">
             {t('rewards.community.discordDetails')}
           </h2>
@@ -701,7 +707,7 @@ export default function RewardsCommunityTab({
             user actually used OpenHuman (token-processing days), not a check-in. */}
         <section
           data-testid="rewards-activity-stats"
-          className="rounded-[1.25rem] bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
+          className="rounded-3xl bg-[#f2f4f6] dark:bg-surface-muted/60 p-4 text-sm text-content-secondary">
           <h2 className="text-sm font-bold text-content">{t('rewards.community.activityTitle')}</h2>
           <p className="mb-3 mt-0.5 text-xs leading-relaxed text-content-muted">
             {t('rewards.community.activityStreakHint')}

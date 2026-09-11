@@ -65,7 +65,6 @@ OpenHuman은 대부분의 어시스턴트가 갖지 못한 세 가지입니다: 
 
 - **[메모리 트리(Memory Tree)](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian 위키](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: 당신의 데이터는 점수가 매겨진 Markdown 트리로 압축되어 당신의 머신에 있는 SQLite에 저장되고, 열어서 직접 편집할 수 있는 [Obsidian 볼트](https://x.com/karpathy/status/2039805659525644595)로 미러링됩니다. 벡터 수프 같은 블랙박스가 아닙니다.
 - **[100개 이상의 OAuth 통합, 5,000개 이상의 MCP 서버, 90,000개 이상의 Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: Gmail, Notion, GitHub, Slack 등 당신의 스택을 원클릭으로 연결하세요. [자동 가져오기(auto-fetch)](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)가 20분마다 두뇌에 데이터를 공급합니다. 덕분에 오늘 아침에 이미 내일의 컨텍스트를 가지고 있습니다.
-- **[잠재의식(subconscious)](https://tinyhumans.gitbook.io/openhuman/features/subconscious)**: 당신의 세계의 변화를 비교 분석하고, 목표를 진전시키고, 아침 브리핑을 작성하는 백그라운드 루프입니다. 타이핑을 멈춘 후에도 생각은 계속됩니다.
 - **[목표 및 할 일(Goals & Todos)](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: 장기 목표, 스레드별 지속 목표, 그리고 대화별 공유 칸반 보드를 제공합니다.
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: 도구 출력은 모델에 닿기 전에 압축되어, 동일한 정보가 최대 80% 적은 토큰으로 전달됩니다. 이것 없이는 이만큼 큰 두뇌를 감당할 수 없을 것입니다.
 
@@ -74,13 +73,10 @@ OpenHuman은 대부분의 어시스턴트가 갖지 못한 세 가지입니다: 
 - **[Workflows](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: 에이전트가 자동화를 제안하면 캔버스에서 검토하고 저장하면 됩니다. 내구성 있고, 트리거 기반이며, 승인 게이트를 거치는 실행이 오픈 소스 [tinyflows](https://github.com/tinyhumansai/tinyflows) 위에서 동작합니다.
 - **[일을 끝까지 마무리하는 하네스](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: 오픈 소스 [tinyagents](https://github.com/tinyhumansai/tinyagents) 기반의 체크포인트 그래프 실행입니다. 막힌 에이전트는 방향을 조정받고, 중단된 에이전트는 근본 원인을 돌려주며, 모든 실행은 호출별 실제 비용과 함께 재생됩니다.
 - **[상시 가동되는 분할 두뇌(split brain)](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: 빠른 반사 에이전트가 들어오는 트래픽을 분류하는 동안 깊은 추론 코어가 워커 함대에 작업을 위임하며, 잠재의식이 이를 조종합니다.
-- **[에이전트 경제](https://tinyhumans.gitbook.io/openhuman/features/tinyplace)**: [tiny.place](https://tiny.place)의 `@handle`, Signal로 암호화된 에이전트 간 오케스트레이션, x402 USDC 바운티와 거래까지 제공합니다. 키는 디스크에 절대 닿지 않습니다.
 
 ### 🔬 깊이 있는 리서처이자 실행가
 
-- **[SuperContext](https://tinyhumans.gitbook.io/openhuman/features/super-context)**: 모델이 첫 메시지를 읽기 전에 리서치 스카우트가 당신의 메모리와 파일을 훑습니다. 콜드 스타트가 없습니다.
 - **모든 것이 포함됨(Batteries included)**: 웹 검색, 스크레이퍼, 코더 툴셋, 실제 [브라우저](https://tinyhumans.gitbook.io/openhuman/features/native-tools/browser-and-computer), 인프로세스 Whisper를 갖춘 [네이티브 음성](../gitbooks/features/native-tools/voice.md), 그리고 워크로드별로 적합한 LLM을 선택하는 [모델 라우팅](https://tinyhumans.gitbook.io/openhuman/features/model-routing)까지. 하나의 구독으로, [로컬 AI는 선택 사항](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)입니다.
-- **[미팅 에이전트](https://tinyhumans.gitbook.io/openhuman/features/mascot/meeting-agents)**: 얼굴과 목소리를 가지고 **Meet, Zoom, Teams, Webex**에 참여합니다. 캘린더에서 자동으로 참여하고, 실시간 자막을 스트리밍하며, 이름이 불리면 대답하고, 요약과 액션 아이템을 정리합니다.
 - **[이미지 및 비디오 생성](https://tinyhumans.gitbook.io/openhuman/features/native-tools)**: Seedream/SeedEdit 이미지와 Seedance/Veo 비디오가 동일한 구독으로 워크스페이스에 바로 생성됩니다.
 - **[17개의 메시징 채널](https://tinyhumans.gitbook.io/openhuman/features/channels)**: Telegram, Discord, Slack, WhatsApp, Signal, iMessage… 그리고 **네이티브 이메일**(IMAP IDLE + SMTP)까지. 에이전트는 당신이 이미 있는 곳에서 당신에게 닿습니다.
 
@@ -156,11 +152,11 @@ n8n과 Zapier에서 깊은 영감을 받은 [워크플로우](https://tinyhumans
 
 ## 소스에서 기여하기
 
-새로운 기여자인가요? 포크/PR 워크플로우 및 로컬 검증 명령에 대해서는 [`CONTRIBUTING.md`](../CONTRIBUTING.md)에서 시작하거나, [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)의 복사-붙여넣기 AI 에이전트 프롬프트를 사용하세요. 빠른 경로는 다음과 같습니다.
+새로운 기여자인가요? 포크/PR 워크플로우 및 로컬 검증 명령에 대해서는 [`CONTRIBUTING.md`](../CONTRIBUTING.md)에서 시작하거나, [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you)의 복사-붙여넣기 AI 에이전트 프롬프트를 사용하세요. 빠른 경로는 다음과 같습니다.
 
-1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.93.0(`rustfmt` + `clippy`), CMake, Ninja, ripgrep 및 플랫폼 데스크톱 빌드 필수 구성 요소를 설치합니다.
+1. Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1(`rustfmt` + `clippy`), CMake, Ninja, ripgrep 및 플랫폼 데스크톱 빌드 필수 구성 요소를 설치합니다.
 2. 저장소를 포크하고 클론한 다음, `pnpm install` 전에 `git submodule update --init --recursive`를 실행하여 벤더링된 Tauri/CEF 소스가 존재하는지 확인합니다.
-3. 웹 전용 UI 작업에는 `pnpm dev`를, 데스크톱 쉘에는 `pnpm --filter openhuman-app dev:app`을 사용하고, PR을 열기 전에 `pnpm typecheck`, `pnpm format:check`, `cargo check -p openhuman --lib`와 같은 집중 점검을 수행합니다.
+3. 웹 전용 UI 작업에는 `pnpm dev`를, 데스크톱 쉘에는 `pnpm --filter openhuman-app dev:app` (macOS) 또는 `pnpm dev:app:win` (Windows)을 사용하고, PR을 열기 전에 `pnpm typecheck`, `pnpm format:check`, `cargo check -p openhuman --lib`와 같은 집중 점검을 수행합니다.
 
 상세 문서: [아키텍처](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [설정하기](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [클라우드 배포](../gitbooks/features/cloud-deploy.md).
 

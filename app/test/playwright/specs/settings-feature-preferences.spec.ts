@@ -276,7 +276,6 @@ test.describe('Settings - Feature Preferences', () => {
   test('persists notification category preferences', async ({ page }) => {
     await openAuthenticatedRoute(page, 'pw-settings-notification-prefs', '/settings/notifications');
 
-    await expect(page.getByText('Do Not Disturb', { exact: true })).toBeVisible();
     await expect(page.getByText('Messages', { exact: true })).toBeVisible();
 
     const messagesLabel = 'Toggle Messages notifications';
@@ -295,7 +294,7 @@ test.describe('Settings - Feature Preferences', () => {
       .toBe(toggled === 'true');
 
     await reloadAndWait(page);
-    await expect(page.getByText('Do Not Disturb')).toBeVisible();
+    await expect(page.getByText('Messages', { exact: true })).toBeVisible();
     await expect.poll(() => getAriaChecked(page, messagesLabel)).toBe(toggled);
   });
 

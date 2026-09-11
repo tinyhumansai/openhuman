@@ -1,10 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use openhuman_core::openhuman::agent::debug::{dump_agent_prompt, DumpPromptOptions};
-use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
-use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::config::AgentConfig;
 use openhuman_core::openhuman::agent::context::prompt::{
     render_ambient_environment, render_safety, render_subagent_system_prompt_with_format,
     render_tools, ConnectedIntegration, CuratedMemoryPromptSnapshot, LearnedContextData,
@@ -12,20 +8,23 @@ use openhuman_core::openhuman::agent::context::prompt::{
     PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder, ToolCallFormat,
     UserIdentity,
 };
+use openhuman_core::openhuman::agent::debug::{dump_agent_prompt, DumpPromptOptions};
+use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
+use openhuman_core::openhuman::agent::Agent;
+use openhuman_core::openhuman::config::AgentConfig;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
 use openhuman_core::openhuman::skills::ops_types::Workflow;
-use openhuman_core::openhuman::subconscious::SourceChunk;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tinyagents::harness::message::Message;
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::usage::Usage;
+use tinyinference::message::Message;
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::usage::Usage;
 
 struct EnvGuard {
     key: &'static str,
@@ -96,7 +95,7 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.requests.lock().push(CapturedRequest {
             messages: request.messages,
             tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
@@ -294,20 +293,6 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
 
     let built = SystemPromptBuilder::with_defaults()
         .add_section(Box::new(PersonalityRosterSection))
-        .with_reflection_context(vec![
-            SourceChunk {
-                ref_id: "entity:alpha".to_string(),
-                kind: "entity".to_string(),
-                content: "Resolved source chunk\nwith newline.".to_string(),
-                metadata: json!({"hotness": 7}),
-            },
-            SourceChunk {
-                ref_id: "missing:beta".to_string(),
-                kind: "missing".to_string(),
-                content: String::new(),
-                metadata: json!({}),
-            },
-        ])
         .build(&ctx)?;
 
     assert!(built.contains("round26 personality soul override"));
@@ -317,9 +302,6 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
     assert!(built.contains("## User Memory"));
     assert!(built.contains("projects (last updated 2026-05-28)"));
     assert!(built.contains("round26_tool[alpha|zeta]"));
-    assert!(built.contains("## Memory context"));
-    assert!(built.contains("Resolved source chunk with newline."));
-    assert!(!built.contains("missing:beta"));
     assert!(built.contains("## Available Personalities"));
     assert!(built.contains("Recent context: "));
 
@@ -348,7 +330,6 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
         SubagentRenderOptions {
             include_safety_preamble: true,
             include_identity: true,
-            include_skills_catalog: false,
             include_profile: true,
             include_memory_md: true,
         },

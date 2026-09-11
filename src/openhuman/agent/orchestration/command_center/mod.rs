@@ -1,7 +1,7 @@
 //! Background agent command center (issue #3373).
 //!
 //! A read-only product surface over the durable run ledger
-//! (`tinyagents::session::run_ledger`): it lists recent background agent runs grouped by
+//! (`tinyagents_session::run_ledger`): it lists recent background agent runs grouped by
 //! a normalized status model (needs-input / working / completed / failed /
 //! stopped) so users can see what is in flight, what is blocked on them, and
 //! what finished. Live run state already persists to the ledger via the spawn

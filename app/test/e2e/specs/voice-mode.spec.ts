@@ -132,22 +132,17 @@ describe.skip('Voice mode integration', () => {
 });
 
 /**
- * Offline STT mode — core RPC contract tests.
+ * Hosted STT engine — core RPC contract tests.
  *
  * These tests exercise the `openhuman.voice_status` RPC to assert the
  * availability contract without touching the UI voice toggle (which was
  * removed in #717). The RPC contract is:
  *
- *   - `stt_available=true` when either the in-process whisper engine is
- *     loaded, OR config.local_ai.whisper_in_process=true and the model file
- *     exists, OR whisper-cli binary + model file are both present.
- *   - `stt_available=false` when none of the above conditions hold; the app
- *     must not silently call a cloud STT provider when `stt_provider=whisper`.
- *
- * Product gap: there is no "offline mode" flag that prevents cloud fallback
- * when local assets are missing. The `it.skip` below records this gap.
+ *   - `stt_engine` is the configured backend or third-party provider route.
+ *   - `stt_available` reports whether that route can be constructed from the
+ *     active configuration, with `stt_error` explaining a missing provider.
  */
-describe('Voice mode — offline STT contract (voice_status RPC)', () => {
+describe('Voice mode — hosted STT contract (voice_status RPC)', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
@@ -164,45 +159,16 @@ describe('Voice mode — offline STT contract (voice_status RPC)', () => {
     const status = (result as any).result ?? result;
     expect(typeof status.stt_available).toBe('boolean');
     expect(typeof status.tts_available).toBe('boolean');
-    expect(typeof status.stt_provider).toBe('string');
+    expect(typeof status.stt_engine).toBe('string');
+    expect(status.stt_error === null || typeof status.stt_error === 'string').toBe(true);
   });
 
-  it('5.2 — voice_status reports stt_available=false and non-cloud stt_provider when local assets are absent in the E2E environment', async () => {
-    // In the E2E test environment whisper-cli is not installed and no model
-    // file is seeded. The RPC must return stt_available=false rather than
-    // silently advertising cloud availability under the whisper provider label.
+  it('5.2 — voice_status reports the resolved STT engine', async () => {
     const result = await callOpenhumanRpc('openhuman.voice_status', {});
     const status = (result as any).result ?? result;
 
-    if (status.stt_provider === 'whisper' || status.stt_provider === 'local') {
-      // When stt_provider is whisper and the binary/model are absent, the
-      // contract is stt_available=false (no silent cloud fallback).
-      if (!status.whisper_binary && !status.stt_model_path) {
-        expect(status.stt_available).toBe(false);
-      }
-    }
-    // If stt_provider is "cloud" the field is correctly set — just assert the
-    // provider is declared (not an empty string which would indicate an
-    // undiscovered fallback).
-    expect(status.stt_provider.length).toBeGreaterThan(0);
-  });
-
-  // TODO: Remove .skip when an explicit offline mode is implemented.
-  // An "offline mode" toggle that (a) forces stt_provider=whisper and (b)
-  // returns a clear error if assets are missing rather than falling back to
-  // cloud has not yet been built. The config field `local_ai.stt_provider`
-  // selects the provider but does not gate cloud fallback when local fails.
-  //
-  // Filed as product gap: src/openhuman/voice/ops.rs currently has no
-  // offline-only enforcement path. When implemented, the new RPC behaviour
-  // should be tested here and the skip removed.
-  it.skip('5.3 — offline mode enabled + local assets missing → explicit "missing local STT" error, no cloud fallback', async () => {
-    // When implemented:
-    //   1. Set config.local_ai.stt_provider = "whisper" and ensure no binary/model.
-    //   2. Attempt a transcription via voice_transcribe or trigger mic recording.
-    //   3. Assert the error message identifies the missing local asset
-    //      (e.g. "STT model not found") rather than a cloud API error.
-    //   4. Assert no outbound HTTP request to any cloud STT endpoint was made.
+    expect(status.stt_engine.length).toBeGreaterThan(0);
+    expect(status.stt_error === null || typeof status.stt_error === 'string').toBe(true);
   });
 });
 
@@ -711,19 +677,41 @@ describe.skip('Voice mode — Human tab capture & error mapping (#1610)', () => 
       await waitForSendErrorCode(8_000);
 
       // Now assert that no user message bubble in the thread says "beep".
-      const beepInThread = await browser.execute(() => {
-        // User messages are rendered by ChatBubble / MessageBubble.
-        // We cast a wide net: any element with role="group" or a message
-        // container whose data-sender="user" contains the word "beep".
-        const candidates = Array.from(
-          document.querySelectorAll('[data-sender="user"], [data-message-sender="user"]')
-        );
-        return candidates.some(
-          (el: Element) => (el as HTMLElement).textContent?.toLowerCase().includes('beep') ?? false
-        );
+      //
+      // This assertion used to query `[data-sender="user"], [data-message-sender="user"]`,
+      // and NEITHER attribute existed anywhere in `app/src` — the NodeList was
+      // always empty, `.some()` was always false, and the guard could never
+      // fail no matter what the thread contained. `data-sender` is now a real
+      // attribute on the message row in ChatThreadView, so the query matches;
+      // the `listMounted` check below is what keeps the assertion from
+      // regressing back into a vacuous pass if that hook is ever renamed.
+      const probe = await browser.execute(() => {
+        const listMounted = !!document.querySelector('[data-testid="chat-message-list"]');
+        const rows = Array.from(document.querySelectorAll('[data-testid="chat-message-row"]'));
+        const userRows = rows.filter(el => el.getAttribute('data-sender') === 'user');
+        const hasBeep = (el: Element) =>
+          (el as HTMLElement).textContent?.toLowerCase().includes('beep') ?? false;
+        return {
+          listMounted,
+          rowCount: rows.length,
+          userRowCount: userRows.length,
+          beepInUserMessage: userRows.some(hasBeep),
+          beepAnywhereInThread: rows.some(hasBeep),
+        };
       });
 
-      expect(beepInThread).toBe(false);
+      // Selector-rot guard: if the transcript itself is not mounted we are not
+      // inspecting the thread at all, and "no beep found" means nothing.
+      expect(probe.listMounted).toBe(true);
+
+      // The real regression guard (#1610): no placeholder utterance was
+      // emitted. Zero user rows is a legitimate pass here — it means nothing
+      // was appended — but it is now distinguishable from "the selector
+      // matched nothing", which is the failure mode this test previously had.
+      expect(probe.beepInUserMessage).toBe(false);
+      // Wider net: the placeholder must not appear on any row, in case a
+      // future implementation renders it under a different sender.
+      expect(probe.beepAnywhereInThread).toBe(false);
     } finally {
       await restoreGetUserMedia();
     }

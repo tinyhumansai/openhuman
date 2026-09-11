@@ -139,6 +139,12 @@ pub enum ToolHookEvent {
 }
 
 /// Safe metadata supplied to an embedding host's tool hook.
+///
+/// The post-execution fields (`output`, `error`) carry the tool's *raw* result
+/// text, unlike [`ToolCallRecord::output_summary`], which is sanitized for the
+/// learning pipeline. A tool hook is a policy seam — a hook asked to redact
+/// secrets from a result cannot do it from a summary — so the trade is
+/// deliberate, and it is why these fields exist here and not there.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolHookContext {
     /// The lifecycle moment that raised this notification.
@@ -153,9 +159,56 @@ pub struct ToolHookContext {
     pub success: Option<bool>,
     /// Final tool runtime in milliseconds; absent before execution.
     pub duration_ms: Option<u64>,
+    /// Raw tool result text; absent before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// Failure text when the tool errored; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Session the call belongs to, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Canonical agent definition id, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+}
+
+/// What a pre-tool hook decided about a call.
+///
+/// This is the enrichment that makes an embedder hook a policy lever rather
+/// than a tripwire: before it existed the only expressible answers were "fine"
+/// and an `Err` that read to the model as a tool crash.
+#[derive(Debug, Clone, Default)]
+pub enum ToolHookDecision {
+    /// Run the tool as requested.
+    #[default]
+    Proceed,
+    /// Run the tool, but with these arguments instead. Used to redact a
+    /// secret, pin a flag, or narrow a path before the tool ever sees it.
+    ProceedWith(serde_json::Value),
+    /// Refuse the call. `reason` is what the model is told.
+    Deny(String),
+    /// Escalate to the human through the approval gate. `reason` is what the
+    /// human is asked about.
+    Ask(String),
+}
+
+impl ToolHookDecision {
+    /// Whether the call is refused outright.
+    pub fn is_deny(&self) -> bool {
+        matches!(self, ToolHookDecision::Deny(_))
+    }
 }
 
 /// Embedder callback around every harness tool execution.
+///
+/// Implement [`before_tool`](ToolHook::before_tool) and
+/// [`after_tool`](ToolHook::after_tool) for a plain observer. Override
+/// [`before_tool_decision`](ToolHook::before_tool_decision) and
+/// [`after_tool_context`](ToolHook::after_tool_context) when the hook needs to
+/// rewrite arguments, escalate to the human, or feed text back to the model;
+/// the defaults bridge to the simpler pair so existing implementations keep
+/// working unchanged.
 #[async_trait]
 pub trait ToolHook: Send + Sync {
     /// Human-readable hook identifier for diagnostics.
@@ -164,6 +217,25 @@ pub trait ToolHook: Send + Sync {
     async fn before_tool(&self, context: &ToolHookContext) -> anyhow::Result<()>;
     /// Observe a completed tool. Errors are logged and never change its result.
     async fn after_tool(&self, context: &ToolHookContext) -> anyhow::Result<()>;
+
+    /// Decide what happens to a call. Defaults to
+    /// [`before_tool`](ToolHook::before_tool), mapping its `Err` to a denial.
+    async fn before_tool_decision(&self, context: &ToolHookContext) -> ToolHookDecision {
+        match self.before_tool(context).await {
+            Ok(()) => ToolHookDecision::Proceed,
+            Err(error) => ToolHookDecision::Deny(format!("{error:#}")),
+        }
+    }
+
+    /// Observe a completed tool and optionally append text to its result, which
+    /// the model then sees. Defaults to [`after_tool`](ToolHook::after_tool)
+    /// with no appended text.
+    async fn after_tool_context(&self, context: &ToolHookContext) -> Option<String> {
+        if let Err(error) = self.after_tool(context).await {
+            log::warn!("[hooks] post-tool hook '{}' failed: {error:#}", self.name());
+        }
+        None
+    }
 }
 
 /// Tool hooks supplied by an embedding host.
@@ -201,123 +273,8 @@ pub fn embedder_tool_hooks() -> Vec<Arc<dyn ToolHook>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sanitize_success_includes_char_count() {
-        let out = sanitize_tool_output("hello world", "read_file", true);
-        assert_eq!(out, "read_file: ok (11 chars)");
-    }
-
-    #[test]
-    fn sanitize_success_empty_output() {
-        let out = sanitize_tool_output("", "write_file", true);
-        assert_eq!(out, "write_file: ok (0 chars)");
-    }
-
-    #[test]
-    fn sanitize_failure_timeout() {
-        let out = sanitize_tool_output("connection timeout after 30s", "http_request", false);
-        assert_eq!(out, "http_request: failed (timeout)");
-    }
-
-    #[test]
-    fn sanitize_failure_not_found() {
-        let out = sanitize_tool_output("no such file or directory", "read_file", false);
-        assert_eq!(out, "read_file: failed (not_found)");
-    }
-
-    #[test]
-    fn sanitize_failure_not_found_variant() {
-        let out = sanitize_tool_output("resource Not Found", "api_call", false);
-        assert_eq!(out, "api_call: failed (not_found)");
-    }
-
-    #[test]
-    fn sanitize_failure_permission_denied() {
-        let out = sanitize_tool_output("Permission denied", "exec", false);
-        assert_eq!(out, "exec: failed (permission_denied)");
-    }
-
-    #[test]
-    fn sanitize_failure_connection_error() {
-        let out = sanitize_tool_output("network unreachable", "fetch", false);
-        assert_eq!(out, "fetch: failed (connection_error)");
-    }
-
-    #[test]
-    fn sanitize_failure_connection_variant() {
-        let out = sanitize_tool_output("Connection refused", "fetch", false);
-        assert_eq!(out, "fetch: failed (connection_error)");
-    }
-
-    #[test]
-    fn sanitize_failure_parse_error() {
-        let out = sanitize_tool_output("invalid JSON syntax", "parse", false);
-        assert_eq!(out, "parse: failed (parse_error)");
-    }
-
-    #[test]
-    fn sanitize_failure_parse_variant() {
-        let out = sanitize_tool_output("failed to parse response", "api", false);
-        assert_eq!(out, "api: failed (parse_error)");
-    }
-
-    #[test]
-    fn sanitize_failure_unknown_tool() {
-        let out = sanitize_tool_output("unknown tool requested", "bad_tool", false);
-        assert_eq!(out, "bad_tool: failed (unknown_tool)");
-    }
-
-    #[test]
-    fn sanitize_failure_generic_error() {
-        let out = sanitize_tool_output("something went wrong", "tool", false);
-        assert_eq!(out, "tool: failed (error)");
-    }
-
-    #[test]
-    fn turn_context_serde_roundtrip() {
-        let ctx = TurnContext {
-            user_message: "hello".into(),
-            assistant_response: "hi".into(),
-            tool_calls: vec![ToolCallRecord {
-                name: "read".into(),
-                arguments: serde_json::json!({"path": "/tmp"}),
-                success: true,
-                output_summary: "read: ok (100 chars)".into(),
-                duration_ms: 42,
-            }],
-            turn_duration_ms: 500,
-            session_id: Some("sess-1".into()),
-            agent_id: Some("orchestrator".into()),
-            entrypoint: Some("cli".into()),
-            iteration_count: 2,
-        };
-        let json = serde_json::to_string(&ctx).unwrap();
-        let back: TurnContext = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.user_message, "hello");
-        assert_eq!(back.tool_calls.len(), 1);
-        assert_eq!(back.tool_calls[0].name, "read");
-        assert_eq!(back.iteration_count, 2);
-    }
-
-    #[tokio::test]
-    async fn fire_hooks_accepts_empty_hook_list() {
-        let ctx = TurnContext {
-            user_message: "x".into(),
-            assistant_response: "y".into(),
-            tool_calls: vec![],
-            turn_duration_ms: 1,
-            session_id: None,
-            agent_id: None,
-            entrypoint: None,
-            iteration_count: 1,
-        };
-        // Should not panic
-        fire_hooks(&[], ctx);
-    }
-}
+#[path = "hooks_tests.rs"]
+mod tests;
 
 /// Fire all hooks in parallel, logging errors without blocking the caller.
 pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
@@ -327,9 +284,20 @@ pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
         ctx.tool_calls.len(),
         ctx.assistant_response.chars().count()
     );
+    // Capture the ambient CoreContext before detaching: a bare `tokio::spawn`
+    // does not inherit the `CURRENT_CONTEXT` task-local, so under a scoped
+    // multi-tenant dispatch a detached hook would fall back to the process
+    // default context — and anything context-derived inside the hook (the
+    // archivist's `active_memory_guard`, goals enrichment) would read and
+    // write another tenant's workspace. Re-entering the scope inside the task
+    // keeps the hook on the dispatch it belongs to; when there is no scoped
+    // context (the desktop's single-tenant path), `current()` already answers
+    // the process default and re-scoping it is a no-op.
+    let core_ctx = crate::core::runtime::context::CoreContext::current();
     for (idx, hook) in hooks.iter().enumerate() {
         let hook = Arc::clone(hook);
         let ctx = ctx.clone();
+        let core_ctx = core_ctx.clone();
         log::trace!(
             "[learning] scheduling hook {}/{}: '{}'",
             idx + 1,
@@ -337,22 +305,30 @@ pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
             hook.name()
         );
         tokio::spawn(async move {
-            let started = std::time::Instant::now();
-            match hook.on_turn_complete(&ctx).await {
-                Ok(()) => {
-                    log::debug!(
-                        "[learning] hook '{}' completed in {}ms",
-                        hook.name(),
-                        started.elapsed().as_millis()
-                    );
+            let run = async move {
+                let started = std::time::Instant::now();
+                match hook.on_turn_complete(&ctx).await {
+                    Ok(()) => {
+                        log::debug!(
+                            "[learning] hook '{}' completed in {}ms",
+                            hook.name(),
+                            started.elapsed().as_millis()
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[learning] hook '{}' failed after {}ms: {e:#}",
+                            hook.name(),
+                            started.elapsed().as_millis()
+                        );
+                    }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "[learning] hook '{}' failed after {}ms: {e:#}",
-                        hook.name(),
-                        started.elapsed().as_millis()
-                    );
+            };
+            match core_ctx {
+                Some(scope_ctx) => {
+                    crate::core::runtime::context::CoreContext::scope(scope_ctx, run).await
                 }
+                None => run.await,
             }
         });
     }

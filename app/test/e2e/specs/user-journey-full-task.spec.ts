@@ -61,12 +61,6 @@ describe('User journey — full research task', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
-    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
-      value: false,
-    });
-    expect(superContext.ok).toBe(true);
-    console.log(`${LOG_PREFIX} Disabled super context for deterministic scripted LLM calls`);
-
     setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     setMockBehavior('llmStreamChunkDelayMs', '10');
     clearRequestLog();

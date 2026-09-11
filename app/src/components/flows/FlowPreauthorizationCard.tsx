@@ -2,7 +2,7 @@ import React from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ApprovalManifestEntry } from '../../services/api/flowsApi';
-import Button from '../ui/Button';
+import { Button } from '../ui';
 
 /**
  * The consolidated save+enable pre-authorization card: one list of every
@@ -52,16 +52,16 @@ export const FlowPreauthorizationCard: React.FC<Props> = ({
       role="alertdialog"
       aria-label={t('flows.enableApproval.title')}
       data-testid="flow-preauthorization-card"
-      className="rounded-xl border border-ocean-300 bg-surface p-3 text-sm shadow-md dark:border-ocean-700">
+      className="rounded-xl border border-primary-300 bg-surface p-3 text-sm shadow-md dark:border-primary-700">
       <div className="flex items-start gap-2">
-        <span aria-hidden className="text-base leading-none text-ocean-700 dark:text-ocean-200">
+        <span aria-hidden className="text-base leading-none text-primary-700 dark:text-primary-200">
           🔐
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-ocean-900 dark:text-ocean-100">
+          <p className="font-semibold text-primary-900 dark:text-primary-100">
             {t('flows.enableApproval.title')}
           </p>
-          <p className="mt-1 break-words text-ocean-800/90 dark:text-ocean-200/90">
+          <p className="mt-1 wrap-break-word text-primary-800/90 dark:text-primary-200/90">
             {t('flows.enableApproval.intro')}
           </p>
 
@@ -76,15 +76,13 @@ export const FlowPreauthorizationCard: React.FC<Props> = ({
                   className={`flex items-start gap-2 rounded-lg border px-2.5 py-1.5 ${
                     informational
                       ? 'border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-900/10'
-                      : 'border-ocean-200 dark:border-ocean-800'
+                      : 'border-primary-200 dark:border-primary-800'
                   }`}>
                   <span aria-hidden className="mt-0.5 text-xs leading-none">
                     {entry.kind === 'approvable' ? '✅' : entry.kind === 'blocked' ? '⛔' : '⚠️'}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words text-ink dark:text-content">
-                      {entry.label}
-                    </span>
+                    <span className="block wrap-break-word text-content">{entry.label}</span>
                     {hint && <span className="block text-xs text-content-secondary">{hint}</span>}
                   </span>
                 </li>
@@ -92,7 +90,9 @@ export const FlowPreauthorizationCard: React.FC<Props> = ({
             })}
           </ul>
 
-          {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+          {errorMsg && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
@@ -130,7 +130,7 @@ export const FlowPreauthorizationCard: React.FC<Props> = ({
  */
 export const FlowPreauthorizationOverlay: React.FC<Props> = props => (
   <div
-    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/50 p-4 backdrop-blur-sm"
     data-testid="flow-preauthorization-overlay">
     <div className="w-full max-w-md">
       <FlowPreauthorizationCard {...props} />

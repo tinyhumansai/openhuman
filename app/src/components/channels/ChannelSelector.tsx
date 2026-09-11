@@ -4,6 +4,7 @@ import { resolvePreferredAuthModeForChannel } from '../../lib/channels/routing';
 import { useT } from '../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../../types/channels';
+import Button from '../ui/Button';
 import { renderChannelIcon } from './channelIcon';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
@@ -67,12 +68,12 @@ const ChannelSelector = ({
             CHANNEL_STATUS_PRIORITY.find(status => modeStatuses.includes(status)) ?? 'disconnected';
 
           return (
-            <button
+            <Button
               key={channelId}
-              type="button"
+              variant="tertiary"
               data-testid={`channel-select-${channelId}`}
               onClick={() => onSelectChannel(channelId)}
-              className={`flex-1 flex items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
+              className={`flex-1 justify-between gap-2 rounded-lg border px-4 py-3 text-sm font-normal ${
                 isSelected
                   ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-300'
                   : 'border-line bg-surface-muted text-content-secondary hover:border-line-strong dark:hover:border-line-strong'
@@ -82,7 +83,7 @@ const ChannelSelector = ({
                 <span className="font-medium">{def.display_name}</span>
               </span>
               <ChannelStatusBadge status={bestStatus} />
-            </button>
+            </Button>
           );
         })}
 
@@ -90,18 +91,18 @@ const ChannelSelector = ({
         {VIRTUAL_TABS.map(tab => {
           const isSelected = selectedChannel === tab.id;
           return (
-            <button
+            <Button
               key={tab.id}
-              type="button"
+              variant="tertiary"
               onClick={() => onSelectChannel(tab.id)}
-              className={`flex-1 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
+              className={`flex-1 justify-start gap-2 rounded-lg border px-4 py-3 text-sm font-normal ${
                 isSelected
                   ? 'border-primary-500/60 bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-300'
                   : 'border-line bg-surface-muted text-content-secondary hover:border-line-strong dark:hover:border-line-strong'
               }`}>
               {renderChannelIcon(tab.id)}
               <span className="font-medium">{tab.display_name}</span>
-            </button>
+            </Button>
           );
         })}
       </div>

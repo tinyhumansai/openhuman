@@ -97,7 +97,7 @@ const McpInventoryExportTab = ({ servers }: McpInventoryExportTabProps) => {
       </div>
       <pre
         data-testid="mcp-inventory-export-pre"
-        className="max-h-80 overflow-auto rounded-lg border border-line bg-surface-muted p-3 text-[11px] font-mono text-content whitespace-pre-wrap break-words">
+        className="max-h-80 overflow-auto rounded-lg border border-line bg-surface-muted p-3 text-[11px] font-mono text-content whitespace-pre-wrap wrap-break-word">
         {serialized}
       </pre>
     </div>

@@ -15,8 +15,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tempfile::{tempdir, TempDir};
-use tinyagents::harness::message::Message;
-use tinyagents::harness::model::ModelRequest;
+use tinyinference::message::Message;
+use tinyinference::model::ModelRequest;
 
 use openhuman_core::openhuman::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
@@ -347,7 +347,6 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "missing");
     assert_eq!(assets.embedding.state, "missing");
-    assert_ne!(assets.stt.state, "ready");
     assert_ne!(assets.tts.state, "ready");
 
     let child = tokio::process::Command::new("/bin/sh")

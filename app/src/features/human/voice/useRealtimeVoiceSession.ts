@@ -2,10 +2,26 @@ import { useConversation } from '@elevenlabs/react';
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  PROACTIVE_VOICE_THREAD_ID,
+  proactiveThreadPins,
+} from '../../../providers/proactiveThreadPins';
 import { fetchVoiceAgentSignedUrl } from '../../../services/api/voiceAgentApi';
+import { socketService } from '../../../services/socketService';
 import { MASCOT_VOICE_ID } from '../../../utils/config';
 
 const log = createDebug('app:human:realtime-voice');
+
+/**
+ * Instruction prefix for "speak-back". A slow voice turn (e.g. an email summary)
+ * is acknowledged aloud, finishes in the background, and its result is delivered
+ * to chat AND pushed here as a `voice_speak` event. We send it back into the live
+ * ElevenLabs session as a user message wrapped with this prefix so the agent reads
+ * it verbatim. MUST match `VOICE_READBACK_PREFIX` in `voice/realtime_harness.rs`,
+ * which uses it to avoid re-arming speak-back on the read-back turn (loop guard).
+ */
+export const READBACK_PREFIX =
+  'Please read the following to me, word for word, and say nothing else:';
 
 /**
  * Lifecycle of a realtime ElevenLabs Agents voice session (#5399).
@@ -19,6 +35,12 @@ export interface RealtimeVoiceSession {
   isSpeaking: boolean;
   /** ElevenLabs turn mode; `listening` while the user speaks. */
   mode: 'speaking' | 'listening';
+  /**
+   * Output loudness (0..1) of the agent's voice, sampled from the SDK's
+   * analyser. Drives the mascot's amplitude lip-sync — the realtime SDK owns
+   * playback, so this is the only signal available to animate the mouth against.
+   */
+  getOutputVolume: () => number;
   error: string | null;
   /** Fetch a signed URL and open the WebSocket session. Idempotent while busy. */
   start: () => Promise<void>;
@@ -38,6 +60,10 @@ export function useRealtimeVoiceSession(opts?: { voiceId?: string }): RealtimeVo
   // Tracks whether a session is live so the unmount teardown only ends a real
   // session, and so the cleanup closure isn't tied to a stale `state`.
   const liveRef = useRef(false);
+  // Answers already read aloud in THIS call, so a redelivered result is not
+  // spoken twice. Scoped per call: asking the same question again in a later
+  // session should of course be answered again.
+  const spokenRef = useRef<Set<string>>(new Set());
 
   const conversation = useConversation({
     onConnect: () => {
@@ -72,6 +98,14 @@ export function useRealtimeVoiceSession(opts?: { voiceId?: string }): RealtimeVo
     startingRef.current = true;
     setError(null);
     setState('connecting');
+    spokenRef.current.clear();
+    // Each session is its own conversation: drop any pin from a prior session so
+    // this session's deferred answers resolve to a fresh/current thread rather
+    // than appending to the previous session's thread (which the Human page may
+    // no longer have selected — the answer would land off-screen). The pin is
+    // re-established on this session's first delivery. See
+    // `resolveVisibleThreadForProactive` in ChatRuntimeProvider.
+    proactiveThreadPins.delete(PROACTIVE_VOICE_THREAD_ID);
     log('start: requesting signed url');
     try {
       const { signedUrl, userToken } = await fetchVoiceAgentSignedUrl();
@@ -125,10 +159,39 @@ export function useRealtimeVoiceSession(opts?: { voiceId?: string }): RealtimeVo
     []
   );
 
+  // Speak-back: a slow voice turn (email/calendar summary) is acknowledged aloud,
+  // finishes in the background, and the core emits its result as a `voice_speak`
+  // event. While the call is still open, read it aloud by sending it back into the
+  // live ElevenLabs session wrapped in the verbatim prefix (a fast read-back turn).
+  // The result also lands in chat regardless (delivered core-side) — this is the
+  // spoken copy. Refs keep the subscription set up once while always seeing the
+  // live conversation and liveness.
+  useEffect(() => {
+    const handler = (payload: unknown) => {
+      if (!liveRef.current) return; // call already ended — the chat copy stands alone
+      const text = (payload as { full_response?: string } | undefined)?.full_response?.trim();
+      if (!text) return;
+      // Each read-back is a real turn the agent has to speak, so a repeat is not
+      // merely redundant: it queues behind the first and pushes the session
+      // towards the provider's per-turn ceiling. Redelivery of the same answer
+      // (a retried turn, a reconnect) must therefore be spoken once.
+      if (spokenRef.current.has(text)) {
+        log('speak-back: already read this answer aloud — skipping');
+        return;
+      }
+      spokenRef.current.add(text);
+      log('speak-back: reading deferred result aloud (%d chars)', text.length);
+      conversationRef.current.sendUserMessage(`${READBACK_PREFIX}\n\n${text}`);
+    };
+    socketService.on('voice_speak', handler);
+    return () => socketService.off('voice_speak', handler);
+  }, []);
+
   return {
     state,
     isSpeaking: conversation.isSpeaking,
     mode: conversation.mode,
+    getOutputVolume: conversation.getOutputVolume,
     error,
     start,
     stop,

@@ -54,7 +54,6 @@ import {
   waitForAssistantReplyContaining,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
-import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
@@ -126,10 +125,6 @@ describe('Harness — Search tool-flow', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
-    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
-      value: false,
-    });
-    expect(superContext.ok).toBe(true);
     console.log(`${LOG_PREFIX} Suite setup complete`);
   });
 

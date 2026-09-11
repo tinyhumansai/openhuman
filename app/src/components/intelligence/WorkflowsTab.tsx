@@ -114,7 +114,7 @@ export default function WorkflowsTab({ asSettingsPanel = false }: WorkflowsTabPr
           <h2 className="text-sm font-semibold text-coral-800 dark:text-coral-200">
             {t('common.error')}
           </h2>
-          <p className="mt-1 break-words font-mono text-[11px] text-coral-700/90 dark:text-coral-300/90">
+          <p className="mt-1 wrap-break-word font-mono text-[11px] text-coral-700/90 dark:text-coral-300/90">
             {loadError}
           </p>
           <Button
@@ -283,7 +283,7 @@ export default function WorkflowsTab({ asSettingsPanel = false }: WorkflowsTabPr
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 text-xs text-content-muted">{t('workflows.subtitle')}</p>
-        <div className="flex flex-shrink-0 items-center gap-2">{newWorkflowButton}</div>
+        <div className="flex shrink-0 items-center gap-2">{newWorkflowButton}</div>
       </div>
       {body}
     </div>

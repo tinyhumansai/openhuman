@@ -203,9 +203,9 @@ describe('FlowRunsDrawer', () => {
 
     const row = await screen.findByTestId('flow-run-row-run-1');
     await waitFor(() => expect(row).toHaveTextContent('Awaiting approval'));
-    expect(screen.getByTestId('flow-run-row-dot-run-1')).toHaveClass(
-      'bg-amber-500',
-      'animate-pulse'
+    expect(screen.getByTestId('flow-run-row-dot-run-1')).toHaveAttribute(
+      'data-status',
+      'pending_approval'
     );
   });
 
@@ -216,10 +216,7 @@ describe('FlowRunsDrawer', () => {
 
     const row = await screen.findByTestId('flow-run-row-run-1');
     await waitFor(() => expect(row).toHaveTextContent('Running'));
-    expect(screen.getByTestId('flow-run-row-dot-run-1')).toHaveClass(
-      'bg-ocean-500',
-      'animate-pulse'
-    );
+    expect(screen.getByTestId('flow-run-row-dot-run-1')).toHaveAttribute('data-status', 'running');
   });
 
   it('falls back to a generic title when no flowName is given', async () => {

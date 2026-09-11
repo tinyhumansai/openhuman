@@ -6,7 +6,7 @@
  * All navigation uses browser.execute() with window.location.hash
  * because sidebar nav buttons are icon-only (aria-label, no text content).
  */
-import { waitForAppReady, waitForAuthBootstrap } from './app-helpers';
+import { waitForAppReady, waitForAuthBootstrap as waitForAuthenticatedCore } from './app-helpers';
 import { triggerAuthDeepLink } from './deep-link-helpers';
 import {
   clickText,
@@ -91,6 +91,18 @@ export async function waitForHomePage(timeout = 15_000) {
   ];
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    // The unified chat surface can legitimately render without a greeting
+    // marker (for example while its thread data is still loading). Once the
+    // authenticated root shell is mounted, the post-onboarding route is ready
+    // for the caller to navigate to its feature under test.
+    if (
+      supportsExecuteScript() &&
+      (await browser.execute(
+        () => document.querySelector('[data-testid="root-shell-sidebar"]') !== null
+      ))
+    ) {
+      return 'application shell';
+    }
     for (const text of candidates) {
       if (await textExists(text)) return text;
     }
@@ -127,7 +139,7 @@ async function clickFirstMatch(candidates, timeout = 5_000) {
  * a first-class tab: it owns the dedicated mascot stage, while Chat carries the
  * same mascot docked on its composer. The earlier "Assistant"/"Activity"/"Alerts"
  * labels are gone. Only real tabs belong here; routes that redirect (e.g. /home,
- * /activity, /intelligence, /skills, /channels) are resolved through
+ * /activity, /intelligence, /skills, /channels, /webhooks) are resolved through
  * HASH_REDIRECTS below — they have no sidebar button.
  */
 const HASH_TO_SIDEBAR_LABEL = {
@@ -146,12 +158,28 @@ const HASH_TO_SIDEBAR_LABEL = {
  */
 const HASH_REDIRECTS = {
   '/home': '/chat',
+  '/accounts': '/chat',
   '/skills': '/connections',
-  '/channels': '/connections',
+  '/channels': '/connections?tab=messaging',
   '/activity': '/settings/notifications',
   '/intelligence': '/settings/notifications',
-  '/routines': '/settings/automations',
-  '/workflows': '/settings/automations',
+  '/routines': '/flows',
+  '/webhooks': '/connections',
+  '/settings/features': '/settings',
+  '/settings/screen-intelligence': '/settings',
+  '/settings/screen-awareness-debug': '/settings',
+  '/settings/mascot': '/settings/personality#face',
+  '/settings/composio-triggers': '/connections?tab=composio-key',
+  '/settings/autonomy': '/settings/agent-access',
+  '/settings/composio-routing': '/connections?tab=composio-key',
+  // The retired debug panels both redirect to the surviving LLM surface.
+  // Do not append their former fragment identifiers: the browser treats a
+  // second `#` as part of the hash and the router intentionally removes it.
+  '/settings/agent-chat': '/connections?tab=llm',
+  '/settings/local-model-debug': '/connections?tab=llm',
+  '/settings/llm': '/connections?tab=llm',
+  '/settings/voice': '/connections?tab=voice',
+  '/settings/search': '/connections?tab=search',
 };
 
 /** Resolve a requested hash to where the router actually settles. */
@@ -181,19 +209,24 @@ function routeReadySelector(hash) {
 }
 
 async function waitForHashRouteReady(hash, options = {}) {
-  const { timeout = 10_000 } = options;
+  const { timeout = 15_000 } = options;
   // Routes that redirect (e.g. /activity → /settings/notifications) settle on
   // the resolved target, so wait for that hash rather than the requested one.
   const expected = normalizeHash(`#${resolveRedirect(normalizeHash(hash).replace(/^#/, ''))}`);
+  const hashMatches = current =>
+    current === expected ||
+    // On wide desktop layouts, the settings index immediately selects its
+    // default panel. Accept that final destination as well.
+    (expected === '#/settings' && current === '#/settings/account');
   const readySelector = routeReadySelector(hash);
   // We deliberately do NOT use a root-innerText "signature changed" heuristic:
   // the TwoPanelLayout shell keeps a persistent sidebar whose text dominates the
   // first 500 chars of root.innerText, so that signature is identical across all
   // settings sub-panels and the heuristic never fires. Instead we key off
-  // readyState + the resolved hash (and a route-ready selector when known),
-  // tolerating redirects to unmapped targets by accepting a stabilised hash.
-  let lastHash = null;
-  let stableCount = 0;
+  // readyState + the resolved hash (and a route-ready selector when known).
+  // A stable but unrelated hash is not evidence of navigation: accepting one
+  // masks failed route changes (for example, a test continuing on /chat after
+  // asking to open /brain?tab=sources).
   await browser.waitUntil(
     async () => {
       const res = await browser.execute(
@@ -214,16 +247,9 @@ async function waitForHashRouteReady(hash, options = {}) {
       // target panel rendered — accept it regardless of the hash, since routes
       // can redirect to a different hash (e.g. /settings/memory-data → /brain).
       if (res.hasSelector) return true;
-      // Otherwise accept the resolved target hash, or — for redirects to an
-      // unmapped target — once the hash has stabilised for ~500ms.
-      const cur = res.current;
-      if (cur === expected) return true;
-      if (cur && cur === lastHash) stableCount += 1;
-      else {
-        stableCount = 0;
-        lastHash = cur;
-      }
-      return stableCount >= 2;
+      // Otherwise require the resolved target hash. Redirects are accounted
+      // for above when computing `expected`.
+      return hashMatches(res.current);
     },
     {
       timeout,
@@ -392,7 +418,15 @@ export async function navigateToSettings() {
 }
 
 export async function navigateToBilling() {
-  await navigateViaHash('/settings/billing');
+  // Direct hash navigation can fail transiently while the settings shell is
+  // still settling after a deep-link auth flow. Keep going so the established
+  // Settings → Billing recovery path below can make a second, UI-driven
+  // attempt instead of making that recovery unreachable.
+  try {
+    await navigateViaHash('/settings/billing');
+  } catch (err) {
+    console.log('[E2E] Initial billing navigation failed; running fallback:', err);
+  }
 
   const billingMarkers = ['Billing moved to the web', 'Open billing dashboard', 'Open dashboard'];
   const deadline = Date.now() + 15_000;
@@ -631,7 +665,7 @@ async function waitForPostOnboardingHome(logPrefix, timeout = 20_000) {
         Boolean(
           await browser.execute(() => {
             const h = window.location.hash.replace(/\/$/, '');
-            return h === '#/home' || h === '#/chat';
+            return !h.startsWith('#/onboarding');
           })
         ),
       {
@@ -737,6 +771,10 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
     if (status === 'gone') {
       console.log(`${logPrefix} Onboarding dismissed after ${step} step(s)`);
       await waitForPostOnboardingHome(logPrefix);
+      // Completing routed onboarding starts the app-wide Joyride tour
+      // asynchronously. Dismiss it before a caller navigates, otherwise the
+      // tour's own route transitions can race a spec and take it back to Chat.
+      await dismissWalkthroughIfVisible(8_000);
       return;
     }
     if (status === 'gone-but-onboarding-hash') {
@@ -771,6 +809,12 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
  * timing races do not cause the helper to skip onboarding prematurely.
  */
 export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
+  // Deep-link delivery resolves when the URL has reached the WebView, before
+  // CoreStateProvider has necessarily applied the authenticated snapshot.
+  // Waiting for that snapshot prevents a slow bootstrap from being mistaken
+  // for an already-onboarded session when the onboarding button has not
+  // mounted yet.
+  await waitForAuthenticatedCore(20_000);
   await walkOnboarding(logPrefix);
   const marker = await waitForHomePage(15_000);
   if (marker) return;
@@ -895,7 +939,7 @@ export async function performFullLogin(
   await waitForWindowVisible(25_000);
   await waitForWebView(15_000);
   await waitForAppReady(15_000);
-  await waitForAuthBootstrap(15_000);
+  await waitForAuthenticatedCore(15_000);
 
   await walkOnboarding(logPrefix);
 

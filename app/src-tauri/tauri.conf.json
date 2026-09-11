@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.63.7",
+  "version": "0.63.25",
   "identifier": "com.openhuman.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
@@ -20,12 +20,16 @@
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 28
+        },
         "resizable": true,
         "center": false
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' data: blob: https: wss: ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; script-src 'self' 'wasm-unsafe-eval' https://www.googletagmanager.com; img-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https: wss: data: blob: https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src 'self' https: data: blob:"
+      "csp": "default-src 'self' 'unsafe-inline' data: blob: https: wss: ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; script-src 'self' 'wasm-unsafe-eval' https://www.googletagmanager.com tauri: tauri://localhost; img-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https: wss: data: blob: https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src 'self' https: data: blob:"
     },
     "macOSPrivateApi": true
   },
@@ -47,8 +51,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../../src/openhuman/agent/prompts",
-      "recipes/**/*"
+      "../../src/openhuman/agent/prompts"
     ],
     "linux": {
       "deb": {
@@ -66,7 +69,9 @@
           "libxkbcommon0",
           "libxshmfence1"
         ],
-        "desktopTemplate": "main.desktop"
+        "desktopTemplate": "main.desktop",
+        "postInstallScript": "postinst",
+        "postRemoveScript": "postrm"
       }
     },
     "windows": {
@@ -76,7 +81,7 @@
     },
     "createUpdaterArtifacts": false,
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "12.3",
       "entitlements": "entitlements.sidecar.plist",
       "infoPlist": "Info.plist",
       "dmg": {

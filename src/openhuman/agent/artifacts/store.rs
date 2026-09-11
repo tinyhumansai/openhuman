@@ -520,7 +520,7 @@ pub async fn create_artifact(
     // matching Ready/Failed event with the same `artifact_id`, the
     // frontend can swap the card in place.
     let (thread_id, client_id) = current_chat_context();
-    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactPending {
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ArtifactPending {
         artifact_id: meta.id.clone(),
         kind: meta.kind.as_str().to_string(),
         title: meta.title.clone(),
@@ -563,7 +563,7 @@ pub async fn finalize_artifact(
     log::debug!("[artifacts] finalize_artifact: id={artifact_id} -> Ready size={size_bytes}");
 
     let (thread_id, client_id) = current_chat_context();
-    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactReady {
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ArtifactReady {
         artifact_id: meta.id.clone(),
         kind: meta.kind.as_str().to_string(),
         title: meta.title.clone(),
@@ -603,7 +603,7 @@ pub async fn fail_artifact(
     );
 
     let (thread_id, client_id) = current_chat_context();
-    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactFailed {
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::ArtifactFailed {
         artifact_id: meta.id.clone(),
         kind: meta.kind.as_str().to_string(),
         title: meta.title.clone(),

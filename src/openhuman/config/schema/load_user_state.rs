@@ -148,7 +148,14 @@ pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
 }
 
 /// Writes the active user id to `{default_openhuman_dir}/active_user.toml`.
+///
+/// This marker outranks the workspace marker in the resolver, so writing it
+/// changes which workspace is active. The cached answer is dropped up front,
+/// before the write rather than after, so a failure partway through cannot
+/// leave a stale workspace reading as current — see
+/// `load::active_workspace` for the rest of that reasoning (#5966).
 pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Result<()> {
+    crate::openhuman::config::schema::invalidate_active_workspace();
     std::fs::create_dir_all(default_openhuman_dir).with_context(|| {
         format!(
             "Failed to create active user state directory: {}",
@@ -192,6 +199,13 @@ pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Resu
         );
     }
 
+    // Again, now that the marker actually says the new user. The pre-write
+    // clear is not enough on its own: a resolver racing this call can read the
+    // *old* marker after that clear and refill the cache with the workspace
+    // being switched away from, which would then read as current after a
+    // successful switch. Before the directory sync, not after: the rename is
+    // what changed the answer, and a sync failure must not skip this.
+    crate::openhuman::config::schema::invalidate_active_workspace();
     sync_directory(default_openhuman_dir)?;
     tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
     Ok(())
@@ -199,11 +213,20 @@ pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Resu
 
 /// Removes the active user marker.  After this, the next config load will
 /// use the default (unauthenticated) openhuman directory.
+///
+/// Sign-out is a workspace switch like any other, so the cached active
+/// workspace is dropped here too — unconditionally, not only when the file
+/// turned out to exist, because a caller reaching for this has already
+/// decided the previous answer should stop applying.
 pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
+    crate::openhuman::config::schema::invalidate_active_workspace();
     let path = active_user_marker_path(default_openhuman_dir);
     if path.exists() {
         std::fs::remove_file(&path)
             .with_context(|| format!("Failed to remove active user state: {}", path.display()))?;
+        // Again, now that the marker is actually gone — see the note in
+        // `write_active_user_id` for the race the pre-clear alone leaves open.
+        crate::openhuman::config::schema::invalidate_active_workspace();
         tracing::debug!(path = %path.display(), "active user cleared");
     }
     Ok(())

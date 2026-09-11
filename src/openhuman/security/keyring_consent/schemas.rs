@@ -40,7 +40,7 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Structured keyring status.",
+                comment: "Structured keyring status: { available, activeMode, backendName, failureReason? }. activeMode says where secrets actually are and is derived from the backend, not from availability — os_keyring (working OS credential store) | local_encrypted (OS keyring failed, user consented to the local encrypted fallback) | local_encrypted_file (encrypted_file backend: {workspace}/secrets.enc) | local_plaintext_file (file/mock backend: plaintext dev-keychain.json) | consent_pending | declined. available reports whether the active backend is usable, which is true for the file backends.",
                 required: true,
             }],
         },
@@ -69,7 +69,7 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Updated keyring status after re-probe.",
+                comment: "Updated keyring status after re-probe, same shape as keyring_consent.status. Only the os backend can change here: the file backends always probe available, so their activeMode is unaffected by a re-probe.",
                 required: true,
             }],
         },
@@ -118,33 +118,5 @@ fn handle_retry_probe(_params: Map<String, Value>) -> ControllerFuture {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schemas_and_controllers_match() {
-        let s = all_keyring_consent_controller_schemas();
-        let c = all_keyring_consent_registered_controllers();
-        assert_eq!(s.len(), c.len());
-        for (schema, ctrl) in s.iter().zip(c.iter()) {
-            assert_eq!(schema.function, ctrl.schema.function);
-            assert_eq!(schema.namespace, ctrl.schema.namespace);
-        }
-    }
-
-    #[test]
-    fn all_schemas_use_keyring_consent_namespace() {
-        for s in all_keyring_consent_controller_schemas() {
-            assert_eq!(s.namespace, "keyring_consent");
-            assert!(!s.description.is_empty());
-        }
-    }
-
-    #[test]
-    fn decide_schema_requires_mode() {
-        let s = keyring_consent_schema("decide");
-        assert_eq!(s.inputs.len(), 1);
-        assert!(s.inputs[0].required);
-        assert_eq!(s.inputs[0].name, "mode");
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

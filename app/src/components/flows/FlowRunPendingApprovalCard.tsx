@@ -81,7 +81,7 @@ export function FlowRunPendingApprovalCard({ approval, deciding, onDecide }: Pro
       className="text-xs"
       density="compact"
       summary={
-        <p className="break-words text-amber-800/90 dark:text-amber-200/90">
+        <p className="wrap-break-word text-amber-800/90 dark:text-amber-200/90">
           {approval.action_summary}
         </p>
       }

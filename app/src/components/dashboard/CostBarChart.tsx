@@ -81,7 +81,7 @@ const CostBarChart = ({
         <div className="text-[11px] text-content-muted mb-1 flex items-center gap-1.5">
           <span
             aria-hidden
-            className="inline-block h-px w-3 border-t border-dashed border-stone-400 dark:border-neutral-500"
+            className="inline-block h-px w-3 border-t border-dashed border-content-faint"
           />
           <span>
             {`${t('settings.costDashboard.dailyTarget')}: ${formatCurrency(dailyTarget, currency)}`}

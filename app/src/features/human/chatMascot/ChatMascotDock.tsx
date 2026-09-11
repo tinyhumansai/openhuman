@@ -52,7 +52,7 @@ const ChatMascotDock = () => {
           // `bottom-full` puts the slot's base exactly on the input box's top
           // edge; the negative margin above drops it a few px so the mascot
           // reads as standing *on* the box rather than floating above it.
-          className="h-full w-full rounded-full transition-transform hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 motion-reduce:transition-none"
+          className="h-full w-full rounded-full transition-transform hover:scale-105 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 motion-reduce:transition-none"
           aria-label={t('chat.mascot.expand')}
           title={t('chat.mascot.expand')}
           aria-expanded={false}
@@ -66,7 +66,7 @@ const ChatMascotDock = () => {
             where there is no hover to trigger. */}
         <button
           type="button"
-          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-line bg-surface text-content-faint opacity-0 shadow-soft transition-opacity hover:text-content focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 group-focus-within:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border border-line bg-surface text-content-faint opacity-0 shadow-soft transition-opacity hover:text-content focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 group-focus-within:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
           aria-label={t('chat.mascot.dismiss')}
           title={t('chat.mascot.dismiss')}
           data-testid="chat-mascot-dismiss"

@@ -70,8 +70,10 @@ impl TranscriptViewCache {
         workspace_dir: &Path,
         thread_id: &str,
     ) -> Option<Arc<ProjectedTranscript>> {
-        let (root_path, sub_paths) = project::resolve_files(workspace_dir, thread_id)?;
-        let signature: Vec<FileSig> = std::iter::once(file_sig(&root_path))
+        let (root_paths, sub_paths) = project::resolve_files(workspace_dir, thread_id)?;
+        let signature: Vec<FileSig> = root_paths
+            .iter()
+            .map(|path| file_sig(path))
             .chain(sub_paths.iter().map(|p| file_sig(p)))
             .collect();
 
@@ -94,7 +96,9 @@ impl TranscriptViewCache {
         }
 
         let projected = Arc::new(project::project_from_files(
-            thread_id, &root_path, &sub_paths,
+            thread_id,
+            &root_paths,
+            &sub_paths,
         ));
 
         let mut inner = self.inner.lock().ok()?;

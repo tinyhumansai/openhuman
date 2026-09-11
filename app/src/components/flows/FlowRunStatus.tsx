@@ -1,9 +1,10 @@
+import { cn } from '../../lib/cn';
 import type { Translate } from '../../lib/flows/cron';
 import type { FlowRunStatus as FlowRunStatusValue } from '../../services/api/flowsApi';
 
 export const FLOW_RUN_STATUS_ACCENT: Record<FlowRunStatusValue, string> = {
   running:
-    'border-ocean-200 bg-ocean-50 text-ocean-700 dark:border-ocean-500/30 dark:bg-ocean-500/10 dark:text-ocean-300',
+    'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300',
   completed:
     'border-sage-200 bg-sage-50 text-sage-700 dark:border-sage-500/30 dark:bg-sage-500/10 dark:text-sage-300',
   completed_with_warnings:
@@ -18,7 +19,7 @@ export const FLOW_RUN_STATUS_ACCENT: Record<FlowRunStatusValue, string> = {
 };
 
 export const FLOW_RUN_STATUS_DOT: Record<FlowRunStatusValue, string> = {
-  running: 'bg-ocean-500 animate-pulse',
+  running: 'bg-primary-500 animate-pulse',
   completed: 'bg-sage-500',
   completed_with_warnings: 'bg-amber-500',
   pending_approval: 'bg-amber-500 animate-pulse',
@@ -89,7 +90,8 @@ export function FlowRunStatus({
     return (
       <span
         data-testid={testId}
-        className={`h-2 w-2 shrink-0 rounded-full ${flowRunStatusDotClass(status)} ${className}`.trim()}
+        data-status={status}
+        className={cn('h-2 w-2 shrink-0 rounded-full', flowRunStatusDotClass(status), className)}
         aria-hidden
       />
     );
@@ -98,7 +100,12 @@ export function FlowRunStatus({
   return (
     <span
       data-testid={testId}
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${flowRunStatusAccentClass(status)} ${className}`.trim()}>
+      data-status={status}
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 font-medium',
+        flowRunStatusAccentClass(status),
+        className
+      )}>
       {label}
     </span>
   );

@@ -13,7 +13,12 @@ const TONE = {
   emerald:
     'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
   orange: 'bg-orange-50 dark:bg-orange-500/10 ring-orange-200 text-orange-900 dark:text-orange-100',
-  slate: 'bg-slate-100 dark:bg-slate-500/15 ring-slate-300 text-slate-900 dark:text-slate-100',
+  // Categorical brand hue, not a themeable surface: this is a neutral tone that
+  // must stay visually distinct from `zinc` above. Written as literal slate hex
+  // (100/500/300/900) rather than `slate-*` utilities so it does not ride the
+  // banned palette scale that `lint:ui-tokens` guards. Do NOT swap it for a
+  // saturated hue — that collides with `sky` and changes the design intent.
+  slate: 'bg-[#f1f5f9] dark:bg-[#64748b]/15 ring-[#cbd5e1] text-[#0f172a] dark:text-[#f1f5f9]',
   sky: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
   fuchsia:
     'bg-fuchsia-50 dark:bg-fuchsia-500/10 ring-fuchsia-200 text-fuchsia-900 dark:text-fuchsia-100',

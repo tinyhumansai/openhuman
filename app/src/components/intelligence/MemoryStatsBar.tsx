@@ -79,7 +79,7 @@ export function MemoryStatsBar(props: MemoryStatsBarProps) {
       label: t('stats.relations'),
       value: formatNumber(totalRelations),
       sub: undefined,
-      color: 'text-lavender-600 dark:text-lavender-300',
+      color: 'text-violet-600 dark:text-violet-300',
     },
     {
       label: t('stats.firstMemory'),

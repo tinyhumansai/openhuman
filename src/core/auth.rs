@@ -55,10 +55,11 @@
 //!   internal bearer or a stable user-managed external API key stored under
 //!   `openhuman::inference::http::EXTERNAL_OPENAI_COMPAT_PROVIDER`.
 
-use std::io::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[cfg(unix)]
+use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
 
@@ -111,10 +112,6 @@ const PUBLIC_PATHS: &[&str] = &[
     "/oauth/mcp/callback",
     "/schema",
     "/events",
-    // AgentBox marketplace surface — see `openhuman::agent::agentbox::http`.
-    // Mounted only when `OPENHUMAN_AGENTBOX_MODE=1`; the public-path entry is
-    // unconditional so the matcher remains a pure function of the path string.
-    "/run",
 ];
 
 /// Public path prefixes — match when the request path begins with any entry.
@@ -122,10 +119,11 @@ const PUBLIC_PATHS: &[&str] = &[
 /// Use this only when the suffix is dynamic (path params). For exact paths,
 /// add to [`PUBLIC_PATHS`] instead.
 #[cfg(feature = "http-server")]
-const PUBLIC_PATH_PREFIXES: &[&str] = &[
-    // AgentBox `GET /jobs/{job_id}` — `{job_id}` is a UUID per submission.
-    "/jobs/",
-];
+///
+/// Intentionally empty: the only entry was AgentBox's `/jobs/{job_id}`, which
+/// left with that domain. The mechanism is kept for the next dynamic-suffix
+/// public route rather than re-derived when one appears.
+const PUBLIC_PATH_PREFIXES: &[&str] = &[];
 
 /// Returns `true` when `path` bypasses bearer-token authentication.
 ///
@@ -630,12 +628,16 @@ mod tests {
 
     #[cfg(feature = "http-server")]
     #[test]
-    fn agentbox_run_and_jobs_paths_are_public() {
-        // AgentBox marketplace surface bypasses bearer auth (gated externally
-        // by `OPENHUMAN_AGENTBOX_MODE` at router-build time).
-        assert!(is_public_path("/run"));
-        assert!(is_public_path("/jobs/abc-123"));
-        assert!(is_public_path("/jobs/00000000-0000-0000-0000-000000000000"));
+    fn agentbox_run_and_jobs_paths_are_no_longer_public() {
+        // These bypassed bearer auth only to serve the AgentBox marketplace
+        // surface, which moved to tinybox. Nothing mounts them now, so they
+        // must authenticate like any other path — a re-added entry here would
+        // silently open an unauthenticated route.
+        assert!(!is_public_path("/run"));
+        assert!(!is_public_path("/jobs/abc-123"));
+        assert!(!is_public_path(
+            "/jobs/00000000-0000-0000-0000-000000000000"
+        ));
         // Sanity: still protect the executable surface.
         assert!(!is_public_path("/rpc"));
         assert!(!is_public_path("/v1/chat/completions"));

@@ -462,7 +462,6 @@ async fn round22_tool_registry_covers_config_gated_registration() {
         &harness.workspace,
         &harness.workspace,
     ));
-    let memory: Arc<dyn Memory> = Arc::new(StubMemory);
     let audit = AuditLogger::disabled();
     let agents: HashMap<String, DelegateAgentConfig> = HashMap::new();
 
@@ -470,7 +469,6 @@ async fn round22_tool_registry_covers_config_gated_registration() {
         Arc::new(harness.config.clone()),
         &security,
         audit,
-        memory,
         &harness.config.browser,
         &harness.config.http_request,
         &harness.workspace,

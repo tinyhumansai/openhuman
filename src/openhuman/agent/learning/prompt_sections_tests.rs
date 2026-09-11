@@ -2,20 +2,12 @@
 //! `load_learned_from_cache` top-K ranking cap and pinned-facet rendering,
 //! not covered by the inline tests in `prompt_sections.rs`.
 
-use parking_lot::Mutex;
-use rusqlite::Connection;
-use std::sync::Arc;
-
 use super::load_learned_from_cache;
 use crate::openhuman::agent::learning::cache::FacetCache;
-use crate::openhuman::memory::store::profile::{
-    FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
-};
+use tinymemory_api::provider::{FacetState, FacetType, ProfileFacet, UserState};
 
 fn open_cache() -> FacetCache {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(PROFILE_INIT_SQL).unwrap();
-    FacetCache::new(Arc::new(Mutex::new(conn)))
+    crate::openhuman::agent::learning::test_profile::in_memory_cache()
 }
 
 fn make_active(id: &str, key: &str, value: &str, stability: f64) -> ProfileFacet {
@@ -41,8 +33,8 @@ fn make_active(id: &str, key: &str, value: &str, stability: f64) -> ProfileFacet
 // ── Top-K cap (CACHE_PROMPT_CAP = 25) ────────────────────────────────────────
 
 /// When more than 25 Active facets exist, output is capped at 25 entries.
-#[test]
-fn load_learned_from_cache_caps_at_25_entries() {
+#[tokio::test]
+async fn load_learned_from_cache_caps_at_25_entries() {
     let cache = open_cache();
 
     // Insert 30 active style facets.
@@ -54,10 +46,11 @@ fn load_learned_from_cache_caps_at_25_entries() {
                 &format!("val{i}"),
                 1.5 + (i as f64) * 0.01,
             ))
+            .await
             .unwrap();
     }
 
-    let result = load_learned_from_cache(&cache);
+    let result = load_learned_from_cache(&cache).await;
     assert_eq!(
         result.len(),
         25,
@@ -69,21 +62,24 @@ fn load_learned_from_cache_caps_at_25_entries() {
 // ── Stability ranking ─────────────────────────────────────────────────────────
 
 /// Within the same class, higher-stability facets appear before lower ones.
-#[test]
-fn load_learned_from_cache_ranks_by_stability_descending() {
+#[tokio::test]
+async fn load_learned_from_cache_ranks_by_stability_descending() {
     let cache = open_cache();
 
     cache
         .upsert(&make_active("f-lo", "style/low_stab", "lo", 0.5))
+        .await
         .unwrap();
     cache
         .upsert(&make_active("f-hi", "style/high_stab", "hi", 2.5))
+        .await
         .unwrap();
     cache
         .upsert(&make_active("f-mid", "style/mid_stab", "mid", 1.5))
+        .await
         .unwrap();
 
-    let result = load_learned_from_cache(&cache);
+    let result = load_learned_from_cache(&cache).await;
     assert!(!result.is_empty());
 
     // Find positions of high / low in the result list.
@@ -105,18 +101,20 @@ fn load_learned_from_cache_ranks_by_stability_descending() {
 // ── Pinned marker ─────────────────────────────────────────────────────────────
 
 /// Pinned facets must carry the `*(pinned)*` marker in the output.
-#[test]
-fn load_learned_from_cache_marks_pinned_facets() {
+#[tokio::test]
+async fn load_learned_from_cache_marks_pinned_facets() {
     let cache = open_cache();
 
     cache
         .upsert(&make_active("f-pin", "identity/name", "Alice", 2.0))
+        .await
         .unwrap();
     cache
         .set_user_state("identity/name", UserState::Pinned)
+        .await
         .unwrap();
 
-    let result = load_learned_from_cache(&cache);
+    let result = load_learned_from_cache(&cache).await;
     let pinned_entry = result
         .iter()
         .find(|s| s.contains("identity/name"))
@@ -130,15 +128,15 @@ fn load_learned_from_cache_marks_pinned_facets() {
 // ── Dropped state excluded ────────────────────────────────────────────────────
 
 /// Dropped-state facets must not appear even when their stability is high.
-#[test]
-fn load_learned_from_cache_excludes_dropped_facets() {
+#[tokio::test]
+async fn load_learned_from_cache_excludes_dropped_facets() {
     let cache = open_cache();
 
     let mut dropped = make_active("f-drop", "style/dropped", "x", 3.0);
     dropped.state = FacetState::Dropped;
-    cache.upsert(&dropped).unwrap();
+    cache.upsert(&dropped).await.unwrap();
 
-    let result = load_learned_from_cache(&cache);
+    let result = load_learned_from_cache(&cache).await;
     assert!(
         !result.iter().any(|s| s.contains("style/dropped")),
         "dropped facet must not appear in output"
@@ -150,8 +148,8 @@ fn load_learned_from_cache_excludes_dropped_facets() {
 /// When multiple classes are present, output is grouped by class (BTreeMap
 /// order — alphabetical: channel, goal, identity, style, tooling, veto).
 /// We only assert that facets from every class are present.
-#[test]
-fn load_learned_from_cache_includes_facets_from_all_classes() {
+#[tokio::test]
+async fn load_learned_from_cache_includes_facets_from_all_classes() {
     let cache = open_cache();
 
     let entries = [
@@ -163,10 +161,10 @@ fn load_learned_from_cache_includes_facets_from_all_classes() {
         ("fv", "veto/no_sports", "true"),
     ];
     for (id, key, val) in &entries {
-        cache.upsert(&make_active(id, key, val, 1.8)).unwrap();
+        cache.upsert(&make_active(id, key, val, 1.8)).await.unwrap();
     }
 
-    let result = load_learned_from_cache(&cache);
+    let result = load_learned_from_cache(&cache).await;
 
     // Goal class renders value-only; others render "**key**: value".
     assert!(result.iter().any(|s| s.contains("Learn Rust")));
@@ -180,29 +178,30 @@ fn load_learned_from_cache_includes_facets_from_all_classes() {
 // ── Empty-cache short-circuit ─────────────────────────────────────────────────
 
 /// An empty cache (no Active facets) must return an empty vec, not an error.
-#[test]
-fn load_learned_from_cache_returns_empty_for_empty_cache() {
+#[tokio::test]
+async fn load_learned_from_cache_returns_empty_for_empty_cache() {
     let cache = open_cache();
-    assert!(load_learned_from_cache(&cache).is_empty());
+    assert!(load_learned_from_cache(&cache).await.is_empty());
 }
 
 // ── drop_below_threshold does not touch Active rows ───────────────────────────
 
 /// Eviction via `FacetCache::drop_below_threshold` must leave Active rows
 /// untouched regardless of their stability value.
-#[test]
-fn drop_below_threshold_skips_active_rows() {
+#[tokio::test]
+async fn drop_below_threshold_skips_active_rows() {
     let cache = open_cache();
 
     // Insert an Active row with very low stability — it must survive eviction.
     cache
         .upsert(&make_active("f-active-low", "style/keep_me", "v", 0.01))
+        .await
         .unwrap();
 
-    let removed = cache.drop_below_threshold(10.0).unwrap(); // aggressive threshold
+    let removed = cache.drop_below_threshold(10.0).await.unwrap(); // aggressive threshold
     assert_eq!(removed, 0, "Active rows must never be evicted");
 
-    let entry = cache.get("style/keep_me").unwrap();
+    let entry = cache.get("style/keep_me").await.unwrap();
     assert!(
         entry.is_some(),
         "Active row must still exist after eviction"

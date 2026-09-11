@@ -157,7 +157,7 @@ describe('SettingsNumberField', () => {
     expect(screen.getByText('1–3600')).toBeInTheDocument();
   });
 
-  it('calls onCommit on blur', () => {
+  it('calls onCommit on blur-sm', () => {
     const onCommit = vi.fn();
     render(<SettingsNumberField {...defaultProps} onCommit={onCommit} />);
     fireEvent.blur(screen.getByLabelText('Action timeout'));

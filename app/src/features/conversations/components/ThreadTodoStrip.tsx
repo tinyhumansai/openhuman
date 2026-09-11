@@ -55,7 +55,7 @@ function statusColorClass(status: TaskBoardCardStatus): string {
     case 'in_progress':
       return 'text-primary-600 dark:text-primary-300 font-medium';
     case 'blocked':
-      return 'text-coral dark:text-coral';
+      return 'text-coral-600 dark:text-coral-300';
     case 'awaiting_approval':
       return 'text-amber-700 dark:text-amber-300';
     default:
@@ -109,7 +109,7 @@ export const ThreadTodoStrip: React.FC<Props> = ({
 
   return (
     <div
-      className="mb-2 rounded-xl border border-line bg-surface-muted text-xs shadow-sm"
+      className="mb-2 rounded-xl border border-line bg-surface-muted text-xs shadow-xs"
       data-testid="thread-todo-strip">
       <button
         type="button"
@@ -134,7 +134,7 @@ export const ThreadTodoStrip: React.FC<Props> = ({
           {activeCards.map(card => (
             <li
               key={card.id}
-              className={`flex items-start gap-1.5 break-words ${statusColorClass(card.status)}`}>
+              className={`flex items-start gap-1.5 wrap-break-word ${statusColorClass(card.status)}`}>
               <span aria-hidden className="font-mono">
                 {statusGlyph(card.status)}
               </span>
@@ -143,7 +143,9 @@ export const ThreadTodoStrip: React.FC<Props> = ({
                 {card.status === 'blocked' && card.blocker?.trim() && (
                   // Surface why a step is stuck + what's needed next, matching
                   // the todo-tool guidance to set `blocked` with a `blocker`.
-                  <span className="min-w-0 text-[11px] text-coral/80">{card.blocker.trim()}</span>
+                  <span className="min-w-0 text-[11px] text-coral-600/80 dark:text-coral-300/80">
+                    {card.blocker.trim()}
+                  </span>
                 )}
               </span>
               {card.sessionThreadId && onViewSession && (
@@ -151,18 +153,18 @@ export const ThreadTodoStrip: React.FC<Props> = ({
                   type="button"
                   title={t('conversations.taskKanban.viewWork')}
                   onClick={() => onViewSession(card)}
-                  className="flex-shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium text-content-secondary transition-colors hover:bg-surface-hover">
+                  className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-medium text-content-secondary transition-colors hover:bg-surface-hover">
                   {t('conversations.taskKanban.viewWork')}
                 </button>
               )}
               {card.status === 'awaiting_approval' && onDecidePlan && (
-                <span className="flex flex-shrink-0 items-center gap-1">
+                <span className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
                     title={t('chat.approval.approve')}
                     disabled={disabled}
                     onClick={() => onDecidePlan(card, true)}
-                    className="rounded-md bg-ocean-600 px-1.5 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-ocean-700 disabled:opacity-40">
+                    className="rounded-md bg-primary-600 px-1.5 py-0.5 text-[10px] font-medium text-content-inverted transition-colors hover:bg-primary-700 disabled:opacity-40">
                     {t('chat.approval.approve')}
                   </button>
                   <button

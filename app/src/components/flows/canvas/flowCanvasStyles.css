@@ -1,6 +1,6 @@
 /**
  * Minimal palette overrides so `@xyflow/react`'s default look picks up the
- * app's ocean/sage/amber/coral theme tokens instead of its own defaults.
+ * app's primary/sage/amber/coral theme tokens instead of its own defaults.
  * `FlowCanvas.tsx` imports `@xyflow/react/dist/style.css` first, then this
  * file, so these rules simply win on specificity/order.
  *

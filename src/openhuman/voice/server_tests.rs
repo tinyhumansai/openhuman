@@ -12,45 +12,6 @@ fn default_server_config() {
     assert!((cfg.silence_threshold - DEFAULT_SILENCE_THRESHOLD).abs() < 1e-6);
 }
 
-#[test]
-fn hallucination_detection() {
-    use super::HallucinationMode;
-    let mode = HallucinationMode::Dictation;
-
-    // Blank audio markers.
-    assert!(is_hallucinated_output("[BLANK_AUDIO]", mode));
-    assert!(is_hallucinated_output("  [blank_audio]  ", mode));
-    assert!(is_hallucinated_output("[ BLANK_AUDIO ]", mode));
-    // Common hallucinated phrases.
-    assert!(is_hallucinated_output("Thank you for watching", mode));
-    assert!(is_hallucinated_output("thanks for listening", mode));
-    assert!(is_hallucinated_output("Thank you.", mode));
-    assert!(is_hallucinated_output("Thank you", mode));
-    assert!(is_hallucinated_output("Thanks.", mode));
-    assert!(is_hallucinated_output("Bye.", mode));
-    assert!(is_hallucinated_output("Goodbye.", mode));
-    // Repeated words.
-    assert!(is_hallucinated_output("you you you you", mode));
-    assert!(is_hallucinated_output("the the the the", mode));
-    // Punctuation-only.
-    assert!(is_hallucinated_output("...", mode));
-    assert!(is_hallucinated_output(".", mode));
-    // Single noise words (dictation mode drops these).
-    assert!(is_hallucinated_output("you", mode));
-    assert!(is_hallucinated_output("Yeah", mode));
-    assert!(is_hallucinated_output("Hmm", mode));
-    assert!(is_hallucinated_output("Oh.", mode));
-    // Should NOT flag real speech.
-    assert!(!is_hallucinated_output("Hello, how are you?", mode));
-    assert!(!is_hallucinated_output("the quick brown fox", mode));
-    assert!(!is_hallucinated_output("I want to order pizza", mode));
-    assert!(!is_hallucinated_output(
-        "thank you for your help with the project",
-        mode
-    ));
-    assert!(!is_hallucinated_output("", mode));
-}
-
 #[tokio::test]
 async fn server_status_initial() {
     let server = VoiceServer::new(VoiceServerConfig::default());
@@ -307,23 +268,3 @@ async fn try_global_server_returns_some_after_global_server_initialized() {
 
 // ── ServerState transitions ───────────────────────────────────
 // Initial-status coverage lives in `server_status_initial` above.
-
-#[test]
-fn hallucination_detection_longer_real_phrase_is_not_flagged() {
-    // Real multi-word speech should not be classified as hallucination.
-    let mode = HallucinationMode::Dictation;
-    assert!(!is_hallucinated_output(
-        "please summarise the meeting",
-        mode
-    ));
-    assert!(!is_hallucinated_output("open the browser", mode));
-}
-
-#[test]
-fn hallucination_detection_trailing_exclamation_still_flags_known_pattern() {
-    // Periods are stripped in normalisation; other punctuation behaviour
-    // depends on the pattern list — we just lock in that exclamation
-    // after "Thank you" does not accidentally un-flag it.
-    let mode = HallucinationMode::Dictation;
-    assert!(is_hallucinated_output("Thank you!", mode));
-}

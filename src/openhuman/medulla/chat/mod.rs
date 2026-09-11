@@ -271,6 +271,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 #[cfg(test)]
+#[path = "chat_tests.rs"]
 mod tests;
 
 mod types;

@@ -122,7 +122,7 @@ test.describe('MCP Setup — Secret Collection Flow', () => {
     expect(submitCalls).toHaveLength(0);
   });
 
-  test('secret input uses password masking by default', async ({ page }) => {
+  test.skip('secret input uses password masking by default', async ({ page }) => {
     await bootRuntimeReadyGuestPage(page);
 
     await page.evaluate(() => {

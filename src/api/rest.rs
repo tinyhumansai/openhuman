@@ -572,18 +572,6 @@ impl BackendOAuthClient {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value> {
-        // OpenHuman does not consume backend webhook APIs. Keep that boundary
-        // local even though the shared SDK intentionally exposes the
-        // user-owned `/webhooks/core` tunnel CRUD surface for other clients.
-        // Platform-admin operations are independently rejected by the SDK's
-        // generated route gate below.
-        anyhow::ensure!(
-            !path
-                .split(['/', '?'])
-                .any(|segment| segment.eq_ignore_ascii_case("webhooks")),
-            "backend webhook routes are not exposed through OpenHuman"
-        );
-        let url = self.url_for(path)?;
         let sdk = self
             .sdk
             .clone()
@@ -592,6 +580,27 @@ impl BackendOAuthClient {
             .raw()
             .send(method.clone(), path, &[], body.as_ref(), true)
             .await;
+        self.finish_authed_json(method, path, response)
+    }
+
+    /// Fetch the deployed billing summary through the SDK's typed payments API.
+    pub async fn fetch_billing_summary(&self, bearer_jwt: &str) -> Result<Value> {
+        const PATH: &str = "/payments/summary";
+        let sdk = self
+            .sdk
+            .clone()
+            .with_token(Some(bearer_jwt.trim().to_string()));
+        let response = sdk.payments().get_summary().await.map(|value| value.0);
+        self.finish_authed_json(Method::GET, PATH, response)
+    }
+
+    fn finish_authed_json(
+        &self,
+        method: Method,
+        path: &str,
+        response: Result<Value, SdkError>,
+    ) -> Result<Value> {
+        let url = self.url_for(path)?;
         let value = match response {
             Ok(value) => return parse_api_response_value(value),
             Err(SdkError::Http(e)) => {

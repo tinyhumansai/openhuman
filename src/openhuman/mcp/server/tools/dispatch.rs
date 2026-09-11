@@ -2,9 +2,9 @@ use serde_json::{json, Map, Value};
 
 use crate::core::all;
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+use crate::openhuman::agent::tinyagents::convert::spec_to_schema;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::inference::provider::types::build_tool_instructions_text;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
 use super::super::write_dispatch;
@@ -215,7 +215,7 @@ async fn build_orchestrator_agent() -> Result<Agent, ToolCallError> {
         ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
     })?;
     agent.fetch_connected_integrations().await;
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
     Ok(agent)
 }
 
@@ -237,9 +237,39 @@ async fn list_core_tools() -> Result<Value, ToolCallError> {
 
 async fn core_tool_instructions() -> Result<Value, ToolCallError> {
     let agent = build_orchestrator_agent().await?;
-    Ok(tool_text_success(build_tool_instructions_text(
-        agent.tool_specs(),
-    )))
+    let schemas: Vec<_> = agent
+        .tool_specs()
+        .iter()
+        .map(|spec| spec_to_schema(spec))
+        .collect();
+    Ok(tool_text_success(
+        tinyagents_harness::tool::prompt_tool_instructions(&schemas),
+    ))
+}
+
+/// Why `agent.run_subagent` will refuse `agent_id`, or `None` when it will run it.
+///
+/// One source for the refusal and for what `agent.list_subagents` publishes, so
+/// the catalogue cannot advertise a delegate that dispatch turns away. The list
+/// enumerates the whole registry and each entry's `when_to_use` invites the
+/// model to delegate; before this, a brain reached `integrations_agent` through
+/// that invitation and only learned it was unreachable from the error, after
+/// spending the round trip (#5755).
+pub fn mcp_dispatch_block_reason(agent_id: &str) -> Option<&'static str> {
+    (agent_id == "integrations_agent").then_some(
+        "agent.run_subagent does not yet support `integrations_agent`; first-level MCP support is currently limited to standalone agents that do not require toolkit binding",
+    )
+}
+
+/// One bullet of the `agent.list_subagents` summary.
+///
+/// Pure so the "not dispatchable" marker is asserted without standing up a
+/// config and an agent registry.
+pub fn subagent_summary_line(id: &str, when_to_use: &str) -> String {
+    match mcp_dispatch_block_reason(id) {
+        Some(reason) => format!("- **{id}** (not dispatchable over MCP — {reason}): {when_to_use}"),
+        None => format!("- **{id}**: {when_to_use}"),
+    }
 }
 
 async fn list_subagents() -> Result<Value, ToolCallError> {
@@ -262,6 +292,10 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
                 "tool_scope": def.tools,
                 "subagents": def.subagents,
                 "source": def.source,
+                // Advertised alongside the invitation, not discovered from the
+                // error of acting on it (#5755).
+                "dispatchable_over_mcp": mcp_dispatch_block_reason(&def.id).is_none(),
+                "not_dispatchable_reason": mcp_dispatch_block_reason(&def.id),
             })
         })
         .collect::<Vec<_>>();
@@ -274,7 +308,7 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
             .map(|def| {
                 let id = def.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
                 let when = def.get("when_to_use").and_then(Value::as_str).unwrap_or("");
-                format!("- **{id}**: {when}")
+                subagent_summary_line(id, when)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -297,10 +331,8 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
 
     let agent_id = required_non_empty_string(params, "agent_id")?;
     let prompt = required_non_empty_string(params, "prompt")?;
-    if agent_id == "integrations_agent" {
-        return Err(ToolCallError::InvalidParams(
-            "agent.run_subagent does not yet support `integrations_agent`; first-level MCP support is currently limited to standalone agents that do not require toolkit binding".to_string(),
-        ));
+    if let Some(reason) = mcp_dispatch_block_reason(&agent_id) {
+        return Err(ToolCallError::InvalidParams(reason.to_string()));
     }
 
     // Bound nested recursion per delegation chain (CC → run_subagent → CC → …).
@@ -329,7 +361,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         "mcp_server",
     );
     agent.fetch_connected_integrations().await;
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
 
     // The MCP server surface exposes openhuman agents to remote MCP
     // clients. Treat callers as ExternalChannel — their prompt text is
@@ -397,29 +429,5 @@ pub fn tool_error(message: String) -> Value {
 }
 
 #[cfg(test)]
-mod depth_tests {
-    use super::super::super::subagent_depth::{current_depth, scope, MAX_SUBAGENT_DEPTH};
-
-    #[tokio::test]
-    async fn child_depth_is_bounded_per_chain() {
-        // The dispatch refuses when `current_depth() >= MAX` (guarding before the
-        // `+1` so a clamped depth at the cap can't overflow). At depth MAX the
-        // next subagent is refused; below it, allowed. (Parallel unrelated chains
-        // each start at 0 — no interference.)
-        assert_eq!(current_depth(), 0, "top level starts at depth 0");
-        scope(MAX_SUBAGENT_DEPTH, async {
-            assert!(
-                current_depth() >= MAX_SUBAGENT_DEPTH,
-                "at the cap, spawning a deeper child must be refused"
-            );
-        })
-        .await;
-        scope(MAX_SUBAGENT_DEPTH - 1, async {
-            assert!(
-                current_depth() < MAX_SUBAGENT_DEPTH,
-                "one below the cap, a child is still allowed"
-            );
-        })
-        .await;
-    }
-}
+#[path = "dispatch_depth_tests_tests.rs"]
+mod depth_tests;

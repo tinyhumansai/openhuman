@@ -62,8 +62,7 @@ test.describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
 
   test('reached the logged-in shell after onboarding', async ({ page }) => {
     await waitForAppReady(page);
-    const text = await page.locator('#root').innerText();
-    expect(['New Conversation', 'Threads'].some(marker => text.includes(marker))).toBe(true);
+    await expect(page.getByTestId('chat-message-input')).toBeVisible();
   });
 
   test('creates a tunnel, lists it, deletes it, and matches mock-backend traffic', async () => {

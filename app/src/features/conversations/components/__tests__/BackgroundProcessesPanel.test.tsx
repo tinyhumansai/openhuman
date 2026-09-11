@@ -177,7 +177,9 @@ describe('BackgroundProcessesPanel', () => {
     render(
       <BackgroundProcessesPanel open processes={procs} onClose={onClose} onOpenProcess={vi.fn()} />
     );
-    fireEvent.keyDown(window, { key: 'Escape' });
+    // Radix's dismissable layer listens on the owning `document`, not on
+    // `window` — an event dispatched on `window` never reaches `document`.
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
 

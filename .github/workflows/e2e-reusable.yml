@@ -6,18 +6,18 @@
 #   - `.github/workflows/release-staging.yml`    — pretest gate, all 3 OS, full suite.
 #   - `.github/workflows/release-production.yml` — pretest gate, all 3 OS, full suite.
 #
-# Recipe per OS (identical across platforms — see e2e-run-session.sh):
-#   1. Build the CEF app via `pnpm --filter openhuman-app test:e2e:build`.
-#   2. Install Appium 3.x + the `chromium` driver.
-#   3. Run `app/scripts/e2e-run-session.sh` which:
-#        - launches the built binary,
-#        - waits for CDP on :19222,
-#        - prunes the prewarm `about:blank` target,
-#        - downloads a chromedriver matching CEF's Chromium version,
-#        - starts Appium and runs WDIO against `wdio.conf.ts`.
+# Recipe (see e2e-run-session.sh):
+#   1. Build the app via `pnpm --filter openhuman-app test:e2e:build`.
+#   2. Run `app/scripts/e2e-run-session.sh` which:
+#        - starts tauri-driver and waits for its /status endpoint,
+#        - runs WDIO against `wdio.conf.ts`.
 #
 # Linux runs inside the project CI container under Xvfb (no native display).
-# macOS / Windows run on GitHub-hosted runners.
+# The Appium Chromium-driver backend used on macOS / Windows attached over
+# CEF's remote-debugging port and was removed in #5478 — CDP does not exist
+# under the Wry runtime. Those jobs cannot pass and need a native driver
+# (Appium Mac2 / WinAppDriver) before they are re-enabled. Tracked in #5485:
+# until it lands, macOS and Windows have no desktop E2E coverage at all.
 #
 # Caching: pnpm store, Swatinem rust-cache, and CEF runtime download
 # (~400MB) are cached on every job. The CEF cache key matches what
@@ -74,6 +74,10 @@ permissions:
 env:
   # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
   GH_TOKEN: ${{ github.token }}
+  # Desktop E2E exercises the shipped app and does not execute skills. Avoid
+  # asynchronously provisioning the optional managed Node runtime during core
+  # startup, which can delay the ready signal past the harness timeout.
+  OPENHUMAN_NODE_ENABLED: "0"
 
 jobs:
   # Selected-spec gate for PR/push (full=false). The full-suite path lives in
@@ -153,6 +157,33 @@ jobs:
           # Appium builds; install idempotently and ignore "already installed".
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
+      - name: Install checksum-pinned TinyMemory test module
+        run: |
+          # Keep memory E2E independent of the GitHub release-metadata API.
+          # tinybus validates every directory ancestor, so the fixture must
+          # live outside the runner-owned checkout in this root-run container.
+          # Version and digest are ONE decision and live on adjacent lines for that
+          # reason: the archive name, the release tag and the checksum each used to
+          # carry the version independently, so a bump could update two of the three
+          # and leave a stale digest that only fails after the download. Both values
+          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+          # which is the authoritative pin — copy them from there, never recompute.
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          memory_dir="$module_root/tinymemory"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
+          rm -rf "$memory_dir"
+          mkdir -p "$memory_dir"
+          curl --fail --location --silent --show-error \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
+            --output "$memory_archive"
+          echo "${memory_sha256}  $memory_archive" \
+            | sha256sum --check
+          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
+            >> "$GITHUB_ENV"
+
       - name: Build E2E app
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
@@ -227,18 +258,6 @@ jobs:
           cache-on-failure: true
           key: e2e-linux-unified
 
-      - name: Cache CEF binary distribution
-        uses: actions/cache@v6
-        with:
-          # cef-dll-sys downloads into $CEF_PATH; ensure-tauri-cli.sh +
-          # e2e-build.sh pin that to $HOME/Library/Caches/tauri-cef on
-          # every OS, so the cache key/path live there too.
-          path: |
-            ~/Library/Caches/tauri-cef
-          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
-          restore-keys: |
-            cef-x86_64-unknown-linux-gnu-v2-
-
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
@@ -254,15 +273,13 @@ jobs:
         run: |
           # Stage everything the test shards need at the layout they expect
           # under a single directory, so the consumer can extract straight
-          # into the workspace + $HOME.
+          # into the workspace.
           STAGE="$(mktemp -d)"
           mkdir -p "$STAGE/repo/app/src-tauri/target/debug"
           mkdir -p "$STAGE/repo/app/dist"
-          mkdir -p "$STAGE/home/Library/Caches"
           cp -a app/src-tauri/target/debug/OpenHuman "$STAGE/repo/app/src-tauri/target/debug/"
           cp -a app/dist/. "$STAGE/repo/app/dist/"
-          cp -a "$HOME/Library/Caches/tauri-cef" "$STAGE/home/Library/Caches/tauri-cef"
-          tar -czf e2e-build-linux.tar.gz -C "$STAGE" repo home
+          tar -czf e2e-build-linux.tar.gz -C "$STAGE" repo
           ls -lh e2e-build-linux.tar.gz
 
       - name: Upload build artifact
@@ -334,25 +351,50 @@ jobs:
           name: e2e-build-linux-${{ github.run_id }}
           path: .
 
-      - name: Restore build artifact into workspace + $HOME
+      - name: Restore build artifact into workspace
         run: |
           tar -xzf e2e-build-linux.tar.gz
-          # The artifact contains: repo/{app/src-tauri/target/debug/OpenHuman, app/dist/...}
-          # and home/Library/Caches/tauri-cef/...
-          mkdir -p app/src-tauri/target/debug app/dist "$HOME/Library/Caches"
+          # The artifact contains: repo/{app/src-tauri/target/debug/OpenHuman, app/dist/...}.
+          mkdir -p app/src-tauri/target/debug app/dist
           cp -a repo/app/src-tauri/target/debug/OpenHuman app/src-tauri/target/debug/
           cp -a repo/app/dist/. app/dist/
-          cp -a home/Library/Caches/tauri-cef "$HOME/Library/Caches/"
-          rm -rf repo home e2e-build-linux.tar.gz
+          rm -rf repo e2e-build-linux.tar.gz
           chmod +x app/src-tauri/target/debug/OpenHuman
           ls -la app/src-tauri/target/debug/OpenHuman app/dist | head
-          ls -la "$HOME/Library/Caches/tauri-cef" | head
+
+      - name: Install checksum-pinned TinyMemory test module
+        if: matrix.shard.name == 'providers'
+        run: |
+          # memory-roundtrip runs in this shard. Supply the native module
+          # directly so the packaged app never depends on GitHub's release
+          # metadata API while the test is running.
+          # Version and digest are ONE decision and live on adjacent lines for that
+          # reason: the archive name, the release tag and the checksum each used to
+          # carry the version independently, so a bump could update two of the three
+          # and leave a stale digest that only fails after the download. Both values
+          # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
+          # which is the authoritative pin — copy them from there, never recompute.
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          memory_dir="$module_root/tinymemory"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
+          rm -rf "$memory_dir"
+          mkdir -p "$memory_dir"
+          curl --fail --location --silent --show-error \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
+            --output "$memory_archive"
+          echo "${memory_sha256}  $memory_archive" \
+            | sha256sum --check
+          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
+            >> "$GITHUB_ENV"
 
       - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
         env:
           E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
+          E2E_USE_TAURI_DRIVER: "1"
         run: |
-          export CEF_PATH="$HOME/Library/Caches/tauri-cef"
           BAIL_FLAG=""
           if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
             BAIL_FLAG="--bail"
@@ -465,7 +507,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -474,14 +516,15 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.93.0 || true
+          rustup default 1.96.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
-          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
-          # dtolnay-installed 1.93.0. The action's `targets:` input added
-          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
-          # universal-helper build actually uses — so add it to the active
-          # (override) toolchain here or the cross-compile fails with E0463
+          # rust-toolchain.toml override toolchain. The action pin and
+          # rust-toolchain.toml agree today (scripts/ci/check-toolchain-image.mjs
+          # enforces that), so the action's `targets:` input lands on the same
+          # toolchain — but re-adding the target against the *active* toolchain
+          # keeps this step correct if the two ever diverge again, which used to
+          # fail the CEF universal-helper cross-compile with E0463
           # "can't find crate for `core`".
           cargo --version
           rustup target add x86_64-apple-darwin
@@ -580,7 +623,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -677,7 +720,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
         with:
           # macos-latest is arm64, but the vendored tauri-cli's build.rs
           # compiles a CEF helper for x86_64-apple-darwin (universal binary),
@@ -687,14 +730,15 @@ jobs:
 
       - name: Verify cargo resolves to real toolchain
         run: |
-          rustup default 1.93.0 || true
+          rustup default 1.96.1 || true
           which cargo
           # `cargo --version` in the repo root materializes the
-          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
-          # dtolnay-installed 1.93.0. The action's `targets:` input added
-          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
-          # universal-helper build actually uses — so add it to the active
-          # (override) toolchain here or the cross-compile fails with E0463
+          # rust-toolchain.toml override toolchain. The action pin and
+          # rust-toolchain.toml agree today (scripts/ci/check-toolchain-image.mjs
+          # enforces that), so the action's `targets:` input lands on the same
+          # toolchain — but re-adding the target against the *active* toolchain
+          # keeps this step correct if the two ever diverge again, which used to
+          # fail the CEF universal-helper cross-compile with E0463
           # "can't find crate for `core`".
           cargo --version
           rustup target add x86_64-apple-darwin
@@ -905,7 +949,7 @@ jobs:
           cache: pnpm
 
       - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@1.96.1
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -915,18 +959,6 @@ jobs:
             app/src-tauri -> target
           cache-on-failure: true
           key: e2e-windows-unified
-
-      - name: Cache CEF binary distribution
-        uses: actions/cache@v6
-        with:
-          # ensure-tauri-cli.sh + e2e-build.sh export
-          # CEF_PATH=$HOME/Library/Caches/tauri-cef regardless of OS; under Git
-          # Bash on Windows that resolves under the user profile.
-          path: |
-            ~/Library/Caches/tauri-cef
-          key: cef-x86_64-pc-windows-msvc-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
-          restore-keys: |
-            cef-x86_64-pc-windows-msvc-v2-
 
       - name: Install JS dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
@@ -943,17 +975,14 @@ jobs:
       - name: Package build artifact
         shell: bash
         run: |
-          # Windows is NOT self-contained: the shard needs the .exe, the
-          # frontend dist, and the CEF runtime (exported via CEF_PATH at run
-          # time). Stage all three at the layout the shard restores into.
+          # Windows shards need the .exe and frontend dist at the layout they
+          # restore into.
           STAGE="$(mktemp -d)"
           mkdir -p "$STAGE/repo/app/src-tauri/target/debug"
           mkdir -p "$STAGE/repo/app/dist"
-          mkdir -p "$STAGE/home/Library/Caches"
           cp -a app/src-tauri/target/debug/OpenHuman.exe "$STAGE/repo/app/src-tauri/target/debug/"
           cp -a app/dist/. "$STAGE/repo/app/dist/"
-          cp -a "$HOME/Library/Caches/tauri-cef" "$STAGE/home/Library/Caches/tauri-cef"
-          tar -czf e2e-build-windows.tar.gz -C "$STAGE" repo home
+          tar -czf e2e-build-windows.tar.gz -C "$STAGE" repo
           ls -lh e2e-build-windows.tar.gz
 
       - name: Upload build artifact
@@ -1027,15 +1056,14 @@ jobs:
           name: e2e-build-windows-${{ github.run_id }}
           path: .
 
-      - name: Restore build artifact into workspace + $HOME
+      - name: Restore build artifact into workspace
         shell: bash
         run: |
           tar -xzf e2e-build-windows.tar.gz
-          mkdir -p app/src-tauri/target/debug app/dist "$HOME/Library/Caches"
+          mkdir -p app/src-tauri/target/debug app/dist
           cp -a repo/app/src-tauri/target/debug/OpenHuman.exe app/src-tauri/target/debug/
           cp -a repo/app/dist/. app/dist/
-          cp -a home/Library/Caches/tauri-cef "$HOME/Library/Caches/"
-          rm -rf repo home e2e-build-windows.tar.gz
+          rm -rf repo e2e-build-windows.tar.gz
           ls -la app/src-tauri/target/debug/OpenHuman.exe app/dist | head
 
       - name: Run E2E shard (${{ matrix.shard.name }} — suites=${{ matrix.shard.suites }})
@@ -1043,9 +1071,6 @@ jobs:
         env:
           E2E_BAIL_ON_FAILURE: ${{ vars.E2E_BAIL_ON_FAILURE || '' }}
         run: |
-          # e2e-build.sh + ensure-tauri-cli.sh always download CEF to
-          # $HOME/Library/Caches/tauri-cef regardless of OS.
-          export CEF_PATH="$HOME/Library/Caches/tauri-cef"
           BAIL_FLAG=""
           if [[ "${E2E_BAIL_ON_FAILURE:-}" == "1" ]]; then
             BAIL_FLAG="--bail"

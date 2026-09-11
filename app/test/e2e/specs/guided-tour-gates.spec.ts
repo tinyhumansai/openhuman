@@ -332,9 +332,20 @@ describe('Guided tour — gates and resume behaviour (#1215)', function () {
       // This is independent of the full tour advance sequence.
       await navigateViaHash('/chat');
 
-      const chatPanel = await browser.execute(() => {
-        return document.querySelector('[data-walkthrough="chat-agent-panel"]') !== null;
-      });
+      // Hash navigation settles before the chat runtime has finished mounting
+      // its composer footer. Poll for the target so this proves the rendered
+      // route contract instead of racing that asynchronous mount in CI.
+      const chatPanel = await browser.waitUntil(
+        async () =>
+          (await browser.execute(
+            () => document.querySelector('[data-walkthrough="chat-agent-panel"]') !== null
+          )) as boolean,
+        {
+          timeout: 15_000,
+          interval: 250,
+          timeoutMsg: 'chat walkthrough target did not mount after navigating to /chat',
+        }
+      );
       // The data-walkthrough attribute must exist for Joyride to focus the step.
       expect(chatPanel).toBe(true);
     });

@@ -35,12 +35,7 @@ impl Tool for SteerSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Send a message into a running async sub-agent (one you started with \
-         spawn_async_subagent), redirecting or feeding it data mid-run without \
-         restarting it. The sub-agent picks the message up at its next step. Use \
-         `mode: steer` (default) for a new instruction it must address, or \
-         `mode: collect` for silent extra context. Returns immediately; use \
-         wait_subagent to collect the final result."
+        "Send a message into a running async sub-agent, redirecting it or feeding it data mid-run without restarting. It is picked up at the next step. `mode: steer` (default) is an instruction it must address; `mode: collect` is silent context. Returns immediately."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -171,44 +166,5 @@ impl Tool for SteerSubagentTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schema_requires_task_id_and_message() {
-        let schema = SteerSubagentTool::new().parameters_schema();
-        let required = schema
-            .get("required")
-            .and_then(|v| v.as_array())
-            .expect("required list");
-        assert!(required.iter().any(|v| v.as_str() == Some("message")));
-    }
-
-    #[tokio::test]
-    async fn missing_task_id_is_rejected() {
-        let tool = SteerSubagentTool::new();
-        let res = tool.execute(json!({ "message": "go" })).await.unwrap();
-        assert!(res.is_error);
-        assert!(res.output().contains("subagent_session_id"));
-    }
-
-    #[tokio::test]
-    async fn missing_message_is_rejected() {
-        let tool = SteerSubagentTool::new();
-        let res = tool.execute(json!({ "task_id": "sub-1" })).await.unwrap();
-        assert!(res.is_error);
-        assert!(res.output().contains("message"));
-    }
-
-    #[tokio::test]
-    async fn outside_agent_turn_is_rejected() {
-        // No PARENT_CONTEXT task-local installed in a bare test.
-        let tool = SteerSubagentTool::new();
-        let res = tool
-            .execute(json!({ "task_id": "sub-1", "message": "go" }))
-            .await
-            .unwrap();
-        assert!(res.is_error);
-        assert!(res.output().contains("outside of an agent turn"));
-    }
-}
+#[path = "steer_subagent_tests.rs"]
+mod tests;

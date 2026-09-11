@@ -64,7 +64,7 @@ None. This domain owns no `tools.rs` agent tools.
 Subscriber (in `bus.rs`): **`WebhookRequestSubscriber`** — `name() = "webhook::request_handler"`, `domains() = ["webhook"]`. Registered at startup (see `channels/runtime/startup.rs`).
 
 - **Subscribes**: `DomainEvent::WebhookIncomingRequest` (published by the socket transport in `socket/event_handlers.rs`).
-- **Publishes**: `DomainEvent::WebhookRegistered` / `WebhookUnregistered` (from the router on registration changes), `DomainEvent::WebhookReceived` (when routed to a target), `DomainEvent::WebhookProcessed` (always, with status/elapsed/error).
+- **Publishes**: `DomainEvent::WebhookRegistered` / `WebhookUnregistered` (from the router on registration changes — `WebhookUnregistered`, the `registration_changed` debug event and the route re-persist all fire **only when a registration was actually removed**; unregistering an absent tunnel is a silent no-op that returns `Ok(false)`, see #6091), `DomainEvent::WebhookReceived` (when routed to a target), `DomainEvent::WebhookProcessed` (always, with status/elapsed/error).
 
 Routing outcomes by `target_kind`: `echo` → `build_echo_response` (200); `agent` → decode body, spawn triage, return `202 Accepted` (spawned task emits the real response later, with 60s timeout → 504); `skill` / unknown → `501` (direct skill dispatch not available); no registration → `404`. Responses are emitted over the socket as `webhook:response`.
 

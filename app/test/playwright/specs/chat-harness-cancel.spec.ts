@@ -41,7 +41,7 @@ async function openChat(page: Page): Promise<void> {
   await page.goto('/#/chat');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await expect(page.getByTestId('send-message-button')).toBeVisible();
+  await expect(page.getByTestId('chat-message-input')).toBeVisible();
 }
 
 async function selectedThreadId(page: Page): Promise<string | null> {
@@ -109,7 +109,7 @@ async function waitForSocketConnected(page: Page): Promise<void> {
 async function sendMessage(page: Page, prompt: string): Promise<void> {
   await waitForSocketConnected(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByPlaceholder('How can I help you today?').fill(prompt);
+  await page.getByTestId('chat-message-input').fill(prompt);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByTestId('send-message-button')).toBeEnabled();
   await page.getByTestId('send-message-button').click();
@@ -136,7 +136,7 @@ test.describe('Chat Harness - Cancel', () => {
       await expect(page.getByText(piece, { exact: false })).toHaveCount(0, { timeout: 5_000 });
     }
 
-    const composer = page.getByPlaceholder('How can I help you today?');
+    const composer = page.getByTestId('chat-message-input');
     await expect(composer).toBeEnabled();
     await composer.fill('post-cancel probe message');
     await expect(page.getByTestId('send-message-button')).toBeEnabled();

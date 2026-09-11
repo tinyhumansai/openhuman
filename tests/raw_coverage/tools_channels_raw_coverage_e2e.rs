@@ -321,7 +321,6 @@ fn tool_registries_schemas_and_local_helpers_cover_safe_branches() {
         &config.workspace_dir,
     ));
     let audit = AuditLogger::disabled();
-    let memory: Arc<dyn Memory> = Arc::new(StubMemory);
 
     let baseline = default_tools(Arc::clone(&security));
     assert_eq!(baseline.len(), 3);
@@ -333,7 +332,6 @@ fn tool_registries_schemas_and_local_helpers_cover_safe_branches() {
         Arc::clone(&config),
         &security,
         audit,
-        memory,
         &config.browser,
         &config.http_request,
         &config.workspace_dir,

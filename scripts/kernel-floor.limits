@@ -13,6 +13,483 @@
 # Simulate with: scripts/dep-sim.py --cut <crates>
 #
 # History
+#   287/269/2  2026-08-31  openhuman#5560: the memory engine crates leave the
+#                      product build (see the PR for the full inventory).
+#                      Measured on CI Linux; macOS resolves one extra
+#                      target-specific package/name (288/270).
+#   NOTE 2026-09-01: the 293/275 lockfile-refresh entry below described
+#                      main's refreshed Cargo.lock; the shed branch's merge
+#                      kept its own lock, so the resolved graph here is the
+#                      287/269 shed measurement, not 293/275.
+#   293/275/2  2026-08-31  Cargo.lock was refreshed to the latest compatible
+#                      dependency releases. The `flows` profile now resolves
+#                      seven additional package versions and five additional
+#                      crate names; native builds remain the same two
+#                      (`libsqlite3-sys`, `ring`). This is a lockfile-wide
+#                      compatibility refresh, not a new always-on OpenHuman
+#                      dependency. Measured with `scripts/kernel-floor.sh
+#                      flows` on the CI Linux profile.
+#   286/270/2  2026-08-30  moving flows::store.rs / flows::draft_store.rs and
+#                      the copilot's authoring prompts upstream split the
+#                      `tinyflows` crate's catalog/storage/copilot surface into
+#                      three sibling crates in the SAME vendored workspace:
+#                      `tinyflows-catalog` (flows/revisions/runs/drafts/
+#                      suggestions + n8n import + save/run gates),
+#                      `tinyflows-sqlite` (the SQLite backend + engine
+#                      checkpointer), and `tinyflows-copilot` (the
+#                      `workflow_builder` / `flow_discovery` archetype prose).
+#                      (+3 packages, +3 NAMES — one each.)
+#
+#                      All three are path dependencies into
+#                      `vendor/tinyflows`, the SAME checkout `tinyflows` itself
+#                      already came from — not a new external crate and not a
+#                      second copy of an existing one. `cargo metadata` still
+#                      shows exactly one `tinyflows` package. Native build
+#                      count is unchanged at 2 (`libsqlite3-sys`, `ring`); none
+#                      of the three pulls in a new native dependency — their
+#                      own dependency lists (serde, serde_json, anyhow,
+#                      rusqlite via the existing `tinyflows-sqlite` path,
+#                      thiserror) are already resolved in this graph.
+#
+#                      All three are `optional = true` and gated behind
+#                      `flows = ["dep:tinyflows", "dep:tinyflows-catalog",
+#                      "dep:tinyflows-copilot", "dep:tinyflows-sqlite"]`, so a
+#                      slim build without `flows` drops all four together, same
+#                      as before this PR.
+#                      Measured on CI's Linux target; macOS resolves one extra
+#                      target-specific package/name (287/271/2), matching the
+#                      host skew already recorded below.
+#   283/267/2  2026-08-30  removed TinyPlace from the core and app, shedding
+#                      five packages and three unique crate names from the
+#                      workflow-only profile.
+#   288/270/2  2026-08-29  the tool vocabulary moved into its own crate
+#                      (+1 package, +1 NAME: `tinytools`). This entry is the
+#                      CURRENT limit; the tinyjuice entry below it left the
+#                      profile at 287/269/2 and this raises it by one on top of
+#                      that.
+#
+#                      It brings NO third-party crate this profile did not
+#                      already have. Its whole dependency list is `anyhow`,
+#                      `async-trait`, `serde` and `serde_json`, all four of them
+#                      already resolved here — measured, not assumed: the native
+#                      build count is unchanged at 2 (`libsqlite3-sys`, `ring`),
+#                      and every one of the 287 previous packages is still
+#                      exactly one package. The +1 is the crate itself.
+#
+#                      It cannot be gated. `src/openhuman/tools/` is kernel
+#                      surface — `shell.rs` alone is reached from the agent turn
+#                      path in every build — so the `Tool` trait compiles in
+#                      every configuration and the vocabulary has no feature to
+#                      hang off. Same situation as `tinyjuice-bus` below, and
+#                      for the same structural reason.
+#
+#                      What it buys is that `tinyagents` and this crate now name
+#                      the SAME tool types instead of structural twins. Before
+#                      this, both declared their own and the seam between them
+#                      was hand-written; `humanize_tool_name` and
+#                      `context_detail_from_args` existed in two copies, one of
+#                      which already carried a comment warning that two copies is
+#                      how one silently stops stripping a prefix the other does.
+#                      `WorkspaceDescriptor` and `SandboxMode` collapsed the same
+#                      way. It also deletes ~780 lines of type definitions from
+#                      this crate (`tools/traits.rs` 690 -> 125,
+#                      `skills/types.rs` 338 -> 127).
+#
+#   287/269/2  2026-08-23  the TinyJuice wire contract moved into its own crate
+#                      (+1 package, +1 NAME: `tinyjuice-bus`). This entry is
+#                      the CURRENT limit; the tinymcp entry below it left the
+#                      profile at 286/268/2 and this raises it by one on top of
+#                      that.
+#
+#                      It is `serde` and
+#                      nothing else — no transport, no runtime, no native code —
+#                      and it brings no third-party crate this profile did not
+#                      already have.
+#
+#                      It cannot be gated: `inference::tokenjuice` compiles in
+#                      every build because the compression middleware sits in the
+#                      agent turn path, so the contract has no feature to hang
+#                      off. The two other contracts that landed in the same PR
+#                      DO have one and cost this profile nothing —
+#                      `tinydocs-bus` is exclusive to `documents` and
+#                      `tinyvoice-bus` to `voice`, both default-OFF for
+#                      contributors.
+#
+#                      What it buys is the deletion of 259 lines of hand-copied
+#                      wire types from `inference/tokenjuice/types.rs`, which
+#                      were a second definition of a contract with nothing
+#                      checking that the two agreed. A crate in the graph is the
+#                      cheaper of the two failure modes.
+#
+#   286/268/2  2026-08-23  tinymcp registry entry, NO CHANGE to this profile —
+#                      and the entry exists to correct the prediction in the
+#                      2026-08-22 line below, which is measurably wrong.
+#                      That line said step two of the MCP extraction would drop
+#                      the `tinymcp` path dependency "at which point the MCP
+#                      transport stack leaves the always-on graph entirely.
+#                      Lower it in that PR." It does not, and the ratchet is
+#                      therefore NOT lowered here.
+#                      Measured, not derived: `scripts/dep-sim.py --cut tinymcp`
+#                      projects 286/268/2 -> 285/267/2, i.e. -1 package / -1
+#                      name / 0 native. The package that leaves is `tinymcp`
+#                      itself and nothing beneath it, because its dependencies
+#                      are shared with kernel surface: in this profile
+#                      `rusqlite` has SIX parents (openhuman, tinyagents,
+#                      tinychannels, tinycortex, tinymcp, tinymemory-core) and
+#                      `reqwest` has TEN. Confirmed with `cargo tree
+#                      --no-default-features --features flows -e normal -i
+#                      rusqlite` / `-i reqwest`.
+#                      This is the same lesson as the TinyMemory port: a module
+#                      boundary buys a COMPILATION boundary, not a dependency
+#                      shed, whenever the module's dependencies are already
+#                      shared. Do not write "and its dependency tail leaves with
+#                      it" into a History entry again without running dep-sim
+#                      first — per-dependency intuition over-counts exactly the
+#                      way per-dependency arithmetic does.
+#                      What this PR does land: `TINYMCP` in
+#                      `src/openhuman/modules/registry.rs`, pinning the v0.3.1
+#                      release so the module can be downloaded and verified. The
+#                      path dependency stays until `tinymcp-bus` publishes the
+#                      members and types the host reaches for (see the Cargo.toml
+#                      comment); the -1 lands in that PR, not this one.
+#   286/268/2  2026-08-22  combined raise from two independent extractions
+#                      landing on the same day, each additive on the 283/265/2
+#                      base. (1) The MCP client moved out to `tinymcp` (+2
+#                      packages, +2 NAMES: `tinymcp` and `tinymcp-bus`). This
+#                      repository's MCP client, server registry and write-audit
+#                      log now live in their own workspace, consumed here as a
+#                      path dependency. No new third-party code enters the
+#                      profile — `tinymcp` resolves reqwest, rusqlite, tokio,
+#                      serde and uuid, every one of which this profile already
+#                      had, and `tinymcp-bus` is the wire contract, which CI
+#                      asserts holds no transport, no async runtime, no HTTP
+#                      client and no native library. This raise is temporary and
+#                      its own undoing: step two of the extraction loads
+#                      `tinymcp` as a TinyBus module from its release artifacts
+#                      and drops the path dependency, keeping only
+#                      `tinymcp-bus` — at which point the MCP transport stack
+#                      leaves the always-on graph entirely. Lower it in that PR.
+#                      (2) Language runtimes moved behind the `tinyruntime`
+#                      TinyBus module (+1 package, +1 NAME: `tinyruntime-bus`,
+#                      the wire contract for the runtime router). It lands on the
+#                      always-on path and cannot be gated: `ShellTool` holds an
+#                      `Option<Arc<NodeBootstrap>>` as a FIELD and
+#                      `tools/impl/system/shell.rs` is kernel, so the toolchain
+#                      clients in `runtime/` are always compiled and name the
+#                      contract's payload types. `tinyruntime-bus` is
+#                      deliberately dependency-light — `serde` and `serde_json`,
+#                      both already in this profile, and nothing else. What it
+#                      buys is a much larger shed elsewhere: downloading,
+#                      verifying and unpacking language toolchains left this
+#                      repository entirely, taking `xz2` AND its static liblzma C
+#                      build with it, so `runtime-node = []` as a result. The
+#                      two native packages are unchanged.
+#   283/265/2  2026-08-21  tinymemory bumped past its #76/#77 line (-2 packages,
+#                      +1 NAME). The name is `tinymemory-bus`, and it is a
+#                      RAISE, so: tinymemory#74 moved the wire vocabulary —
+#                      member names, payload types, the error-name table — out
+#                      of `tinymemory-api` into a crate beneath it, so anything
+#                      linking the api now also resolves the bus crate. No new
+#                      third-party code enters: `tinymemory-bus` is deliberately
+#                      dependency-light (serde, serde_json, chrono, sha2, uuid,
+#                      anyhow, thiserror — every one already in this profile,
+#                      and it is forbidden an async runtime, rusqlite, git2,
+#                      reqwest or regex by a guard in its own manifest). It is
+#                      also the crate that makes the opposite direction
+#                      possible: a host that later talks to the loadable
+#                      TinyMemory module links THIS and drops the engine, which
+#                      is a shed this ratchet should want.
+#                      The -2 packages are real departures, not a re-count:
+#                      `hashbrown 0.16.1`, `toml 0.9.12`, `toml_datetime 0.7.5`
+#                      and `winnow 0.7.15` leave; `dirs 6.0.0` and
+#                      `tinymemory-bus 0.1.0` enter, so four out and two in.
+#                      `dirs 6.0.0` moves the package count without moving the
+#                      name count: `dirs 5.0.1` is a DIRECT dependency of
+#                      `openhuman` itself, so it cannot leave on any host and
+#                      the two versions coexist. The +1 name is therefore
+#                      `tinymemory-bus` alone. Everything else in the diff is a
+#                      version bump the pin carries: rusqlite 0.40.0 -> 0.40.2
+#                      (and libsqlite3-sys 0.38.1 -> 0.38.2, hashlink 0.11 ->
+#                      0.12), which is `tinymemory-core`'s exact pin, and
+#                      tinymemory 1.0.1 -> 1.1.0. Native builds unchanged at 2.
+#                      Measured on CI (Linux): 283/265/2. Both hosts move by the
+#                      same -2/+1: at this branch's base (5cd5b3a) Linux
+#                      resolves 285/264 and macOS 286/265, landing at 283/265
+#                      and 284/266 — the host skew is +1 package and +1 name,
+#                      before and after. Note the 2026-08-19 entry below reads
+#                      286/264: its lockfile is name-for-name identical to this
+#                      branch's base, so that 286 is the macOS package count
+#                      paired with the Linux name count, i.e. one package
+#                      looser than a Linux run of `scripts/kernel-floor.sh
+#                      flows` measures. Re-measure on one host before quoting a
+#                      delta against it.
+#   286/264/2  2026-08-19  tinymemory bumped across its #18 arc (-4 names, 0
+#                      packages net, native unchanged). A shed, not a gate, and
+#                      a downstream one: tinymemory#43 (§D2) moved `axum` from
+#                      tinymemory-core's normal dependencies to dev-only — its
+#                      four references there were all inside `mod tests` — and
+#                      that takes the whole tail out of this always-on profile:
+#                      `axum`, `axum-core`, `axum-macros`, `matchit`,
+#                      `httpdate`, `serde_path_to_error` leave (-6). Two enter:
+#                      `tinymemory-sources` and `tinymemory-sync`, the crates
+#                      tinymemory#46/#48 split the source readers and the
+#                      engine-free Composio sync into — both already-compiled
+#                      code relocated, so packages stay flat. Net -4 names.
+#                      Measured on CI (Linux): `scripts/kernel-floor.sh flows
+#                      --json` -> 286/264/2. (macOS resolves 286/265/2 per the
+#                      documented target skew.) The crate-set diff old-pin vs
+#                      new-pin confirms exactly the six-out/two-in above.
+#   286/268/2  2026-08-15  tinywallet de-vendored back to a submodule + module
+#                      (-11 packages / -11 names). The inlined `tinywallet`
+#                      crate copy is deleted; key derivation and transaction
+#                      signing for BTC/EVM/Tron/Solana move into the loaded
+#                      `tinywallet` TinyBus module over confidential
+#                      `SignTransaction`/`SignMessage` calls. `web3` stayed
+#                      gated out of this profile already, so the shed here is
+#                      not the wallet crate itself (never in `flows`) — it is
+#                      `app/src-tauri/Cargo.lock`'s stale cryptocurrency
+#                      dependency tail that the old inlined copy had pulled in
+#                      and the delete-and-revendor removed (`chore(deps): prune
+#                      unused cryptocurrency dependencies from Cargo.lock`).
+#                      Measured on CI (Linux): `scripts/kernel-floor.sh flows
+#                      --json` -> 286/268/2. (macOS resolves ~298/280/2 per the
+#                      documented target skew; the ratchet stays calibrated on
+#                      Linux.)
+#   297/279/2  2026-08-14  tinycortex + tinymemory advanced to their merge
+#                      commits for the git2-ownership move (-6 packages /
+#                      -2 names). A shed, not a gate: the newer submodules stop
+#                      pulling a second `toml` parser stack into this profile —
+#                      `toml`, `toml_edit`, `toml_datetime`, `toml_write`,
+#                      `serde_spanned` and `winnow` leave, and nothing is added.
+#                      Six packages but only two names, because four of them
+#                      were duplicate majors of names still present at another
+#                      version.
+#
+#                      Measured AFTER merging main's TinyJuice extraction and
+#                      tinyflows 0.8 (the 303/281/2 entry below), so this is
+#                      that baseline minus this branch's shed: 303 - 6 = 297
+#                      packages, 281 - 2 = 279 names. The two sheds are
+#                      disjoint — no crate is claimed twice. Measured with
+#                      `scripts/kernel-floor.sh flows --json` (297/279/2) and
+#                      confirmed by diffing `cargo tree --no-default-features
+#                      --features flows -e normal` across the two submodule
+#                      pins.
+#
+#                      NOTE: this takes the profile BELOW the 302 package count
+#                      of the 2026-08-09 spec-target entry below, which the
+#                      three intervening entries had grown away from. Native
+#                      builds are unchanged at 2 (libsqlite3-sys, ring) — still
+#                      the floor, and still load-bearing.
+#   303/281/2  2026-08-14  tinyflows 0.8: the duplicate reqwest major is gone,
+#                      closing #5539. Main had raised this to 308 because
+#                      tinyflows pulled reqwest 0.13 alongside the kernel's
+#                      0.12; tinyflows PR #45 put its HTTP client behind the
+#                      `chrome-extension` and `host-caps` features, and this
+#                      crate enables neither, so 0.13 leaves the graph entirely
+#                      rather than being unified. -1 PACKAGE, and deliberately
+#                      NOT -1 name: `reqwest` is still resolved at 0.12.28, so
+#                      only the duplicate major goes. Verified with `cargo tree
+#                      --no-default-features --features flows -e normal |
+#                      grep '^reqwest '` → one line. Nothing was gated here;
+#                      the vendor bump stopped pulling the second copy in.
+#                      Measured on top of the TinyJuice entry below:
+#                      303 packages / 281 names / 2 native builds.
+#   304/281/2  2026-08-14  TinyJuice moved behind the TinyBus module boundary
+#                      (-3 packages / -3 names). The `tinyjuice`,
+#                      `tinyjuice-tokenizer`, and `tinyjuice-vector`
+#                      crates no longer enter the always-on `flows` graph;
+#                      OpenHuman keeps only its stable wire types and host
+#                      adapter. Measured with `scripts/kernel-floor.sh flows`.
+#   308/284/2  2026-08-13  tinyflows' host-stack advance (PR #5537) moved its
+#                      direct HTTP client from reqwest 0.12 to 0.13 while the
+#                      rest of the kernel still uses 0.12. That creates one
+#                      additional resolved package but no new crate name or
+#                      native build. The submodule advance landed without the
+#                      matching root lockfile/schema compatibility updates, so
+#                      current main cannot build the flows profile until the
+#                      0.13 package and WorkflowGraph::agents initialization
+#                      are recorded. Keep both versions for compatibility now;
+#                      unifying the HTTP-client major is tracked in #5539.
+#                      Measured with `scripts/kernel-floor.sh flows --json`:
+#                      308 packages / 284 names / 2 native builds.
+#   307/284/2  2026-08-12  tinymemory-core + its `ureq` HTTP client chain
+#                      (+2 packages / +2 names) became always-on via the
+#                      `add tinymemory-core dependency and patch tinycortex-api`
+#                      change (6bf080266), which wired the crate into
+#                      `openhuman_core` on the always-on memory path but did not
+#                      update this ratchet — so `main` failed the Feature-Gate
+#                      Smoke lane. tinymemory-core is the concrete memory/
+#                      embedding core the always-on memory families consume; its
+#                      `ureq` client rides with it. This reconciles the ratchet
+#                      to the dependency graph already on `main` (no new deps are
+#                      introduced here). Verified via CI (Linux resolves 307/284;
+#                      macOS resolves 308/285 per the documented target skew).
+#   305/282/2  2026-08-10  tinymemory engine-neutral memory layer (+3 packages
+#                      / +3 names). `tinymemory`, `tinymemory-api`, and
+#                      `tinymemory-tinycortex` are deliberate always-on
+#                      dependencies: driver admission and the mandatory memory
+#                      capability families must remain available to a second
+#                      engine in the `flows` host profile. `tinydocs` and
+#                      `tinywallet` remain gated behind `documents` and
+#                      `web3`, respectively, and do not enter this profile.
+#                      Verified with `scripts/kernel-floor.sh flows` and
+#                      `cargo tree --no-default-features --features flows
+#                      --invert tinymemory`.
+#   305/282/2  2026-08-11  documents moved into the tinydocs TinyBus module.
+#                      NO CHANGE to this profile, and that is the point of the
+#                      entry: `documents` was never in the `flows` profile, so
+#                      the codecs it carried were invisible to this ratchet.
+#                      What the ratchet DID catch is the other half of the same
+#                      change — enabling `tinybus/modules` on the dependency
+#                      itself put a `dlopen` loader plus `ureq` and an archive
+#                      stack into the kernel profile (305 -> 308 packages,
+#                      282 -> 285 names), because tinybus is always-on surface.
+#                      Fixed by forwarding `tinybus/modules` from this crate's
+#                      own default-ON `modules` feature instead, so a
+#                      workflow-only host carries no loader. Back to 305/282/2,
+#                      identical to upstream/main.
+#                      The shed lands on the PRODUCT profile, which is what
+#                      ships: 505 -> 448 unique crate names, and 39 crates leave
+#                      Cargo.lock entirely — docx-rs, ppt-rs, pdf-extract and
+#                      their font/PostScript/XML tails (lopdf, syntect,
+#                      pulldown-cmark, xml-rs, quick-xml, zip 0.6, zstd, bzip2,
+#                      encoding_rs, euclid, ttf-parser, …). Verified with
+#                      `scripts/assert-shed.sh documents docx-rs ppt-rs
+#                      pdf-extract syntect pulldown-cmark lopdf xml-rs` and the
+#                      same against the product feature set.
+#                      NOTE: this profile already exceeded its limit on
+#                      upstream/main (305/282 vs 302/279) before this branch;
+#                      `scripts/check-kernel-floor.sh` fails identically there.
+#                      Not raised here — the number is unchanged, and raising a
+#                      limit to paper over inherited growth is what this file
+#                      exists to prevent.
+#   302/279/2  2026-08-09  `memory-git` gate (-3 packages / -3 names / -2 NATIVE),
+#                      measured on top of the runtime-node entry below.
+#
+#                      *** THE SPEC TARGET IS REACHED. *** Two native builds
+#                      remain — `libsqlite3-sys` and `ring` — which is exactly
+#                      the goal set in docs/plans MIGRATION-PLAN G6 and named
+#                      at the bottom of this file's 2026-08-01 baseline entry.
+#                      From 418 names / 6 native at the start of the program.
+#
+#                      The largest native-build shed in the program: `git2`
+#                      with vendored libgit2 leaves the kernel profile, taking
+#                      `libgit2-sys` AND `libz-sys` with it. Two of the five
+#                      remaining native C builds, gone in one gate.
+#                      Required a tinycortex change first: `git-diff` gated the
+#                      WHOLE `memory::diff` module, so a libgit2-less host
+#                      could not even name a `CrossSourceDiff`. Its `types`
+#                      and `source` submodules are serde/std-only and are now
+#                      ungated there; only `ledger`/`ledger_helpers` (the two
+#                      that touch git2), the impls written against `Ledger`,
+#                      and `DiffEngine` sit behind the feature. OpenHuman
+#                      mirrors the split: `memory::diff::types` compiles in
+#                      both directions because the always-on subconscious
+#                      profile renders those types into prompts.
+#                      Off-state: `memory_diff` is unknown-method, the
+#                      `memory_diff` agent tool is absent, the embedded driver
+#                      drops `Capability::Diff` (and `as_diff()` returns
+#                      `None`, in lockstep — `audit_provider` fails on either
+#                      half alone), and the git wiki mirror of summary nodes is
+#                      skipped while the summaries themselves are still
+#                      written. Default (full-feature) profile moved 356 -> 353.
+#                      Verified with `scripts/assert-shed.sh flows git2
+#                      libgit2-sys libz-sys`.
+#   305/282/4  2026-08-09  runtime-node gate, measured on top of the
+#                      upstream/main merge below (307/284/5 -> 305/282/4).
+#                      `xz2` + its static liblzma C build are exclusive to
+#                      runtime::node::extractor's .tar.xz path, so gating the
+#                      managed Node toolchain removes them: -2 packages, -2
+#                      names, and lzma-sys leaves the NATIVE list (5 -> 4) —
+#                      the first native toolchain build removed by the gating
+#                      program. Remaining native: libgit2-sys, libsqlite3-sys,
+#                      libz-sys, ring — the target keeps the last two.
+#                      Measured with `scripts/kernel-floor.sh flows`, and
+#                      `scripts/dep-sim.py --cut-nothing` agrees (282 names).
+#   307/284/5  2026-08-09  merge upstream/main + PR #5446 memory-subsystem work.
+#                      Measured, not derived: `scripts/kernel-floor.sh flows`
+#                      reports 307/284/5 on this merge. +3 names over the
+#                      304/281/5 below, and the split matters:
+#                        * +2 INHERITED — `tinybus` + `tinybus-macros`, vendored
+#                          by upstream #5459. The event bus is always-on kernel
+#                          surface, so they are in the `flows` profile there too;
+#                          upstream landed them without moving this number.
+#                        * +1 OURS — `tinycortex-api`, the memory contract crate
+#                          (`MemoryProvider`, `Capabilities`, `NullMemoryProvider`)
+#                          that `MemorySubsystemConfig` -> `MemoryBinding` now
+#                          depends on directly. It was already in the graph
+#                          transitively via `tinycortex`, so no *new* third-party
+#                          code enters the kernel profile — only a new direct edge.
+#                      The -6 packages / -1 native from the tokio-tungstenite
+#                      unification below is preserved, not spent: native builds
+#                      stay at 5 and aws-lc-sys stays absent.
+#   304/281/5  2026-08-08  local whisper.cpp STT deleted (`whisper-rs` +
+#                      `whisper-rs-sys` out of BOTH Cargo worlds, and the
+#                      `[patch.crates-io] whisper-rs-sys` fork entries with
+#                      them). Speech-to-text is a hosted call now, selected by
+#                      `voice_server.stt_engine`. No change to the `flows`
+#                      number: whisper sat behind the default-ON `inference`
+#                      gate, which that profile never enabled — so the kernel
+#                      floor could not see it, which is exactly why a
+#                      CMake-driven C++ inference library survived nine
+#                      ratchet entries. The DEFAULT (full-feature) profile
+#                      moved 569/525/8 -> 567/523/7 native (whisper-rs-sys
+#                      dropped from the native list; its whisper.cpp/GGML
+#                      build was the reason `GGML_NATIVE=OFF` had to prefix
+#                      every macOS cargo invocation). Verified with
+#                      `cargo tree -e normal | grep -ci whisper` = 0 on both
+#                      the root crate and app/src-tauri.
+#   304/281/5  2026-08-08  tokenjuice-treesitter feature deleted entirely (AST-
+#                      aware code compression dropped; tinyjuice's non-AST
+#                      compression path is now the only mode). tinyjuice is
+#                      still consumed with `default-features = false` and its
+#                      own `tinyjuice-treesitter` feature is no longer enabled
+#                      from the root manifest, dropping tree-sitter +
+#                      tree-sitter-{python,rust,typescript}. No change to the
+#                      `flows` number here — that profile never enabled this
+#                      feature to begin with (it was never on the kernel
+#                      path). The DEFAULT (full-feature) profile moved
+#                      575/?/9 -> 569/525/8 native (tree-sitter's C runtime
+#                      build dropped from the native list). Verified with
+#                      `scripts/assert-shed.sh flows tree-sitter
+#                      tree-sitter-python tree-sitter-rust
+#                      tree-sitter-typescript` (all 4 shed) and `cargo tree -e
+#                      normal --prefix none | grep '^tree-sitter'` (empty) on
+#                      the default graph.
+#   304/281/5  2026-08-08  tokio-tungstenite unified on 0.29 (-6 packages/-2
+#                      names). Root Cargo.toml's two per-target
+#                      tokio-tungstenite entries and
+#                      the relevant manifests were pinned at "0.24"; bumped
+#                      all entries to "0.29" (same feature names:
+#                      connect/handshake/native-tls/rustls-tls-webpki-roots).
+#                      Sheds the duplicate tungstenite 0.24 + thiserror 1.x +
+#                      thiserror-impl 1.x majors from the `flows` profile
+#                      (confirmed: `cargo tree --no-default-features --features
+#                      flows -e normal --prefix none | grep '^thiserror 1'` is
+#                      empty, and tungstenite/tokio-tungstenite both resolve
+#                      to a single 0.29 there). Call-site fix: tungstenite
+#                      0.29's `Message::Text` now wraps `Utf8Bytes` instead of
+#                      `String` — `.into()` at each send call site in
+#                      src/openhuman/platform/socket/ws_loop.rs (+ its test
+#                      double server in ws_loop_tests.rs) and
+#                      NOTE: the DEFAULT (full-feature) profile still shows
+#                      both tungstenite 0.24 and 0.29 — socketioxide 0.15.2 /
+#                      engineioxide 0.15.2 (pulled in by the default-ON
+#                      `http-server` feature, unrelated to the three
+#                      activators above) pin `tokio-tungstenite = "0.24"`
+#                      themselves and were out of scope here. Unifying the
+#                      default profile too would mean bumping socketioxide,
+#                      a separate, broader change.
+#   310/283/5  2026-08-08  aws-lc-sys shed (-2 packages/names, -1 native). The
+#                      sole activator was vendor/tinychannels: `rustls = {
+#                      features = ["ring"] }` without `default-features =
+#                      false` unions in rustls's default aws_lc_rs provider,
+#                      and bare `tokio-rustls = "0.26.4"` defaults to
+#                      aws_lc_rs too. Pinned both to default-features = false
+#                      with an explicit ring/std/logging/tls12 feature set.
+#                      Default profile moved 577/533/10 -> 575/531/9 the same
+#                      way. Verified with scripts/assert-shed.sh flows
+#                      aws-lc-sys aws-lc-rs.
 #   312/285/6  2026-08-02  merge origin/main (+5 names) — INHERITED, not introduced here.
 #                      A rise in this number is the one thing this file exists
 #                      to make someone justify, so: main grew the graph on its
@@ -43,8 +520,8 @@
 #                      join the `web3` gate, unblocked by giving Polymarket its
 #                      own `prediction-markets` feature that implies it (-67 —
 #                      the largest single shed in the program). bs58 and
-#                      ed25519-dalek stay always-on (orchestration + tinyplace
-#                      identity), and curve25519-dalek survives under them.
+#                      ed25519-dalek stay always-on, and curve25519-dalek
+#                      survives under them.
 #   375/6  2026-08-01  M2 step 4: tracing-appender + tracing-log behind
 #                      default-ON `file-logging` (-9). Off-state keeps stderr
 #                      and Sentry but writes nothing to disk, and drops the
@@ -62,4 +539,6 @@
 #                      Native: aws-lc-sys libgit2-sys libsqlite3-sys libz-sys
 #                      lzma-sys ring. Target after gating is 222 names / 2 native
 #                      (libsqlite3-sys, ring) — see docs/plans MIGRATION-PLAN G6.
-flows:312:285:6
+# 307/284  2026-08-12  Re-baseline after the upstream lockfile resolution;
+#                      `flows` remains at two native packages.
+flows:287:269:2

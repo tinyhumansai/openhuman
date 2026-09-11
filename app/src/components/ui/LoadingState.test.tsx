@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from './LoadingState';
+import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus, Spinner } from './LoadingState';
 
 describe('ErrorBanner', () => {
   it('retains message call sites and exposes errors as alerts', () => {
@@ -45,5 +45,30 @@ describe('loading states', () => {
     expect(screen.getByText('Checking')).toBeInTheDocument();
     expect(screen.getByText('Loading runs')).toBeInTheDocument();
     expect(container.querySelectorAll('svg')).toHaveLength(2);
+  });
+});
+
+describe('Spinner', () => {
+  // There is no `ui/Spinner.tsx` on purpose — this module re-exports the one
+  // SVG in `ui/icons.tsx`. These cases pin that the alias resolves and that the
+  // spinner stays themeable, so a second implementation is never needed.
+  it('renders the shared spinner and forwards rest props and data-testid', () => {
+    render(<Spinner data-testid="spinner" aria-label="Loading" role="img" />);
+
+    const spinner = screen.getByTestId('spinner');
+    expect(spinner.tagName).toBe('svg');
+    expect(spinner).toHaveAttribute('aria-label', 'Loading');
+    expect(spinner).toHaveAttribute('role', 'img');
+    expect(spinner.getAttribute('class')).toMatch(/animate-spin/);
+  });
+
+  it('is sized by className and uses no raw palette utility', () => {
+    render(<Spinner data-testid="spinner" className="h-5 w-5 text-content-muted" />);
+
+    const className = screen.getByTestId('spinner').getAttribute('class') ?? '';
+    expect(className).toMatch(/h-5 w-5/);
+    expect(className).not.toMatch(
+      /\b(bg|text|border|ring)-(neutral|stone|slate|canvas|white|black)\b/
+    );
   });
 });

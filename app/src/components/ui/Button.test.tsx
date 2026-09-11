@@ -40,7 +40,7 @@ describe('Button', () => {
     expect(btn.className).toMatch(/text-content-inverted/);
   });
 
-  it('renders a coral outline for secondary + tone="danger"', () => {
+  it('renders a coral outline-solid for secondary + tone="danger"', () => {
     render(
       <Button variant="secondary" tone="danger">
         Remove
@@ -135,5 +135,108 @@ describe('Button', () => {
     );
     expect(screen.getByTestId('lead')).toBeInTheDocument();
     expect(screen.getByTestId('trail')).toBeInTheDocument();
+  });
+
+  /**
+   * cva CONCATENATES compound variants where the previous lookup-table
+   * implementation SUBSTITUTED. A danger button's raw cva output therefore
+   * contains the default variant's background as well as coral, and only
+   * `cn()`'s tailwind-merge pass drops the loser.
+   *
+   * Asserting the winning class is present would pass even if the merge were
+   * broken and both classes shipped — CSS order, not the class list, would then
+   * decide the colour. So these assert the LOSING class is absent.
+   */
+  describe('danger tone overrides the base variant rather than doubling up', () => {
+    it.each([
+      ['primary', /bg-primary-500/, /bg-coral-500/],
+      ['secondary', /border-line-strong/, /border-coral-300/],
+      ['tertiary', /text-content-secondary/, /text-coral-600/],
+    ] as const)('drops the default %s surface', (variant, losing, winning) => {
+      render(
+        <Button variant={variant} tone="danger">
+          Delete
+        </Button>
+      );
+      const btn = screen.getByRole('button', { name: 'Delete' });
+      expect(btn.className).toMatch(winning);
+      expect(btn.className).not.toMatch(losing);
+    });
+  });
+
+  it('lets a caller className win over the variant default', () => {
+    render(<Button className="bg-sage-500">Go</Button>);
+    const btn = screen.getByRole('button', { name: 'Go' });
+    expect(btn.className).toMatch(/bg-sage-500/);
+    expect(btn.className).not.toMatch(/bg-primary-500/);
+  });
+
+  it('exposes variant state as data attributes for tests and styling hooks', () => {
+    render(
+      <Button variant="secondary" tone="danger" size="lg">
+        Remove
+      </Button>
+    );
+    const btn = screen.getByRole('button', { name: 'Remove' });
+    expect(btn).toHaveAttribute('data-slot', 'button');
+    expect(btn).toHaveAttribute('data-variant', 'secondary');
+    expect(btn).toHaveAttribute('data-tone', 'danger');
+    expect(btn).toHaveAttribute('data-size', 'lg');
+  });
+
+  it('forwards data-testid so E2E selectors survive the primitive swap', () => {
+    render(<Button data-testid="save-btn">Save</Button>);
+    expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+  });
+
+  // `Slot` merges props onto the child, and the delegated analytics listener in
+  // services/analyticsInteractions.ts reads the attribute off whatever element
+  // actually receives the click — so it has to survive both paths.
+  it('emits data-analytics-id as a plain button', () => {
+    render(<Button analyticsId="settings.save">Save</Button>);
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute(
+      'data-analytics-id',
+      'settings.save'
+    );
+  });
+
+  it('emits data-analytics-id through asChild onto the rendered child', () => {
+    render(
+      <Button asChild analyticsId="settings.docs">
+        <a href="https://example.test">Docs</a>
+      </Button>
+    );
+    const link = screen.getByRole('link', { name: 'Docs' });
+    expect(link).toHaveAttribute('data-analytics-id', 'settings.docs');
+    expect(link).not.toHaveAttribute('type');
+  });
+
+  /**
+   * The themeability contract, expressed once instead of as frozen class
+   * strings: every variant must be built from semantic/accent tokens, which
+   * follow a user's theme, never from a raw palette scale, which does not.
+   */
+  it('never renders a raw palette colour in any variant combination', () => {
+    const RAW_PALETTE = /\b(?:bg|text|border|ring)-(?:neutral|stone|slate|canvas|white|black)\b/;
+    const variants = ['primary', 'secondary', 'tertiary'] as const;
+    const tones = ['default', 'danger'] as const;
+    const sizes = ['xs', 'sm', 'md', 'lg', 'xl'] as const;
+
+    for (const variant of variants) {
+      for (const tone of tones) {
+        for (const size of sizes) {
+          for (const iconOnly of [false, true]) {
+            const { unmount } = render(
+              <Button variant={variant} tone={tone} size={size} iconOnly={iconOnly}>
+                x
+              </Button>
+            );
+            const className = screen.getByRole('button').className;
+            expect(className, `${variant}/${tone}/${size}`).not.toMatch(RAW_PALETTE);
+            unmount();
+          }
+        }
+      }
+    }
   });
 });

@@ -4,7 +4,15 @@ use parking_lot::Mutex as TestMutex;
 use serde_json::json;
 use tempfile::tempdir;
 
-static APP_STATE_CACHE_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
+/// Serialises every test that reads or writes the process-global snapshot
+/// caches. A `tokio` mutex rather than a `parking_lot` one so async tests can
+/// hold it across an `.await` — sibling `ops_current_user_backoff_tests.rs`
+/// guards its own global the same way.
+///
+/// `pub(super)` for `ops_snapshot_latency_tests.rs`, which seeds the positive
+/// cache and so has to serialise against the readers here.
+pub(super) static APP_STATE_CACHE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
+    TestLazy::new(|| tokio::sync::Mutex::new(()));
 
 #[test]
 fn sanitize_snapshot_user_drops_empty_payloads() {
@@ -142,7 +150,7 @@ fn save_and_reload_stored_app_state_round_trips() {
 
 #[test]
 fn peek_cached_current_user_identity_plucks_known_fields() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -170,7 +178,7 @@ fn peek_cached_current_user_identity_plucks_known_fields() {
 
 #[test]
 fn peek_cached_current_user_identity_returns_none_when_only_empty_fields_exist() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -203,7 +211,7 @@ impl Drop for SnapshotCacheResetGuard {
 
 #[test]
 fn runtime_snapshot_cache_hit_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -224,7 +232,7 @@ fn runtime_snapshot_cache_hit_within_ttl() {
 
 #[test]
 fn runtime_snapshot_cache_miss_after_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
@@ -243,7 +251,7 @@ fn runtime_snapshot_cache_miss_after_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -260,7 +268,7 @@ fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let cfg = Config::default();
@@ -280,7 +288,7 @@ fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_on_config_key_mismatch() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     // A fresh entry cached for one workspace must never be served to another
@@ -325,9 +333,11 @@ fn degraded_runtime_snapshot_has_expected_degraded_fields() {
 #[test]
 fn auth_fetch_timeout_constant_is_below_rpc_timeout() {
     // The 30s RPC timeout on the frontend means auth fetch + runtime snapshot
-    // must fit comfortably. Verify the constants are sane.
+    // must fit comfortably. Asserted across the whole configurable range
+    // (#5930), not just the default, because the operator override is what
+    // could push the pair past the ceiling.
     assert!(
-        AUTH_FETCH_TIMEOUT.as_secs() < 15,
+        MAX_AUTH_FETCH_TIMEOUT_SECS < 15,
         "auth fetch timeout should be well under the 30s RPC timeout"
     );
     assert!(
@@ -335,9 +345,92 @@ fn auth_fetch_timeout_constant_is_below_rpc_timeout() {
         "runtime snapshot timeout should be well under the 30s RPC timeout"
     );
     assert!(
-        AUTH_FETCH_TIMEOUT + RUNTIME_SNAPSHOT_TIMEOUT < Duration::from_secs(30),
-        "total of auth + runtime timeouts must fit within the 30s RPC timeout"
+        Duration::from_secs(MAX_AUTH_FETCH_TIMEOUT_SECS) + RUNTIME_SNAPSHOT_TIMEOUT
+            < Duration::from_secs(30),
+        "even the widest permitted auth timeout plus the runtime timeout must fit within the 30s RPC timeout"
     );
+    assert!(
+        (MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS)
+            .contains(&DEFAULT_AUTH_FETCH_TIMEOUT_SECS),
+        "the default must itself be an accepted override value"
+    );
+}
+
+// ── Configurable auth fetch timeout (#5930) ─────────────────────────────────
+//
+// "5s may be too tight" is the issue's first acceptance criterion. The risk in
+// answering it is that a wider timeout re-opens #5624: the backoff's first step
+// was a fixed 10s, so an operator setting 20s would make every poll find the
+// window already closed and pay the full 20s again. The clamp and the derived
+// base are what stop that, so both are pinned here.
+
+#[test]
+fn parse_auth_fetch_timeout_secs_clamps_and_falls_back() {
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(None),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "an unset override leaves the default in place"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("not-a-number")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("0")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "0 would disable the timeout entirely and is rejected"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some(&(MIN_AUTH_FETCH_TIMEOUT_SECS - 1).to_string())),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "below the floor is rejected rather than clamped up, so a typo is visible in the logs"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some(&(MAX_AUTH_FETCH_TIMEOUT_SECS + 1).to_string())),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "above the ceiling is rejected rather than clamped down"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("  7  ")),
+        7,
+        "surrounding whitespace is tolerated"
+    );
+
+    for secs in MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS {
+        assert_eq!(
+            parse_auth_fetch_timeout_secs(Some(&secs.to_string())),
+            secs,
+            "{secs}s is inside the accepted range and must pass through unchanged"
+        );
+    }
+}
+
+#[test]
+fn the_derived_backoff_base_outlasts_every_permitted_fetch_timeout() {
+    // This is #5624's invariant, restated as a property over the range #5930
+    // opened up. A first step shorter than the fetch timeout means the next
+    // poll finds the window already closed and pays the full timeout again —
+    // which is the bug, not the fix.
+    for secs in MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS {
+        let timeout = Duration::from_secs(secs);
+        let base = current_user_backoff_base_for(timeout);
+        assert!(
+            base > timeout,
+            "first backoff step {base:?} must exceed the fetch timeout {timeout:?}"
+        );
+        assert!(
+            base > CURRENT_USER_REFRESH_TTL,
+            "first backoff step {base:?} must exceed the cache TTL {CURRENT_USER_REFRESH_TTL:?}"
+        );
+        assert!(
+            base <= CURRENT_USER_BACKOFF_MAX,
+            "first backoff step {base:?} must not start at or above the cap {CURRENT_USER_BACKOFF_MAX:?}"
+        );
+    }
 }
 
 fn build_dummy_runtime_snapshot() -> RuntimeSnapshot {
@@ -400,4 +493,118 @@ async fn current_user_fetch_carries_the_product_identity() {
     );
 
     crate::api::product::reset_product_identity_for_test();
+}
+
+// Serialises the `OPENHUMAN_WORKSPACE` env mutations below so two of these tests
+// can't race each other on the process-global var.
+static WORKSPACE_ENV_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
+
+/// RAII guard for `OPENHUMAN_WORKSPACE`. Captures the prior value on
+/// construction and restores it (set or remove) on drop, so a test that panics
+/// between the mutation and the end of the test can't leak the override into a
+/// sibling test. Must be constructed while holding `WORKSPACE_ENV_TEST_LOCK`:
+/// mutating a process env var while another thread reads it is unsafe, and the
+/// lock serialises every test in this group.
+struct WorkspaceEnvGuard {
+    prior: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(value: &std::path::Path) -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", value);
+        Self { prior }
+    }
+
+    fn set_empty() -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", "");
+        Self { prior }
+    }
+
+    fn unset() -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+        Self { prior }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+    }
+}
+
+/// The #6079 twin: `config_dir_for_workspace_env` must resolve the modern
+/// `<root>/.openhuman/workspace` layout to its parent `<root>/.openhuman` (the
+/// real config dir), NOT the doubled `<root>/.openhuman/.openhuman`. The private
+/// reimplementation this replaced produced the doubled path, so
+/// `config_is_workspace_env_scoped` disagreed with the loader and mis-scoped
+/// credentials on session revalidation. Delegating to the shared
+/// `resolve_config_dir_for_workspace` keeps the two in lockstep.
+///
+/// The workspace root is named `default_root_dir_name()` (`.openhuman` /
+/// `.openhuman-staging`) so the modern-layout arm — which keys on that name —
+/// fires regardless of the ambient `OPENHUMAN_APP_ENV`, and a temp dir isolates
+/// it from any real `.openhuman` on the host.
+#[test]
+fn config_dir_for_workspace_env_modern_layout_does_not_double_openhuman() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    let tmp = tempdir().unwrap();
+    let root = tmp
+        .path()
+        .join(crate::openhuman::config::default_root_dir_name());
+    let workspace = root.join("workspace");
+    let _env = WorkspaceEnvGuard::set(&workspace);
+
+    let resolved = config_dir_for_workspace_env();
+
+    assert_eq!(resolved, Some(root.clone()));
+    assert_ne!(
+        resolved,
+        Some(root.join(crate::openhuman::config::default_root_dir_name())),
+        "must never return the doubled .openhuman/.openhuman path"
+    );
+}
+
+/// A fresh legacy layout (`<proj>/workspace` with no sibling `.openhuman` on
+/// disk) must resolve to the sibling `<proj>/.openhuman`, matching the loader —
+/// not nest the workspace inside itself. Guards the same seam as the
+/// `dirs.rs` fresh-legacy test, one level up through the app_state resolver.
+#[test]
+fn config_dir_for_workspace_env_fresh_legacy_resolves_to_sibling() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    let tmp = tempdir().unwrap();
+    let project = tmp.path().join("some-project");
+    let workspace = project.join("workspace");
+    let _env = WorkspaceEnvGuard::set(&workspace);
+
+    let resolved = config_dir_for_workspace_env();
+
+    assert_eq!(
+        resolved,
+        Some(project.join(".openhuman")),
+        "a fresh legacy workspace must resolve to its sibling .openhuman"
+    );
+}
+
+/// An unset / empty `OPENHUMAN_WORKSPACE` yields `None` so the caller falls back
+/// to user-scoped resolution rather than treating the empty string as a path.
+#[test]
+fn config_dir_for_workspace_env_none_when_unset_or_empty() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    {
+        let _env = WorkspaceEnvGuard::unset();
+        assert_eq!(config_dir_for_workspace_env(), None);
+    }
+
+    let _env = WorkspaceEnvGuard::set_empty();
+    assert_eq!(
+        config_dir_for_workspace_env(),
+        None,
+        "an empty override must not be treated as a path"
+    );
 }

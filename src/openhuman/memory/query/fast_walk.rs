@@ -5,8 +5,8 @@
 //! retriever. It returns a structured [`QueryResponse`] of ranked evidence
 //! (no synthesized prose); a higher-level context agent composes the answer.
 
-use crate::openhuman::config::rpc as config_rpc;
-use crate::openhuman::memory::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
+use crate::openhuman::memory::api::provider::{FastRetrieveQuery, MemoryProvider};
+use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::tools::traits::ToolResult;
 
 /// Parse the shared `memory_tree` args and run deterministic retrieval.
@@ -44,16 +44,24 @@ pub async fn run_fast_walk(args: serde_json::Value) -> anyhow::Result<ToolResult
         time_window_days
     );
 
-    let cfg = config_rpc::load_config_with_timeout()
+    // Routed through the bound driver. `None` for the scope is not
+    // "unrestricted": the guard intersects it with the ambient per-turn
+    // allowlist, so the source gate still applies.
+    let guard = active_memory_guard()
         .await
-        .map_err(|e| anyhow::anyhow!("memory_tree walk: load config failed: {e}"))?;
-
-    let opts = FastRetrieveOptions {
+        .map_err(|e| anyhow::anyhow!("memory_tree walk: {e}"))?;
+    let opts = FastRetrieveQuery {
         limit,
         max_hops,
         time_window_days,
     };
-    let resp = fast_retrieve(&cfg, &query, opts).await?;
+    let resp = guard
+        .as_retrieval()
+        .ok_or_else(|| {
+            anyhow::anyhow!("memory_tree walk: memory driver does not support the retrieval family")
+        })?
+        .fast_retrieve(&query, opts, None)
+        .await?;
     log::debug!(
         "[tool][memory_tree] walk returning hits={} total={}",
         resp.hits.len(),
@@ -64,19 +72,5 @@ pub async fn run_fast_walk(args: serde_json::Value) -> anyhow::Result<ToolResult
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn missing_query_errors() {
-        let err = run_fast_walk(json!({})).await.unwrap_err();
-        assert!(err.to_string().contains("`query` is required"));
-    }
-
-    #[tokio::test]
-    async fn blank_query_errors() {
-        let err = run_fast_walk(json!({"query": "   "})).await.unwrap_err();
-        assert!(err.to_string().contains("`query` is required"));
-    }
-}
+#[path = "fast_walk_tests.rs"]
+mod tests;

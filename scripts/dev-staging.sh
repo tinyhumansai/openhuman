@@ -33,8 +33,6 @@ export VITE_BACKEND_URL=https://staging-api.tinyhumans.ai
 # Load the regular .env (secrets take precedence since they're already set)
 source "$SCRIPT_DIR/load-dotenv.sh"
 
-export CEF_PATH="$HOME/Library/Caches/tauri-cef"
-
 # ── Temporary keychain for codesign (CI-style) ────────────────────────────────
 KEYCHAIN_NAME="dev-staging.keychain-db"
 KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"

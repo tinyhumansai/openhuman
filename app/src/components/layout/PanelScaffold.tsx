@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
-import PanelHeader, { DEFAULT_PANEL_HEADER_BG, DEFAULT_PANEL_HEADER_CLASS } from './PanelHeader';
+import { cn } from '../../lib/cn';
+import { type ContentWidth, contentWidthVariants } from './contentWidth';
+import PanelHeader, { type PanelHeaderProps } from './PanelHeader';
 
 interface PanelScaffoldProps {
   /** Primary title rendered in the fixed header (optional; see {@link PanelHeader}). */
@@ -18,6 +20,8 @@ interface PanelScaffoldProps {
   headerExtra?: ReactNode;
   /** Scrollable body content. */
   children: ReactNode;
+  /** When false, let an ancestor own scrolling instead of constraining the body. */
+  scrollable?: boolean;
   /** Extra classes on the scaffold root. */
   className?: string;
   /**
@@ -26,10 +30,21 @@ interface PanelScaffoldProps {
    * own padding (e.g. an embedded sub-panel).
    */
   contentClassName?: string;
-  /** Classes for the fixed header band. */
+  /**
+   * Extra classes merged (via `cn`) onto the fixed header band, on top of its
+   * own padding/background. Most callers don't need this — reach for it for a
+   * one-off spacing tweak.
+   */
   headerClassName?: string;
-  /** Background applied to the fixed header band. */
-  headerBgClassName?: string;
+  /** Background tone for the fixed header band. Defaults to `'muted'`. */
+  headerTone?: PanelHeaderProps['tone'];
+  /**
+   * Cap the body's width and center it (`mx-auto`) — for a scaffold whose body
+   * reads as a single centered column rather than a full-bleed list/table.
+   * Defaults to `'full'` (today's unconstrained behavior; no wrapper is
+   * rendered at all in that case, so this is a strictly opt-in change).
+   */
+  width?: ContentWidth;
   /**
    * Draw a hairline border between the fixed header and the scrollable body for
    * a clear separation. Defaults to on whenever a header is present; force it
@@ -65,9 +80,11 @@ export default function PanelScaffold({
   children,
   className = '',
   contentClassName = DEFAULT_CONTENT_CLASS,
-  headerClassName = DEFAULT_PANEL_HEADER_CLASS,
-  headerBgClassName = DEFAULT_PANEL_HEADER_BG,
+  headerClassName,
+  headerTone,
+  width = 'full',
   bodyBorder,
+  scrollable = true,
   testId,
 }: PanelScaffoldProps) {
   const hasHeader =
@@ -83,23 +100,36 @@ export default function PanelScaffold({
     title != null || description != null || action != null || headerExtra != null;
   const showBorder = bodyBorder ?? hasVisibleHeader;
 
+  const body =
+    width === 'full' ? (
+      children
+    ) : (
+      <div className={cn('mx-auto w-full', contentWidthVariants({ width }))}>{children}</div>
+    );
+
   return (
-    <div className={`relative flex h-full min-h-0 flex-col ${className}`} data-testid={testId}>
+    <div
+      className={cn('relative flex flex-col', scrollable && 'h-full min-h-0', className)}
+      data-testid={testId}>
       {hasHeader && (
         <PanelHeader
           title={title}
           description={description}
           leading={leading}
           action={action}
-          className={`flex-shrink-0 ${headerClassName}`}
-          bgClassName={headerBgClassName}>
+          tone={headerTone}
+          className={cn('shrink-0', headerClassName)}>
           {headerExtra}
         </PanelHeader>
       )}
 
       <div
-        className={`min-h-0 flex-1 overflow-y-auto ${showBorder ? BODY_BORDER_CLASS : ''} ${contentClassName}`}>
-        {children}
+        className={cn(
+          scrollable && 'min-h-0 flex-1 overflow-y-auto',
+          showBorder && BODY_BORDER_CLASS,
+          contentClassName
+        )}>
+        {body}
       </div>
     </div>
   );

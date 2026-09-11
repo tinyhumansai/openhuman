@@ -12,14 +12,11 @@
 //! exposes the same public surface that always-on / other-gated callers depend
 //! on (`WALLET_NOT_CONFIGURED_MESSAGE`, `status`, `secret_material`,
 //! `WalletChain`, `prepare_transfer`, `execute_prepared`, the prepare/execute
-//! param + result types, `solana_cluster` / `SolanaCluster` /
-//! `tinyplace_solana_rpc_endpoints`, `tinyplace_signer_seed`, the `rpc`
-//! submodule, `prepared_quotes_for_test`, and the controller-registration
-//! entry points) with no-op / disabled-error bodies — so tinyplace on-chain
-//! payments + the Polymarket tools degrade to graceful "wallet disabled"
-//! errors rather than failing to compile. Signatures MUST match the real ones;
+//! param + result types, `solana_cluster` / `SolanaCluster`,
+//! `prepared_quotes_for_test`, and the controller-registration
+//! entry points) with no-op / disabled-error bodies. Signatures MUST match the real ones;
 //! the disabled build
-//! (`cargo check --no-default-features --features tokenjuice-treesitter`) is
+//! (`cargo check --no-default-features`) is
 //! the only thing that catches drift.
 
 #[cfg(feature = "web3")]
@@ -34,26 +31,27 @@ mod execution;
 mod ops;
 #[cfg(feature = "web3")]
 pub(crate) mod rpc;
+
 #[cfg(feature = "web3")]
 mod schemas;
 #[cfg(feature = "web3")]
 pub mod tools;
+/// The host side of the wallet primitives' `Transport` seam — endpoint resolution,
+/// failover and redaction stay here, where the config lives.
+#[cfg(feature = "web3")]
+pub(crate) mod transport;
 
 #[cfg(all(test, feature = "web3"))]
 pub(crate) mod test_support;
 
 #[cfg(feature = "web3")]
 pub use abi::encode_erc20_transfer;
-/// 32-byte Ed25519 seed for the tiny.place LocalSigner. Derived from the user's
-/// primary Solana wallet key via SLIP-0010; consumed in-process and never exposed.
-#[cfg(feature = "web3")]
-pub(crate) use chains::solana::tinyplace_signer_seed;
 #[cfg(feature = "web3")]
 pub use defaults::{
     asset_catalog, default_rpc_url, env_var_for_chain, evm_asset_catalog, explorer_tx_url,
     find_asset, find_asset_for_network, network_defaults, rpc_source_for_chain, rpc_url_for_chain,
-    rpc_url_for_evm_network, solana_cluster, tinyplace_solana_rpc_endpoints, EvmNetwork, RpcSource,
-    SolanaCluster, WalletAssetDefinition, WalletNetworkDefaults,
+    rpc_url_for_evm_network, solana_cluster, EvmNetwork, RpcSource, SolanaCluster,
+    WalletAssetDefinition, WalletNetworkDefaults,
 };
 #[cfg(feature = "web3")]
 pub use execution::{
@@ -74,10 +72,6 @@ pub use ops::{
     reveal_recovery_phrase, setup, status, RevealRecoveryPhraseResult, WalletAccount, WalletChain,
     WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
 };
-/// Reduce an RPC URL to `scheme://host` for logging so private provider tokens
-/// embedded in the path/query never reach the logs.
-#[cfg(feature = "web3")]
-pub(crate) use rpc::redact_rpc_url;
 #[cfg(feature = "web3")]
 pub use schemas::{
     all_controller_schemas, all_registered_controllers, all_wallet_controller_schemas,

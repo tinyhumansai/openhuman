@@ -222,7 +222,7 @@ function AgentForm({ config, onChange, connections, upstreamOptions }: NodeConfi
             options={upstreamOptions}
             onInsert={expr => onChange({ prompt: prompt ? `${prompt} ${expr}` : expr })}
             testId="node-config-agent-prompt-upstream"
-            className="cursor-pointer rounded-md border border-line-strong bg-surface-muted px-1.5 py-1 text-[11px] text-content-muted focus:outline-none"
+            className="cursor-pointer rounded-md border border-line-strong bg-surface-muted px-1.5 py-1 text-[11px] text-content-muted focus:outline-hidden"
           />
         </div>
       )}

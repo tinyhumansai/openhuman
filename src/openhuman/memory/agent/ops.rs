@@ -8,7 +8,8 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::agent::types::{BenchmarkSummary, RetrievalStep, WalkBenchmark};
-use crate::openhuman::memory::tree::retrieval::{fast_retrieve, FastRetrieveOptions};
+use crate::openhuman::memory::api::provider::retrieval::{FastRetrieveQuery, RetrievalResponse};
+use crate::openhuman::memory::source_scope::as_bus_scope;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -32,13 +33,35 @@ pub async fn bench_walk(
         limit
     );
 
-    let opts = FastRetrieveOptions {
+    let opts = FastRetrieveQuery {
         limit,
-        ..FastRetrieveOptions::default()
+        ..FastRetrieveQuery::default()
     };
 
+    // Through the bound driver's `MemoryRetrieval`, not the engine (#5560).
+    // `as_bus_scope()` renders this host's own source allowlist in the
+    // contract's vocabulary — `binding.provider()` is the unguarded driver, so
+    // the scope passed here IS the gate, and a literal `None` would fail it
+    // open. See `memory::tree::retrieval::rpc`'s module docs.
+    let scope = as_bus_scope();
+    let binding = crate::openhuman::memory::binding::for_config(config)
+        .map_err(|e| anyhow::anyhow!("bench_walk: bind memory driver: {e}"))?;
     let start = Instant::now();
-    let resp = fast_retrieve(config, query, opts).await?;
+    let resp = match binding.provider().as_retrieval() {
+        Some(retrieval) => retrieval
+            .fast_retrieve(query, opts, scope.as_ref())
+            .await
+            .map_err(|e| anyhow::anyhow!("bench_walk: fast_retrieve: {e}"))?,
+        // A driver with no retrieval family keeps no summary tree to rank, so
+        // an empty result is the honest benchmark rather than an error.
+        None => {
+            log::debug!(
+                "[agent_memory::bench] driver '{}' does not serve Retrieval; reporting empty",
+                binding.driver_id()
+            );
+            RetrievalResponse::default()
+        }
+    };
     let total_elapsed = start.elapsed();
 
     let total_bytes_scanned: u64 = resp.hits.iter().map(|h| h.content.len() as u64).sum();
@@ -109,33 +132,5 @@ pub async fn bench_batch(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_summary_is_zeroed() {
-        let summary = BenchmarkSummary::from_benchmarks(&[]);
-        assert_eq!(summary.runs, 0);
-        assert_eq!(summary.avg_elapsed_ms, 0.0);
-    }
-
-    #[test]
-    fn summary_from_single_run() {
-        let bench = WalkBenchmark {
-            query: "test".into(),
-            namespace: "default".into(),
-            content_root: "/tmp".into(),
-            total_elapsed: std::time::Duration::from_millis(500),
-            steps: vec![],
-            total_turns: 3,
-            total_chunks_retrieved: 5,
-            total_bytes_scanned: 1024,
-            answer: "test answer".into(),
-            stop_reason: "answered".into(),
-        };
-        let summary = BenchmarkSummary::from_benchmarks(&[bench]);
-        assert_eq!(summary.runs, 1);
-        assert!((summary.avg_elapsed_ms - 500.0).abs() < 1.0);
-        assert!((summary.avg_turns - 3.0).abs() < 0.01);
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

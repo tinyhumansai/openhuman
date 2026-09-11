@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
-import Button from '../ui/Button';
+import { cn } from '../../lib/cn';
+import { Button } from '../ui';
 
 export interface ApprovalDecisionAction {
   id: string;
@@ -41,13 +42,11 @@ export function ApprovalDecisionCard({
       role="alertdialog"
       aria-label={ariaLabel}
       data-testid={testId}
-      className={[
-        'rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-sm',
+      className={cn(
+        'rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-xs',
         'dark:border-amber-700 dark:bg-amber-950',
-        className,
-      ]
-        .filter(Boolean)
-        .join(' ')}>
+        className
+      )}>
       <div className="flex items-start gap-2">
         <span
           aria-hidden

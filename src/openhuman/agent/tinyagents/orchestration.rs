@@ -22,18 +22,19 @@ use std::sync::OnceLock;
 
 // Re-export the tinyagents task-orchestration primitives so the detached
 // sub-agent control plane imports lifecycle types from one openhuman path.
-pub(crate) use tinyagents::graph::orchestration::OrchestrationTaskStatus;
+pub(crate) use tinyagents_graph::orchestration::OrchestrationTaskStatus;
 #[allow(unused_imports)]
-pub(crate) use tinyagents::graph::orchestration::SteeringRegistry;
-pub(crate) use tinyagents::graph::orchestration::{
-    DetachedTaskRegistry, DetachedTaskRegistryError, DetachedTaskWaitOutcome, InMemoryTaskStore,
-    JsonlTaskStore, OrchestrationControlOutcome, OrchestrationTaskFilter, OrchestrationTaskKind,
-    OrchestrationTaskRecord, OrchestrationTaskResult, OrchestrationTaskSpec, TaskStore,
+pub(crate) use tinyagents_graph::orchestration::SteeringRegistry;
+pub(crate) use tinyagents_graph::orchestration::{
+    open_jsonl_task_store_or_memory, reconcile_orphaned_tasks, DetachedTaskRegistry,
+    DetachedTaskRegistryError, DetachedTaskWaitOutcome, InMemoryTaskStore, OrchestrationTaskFilter,
+    OrchestrationTaskKind, OrchestrationTaskRecord, OrchestrationTaskResult, OrchestrationTaskSpec,
+    TaskStore, TaskStoreRegistry,
 };
 #[allow(unused_imports)]
-pub(crate) use tinyagents::harness::ids::TaskId;
+pub(crate) use tinyagents_harness::ids::TaskId;
 #[allow(unused_imports)]
-pub(crate) use tinyagents::harness::steering::{
+pub(crate) use tinyagents_harness::steering::{
     SteeringCommand, SteeringCommandKind, SteeringHandle, SteeringPolicy,
 };
 
@@ -96,70 +97,5 @@ pub(crate) fn openhuman_steering_handle(run_class: SteeringRunClass) -> Steering
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn task_store_tracks_lifecycle() {
-        // Smoke the re-exported orchestration primitives: a task moves
-        // Pending → Running → Completed and is readable back by id.
-        let store = InMemoryTaskStore::new();
-        let spec = OrchestrationTaskSpec::new(
-            "task-1",
-            OrchestrationTaskKind::SubAgent {
-                agent: "researcher".to_string(),
-            },
-        );
-        let rec = store.insert(spec).expect("insert");
-        assert_eq!(rec.status, OrchestrationTaskStatus::Pending);
-
-        store.mark_running(rec.task_id()).expect("running");
-        let done = store
-            .complete(rec.task_id(), OrchestrationTaskResult::text("done"))
-            .expect("complete");
-        assert_eq!(done.status, OrchestrationTaskStatus::Completed);
-        assert_eq!(
-            store.get(rec.task_id()).map(|r| r.status),
-            Some(OrchestrationTaskStatus::Completed)
-        );
-    }
-
-    #[test]
-    fn steering_registry_reexport_registers_task_handles() {
-        let registry = shared_steering_registry();
-        let handle = openhuman_steering_handle(SteeringRunClass::Background);
-        let task_id = TaskId::new("task-steer");
-
-        registry.register(task_id.clone(), handle);
-        assert!(registry.get(&task_id).is_some());
-        assert!(registry.deregister(&task_id).is_some());
-        assert!(registry.get(&task_id).is_none());
-    }
-
-    #[test]
-    fn steering_policy_tightens_by_run_class() {
-        // Interactive: only the two long-standing kinds; control-flow steering
-        // stays closed so the user's live turn can't be cancelled/redirected
-        // out from under it via a rogue steer.
-        let interactive = openhuman_steering_handle(SteeringRunClass::Interactive);
-        let policy = interactive.policy();
-        assert!(policy.is_allowed(SteeringCommandKind::InjectMessage));
-        assert!(policy.is_allowed(SteeringCommandKind::Pause));
-        assert!(!policy.is_allowed(SteeringCommandKind::Cancel));
-        assert!(!policy.is_allowed(SteeringCommandKind::Resume));
-        assert!(!policy.is_allowed(SteeringCommandKind::Redirect));
-        assert!(!policy.is_allowed(SteeringCommandKind::SetMetadata));
-
-        // Background: additionally accepts graceful control-flow steering.
-        let background = openhuman_steering_handle(SteeringRunClass::Background);
-        let policy = background.policy();
-        assert!(policy.is_allowed(SteeringCommandKind::InjectMessage));
-        assert!(policy.is_allowed(SteeringCommandKind::Pause));
-        assert!(policy.is_allowed(SteeringCommandKind::Cancel));
-        assert!(policy.is_allowed(SteeringCommandKind::Resume));
-        assert!(policy.is_allowed(SteeringCommandKind::Redirect));
-        // Metadata replacement stays closed on every class until a control
-        // surface owns it.
-        assert!(!policy.is_allowed(SteeringCommandKind::SetMetadata));
-    }
-}
+#[path = "orchestration_tests.rs"]
+mod tests;

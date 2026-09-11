@@ -212,11 +212,6 @@ describe('Harness — Cross-channel bridge flow', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
-    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
-      value: false,
-    });
-    expect(superContext.ok).toBe(true);
-
     // Configure Telegram mock defaults.
     setMockBehavior('telegramBotUsername', TEST_BOT_USERNAME);
     setMockBehavior('telegramPollDelayMs', '0');

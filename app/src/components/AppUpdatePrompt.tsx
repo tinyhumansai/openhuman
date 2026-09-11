@@ -96,7 +96,10 @@ const AppUpdatePrompt = (props: AppUpdatePromptProps) => {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-4 right-4 z-[9998] w-[340px] animate-fade-up"
+      // `bottom-14`, not `bottom-2`: NoticeCenter's FAB owns the bottom-right
+      // corner (8px inset, 40px tall), and this card is ~340px wide at z-9998 —
+      // sharing the corner would put it straight on top and swallow the clicks.
+      className="fixed bottom-14 right-2 z-9998 w-[340px] animate-fade-up"
       data-testid="app-update-prompt">
       <div className="bg-stone-900 border border-stone-700/50 rounded-2xl shadow-large overflow-hidden">
         {/* Header */}
@@ -225,7 +228,7 @@ const ProgressBar = ({
   return (
     <div className="h-1.5 w-full rounded-full bg-stone-800 overflow-hidden">
       <div
-        className={`h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-500 ${
+        className={`h-full rounded-full bg-linear-to-r from-primary-500 to-primary-400 transition-all duration-500 ${
           indet ? 'animate-pulse' : ''
         }`}
         style={{ width: indet ? '100%' : `${percent ?? 0}%` }}
@@ -242,7 +245,9 @@ const ReleaseNotes = ({ body }: { body: string }) => {
   const display = expanded || !isLong ? trimmed : `${trimmed.slice(0, 160).trimEnd()}…`;
   return (
     <div className="mt-2 rounded-lg bg-stone-800/60 border border-stone-700/40 px-3 py-2">
-      <p className="text-[11px] text-content-faint whitespace-pre-line break-words">{display}</p>
+      <p className="text-[11px] text-content-faint whitespace-pre-line wrap-break-word">
+        {display}
+      </p>
       {isLong && (
         <ReleaseNotesToggle expanded={expanded} onToggle={() => setExpanded(prev => !prev)} />
       )}

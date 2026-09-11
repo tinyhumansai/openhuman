@@ -83,7 +83,7 @@ function buildSnapshot(): RewardsSnapshot {
 }
 
 describe('RewardsCommunityTab — role card branches', () => {
-  it('renders both unlocked and locked roles (covers the `role.unlocked` ring branch)', async () => {
+  it('renders both unlocked and locked roles (covers the `role.unlocked` ring-3 branch)', async () => {
     const { default: RewardsCommunityTab } = await import('../RewardsCommunityTab');
     render(
       <MemoryRouter>
@@ -92,7 +92,7 @@ describe('RewardsCommunityTab — role card branches', () => {
     );
 
     // Both role titles are rendered — each goes through the ternary on
-    // line 248 (ring-primary-100 for unlocked, ring-black/[0.04] for locked).
+    // line 248 (ring-primary-100 for unlocked, ring-black/4 for locked).
     expect(screen.getByText('Pioneer')).toBeInTheDocument();
     expect(screen.getByText('Veteran')).toBeInTheDocument();
   });

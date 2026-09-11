@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,10 @@ import { AgentProcessSourcePanel } from '../AgentProcessSourcePanel';
 
 function renderPanel(ui: React.ReactNode) {
   return render(<Provider store={store}>{ui}</Provider>);
+}
+
+function openFirstSubagent(): void {
+  fireEvent.click(screen.getAllByTestId('assistant-ui-subagent-call')[0].querySelector('button')!);
 }
 
 const fetchEntry = (id: string, url: string): ToolTimelineEntry => ({
@@ -56,6 +60,40 @@ describe('AgentProcessSourcePanel', () => {
     expect(rows[1].textContent).toContain('example.org');
   });
 
+  it('makes the sources list a real disclosure that can be collapsed', async () => {
+    // The heading used to be a plain <h3>, so a long source list had no way to
+    // get out of the way. It is `ai-elements`' Sources (Radix Collapsible) now:
+    // open on mount, with a trigger carrying real expanded state.
+    renderPanel(
+      <AgentProcessSourcePanel
+        open
+        entries={[fetchEntry('e1', 'https://news-gazette.com/a')]}
+        onClose={() => {}}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: /sources/i });
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByTestId('agent-source-row')).toHaveLength(1);
+
+    await userEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('agent-source-row')).toBeNull();
+  });
+
+  it('counts the sources in the disclosure label', () => {
+    renderPanel(
+      <AgentProcessSourcePanel
+        open
+        entries={[
+          fetchEntry('e1', 'https://news-gazette.com/a'),
+          fetchEntry('e2', 'https://example.org/b'),
+        ]}
+        onClose={() => {}}
+      />
+    );
+    expect(screen.getByRole('button', { name: /sources/i }).textContent).toContain('(2)');
+  });
+
   it('expands every step row by default (whole run visible at a glance)', () => {
     renderPanel(
       <AgentProcessSourcePanel
@@ -68,10 +106,10 @@ describe('AgentProcessSourcePanel', () => {
       />
     );
     const panel = screen.getByTestId('agent-process-source-panel');
-    const allDetails = panel.querySelectorAll('details');
-    // Every <details> (the group + each expandable row) is open.
-    expect(allDetails.length).toBeGreaterThan(1);
-    allDetails.forEach(d => expect(d.hasAttribute('open')).toBe(true));
+    const disclosures = panel.querySelectorAll('[data-slot="collapsible"]');
+    // Every disclosure (the group + each expandable row) reports itself open.
+    expect(disclosures.length).toBeGreaterThan(1);
+    disclosures.forEach(d => expect(d.getAttribute('data-state')).toBe('open'));
   });
 
   it('never shows the "view full processing" affordance (the panel IS that view)', () => {
@@ -95,7 +133,8 @@ describe('AgentProcessSourcePanel', () => {
         onClose={() => {}}
       />
     );
-    // The subagent activity renders, but with no onView → no button.
+    // The assistant-ui delegation is collapsed until the reviewer opens it.
+    openFirstSubagent();
     expect(screen.getByTestId('subagent-activity')).toBeInTheDocument();
     expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
   });
@@ -153,6 +192,7 @@ describe('AgentProcessSourcePanel', () => {
     // …and the sub-agent's full activity (its thoughts) shows in the deep-dive,
     // with no redundant "view full processing" button (no onView).
     expect(screen.getByTestId('agent-source-subagent')).toBeInTheDocument();
+    openFirstSubagent();
     const activity = screen.getByTestId('subagent-activity');
     expect(activity.textContent).toContain('planning the search');
     expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
@@ -188,6 +228,7 @@ describe('AgentProcessSourcePanel', () => {
     // Header shows the step's label, not the generic title.
     expect(screen.getByText('Researching')).toBeInTheDocument();
     // Only the scoped step's activity renders…
+    openFirstSubagent();
     expect(screen.getByTestId('subagent-activity').textContent).toContain('scoped thought');
     // …and the whole-run transcript / other steps do NOT.
     expect(screen.queryByTestId('processing-transcript')).toBeNull();

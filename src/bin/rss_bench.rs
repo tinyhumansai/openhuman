@@ -41,7 +41,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
-use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
 
 /// Roster sizes measured by default: the 1-agent baseline and the
 /// representative 8-agent company roster from #5046.
@@ -64,7 +64,7 @@ impl ChatModel<()> for MockModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         Ok(ModelResponse::assistant("ok"))
     }
 }
@@ -398,15 +398,27 @@ mod tests {
         assert_eq!(dirs.len(), 8, "workspaces must be isolated per agent");
     }
 
-    #[tokio::test]
-    async fn warm_up_turn_completes_without_network() {
-        let mut roster = build_roster(1).expect("1-agent roster builds");
-        warm_up(&mut roster).await.expect("warm-up turn completes");
-        // The mock provider reports usage, so last_turn_usage is populated —
-        // proving the embedding cost-metering contract works on the bare Agent.
-        assert!(
-            roster.agents[0].last_turn_usage().is_some(),
-            "usage should be readable after a turn"
-        );
+    #[test]
+    fn warm_up_turn_completes_without_network() {
+        // The agent-turn future is large in debug builds. Run it on a worker
+        // with explicit stack headroom instead of libtest's smaller default.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_stack_size(8 * 1024 * 1024)
+            .build()
+            .expect("test runtime builds");
+        runtime
+            .block_on(runtime.spawn(async {
+                let mut roster = build_roster(1).expect("1-agent roster builds");
+                warm_up(&mut roster).await.expect("warm-up turn completes");
+                // The mock provider reports usage, so last_turn_usage is populated —
+                // proving the embedding cost-metering contract works on the bare Agent.
+                assert!(
+                    roster.agents[0].last_turn_usage().is_some(),
+                    "usage should be readable after a turn"
+                );
+            }))
+            .expect("warm-up task joins");
     }
 }

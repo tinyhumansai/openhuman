@@ -76,4 +76,3 @@ RPC surface: `openhuman.todos_list` / `_add` / `_edit` / `_update_status` / `_se
 
 - [Subconscious Loop](subconscious.md): the background loop that powers idle continuation and task evaluation.
 - [Memory Tree](obsidian-wiki/memory-tree.md): what goal reflection reads from.
-- [SuperContext](super-context.md): first-turn grounding that complements goal-driven work.

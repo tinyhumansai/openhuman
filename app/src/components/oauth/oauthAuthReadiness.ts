@@ -3,12 +3,12 @@ import debug from 'debug';
 import { getCoreStateSnapshot } from '../../lib/coreState/store';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import { getCoreRpcUrl, testCoreRpcConnection } from '../../services/coreRpcClient';
-import { isTauri } from '../../services/webviewAccountService';
 import {
   getStoredCoreMode,
   getStoredCoreToken,
   storeCoreMode,
 } from '../../utils/configPersistence';
+import { isTauri } from '../../utils/tauriCommands/common';
 
 const logPrefix = '[oauth-auth-readiness]';
 const log = debug('oauth:auth-readiness');

@@ -37,7 +37,7 @@ import {
   setSelectedMascotId,
   SUPPORTED_MASCOT_COLORS,
 } from '../../../store/mascotSlice';
-import Button from '../../ui/Button';
+import { Alert, AlertDescription, Badge, Button, Card, Checkbox } from '../../ui';
 import { SettingsSelect, SettingsTextField } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import {
@@ -374,7 +374,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
           {t('settings.mascot.colorHeading')}
         </h3>
-        <div className="bg-surface rounded-xl border border-line overflow-hidden">
+        <Card divided={false}>
           {available.length === 0 ? (
             <p className="p-4 text-sm text-content-muted">{t('settings.mascot.noColorVariants')}</p>
           ) : (
@@ -395,7 +395,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
                     aria-label={label}
                     onClick={() => handleSelect(opt.id)}
                     data-testid={`mascot-color-${opt.id}`}
-                    className={`flex flex-col items-center gap-2 rounded-lg p-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+                    className={`flex flex-col items-center gap-2 rounded-lg p-2 transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 ${
                       selected ? 'bg-surface-subtle' : 'hover:bg-surface-hover'
                     }`}>
                     <span
@@ -416,38 +416,40 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
               })}
             </div>
           )}
-        </div>
+        </Card>
         {activeColor === 'custom' && (
-          <div className="mt-3 bg-surface rounded-xl border border-line p-4 space-y-3">
-            <label className="flex items-center gap-3">
-              <input
-                type="color"
-                value={customPrimary}
-                onChange={e => dispatch(setCustomPrimaryColor(e.target.value))}
-                className="w-8 h-8 rounded-md border border-line dark:border-line-strong cursor-pointer p-0"
-              />
-              <span className="text-sm text-content-secondary">
-                {t('settings.mascot.primaryColor')}
-              </span>
-              <code className="ml-auto text-[11px] font-mono text-content-faint">
-                {customPrimary}
-              </code>
-            </label>
-            <label className="flex items-center gap-3">
-              <input
-                type="color"
-                value={customSecondary}
-                onChange={e => dispatch(setCustomSecondaryColor(e.target.value))}
-                className="w-8 h-8 rounded-md border border-line dark:border-line-strong cursor-pointer p-0"
-              />
-              <span className="text-sm text-content-secondary">
-                {t('settings.mascot.secondaryColor')}
-              </span>
-              <code className="ml-auto text-[11px] font-mono text-content-faint">
-                {customSecondary}
-              </code>
-            </label>
-          </div>
+          <Card padded divided={false} className="mt-3">
+            <div className="space-y-3">
+              <label className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={customPrimary}
+                  onChange={e => dispatch(setCustomPrimaryColor(e.target.value))}
+                  className="w-8 h-8 rounded-md border border-line dark:border-line-strong cursor-pointer p-0"
+                />
+                <span className="text-sm text-content-secondary">
+                  {t('settings.mascot.primaryColor')}
+                </span>
+                <code className="ml-auto text-[11px] font-mono text-content-faint">
+                  {customPrimary}
+                </code>
+              </label>
+              <label className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={customSecondary}
+                  onChange={e => dispatch(setCustomSecondaryColor(e.target.value))}
+                  className="w-8 h-8 rounded-md border border-line dark:border-line-strong cursor-pointer p-0"
+                />
+                <span className="text-sm text-content-secondary">
+                  {t('settings.mascot.secondaryColor')}
+                </span>
+                <code className="ml-auto text-[11px] font-mono text-content-faint">
+                  {customSecondary}
+                </code>
+              </label>
+            </div>
+          </Card>
         )}
         <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
           {t('settings.mascot.colorDesc')}
@@ -459,148 +461,149 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
           {t('settings.mascot.voice.heading')}
         </h3>
-        <div className="bg-surface rounded-xl border border-line p-4 space-y-4">
-          {/* Gender radio buttons — intentional bespoke pill UI */}
-          <div
-            role="radiogroup"
-            aria-label={t('settings.mascot.voice.genderHeading')}
-            className="space-y-1">
-            <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-              {t('settings.mascot.voice.genderHeading')}
-            </span>
-            <div className="flex gap-2 pt-1">
-              {(['female', 'male'] as const).map(g => (
-                <button
-                  key={g}
-                  type="button"
-                  role="radio"
-                  aria-checked={voiceGender === g}
-                  data-testid={`mascot-voice-gender-${g}`}
-                  onClick={() => onGenderChange(g)}
-                  className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                    voiceGender === g
-                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/20 text-primary-700 dark:text-primary-200'
-                      : 'border-line text-content-secondary hover:border-line-strong dark:hover:border-line-strong'
-                  }`}>
-                  {t(
-                    g === 'female'
-                      ? 'settings.mascot.voice.genderFemale'
-                      : 'settings.mascot.voice.genderMale'
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Locale default checkbox — bespoke inline label layout */}
-          <label className="flex items-start gap-2 text-sm text-content-secondary cursor-pointer">
-            <input
-              type="checkbox"
-              data-testid="mascot-voice-locale-default"
-              checked={useLocaleDefault}
-              onChange={e => onLocaleDefaultToggle(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
-            />
-            <span className="flex flex-col">
-              <span>{t('settings.mascot.voice.useLocaleDefault')}</span>
-              <span className="text-[11px] text-content-muted">
-                {t('settings.mascot.voice.useLocaleDefaultDesc')}{' '}
-                <code className="font-mono">{locale}</code> →{' '}
-                <code className="font-mono">{localeDefaultVoiceId}</code>
-              </span>
-            </span>
-          </label>
-
-          {/* Preset dropdown — bespoke label + select combo */}
-          <label className={`block space-y-1 ${presetPickerDisabled ? 'opacity-50' : ''}`}>
-            <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-              {t('settings.mascot.voice.presetHeading')}
-            </span>
-            <SettingsSelect
-              aria-label={t('settings.mascot.voice.presetHeading')}
-              data-testid="mascot-voice-select"
-              disabled={presetPickerDisabled}
-              value={isCustomVoice ? '__custom__' : effectiveVoiceId}
-              onChange={e => onPresetChange(e.target.value)}
-              className="w-full">
-              {visiblePresets.map(v => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
-              <option value="__custom__">{t('settings.mascot.voice.customOption')}</option>
-            </SettingsSelect>
-          </label>
-
-          {isCustomVoice && (
-            <label className="block space-y-1">
-              <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-                {t('settings.mascot.voice.customHeading')}
-              </span>
-              <div className="flex gap-2">
-                <SettingsTextField
-                  aria-label={t('settings.mascot.voice.customHeading')}
-                  data-testid="mascot-voice-input"
-                  value={voiceDraft}
-                  placeholder={t('settings.mascot.voice.customPlaceholder')}
-                  onChange={e => setVoiceDraft(e.target.value)}
-                  className="flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="xs"
-                  data-testid="mascot-voice-save-paste"
-                  onClick={onSavePaste}
-                  disabled={voiceDraft.trim() === (storedVoiceId ?? '').trim()}>
-                  {t('common.save')}
-                </Button>
-              </div>
-              <p className="text-[11px] text-content-muted">
-                {t('settings.mascot.voice.customDesc')}
-              </p>
-            </label>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="primary"
-              size="xs"
-              data-testid="mascot-voice-preview"
-              onClick={() => void onVoicePreview()}
-              disabled={isPreviewingVoice}
-              className="bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500">
-              {isPreviewingVoice
-                ? t('settings.mascot.voice.previewing')
-                : t('settings.mascot.voice.preview')}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="xs"
-              data-testid="mascot-voice-reset"
-              onClick={onVoiceReset}
-              disabled={storedVoiceId == null}>
-              {t('settings.mascot.voice.reset')}
-            </Button>
-            <span
-              data-testid="mascot-voice-current"
-              className="ml-1 text-[11px] text-content-muted truncate max-w-[18rem]"
-              title={effectiveVoiceId}>
-              {t('settings.mascot.voice.current')}:{' '}
-              <code className="font-mono">{effectiveVoiceId}</code>
-            </span>
-          </div>
-
-          {voicePreviewError && (
+        <Card padded divided={false}>
+          <div className="space-y-4">
+            {/* Gender radio buttons — intentional bespoke pill UI */}
             <div
-              data-testid="mascot-voice-preview-error"
-              className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
-              {t('settings.mascot.voice.previewError')}: {voicePreviewError}
+              role="radiogroup"
+              aria-label={t('settings.mascot.voice.genderHeading')}
+              className="space-y-1">
+              <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+                {t('settings.mascot.voice.genderHeading')}
+              </span>
+              <div className="flex gap-2 pt-1">
+                {(['female', 'male'] as const).map(g => (
+                  <button
+                    key={g}
+                    type="button"
+                    role="radio"
+                    aria-checked={voiceGender === g}
+                    data-testid={`mascot-voice-gender-${g}`}
+                    onClick={() => onGenderChange(g)}
+                    className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                      voiceGender === g
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/20 text-primary-700 dark:text-primary-200'
+                        : 'border-line text-content-secondary hover:border-line-strong dark:hover:border-line-strong'
+                    }`}>
+                    {t(
+                      g === 'female'
+                        ? 'settings.mascot.voice.genderFemale'
+                        : 'settings.mascot.voice.genderMale'
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Locale default checkbox — bespoke inline label layout */}
+            <label className="flex items-start gap-2 text-sm text-content-secondary cursor-pointer">
+              <Checkbox
+                data-testid="mascot-voice-locale-default"
+                checked={useLocaleDefault}
+                onCheckedChange={onLocaleDefaultToggle}
+                className="mt-0.5"
+              />
+              <span className="flex flex-col">
+                <span>{t('settings.mascot.voice.useLocaleDefault')}</span>
+                <span className="text-[11px] text-content-muted">
+                  {t('settings.mascot.voice.useLocaleDefaultDesc')}{' '}
+                  <code className="font-mono">{locale}</code> →{' '}
+                  <code className="font-mono">{localeDefaultVoiceId}</code>
+                </span>
+              </span>
+            </label>
+
+            {/* Preset dropdown — bespoke label + select combo */}
+            <label className={`block space-y-1 ${presetPickerDisabled ? 'opacity-50' : ''}`}>
+              <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+                {t('settings.mascot.voice.presetHeading')}
+              </span>
+              <SettingsSelect
+                aria-label={t('settings.mascot.voice.presetHeading')}
+                data-testid="mascot-voice-select"
+                disabled={presetPickerDisabled}
+                value={isCustomVoice ? '__custom__' : effectiveVoiceId}
+                onChange={e => onPresetChange(e.target.value)}
+                className="w-full">
+                {visiblePresets.map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+                <option value="__custom__">{t('settings.mascot.voice.customOption')}</option>
+              </SettingsSelect>
+            </label>
+
+            {isCustomVoice && (
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+                  {t('settings.mascot.voice.customHeading')}
+                </span>
+                <div className="flex gap-2">
+                  <SettingsTextField
+                    aria-label={t('settings.mascot.voice.customHeading')}
+                    data-testid="mascot-voice-input"
+                    value={voiceDraft}
+                    placeholder={t('settings.mascot.voice.customPlaceholder')}
+                    onChange={e => setVoiceDraft(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="xs"
+                    data-testid="mascot-voice-save-paste"
+                    onClick={onSavePaste}
+                    disabled={voiceDraft.trim() === (storedVoiceId ?? '').trim()}>
+                    {t('common.save')}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-content-muted">
+                  {t('settings.mascot.voice.customDesc')}
+                </p>
+              </label>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="primary"
+                size="xs"
+                data-testid="mascot-voice-preview"
+                onClick={() => void onVoicePreview()}
+                disabled={isPreviewingVoice}
+                className="bg-sage-500 hover:bg-sage-600 dark:hover:bg-sage-400">
+                {isPreviewingVoice
+                  ? t('settings.mascot.voice.previewing')
+                  : t('settings.mascot.voice.preview')}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                data-testid="mascot-voice-reset"
+                onClick={onVoiceReset}
+                disabled={storedVoiceId == null}>
+                {t('settings.mascot.voice.reset')}
+              </Button>
+              <span
+                data-testid="mascot-voice-current"
+                className="ml-1 text-[11px] text-content-muted truncate max-w-[18rem]"
+                title={effectiveVoiceId}>
+                {t('settings.mascot.voice.current')}:{' '}
+                <code className="font-mono">{effectiveVoiceId}</code>
+              </span>
+            </div>
+
+            {voicePreviewError && (
+              <Alert variant="warning" density="compact" data-testid="mascot-voice-preview-error">
+                <AlertDescription>
+                  {t('settings.mascot.voice.previewError')}: {voicePreviewError}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </Card>
         <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
           {t('settings.mascot.voice.desc')}
         </p>
@@ -613,51 +616,52 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
         </h3>
 
         {/* Custom GIF input */}
-        <div className="mb-3 bg-surface rounded-xl border border-line p-4 space-y-3">
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
-              {t('settings.mascot.customGifHeading')}
-            </span>
-            <div className="flex gap-2">
-              <SettingsTextField
-                aria-label={t('settings.mascot.customGifLabel')}
-                data-testid="mascot-custom-gif-input"
-                value={customGifDraft}
-                placeholder={t('settings.mascot.customGifPlaceholder')}
-                onChange={e => {
-                  setCustomGifDraft(e.target.value);
-                  setCustomGifError(null);
-                }}
-                className="flex-1"
-              />
-              <Button
-                type="button"
-                variant="primary"
-                size="xs"
-                data-testid="mascot-custom-gif-save"
-                onClick={onSaveCustomGif}
-                disabled={
-                  // For an uploaded (data-URL) avatar the box is intentionally
-                  // blank, so an empty box means "no URL change", not "clear"
-                  // (that would drop the upload). Only a typed URL enables Save.
-                  storedIsUploadedAvatar
-                    ? customGifDraft.trim().length === 0
-                    : customGifDraft.trim() === (customMascotGifUrl ?? '').trim()
-                }>
-                {t('common.save')}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                data-testid="mascot-custom-gif-reset"
-                onClick={onResetCustomGif}
-                disabled={customMascotGifUrl == null && customGifDraft.trim().length === 0}>
-                {t('common.reset')}
-              </Button>
-            </div>
-          </label>
-          {/* Upload a local image file (issue #5360). The hidden input is
+        <Card padded divided={false} className="mb-3">
+          <div className="space-y-3">
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-content-muted dark:text-content-secondary">
+                {t('settings.mascot.customGifHeading')}
+              </span>
+              <div className="flex gap-2">
+                <SettingsTextField
+                  aria-label={t('settings.mascot.customGifLabel')}
+                  data-testid="mascot-custom-gif-input"
+                  value={customGifDraft}
+                  placeholder={t('settings.mascot.customGifPlaceholder')}
+                  onChange={e => {
+                    setCustomGifDraft(e.target.value);
+                    setCustomGifError(null);
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="xs"
+                  data-testid="mascot-custom-gif-save"
+                  onClick={onSaveCustomGif}
+                  disabled={
+                    // For an uploaded (data-URL) avatar the box is intentionally
+                    // blank, so an empty box means "no URL change", not "clear"
+                    // (that would drop the upload). Only a typed URL enables Save.
+                    storedIsUploadedAvatar
+                      ? customGifDraft.trim().length === 0
+                      : customGifDraft.trim() === (customMascotGifUrl ?? '').trim()
+                  }>
+                  {t('common.save')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  data-testid="mascot-custom-gif-reset"
+                  onClick={onResetCustomGif}
+                  disabled={customMascotGifUrl == null && customGifDraft.trim().length === 0}>
+                  {t('common.reset')}
+                </Button>
+              </div>
+            </label>
+            {/* Upload a local image file (issue #5360). The hidden input is
               driven by the styled button; its value is cleared after each pick
               so choosing the same file twice still fires onChange.
 
@@ -674,46 +678,47 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
               still gates the read, so a type outside the allowlist (SVG, most
               importantly — it can carry inline scripts) is rejected with a
               visible error rather than silently accepted. */}
-          <div className="flex items-center gap-2">
-            <input
-              ref={avatarFileInputRef}
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              data-testid="mascot-custom-image-input"
-              aria-label={t('settings.mascot.customGifUpload')}
-              onChange={e => {
-                void onUploadAvatarFile(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="xs"
-              data-testid="mascot-custom-image-upload"
-              onClick={() => avatarFileInputRef.current?.click()}>
-              {t('settings.mascot.customGifUpload')}
-            </Button>
-          </div>
-          {customGifError && (
-            <p
-              data-testid="mascot-custom-gif-error"
-              className="text-xs text-coral-700 dark:text-coral-300">
-              {customGifError}
-            </p>
-          )}
-          {customMascotGifUrl && (
-            <div className="flex justify-center rounded-lg border border-line-subtle bg-surface-muted p-3">
-              <div style={{ width: 128, height: 128 }}>
-                <CustomGifMascot src={customMascotGifUrl} />
-              </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={avatarFileInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                data-testid="mascot-custom-image-input"
+                aria-label={t('settings.mascot.customGifUpload')}
+                onChange={e => {
+                  void onUploadAvatarFile(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                data-testid="mascot-custom-image-upload"
+                onClick={() => avatarFileInputRef.current?.click()}>
+                {t('settings.mascot.customGifUpload')}
+              </Button>
             </div>
-          )}
-        </div>
+            {customGifError && (
+              <p
+                data-testid="mascot-custom-gif-error"
+                className="text-xs text-coral-700 dark:text-coral-300">
+                {customGifError}
+              </p>
+            )}
+            {customMascotGifUrl && (
+              <div className="flex justify-center rounded-lg border border-line-subtle bg-surface-muted p-3">
+                <div style={{ width: 128, height: 128 }}>
+                  <CustomGifMascot src={customMascotGifUrl} />
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
 
         {/* Mascot manifest library (tinyhumansai/mascots) */}
-        <div className="bg-surface rounded-xl border border-line overflow-hidden">
+        <Card divided={false}>
           {manifestError && (
             <p className="p-4 text-sm text-coral-700 dark:text-coral-300">
               {t('settings.mascot.libraryUnavailable')}: {manifestError.message}
@@ -726,7 +731,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
             <p className="p-4 text-sm text-content-muted">{t('settings.mascot.noCharacters')}</p>
           )}
           {manifest && manifest.mascots.length > 0 && (
-            <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
+            <ul className="divide-y divide-line-subtle">
               <li>
                 <button
                   type="button"
@@ -766,9 +771,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
                         <span className="flex items-center gap-2">
                           {mascot.name}
                           {mascot.status === 'draft' && (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
-                              {t('settings.mascot.characterDraft')}
-                            </span>
+                            <Badge variant="warning">{t('settings.mascot.characterDraft')}</Badge>
                           )}
                         </span>
                         <span className="text-[10px] text-content-muted">
@@ -787,7 +790,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
               })}
             </ul>
           )}
-        </div>
+        </Card>
 
         {activeEntry && !customMascotGifUrl && (
           <div className="mt-3 rounded-xl border border-line bg-surface-muted p-4">
@@ -825,7 +828,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
           {/* Second-mascot picker — bespoke label + select combo mirroring
               the voice preset dropdown. The primary's id is disabled so the
               duo can never duplicate a single mascot. */}
-          <div className="bg-surface rounded-xl border border-line p-4 space-y-1">
+          <Card padded divided={false}>
             <label className="block space-y-1">
               <span className="sr-only">{t('settings.mascot.secondaryHeading')}</span>
               <SettingsSelect
@@ -854,7 +857,7 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
                 ))}
               </SettingsSelect>
             </label>
-          </div>
+          </Card>
           <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
             {t('settings.mascot.secondaryDesc')}
           </p>
@@ -892,8 +895,9 @@ const MascotPanel = ({ embedded = false }: MascotPanelProps) => {
   );
 
   // Embedded inside the tabbed Personality & Face page: the parent owns the
-  // header, so render just the padded body.
-  if (embedded) return <div className="p-4 space-y-5">{body}</div>;
+  // header AND the page gutter (`SettingsPanel` supplies `p-4` now), so this
+  // renders the body flush — a `p-4` here would indent it twice.
+  if (embedded) return <div className="space-y-5">{body}</div>;
 
   return <SettingsPanel>{body}</SettingsPanel>;
 };

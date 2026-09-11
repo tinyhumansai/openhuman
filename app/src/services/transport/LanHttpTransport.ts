@@ -6,6 +6,7 @@
  */
 import debug from 'debug';
 
+import { redactRpcUrlForLog } from '../../utils/redactRpcUrlForLog';
 import type { CoreTransport } from './CoreTransport';
 
 const log = debug('transport:lan');
@@ -34,17 +35,22 @@ export class LanHttpTransport implements CoreTransport {
     private readonly rpcUrl: string,
     private readonly timeoutMs: number = 10_000
   ) {
-    log('[transport:lan] created rpcUrl=%s', rpcUrl);
+    log('[transport:lan] created rpcUrl=%s', redactRpcUrlForLog(rpcUrl));
   }
 
-  async call<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+  async call<T>(
+    method: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T> {
     const id = _nextId++;
     const payload: JsonRpcRequestBody = { jsonrpc: '2.0', id, method, params: params ?? {} };
 
     log('[transport:lan] → %s id=%d', method, id);
 
+    const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     opts?.signal?.addEventListener('abort', () => controller.abort());
 
     let response: Response;
@@ -57,7 +63,7 @@ export class LanHttpTransport implements CoreTransport {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`[transport:lan] ${method} timed out after ${this.timeoutMs}ms`);
+        throw new Error(`[transport:lan] ${method} timed out after ${timeoutMs}ms`);
       }
       throw err;
     } finally {

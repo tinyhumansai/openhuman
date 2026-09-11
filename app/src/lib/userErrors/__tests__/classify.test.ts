@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyMemoryPipelineFailure,
+  classifyMemoryQuarantine,
   classifyUserActionableError,
   userErrorId,
 } from '../classify';
@@ -92,6 +93,38 @@ describe('classifyUserActionableError', () => {
     }
   });
 
+  it('classifies a quarantined corrupt memory store (memory user_error kind token)', () => {
+    // Core's shared corruption recovery emits the stable STORE_CORRUPT_KIND
+    // token with error_source=memory after quarantine + rebuild
+    // (openhuman#5820); the CTA routes to Brain's sync tab because the
+    // rebuilt store repopulates by re-syncing sources.
+    const a = classifyUserActionableError({
+      errorType: 'memory_store_corrupt',
+      scope: 'memory',
+      sourceDomain: 'memory',
+    });
+    expect(a?.kind).toBe('memory_store_corrupt');
+    expect(a?.severity).toBe('error');
+    expect(a?.scope).toBe('memory');
+    expect(a?.action).toBe('open_memory_sync');
+    expect(a?.titleKey).toBe('userErrors.memoryStoreCorrupt.title');
+    expect(a?.bodyKey).toBe('userErrors.memoryStoreCorrupt.body');
+    expect(a?.id).toBe(userErrorId('memory_store_corrupt', 'memory', undefined));
+  });
+
+  it('does NOT promote raw SQLite corruption prose relayed by another domain', () => {
+    // Token-only on purpose: "database disk image is malformed" appears in
+    // raw logs other domains relay, and a relayed log line must not become a
+    // "your memory was quarantined" panel entry.
+    expect(classifyUserActionableError({ message: 'database disk image is malformed' })).toBeNull();
+    expect(
+      classifyUserActionableError({
+        message: 'sync failed: file is not a database',
+        scope: 'memory',
+      })
+    ).toBeNull();
+  });
+
   it('does NOT promote a bare "daemon unreachable" from another domain', () => {
     // Backend connection-health logs use this phrase too. Matching it loosely
     // would tell a user with a flaky backend link to install Ollama. The Rust
@@ -125,6 +158,26 @@ describe('classifyUserActionableError', () => {
 });
 
 // ── #5324: memory pipeline budget exhaustion ────────────────────────────────
+
+describe('classifyMemoryQuarantine', () => {
+  it('reports an outstanding quarantine under the same id as the socket path', () => {
+    const fromPoll = classifyMemoryQuarantine({ resynced: false });
+    const fromSocket = classifyUserActionableError({
+      errorType: 'memory_store_corrupt',
+      scope: 'memory',
+      sourceDomain: 'memory',
+    });
+    expect(fromPoll?.kind).toBe('memory_store_corrupt');
+    expect(fromPoll?.action).toBe('open_memory_sync');
+    expect(fromPoll?.id).toBe(fromSocket?.id);
+  });
+
+  it('is null once the store has been re-synced, and for no quarantine at all', () => {
+    expect(classifyMemoryQuarantine({ resynced: true })).toBeNull();
+    expect(classifyMemoryQuarantine(null)).toBeNull();
+    expect(classifyMemoryQuarantine(undefined)).toBeNull();
+  });
+});
 
 describe('classifyMemoryPipelineFailure', () => {
   it('promotes a budget-exhausted memory pipeline to a user-actionable error', () => {

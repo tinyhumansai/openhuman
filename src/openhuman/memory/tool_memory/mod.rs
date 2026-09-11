@@ -1,49 +1,84 @@
-//! Tool-scoped memory layer for durable learnings and high-priority rules.
+//! Host layer over the engine's tool-memory domain.
 //!
-//! Implements the dedicated memory namespace requested in
-//! [issue #1400](https://github.com/tinyhumansai/openhuman/issues/1400):
-//! a first-class storage and retrieval surface for **actionable**
-//! tool-specific guidance, distinct from the
-//! [`tool_effectiveness`](crate::openhuman::agent::learning::tool_tracker)
-//! statistics namespace and from the generic `global` / `skill-*`
-//! namespaces.
+//! The rule store and its types are the engine's. What stays here is the pair
+//! that plugs into the agent harness — the post-turn capture hook and the
+//! system prompt section — both of which name harness traits (`PostTurnHook`,
+//! `PromptContext`) that the engine crate cannot see.
 //!
-//! ## Namespace convention
+//! # Where the four names in this module came from (#5560)
 //!
-//! Each tool gets its own namespace `tool-{tool_name}`. The prefix is
-//! distinct from `global`, `skill-{id}`, `tool_effectiveness`, and the
-//! learning namespaces so list/clear operations can reason about it
-//! without ambiguity. Build the namespace string via
-//! [`tool_memory_namespace`] — never hard-code the format.
+//! This module used to be `pub use tinymemory_core::tool_memory::*;`, and that
+//! glob resolved to four different places:
 //!
-//! ## Components
+//! | Name | Where it used to live | Where it is now |
+//! | --- | --- | --- |
+//! | `ToolMemoryStore`, `TOOL_MEMORY_PROMPT_CAP` | `tinycortex::memory::tool_memory::store` | [`store`], in this directory |
+//! | `tool_memory_namespace`, `ToolMemoryPriority`, `ToolMemoryRule`, `ToolMemorySource` | `tinycortex::memory::tool_memory::types` | `tinymemory_api::tool_memory` — the contract |
+//! | `tool_memory_store` | a ten-line constructor in `tinymemory-core` | [`tool_memory_store`] below |
+//! | `test_helpers` | `tinymemory-core`, behind `cfg(any(test, feature = "test-support"))` | unchanged, and test-only |
 //!
-//! - [`tinycortex::memory::tool_memory::types`] owns [`ToolMemoryRule`],
-//!   [`ToolMemoryPriority`], and [`ToolMemorySource`].
-//! - [`tinycortex::memory::tool_memory::store`] owns [`ToolMemoryStore`], the
-//!   put/list/delete/prompt API built on top of an `Arc<dyn Memory>`.
-//! - [`capture`] — [`ToolMemoryCaptureHook`], the post-turn
-//!   [`PostTurnHook`] that records user edicts and repeated tool
-//!   failures.
-//! - [`prompt`]  — [`ToolMemoryRulesSection`], the prompt section that
-//!   pins Critical / High rules into the system prompt so they survive
-//!   mid-session compression.
-//! - [`tools`]   — agent-facing read/write tools:
-//!   [`tools::MemoryToolsListTool`], [`tools::MemoryToolsPutTool`].
+//! The **second** row is a pure repoint and changes no type. The engine's
+//! `memory::tool_memory::types` is `tinycortex_api::tool_memory`, and
+//! `tinycortex-api` is itself now nothing but `pub use tinymemory_api::{…}` —
+//! so the contract path and the engine path name the *same items*, and the
+//! engine's own `MemoryToolMemory` implementation serialises those very types.
+//! Naming the contract removes an alias, not an indirection.
 //!
-//! [`PostTurnHook`]: crate::openhuman::agent::hooks::PostTurnHook
+//! The **first** row came home rather than being repointed, because there was
+//! nothing to repoint it at: the contract has the vocabulary a rule is made of
+//! but not the store that files one. [`store`] says at length why it is a
+//! host-side convention over `Arc<dyn Memory>` rather than a call onto
+//! `MemoryToolMemory` — the short version is that both of its callers are
+//! handed a *subtree-scoped* memory object, and the family reached through the
+//! ambient guard is the shared tree.
+//!
+//! The **third** row came home earlier for the same reason:
+//! [`tool_memory_store`] below is the same one-line `ToolMemoryStore::new`
+//! wrapper, and it was only in the engine crate because that crate used to be
+//! this host's memory layer. Nothing in `tinymemory` named it.
+//!
+//! The fourth row is **test-only** and stays on the engine crate deliberately:
+//! `MockMemory` is a test fixture reached from four inline `#[cfg(test)]`
+//! modules, and `cfg(test)` code links against the `tinymemory-core`
+//! **dev-dependency** (declared with `features = ["test-support"]`), which
+//! survives the shed. It is not a production reference and does not keep the
+//! engine crate in the shipped binary. It now sits in `test_support/` — a
+//! directory both memory lints skip by path, and `#[cfg(test)]` so it is not
+//! link-resolvable from a docs build — which is why the one line of this file
+//! that named the engine crate no longer reads as an unmigrated production
+//! call. See that module for why the classification is the point.
+
+use std::sync::Arc;
+
+// The contract's storage trait, named at the contract rather than through
+// `memory::Memory` — same item, one less alias to follow.
+use tinymemory_api::traits::Memory;
+
+// The rule vocabulary, named at the contract. Re-exported rather than merely
+// available so every historical `memory::tool_memory::ToolMemoryRule` path
+// keeps resolving — and resolving to the item that actually crosses the bus.
+pub use tinymemory_api::tool_memory::{
+    tool_memory_namespace, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource,
+};
+
+pub use store::{ToolMemoryStore, TOOL_MEMORY_PROMPT_CAP};
 
 pub mod capture;
 pub mod prompt;
-mod store;
+pub mod store;
 #[cfg(test)]
-pub mod test_helpers;
-pub mod tools;
+pub mod test_support;
+#[cfg(test)]
+pub use test_support::test_helpers;
 
-pub use capture::ToolMemoryCaptureHook;
-pub use prompt::{render_tool_memory_rules, ToolMemoryRulesSection, TOOL_MEMORY_HEADING};
-pub use store::tool_memory_store;
-pub use tinycortex::memory::tool_memory::{
-    store::{ToolMemoryStore, TOOL_MEMORY_PROMPT_CAP},
-    types::{tool_memory_namespace, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource},
-};
+/// Build the rule store over OpenHuman's shared memory object.
+///
+/// A named constructor rather than `ToolMemoryStore::new` at each call site:
+/// every caller (`capture.rs`, the harness session builder, the raw-coverage
+/// suite) passes the same `Arc<dyn Memory>` the host already holds, and the
+/// indirection is what let the store's own construction move between crates
+/// without touching them. Kept for exactly that reason.
+pub fn tool_memory_store(memory: Arc<dyn Memory>) -> ToolMemoryStore {
+    log::trace!("[memory::tool_memory] building ToolMemoryStore over the host memory object");
+    ToolMemoryStore::new(memory)
+}

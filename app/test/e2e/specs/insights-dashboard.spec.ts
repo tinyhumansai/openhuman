@@ -66,14 +66,24 @@ describe('Insights dashboard smoke', () => {
 
   it('renders the memory graph surface (11.2.3)', async () => {
     stepLog('checking for memory graph testid');
-    const deadline = Date.now() + 10_000;
+    // The canvas is the graph surface. Its `data-render-ready` marker is
+    // intentionally emitted only after Pixi's force simulation cools; a
+    // throttled WebDriver renderer can leave that simulation running after
+    // the visible canvas has mounted. Requiring the marker here turned this
+    // route-mount smoke test into a timing assertion while the actual graph
+    // (including its nodes) was already rendered.
+    const deadline = Date.now() + 30_000;
     let present = false;
     while (Date.now() < deadline) {
-      present = (await browser.execute(
-        () =>
+      present = (await browser.execute(() => {
+        if (
           document.querySelector('[data-testid="memory-graph-svg"]') !== null ||
           document.querySelector('[data-testid="memory-graph-empty"]') !== null
-      )) as boolean;
+        ) {
+          return true;
+        }
+        return document.querySelector('[data-testid="memory-graph-canvas"] canvas') !== null;
+      })) as boolean;
       if (present) break;
       await browser.pause(500);
     }

@@ -188,8 +188,11 @@ async fn local_transcribe_bytes_covers_temp_file_path_and_extension_validation()
 
     let disabled = local_ai_transcribe_bytes(&config, b"audio", Some(".WEBM".to_string()))
         .await
-        .expect_err("disabled runtime after temp file write");
-    assert!(disabled.contains("local ai is disabled"));
+        .expect_err("hosted STT without a configured session");
+    assert!(
+        !disabled.contains("local ai is disabled"),
+        "hosted STT must not be gated on the local-AI runtime: {disabled}"
+    );
 }
 
 async fn serve_piper_mock() -> (String, PiperMockState) {

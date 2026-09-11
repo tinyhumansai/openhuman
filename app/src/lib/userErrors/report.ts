@@ -10,11 +10,13 @@
 import debug from 'debug';
 
 import type { AppDispatch } from '../../store';
-import { reportUserError } from '../../store/userErrorsSlice';
+import { reportUserError, resolveUserError } from '../../store/userErrorsSlice';
 import {
   classifyMemoryPipelineFailure,
+  classifyMemoryQuarantine,
   classifyUserActionableError,
   type RuntimeErrorSignal,
+  userErrorId,
 } from './classify';
 
 const log = debug('openhuman:user-errors');
@@ -71,6 +73,34 @@ export function reportMemoryPipelineFailure(
     return true;
   } catch (err) {
     log('memory pipeline ingest failed: %o', err);
+    return false;
+  }
+}
+
+/**
+ * Replay a quarantine from the pipeline-status poll into the durable
+ * NoticeCenter, and retire it once the store has been re-synced
+ * (openhuman#5820). Never throws; returns whether a notice is active.
+ */
+export function reportMemoryQuarantine(
+  dispatch: AppDispatch,
+  quarantine: { resynced: boolean } | null | undefined
+): boolean {
+  try {
+    const descriptor = classifyMemoryQuarantine(quarantine);
+    if (descriptor) {
+      log('memory quarantine active kind=%s', descriptor.kind);
+      dispatch(reportUserError({ descriptor, at: Date.now() }));
+      return true;
+    }
+    if (quarantine?.resynced) {
+      dispatch(
+        resolveUserError({ id: userErrorId('memory_store_corrupt', 'memory'), at: Date.now() })
+      );
+    }
+    return false;
+  } catch (err) {
+    log('memory quarantine ingest failed: %o', err);
     return false;
   }
 }

@@ -23,6 +23,7 @@
     /* Path aliases */
     "baseUrl": ".",
     "paths": {
+      "@/*": ["src/*"],
       "@openhuman/skill-types": ["src/lib/skills/types.ts"],
       "tauri-plugin-ptt-api": ["../packages/tauri-plugin-ptt/guest-js/index.ts"]
     },

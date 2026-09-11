@@ -6,8 +6,18 @@ use serde_json::json;
 
 /// Pauses the current execution to ask the user for clarification.
 ///
-/// In the orchestrator flow, this surfaces the question to the user via the
-/// event channel and waits for a response before continuing.
+/// The pause is NOT implemented here — this tool only returns the question as
+/// its output. The turn stops because `ask_user_clarification` is registered as
+/// an *early-exit tool* on the harness seam
+/// (`tinyagents::run_turn_via_tinyagents_shared`'s `early_exit_tools`): on a
+/// successful call the hook records the output as the pause question and steers
+/// the loop to `Pause`, so the caller ends the turn with that question as its
+/// text instead of feeding this result back to the model.
+///
+/// Every caller that exposes this tool MUST name it in `early_exit_tools`.
+/// A caller that does not gets a tool that answers its own question: the model
+/// reads this output as a successful result and carries on without ever asking
+/// (the chat and channel paths did exactly that until this was wired up).
 pub struct AskClarificationTool;
 
 impl Default for AskClarificationTool {
@@ -57,9 +67,20 @@ impl Tool for AskClarificationTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        // Blank counts as absent. The schema has no `minLength`, so
+        // `{"question":""}` is a legal call, and `as_str()` answers `Some("")` —
+        // which slipped past the missing-argument fallback below. That was
+        // survivable only while the `[CLARIFICATION NEEDED]` prefix kept the
+        // output non-empty; now that this output *is* the message the user
+        // reads, an empty one would park the turn on a blank prompt: a blank
+        // assistant reply on the channel path, and an `AwaitingUser` sub-agent
+        // card with nothing in it. Trimmed for the same reason — a whitespace
+        // question is a blank one (#6213 review).
         let question = args
             .get("question")
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
             .unwrap_or("Could you clarify?");
 
         let options = args.get("options").and_then(|v| v.as_array()).map(|arr| {
@@ -69,16 +90,17 @@ impl Tool for AskClarificationTool {
                 .join(", ")
         });
 
-        let mut output = format!("[CLARIFICATION NEEDED]\n{question}");
+        // Plain question text, no marker: this output IS the message the user
+        // reads. The early-exit hook captures it verbatim as the pause question,
+        // which the chat path returns as the turn's reply and the sub-agent path
+        // carries on `SubagentRunStatus::AwaitingUser`. Nothing anywhere parsed
+        // the old `[CLARIFICATION NEEDED]` prefix — it only ever leaked into the
+        // user's face.
+        let mut output = question.to_string();
         if let Some(opts) = options {
             output.push_str(&format!("\n\nOptions: {opts}"));
         }
 
-        // In a full implementation, this would:
-        // 1. Emit an event to the frontend/CLI.
-        // 2. Block on a response channel.
-        // 3. Return the user's answer.
-        // For now, return the question as output so the orchestrator can surface it.
         tracing::info!("[ask_clarification] question: {question}");
 
         Ok(ToolResult::success(output))
@@ -86,73 +108,5 @@ impl Tool for AskClarificationTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn name_is_correct() {
-        assert_eq!(AskClarificationTool::new().name(), "ask_user_clarification");
-    }
-
-    #[test]
-    fn description_is_non_empty() {
-        assert!(!AskClarificationTool::new().description().is_empty());
-    }
-
-    #[test]
-    fn schema_is_object_type() {
-        let schema = AskClarificationTool::new().parameters_schema();
-        assert_eq!(schema["type"], "object");
-    }
-
-    #[test]
-    fn permission_level_is_none() {
-        assert_eq!(
-            AskClarificationTool::new().permission_level(),
-            PermissionLevel::None
-        );
-    }
-
-    #[test]
-    fn default_and_new_are_equivalent() {
-        let a = AskClarificationTool::new();
-        let b = AskClarificationTool::default();
-        assert_eq!(a.name(), b.name());
-    }
-
-    #[tokio::test]
-    async fn execute_with_question_includes_question_in_output() {
-        let tool = AskClarificationTool::new();
-        let result = tool
-            .execute(json!({ "question": "Which branch should I target?" }))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("Which branch should I target?"));
-    }
-
-    #[tokio::test]
-    async fn execute_with_options_lists_choices() {
-        let tool = AskClarificationTool::new();
-        let result = tool
-            .execute(json!({
-                "question": "Which env?",
-                "options": ["staging", "production"]
-            }))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        let out = result.output();
-        assert!(out.contains("staging"));
-        assert!(out.contains("production"));
-    }
-
-    #[tokio::test]
-    async fn execute_without_question_uses_fallback() {
-        let tool = AskClarificationTool::new();
-        let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.output().contains("CLARIFICATION NEEDED"));
-    }
-}
+#[path = "ask_clarification_tests.rs"]
+mod tests;

@@ -150,12 +150,12 @@ describe('transcribeWithFactory', () => {
 
   it('forwards an explicit provider override', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
-    mock.mockResolvedValueOnce({ text: 'local hi', provider: 'whisper' });
+    mock.mockResolvedValueOnce({ text: 'scribe hi', provider: 'elevenlabs' });
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
-    await transcribeWithFactory(blob, { provider: 'whisper', model: 'whisper-large-v3-turbo' });
+    await transcribeWithFactory(blob, { provider: 'elevenlabs', model: 'scribe_v1' });
     const params = mock.mock.calls[0][0].params as Record<string, unknown>;
-    expect(params.provider).toBe('whisper');
-    expect(params.model).toBe('whisper-large-v3-turbo');
+    expect(params.provider).toBe('elevenlabs');
+    expect(params.model).toBe('scribe_v1');
   });
 
   it('rejects empty blobs without hitting the core', async () => {
@@ -184,21 +184,21 @@ describe('transcribeWithFactory', () => {
 
   it('passes through non-unknown-method errors verbatim', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
-    mock.mockRejectedValueOnce(new Error('whisper.cpp failed: model not found'));
+    mock.mockRejectedValueOnce(new Error('external STT error 401: invalid api key'));
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
-    await expect(transcribeWithFactory(blob)).rejects.toThrow(/whisper.cpp failed/);
+    await expect(transcribeWithFactory(blob)).rejects.toThrow(/external STT error 401/);
   });
 
   it('trims whitespace off the returned transcript', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
-    mock.mockResolvedValueOnce({ text: '  padded  ', provider: 'whisper' });
+    mock.mockResolvedValueOnce({ text: '  padded  ', provider: 'elevenlabs' });
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
     expect(await transcribeWithFactory(blob)).toBe('padded');
   });
 
   it('returns empty string when provider yields no text', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
-    mock.mockResolvedValueOnce({ provider: 'whisper' });
+    mock.mockResolvedValueOnce({ provider: 'elevenlabs' });
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
     expect(await transcribeWithFactory(blob)).toBe('');
   });

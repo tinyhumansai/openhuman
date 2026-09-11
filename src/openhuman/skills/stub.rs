@@ -12,7 +12,7 @@
 //!
 //! The signatures here MUST match the real ones exactly (return types
 //! included). The disabled build
-//! (`cargo check --no-default-features --features tokenjuice-treesitter`) is
+//! (`cargo check --no-default-features`) is
 //! the only thing that catches drift — if a real signature changes, update the
 //! mirror below until that build is green again.
 

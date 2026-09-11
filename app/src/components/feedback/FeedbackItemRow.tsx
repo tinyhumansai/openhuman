@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { FeedbackItem } from '../../types/feedback';
+import { Button } from '../ui';
+import { AvatarFallback, AvatarRoot } from '../ui/Avatar';
 import FeedbackAdminMenu from './FeedbackAdminMenu';
 import FeedbackComments from './FeedbackComments';
 import FeedbackStatusBadge from './FeedbackStatusBadge';
@@ -68,12 +70,12 @@ export default function FeedbackItemRow({
           <FeedbackStatusBadge status={item.status} />
         </div>
 
-        <h3 className="mt-2 break-words font-title text-[15px] font-semibold leading-snug text-content">
+        <h3 className="mt-2 wrap-break-word font-title text-[15px] font-semibold leading-snug text-content">
           {item.title}
         </h3>
 
         <p
-          className={`mt-1 whitespace-pre-wrap break-words text-sm text-content-muted ${
+          className={`mt-1 whitespace-pre-wrap wrap-break-word text-sm text-content-muted ${
             expanded ? '' : 'line-clamp-2'
           }`}>
           {item.body}
@@ -81,20 +83,21 @@ export default function FeedbackItemRow({
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-content-faint">
           <span className="flex items-center gap-1.5">
-            <span
-              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${avatarTint(
-                item.createdBy
-              )}`}>
-              {avatarInitial}
-            </span>
+            <AvatarRoot className="h-5 w-5">
+              <AvatarFallback
+                className={`bg-transparent text-[10px] font-semibold ${avatarTint(item.createdBy)}`}>
+                {avatarInitial}
+              </AvatarFallback>
+            </AvatarRoot>
             <span className="font-medium text-content-muted">{authorName}</span>
           </span>
           <span>·</span>
           <span>{formatDate(item.createdAt)}</span>
-          <button
-            type="button"
+          <Button
+            variant="tertiary"
+            size="xs"
             onClick={() => setExpanded(prev => !prev)}
-            className="flex items-center gap-1 transition-colors hover:text-primary-500">
+            className="h-auto gap-1 p-0 text-xs font-normal text-content-faint hover:bg-transparent hover:text-primary-500">
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -104,13 +107,14 @@ export default function FeedbackItemRow({
               />
             </svg>
             {item.commentCount} {t('feedback.comments')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="tertiary"
+            size="xs"
             onClick={() => setExpanded(prev => !prev)}
-            className="transition-colors hover:text-primary-500">
+            className="h-auto p-0 text-xs font-normal text-content-faint hover:bg-transparent hover:text-primary-500">
             {expanded ? t('feedback.collapse') : t('feedback.expand')}
-          </button>
+          </Button>
           {item.github?.issueUrl && (
             <a
               href={item.github.issueUrl}

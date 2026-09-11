@@ -7,7 +7,6 @@ sandbox_mode = "sandboxed"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
 
 [model]
 hint = "coding"

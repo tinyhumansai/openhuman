@@ -10,6 +10,9 @@ import { MemoryWorkspace } from '../MemoryWorkspace';
 // out separately so the workspace mounts cleanly without hitting the
 // network.
 vi.mock('../../../utils/tauriCommands', () => ({
+  // The status hook polls this alongside pipeline status; a factory mock
+  // without it turns every render into an unhandled rejection.
+  memoryNamespaceSummaries: vi.fn(async () => ({ namespaces: [], total_documents: 0 })),
   isTauri: vi.fn(() => true),
   memoryTreeGraphExport: vi.fn(),
   memoryTreeFlushNow: vi.fn(),

@@ -94,6 +94,32 @@ pub struct DumpedPrompt {
     pub tool_names: Vec<String>,
     /// Number of `ToolCategory::Workflow` tools in the dump.
     pub skill_tool_count: usize,
+    /// One `{name, description, parameters}` entry per tool the agent
+    /// exposes, in the same order as [`Self::tool_names`].
+    ///
+    /// The system prompt is only half of a turn's fixed cost: the tool
+    /// schemas ride alongside it in every request, and for an agent with a
+    /// few hundred tools they dominate. Dumping the prompt without them
+    /// measures the smaller half.
+    pub tool_specs: Vec<serde_json::Value>,
+}
+
+// The `+ 'a` is load-bearing: a bare `dyn Tool` here means `dyn Tool +
+// 'static`, which `Box<dyn Tool>` satisfies but a borrowed `&'a dyn Tool` (what
+// `Agent::all_tool_refs` yields) does not.
+fn tool_specs_of<'a, T: std::ops::Deref<Target = dyn crate::openhuman::tools::Tool + 'a>>(
+    tools: &[T],
+) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name(),
+                "description": t.description(),
+                "parameters": t.parameters_schema(),
+            })
+        })
+        .collect()
 }
 
 /// Render and return the system prompt for a single agent via the
@@ -202,6 +228,22 @@ async fn load_dump_config(
     if let Some(model) = model_override {
         config.default_model = Some(model);
     }
+
+    // The `agent` CLI dispatches straight to this dumper and never runs the
+    // runtime bootstrap, so nothing else wires the host's memory seams.
+    //
+    // The `tinymemory-core` seams this used to install are gone with the crate
+    // (#5560). The reason they were needed — building a session agent
+    // constructed an in-process memory store whose embedding seam failed loudly
+    // when unwired — no longer holds: `session::builder::factory` stopped
+    // booting one, so `dump-prompt` reaches no engine to call back into.
+    //
+    // The contract event sink still installs, idempotently, for the same reason
+    // as in `runtime::context`: it is a `tinymemory-api` seam with a live
+    // production publisher, and it drops silently rather than loudly when
+    // unwired. Same rationale as `memory_cli` / `subconscious_cli`.
+    crate::openhuman::memory::host::install_memory_event_sink();
+
     Ok(config)
 }
 
@@ -218,17 +260,17 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
     agent.fetch_connected_integrations().await;
     // Mirror turn-1: synthesise `delegate_*` tools for connected
     // Composio toolkits now that we know what's actually authorised.
-    // The shared-Arc failure path is unreachable here (this is the
-    // debug dumper running against a freshly-built agent — no
-    // sub-agent has cloned the tool list), so ignore the bool return.
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
 
     let text = agent
         .build_system_prompt(LearnedContextData::default())
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
-    let tools = agent.tools();
+    // The whole callable surface, so the dump shows the `delegate_*` tools
+    // the refresh above just synthesised alongside the durable registry.
+    let tools = agent.all_tool_refs();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
+    let tool_specs = tool_specs_of(&tools);
     let skill_tool_count = tools
         .iter()
         .filter(|t| t.category() == ToolCategory::Workflow)
@@ -243,6 +285,7 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
         text,
         tool_names,
         skill_tool_count,
+        tool_specs,
     })
 }
 
@@ -297,6 +340,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     match &client_kind {
         ComposioClientKind::Backend(composio_client) => {
             match crate::openhuman::integrations::composio::fetch_toolkit_actions(
+                config,
                 composio_client,
                 &integration.toolkit,
                 None,
@@ -457,6 +501,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         .iter()
         .map(|t| t.name().to_string())
         .collect();
+    let tool_specs = tool_specs_of(&rendered_tools);
     let skill_tool_count = rendered_tools
         .iter()
         .filter(|t| t.category() == ToolCategory::Workflow)
@@ -471,6 +516,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
         text,
         tool_names,
         skill_tool_count,
+        tool_specs,
     })
 }
 

@@ -1,11 +1,43 @@
+import {
+  type AppendMessage,
+  AssistantRuntimeProvider,
+  type ThreadMessageLike,
+  useExternalStoreRuntime,
+} from '@assistant-ui/react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { createRef, useEffect, useState } from 'react';
+import { createRef, type ReactNode, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Attachment } from '../../../lib/attachments';
 import ChatComposer, { type ChatComposerProps } from '../ChatComposer';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
+
+/**
+ * `ChatComposer` is built on the headless `ComposerPrimitive`, which reads its
+ * runtime from React context, so every render here needs one. The adapter is
+ * deliberately inert — this suite asserts the composer's own behaviour, and the
+ * composer never routes a send through the runtime (see the component's doc
+ * comment for why). What the runtime supplies is the composer *text store* the
+ * `inputValue` prop is bridged into.
+ */
+const EMPTY_RUNTIME_MESSAGES: ThreadMessageLike[] = [];
+
+function Runtime({
+  children,
+  onNew = async () => {},
+}: {
+  children: ReactNode;
+  onNew?: (message: AppendMessage) => Promise<void>;
+}) {
+  const runtime = useExternalStoreRuntime<ThreadMessageLike>({
+    messages: EMPTY_RUNTIME_MESSAGES,
+    isRunning: false,
+    convertMessage: m => m,
+    onNew,
+  });
+  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+}
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(256)], { type: 'image/png' });
@@ -49,7 +81,37 @@ function renderComposer(overrides: Partial<ChatComposerProps> = {}) {
     ...overrides,
   };
 
-  return render(<ChatComposer {...props} />);
+  return render(<ChatComposer {...props} />, { wrapper: Runtime });
+}
+
+/** A composer with real local text state, for cases a stubbed setter can't cover. */
+function Harness({ onSend }: { onSend: (text?: string) => Promise<void> }) {
+  const [value, setValue] = useState('hello');
+  const textInputRef = createRef<HTMLTextAreaElement | null>();
+  const fileInputRef = createRef<HTMLInputElement | null>();
+  const isComposingTextRef = { current: false };
+  return (
+    <ChatComposer
+      inputValue={value}
+      setInputValue={v => setValue(typeof v === 'function' ? v(value) : v)}
+      onSend={onSend}
+      textInputRef={textInputRef}
+      fileInputRef={fileInputRef}
+      composerInteractionBlocked={false}
+      isSending={false}
+      attachments={[]}
+      onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+      onRemoveAttachment={vi.fn()}
+      attachError={null}
+      onSwitchToMicCloud={vi.fn()}
+      handleInputKeyDown={vi.fn()}
+      inlineCompletionSuffix=""
+      isComposingTextRef={isComposingTextRef}
+      maxAttachments={0}
+      allowedMimeTypes={[]}
+      attachmentsEnabled={false}
+    />
+  );
 }
 
 describe('ChatComposer', () => {
@@ -176,6 +238,106 @@ describe('ChatComposer', () => {
     expect(onSwitchToMicCloud).toHaveBeenCalledTimes(1);
   });
 
+  describe('runtime boundary', () => {
+    it('renders with no assistant-ui runtime in context at all', () => {
+      // The primitives throw on a missing runtime; the boundary supplies an
+      // inert one so a host that mounts none still gets a working composer
+      // rather than a crash. Note the deliberate absence of `wrapper: Runtime`.
+      render(
+        <ChatComposer
+          inputValue="standalone"
+          setInputValue={vi.fn()}
+          onSend={vi.fn().mockResolvedValue(undefined)}
+          textInputRef={createRef<HTMLTextAreaElement | null>()}
+          fileInputRef={createRef<HTMLInputElement | null>()}
+          composerInteractionBlocked={false}
+          isSending={false}
+          attachments={[]}
+          onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+          onRemoveAttachment={vi.fn()}
+          attachError={null}
+          onSwitchToMicCloud={vi.fn()}
+          handleInputKeyDown={vi.fn()}
+          inlineCompletionSuffix=""
+          isComposingTextRef={{ current: false }}
+          maxAttachments={0}
+          allowedMimeTypes={[]}
+          attachmentsEnabled={false}
+        />
+      );
+      expect(screen.getByRole('textbox')).toHaveValue('standalone');
+      expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
+    });
+  });
+
+  describe('assistant-ui composer text bridge', () => {
+    it('renders the inputValue prop through the primitive input', () => {
+      // The primitive is not a controlled React input — it renders the
+      // runtime's composer text. The bridge is what makes the prop visible.
+      renderComposer({ inputValue: 'from the host surface' });
+      expect(screen.getByRole('textbox')).toHaveValue('from the host surface');
+    });
+
+    it('reports typing back to the host through setInputValue', () => {
+      const setInputValue = vi.fn();
+      renderComposer({ setInputValue });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'typed' } });
+      expect(setInputValue).toHaveBeenCalledWith('typed');
+    });
+
+    it('keeps the host authoritative when it ignores the change', () => {
+      // A surface that does not adopt the change must not end up with a
+      // composer showing text its own state never accepted.
+      renderComposer({ inputValue: 'host value', setInputValue: vi.fn() });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'ignored' } });
+      expect(screen.getByRole('textbox')).toHaveValue('host value');
+    });
+  });
+
+  describe('submit interception', () => {
+    it('sends through onSend, not the runtime, when the form submits', () => {
+      const onSend = vi.fn().mockResolvedValue(undefined);
+      const onNew = vi.fn().mockResolvedValue(undefined);
+      const { container } = render(<Harness onSend={onSend} />, {
+        wrapper: ({ children }) => <Runtime onNew={onNew}>{children}</Runtime>,
+      });
+      fireEvent.submit(container.querySelector('form')!);
+      expect(onSend).toHaveBeenCalledTimes(1);
+      // The primitive's own submit handler would have called the runtime's
+      // `onNew`, which cannot carry attachments or the parallel-send modifiers.
+      expect(onNew).not.toHaveBeenCalled();
+    });
+
+    it('does not send on submit while the composer is locked', () => {
+      const onSend = vi.fn().mockResolvedValue(undefined);
+      const { container } = renderComposer({ onSend, composerInteractionBlocked: true });
+      fireEvent.submit(container.querySelector('form')!);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Enter key ownership', () => {
+    it('does not send when the host key handler declines to act', () => {
+      // The regression this pins: assistant-ui's own Enter handler runs after
+      // the host's (Radix composes them) and fires whenever the host merely
+      // returns instead of calling preventDefault. Mid-IME-composition the host
+      // declines and the keydown carries no `isComposing` flag, so the
+      // primitive would submit a half-composed word. `submitMode="none"` is
+      // what stops it.
+      const onSend = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ inputValue: 'かな', onSend, handleInputKeyDown: vi.fn() });
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', keyCode: 229 });
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('still routes Enter to the host key handler', () => {
+      const handleInputKeyDown = vi.fn();
+      renderComposer({ inputValue: 'hello', handleInputKeyDown });
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+      expect(handleInputKeyDown).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('mascotDock', () => {
     it('renders the node inside the input box, not the header stack', () => {
       // Anchoring matters: the dock is absolutely positioned against the input
@@ -187,7 +349,7 @@ describe('ChatComposer', () => {
       });
 
       const dock = screen.getByTestId('mascot-dock');
-      const inputBox = container.querySelector('.rounded-2xl.border');
+      const inputBox = container.querySelector('.rounded-3xl.border');
       expect(inputBox).not.toBeNull();
       expect(inputBox!.contains(dock)).toBe(true);
       expect(inputBox!.contains(screen.getByTestId('header-slot'))).toBe(false);
@@ -207,7 +369,7 @@ describe('ChatComposer', () => {
     it('shows the drop overlay while a file drag is over the composer', () => {
       renderComposer();
       const textarea = screen.getByRole('textbox');
-      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const box = textarea.closest('div.rounded-3xl') as HTMLElement;
       fireEvent.dragOver(box, { dataTransfer: { types: ['Files'] } });
       expect(screen.getByText('chat.attachment.dropToAttach')).toBeInTheDocument();
     });
@@ -216,7 +378,7 @@ describe('ChatComposer', () => {
       const onAttachFiles = vi.fn().mockResolvedValue(undefined);
       renderComposer({ onAttachFiles });
       const textarea = screen.getByRole('textbox');
-      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const box = textarea.closest('div.rounded-3xl') as HTMLElement;
       const file = makeVideoFile();
       fireEvent.drop(box, { dataTransfer: { files: [file], types: ['Files'] } });
       expect(onAttachFiles).toHaveBeenCalledTimes(1);
@@ -226,7 +388,7 @@ describe('ChatComposer', () => {
       const onAttachFiles = vi.fn().mockResolvedValue(undefined);
       renderComposer({ onAttachFiles, attachmentsEnabled: false });
       const textarea = screen.getByRole('textbox');
-      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const box = textarea.closest('div.rounded-3xl') as HTMLElement;
       fireEvent.drop(box, { dataTransfer: { files: [makeVideoFile()], types: ['Files'] } });
       expect(onAttachFiles).not.toHaveBeenCalled();
     });
@@ -235,7 +397,7 @@ describe('ChatComposer', () => {
       // fireEvent returns false when the event default was prevented.
       renderComposer({ attachmentsEnabled: false });
       const textarea = screen.getByRole('textbox');
-      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const box = textarea.closest('div.rounded-3xl') as HTMLElement;
       const notPrevented = fireEvent.drop(box, {
         dataTransfer: { files: [makeVideoFile()], types: ['Files'] },
       });
@@ -317,7 +479,7 @@ describe('ChatComposer', () => {
         );
       }
 
-      render(<LoopHarness />);
+      render(<LoopHarness />, { wrapper: Runtime });
 
       const loopCalls = warnSpy.mock.calls.filter(
         args => typeof args[0] === 'string' && args[0].includes('Render-loop detected')
@@ -337,26 +499,28 @@ describe('ChatComposer', () => {
 
       // First, render normally.
       const { rerender } = render(
-        <ChatComposer
-          inputValue=""
-          setInputValue={vi.fn()}
-          onSend={vi.fn().mockResolvedValue(undefined)}
-          textInputRef={textInputRef}
-          fileInputRef={fileInputRef}
-          composerInteractionBlocked={false}
-          isSending={false}
-          attachments={[]}
-          onAttachFiles={vi.fn().mockResolvedValue(undefined)}
-          onRemoveAttachment={vi.fn()}
-          attachError={null}
-          onSwitchToMicCloud={vi.fn()}
-          handleInputKeyDown={vi.fn()}
-          inlineCompletionSuffix=""
-          isComposingTextRef={isComposingTextRef}
-          maxAttachments={5}
-          allowedMimeTypes={[]}
-          attachmentsEnabled={false}
-        />
+        <Runtime>
+          <ChatComposer
+            inputValue=""
+            setInputValue={vi.fn()}
+            onSend={vi.fn().mockResolvedValue(undefined)}
+            textInputRef={textInputRef}
+            fileInputRef={fileInputRef}
+            composerInteractionBlocked={false}
+            isSending={false}
+            attachments={[]}
+            onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+            onRemoveAttachment={vi.fn()}
+            attachError={null}
+            onSwitchToMicCloud={vi.fn()}
+            handleInputKeyDown={vi.fn()}
+            inlineCompletionSuffix=""
+            isComposingTextRef={isComposingTextRef}
+            maxAttachments={5}
+            allowedMimeTypes={[]}
+            attachmentsEnabled={false}
+          />
+        </Runtime>
       );
 
       // Wait for the setTimeout(0) reset to fire.
@@ -364,26 +528,28 @@ describe('ChatComposer', () => {
 
       // Then render again — should not warn because the counter was reset.
       rerender(
-        <ChatComposer
-          inputValue="hello"
-          setInputValue={vi.fn()}
-          onSend={vi.fn().mockResolvedValue(undefined)}
-          textInputRef={textInputRef}
-          fileInputRef={fileInputRef}
-          composerInteractionBlocked={false}
-          isSending={false}
-          attachments={[]}
-          onAttachFiles={vi.fn().mockResolvedValue(undefined)}
-          onRemoveAttachment={vi.fn()}
-          attachError={null}
-          onSwitchToMicCloud={vi.fn()}
-          handleInputKeyDown={vi.fn()}
-          inlineCompletionSuffix=""
-          isComposingTextRef={isComposingTextRef}
-          maxAttachments={5}
-          allowedMimeTypes={[]}
-          attachmentsEnabled={false}
-        />
+        <Runtime>
+          <ChatComposer
+            inputValue="hello"
+            setInputValue={vi.fn()}
+            onSend={vi.fn().mockResolvedValue(undefined)}
+            textInputRef={textInputRef}
+            fileInputRef={fileInputRef}
+            composerInteractionBlocked={false}
+            isSending={false}
+            attachments={[]}
+            onAttachFiles={vi.fn().mockResolvedValue(undefined)}
+            onRemoveAttachment={vi.fn()}
+            attachError={null}
+            onSwitchToMicCloud={vi.fn()}
+            handleInputKeyDown={vi.fn()}
+            inlineCompletionSuffix=""
+            isComposingTextRef={isComposingTextRef}
+            maxAttachments={5}
+            allowedMimeTypes={[]}
+            attachmentsEnabled={false}
+          />
+        </Runtime>
       );
 
       const loopCalls = warnSpy.mock.calls.filter(
@@ -438,6 +604,53 @@ describe('ChatComposer', () => {
     it('surfaces the follow-up hint as the placeholder', () => {
       renderComposer({ allowParallelSend: true, composerInteractionBlocked: true });
       expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', 'chat.followupHint');
+    });
+  });
+
+  /**
+   * Action-row layout. The reference design puts the attach button and the
+   * read-only model chip on the left, and the mic beside the send/stop action
+   * on the right. These assert the *grouping and order* of the controls (via
+   * DOM containment and document order) rather than any class string, so a
+   * restyle cannot break them but a re-ordering will.
+   */
+  describe('action row layout', () => {
+    it('renders the model chip immediately after the attach button', () => {
+      renderComposer();
+      const attach = screen.getByRole('button', { name: 'composer.attachFile' });
+      const chip = screen.getByRole('button', { name: 'composer.modelSelector' });
+      expect(chip).toBeInTheDocument();
+      // Same group, chip second.
+      expect(chip.parentElement).toBe(attach.parentElement);
+      expect(attach.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('groups the mic with the send action, not with the attach button', () => {
+      renderComposer();
+      const attach = screen.getByRole('button', { name: 'composer.attachFile' });
+      const mic = screen.getByRole('button', { name: 'composer.voiceMode' });
+      const send = screen.getByTestId('send-message-button');
+      expect(mic.parentElement).toBe(send.parentElement);
+      expect(mic.parentElement).not.toBe(attach.parentElement);
+      // Mic precedes send within that group.
+      expect(mic.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('keeps send reachable and usable with every control present', () => {
+      renderComposer({ inputValue: 'hi' });
+      expect(screen.getByRole('button', { name: 'composer.attachFile' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'composer.modelSelector' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'composer.voiceMode' })).toBeInTheDocument();
+      const send = screen.getByTestId('send-message-button');
+      expect(send).toBeInTheDocument();
+      expect(send).not.toBeDisabled();
+    });
+
+    it('still shows the model chip when the mic is hidden', () => {
+      renderComposer({ micEnabled: false });
+      expect(screen.queryByRole('button', { name: 'composer.voiceMode' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'composer.modelSelector' })).toBeInTheDocument();
+      expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
     });
   });
 });

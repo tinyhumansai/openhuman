@@ -214,7 +214,7 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("connect empty dictation ws");
-    ws.send(WsMessage::Text(r#"{"type":"stop"}"#.to_string()))
+    ws.send(WsMessage::Text(r#"{"type":"stop"}"#.into()))
         .await
         .expect("send stop");
     let final_msg = ws.next().await.expect("final frame").expect("final ok");
@@ -227,7 +227,7 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
     let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("connect capped dictation ws");
-    ws.send(WsMessage::Binary(vec![0u8; 9_600_002]))
+    ws.send(WsMessage::Binary(vec![0u8; 9_600_002].into()))
         .await
         .expect("send oversized pcm");
     let error_msg = ws.next().await.expect("error frame").expect("error ok");
@@ -241,26 +241,24 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
 }
 
 #[tokio::test]
-async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries() {
+async fn local_service_assets_report_state_from_fake_files_and_binaries() {
     let _env = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");
-    let whisper = write_stub_script(
-        scripts.path(),
-        "whisper-cli",
-        "#!/bin/sh\nprintf 'fallback transcript from fake whisper\\n'\n",
-    );
     write_stub_script(scripts.path(), "ollama", "#!/bin/sh\nexit 42\n");
     write_stub_script(scripts.path(), "python", "#!/bin/sh\nexit 42\n");
     write_stub_script(scripts.path(), "python3", "#!/bin/sh\nexit 42\n");
     write_stub_script(scripts.path(), "mlx_lm.generate", "#!/bin/sh\nexit 42\n");
     write_stub_script(scripts.path(), "piper", "#!/bin/sh\nexit 42\n");
 
-    let fake_model = tmp.path().join("fake-ggml.bin");
-    std::fs::write(&fake_model, b"not a real whisper model").expect("fake model");
-    let audio = tmp.path().join("audio.wav");
-    std::fs::write(&audio, minimal_wav_16k_mono()).expect("audio wav");
+    // The `stt` asset slot still exists (the hosted-STT migration left the
+    // generic local-AI asset plumbing in place), so a present file on disk
+    // must still report "ready" — only the transcription engine behind it is
+    // gone. Nothing reads this file any more; it exists to drive the state
+    // machine.
+    let fake_model = tmp.path().join("fake-stt-asset.bin");
+    std::fs::write(&fake_model, b"not a real stt model").expect("fake model");
 
     let mut config = temp_config(&tmp);
     config.local_ai.runtime_enabled = true;
@@ -274,13 +272,11 @@ async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries()
     config.local_ai.stt_model_id = fake_model.display().to_string();
     config.local_ai.tts_voice_id = "round23-voice".to_string();
     config.local_ai.tts_download_url = Some(format!("{base}/asset/tts"));
-    config.local_ai.whisper_in_process = true;
     config.save().await.expect("save config");
 
     let _path = EnvVarGuard::set("PATH", scripts.path());
     let _workspace = EnvVarGuard::set("OPENHUMAN_WORKSPACE", config.config_path.parent().unwrap());
     let _ollama_base = EnvVarGuard::set("OPENHUMAN_OLLAMA_BASE_URL", &base);
-    let _whisper_bin = EnvVarGuard::set("WHISPER_BIN", &whisper);
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
     let _ollama_bin = EnvVarGuard::unset("OLLAMA_BIN");
 
@@ -295,33 +291,16 @@ async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries()
     // advertises it, so an Ondemand-mode vision model that is present reports
     // "ready", not "ondemand".
     assert_eq!(assets.vision.state, "ready");
-    assert_eq!(assets.stt.state, "ready");
     assert_eq!(assets.tts.state, "ondemand");
 
     let progress = service.downloads_progress(&config).await.expect("progress");
-    assert_eq!(progress.stt.state, "ready");
     assert_eq!(progress.tts.state, "ondemand");
 
-    let transcript = service
-        .transcribe_with_prompt(
-            &config,
-            audio.to_string_lossy().as_ref(),
-            Some("round23 vocabulary"),
-        )
-        .await
-        .expect("fake whisper fallback transcript");
-    assert_eq!(transcript.text, "fallback transcript from fake whisper");
-    assert_eq!(transcript.model_id, fake_model.display().to_string());
+    // No transcription assertion here any more: `transcribe_with_prompt` is a
+    // hosted call to the backend proxy since the whisper.cpp engine was
+    // deleted, so there is no local binary to stub and nothing this offline
+    // test can drive. Hosted STT is covered where the backend is mocked.
 
-    assert_eq!(
-        local_ai_assets_status(&config)
-            .await
-            .expect("ops assets")
-            .value
-            .stt
-            .state,
-        "ready"
-    );
     assert_eq!(
         local_ai_downloads_progress(&config)
             .await
@@ -505,26 +484,4 @@ fn write_stub_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         std::fs::set_permissions(&path, perms).expect("chmod");
     }
     path
-}
-
-fn minimal_wav_16k_mono() -> Vec<u8> {
-    let pcm: [i16; 4] = [0, 100, -100, 0];
-    let data_len = (pcm.len() * 2) as u32;
-    let mut out = Vec::new();
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&16000u32.to_le_bytes());
-    out.extend_from_slice(&32000u32.to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for sample in pcm {
-        out.extend_from_slice(&sample.to_le_bytes());
-    }
-    out
 }

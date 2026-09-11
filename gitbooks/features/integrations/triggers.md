@@ -93,7 +93,6 @@ This is the part that distinguishes "OpenHuman has a Gmail integration" from "Op
   - Draft a reply to an important email and queue it for your approval.
   - Pull up the relevant Notion / Linear / Drive context for an inbound issue and write a structured comment.
   - Update three connected systems based on a single inbound event ("this customer's plan changed in Stripe, update HubSpot, post in #revenue, and add a note to their Notion file").
-  - Decide the trigger means a meeting just got scheduled and pre-load the [Meeting Agent](../mascot/meeting-agents.md) for that call.
 
 In both cases the action runs on your machine, against your local Memory Tree, with the same model-routing and tool surface the rest of the agent uses.
 
@@ -136,4 +135,3 @@ Triggers follow the same boundary as the rest of the product (see [Privacy & Sec
 - [Third-party Integrations](README.md), the catalog of services triggers come from.
 - [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md), the polling counterpart, periodic ingest of source data into the Memory Tree.
 - [Subconscious Loop](../subconscious.md), the background loop that uses trigger context and memory to plan ahead.
-- [Meeting Agents](../mascot/meeting-agents.md), one place an escalated trigger can land (a calendar event with a Meet link).

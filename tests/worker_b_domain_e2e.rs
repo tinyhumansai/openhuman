@@ -267,7 +267,6 @@ async fn worker_b_schema_catalog_exposes_all_controller_methods() {
         "openhuman.tools_querit_search",
         "openhuman.tools_searxng_search",
         "openhuman.tools_apify_linkedin_scrape",
-        "openhuman.tools_polymarket_execute",
         "openhuman.tool_registry_list",
         "openhuman.tool_registry_get",
         "openhuman.tool_registry_diagnostics",
@@ -653,11 +652,6 @@ async fn tools_and_tool_registry_paths_are_reachable_without_live_services() {
             "openhuman.tools_apify_linkedin_scrape",
             json!({ "profile_url": "https://www.linkedin.com/in/example" }),
             "Sign in first",
-        ),
-        (
-            "openhuman.tools_polymarket_execute",
-            json!({ "action": "markets", "arguments": {} }),
-            "disabled",
         ),
     ]
     .into_iter()

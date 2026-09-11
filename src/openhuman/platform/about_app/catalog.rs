@@ -13,7 +13,7 @@ static VALIDATED: OnceLock<()> = OnceLock::new();
 
 pub fn all_capabilities() -> &'static [Capability] {
     ensure_validated();
-    CAPABILITIES
+    CAPABILITIES.as_slice()
 }
 
 pub fn capabilities_by_category(category: CapabilityCategory) -> Vec<Capability> {
@@ -65,7 +65,7 @@ fn searchable_text(capability: &Capability) -> String {
 fn ensure_validated() {
     VALIDATED.get_or_init(|| {
         let mut ids = BTreeSet::new();
-        for capability in CAPABILITIES {
+        for capability in CAPABILITIES.iter() {
             assert!(
                 !capability.id.trim().is_empty(),
                 "about_app capability id must not be empty"

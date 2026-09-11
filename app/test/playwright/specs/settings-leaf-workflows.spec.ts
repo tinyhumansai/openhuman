@@ -59,80 +59,19 @@ function unwrap<T>(value: T | { result: T }): T {
 }
 
 test.describe('Settings leaf workflows', () => {
-  test('appearance theme, tab bar, and chat rendering preferences persist in app state', async ({
-    page,
-  }) => {
+  test('appearance theme persists in app state', async ({ page }) => {
     await openSettings(page, 'pw-settings-appearance', '/settings/appearance');
 
     // Panel title dropped in the PanelPage migration; the theme radios confirm
     // the Appearance panel mounted.
     await expect(page.getByRole('radio', { name: /Dark/ })).toBeVisible();
     await page.getByRole('radio', { name: /Dark/ }).click();
-    const labelSwitch = page.getByRole('switch', { name: /Always show labels/ });
-    if ((await labelSwitch.getAttribute('aria-checked')) !== 'true') {
-      await labelSwitch.click();
-    }
-    const assistantTextSwitch = page.getByRole('switch', { name: /Plain assistant responses/ });
-    if ((await assistantTextSwitch.getAttribute('aria-checked')) !== 'true') {
-      await assistantTextSwitch.click();
-    }
-
-    await expect
-      .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
-    await expect
-      .poll(() => persistedThemeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
+    await expect.poll(() => themeState(page)).toMatchObject({ mode: 'dark' });
+    await expect.poll(() => persistedThemeState(page)).toMatchObject({ mode: 'dark' });
 
     await page.reload();
     await waitForAppReady(page);
-    await expect
-      .poll(() => themeState(page))
-      .toMatchObject({ mode: 'dark', tabBarLabels: 'always', agentMessageViewMode: 'text' });
-  });
-
-  test('embeddings custom endpoint setup writes provider, model, and dimensions', async ({
-    page,
-  }) => {
-    await openSettings(page, 'pw-settings-embeddings', '/settings/embeddings');
-
-    // Panel title dropped in the PanelPage migration; the provider radios confirm
-    // the Embeddings panel mounted.
-    await expect(page.getByRole('radio', { name: /Custom/i })).toBeVisible();
-    await page.getByRole('radio', { name: /Custom/i }).click();
-
-    await expect(page.getByRole('heading', { name: /Set up/i })).toBeVisible();
-    await page
-      .getByPlaceholder('https://your-endpoint.com/v1')
-      .fill('http://127.0.0.1:18473/openai/v1');
-    // Use a `text-embedding-3-*` model so the save-time verification probe sends
-    // `dimensions: 64` — the mock backend (scripts/mock-api) echoes that length,
-    // so the live test embed verifies and the config can be persisted.
-    await page.getByPlaceholder('text-embedding-3-small').fill('text-embedding-3-small');
-    await page.getByPlaceholder('1024').fill('64');
-    await page.getByRole('button', { name: 'Save & switch' }).click();
-
-    const wipe = page.getByRole('button', { name: 'Wipe & apply' });
-    await expect(wipe).toBeVisible({ timeout: 15_000 });
-    await wipe.click();
-
-    await expect(page.getByText('Saved.')).toBeVisible({ timeout: 15_000 });
-    await expect
-      .poll(async () => {
-        const raw = await callCoreRpc<any>('openhuman.embeddings_get_settings', {});
-        const settings =
-          unwrap<{ provider?: string; model?: string; dimensions?: number }>(raw) ?? {};
-        return {
-          provider: settings.provider,
-          model: settings.model,
-          dimensions: settings.dimensions,
-        };
-      })
-      .toEqual({
-        provider: 'custom:http://127.0.0.1:18473/openai/v1',
-        model: 'text-embedding-3-small',
-        dimensions: 64,
-      });
+    await expect.poll(() => themeState(page)).toMatchObject({ mode: 'dark' });
   });
 
   test('agents/new creates a custom agent that appears in the registry', async ({ page }) => {

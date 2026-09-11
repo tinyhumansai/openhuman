@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use tinyagents::harness::workspace::WorkspaceDescriptor;
+use tinyagents_harness::workspace::WorkspaceDescriptor;
 use tokio::sync::mpsc::Sender;
 
 use crate::openhuman::agent::harness::run_queue::RunQueue;

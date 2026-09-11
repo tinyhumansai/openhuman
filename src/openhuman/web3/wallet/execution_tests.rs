@@ -257,6 +257,17 @@ async fn tx_status_rejects_empty_hash() {
     assert!(err.contains("tx hash is empty"), "got: {err}");
 }
 
+// Drives the real wallet module, so it must be the only such test in its
+// process: tinybus never unloads a module, and the module bus belongs to
+// whichever tokio runtime created it — a second `#[tokio::test]` finds a
+// broker whose tasks died with the first and the call fails with
+// "connection closed". Verified passing in isolation:
+//
+//   cargo test -p openhuman --lib --features "$(bash scripts/ci/product-features.sh)" \
+//     execute_prepared_broadcasts_native_evm_transaction -- --ignored --test-threads=1
+//
+// Same constraint tinydocs documents for its module-backed tool tests.
+#[ignore = "drives the loaded wallet module; must run alone in its process"]
 #[tokio::test]
 async fn execute_prepared_broadcasts_native_evm_transaction() {
     let _guard = TEST_LOCK.lock();
@@ -294,6 +305,17 @@ async fn execute_prepared_broadcasts_native_evm_transaction() {
     );
 }
 
+// Drives the real wallet module, so it must be the only such test in its
+// process: tinybus never unloads a module, and the module bus belongs to
+// whichever tokio runtime created it — a second `#[tokio::test]` finds a
+// broker whose tasks died with the first and the call fails with
+// "connection closed". Verified passing in isolation:
+//
+//   cargo test -p openhuman --lib --features "$(bash scripts/ci/product-features.sh)" \
+//     execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog -- --ignored --test-threads=1
+//
+// Same constraint tinydocs documents for its module-backed tool tests.
+#[ignore = "drives the loaded wallet module; must run alone in its process"]
 #[tokio::test]
 async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog() {
     let _guard = TEST_LOCK.lock();
@@ -335,6 +357,17 @@ async fn execute_prepared_broadcasts_erc20_transfer_using_default_token_catalog(
     assert!(data.starts_with("0xa9059cbb"));
 }
 
+// Drives the real wallet module, so it must be the only such test in its
+// process: tinybus never unloads a module, and the module bus belongs to
+// whichever tokio runtime created it — a second `#[tokio::test]` finds a
+// broker whose tasks died with the first and the call fails with
+// "connection closed". Verified passing in isolation:
+//
+//   cargo test -p openhuman --lib --features "$(bash scripts/ci/product-features.sh)" \
+//     execute_prepared_broadcasts_native_evm_on_base_with_chain_id_8453 -- --ignored --test-threads=1
+//
+// Same constraint tinydocs documents for its module-backed tool tests.
+#[ignore = "drives the loaded wallet module; must run alone in its process"]
 #[tokio::test]
 async fn execute_prepared_broadcasts_native_evm_on_base_with_chain_id_8453() {
     let _guard = TEST_LOCK.lock();

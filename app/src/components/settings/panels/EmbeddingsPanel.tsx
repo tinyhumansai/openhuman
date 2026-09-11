@@ -22,17 +22,13 @@ import {
 } from '../../../services/api/embeddingsApi';
 import { isLocalSessionToken } from '../../../utils/localSession';
 import PanelPage from '../../layout/PanelPage';
-import Button from '../../ui/Button';
+import { Alert, AlertDescription, Button, CenteredLoadingState, ConfirmDialog } from '../../ui';
 import SettingsBackButton from '../components/SettingsBackButton';
-import {
-  SettingsBadge,
-  SettingsRow,
-  SettingsSection,
-  SettingsSelect,
-  SettingsStatusLine,
-  SettingsTextField,
-} from '../controls';
+import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import EmbeddingsModelSection from './EmbeddingsModelSection';
+import EmbeddingsProviderList from './EmbeddingsProviderList';
+import EmbeddingsSetupModal from './EmbeddingsSetupModal';
 
 // Grep-friendly, namespaced diagnostics for the custom-endpoint verification
 // flow. Logs only safe metadata (error classification code, state transitions) —
@@ -114,13 +110,13 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         description={embedded ? undefined : t('pages.settings.ai.embeddingsDesc')}
         leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
         <div className={embedded ? '' : 'p-4'}>
-          <div className="rounded-xl border border-line bg-surface p-4 text-xs text-content-muted">
-            {status.kind === 'loading'
-              ? t('common.loading')
-              : status.kind === 'error'
-                ? status.message
-                : ''}
-          </div>
+          {status.kind === 'loading' ? (
+            <CenteredLoadingState label={t('common.loading')} />
+          ) : status.kind === 'error' ? (
+            <Alert variant="destructive" density="compact">
+              <AlertDescription>{status.message}</AlertDescription>
+            </Alert>
+          ) : null}
         </div>
       </PanelPage>
     );
@@ -139,20 +135,37 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
   function handleProviderClick(entry: EmbeddingProviderEntry) {
     if (entry.slug !== 'managed') setManagedSessionMissing(false);
+
+    if (entry.slug === 'custom') {
+      // Custom is an editable profile, not a plain selection: reopen (and
+      // hydrate from the retained profile) even when already selected.
+      const loadedSettings = settings!;
+      const activeEndpoint = loadedSettings.provider.startsWith('custom:')
+        ? loadedSettings.provider.slice('custom:'.length)
+        : '';
+      const profile = activeEndpoint
+        ? {
+            endpoint: activeEndpoint,
+            model: loadedSettings.model,
+            dimensions: loadedSettings.dimensions,
+          }
+        : loadedSettings.custom_settings;
+      setCustomEndpoint(profile?.endpoint ?? customEndpoint);
+      setCustomModel(profile?.model ?? customModel);
+      setCustomDims(String(profile?.dimensions ?? customDims));
+      setSetupProvider(entry);
+      setSetupKey('');
+      setSetupShowKey(false);
+      setSetupTestResult(null);
+      setSetupError('');
+      return;
+    }
+
     if (entry.slug === selectedProvider) return;
 
     if (entry.slug === 'managed' && isLocalSession) {
       setManagedSessionMissing(true);
       setStatus({ kind: 'error', message: managedLoginMessage });
-      return;
-    }
-
-    if (entry.slug === 'custom') {
-      // For custom, open setup popup to enter endpoint
-      setSetupProvider(entry);
-      setSetupKey('');
-      setSetupTestResult(null);
-      setSetupError('');
       return;
     }
 
@@ -435,164 +448,56 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         </p>
 
         {/* Provider selection */}
-        <SettingsSection>
-          <div role="radiogroup" aria-label={t('settings.embeddings.providerAria')}>
-            {settings.providers.map((entry, idx) => {
-              const selected = entry.slug === selectedProvider;
-              return (
-                <button
-                  key={entry.slug}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => handleProviderClick(entry)}
-                  className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
-                    idx !== 0 ? 'border-t border-line-subtle' : ''
-                  } ${
-                    selected ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-hover'
-                  }`}>
-                  <span className="flex-1 min-w-0">
-                    <span className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-content">{entry.label}</span>
-                      {entry.requires_api_key && (
-                        <SettingsBadge variant={entry.has_api_key ? 'success' : 'warning'}>
-                          {entry.has_api_key
-                            ? t('settings.embeddings.statusConfigured')
-                            : t('settings.embeddings.statusNeedsKey')}
-                        </SettingsBadge>
-                      )}
-                      {isLocalSession && entry.slug === 'managed' && (
-                        <SettingsBadge variant="warning">
-                          {t('settings.embeddings.requiresSignIn')}
-                        </SettingsBadge>
-                      )}
-                    </span>
-                    <span className="block mt-0.5 text-xs text-content-muted">
-                      {entry.description}
-                    </span>
-                  </span>
-                  {selected && (
-                    <svg
-                      className="w-5 h-5 text-primary-500 flex-shrink-0 mt-0.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-hidden>
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </SettingsSection>
+        <EmbeddingsProviderList
+          providers={settings.providers}
+          selectedProvider={selectedProvider}
+          isLocalSession={isLocalSession}
+          onSelect={handleProviderClick}
+        />
 
         {showManagedLoginPrompt && (
-          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
-                {t('settings.embeddings.managedBannerIntro')}{' '}
-                {isLocalSession
-                  ? t('settings.embeddings.managedBannerLocalSession')
-                  : t('settings.embeddings.managedBannerRemoteSession')}
-              </p>
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                className="shrink-0"
-                onClick={() => void clearSession()}>
-                {isLocalSession
-                  ? t('settings.exitLocalSession')
-                  : t('settings.embeddings.signInAgain')}
-              </Button>
-            </div>
-          </div>
+          <Alert
+            variant="warning"
+            className="flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <AlertDescription className="opacity-100">
+              {t('settings.embeddings.managedBannerIntro')}{' '}
+              {isLocalSession
+                ? t('settings.embeddings.managedBannerLocalSession')
+                : t('settings.embeddings.managedBannerRemoteSession')}
+            </AlertDescription>
+            <Button
+              variant="secondary"
+              size="xs"
+              className="shrink-0"
+              onClick={() => void clearSession()}>
+              {isLocalSession
+                ? t('settings.exitLocalSession')
+                : t('settings.embeddings.signInAgain')}
+            </Button>
+          </Alert>
         )}
 
         {/* Vector search disabled notice */}
         {selectedProvider === 'none' && (
-          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-900/10 p-3">
-            <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
-              {t('settings.embeddings.vectorSearchDisabled')}
-            </p>
-          </div>
+          <Alert variant="warning">{t('settings.embeddings.vectorSearchDisabled')}</Alert>
         )}
 
         {/* Model & dimensions (for active provider with catalog models) */}
         {currentModels.length > 0 &&
           selectedProvider !== 'custom' &&
           selectedProvider !== 'none' && (
-            <SettingsSection>
-              {currentModels.length > 1 && (
-                <SettingsRow
-                  htmlFor="embeddings-model"
-                  label={t('settings.embeddings.model')}
-                  stacked
-                  control={
-                    <SettingsSelect
-                      id="embeddings-model"
-                      value={settings.model}
-                      onChange={e => void handleModelChange(e.target.value)}
-                      className="w-full">
-                      {currentModels.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.label} ({m.id})
-                        </option>
-                      ))}
-                    </SettingsSelect>
-                  }
-                />
-              )}
-
-              {allowedDims.length > 1 && (
-                <SettingsRow
-                  htmlFor="embeddings-dims"
-                  label={t('settings.embeddings.dimensions')}
-                  stacked
-                  control={
-                    <SettingsSelect
-                      id="embeddings-dims"
-                      value={settings.dimensions}
-                      onChange={e => void handleDimsChange(Number(e.target.value))}
-                      className="w-full">
-                      {allowedDims.map(d => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </SettingsSelect>
-                  }
-                />
-              )}
-
-              {/* Active provider info + actions */}
-              <div className="flex items-center gap-2 px-4 py-3">
-                {currentEntry?.requires_api_key && currentEntry.has_api_key && (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    tone="danger"
-                    size="xs"
-                    onClick={() => void handleClearKey()}>
-                    {t('settings.embeddings.clearKey')}
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => void handleTestConnection()}
-                  disabled={selectedProvider === 'none' || managedRequiresLogin}>
-                  {t('settings.embeddings.testConnection')}
-                </Button>
-              </div>
-            </SettingsSection>
+            <EmbeddingsModelSection
+              currentModels={currentModels}
+              allowedDims={allowedDims}
+              model={settings.model}
+              dimensions={settings.dimensions}
+              onModelChange={modelId => void handleModelChange(modelId)}
+              onDimsChange={dims => void handleDimsChange(dims)}
+              canClearKey={Boolean(currentEntry?.requires_api_key && currentEntry.has_api_key)}
+              onClearKey={() => void handleClearKey()}
+              onTestConnection={() => void handleTestConnection()}
+              testConnectionDisabled={selectedProvider === 'none' || managedRequiresLogin}
+            />
           )}
 
         {/* Status bar */}
@@ -610,222 +515,45 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
       {/* ── Setup popup (API key entry + test + save) ── */}
       {setupProvider && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={e => {
-            if (e.target === e.currentTarget) {
-              setSetupProvider(null);
+        <EmbeddingsSetupModal
+          setupProvider={setupProvider}
+          onClose={() => setSetupProvider(null)}
+          setupKey={setupKey}
+          onSetupKeyChange={setSetupKey}
+          setupShowKey={setupShowKey}
+          onToggleShowKey={() => setSetupShowKey(s => !s)}
+          setupTesting={setupTesting}
+          setupTestResult={setupTestResult}
+          setupSaving={setupSaving}
+          setupError={setupError}
+          customEndpoint={customEndpoint}
+          onCustomEndpointChange={setCustomEndpoint}
+          customModel={customModel}
+          onCustomModelChange={setCustomModel}
+          customDims={customDims}
+          onCustomDimsChange={setCustomDims}
+          onTest={() => void setupTest()}
+          onSave={() => {
+            if (setupProvider.slug === 'custom') {
+              void setupSaveCustom();
+            } else {
+              void setupSave();
             }
-          }}>
-          <div className="mx-4 max-w-md w-full rounded-2xl bg-surface border border-line dark:border-line-strong p-6 shadow-xl space-y-4">
-            <h3 className="text-sm font-semibold text-content">
-              {t('settings.embeddings.setupTitle').replace('{provider}', setupProvider.label)}
-            </h3>
-
-            {setupProvider.slug === 'custom' ? (
-              /* Custom endpoint form */
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                    {t('settings.embeddings.customEndpoint')}
-                  </label>
-                  <SettingsTextField
-                    type="text"
-                    value={customEndpoint}
-                    onChange={e => setCustomEndpoint(e.target.value)}
-                    placeholder="https://your-endpoint.com/v1"
-                    mono
-                    autoFocus
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                      {t('settings.embeddings.customModelPlaceholder')}
-                    </label>
-                    <SettingsTextField
-                      type="text"
-                      value={customModel}
-                      onChange={e => setCustomModel(e.target.value)}
-                      placeholder="text-embedding-3-small"
-                      mono
-                    />
-                  </div>
-                  <div className="w-24">
-                    <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                      {t('settings.embeddings.dimensions')}
-                    </label>
-                    <SettingsTextField
-                      type="number"
-                      value={customDims}
-                      onChange={e => setCustomDims(e.target.value)}
-                      placeholder="1024"
-                      mono
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                    {t('settings.embeddings.apiKeyLabelGeneric')} (
-                    {t('settings.embeddings.optional')})
-                  </label>
-                  <SettingsTextField
-                    type={setupShowKey ? 'text' : 'password'}
-                    value={setupKey}
-                    onChange={e => setSetupKey(e.target.value)}
-                    placeholder={t('settings.embeddings.placeholderKey')}
-                    mono
-                  />
-                </div>
-              </div>
-            ) : (
-              /* Standard API key form */
-              <div className="space-y-3">
-                <p className="text-xs text-content-muted">{setupProvider.description}</p>
-                <div>
-                  <label className="block text-[11px] font-medium text-content-secondary mb-1">
-                    {t('settings.embeddings.apiKeyLabel').replace(
-                      '{provider}',
-                      setupProvider.label
-                    )}
-                  </label>
-                  <div className="flex gap-2">
-                    <SettingsTextField
-                      type={setupShowKey ? 'text' : 'password'}
-                      value={setupKey}
-                      onChange={e => setSetupKey(e.target.value)}
-                      placeholder={t('settings.embeddings.placeholderKey')}
-                      mono
-                      autoFocus
-                      className="flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="xs"
-                      onClick={() => setSetupShowKey(s => !s)}>
-                      {setupShowKey ? t('settings.embeddings.hide') : t('settings.embeddings.show')}
-                    </Button>
-                  </div>
-                  <p className="mt-1 text-[10px] text-content-faint">
-                    {t('settings.embeddings.keyStoredEncrypted')}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Test result */}
-            {setupTestResult && (
-              <div
-                className={`rounded-lg px-3 py-2 text-xs ${
-                  setupTestResult.success
-                    ? 'bg-sage-50 dark:bg-sage-900/20 text-sage-700 dark:text-sage-300'
-                    : 'bg-coral-50 dark:bg-coral-900/20 text-coral-700 dark:text-coral-300'
-                }`}>
-                {setupTestResult.success
-                  ? t('settings.embeddings.testSuccess').replace(
-                      '{dims}',
-                      String(setupTestResult.actual_dimensions ?? '?')
-                    )
-                  : t('settings.embeddings.testFailed').replace(
-                      '{error}',
-                      setupTestResult.error ?? ''
-                    )}
-              </div>
-            )}
-
-            {setupError && (
-              <div className="rounded-lg px-3 py-2 text-xs bg-coral-50 dark:bg-coral-900/20 text-coral-700 dark:text-coral-300">
-                {setupError}
-              </div>
-            )}
-
-            {/* Popup actions */}
-            <div className="flex justify-between pt-1">
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                onClick={() => {
-                  if (setupProvider.slug !== 'custom') {
-                    void setupTest();
-                  }
-                }}
-                disabled={
-                  setupTesting ||
-                  setupSaving ||
-                  (setupProvider.slug !== 'custom' && !setupKey.trim())
-                }>
-                {setupTesting
-                  ? t('settings.embeddings.testing')
-                  : t('settings.embeddings.testConnection')}
-              </Button>
-
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  size="xs"
-                  onClick={() => setSetupProvider(null)}>
-                  {t('settings.embeddings.cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="xs"
-                  onClick={() => {
-                    if (setupProvider.slug === 'custom') {
-                      void setupSaveCustom();
-                    } else {
-                      void setupSave();
-                    }
-                  }}
-                  disabled={
-                    setupSaving ||
-                    (setupProvider.slug !== 'custom' &&
-                      !setupKey.trim() &&
-                      !setupProvider.has_api_key) ||
-                    (setupProvider.slug === 'custom' && !customEndpoint.trim())
-                  }>
-                  {setupSaving
-                    ? t('settings.embeddings.saving')
-                    : t('settings.embeddings.saveAndSwitch')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
+          }}
+        />
       )}
-
       {/* ── Confirm wipe dialog ── */}
       {pendingWipe && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="mx-4 max-w-sm w-full rounded-2xl bg-surface border border-line dark:border-line-strong p-6 shadow-xl space-y-4">
-            <h3 className="text-sm font-semibold text-content">
-              {t('settings.embeddings.wipeTitle')}
-            </h3>
-            <p className="text-xs text-content-secondary dark:text-content-muted leading-relaxed">
-              {t('settings.embeddings.wipeBody')}
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="tertiary"
-                size="xs"
-                onClick={() => setPendingWipe(null)}>
-                {t('settings.embeddings.cancel')}
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                tone="danger"
-                size="xs"
-                onClick={() => void confirmWipe()}>
-                {t('settings.embeddings.confirmWipe')}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          titleId="embeddings-wipe-title"
+          title={t('settings.embeddings.wipeTitle')}
+          body={t('settings.embeddings.wipeBody')}
+          confirmLabel={t('settings.embeddings.confirmWipe')}
+          cancelLabel={t('settings.embeddings.cancel')}
+          destructive
+          onConfirm={() => void confirmWipe()}
+          onCancel={() => setPendingWipe(null)}
+        />
       )}
     </PanelPage>
   );

@@ -15,38 +15,31 @@
 mod types;
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tinyagents_harness::run_queue::{QueueLane, RunQueue as TinyAgentsRunQueue};
 
-pub use types::{QueueMode, QueueStatus, QueuedMessage};
+pub use tinyagents_harness::run_queue::QueueStatus;
+pub use types::{QueueMode, QueuedMessage};
 
 /// Thread-safe run queue with three lanes. Wrapped in `Arc` for shared
 /// ownership between the web channel producer and the engine consumer.
 #[derive(Debug)]
 pub struct RunQueue {
-    inner: Mutex<RunQueueInner>,
-}
-
-#[derive(Debug, Default)]
-struct RunQueueInner {
-    steers: Vec<QueuedMessage>,
-    followups: Vec<QueuedMessage>,
-    collects: Vec<QueuedMessage>,
+    inner: TinyAgentsRunQueue<QueuedMessage>,
 }
 
 impl RunQueue {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(RunQueueInner::default()),
+            inner: TinyAgentsRunQueue::new(),
         })
     }
 
     /// Push a message into the appropriate lane based on its mode.
     pub async fn push(&self, msg: QueuedMessage) {
-        let mut inner = self.inner.lock().await;
         match msg.mode {
-            QueueMode::Steer => inner.steers.push(msg),
-            QueueMode::Followup => inner.followups.push(msg),
-            QueueMode::Collect => inner.collects.push(msg),
+            QueueMode::Steer => self.inner.push(QueueLane::Steer, msg).await,
+            QueueMode::Followup => self.inner.push(QueueLane::Followup, msg).await,
+            QueueMode::Collect => self.inner.push(QueueLane::Collect, msg).await,
             QueueMode::Interrupt => {
                 log::warn!(
                     "[run_queue] interrupt-mode message pushed to queue — should have been handled by caller"
@@ -62,44 +55,27 @@ impl RunQueue {
 
     /// Drain all pending steer messages (FIFO order).
     pub async fn drain_steers(&self) -> Vec<QueuedMessage> {
-        let mut inner = self.inner.lock().await;
-        std::mem::take(&mut inner.steers)
+        self.inner.drain(QueueLane::Steer).await
     }
 
     /// Drain all pending collect messages (FIFO order).
     pub async fn drain_collects(&self) -> Vec<QueuedMessage> {
-        let mut inner = self.inner.lock().await;
-        std::mem::take(&mut inner.collects)
+        self.inner.drain(QueueLane::Collect).await
     }
 
     /// Drain all pending followup messages (FIFO order).
     pub async fn drain_followups(&self) -> Vec<QueuedMessage> {
-        let mut inner = self.inner.lock().await;
-        std::mem::take(&mut inner.followups)
+        self.inner.drain(QueueLane::Followup).await
     }
 
     /// Snapshot the current queue depth per lane.
     pub async fn status(&self) -> QueueStatus {
-        let inner = self.inner.lock().await;
-        let steers = inner.steers.len();
-        let followups = inner.followups.len();
-        let collects = inner.collects.len();
-        QueueStatus {
-            steers,
-            followups,
-            collects,
-            total: steers + followups + collects,
-        }
+        self.inner.status().await
     }
 
     /// Clear all lanes and return the total number of messages dropped.
     pub async fn clear(&self) -> usize {
-        let mut inner = self.inner.lock().await;
-        let total = inner.steers.len() + inner.followups.len() + inner.collects.len();
-        inner.steers.clear();
-        inner.followups.clear();
-        inner.collects.clear();
-        total
+        self.inner.clear().await
     }
 }
 

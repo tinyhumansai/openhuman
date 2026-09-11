@@ -34,6 +34,7 @@ import {
   openhumanCronRuns,
   openhumanCronUpdate,
 } from '../../utils/tauriCommands/cron';
+import { Badge, type BadgeVariant, Checkbox, NativeSelect, TextField } from '../ui';
 import Button from '../ui/Button';
 import CreateSkillModal from './CreateSkillModal';
 import BranchPicker from './inputs/BranchPicker';
@@ -941,17 +942,17 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
     onChange: (next: InputValue) => void
   ) => {
     const id = `skills-runner-input-${inp.name}`;
-    const requiredMark = inp.required ? <span className="text-red-500"> *</span> : null;
+    const requiredMark = inp.required ? <span className="text-coral-500"> *</span> : null;
     const commonLabel = (
       <label
         htmlFor={id}
-        className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
+        className="block text-sm font-medium text-content-secondary mb-1">
         {inp.name}
         {requiredMark}
       </label>
     );
     const desc = inp.description ? (
-      <p className="text-xs text-content-muted dark:text-stone-400 mt-1">{inp.description}</p>
+      <p className="text-xs text-content-muted mt-1">{inp.description}</p>
     ) : null;
 
     // Rich picker: repo-shaped input → Composio github_repo picker.
@@ -987,13 +988,11 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
         <div key={inp.name}>
           <label
             htmlFor={id}
-            className="flex items-center gap-2 text-sm font-medium text-content-secondary dark:text-stone-300">
-            <input
+            className="flex items-center gap-2 text-sm font-medium text-content-secondary">
+            <Checkbox
               id={id}
-              type="checkbox"
               checked={Boolean(value)}
-              onChange={e => onChange(e.target.checked)}
-              className="rounded"
+              onCheckedChange={next => onChange(next)}
             />
             {inp.name}
             {requiredMark}
@@ -1007,14 +1006,14 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
       return (
         <div key={inp.name}>
           {commonLabel}
-          <input
+          <TextField
             id={id}
             type="number"
             inputMode="numeric"
             value={typeof value === 'number' ? value : (value as string)}
             onChange={e => onChange(e.target.value)}
             placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
-            className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100"
+            className="rounded"
           />
           {desc}
         </div>
@@ -1025,13 +1024,13 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
     return (
       <div key={inp.name}>
         {commonLabel}
-        <input
+        <TextField
           id={id}
           type="text"
           value={value as string}
           onChange={e => onChange(e.target.value)}
           placeholder={inp.required ? t('settings.skillsRunner.placeholder.required') : ''}
-          className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100"
+          className="rounded"
         />
         {desc}
       </div>
@@ -1041,7 +1040,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className={className ?? 'space-y-6'}>
-      <div className="text-sm text-content-secondary dark:text-stone-400">
+      <div className="text-sm text-content-secondary">
         {headerText ?? t('settings.developerMenu.skillsRunner.panelDesc')}
       </div>
 
@@ -1053,7 +1052,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
           <div className="flex items-center gap-2">
             <h2
               data-testid="skills-runner-skill-locked"
-              className="min-w-0 truncate text-lg font-semibold text-content dark:text-stone-100">
+              className="min-w-0 truncate text-lg font-semibold text-content">
               {selectedWorkflow?.name || selectedSkillId}
             </h2>
           </div>
@@ -1061,15 +1060,15 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
           <>
             <label
               htmlFor="skills-runner-skill"
-              className="block text-sm font-medium text-content-secondary dark:text-stone-300 mb-1">
+              className="block text-sm font-medium text-content-secondary mb-1">
               {t('settings.skillsRunner.skill')}
             </label>
-            <select
+            <NativeSelect
               id="skills-runner-skill"
               value={selectedSkillId}
               onChange={e => setSelectedSkillId(e.target.value)}
               disabled={skillsLoading || skillsError !== null}
-              className="w-full rounded border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100">
+              className="w-full rounded">
               <option value="">
                 {skillsLoading
                   ? t('settings.skillsRunner.loadingSkills')
@@ -1080,11 +1079,11 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   {s.name || s.id}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </>
         )}
         {skillsError && (
-          <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+          <p className="text-xs text-coral-600 dark:text-coral-400 mt-1">
             {t('settings.skillsRunner.error.listWorkflows')} {skillsError}
           </p>
         )}
@@ -1094,12 +1093,12 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
       {selectedSkillId && (
         <>
           {descLoading && (
-            <div className="text-sm text-content-muted dark:text-stone-400">
+            <div className="text-sm text-content-muted">
               {t('settings.skillsRunner.loadingDescription')}
             </div>
           )}
           {descError && (
-            <div className="text-sm text-red-600 dark:text-red-400">
+            <div className="text-sm text-coral-600 dark:text-coral-400">
               {t('settings.skillsRunner.error.describe')} {descError}
             </div>
           )}
@@ -1110,15 +1109,15 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                     save a recurring schedule that snapshots them. */}
               <div
                 id="workflow-schedule"
-                className="space-y-4 rounded-2xl border border-line/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-4 py-4 shadow-soft">
-                <div className="rounded border border-line dark:border-stone-700 bg-surface/70 dark:bg-stone-900/60 p-3">
-                  <p className="text-sm text-content-secondary dark:text-stone-300 whitespace-pre-wrap">
+                className="space-y-4 rounded-2xl border border-line/90 bg-linear-to-br from-surface-muted via-surface to-surface-subtle px-4 py-4 shadow-soft">
+                <div className="rounded border border-line bg-surface/70 p-3">
+                  <p className="text-sm text-content-secondary whitespace-pre-wrap">
                     {description.when_to_use}
                   </p>
                 </div>
 
                 {description.inputs.length === 0 ? (
-                  <p className="text-sm italic text-content-muted dark:text-stone-400">
+                  <p className="text-sm italic text-content-muted">
                     {t('settings.skillsRunner.noInputs')}
                   </p>
                 ) : (
@@ -1196,11 +1195,11 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   </div>
 
                   {run.status === 'started' && run.result && (
-                    <div className="rounded border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950 p-3 text-sm">
-                      <p className="text-emerald-800 dark:text-emerald-200">
+                    <div className="rounded border border-sage-300 dark:border-sage-700 bg-sage-50 dark:bg-sage-950 p-3 text-sm">
+                      <p className="text-sage-800 dark:text-sage-200">
                         {t('settings.skillsRunner.started')} {run.result.run_id}
                       </p>
-                      <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1 break-all">
+                      <p className="text-xs text-sage-700 dark:text-sage-300 mt-1 break-all">
                         {t('settings.skillsRunner.logPath')} <code>{run.result.log}</code>
                       </p>
                     </div>
@@ -1219,7 +1218,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                       return (
                         <div
                           data-testid="skill-run-error"
-                          className="rounded border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950 p-3 text-sm">
+                          className="rounded border border-coral-300 dark:border-coral-700 bg-coral-50 dark:bg-coral-950 p-3 text-sm">
                           {isGateFailure && (
                             <div
                               data-testid="preflight-gate-pill"
@@ -1232,7 +1231,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                               ) : null}
                             </div>
                           )}
-                          <p className="text-red-800 dark:text-red-200">
+                          <p className="text-coral-800 dark:text-coral-200">
                             {isGateFailure
                               ? parsed.body
                               : `${t('settings.skillsRunner.error.run')} ${run.message ?? ''}`}
@@ -1243,28 +1242,28 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                 </div>
 
                 {/* Same inputs, second action: run it on a schedule. */}
-                <div className="border-t border-line/70 dark:border-stone-700/70 pt-3">
-                  <h3 className="mb-2 text-sm font-semibold text-content dark:text-stone-200">
+                <div className="border-t border-line/70 pt-3">
+                  <h3 className="mb-2 text-sm font-semibold text-content">
                     {t('settings.skillsRunner.schedule.heading')}
                   </h3>
                   <div className="flex flex-col sm:flex-row sm:items-end gap-2">
                     <div className="flex-1">
                       <label
                         htmlFor="skills-runner-schedule"
-                        className="block text-xs font-semibold uppercase tracking-wide text-content-secondary dark:text-stone-300 mb-1.5">
+                        className="block text-xs font-semibold uppercase tracking-wide text-content-secondary mb-1.5">
                         {t('settings.skillsRunner.schedule.frequency')}
                       </label>
-                      <select
+                      <NativeSelect
                         id="skills-runner-schedule"
                         value={schedule}
                         onChange={e => setSchedule(e.target.value)}
-                        className="w-full rounded-xl border border-line-strong dark:border-stone-600 bg-surface px-3 py-2 text-sm text-content dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500">
+                        className="w-full rounded-xl shadow-xs">
                         {SCHEDULE_PRESETS.map(p => (
                           <option key={p.value} value={p.value}>
                             {t(p.labelKey)}
                           </option>
                         ))}
-                      </select>
+                      </NativeSelect>
                     </div>
                     <Button
                       variant="primary"
@@ -1278,12 +1277,12 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   </div>
 
                   {scheduleSaved && (
-                    <p className="mt-2 inline-flex items-center rounded-full border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-sage-300 dark:border-sage-700 bg-sage-50 dark:bg-sage-900/40 px-2.5 py-1 text-xs font-medium text-sage-700 dark:text-sage-300">
                       {t('settings.skillsRunner.schedule.saved')}
                     </p>
                   )}
                   {scheduleError && (
-                    <p className="mt-2 inline-flex items-center rounded-full border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/40 px-2.5 py-1 text-xs font-medium text-red-700 dark:text-red-300">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-coral-300 dark:border-coral-700 bg-coral-50 dark:bg-coral-900/40 px-2.5 py-1 text-xs font-medium text-coral-700 dark:text-coral-300">
                       {t('settings.skillsRunner.schedule.error')} {scheduleError}
                     </p>
                   )}
@@ -1291,19 +1290,19 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
               </div>
 
               {/* Second box — saved schedules for this workflow. */}
-              <div className="space-y-2 rounded-2xl border border-line/90 dark:border-stone-700/80 bg-surface dark:bg-stone-900 px-4 py-4 shadow-soft">
+              <div className="space-y-2 rounded-2xl border border-line/90 bg-surface px-4 py-4 shadow-soft">
                 {/* Existing scheduled jobs for this skill */}
                 {scheduledJobsLoading ? (
-                  <p className="mt-3 text-xs text-content-muted dark:text-stone-400">
+                  <p className="mt-3 text-xs text-content-muted">
                     {t('settings.skillsRunner.schedule.loadingJobs')}
                   </p>
                 ) : scheduledJobs.length === 0 ? (
-                  <p className="mt-3 text-xs italic text-content-muted dark:text-stone-400">
+                  <p className="mt-3 text-xs italic text-content-muted">
                     {t('settings.skillsRunner.schedule.noJobs')}
                   </p>
                 ) : (
-                  <div className="mt-3 space-y-2 rounded-2xl border border-line/80 dark:border-stone-800 bg-surface-muted/70 dark:bg-stone-900/40 p-2.5">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-content-secondary dark:text-stone-400 px-1">
+                  <div className="mt-3 space-y-2 rounded-2xl border border-line/80 bg-surface-muted/70 p-2.5">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-content-secondary px-1">
                       {t('settings.skillsRunner.schedule.existing')}
                     </div>
                     {/* Per-skill saved-schedule list — uses the shared
@@ -1356,19 +1355,19 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                           <div data-testid={`scheduled-job-${job.id}-inputs`} className="px-4 pt-2">
                             {jobInputs.length > 0 ? (
                               <div className="flex flex-wrap items-center gap-1">
-                                <span className="text-[10px] font-semibold uppercase tracking-wide text-content-muted dark:text-stone-400">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
                                   {t('settings.skillsRunner.schedule.inputsLabel')}
                                 </span>
                                 {jobInputs.map(inp => (
                                   <span
                                     key={inp.key}
-                                    className="rounded bg-surface-subtle dark:bg-stone-800 px-1.5 py-0.5 font-mono text-[10px] text-content-secondary dark:text-stone-300">
+                                    className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-[10px] text-content-secondary">
                                     {inp.key}: {inp.value}
                                   </span>
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-[10px] italic text-content-faint dark:text-stone-500">
+                              <span className="text-[10px] italic text-content-faint">
                                 {t('settings.skillsRunner.schedule.inputsNone')}
                               </span>
                             )}
@@ -1378,49 +1377,47 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                                 a disclosure toggle reveals up to 5 runs
                                 each with status badge + duration; click
                                 a run to expand its captured output. */}
-                          <div className="px-4 pb-3 border-t border-line-subtle dark:border-stone-800">
-                            <button
-                              type="button"
+                          <div className="px-4 pb-3 border-t border-line-subtle">
+                            <Button
+                              variant="tertiary"
+                              size="xs"
                               onClick={() => toggleJobHistory(job.id)}
                               aria-expanded={Boolean(hist?.expanded)}
                               data-testid={`history-toggle-${job.id}`}
-                              className="mt-2 text-[11px] text-content-secondary dark:text-stone-400 hover:underline">
+                              className="mt-2 gap-1 px-0 text-[11px] text-content-secondary hover:bg-transparent hover:underline">
                               {hist?.expanded ? '▾' : '▸'}{' '}
                               {t('settings.skillsRunner.schedule.history')}
                               {hist?.runs?.length ? ` (${hist.runs.length})` : ''}
-                            </button>
+                            </Button>
                             {hist?.expanded && (
                               <div className="mt-1.5 space-y-1">
                                 {hist.loading && hist.runs.length === 0 ? (
-                                  <p className="text-[11px] text-content-muted dark:text-stone-400">
+                                  <p className="text-[11px] text-content-muted">
                                     {t('settings.skillsRunner.schedule.historyLoading')}
                                   </p>
                                 ) : hist.runs.length === 0 ? (
-                                  <p className="text-[11px] italic text-content-muted dark:text-stone-400">
+                                  <p className="text-[11px] italic text-content-muted">
                                     {t('settings.skillsRunner.schedule.historyEmpty')}
                                   </p>
                                 ) : (
                                   hist.runs.map(r => {
                                     const open = hist.expandedRunId === r.id;
-                                    const okClass =
-                                      r.status === 'ok'
-                                        ? 'bg-sage-100 dark:bg-sage-500/20 text-sage-700 dark:text-sage-300'
-                                        : 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300';
                                     return (
                                       <div
                                         key={r.id}
                                         className="rounded bg-surface">
-                                        <button
+                                        <Button
                                           type="button"
+                                          variant="tertiary"
                                           onClick={() => toggleHistoryRun(job.id, r.id)}
                                           aria-expanded={open}
                                           data-testid={`history-run-${job.id}-${r.id}`}
-                                          className="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-muted dark:hover:bg-stone-700 rounded">
+                                          className="w-full flex items-center justify-between px-2 py-1.5 rounded font-normal">
                                           <div className="flex items-center gap-2">
                                             <span className="text-content-faint">
                                               {open ? '▾' : '▸'}
                                             </span>
-                                            <span className="text-content-secondary dark:text-stone-400">
+                                            <span className="text-content-secondary">
                                               {new Date(r.started_at).toLocaleString()}
                                             </span>
                                           </div>
@@ -1430,19 +1427,18 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                                                 {(r.duration_ms / 1000).toFixed(1)}s
                                               </span>
                                             )}
-                                            <span
-                                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${okClass}`}>
+                                            <Badge variant={r.status === 'ok' ? 'success' : 'danger'}>
                                               {r.status}
-                                            </span>
+                                            </Badge>
                                           </div>
-                                        </button>
+                                        </Button>
                                         {open && r.output && (
-                                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-surface-subtle dark:bg-stone-900 border border-line dark:border-stone-700 text-[11px] text-content-secondary dark:text-stone-300 font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                                          <pre className="mx-2 mb-2 px-3 py-2 rounded-md bg-surface-subtle border border-line text-[11px] text-content-secondary font-mono whitespace-pre-wrap wrap-break-word max-h-64 overflow-y-auto">
                                             {r.output}
                                           </pre>
                                         )}
                                         {open && !r.output && (
-                                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-content-faint dark:text-stone-500">
+                                          <div className="mx-2 mb-2 px-3 py-2 text-[11px] italic text-content-faint">
                                             {t('settings.skillsRunner.schedule.historyNoOutput')}
                                           </div>
                                         )}
@@ -1465,9 +1461,9 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
       )}
 
       {/* Recent runs (cross-skill if no skill picked; otherwise scoped) */}
-      <div className="pt-4 border-t border-line dark:border-stone-700 space-y-2">
+      <div className="pt-4 border-t border-line space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-content-secondary dark:text-stone-300">
+          <h3 className="text-sm font-semibold text-content-secondary">
             {selectedSkillId
               ? t('settings.skillsRunner.recentRuns.headingForSkill')
               : t('settings.skillsRunner.recentRuns.headingAll')}
@@ -1476,62 +1472,60 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
             variant="tertiary"
             size="xs"
             onClick={() => setRecentRunsRefreshNonce(n => n + 1)}
-            className="px-0 text-content-secondary hover:bg-transparent hover:underline dark:text-stone-400">
+            className="px-0 text-content-secondary hover:bg-transparent hover:underline">
             {t('settings.skillsRunner.recentRuns.refresh')}
           </Button>
         </div>
         {recentRunsLoading ? (
-          <p className="text-xs text-content-muted dark:text-stone-400">
+          <p className="text-xs text-content-muted">
             {t('settings.skillsRunner.recentRuns.loading')}
           </p>
         ) : recentRuns.length === 0 ? (
-          <p className="text-xs italic text-content-muted dark:text-stone-400">
+          <p className="text-xs italic text-content-muted">
             {t('settings.skillsRunner.recentRuns.empty')}
           </p>
         ) : (
           <div className="space-y-2">
             {recentRuns.map(r => {
-              const badgeClass = (() => {
-                if (r.status === 'RUNNING')
-                  return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
-                if (r.status === 'DONE')
-                  return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200';
-                if (r.status === 'DEGENERATE')
-                  return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200';
-                return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-              })();
+              const badgeVariant: BadgeVariant =
+                r.status === 'RUNNING'
+                  ? 'primary'
+                  : r.status === 'DONE'
+                    ? 'success'
+                    : r.status === 'DEGENERATE'
+                      ? 'warning'
+                      : 'danger';
               const dur = r.duration_ms !== null ? `${Math.round(r.duration_ms / 1000)}s` : '—';
               const expanded = expandedRunId === r.run_id;
               const v = viewer[r.run_id];
               return (
                 <div
                   key={r.run_id}
-                  className="rounded border border-line dark:border-stone-700 bg-surface-muted dark:bg-stone-900 text-xs overflow-hidden">
-                  <button
+                  className="rounded border border-line bg-surface-muted text-xs overflow-hidden">
+                  <Button
                     type="button"
+                    variant="tertiary"
                     onClick={() => toggleExpand(r.run_id)}
-                    className="w-full text-left px-3 py-2 hover:bg-surface-subtle dark:hover:bg-stone-800 focus:outline-none focus:bg-surface-subtle dark:focus:bg-stone-800"
+                    className="w-full block text-left px-3 py-2 font-normal"
                     aria-expanded={expanded}>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-content-muted dark:text-stone-400">
+                      <span className="text-content-muted">
                         {expanded ? '▾' : '▸'}
                       </span>
-                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
-                        {r.status}
-                      </span>
-                      <span className="font-mono text-content-secondary dark:text-stone-300">
+                      <Badge variant={badgeVariant}>{r.status}</Badge>
+                      <span className="font-mono text-content-secondary">
                         {r.run_id.slice(0, 8)}
                       </span>
-                      <span className="text-content-secondary dark:text-stone-400">{r.workflow_id}</span>
-                      <span className="text-content-muted dark:text-stone-400 ml-auto">{dur}</span>
+                      <span className="text-content-secondary">{r.workflow_id}</span>
+                      <span className="text-content-muted ml-auto">{dur}</span>
                     </div>
-                    <div className="text-content-muted dark:text-stone-400 truncate pl-5">
+                    <div className="text-content-muted truncate pl-5">
                       {r.started}
                     </div>
-                    <div className="text-content-faint dark:text-stone-500 font-mono text-[10px] truncate pl-5">
+                    <div className="text-content-faint font-mono text-[10px] truncate pl-5">
                       {r.log_path}
                     </div>
-                  </button>
+                  </Button>
 
                   {r.status === 'RUNNING' && (
                     <div className="px-3 pb-2 pl-8">
@@ -1548,26 +1542,26 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   )}
 
                   {expanded && (
-                    <div className="border-t border-line dark:border-stone-700 bg-surface dark:bg-stone-950">
+                    <div className="border-t border-line bg-surface-canvas">
                       {/* Live indicator while tailing */}
                       {!v?.complete && (
-                        <div className="px-3 py-1.5 text-[10px] text-content-muted dark:text-stone-400 border-b border-line-subtle dark:border-stone-800 flex items-center gap-2">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        <div className="px-3 py-1.5 text-[10px] text-content-muted border-b border-line-subtle flex items-center gap-2">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary-500 animate-pulse" />
                           <span>
                             {t('settings.skillsRunner.viewer.tailing')}
                             {v?.loading ? ` · ${t('settings.skillsRunner.viewer.fetching')}` : ''}
                           </span>
-                          <span className="ml-auto text-content-faint dark:text-stone-500">
+                          <span className="ml-auto text-content-faint">
                             {v?.offset ?? 0} B
                           </span>
                         </div>
                       )}
                       {v?.error && (
-                        <div className="px-3 py-2 text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border-b border-red-100 dark:border-red-900">
+                        <div className="px-3 py-2 text-coral-700 dark:text-coral-300 bg-coral-50 dark:bg-coral-950 border-b border-coral-100 dark:border-coral-900">
                           {t('settings.skillsRunner.viewer.error')} {v.error}
                         </div>
                       )}
-                      <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-content dark:text-stone-200">
+                      <pre className="px-3 py-2 m-0 max-h-96 overflow-auto font-mono text-[11px] leading-snug whitespace-pre-wrap wrap-break-word text-content">
                         {v?.content ??
                           (v?.loading ? t('settings.skillsRunner.viewer.loading') : '')}
                       </pre>

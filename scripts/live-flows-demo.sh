@@ -36,7 +36,7 @@ fi
 
 echo "[live-flows-demo] backend=$OPENHUMAN_LIVE_API_URL user=$OPENHUMAN_LIVE_USER_ID"
 
-# macOS Apple-Silicon whisper-rs/llama.cpp build workaround (see AGENTS.md).
+# macOS Apple-Silicon llama.cpp build workaround (see AGENTS.md).
 export GGML_NATIVE="${GGML_NATIVE:-OFF}"
 
 cd "$ROOT_DIR"

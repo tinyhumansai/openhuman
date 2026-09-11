@@ -140,6 +140,22 @@ async fn setup() -> TestHarness {
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
     ];
 
+    // The HTTP router is intentionally transport-only and does not construct a
+    // Core runtime context. Memory-backed RPC reads still need the explicit
+    // tinymemory host seams before they can load their configured provider.
+    // Same rule for the modules policy, which became load-bearing when the
+    // status RPCs started reading diagnostics through the bound driver
+    // (#5560): resolving a driver refuses outright until boot publishes the
+    // config to load against — "call modules::memory::set_modules_policy
+    // during boot" — and this harness is the boot. With the policy published,
+    // the provider loads the artifact CI installs (TINYMEMORY_TEST_MODULE);
+    // where none is present the binding degrades to its null placeholder and
+    // the diagnostics answer empty, which is a round-trippable result rather
+    // than a JSON-RPC error.
+    openhuman_core::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(
+        openhuman_core::openhuman::config::Config::default(),
+    ));
+
     let (addr, join) = serve_rpc().await;
     TestHarness {
         _tmp: tmp,
@@ -355,28 +371,6 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
         Some(false)
     );
 
-    let meet = rpc(
-        &harness.rpc_base,
-        30_005,
-        "openhuman.config_update_meet_settings",
-        json!({ "auto_orchestrator_handoff": true }),
-    )
-    .await;
-    ok(&meet, "update_meet_settings");
-    let meet_get = rpc(
-        &harness.rpc_base,
-        30_006,
-        "openhuman.config_get_meet_settings",
-        json!({}),
-    )
-    .await;
-    assert_eq!(
-        payload(&meet_get, "get_meet_settings")
-            .get("auto_orchestrator_handoff")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-
     let dictation = rpc(
         &harness.rpc_base,
         30_007,
@@ -551,7 +545,6 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
         ("openhuman.tools_querit_search", json!({})),
         ("openhuman.tools_searxng_search", json!({})),
         ("openhuman.tools_apify_linkedin_scrape", json!({})),
-        ("openhuman.tools_polymarket_execute", json!({})),
     ]
     .into_iter()
     .enumerate()

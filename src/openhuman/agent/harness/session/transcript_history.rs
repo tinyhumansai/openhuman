@@ -2,7 +2,7 @@
 //!
 //! This is the seam chosen in `docs/specs/2026-07-28-agent-session-transcript-to-tinyagents-design.md`
 //! §4 Option A: the harness talks to the crate's
-//! [`tinyagents::harness::memory::ChatHistory`] trait, while OpenHuman keeps
+//! [`tinyagents_harness::memory::ChatHistory`] trait, while OpenHuman keeps
 //! ownership of the on-disk format. Nothing about `session_raw` moves, so
 //! there is no on-disk change and no migration risk — the previous parallel
 //! abstraction is what goes away.
@@ -152,9 +152,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyagents::harness::memory::ChatHistory;
-use tinyagents::harness::message::Message;
-use tinyagents::{Result as TaResult, TinyAgentsError};
+use tinyagents_harness::memory::ChatHistory;
+use tinyagents_harness::{Result as TaResult, TinyAgentsError};
+use tinyinference::message::Message;
 
 use crate::openhuman::agent::message_convert::{history_to_messages, message_to_chat_message};
 use crate::openhuman::agent::messages::ChatMessage;

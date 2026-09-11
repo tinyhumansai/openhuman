@@ -71,4 +71,19 @@ describe('ConfirmationModal', () => {
     expect(onConfirmMock).toHaveBeenCalledWith(true);
     expect(localStorage.length).toBe(0);
   });
+
+  it('traps focus onto Cancel when it opens, and marks the surface a real modal', () => {
+    render(<ConfirmationModal {...defaultProps} />);
+
+    // Radix's AlertDialog auto-focuses Cancel on mount (the escape hatch) and
+    // marks the content `role="alertdialog"` + `aria-modal` — none of which the
+    // previous hand-rolled `fixed inset-0` div provided. Focus RESTORATION back
+    // to a trigger on close is provided by the same primitive in a real
+    // browser, but is not reliably observable under jsdom (no real window
+    // focus), so it is not asserted here.
+    const cancelButton = screen.getByText('Cancel');
+    expect(document.activeElement).toBe(cancelButton);
+
+    expect(cancelButton.closest('[role="alertdialog"]')).not.toBeNull();
+  });
 });

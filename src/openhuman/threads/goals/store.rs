@@ -8,7 +8,7 @@
 //! surface every consumer (RPC ops, the harness turn loop, the heartbeat
 //! continuation runtime, the agent tools, and post-turn accounting) already
 //! uses, and forwards each operation to the crate store — converting the crate
-//! [`CrateThreadGoal`](tinyagents::graph::goals::types::ThreadGoal) back to the
+//! [`CrateThreadGoal`](tinyagents_graph::goals::types::ThreadGoal) back to the
 //! local [`ThreadGoal`] and its `TinyAgentsError` to a `String`.
 //!
 //! The crate store owns the concurrency (per-thread async locks) and the goal
@@ -19,7 +19,7 @@ use std::path::Path;
 
 use super::migration::{delete_legacy_goal_file, goals_store};
 use super::ThreadGoal;
-use ::tinyagents::graph::goals::store as crate_store;
+use tinyagents_graph::goals::store as crate_store;
 
 /// Set (create or replace) the thread's goal. A changed objective mints a fresh
 /// goal and resets counters; an unchanged objective preserves counters and

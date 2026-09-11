@@ -4,9 +4,10 @@
 use super::helpers::strip_tool_calls_from_response;
 use super::types::ArchivistHook;
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::ingest_pipeline;
-use crate::openhuman::memory::store::fts5;
-use tinycortex::memory::ingest::canonicalize::chat::{ChatBatch, ChatMessage};
+use crate::openhuman::memory::api::chunks::{DataSource, SourceRef};
+use crate::openhuman::memory::api::provider::types::IngestItem;
+use crate::openhuman::memory::api::provider::{ConversationSegment, EpisodicTurn};
+use crate::openhuman::memory::api::types::MemoryTaint;
 
 impl ArchivistHook {
     /// Pipe a closed segment's raw prose turns into the memory tree as
@@ -33,9 +34,9 @@ impl ArchivistHook {
     pub(super) async fn pipe_segment_to_tree(
         &self,
         config: &Config,
-        segment: &crate::openhuman::memory::store::segments::ConversationSegment,
+        segment: &ConversationSegment,
         session_id: &str,
-        entries: &[&fts5::EpisodicEntry],
+        entries: &[&EpisodicTurn],
     ) {
         use chrono::{TimeZone, Utc};
 
@@ -55,7 +56,7 @@ impl ArchivistHook {
         // Build one ChatMessage per episodic entry (user + assistant; skip
         // empties). Tool-call JSON is stripped from assistant content so only
         // prose flows into the tree.
-        let messages: Vec<ChatMessage> = entries
+        let messages = entries
             .iter()
             .filter_map(|e| {
                 let raw_text = if e.role == "assistant" {
@@ -84,14 +85,36 @@ impl ArchivistHook {
                     .single()
                     .unwrap_or_else(Utc::now);
 
-                Some(ChatMessage {
-                    author: e.role.clone(),
-                    timestamp: ts,
-                    text,
-                    source_ref: Some(provenance.clone()),
+                // One IngestItem per prose turn. The widened attribution trio
+                // exists for exactly this batch shape: `owner` is the session
+                // the memory belongs to, `author` is the speaking role, the
+                // label is human-readable while `source_id` stays the constant
+                // dedupe key, and `platform: "agent"` preserves the string
+                // every previously-stored chunk carries.
+                Some(IngestItem {
+                    namespace: None,
+                    source: DataSource::Conversation,
+                    source_id: "conversations:agent".to_string(),
+                    owner: session_id.to_string(),
+                    source_ref: Some(SourceRef::new(provenance.clone())),
+                    content: text,
+                    mime: Some("text/plain".into()),
+                    timestamp: Some(ts),
+                    tags: vec!["agent_chat".to_string()],
+                    taint: MemoryTaint::Internal,
+                    path_scope: None,
+                    author: Some(e.role.clone()),
+                    channel_label: Some(session_id.to_string()),
+                    // Mail-only fields; this source is not mail, and the contract
+                    // documents empty/absent as the same statement as "not mail".
+                    to: Vec::new(),
+                    cc: Vec::new(),
+                    subject: None,
+                    list_unsubscribe: None,
+                    platform: Some("agent".into()),
                 })
             })
-            .collect();
+            .collect::<Vec<IngestItem>>();
 
         if messages.is_empty() {
             tracing::debug!(
@@ -100,39 +123,84 @@ impl ArchivistHook {
             return;
         }
 
-        let batch = ChatBatch {
-            platform: "agent".into(),
-            // channel_label carries session_id for human-readable context.
-            channel_label: session_id.to_string(),
-            messages,
-        };
-
-        // `source_id` is intentionally a CONSTANT — all agent sessions share
-        // one tree source so cross-session summarisation sees the full history.
         let source_id = "conversations:agent";
-        // `owner` scopes the memory to the session; `tags` enable filtering.
-        let owner = session_id;
-        let tags = vec!["agent_chat".to_string()];
-
         tracing::debug!(
             "[archivist] tree ingest start: source_id={source_id} session={session_id} \
              segment={segment_id} ep_span={start_ep}-{end_ep} provenance={provenance}"
         );
 
-        match ingest_pipeline::ingest_chat(config, source_id, owner, tags, batch).await {
+        let Some(ingest) = self.provider.as_deref().and_then(|p| p.as_ingest()) else {
+            tracing::debug!(
+                "[archivist] tree ingest skipped: driver serves no Ingest family \
+                 segment={segment_id}"
+            );
+            return;
+        };
+        // `config` gates this path (chat_to_tree_enabled) and sizes nothing
+        // here any more — the driver owns chunking and extraction.
+        let _ = config;
+
+        let ingest_result = ingest.ingest_chat(messages).await;
+
+        match ingest_result {
             Ok(result) => {
                 tracing::debug!(
                     "[archivist] tree ingest ok: source_id={source_id} \
                      session={session_id} segment={segment_id} \
                      chunks_written={} provenance={provenance}",
-                    result.chunks_written
+                    result.written
                 );
             }
             Err(e) => {
-                tracing::warn!(
-                    "[archivist] tree ingest failed (non-fatal): source_id={source_id} \
-                     session={session_id} segment={segment_id} error={e}"
-                );
+                // Corruption is not non-fatal (openhuman#5820): a malformed
+                // chunk store fails every segment identically, and this warn
+                // was one of the paths that let it run silently for 34
+                // minutes. The driver's engine owns the recovery (its queue
+                // worker quarantines + rebuilds within one poll interval);
+                // this side's job is to escalate visibility — log at ERROR and
+                // put a durable notice in front of the user, once per process
+                // rather than once per segment. The engine's own quarantine
+                // publishes the same `memory_store_corrupt` kind afterwards;
+                // that is not a second entry, because the notice store keys on
+                // the descriptor id (kind + scope) and refreshes the existing
+                // one. This early notice is what covers damage the queue worker
+                // never walks. The episodic write above is still the source of
+                // truth either way, so the turn itself is never failed from
+                // here.
+                let rendered = e.to_string();
+                if crate::openhuman::memory::tree::health::user_error::is_corrupt_store_error(
+                    &rendered,
+                ) {
+                    tracing::error!(
+                        "[archivist] tree ingest hit a CORRUPT memory store: \
+                         source_id={source_id} session={session_id} segment={segment_id} \
+                         error={rendered}"
+                    );
+                    crate::openhuman::memory::tree::health::user_error::notice_corrupt_store_once(
+                        "archivist tree ingest",
+                    );
+                } else if crate::openhuman::memory::tree::health::user_error::is_local_embedding_error(
+                    &rendered,
+                ) {
+                    tracing::warn!(
+                        "[archivist] tree ingest hit a local-model embedding failure \
+                         (non-fatal): source_id={source_id} session={session_id} \
+                         segment={segment_id} error={rendered}"
+                    );
+                    // Surface a once-per-process user notification so the
+                    // frontend can prompt the user to check their local model
+                    // configuration (openhuman#5867). Only fires for confirmed
+                    // Ollama-specific errors; storage/bus/RPC failures are
+                    // logged above and left to the existing retry/backoff path.
+                    crate::openhuman::memory::tree::health::user_error::notice_local_model_unavailable_once(
+                        "archivist tree ingest",
+                    );
+                } else {
+                    tracing::warn!(
+                        "[archivist] tree ingest failed (non-fatal): source_id={source_id} \
+                         session={session_id} segment={segment_id} error={rendered}"
+                    );
+                }
             }
         }
     }

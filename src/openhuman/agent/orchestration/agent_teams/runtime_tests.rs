@@ -20,12 +20,12 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::config::{AgentConfig, Config};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::tools::{Tool, ToolSpec};
-use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
-use tinyagents::session::run_ledger::{
+use crate::openhuman::tools::Tool;
+use tinyagents_session::run_ledger::{
     self, AgentTeamMemberStatus, AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTaskStatus,
     AgentTeamTaskUpsert, AgentTeamUpsert,
 };
+use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Mocks (mirror workflow_runs::engine_tests) ──────────────────────────────
 
@@ -97,9 +97,9 @@ impl ChatModel<()> for CannedModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         if self.fail {
-            return Err(tinyagents::TinyAgentsError::Model(
+            return Err(tinyinference::Error::Model(
                 "mock model forced failure".to_string(),
             ));
         }
@@ -114,7 +114,8 @@ fn mock_parent(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
-        all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".to_string(),

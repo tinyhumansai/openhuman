@@ -5,7 +5,7 @@
 //! points without relying on the *absence* of other task-locals as a signal.
 //!
 //! Every entry point that drives the agent loop ([`crate::openhuman::web_chat`],
-//! [`crate::openhuman::channels::runtime::dispatch`], [`crate::openhuman::subconscious`],
+//! [`crate::openhuman::channels::runtime::dispatch`],
 //! [`crate::openhuman::cron`], CLI) MUST scope a real [`AgentTurnOrigin`]
 //! around its `run_turn` invocation. Any path that fails to do so is treated
 //! as [`AgentTurnOrigin::Unknown`] by the gate and the call fails closed.
@@ -63,6 +63,21 @@ pub enum AgentTurnOrigin {
     },
     /// Command-line / sub-agent / one-off internal invocation.
     Cli,
+    /// A person typing into a direct chat surface that is not the web thread —
+    /// today the `openhuman.agent_chat` RPC behind the desktop Settings agent
+    /// chat panel, and an operator running the same RPC by hand.
+    ///
+    /// Split out of [`Cli`](Self::Cli) rather than folded into it because the
+    /// two answer different questions with the same variant. `Cli` was chosen
+    /// for this RPC to tell the **approval gate** "trusted caller, do not fail
+    /// closed"; it says nothing about who wrote the text, and its own
+    /// documentation covers sub-agent and internal invocations too. Reusing it
+    /// for [`is_user_authored`](Self::is_user_authored) would have to answer
+    /// "did a person write this" with a trust answer, and would drop a real
+    /// person's message on the floor.
+    ///
+    /// Trust-wise this is exactly `Cli` — the gate treats them identically.
+    DirectChat,
     /// Unlabelled — gate fails closed. Every entry point MUST scope a real
     /// origin before invoking the agent.
     Unknown,
@@ -121,9 +136,46 @@ impl AgentTurnOrigin {
                 format!("TrustedAutomation({source:?})")
             }
             AgentTurnOrigin::Cli => "Cli".to_string(),
+            AgentTurnOrigin::DirectChat => "DirectChat".to_string(),
             AgentTurnOrigin::Unknown => "Unknown".to_string(),
         }
     }
+
+    /// Whether the turn's text was written by a **person**.
+    ///
+    /// `WebChat`, `ExternalChannel`, and `DirectChat` carry what a human sent.
+    /// Every other origin carries text the host wrote for an agent to act on: a
+    /// `TrustedAutomation` prompt (cron, subconscious, goal continuation,
+    /// workflow), a `Cli` invocation — which this module documents as
+    /// "command-line / **sub-agent** / one-off internal" — or an unscoped
+    /// `Unknown`.
+    ///
+    /// An allowlist, not a denylist, and for the same reason the permission
+    /// gate uses one: a new origin is a turn nobody has classified yet, and
+    /// mistaking a host-written prompt for a user message writes it into the
+    /// user's memory, where it is indistinguishable from something they said.
+    /// A caller that genuinely relays a person's text scopes one of the three
+    /// origins above.
+    ///
+    /// This is a **different question** from the one the approval gate asks,
+    /// and the two must not be collapsed onto one variant. The gate asks how
+    /// far to trust the caller; this asks who wrote the words. `DirectChat`
+    /// exists because `agent_chat` needs the first answer to be "trusted" and
+    /// the second to be "a person" — see that variant's note.
+    pub fn is_user_authored(&self) -> bool {
+        matches!(
+            self,
+            AgentTurnOrigin::WebChat { .. }
+                | AgentTurnOrigin::ExternalChannel { .. }
+                | AgentTurnOrigin::DirectChat
+        )
+    }
+}
+
+/// Whether the current turn's text was written by a person — `false` outside
+/// any origin scope, matching [`AgentTurnOrigin::is_user_authored`]'s allowlist.
+pub fn current_is_user_authored() -> bool {
+    current().is_some_and(|origin| origin.is_user_authored())
 }
 
 tokio::task_local! {
@@ -155,6 +207,64 @@ pub async fn with_origin<F: std::future::Future>(origin: AgentTurnOrigin, fut: F
 /// [`AgentTurnOrigin::Unknown`] / fail-closed).
 pub fn current() -> Option<AgentTurnOrigin> {
     AGENT_TURN_ORIGIN.try_with(|o| o.clone()).ok()
+}
+
+/// Capture the ambient origin so it can be carried across a `tokio::spawn`
+/// boundary by [`with_inherited_origin`].
+///
+/// This is exactly [`current()`] — it exists as a named pair with
+/// `with_inherited_origin` so the capture/re-scope idiom is greppable at every
+/// delegation site, and so the capture is obviously required to happen on the
+/// *parent* task (task-locals do not cross `tokio::spawn`; calling this inside
+/// the spawned future always yields `None`).
+pub fn capture() -> Option<AgentTurnOrigin> {
+    current()
+}
+
+/// Re-scope a [`capture()`]d origin around `fut` on a freshly-spawned task.
+///
+/// # Why this is inherit-only
+///
+/// `AGENT_TURN_ORIGIN` is a `tokio` task-local, so it is **lost** the moment
+/// work moves onto a new task via `tokio::spawn`. An async sub-agent, team
+/// member, or workflow phase therefore runs unlabelled, the approval gate reads
+/// [`AgentTurnOrigin::Unknown`], and every `external_effect` tool (shell/exec)
+/// is refused. Re-establishing the parent's label is the fix.
+///
+/// It re-establishes the parent's label and **nothing else**:
+///
+/// * `Some(origin)` — scope that exact origin, unchanged. A worker descending
+///   from an [`AgentTurnOrigin::ExternalChannel`] turn stays `ExternalChannel`
+///   (remote, untrusted); it is never promoted to `Cli` or any other origin
+///   just because it now runs on a background task. Delegation must not be a
+///   privilege-escalation primitive.
+/// * `None` — run `fut` with **no** scope at all. The spawned task stays
+///   unlabelled and the gate keeps failing closed exactly as it does today.
+///   Never substitute a default origin here: fabricating a label for an
+///   unlabelled parent would hand every unlabelled call site in the process a
+///   trust root it never earned.
+///
+/// Capture on the parent task *before* the `tokio::spawn`, move the
+/// `Option<AgentTurnOrigin>` into the spawned future, and wrap the future's
+/// body:
+///
+/// ```ignore
+/// let inherited = turn_origin::capture();
+/// tokio::spawn(async move {
+///     turn_origin::with_inherited_origin(inherited, async move { /* agent work */ }).await
+/// });
+/// ```
+pub async fn with_inherited_origin<F: std::future::Future>(
+    captured: Option<AgentTurnOrigin>,
+    fut: F,
+) -> F::Output {
+    match captured {
+        // Box-pinned by `with_origin` for the same stack-depth reason
+        // documented there — the agent loop downstream can be very deep.
+        Some(origin) => with_origin(origin, fut).await,
+        // Deliberately unlabelled: fail-closed is the correct default.
+        None => fut.await,
+    }
 }
 
 /// Carry the origin scoped **right now** into a future that will run on
@@ -193,6 +303,87 @@ pub fn propagate<F: std::future::Future>(fut: F) -> impl std::future::Future<Out
     }
 }
 
+/// `tokio::spawn`, with the current turn origin carried onto the new task.
+///
+/// # Why this exists when [`propagate`] already does the carrying
+///
+/// [`propagate`] and [`capture`] read the origin **when they are called**, which
+/// has to be on the spawning task — a task-local is already gone by the time the
+/// spawned future is first polled. Both of these compile, neither warns, and
+/// only the first is right:
+///
+/// ```ignore
+/// tokio::spawn(turn_origin::propagate(work));              // correct
+/// tokio::spawn(async move { turn_origin::propagate(work).await });  // silently Unknown
+/// ```
+///
+/// The second captures inside the new task, where [`current`] is already `None`,
+/// so it scopes nothing and every external-effect tool the child calls is
+/// refused by the approval gate. The existing call sites get this right only
+/// because each one carries a hand-written comment saying to capture *here, on
+/// the spawning task* — correctness resting on reviewer attention at every
+/// future site.
+///
+/// This helper removes the ordering from the caller's hands: the capture happens
+/// inside, before the spawn, and there is no argument order that can get it
+/// wrong.
+///
+/// # Fail-closed is preserved
+///
+/// With no ambient origin nothing is scoped, so the child lands on
+/// [`AgentTurnOrigin::Unknown`] exactly as a bare `tokio::spawn` would. This
+/// only ever *carries* a decision some entry point already made; it cannot
+/// manufacture a trust root. See [`propagate`], which does the actual work.
+///
+/// # What it does not carry
+///
+/// Only the origin. A delegated agent turn usually also needs
+/// [`turn_workspace::propagate`](super::turn_workspace) and the harness fork
+/// context; those are separate wrappers and still have to be applied around the
+/// future passed in here.
+///
+/// ```ignore
+/// let join = turn_origin::spawn(turn_workspace::propagate(async move { .. }));
+/// ```
+pub fn spawn<F>(fut: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    // `propagate` is evaluated here, on the caller's task, which is the whole
+    // point of routing through this function.
+    tokio::spawn(propagate(fut))
+}
+
+/// `tokio::spawn` for work that must deliberately **not** carry the caller's
+/// origin, naming why.
+///
+/// Dropping the origin is sometimes right — a detached background job that is
+/// not a continuation of the caller's turn should not inherit that turn's
+/// authority. The problem is that a bare `tokio::spawn` looks identical whether
+/// the author decided that or simply did not think about it, so a reviewer
+/// cannot tell a deliberate choice from a regression.
+///
+/// This is a plain `tokio::spawn` — the behaviour is the same — but the name and
+/// the `reason` make the choice explicit at the call site and greppable across
+/// the tree. The reason is emitted at `trace` so a live process can be asked
+/// which spawns dropped their label.
+///
+/// Prefer [`spawn`] unless the work genuinely is not a continuation of the
+/// caller's turn.
+pub fn spawn_unlabelled<F>(reason: &'static str, fut: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tracing::trace!(
+        reason,
+        parent_origin = ?current().as_ref().map(AgentTurnOrigin::class),
+        "[turn_origin] spawning without the caller's origin"
+    );
+    tokio::spawn(fut)
+}
+
 /// Read the ambient web-chat `request_id` for the current turn, when one was
 /// scoped by an [`AgentTurnOrigin::WebChat`] entry point. `None` for every
 /// other origin (channel / cron / CLI / sub-agent) and outside any scope —
@@ -206,112 +397,5 @@ pub fn current_request_id() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn with_origin_scopes_correctly_and_unscopes_on_exit() {
-        // Outside any scope: current() returns None.
-        assert!(current().is_none());
-
-        let observed = with_origin(AgentTurnOrigin::Cli, async {
-            // Inside the scope: current() returns the scoped origin.
-            current()
-        })
-        .await;
-        assert!(matches!(observed, Some(AgentTurnOrigin::Cli)));
-
-        // After the scope exits, current() is None again.
-        assert!(current().is_none());
-    }
-
-    /// Regression: a detached sub-agent (`spawn_async_subagent`, the
-    /// orchestration spawn task) starts on a fresh task, and without explicit
-    /// propagation its tools reach the approval gate as `Unknown` and every
-    /// external-effect call is refused — the parent's label silently lost at
-    /// the `tokio::spawn` boundary.
-    #[tokio::test]
-    async fn propagate_carries_the_origin_across_a_spawn() {
-        let observed = with_origin(
-            AgentTurnOrigin::TrustedAutomation {
-                job_id: "run-1".to_string(),
-                source: TrustedAutomationSource::Workflow {
-                    require_approval: false,
-                },
-            },
-            async {
-                tokio::spawn(propagate(async { current() }))
-                    .await
-                    .expect("spawned task panicked")
-            },
-        )
-        .await;
-        assert!(matches!(
-            observed,
-            Some(AgentTurnOrigin::TrustedAutomation {
-                source: TrustedAutomationSource::Workflow {
-                    require_approval: false
-                },
-                ..
-            })
-        ));
-    }
-
-    /// Without propagation the same spawn loses the label — the behaviour the
-    /// helper above exists to fix, pinned so a future refactor cannot quietly
-    /// reintroduce it by dropping the wrapper.
-    #[tokio::test]
-    async fn a_bare_spawn_loses_the_origin() {
-        let observed = with_origin(AgentTurnOrigin::Cli, async {
-            tokio::spawn(async { current() })
-                .await
-                .expect("spawned task panicked")
-        })
-        .await;
-        assert!(observed.is_none());
-    }
-
-    /// Fail-closed is preserved: propagation carries a decision, it does not
-    /// invent one. An unlabelled parent still yields an unlabelled child.
-    #[tokio::test]
-    async fn propagate_does_not_manufacture_an_origin() {
-        let observed = tokio::spawn(propagate(async { current() }))
-            .await
-            .expect("spawned task panicked");
-        assert!(observed.is_none());
-    }
-
-    #[tokio::test]
-    async fn current_returns_none_outside_scope() {
-        assert!(current().is_none());
-    }
-
-    #[tokio::test]
-    async fn current_returns_inner_origin_on_nested_scope() {
-        let observed = with_origin(
-            AgentTurnOrigin::WebChat {
-                thread_id: "outer".into(),
-                client_id: "c-outer".into(),
-                request_id: Some("req-outer".into()),
-            },
-            async {
-                with_origin(
-                    AgentTurnOrigin::TrustedAutomation {
-                        job_id: "j-1".into(),
-                        source: TrustedAutomationSource::Cron,
-                    },
-                    async { current() },
-                )
-                .await
-            },
-        )
-        .await;
-        match observed {
-            Some(AgentTurnOrigin::TrustedAutomation { job_id, source }) => {
-                assert_eq!(job_id, "j-1");
-                assert_eq!(source, TrustedAutomationSource::Cron);
-            }
-            other => panic!("expected inner TrustedAutomation, got {other:?}"),
-        }
-    }
-}
+#[path = "turn_origin_tests.rs"]
+mod tests;

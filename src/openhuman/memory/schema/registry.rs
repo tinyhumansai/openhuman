@@ -1,5 +1,17 @@
 //! Registry: lists of all `memory_tree` controller schemas and registered
 //! controller pairs wired into `core::all`.
+//!
+//! **Deliberately NOT split per family (M5.1).** `memory/schemas/` was split
+//! into seven per-capability-family pairs because a single aggregator there
+//! fanned seven unrelated families (documents / files / kv_graph / sync / learn
+//! / provider / tool_memory) into one `Vec` behind one push site. This registry
+//! is the opposite shape: it is one family — the `memory_tree` chunk store —
+//! under its own namespace, already registered from its own push site in
+//! `src/core/all.rs`, and the tree domain's other halves (`retrieval`,
+//! `tree_runtime`'s summarizer) are already separate registries with separate
+//! push sites. A per-family filter can therefore already be applied here
+//! without any split; carving these functions up further would invent
+//! boundaries the domain does not have and add drift surface for no gain.
 
 use crate::core::all::RegisteredController;
 use crate::core::ControllerSchema;
@@ -27,6 +39,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
         schemas("vault_health_check"),
+        schemas("backfill_connector_trees"),
         schemas("flush_now"),
         schemas("flush_source"),
         schemas("wipe_all"),
@@ -106,6 +119,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("vault_health_check"),
             handler: handle_vault_health_check,
+        },
+        RegisteredController {
+            schema: schemas("backfill_connector_trees"),
+            handler: handle_backfill_connector_trees,
         },
         RegisteredController {
             schema: schemas("flush_now"),

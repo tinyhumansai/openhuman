@@ -53,8 +53,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, WindowEvent};
 
-use crate::cef_profile;
-
 const STATE_FILE: &str = "window_state.toml";
 
 /// Smallest size we will ever shrink the window to. Below this the UI
@@ -100,9 +98,7 @@ struct WorkArea {
 }
 
 fn state_path() -> Option<PathBuf> {
-    cef_profile::default_root_openhuman_dir()
-        .ok()
-        .map(|root| root.join(STATE_FILE))
+    Some(crate::file_logging::resolve_data_dir().join(STATE_FILE))
 }
 
 /// Capture the main window's outer geometry and write it to disk.
@@ -163,9 +159,14 @@ pub fn save_main<R: Runtime>(window: &WebviewWindow<R>) {
 /// Returns `true` when saved geometry was applied. Returns `false` when
 /// no saved file exists, the file is malformed, or the saved position
 /// falls outside every currently-attached monitor's work area (e.g. the
-/// user undocked an external display); the caller is then expected to
-/// fall back to a centered default so we never strand the window
-/// off-screen.
+/// user undocked an external display).
+///
+/// The caller is then expected to fall back to a placement that cannot
+/// strand the window off-screen: [`maximize_to_work_area`] first, and
+/// [`center_main`] if even that resolves no monitor. Note this is no
+/// longer "the centered default" — a `false` here means there is no
+/// usable saved geometry, and the product default for that is a window
+/// filling the work area.
 ///
 /// Even when the saved monitor is still attached, the restored size is
 /// clamped to that monitor's work area (issue #2282) so a window saved
@@ -182,7 +183,7 @@ pub fn restore_main<R: Runtime>(window: &WebviewWindow<R>) -> bool {
         Ok(s) => s,
         Err(err) => {
             log::warn!(
-                "[window-state] parse {} failed: {err}; using default placement",
+                "[window-state] parse {} failed: {err}; falling back to default placement",
                 path.display()
             );
             return false;
@@ -201,7 +202,7 @@ pub fn restore_main<R: Runtime>(window: &WebviewWindow<R>) -> bool {
         pick_monitor_for_window(state.x, state.y, state.width, state.height, &work_areas)
     else {
         log::info!(
-            "[window-state] saved geometry x={} y={} w={} h={} not on any attached monitor's work area; falling back to centered default",
+            "[window-state] saved geometry x={} y={} w={} h={} not on any attached monitor's work area; falling back to default placement",
             state.x,
             state.y,
             state.width,
@@ -247,6 +248,66 @@ pub fn restore_main<R: Runtime>(window: &WebviewWindow<R>) -> bool {
             height
         );
     }
+    true
+}
+
+/// Geometry for a window that should fill `monitor`'s work area.
+///
+/// Goes through [`clamp_to_work_area`] rather than returning the raw work-area
+/// dimensions, because [`clamp_size`] enforces the `MIN_WINDOW_*` floor: a work
+/// area smaller than 480x360 would otherwise produce a window below the
+/// module's stated minimum, and make first launch behave differently from
+/// [`restore_main`] and [`center_main`].
+///
+/// Split out from [`maximize_to_work_area`] so the invariant is testable
+/// without a live window handle.
+fn work_area_fill_geometry(monitor: WorkArea) -> (i32, i32, u32, u32) {
+    clamp_to_work_area(monitor.x, monitor.y, monitor.width, monitor.height, monitor)
+}
+
+/// Fill the target monitor's **work area** on a first launch (no saved
+/// geometry), so the app opens at full usable size instead of the modest
+/// default declared in `tauri.conf.json`.
+///
+/// Deliberately the work area, not the full monitor bounds: the macOS menu
+/// bar / Dock and the Windows taskbar are excluded, so the window is
+/// "maximized" in the sense a user means it, without covering OS chrome or
+/// tripping the clamping in [`clamp_to_work_area`].
+///
+/// Position is applied before size for the same DPI reason documented on
+/// [`restore_main`] — the size that sticks is the one measured against the
+/// monitor the window has actually arrived on.
+///
+/// Returns `false` when no monitor can be resolved, so the caller can fall
+/// back to [`center_main`].
+pub fn maximize_to_work_area<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    let work_areas = collect_work_areas(window);
+    let Some(monitor) =
+        primary_or_current_work_area(window).or_else(|| work_areas.first().copied())
+    else {
+        log::warn!("[window-state] no monitor resolved; cannot size to work area");
+        return false;
+    };
+
+    let (x, y, width, height) = work_area_fill_geometry(monitor);
+
+    if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
+        log::warn!("[window-state] work-area set_position failed: {err}");
+        return false;
+    }
+    if let Err(err) = window.set_size(PhysicalSize::new(width, height)) {
+        log::warn!("[window-state] work-area set_size failed: {err}");
+        return false;
+    }
+    log::info!(
+        "[window-state] no saved geometry; opened filling work area x={} y={} w={} h={} (work area {}x{})",
+        x,
+        y,
+        width,
+        height,
+        monitor.width,
+        monitor.height
+    );
     true
 }
 
@@ -817,6 +878,31 @@ mod tests {
         let (x, y, _, _) = clamp_to_work_area(-2000, 100, 1000, 800, work_area);
         assert_eq!(x, -1920);
         assert_eq!(y, 100);
+    }
+
+    #[test]
+    fn work_area_fill_uses_the_whole_work_area_on_a_normal_monitor() {
+        let (x, y, w, h) = work_area_fill_geometry(wa(0, 60, 3600, 2190));
+        assert_eq!((x, y), (0, 60));
+        assert_eq!((w, h), (3600, 2190));
+    }
+
+    #[test]
+    fn work_area_fill_keeps_the_offset_of_a_secondary_monitor() {
+        // A monitor to the left of the primary has a negative origin; filling
+        // its work area must land there, not at (0, 0).
+        let (x, y, w, h) = work_area_fill_geometry(wa(-1920, 0, 1920, 1080));
+        assert_eq!((x, y), (-1920, 0));
+        assert_eq!((w, h), (1920, 1080));
+    }
+
+    #[test]
+    fn work_area_fill_never_goes_below_the_minimum_window_size() {
+        // The invariant this helper exists for: a work area smaller than
+        // MIN_WINDOW_* must still produce at least the minimum, matching what
+        // `restore_main` and `center_main` guarantee.
+        let (_, _, w, h) = work_area_fill_geometry(wa(0, 0, 320, 200));
+        assert_eq!((w, h), (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT));
     }
 
     #[test]

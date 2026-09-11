@@ -6,12 +6,12 @@
  * Conversations. Its composer footer stacks the upsell/error banners, the
  * actionable error CTAs (e.g. the voice-transcription "Setup" link), and the
  * composer itself in a single block inside the `overflow-hidden` mainPanel.
- * The footer used to be a plain `flex-shrink-0` block, so on a short window its
+ * The footer used to be a plain `shrink-0` block, so on a short window its
  * natural height exceeded the panel and its bottom was clipped with no scroll
  * affordance — the composer and the fix button became unreachable.
  *
  * The fix lets the footer SHRINK and scroll instead of staying rigid: dropping
- * `flex-shrink-0` and adding `min-h-0 overflow-y-auto` makes the flex algorithm
+ * `shrink-0` and adding `min-h-0 overflow-y-auto` makes the flex algorithm
  * cap it to the available height and scroll it internally. jsdom does not lay
  * out, so we assert the footer is class-wise scroll-capable + shrinkable, which
  * is what prevents the silent clipping from coming back.
@@ -260,10 +260,10 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
     expect(footer).toHaveClass('overflow-y-auto');
     expect(footer).toHaveClass('min-h-0');
     // It must be allowed to shrink (no flex-shrink-0) so it can give way + scroll.
-    expect(footer).not.toHaveClass('flex-shrink-0');
+    expect(footer).not.toHaveClass('shrink-0');
   });
 
-  it('keeps the floating page-variant composer absolutely positioned (no regression)', async () => {
+  it('keeps the assistant-ui page composer in flow (no legacy floating footer)', async () => {
     const store = buildStore({ thread: emptyThreadState });
     const { default: Conversations } = await import('../../features/conversations/Conversations');
 
@@ -281,11 +281,11 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
       ));
     });
 
-    const footer = container.querySelector('[data-walkthrough="home-cta"]');
-    expect(footer).not.toBeNull();
-    // Page variant floats over the message fade; it must NOT adopt the sidebar's
-    // in-flow scroll cap.
-    expect(footer).toHaveClass('absolute');
-    expect(footer).not.toHaveClass('overflow-y-auto');
+    const composer = container.querySelector('[data-slot="aui_composer-shell"]');
+    expect(composer).not.toBeNull();
+    // The assistant-ui thread owns an in-flow composer. The old absolute
+    // home-cta footer must not reappear and cover the message viewport.
+    expect(composer?.closest('.aui-composer-root')).not.toHaveClass('absolute');
+    expect(container.querySelector('[data-walkthrough="home-cta"]')).toBeNull();
   });
 });
