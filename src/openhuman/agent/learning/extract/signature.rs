@@ -469,11 +469,16 @@ fn now_secs() -> f64 {
 /// sources and routes detected identity candidates into its configured buffer.
 pub struct EmailSignatureSubscriber {
     buffer: &'static Buffer,
+    workspace_dir: Option<std::path::PathBuf>,
 }
 
 impl EmailSignatureSubscriber {
     fn new(buffer: &'static Buffer) -> Self {
-        Self { buffer }
+        Self { buffer, workspace_dir: None }
+    }
+
+    fn for_workspace(buffer: &'static Buffer, workspace_dir: std::path::PathBuf) -> Self {
+        Self { buffer, workspace_dir: Some(workspace_dir) }
     }
 }
 
@@ -488,6 +493,19 @@ impl EventHandler<DomainEvent> for EmailSignatureSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
+        if let Some(workspace_dir) = &self.workspace_dir {
+            match crate::openhuman::config::ops::load_config_for_workspace_with_timeout(workspace_dir).await {
+                Ok(config) if !config.learning.enabled => {
+                    tracing::debug!("[learning::extract::signature] learning disabled; skipping email signature");
+                    return;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!("[learning::extract::signature] unable to read learning setting; skipping email signature: {error}");
+                    return;
+                }
+            }
+        }
         if let DomainEvent::DocumentCanonicalized {
             source_id,
             source_kind,
@@ -544,8 +562,8 @@ impl EventHandler<DomainEvent> for EmailSignatureSubscriber {
 /// Must be called at startup after [`crate::core::bus::init`].
 /// The returned handle keeps the subscription alive — store it in a long-lived
 /// container (e.g. alongside other `SubscriptionHandle`s in startup).
-pub fn register_email_signature_subscriber() -> Option<SubscriptionHandle> {
-    BUS.subscribe(Arc::new(EmailSignatureSubscriber::new(candidate::global())))
+pub fn register_email_signature_subscriber(workspace_dir: std::path::PathBuf) -> Option<SubscriptionHandle> {
+    BUS.subscribe(Arc::new(EmailSignatureSubscriber::for_workspace(candidate::global(), workspace_dir)))
 }
 
 /// Register the email signature subscriber with isolated test dependencies.
