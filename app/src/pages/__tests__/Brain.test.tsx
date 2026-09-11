@@ -66,6 +66,12 @@ vi.mock('../../components/intelligence/SyncAuditPanel', async () => {
     SyncAuditPanel: () => React.createElement('div', { 'data-testid': 'brain-sync-audit' }),
   };
 });
+vi.mock('../../components/intelligence/FacetsPanel', async () => {
+  const React = await import('react');
+  return {
+    default: () => React.createElement('div', { 'data-testid': 'brain-profile' }),
+  };
+});
 
 const makeGraph = (n: number) => ({
   nodes: Array.from({ length: n }, (_, i) => ({ id: `n${i}`, kind: 'summary', label: `N${i}` })),
@@ -142,6 +148,7 @@ describe('Brain page', () => {
   it.each([
     ['sources', 'brain-sources'],
     ['sync', 'brain-sync'],
+    ['profile', 'brain-profile'],
   ])('renders the %s tab', async (tab, testId) => {
     graphExportMock.mockResolvedValue(makeGraph(0));
     await act(async () => {

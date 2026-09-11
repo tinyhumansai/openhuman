@@ -130,4 +130,50 @@ describe('<FacetsPanel />', () => {
     fireEvent.click(screen.getByTestId('facet-pin-style/x'));
     expect(await screen.findByRole('alert')).toHaveTextContent('pin failed');
   });
+
+  it('handles refresh and rebuild failures without losing the panel', async () => {
+    listFacets.mockResolvedValue([{ key: 'other/value', value: 'x', state: 'active', stability: 1 }]);
+    render(<FacetsPanel />);
+    await screen.findByTestId('facet-row-other/value');
+
+    listFacets.mockRejectedValueOnce(new Error('refresh failed'));
+    fireEvent.click(screen.getByTestId('facet-pin-other/value'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('refresh failed'));
+
+    rebuildCache.mockRejectedValueOnce(new Error('rebuild failed'));
+    fireEvent.click(screen.getByTestId('facets-rebuild'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('rebuild failed'));
+  });
+
+  it('shows fallback action errors and renders unknown classes', async () => {
+    listFacets.mockResolvedValueOnce([
+      { key: 'unclassified', value: 'x', state: 'active', stability: 1 },
+    ]);
+    render(<FacetsPanel />);
+    await screen.findByTestId('facets-class-other');
+
+    forgetFacet.mockRejectedValueOnce('forget failed');
+    fireEvent.click(screen.getByTestId('facet-forget-unclassified'));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('brain.profile.actionError')
+    );
+  });
+
+  it('reports a learning toggle failure', async () => {
+    updateSettings.mockRejectedValueOnce(new Error('toggle failed'));
+    render(<FacetsPanel />);
+    const toggle = await screen.findByTestId('learning-enabled-toggle');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('toggle failed'));
+  });
+
+  it('reports a rebuild refresh failure', async () => {
+    render(<FacetsPanel />);
+    await screen.findByTestId('facets-panel');
+    listFacets.mockRejectedValueOnce(new Error('rebuild refresh failed'));
+    fireEvent.click(screen.getByTestId('facets-rebuild'));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('rebuild refresh failed')
+    );
+  });
 });
