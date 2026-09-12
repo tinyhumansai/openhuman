@@ -1143,7 +1143,6 @@ async fn subagent_clarification_flow_inner() {
         .get("full_response")
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("turn-2 chat_done missing 'full_response': {second}"));
-    eprintln!("clarification captured count={}", with_captured(|c| c.len()));
     assert!(
         second_response.contains("ANSWER_CANARY_V2"),
         "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}"
