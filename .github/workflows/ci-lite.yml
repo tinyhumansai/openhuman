@@ -1112,6 +1112,9 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Fetch submodule tags for pin verification
+        run: git submodule foreach --recursive 'git fetch --tags --force origin'
+
       # Nine subsystems load as downloaded cdylib modules and each is pinned
       # twice: once as a submodule (the contract compiled here) and once as a
       # version + digest in modules/registry.rs (the artifact loaded at runtime).
