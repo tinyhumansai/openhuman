@@ -563,7 +563,6 @@ enum CursorKind {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct AgentCursorEnvelope {
     agent_id: String,
     agent_key: String,
@@ -572,7 +571,6 @@ struct AgentCursorEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ToolDefinitionCursorEnvelope {
     definition_id: String,
     tool_key: String,
@@ -580,7 +578,6 @@ struct ToolDefinitionCursorEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ConnectorCursorEnvelope {
     key: String,
     kind: String,

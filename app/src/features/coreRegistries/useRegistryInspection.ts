@@ -124,7 +124,7 @@ function pushUrlState(
 ): void {
   const serialized = serializeRegistryUrlState(urlState);
   const search = serialized.length > 0 ? `?${serialized}` : '';
-  const hashRoute = window.location.hash.split('?')[0] || '#/registries';
+  const hashRoute = window.location.hash ? window.location.hash.split('?')[0] : '';
   const nextUrl = `${window.location.pathname}${hashRoute}${search}`;
 
   if (mode === 'replace') {
@@ -573,6 +573,7 @@ export function useRegistryInspection(
       await runCollectionRequest(tab, collection, generation, {
         append: true,
         cursor: collectionState.nextCursor,
+        restarted: collectionState.restartAttemptedGeneration === generation,
       });
     },
     [dispatch, runCollectionRequest]

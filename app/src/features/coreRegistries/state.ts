@@ -138,6 +138,7 @@ function notLoadedCollection<TItem>(): CursorRegistryCollectionState<TItem> {
     lastObservedAt: null,
     successGeneration: null,
     restartGeneration: null,
+    restartAttemptedGeneration: null,
     retryDisabledUntil: null,
   };
 }
@@ -149,6 +150,7 @@ function notLoadedUnpagedCollection<TItem>(): UnpagedRegistryCollectionState<TIt
     lastObservedAt: null,
     successGeneration: null,
     restartGeneration: null,
+    restartAttemptedGeneration: null,
     retryDisabledUntil: null,
   };
 }
@@ -233,7 +235,7 @@ function collectionStateGeneration(
   tab: RegistryTab,
   collection: RegistryCollectionKey
 ): number | null {
-  return getCollectionState(state, tab, collection)?.restartGeneration ?? null;
+  return getCollectionState(state, tab, collection)?.restartGeneration ?? state.tabs[tab].generation;
 }
 
 function collectionObservationSuccess(
@@ -430,6 +432,7 @@ function resetCollectionForRestart(
   }
   collectionState.observation = { kind: 'loading', generation };
   collectionState.restartGeneration = generation;
+  collectionState.restartAttemptedGeneration = generation;
   collectionState.successGeneration = null;
   collectionState.retryDisabledUntil = null;
 }
