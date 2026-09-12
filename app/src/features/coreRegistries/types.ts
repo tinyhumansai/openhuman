@@ -64,6 +64,7 @@ export interface RegistryCollectionStateBase<TItem> {
   lastObservedAt: string | null;
   successGeneration: number | null;
   restartGeneration: number | null;
+  restartAttemptedGeneration: number | null;
   retryDisabledUntil?: number | null;
 }
 
