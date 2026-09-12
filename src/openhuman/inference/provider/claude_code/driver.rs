@@ -74,7 +74,7 @@ fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
-use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
+use super::session_store::{is_uuid_v4, SessionStore};
 use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
@@ -286,19 +286,8 @@ fn append_system_prompt_args(
 /// Split out of [`run_turn`] so the mapping from key to session can be tested
 /// without spawning the CLI.
 fn resolve_cc_session(store: &SessionStore, session_key: &str) -> (String, bool) {
-    let stored = store.get(session_key);
-    if let Some(existing) = stored.filter(|id| is_uuid_v4(id)) {
-        return (existing, false);
-    }
-    let id = generate_uuid_v4();
-    if let Err(e) = store.set(session_key, &id) {
-        log::warn!(
-            "[claude-code][driver] failed to persist session uuid for thread {}: {}",
-            session_key,
-            e
-        );
-    }
-    (id, true)
+    let (scope, _) = session_key.split_once(':').unwrap_or((session_key, ""));
+    store.get_or_create(scope, session_key)
 }
 
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards

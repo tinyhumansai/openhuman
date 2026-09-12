@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 struct StoreFile {
     /// thread_id → CC session uuid (v4)
     sessions: HashMap<String, String>,
+    /// conversation scope → the session key currently active for that scope.
+    #[serde(default)]
+    active_keys: HashMap<String, String>,
 }
 
 /// Disk-backed session store. Cheap to clone — it's `Arc`-shareable via
@@ -52,6 +55,37 @@ impl SessionStore {
             .sessions
             .insert(thread_id.to_string(), uuid.to_string());
         let serialized = serde_json::to_string_pretty(&*guard).map_err(std::io::Error::other)?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.path, serialized)
+    }
+
+    /// Atomically reuse or create the session for a key. The lock is held
+    /// across the lookup, generation, and persistence so concurrent first
+    /// turns cannot mint competing sessions. A changed key in the same
+    /// conversation scope starts a new prompt epoch; an old key is never
+    /// resurrected when the prompt later returns to it.
+    pub fn get_or_create(&self, scope: &str, key: &str) -> (String, bool) {
+        let mut guard = self.inner.lock().expect("session store mutex poisoned");
+        let is_current = guard.active_keys.get(scope).is_none_or(|active| active == key);
+        if is_current {
+            if let Some(existing) = guard.sessions.get(key).filter(|id| is_uuid_v4(id)) {
+                return (existing.clone(), false);
+            }
+        }
+
+        let id = generate_uuid_v4();
+        guard.sessions.insert(key.to_string(), id.clone());
+        guard.active_keys.insert(scope.to_string(), key.to_string());
+        if let Err(e) = self.persist(&guard) {
+            log::warn!("[claude-code][session-store] failed to persist session: {e}");
+        }
+        (id, true)
+    }
+
+    fn persist(&self, file: &StoreFile) -> std::io::Result<()> {
+        let serialized = serde_json::to_string_pretty(file).map_err(std::io::Error::other)?;
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }

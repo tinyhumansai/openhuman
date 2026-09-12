@@ -341,16 +341,19 @@ fn session_key_from_request(messages: &[ChatMessage], system_prompt: Option<&str
         .find(|m| m.role == "user")
         .map(|m| m.content.as_str())
         .unwrap_or("");
-    let mut hasher = Sha256::new();
-    for field in [first, system_prompt.unwrap_or("")] {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
+    let mut conversation = Sha256::new();
+    conversation.update((first.len() as u64).to_be_bytes());
+    conversation.update(first.as_bytes());
+    let mut prompt = Sha256::new();
+    for field in [system_prompt.unwrap_or("")] {
+        prompt.update((field.len() as u64).to_be_bytes());
+        prompt.update(field.as_bytes());
     }
-    let digest = hasher.finalize();
-    format!(
-        "hash_{:032x}",
-        u128::from_be_bytes(digest[..16].try_into().unwrap())
-    )
+    let conversation = conversation.finalize();
+    let prompt = prompt.finalize();
+    format!("hash_{:032x}:prompt_{:032x}",
+        u128::from_be_bytes(conversation[..16].try_into().unwrap()),
+        u128::from_be_bytes(prompt[..16].try_into().unwrap()))
 }
 
 #[cfg(test)]
