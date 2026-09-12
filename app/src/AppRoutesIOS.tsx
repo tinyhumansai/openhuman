@@ -94,12 +94,14 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     void manager
       .getTransport()
       .then(transport => {
-        if (!disposed) {
+        if (disposed) return;
+        return transport.isHealthy().then(healthy => {
+          if (!healthy) throw new Error('persisted transport is unhealthy');
           setActiveCoreTransport(transport);
           setBindingFailed(false);
           setReady(true);
           log('[mobile] bound persisted transport kind=%s', transport.kind);
-        }
+        });
       })
       .catch(error => {
         if (!disposed) {

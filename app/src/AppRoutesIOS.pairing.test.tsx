@@ -134,7 +134,7 @@ describe('AppRoutesIOS — persisted transport bootstrap', () => {
   it('binds the newest saved profile before rendering paired routes', async () => {
     const newestProfile = { ...TUNNEL_PROFILE, id: 'newest' };
     listProfiles.mockReturnValue([{ ...TUNNEL_PROFILE, id: 'oldest' }, newestProfile]);
-    const transport = { kind: 'tunnel', isHealthy: vi.fn() };
+    const transport = { kind: 'tunnel', isHealthy: vi.fn().mockResolvedValue(true) };
     mockGetTransport.mockResolvedValue(transport);
 
     renderAt('/human');
