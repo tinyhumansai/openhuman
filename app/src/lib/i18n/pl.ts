@@ -3223,6 +3223,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Komputer',
   'iosMascot.disconnect': 'Rozłącz',
   'iosMascot.error.generic': 'Coś poszło nie tak. Spróbuj ponownie.',
+  'iosMascot.error.providerSetup': 'Problem z konfiguracją Claude Code: {details}',
   'iosMascot.error.sendFailed': 'Nie udało się wysłać. Sprawdź połączenie.',
   'iosMascot.pushToTalk': 'Naciśnij i mów',
   'iosMascot.sendMessage': 'Wyślij wiadomość',

@@ -3005,6 +3005,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': '桌面',
   'iosMascot.disconnect': '断开连接',
   'iosMascot.error.generic': '出了点问题。请再试一次。',
+  'iosMascot.error.providerSetup': 'Claude Code 设置出现问题：{details}',
   'iosMascot.error.sendFailed': '发送失败。检查您的连接。',
   'iosMascot.pushToTalk': '一键通话',
   'iosMascot.sendMessage': '发送消息',

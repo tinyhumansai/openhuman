@@ -3108,6 +3108,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'سطح المكتب',
   'iosMascot.disconnect': 'قطع الاتصال',
   'iosMascot.error.generic': 'حدث خطأ ما. يرجى المحاولة مرة أخرى.',
+  'iosMascot.error.providerSetup': 'مشكلة في إعداد Claude Code: {details}',
   'iosMascot.error.sendFailed': 'فشل الإرسال. تحقق من اتصالك.',
   'iosMascot.pushToTalk': 'اضغط لتتحدث',
   'iosMascot.sendMessage': 'أرسل رسالة',

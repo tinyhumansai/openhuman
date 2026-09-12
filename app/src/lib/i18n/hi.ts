@@ -3183,6 +3183,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'डेस्कटॉप',
   'iosMascot.disconnect': 'डिस्कनेक्ट करें',
   'iosMascot.error.generic': 'कुछ ग़लत हो गया. कृपया पुन: प्रयास करें।',
+  'iosMascot.error.providerSetup': 'Claude Code सेटअप में समस्या: {details}',
   'iosMascot.error.sendFailed': 'भेजने में विफल. अपना कनेक्शन जांचें.',
   'iosMascot.pushToTalk': 'बात करने के लिए दबाव डालें',
   'iosMascot.sendMessage': 'संदेश भेजें',

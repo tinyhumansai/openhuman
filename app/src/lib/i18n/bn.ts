@@ -3180,6 +3180,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'ডেস্কটপ',
   'iosMascot.disconnect': 'সংযোগ বিচ্ছিন্ন করুন',
   'iosMascot.error.generic': 'কিছু ভুল হয়েছে৷ আবার চেষ্টা করুন.',
+  'iosMascot.error.providerSetup': 'Claude Code সেটআপে সমস্যা: {details}',
   'iosMascot.error.sendFailed': 'পাঠাতে ব্যর্থ হয়েছে৷ আপনার সংযোগ পরীক্ষা করুন.',
   'iosMascot.pushToTalk': 'কথা বলার জন্য চাপ দিন',
   'iosMascot.sendMessage': 'বার্তা পাঠান',

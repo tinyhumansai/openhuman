@@ -3147,6 +3147,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': '데스크탑',
   'iosMascot.disconnect': '연결 끊기',
   'iosMascot.error.generic': '문제가 발생했습니다. 다시 시도해 주세요.',
+  'iosMascot.error.providerSetup': 'Claude Code 설정 문제: {details}',
   'iosMascot.error.sendFailed': '전송하지 못했습니다. 연결을 확인하세요.',
   'iosMascot.pushToTalk': '푸시하여 말하기',
   'iosMascot.sendMessage': '메시지 보내기',

@@ -261,7 +261,7 @@ export const MascotScreen: FC = () => {
             role: 'assistant' as const,
             text:
               e.error_type === 'provider_setup' && e.message.trim()
-                ? e.message
+                ? t('iosMascot.error.providerSetup').replace('{details}', e.message.trim())
                 : t('iosMascot.error.generic'),
             streaming: false,
           },

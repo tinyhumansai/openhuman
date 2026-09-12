@@ -3273,6 +3273,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Desktop',
   'iosMascot.disconnect': 'Trennen',
   'iosMascot.error.generic': 'Etwas ist schief gelaufen. Bitte versuchen Sie es erneut.',
+  'iosMascot.error.providerSetup': 'Problem bei der Einrichtung von Claude Code: {details}',
   'iosMascot.error.sendFailed': 'Senden fehlgeschlagen. Überprüfen Sie Ihre Verbindung.',
   'iosMascot.pushToTalk': 'Push-to-talk',
   'iosMascot.sendMessage': 'Nachricht senden',
