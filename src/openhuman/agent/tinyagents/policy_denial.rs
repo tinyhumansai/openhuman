@@ -19,7 +19,7 @@
 //! It is a mitigation, not a guarantee — detecting fabrication needs the
 //! tool-call record carried out to the caller.
 
-use crate::openhuman::security::POLICY_BLOCKED_MARKER;
+use crate::openhuman::security::{POLICY_BLOCKED_MARKER, WORKSPACE_MISSING_MARKER};
 use crate::openhuman::tools::PermissionLevel;
 
 /// Generic workaround for a raw security-policy / autonomy block. These denials
@@ -32,6 +32,11 @@ const SECURITY_POLICY_WORKAROUND: &str = "Raise the agent's access tier / autono
     `[autonomy]` config) if this action should be allowed; otherwise reach the goal \
     with a permitted (e.g. read-only) alternative, or report that it can't be done \
     here.";
+
+/// A missing workspace cannot be repaired by changing the agent's autonomy.
+/// Keep this separate from [`SECURITY_POLICY_WORKAROUND`] so the denial does
+/// not send the user toward an unrelated permission change.
+const WORKSPACE_MISSING_WORKAROUND: &str = "Create the workspace directory (or configure a valid workspace path) and retry; raising the agent's access tier / autonomy cannot resolve a missing workspace.";
 
 /// The boundary that blocked a tool call, with the context needed to explain it
 /// and suggest a way forward.
@@ -93,18 +98,30 @@ impl PolicyDenial<'_> {
                 // Strip the marker prefix from the reason (it is re-added on the
                 // `blocked` line so downstream `contains(POLICY_BLOCKED_MARKER)`
                 // checks — classification, the loop-breaker — keep matching).
-                let reason = raw_reason
+                let policy_reason = raw_reason
                     .trim()
                     .strip_prefix(POLICY_BLOCKED_MARKER)
                     .unwrap_or(raw_reason)
+                    .trim();
+                let is_missing_workspace = policy_reason
+                    .strip_prefix(WORKSPACE_MISSING_MARKER)
+                    .is_some();
+                let reason = policy_reason
+                    .strip_prefix(WORKSPACE_MISSING_MARKER)
+                    .unwrap_or(policy_reason)
                     .trim()
                     .to_string();
+                let workaround = if is_missing_workspace {
+                    WORKSPACE_MISSING_WORKAROUND
+                } else {
+                    SECURITY_POLICY_WORKAROUND
+                };
                 (
                     format!(
                         "{POLICY_BLOCKED_MARKER} Tool '{tool}' was blocked by the security policy"
                     ),
                     reason,
-                    SECURITY_POLICY_WORKAROUND.to_string(),
+                    workaround.to_string(),
                 )
             }
             PolicyDenial::SessionForbidden {

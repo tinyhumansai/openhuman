@@ -218,7 +218,7 @@ impl CsvExportTool {
 
         // Create exports/ directory only at the validated, resolved location.
         if let Some(resolved_parent) = resolved_target.parent() {
-            tokio::fs::create_dir_all(resolved_parent).await?;
+            super::create_validated_parent_dirs(&path_policy, resolved_parent).await?;
         }
 
         // If the target already exists and is a symlink, refuse to follow it

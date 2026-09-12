@@ -121,3 +121,5 @@ mod part_03_tests;
 mod part_04_tests;
 #[path = "policy_tests_part_05_tests.rs"]
 mod part_05_tests;
+#[path = "policy_tests_part_06_tests.rs"]
+mod part_06_tests;

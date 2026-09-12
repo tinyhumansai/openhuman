@@ -197,3 +197,36 @@ fn approval_required_suggests_approval_then_retry() {
     assert!(msg.contains("approve this action"));
     assert!(msg.contains("Relay this to the user"));
 }
+
+#[test]
+fn missing_workspace_block_suggests_workspace_repair_not_more_autonomy() {
+    let raw = format!(
+        "{POLICY_BLOCKED_MARKER} {WORKSPACE_MISSING_MARKER} Workspace directory does not exist: C:\\workspace. Nothing can be written until it is created; this is not a path-traversal refusal."
+    );
+    let msg = PolicyDenial::SecurityPolicyBlocked {
+        tool: "write_file",
+        raw_reason: &raw,
+    }
+    .render();
+
+    assert!(msg.contains("Workspace directory does not exist:"));
+    assert!(!msg.contains(WORKSPACE_MISSING_MARKER));
+    assert!(msg.contains("Create the workspace directory"));
+    assert!(msg.contains("cannot resolve a missing workspace"));
+    assert!(!msg.contains("Raise the agent's access tier / autonomy"));
+    assert!(msg.contains("Relay this to the user"));
+}
+
+#[test]
+fn workspace_marker_only_classifies_a_prefixed_reason() {
+    let raw =
+        format!("{POLICY_BLOCKED_MARKER} unrelated failure mentions {WORKSPACE_MISSING_MARKER}");
+    let msg = PolicyDenial::SecurityPolicyBlocked {
+        tool: "write_file",
+        raw_reason: &raw,
+    }
+    .render();
+
+    assert!(msg.contains("Raise the agent's access tier / autonomy"));
+    assert!(!msg.contains("Create the workspace directory"));
+}

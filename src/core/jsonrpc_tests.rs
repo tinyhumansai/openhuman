@@ -177,6 +177,32 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
     assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
+/// A registration attempt before the bus is ready must not consume the
+/// group's token, so a later ready attempt can still claim it.
+#[test]
+fn domain_subscriber_registration_defers_until_bus_is_ready() {
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    let completed = Mutex::new(HashSet::new());
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        false
+    ));
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        true
+    ));
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        true
+    ));
+}
+
 #[test]
 fn domain_subscriber_registration_readiness_helper_is_idempotent() {
     use crate::core::all::DomainGroup;

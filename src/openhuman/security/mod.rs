@@ -61,7 +61,7 @@ pub use policy::{ensure_openhuman_scratch_dir, openhuman_scratch_dir};
 pub use policy::{CommandClass, GateDecision};
 #[allow(unused_imports)]
 pub use policy::{TrustedAccess, TrustedRoot};
-pub use policy::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
+pub use policy::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER, WORKSPACE_MISSING_MARKER};
 #[allow(unused_imports)]
 pub use traits::{NoopSandbox, Sandbox};
 

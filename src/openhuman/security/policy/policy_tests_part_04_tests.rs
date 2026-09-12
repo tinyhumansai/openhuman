@@ -163,6 +163,151 @@ async fn validate_parent_path_allows_new_file() {
     assert!(result.is_ok());
 }
 
+#[tokio::test]
+async fn validate_parent_path_distinguishes_missing_workspace() {
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().join("missing-workspace");
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    let err = policy
+        .validate_parent_path("newfile.txt")
+        .await
+        .expect_err("a missing workspace must fail closed");
+    assert!(err.contains(POLICY_BLOCKED_MARKER), "err: {err}");
+    assert!(err.contains(WORKSPACE_MISSING_MARKER), "err: {err}");
+    assert!(
+        err.contains("Nothing can be written until it is created"),
+        "err: {err}"
+    );
+    assert!(
+        !err.contains("Resolved parent path escapes workspace"),
+        "missing workspace must not be mislabeled as traversal: {err}"
+    );
+}
+
+#[tokio::test]
+async fn validate_parent_path_distinguishes_missing_workspace_without_workspace_only() {
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().join("missing-workspace");
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    let err = policy
+        .validate_parent_path("newfile.txt")
+        .await
+        .expect_err("a missing workspace must fail closed even when workspace_only is disabled");
+    assert!(err.contains(WORKSPACE_MISSING_MARKER), "err: {err}");
+    assert!(
+        !err.contains("Resolved parent path escapes workspace"),
+        "missing workspace must not be mislabeled as traversal: {err}"
+    );
+}
+
+#[tokio::test]
+async fn validate_parent_path_does_not_mislabel_unrelated_target_as_missing_workspace() {
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().join("missing-workspace");
+    let action = parent.path().join("unrelated-action");
+    std::fs::create_dir_all(&action).unwrap();
+    let policy = SecurityPolicy {
+        workspace_dir: workspace,
+        action_dir: action,
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    let err = policy
+        .validate_parent_path("newfile.txt")
+        .await
+        .expect_err("an unrelated untrusted target must remain blocked");
+    assert!(
+        err.contains("Resolved parent path escapes workspace"),
+        "err: {err}"
+    );
+    assert!(!err.contains(WORKSPACE_MISSING_MARKER), "err: {err}");
+}
+
+#[tokio::test]
+async fn validate_parent_path_preserves_trusted_write_when_workspace_missing() {
+    let parent = tempfile::tempdir().unwrap();
+    let workspace = parent.path().join("missing-workspace");
+    let trusted = parent.path().join("trusted");
+    std::fs::create_dir_all(&trusted).unwrap();
+    let policy = SecurityPolicy {
+        workspace_dir: workspace,
+        action_dir: trusted.clone(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        trusted_roots: vec![TrustedRoot {
+            path: trusted.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+        ..SecurityPolicy::default()
+    };
+
+    let resolved = policy
+        .validate_parent_path("newfile.txt")
+        .await
+        .expect("an explicitly granted trusted root must remain writable");
+    assert!(resolved.ends_with("newfile.txt"));
+}
+
+#[tokio::test]
+async fn validate_parent_path_does_not_let_parent_trusted_root_create_workspace_state() {
+    let parent = tempfile::tempdir().unwrap();
+    let trusted = parent.path().join("trusted");
+    let workspace = trusted.join("missing-workspace");
+    std::fs::create_dir_all(&trusted).unwrap();
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        action_dir: trusted.clone(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        trusted_roots: vec![TrustedRoot {
+            path: trusted.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+        ..SecurityPolicy::default()
+    };
+
+    let err = policy
+        .validate_parent_path("missing-workspace/newfile.txt")
+        .await
+        .expect_err("a parent grant must not turn the missing workspace into an action root");
+    assert!(err.contains(WORKSPACE_MISSING_MARKER), "err: {err}");
+}
+
+#[tokio::test]
+async fn validate_parent_path_preserves_protected_root_diagnosis_when_workspace_missing() {
+    let workspace = std::path::PathBuf::from("/etc/missing-openhuman-workspace");
+    let policy = SecurityPolicy {
+        workspace_dir: workspace,
+        action_dir: "/etc/missing-openhuman-workspace".into(),
+        workspace_only: true,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    let err = policy
+        .validate_parent_path("newfile.txt")
+        .await
+        .expect_err("protected roots must remain forbidden");
+    assert!(err.contains("protected"), "err: {err}");
+    assert!(!err.contains(WORKSPACE_MISSING_MARKER), "err: {err}");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn validate_parent_path_blocks_symlinked_parent_dir() {
@@ -528,174 +673,5 @@ fn from_config_does_not_duplicate_user_granted_projects_root() {
     assert!(
         matches!(matches[0].access, TrustedAccess::Read),
         "must preserve the user-granted access level"
-    );
-}
-
-// -- canonical_workspace cache ------------------------------------
-
-/// `validate_path` previously called `tokio::fs::canonicalize(&workspace_dir)`
-/// inline on every invocation. The `canonical_workspace` OnceCell now memoizes
-/// that result. This test pins the contract: the cell starts empty, is
-/// populated after the first `validate_path` call, and stays populated (same
-/// value) across subsequent calls — i.e. only one canonicalize per policy.
-#[tokio::test]
-async fn validate_path_caches_canonical_workspace_root() {
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().to_path_buf();
-    let file = workspace.join("hello.txt");
-    std::fs::write(&file, "hi").unwrap();
-
-    let policy = SecurityPolicy {
-        workspace_dir: workspace.clone(),
-        action_dir: workspace.clone(),
-        // Disable workspace_only so we can refer to the temp workspace via
-        // its absolute path (the default policy blocks any absolute path
-        // when workspace_only=true). Clear forbidden_paths for the same
-        // reason — macOS tempdirs live under `/var/folders/…`.
-        workspace_only: false,
-        forbidden_paths: vec![],
-        ..SecurityPolicy::default()
-    };
-
-    // Empty before first use.
-    assert!(
-        policy.canonical_workspace.get().is_none(),
-        "OnceCell must start empty so the first call hydrates it"
-    );
-
-    // First call hydrates the cache.
-    let r1 = policy
-        .validate_path(file.to_str().unwrap())
-        .await
-        .expect("first validate_path call succeeds");
-    let cached_after_first = policy
-        .canonical_workspace
-        .get()
-        .expect("first validate_path call must hydrate the OnceCell")
-        .clone();
-
-    // Subsequent calls reuse the cached value without re-canonicalizing.
-    for _ in 0..5 {
-        let r = policy
-            .validate_path(file.to_str().unwrap())
-            .await
-            .expect("repeated validate_path calls succeed");
-        assert_eq!(r, r1, "validate_path result must be stable across calls");
-        let cached_now = policy
-            .canonical_workspace
-            .get()
-            .expect("OnceCell stays populated after first hydration");
-        assert_eq!(
-            cached_now, &cached_after_first,
-            "cached workspace root must not change across calls"
-        );
-    }
-}
-
-/// The synchronous path validators (`is_path_string_allowed`,
-/// `is_resolved_path_allowed_for`) previously re-canonicalized `workspace_dir`
-/// on every call. `workspace_root_sync` now hydrates the **same**
-/// `canonical_workspace` cell the async `workspace_root` uses. This pins that
-/// the sync helper populates the cell once, reuses it, and agrees byte-for-byte
-/// with the async path — one cache, both paths converge on one value.
-#[tokio::test]
-async fn workspace_root_sync_hydrates_and_shares_the_async_cache() {
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().to_path_buf();
-    let expected = workspace
-        .canonicalize()
-        .unwrap_or_else(|_| workspace.clone());
-
-    let policy = SecurityPolicy {
-        workspace_dir: workspace.clone(),
-        action_dir: workspace.clone(),
-        workspace_only: false,
-        forbidden_paths: vec![],
-        ..SecurityPolicy::default()
-    };
-
-    // Empty before first use.
-    assert!(
-        policy.canonical_workspace.get().is_none(),
-        "OnceCell must start empty so the first sync call hydrates it"
-    );
-
-    // First sync call resolves the canonical workspace and hydrates the cell.
-    let r1 = policy.workspace_root_sync();
-    assert_eq!(r1, expected, "sync helper returns the canonical workspace");
-    assert_eq!(
-        policy.canonical_workspace.get(),
-        Some(&expected),
-        "sync helper must hydrate the shared canonical_workspace cell"
-    );
-
-    // Repeated sync calls reuse the cached value.
-    for _ in 0..5 {
-        assert_eq!(
-            policy.workspace_root_sync(),
-            r1,
-            "sync workspace root must be stable across calls"
-        );
-    }
-
-    // The async path reuses the SAME cell the sync call populated — no second
-    // canonicalize, and both paths agree on one value.
-    assert_eq!(
-        policy.workspace_root().await,
-        r1,
-        "async workspace_root must return the value the sync helper cached"
-    );
-
-    // Behavior preserved through the swapped call site: a path under the
-    // canonical workspace is still allowed.
-    assert!(
-        policy.is_resolved_path_allowed(&expected.join("note.txt")),
-        "a path inside the workspace stays allowed after the cache swap"
-    );
-}
-
-/// `validate_parent_path` shares the same cache as `validate_path` — both go
-/// through `workspace_root()`. Hydrating via either entry point must be
-/// observable from the other.
-#[tokio::test]
-async fn validate_parent_path_uses_same_cache_as_validate_path() {
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().to_path_buf();
-
-    let policy = SecurityPolicy {
-        workspace_dir: workspace.clone(),
-        action_dir: workspace.clone(),
-        // Disable workspace_only so we can refer to the temp workspace via
-        // its absolute path (the default policy blocks any absolute path
-        // when workspace_only=true). Clear forbidden_paths for the same
-        // reason — macOS tempdirs live under `/var/folders/…`.
-        workspace_only: false,
-        forbidden_paths: vec![],
-        ..SecurityPolicy::default()
-    };
-
-    // Empty before first use.
-    assert!(policy.canonical_workspace.get().is_none());
-
-    // Hydrate via validate_parent_path (target file does not exist yet).
-    let target = workspace.join("not-yet-written.txt");
-    let _ = policy
-        .validate_parent_path(target.to_str().unwrap())
-        .await
-        .expect("validate_parent_path succeeds against an extant parent");
-    let cached = policy
-        .canonical_workspace
-        .get()
-        .expect("validate_parent_path must also hydrate the OnceCell")
-        .clone();
-
-    // A subsequent validate_path call must see the same cached root.
-    let other = workspace.join("hi.txt");
-    std::fs::write(&other, "x").unwrap();
-    let _ = policy.validate_path(other.to_str().unwrap()).await.unwrap();
-    assert_eq!(
-        policy.canonical_workspace.get(),
-        Some(&cached),
-        "validate_path must reuse the cache hydrated by validate_parent_path"
     );
 }
