@@ -6,6 +6,7 @@
 //! against [`MIN_CLI_VERSION`].
 
 use std::ffi::OsString;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -126,21 +127,26 @@ fn account_login_shell() -> Option<PathBuf> {
         Ok(None) => {
             log::warn!("[claude-code][version] dscl timed out; killing child");
             let _ = child.kill();
-            let _ = child.wait();
+            if let Err(e) = child.wait() {
+                log::warn!("[claude-code][version] dscl reap failed after timeout err={e}");
+            }
             return None;
         }
         Err(e) => {
             log::warn!("[claude-code][version] dscl wait failed err={e}; killing child");
             let _ = child.kill();
-            let _ = child.wait();
+            if let Err(e) = child.wait() {
+                log::warn!("[claude-code][version] dscl reap failed err={e}");
+            }
             return None;
         }
     };
     if !status.success() {
         return None;
     }
-    let output = child.wait_with_output().ok()?;
-    let shell = String::from_utf8_lossy(&output.stdout)
+    let mut stdout = Vec::new();
+    child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+    let shell = String::from_utf8_lossy(&stdout)
         .lines()
         .find_map(|line| line.strip_prefix("UserShell:").map(str::trim))?;
     (!shell.is_empty()).then(|| PathBuf::from(shell))
@@ -149,14 +155,16 @@ fn account_login_shell() -> Option<PathBuf> {
 fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
     let mut child = Command::new(shell)
         .args(["-lc", "command -v claude"])
+        .env("PATH", path_with_binary_dir(shell))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    match child.wait_timeout(Duration::from_secs(2)).ok()? {
-        Some(status) if status.success() => {
-            let output = child.wait_with_output().ok()?;
-            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    match child.wait_timeout(Duration::from_secs(2)) {
+        Ok(Some(status)) if status.success() => {
+            let mut stdout = Vec::new();
+            child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+            let path = PathBuf::from(String::from_utf8_lossy(&stdout).trim());
             path.is_file().then(|| {
                 log::debug!(
                     "[claude-code][version] resolved via login shell path={}",
@@ -165,10 +173,19 @@ fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
                 path
             })
         }
-        Some(_) => None,
-        None => {
+        Ok(Some(_)) => None,
+        Ok(None) => {
             log::warn!(
                 "[claude-code][version] login shell timed out shell={}",
+                shell.display()
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "[claude-code][version] login shell wait failed shell={} err={e}",
                 shell.display()
             );
             let _ = child.kill();
