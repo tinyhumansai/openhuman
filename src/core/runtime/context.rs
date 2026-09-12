@@ -456,10 +456,22 @@ impl CoreContext {
     }
 
     pub fn current() -> Option<Arc<CoreContext>> {
-        CURRENT_CONTEXT
-            .try_with(|ctx| ctx.clone())
-            .ok()
-            .or_else(|| DEFAULT_CONTEXT.get().cloned())
+        let current = CURRENT_CONTEXT.try_with(|ctx| ctx.clone()).ok();
+
+        // Tests run in parallel and some exercise full core initialization,
+        // which seeds DEFAULT_CONTEXT. Falling back to that process-global
+        // value outside an explicit scope makes otherwise context-free tests
+        // observe whichever test initialized first. Production dispatch still
+        // gets the legacy default-context fallback below.
+        #[cfg(test)]
+        {
+            current
+        }
+
+        #[cfg(not(test))]
+        {
+            current.or_else(|| DEFAULT_CONTEXT.get().cloned())
+        }
     }
 
     /// The process default context (first built), independent of any active
