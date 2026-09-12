@@ -390,7 +390,43 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
     let mut responses_omit_max_output_tokens = false;
 
     let auth = match entry.auth_style {
-        AuthStyle::Anthropic => CompatAuthStyle::Anthropic,
+        AuthStyle::Anthropic => {
+            // Anthropic's OpenAI-compatibility endpoint does not support prompt
+            // caching (and reports `prompt_tokens_details` as always empty), so
+            // a BYOK Claude key served through Chat Completions re-billed the
+            // whole prefix on every call. Native tool calling is the normal
+            // case and routes to the crate's Messages API adapter, which
+            // places `cache_control` breakpoints. Text mode (prompt-guided
+            // tools) is only implemented on the Chat Completions adapter, so
+            // that rare case keeps the compat path.
+            if native_tool_calling
+                && super::crate_anthropic::endpoint_is_anthropic_messages(&endpoint)
+            {
+                crate::openhuman::security::egress::emit_external_transfer(
+                    crate::openhuman::security::egress::EgressDescriptor::inference(
+                        &slug,
+                        &effective_model,
+                        true,
+                    ),
+                );
+                let chat = super::crate_anthropic::build_crate_anthropic_model(
+                    super::crate_anthropic::CrateAnthropicConfig {
+                        endpoint: endpoint.as_str(),
+                        api_key: key.as_str(),
+                        model: effective_model.as_str(),
+                        temperature_override,
+                        temperature_unsupported_models: config
+                            .temperature_unsupported_models
+                            .as_slice(),
+                    },
+                );
+                return Some(Ok((chat, effective_model)));
+            }
+            log::debug!(
+                "[providers][chat-factory] slug={slug} auth_style=anthropic native_tools=false → OpenAI-compatible text-mode path (no prompt caching)"
+            );
+            CompatAuthStyle::Anthropic
+        }
         AuthStyle::None => CompatAuthStyle::None,
         AuthStyle::OpenhumanJwt => {
             #[cfg(not(test))]
@@ -467,6 +503,11 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
             responses_omit_max_output_tokens,
             extra_query_params: extra_query_params.as_slice(),
             user_agent: user_agent.as_deref(),
+            // OpenRouter forwards explicit `cache_control` markers to Anthropic
+            // and Gemini, which cache nothing through a Chat Completions relay
+            // without them; hosted OpenAI rejects unknown part fields, so the
+            // flag is keyed on the relay, not on by default.
+            explicit_cache_control: super::crate_openai::endpoint_is_openrouter(&endpoint),
         });
     Some(Ok((chat, effective_model)))
 }

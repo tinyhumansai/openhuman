@@ -148,7 +148,7 @@ fn prompt_guided_response_uses_tinyagents_xml_parser() {
 #[test]
 fn prompt_guided_response_keeps_legacy_pformat_fallback() {
     let response = prompt_guided_text_response(
-        "<tool_call>lookup[7|needle]</tool_call>".to_string(),
+        "<tool_call>lookup[0|7|1|needle]</tool_call>".to_string(),
         &tool_request(),
     );
 

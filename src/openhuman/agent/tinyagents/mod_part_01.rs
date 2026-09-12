@@ -246,10 +246,17 @@ fn run_policy_for(max_iterations: usize, response_cache_enabled: bool) -> RunPol
     // to manufacture valid stub arguments only because this policy was left at
     // its historical fail-fast default.
     policy.invalid_args = InvalidArgsPolicy::ReturnToolError;
-    // Prompt-prefix protection is always on (issue #4249, 03.2): the
-    // `PromptCacheGuardMiddleware` records a `CacheLayoutEvent` whenever volatile
-    // content busts the provider KV-cache prefix. Purely diagnostic — never
-    // mutates the request.
+    // Prompt-prefix protection is always on (issue #4249, 03.2). Two things
+    // ride on it, and both were inert until the harness started stamping this
+    // effective policy onto the outgoing request (tinyagents `model_call`):
+    //   * the `PromptCacheGuardMiddleware` records a `CacheLayoutEvent` whenever
+    //     volatile content busts the provider KV-cache prefix (diagnostic), and
+    //   * the loop injects a `prompt_cache_key` routing hint derived from the
+    //     stable prefix into `provider_options`, and the provider adapters see
+    //     `protect_prompt_prefix` and emit explicit `cache_control` breakpoints
+    //     where the provider needs them (native Anthropic, OpenRouter relays).
+    // The stable prefix itself is declared per request by the host
+    // `PromptCacheSegmentMiddleware`.
     policy.cache.protect_prompt_prefix = true;
     // Response caching is gated: it is enabled only for deterministic internal
     // runs (which additionally attach a `ResponseCache`). Interactive chat turns

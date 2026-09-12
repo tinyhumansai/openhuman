@@ -40,6 +40,7 @@ fn builds_a_chat_model_with_the_configured_profile() {
         responses_omit_max_output_tokens: false,
         extra_query_params: &[],
         user_agent: None,
+        explicit_cache_control: false,
     });
     // The built model carries the configured provider + model on its profile.
     let profile = model.profile().expect("openai models expose a profile");
@@ -85,6 +86,7 @@ fn builder_applies_local_none_auth_without_panicking() {
         responses_omit_max_output_tokens: false,
         extra_query_params: &[],
         user_agent: None,
+        explicit_cache_control: false,
     });
 }
 
@@ -106,4 +108,16 @@ fn local_runtime_builder_disables_native_tools_and_vision() {
     // Local runtimes must not advertise native tools or vision.
     assert!(!profile.tool_calling);
     assert!(!profile.modalities.image_in);
+}
+
+#[test]
+fn openrouter_endpoints_are_recognised_for_explicit_cache_control() {
+    assert!(endpoint_is_openrouter("https://openrouter.ai/api/v1"));
+    assert!(endpoint_is_openrouter("HTTPS://OpenRouter.ai/api/v1/"));
+    assert!(endpoint_is_openrouter("https://openrouter.ai:443/api/v1"));
+    assert!(!endpoint_is_openrouter("https://api.openai.com/v1"));
+    assert!(!endpoint_is_openrouter("https://notopenrouter.ai/api/v1"));
+    assert!(!endpoint_is_openrouter(
+        "https://example.com/openrouter.ai/"
+    ));
 }

@@ -218,6 +218,13 @@ impl<State: Send + Sync> ChatModel<State> for StatelessModel {
         self.inner.profile()
     }
 
+    // Forwarded so the harness response cache scopes on the *real* model. The
+    // trait default declines identity, and `scoped_cache_key` then folds a fixed
+    // "anonymous-model" marker — every wrapped model would share one key space.
+    fn cache_identity(&self) -> Option<String> {
+        self.inner.cache_identity()
+    }
+
     async fn invoke(
         &self,
         _state: &State,

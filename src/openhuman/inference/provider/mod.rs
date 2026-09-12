@@ -11,6 +11,8 @@ pub mod chat_template;
 pub mod claude_agent_sdk;
 pub mod claude_code;
 pub mod config_rejection;
+/// Crate-native Anthropic Messages API client construction (prompt caching).
+pub mod crate_anthropic;
 /// Crate-native OpenAI-compatible client construction (issue #4727, Motion B).
 pub mod crate_openai;
 pub mod error_classify;

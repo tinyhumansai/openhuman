@@ -481,6 +481,19 @@ impl ChatModel<()> for OpenHumanBackendModel {
         Some(&self.profile)
     }
 
+    /// Identity for harness response-cache scoping: the backend base URL and
+    /// the default tier/model. The session JWT is deliberately absent — it
+    /// rotates, and a key derived from it would never hit twice — and the
+    /// backend resolves the tier per account anyway, so two accounts sharing
+    /// a cache would need their own namespace, not a credential in the key.
+    fn cache_identity(&self) -> Option<String> {
+        Some(format!(
+            "openhuman:{}:{}",
+            self.base_url(),
+            self.default_model
+        ))
+    }
+
     async fn invoke(
         &self,
         state: &(),

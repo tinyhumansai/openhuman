@@ -221,6 +221,16 @@ impl ChatModel<()> for ClaudeCodeProvider {
         Some(&self.profile)
     }
 
+    /// Identity for harness response-cache scoping. Names the binary and the
+    /// model, never the API key.
+    fn cache_identity(&self) -> Option<String> {
+        Some(format!(
+            "claude_code:{}:{}",
+            self.bin_path.display(),
+            self.model
+        ))
+    }
+
     async fn invoke(
         &self,
         _state: &(),

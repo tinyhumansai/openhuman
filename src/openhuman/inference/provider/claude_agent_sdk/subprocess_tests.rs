@@ -213,6 +213,15 @@ printf '%s\n' '{"type":"result","result":"Calling.<tool_call>{\"name\":\"lookup\
     );
 }
 
+#[test]
+fn cache_identity_includes_selected_model() {
+    let config = ClaudeAgentSdkConfig::default();
+    let first = ClaudeAgentSdkProvider::for_model(config.clone(), "model-a");
+    let second = ClaudeAgentSdkProvider::for_model(config, "model-b");
+
+    assert_ne!(first.cache_identity(), second.cache_identity());
+}
+
 /// The CLI takes one `--system-prompt`, so every system message has to be
 /// folded into it. Taking only the first dropped the artifact contents list and
 /// the turn-cap wrap-up, which are appended as system messages exactly so the

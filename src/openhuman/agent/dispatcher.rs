@@ -163,6 +163,7 @@ fn to_outcomes(results: &[ToolExecutionResult]) -> Vec<ToolOutcome> {
             output: result.output.clone(),
             success: result.success,
             tool_call_id: result.tool_call_id.clone(),
+            trusted_verbatim: false,
         })
         .collect()
 }
@@ -188,6 +189,7 @@ fn to_transcript_entry(message: &ConversationMessage) -> TranscriptEntry {
                 .map(|result| ToolResultEntry {
                     tool_call_id: result.tool_call_id.clone(),
                     content: result.content.clone(),
+                    trusted_verbatim: false,
                 })
                 .collect(),
         ),
@@ -290,7 +292,18 @@ fn dispatch_format_results(
     dialect: &dyn ToolDialect,
     results: &[ToolExecutionResult],
 ) -> ConversationMessage {
-    from_transcript_entry(dialect.format_results(&to_outcomes(results)))
+    let entries = dialect.format_results(&to_outcomes(results));
+    debug_assert_eq!(
+        entries.len(),
+        1,
+        "OpenHuman tool results must remain a single conversation message"
+    );
+    from_transcript_entry(
+        entries
+            .into_iter()
+            .next()
+            .expect("tool result formatting must produce a message"),
+    )
 }
 
 fn dispatch_provider_messages(

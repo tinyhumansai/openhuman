@@ -475,7 +475,7 @@ fn tools_section_pformat_renders_signature_not_schema() {
     let rendered = ToolsSection.build(&ctx).unwrap();
     // Alphabetical: kind, sugar.
     assert!(
-        rendered.contains("Call as: `make_tea[kind|sugar]`"),
+        rendered.contains("Call as: `make_tea[0|<kind>|1|<sugar>]`"),
         "expected p-format signature in tools section, got:\n{rendered}"
     );
     // Should NOT contain the raw JSON schema dump.

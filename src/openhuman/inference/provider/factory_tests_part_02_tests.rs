@@ -327,6 +327,46 @@ fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
         model.profile().and_then(|p| p.provider.as_deref()),
         Some("anthropic")
     );
+    // The native Messages API adapter, not the OpenAI-compat flavour: its
+    // cache identity is `anthropic:<base>:<model>`, while the compat client
+    // would report the provider slug with an OpenAI-shaped identity. Only the
+    // native adapter places `cache_control` breakpoints — Anthropic's compat
+    // endpoint documents prompt caching as unsupported.
+    let identity = model.cache_identity().expect("anthropic identifies itself");
+    assert!(
+        identity.starts_with("anthropic:https://api.anthropic.com/v1:claude-sonnet-4-6"),
+        "expected the native Messages adapter, got identity {identity}"
+    );
+    assert!(model
+        .profile()
+        .is_some_and(|p| p.tool_calling && p.streaming));
+}
+
+/// Text mode (prompt-guided tools) is only implemented on the Chat Completions
+/// adapter, so an Anthropic slug asked for `native_tools = false` keeps the
+/// compat client rather than a native adapter that would ignore the request.
+#[test]
+fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_anth", "anthropic"));
+    let (model, model_id) = try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        "chat",
+        "anthropic:claude-sonnet-4-6",
+        &config,
+        false,
+    )
+    .expect("anthropic slug resolves")
+    .expect("build");
+    assert_eq!(model_id, "claude-sonnet-4-6");
+    let identity = model.cache_identity().unwrap_or_default();
+    assert!(
+        !identity.starts_with("anthropic:https://"),
+        "text mode must not route to the native adapter, got {identity}"
+    );
+    assert!(model.profile().is_some_and(|p| !p.tool_calling));
 }
 
 #[test]

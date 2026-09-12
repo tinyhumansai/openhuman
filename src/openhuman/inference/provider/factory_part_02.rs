@@ -217,6 +217,10 @@ impl ChatModel<()> for DefaultTemperatureChatModel {
         self.inner.profile()
     }
 
+    fn cache_identity(&self) -> Option<String> {
+        self.inner.cache_identity()
+    }
+
     async fn invoke(
         &self,
         state: &(),

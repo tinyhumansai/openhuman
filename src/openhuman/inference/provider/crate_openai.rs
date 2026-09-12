@@ -90,6 +90,24 @@ pub(crate) struct CrateOpenAiConfig<'a> {
     /// `User-Agent` header override (e.g. the Codex CLI UA). Maps to
     /// `OpenAiModel::with_user_agent`.
     pub user_agent: Option<&'a str>,
+    /// Emit explicit `cache_control` breakpoints on the last system and user
+    /// messages. Only relays that forward them to an opt-in prompt cache
+    /// (OpenRouter → Anthropic / Gemini) should set this; hosted OpenAI
+    /// rejects unknown content-part fields. Maps to
+    /// `OpenAiModel::with_explicit_cache_control`.
+    pub explicit_cache_control: bool,
+}
+
+/// Whether `endpoint` is OpenRouter, the one relay in the catalog that
+/// documents forwarding `cache_control` markers to its upstream providers.
+pub(crate) fn endpoint_is_openrouter(endpoint: &str) -> bool {
+    url::Url::parse(endpoint.trim())
+        .ok()
+        .and_then(|url| {
+            url.host_str()
+                .map(|host| host.eq_ignore_ascii_case("openrouter.ai"))
+        })
+        .unwrap_or(false)
 }
 
 /// Build a crate-native `OpenAiModel` (`ChatModel`) for the given OpenAI-compatible
@@ -133,6 +151,13 @@ pub(crate) fn build_crate_openai_model(config: CrateOpenAiConfig<'_>) -> Arc<dyn
     }
     if let Some(user_agent) = config.user_agent {
         model = model.with_user_agent(user_agent);
+    }
+    if config.explicit_cache_control {
+        log::debug!(
+            "[providers][chat-factory] provider={} explicit cache_control breakpoints enabled",
+            config.provider_name
+        );
+        model = model.with_explicit_cache_control(true);
     }
     if config.responses_api_primary {
         model = model.with_responses_api_primary();
@@ -181,6 +206,7 @@ pub(crate) fn make_crate_openai_chat_model(
         responses_omit_max_output_tokens: false,
         extra_query_params: &[],
         user_agent: None,
+        explicit_cache_control: false,
     })
 }
 
@@ -224,6 +250,7 @@ pub(crate) fn make_crate_local_runtime_chat_model(
         responses_omit_max_output_tokens: false,
         extra_query_params: &[],
         user_agent: None,
+        explicit_cache_control: false,
     })
 }
 

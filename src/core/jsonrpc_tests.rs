@@ -195,7 +195,6 @@ fn domain_subscriber_registration_readiness_helper_is_idempotent() {
         true
     ));
 }
-
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot
 /// path (`register_domain_subscribers`), NOT inside
 /// `channels::runtime::startup::start_channels`, which is skipped for

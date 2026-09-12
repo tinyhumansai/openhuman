@@ -54,7 +54,7 @@ fn a_registered_tool_parses_positionally_through_the_adapter() {
     // arguments come back named and coerced.
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool("echo"))];
     let reg = build_registry(&tools);
-    let (name, args) = parse_call("echo[3|hi]", &reg).expect("known tool parses");
+    let (name, args) = parse_call("echo[0|3|1|hi]", &reg).expect("known tool parses");
     assert_eq!(name, "echo");
     // Schema properties are ordered alphabetically: count, value.
     assert_eq!(args["count"], 3);
@@ -70,5 +70,5 @@ fn signature_rendering_agrees_between_the_tool_and_schema_forms() {
     let from_tool = render_signature_from_tool(&tool);
     let from_schema = render_signature_from_schema("echo", &tool.parameters_schema());
     assert_eq!(from_tool, from_schema);
-    assert_eq!(from_tool, "echo[count|value]");
+    assert_eq!(from_tool, "echo[0|<count>|1|<value>]");
 }
