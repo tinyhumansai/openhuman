@@ -454,9 +454,7 @@ export function useRegistryInspection(
         }
 
         const shouldRestart = Boolean(
-          options.cursor &&
-          !options.restarted &&
-          isInvalidCursorError(meta)
+          options.cursor && !options.restarted && isInvalidCursorError(meta)
         );
         dispatch({
           type: 'collection_request_failed',
