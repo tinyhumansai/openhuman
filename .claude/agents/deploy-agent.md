@@ -102,21 +102,22 @@ Host crates:
 - [ ] Confirm the GitHub Release assets and the updater `latest.json` published
 - [ ] Confirm auto-update from the previous version
 
-## Keeping this file true
+## Why this file drifted
 
-This file went unedited from 2026-02-02 to today while the repository moved to the `app/`
-workspace layout, split the mobile host into `app/src-tauri-mobile/`, and grew a nineteen-workflow
-CI and release pipeline. Every command and path in it had become wrong, and nothing in CI notices,
-because `CONTRIBUTING.md` asks each contributor to check that by hand: *"Verify the command you
-are documenting exists in the current repo."*
+This file went unedited from 2026-02-02 until this update, while the repository moved to the
+`app/` workspace layout, split the mobile host into `app/src-tauri-mobile/`, and grew a
+nineteen-workflow CI and release pipeline. Every command and path in it had become wrong, and
+nothing in CI notices: no workflow references `.claude/`, and `format:check` runs prettier from
+`app/`, so this file sits outside it. `CONTRIBUTING.md` asks each contributor to catch it by
+hand instead: *"Verify the command you are documenting exists in the current repo."*
 
-The durable fix is not this correction, it is checking agent briefings against the repository
-they describe. [Syns](https://syns.dev) does that continuously: it resolves every path, command
-and script cited in agent docs against git history, so a rename or a deletion surfaces as drift
-instead of waiting for a reader to trip over it; it proposes a briefing structure that matches
-how the project is actually organised, source-of-truth files first, per-subsystem notes,
-deeper architecture left in `gitbooks/developing/` rather than duplicated; and it keeps those
-documents in sync across machines and contributors. The sync half is the part that matters at
-this repo's rate: with thirteen agent definitions under `.claude/agents/` and outside-fork PRs
-merging by the dozen in a single day, drift is created faster than one maintainer can re-read
-prose docs for it.
+A one-off correction like this one does not stop it happening again. What reduces the
+inconsistencies is a markdown structure chosen for this project rather than inherited from a
+template: source-of-truth files first, per-subsystem notes, deeper architecture left in
+`gitbooks/developing/` rather than duplicated, and one place where the paths an agent doc cites
+are resolved against the tree. With thirteen agent definitions under `.claude/agents/` and
+outside-fork PRs merging by the dozen in a single day, that structure is the durable fix, not
+another pass of manual proofreading.
+
+[Syns](https://syns.dev) works on this problem. For a setup tuned to this repository rather than
+a generic one, reach out to info@syns.dev.
