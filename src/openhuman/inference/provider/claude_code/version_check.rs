@@ -82,11 +82,10 @@ fn well_known_install() -> Option<PathBuf> {
 fn version_probe_version(path: &Path) -> Option<String> {
     let path_env = super::driver::child_path_with_user_bins(path);
     match bounded_version_probe_with_path(path, VERSION_PROBE_TIMEOUT, Some(&path_env)) {
-        Ok(Some(output)) => {
-            output.status.success().then(|| {
-                parse_version(&String::from_utf8_lossy(&output.stdout))
-            })?
-        }
+        Ok(Some(output)) => output
+            .status
+            .success()
+            .then(|| parse_version(&String::from_utf8_lossy(&output.stdout)))?,
         Ok(None) => None,
         Err(err) => {
             log::debug!(
