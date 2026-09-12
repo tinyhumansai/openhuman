@@ -406,6 +406,7 @@ const MEMORY_TOOL_CAPABILITIES: &[(&str, tinymemory_api::capabilities::Capabilit
         ("memory_hybrid_search", C::Recall),
         ("memory_store_raw_chunks", C::Recall),
         ("memory_tree", C::Tree),
+        ("memory_tree_list_sources", C::Tree),
         ("memory_flavour", C::Tree),
         ("memory_store_raw_search", C::Entities),
         ("memory_doctor", C::Maintenance),
@@ -446,6 +447,7 @@ fn null_driver_memory_cfg() -> crate::openhuman::config::schema::MemorySubsystem
 ///
 const OPTIONAL_FAMILY_MEMORY_TOOLS: &[&str] = &[
     "memory_tree",
+    "memory_tree_list_sources",
     "memory_flavour",
     "memory_store_raw_search",
     "memory_doctor",
