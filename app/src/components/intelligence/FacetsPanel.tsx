@@ -9,8 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuPin, LuPinOff, LuRefreshCw, LuTrash2 } from 'react-icons/lu';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { trackAnalyticsEvent } from '../analytics';
 import { learningApi, type LearningFacet } from '../../services/api/learningApi';
+import { trackAnalyticsEvent } from '../analytics';
 import Button from '../ui/Button';
 
 const cardClass = 'rounded-lg border border-line bg-surface p-4';

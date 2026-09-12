@@ -56,13 +56,16 @@ describe('learningApi', () => {
     await learningApi.forgetFacet('style/verbosity');
     await learningApi.rebuildCache();
     expect(mockCallCoreRpc).toHaveBeenNthCalledWith(1, {
-      method: 'openhuman.learning_unpin_facet', params: { class: 'identity', key: 'name' },
+      method: 'openhuman.learning_unpin_facet',
+      params: { class: 'identity', key: 'name' },
     });
     expect(mockCallCoreRpc).toHaveBeenNthCalledWith(2, {
-      method: 'openhuman.learning_forget_facet', params: { class: 'style', key: 'verbosity' },
+      method: 'openhuman.learning_forget_facet',
+      params: { class: 'style', key: 'verbosity' },
     });
     expect(mockCallCoreRpc).toHaveBeenNthCalledWith(3, {
-      method: 'openhuman.learning_rebuild_cache', params: {},
+      method: 'openhuman.learning_rebuild_cache',
+      params: {},
     });
   });
 
@@ -72,7 +75,8 @@ describe('learningApi', () => {
       expect.objectContaining({ key: 'x', state: 'active', stability: 0 }),
     ]);
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.learning_list_facets', params: { class: 'style' },
+      method: 'openhuman.learning_list_facets',
+      params: { class: 'style' },
     });
     mockCallCoreRpc.mockResolvedValueOnce({ result: {} });
     expect(await learningApi.cacheStats()).toEqual({ total: 0, by_class: undefined });
