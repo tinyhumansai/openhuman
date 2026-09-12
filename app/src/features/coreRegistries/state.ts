@@ -487,6 +487,7 @@ export function registryInspectionReducer(
 
     case 'collection_request_started': {
       next.surfaceError = null;
+      next.tabs[action.tab].generation = Math.max(next.tabs[action.tab].generation, action.generation);
       markCollectionLoading(next, action.tab, action.collection, action.generation);
       next.tabs[action.tab].summaryState = summarizeTab(next, action.tab);
       return next;

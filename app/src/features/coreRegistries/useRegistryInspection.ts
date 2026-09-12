@@ -525,6 +525,13 @@ export function useRegistryInspection(
 
   const refreshActiveTab = useCallback(async () => {
     const tab = stateRef.current.urlState.tab;
+    for (const collection of relevantCollectionKeysForTab(tab)) {
+      const collectionState = getCollectionState(stateRef.current, tab, collection);
+      if (isRetryCooldownActive(collectionState?.retryDisabledUntil)) {
+        return;
+      }
+    }
+
     visitedTabsRef.current.add(tab);
     const generation = nextGeneration(tab);
     await loadTabGeneration(tab, generation);
