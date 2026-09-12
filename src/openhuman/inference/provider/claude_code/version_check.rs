@@ -309,8 +309,6 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
     })
 }
 
-}
-
 /// The ordered fallback candidates, split out so the list is unit-testable
 /// without mutating the process environment.
 fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
