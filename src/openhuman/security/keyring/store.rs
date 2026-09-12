@@ -214,7 +214,11 @@ pub fn workspace_dir_for_file_backend() -> PathBuf {
 /// The production resolution rule, kept compiled in test builds so it stays
 /// directly testable (see `store_tests.rs`).
 fn resolve_workspace_dir_from_process_state() -> PathBuf {
-    if let Some(dir) = WORKSPACE_DIR.get() {
+    resolve_workspace_dir(WORKSPACE_DIR.get())
+}
+
+fn resolve_workspace_dir(registered_workspace: Option<&PathBuf>) -> PathBuf {
+    if let Some(dir) = registered_workspace {
         return dir.clone();
     }
 

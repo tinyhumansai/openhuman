@@ -4708,6 +4708,7 @@ const messages: TranslationMap = {
     'OpenHuman আমাদের ব্যাকএন্ডের মাধ্যমে টুল কল প্রক্সি করে (প্রস্তাবিত)। অথ ব্রোকার করা হয়; আপনি কখনও Composio API key পেস্ট করেন না। Webhooks সম্পূর্ণরূপে রুট করা।',
   'settings.composio.routingMode': 'রুটিং মোড',
   'settings.composio.saveErrorNoKey': 'সংরক্ষণ ব্যর্থ। Direct মোডের জন্য একটি API key প্রয়োজন।',
+  'settings.composio.invalidApiKey': 'Composio API key অবৈধ।',
   'settings.composio.saving': 'সংরক্ষণ হচ্ছে…',
   'settings.composio.switching': 'স্যুইচ হচ্ছে…',
   'settings.cron.jobs.commandRequired': 'শেল জবের জন্য কমান্ড আবশ্যক',

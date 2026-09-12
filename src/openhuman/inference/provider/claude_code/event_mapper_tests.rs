@@ -56,6 +56,33 @@ fn cli_internal_tool_calls_are_not_surfaced_to_the_harness() {
     );
 }
 
+#[test]
+fn cli_internal_tool_blocks_without_metadata_are_still_suppressed() {
+    let mut m = EventMapper::new();
+    let start = json!({
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {"type": "tool_use"}
+    });
+    let args = json!({
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {"type": "input_json_delta", "partial_json": "{\"x\":1}"}
+    });
+    let stop = json!({"type": "content_block_stop", "index": 1});
+
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: start })
+        .is_empty());
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: args })
+        .is_empty());
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: stop })
+        .is_empty());
+    assert!(m.tool_calls.is_empty());
+}
+
 /// Text in the same turn still streams normally — dropping the tool block must
 /// not swallow the CLI's actual answer.
 #[test]

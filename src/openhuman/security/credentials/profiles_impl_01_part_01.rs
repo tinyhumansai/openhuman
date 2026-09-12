@@ -1,6 +1,4 @@
-
 impl AuthProfilesStore {
-
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         let user_id = user_id_from_state_dir(state_dir);
         let policy = crate::openhuman::security::keyring_consent::policy::check_secret_access();
@@ -214,7 +212,7 @@ impl AuthProfilesStore {
         }
 
         data.active_profiles
-            .insert(provider.to_string(), profile_id.to_string());
+            .insert(provider.to_ascii_lowercase(), profile_id.to_string());
         data.updated_at = Utc::now();
         self.save_locked(&data)
     }
@@ -222,7 +220,7 @@ impl AuthProfilesStore {
     pub fn clear_active_profile(&self, provider: &str) -> Result<()> {
         let _lock = self.acquire_lock()?;
         let mut data = self.load_locked()?;
-        data.active_profiles.remove(provider);
+        data.active_profiles.remove(&provider.to_ascii_lowercase());
         data.updated_at = Utc::now();
         self.save_locked(&data)
     }
@@ -276,6 +274,7 @@ impl AuthProfilesStore {
         // `keychain_migrated` tracks enc2: → keychain promotions: when true the
         // persisted JSON must be rewritten with secret fields cleared.
         let mut keychain_migrated = false;
+        let mut pending_keychain_deletes = Vec::new();
         let mut dropped_ids: Vec<String> = Vec::new();
 
         let mut profiles = BTreeMap::new();
@@ -572,13 +571,7 @@ impl AuthProfilesStore {
             );
         }
 
-        // Purge dropped profiles from the on-disk persisted view AND
-        // any `active_profiles` pointers that referenced them, so the
-        // next read returns a clean "no active session" state.
         if !dropped_ids.is_empty() {
-            // Always apply the cleanup to the in-memory view so the returned
-            // data is correct even on the lock-free read path; the on-disk
-            // rewrite below is what's gated by `persist`.
             for id in &dropped_ids {
                 persisted.profiles.remove(id);
             }
@@ -593,15 +586,153 @@ impl AuthProfilesStore {
                 self.path.display(),
             );
         }
-        // Persist opportunistic cleanup / migrations only on the locked write
-        // path. The lock-free read-only fallback (`persist = false`, used when
-        // the disk can't accept the lock file) intentionally skips this — the
-        // write would fail on a full disk anyway, and the in-memory view above
-        // is already correct.
-        if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated) {
-            self.write_persisted_locked(&persisted)?;
+
+        let mut key_migrated = false;
+        let mut new_active = BTreeMap::new();
+        let mut active_entries: Vec<_> = persisted.active_profiles.iter().collect();
+        active_entries.sort_by_key(|(k, _)| k.to_ascii_lowercase() != **k);
+        for (k, v) in active_entries {
+            let lower = k.to_ascii_lowercase();
+            let normalized_value = normalize_profile_id_provider(v);
+            if &lower != k || &normalized_value != v {
+                key_migrated = true;
+            }
+            if new_active.contains_key(&lower) {
+                if k == &lower {
+                    new_active.insert(lower.clone(), normalized_value.clone());
+                }
+            } else {
+                new_active.insert(lower, normalized_value);
+            }
+        }
+        if key_migrated {
+            persisted.active_profiles = new_active;
         }
 
+        let mut new_persisted_profiles: BTreeMap<String, PersistedAuthProfile> = BTreeMap::new();
+        let mut new_profiles: BTreeMap<String, AuthProfile> = BTreeMap::new();
+        let mut profile_id_migration_targets: BTreeMap<String, String> = BTreeMap::new();
+        let mut profile_casing_changed_count: usize = 0;
+        let mut profile_migration_conflicts: usize = 0;
+
+        let mut profile_entries: Vec<_> = std::mem::take(&mut persisted.profiles)
+            .into_iter()
+            .collect();
+        profile_entries.sort_by_key(|(id, p)| {
+            id != &profile_id(&p.provider.to_ascii_lowercase(), &p.profile_name)
+        });
+        for (id, mut p) in profile_entries {
+            let original_provider = p.provider.clone();
+            let lower_provider = p.provider.to_ascii_lowercase();
+            let normalized_id = profile_id(&lower_provider, &p.profile_name);
+            let provider_or_id_changed = normalized_id != id || lower_provider != p.provider;
+
+            if let Some(mut ap) = profiles.remove(&id) {
+                if new_profiles.contains_key(&normalized_id) {
+                    profile_migration_conflicts += 1;
+                    key_migrated = true;
+                    if id == normalized_id {
+                        let old_id = new_profiles
+                            .insert(normalized_id.clone(), ap)
+                            .map(|old| old.id);
+                        new_persisted_profiles.insert(normalized_id.clone(), p);
+                        profile_id_migration_targets
+                            .insert(id.clone(), normalized_id.clone());
+                        profile_id_migration_targets.insert(
+                            normalize_profile_id_provider(&id),
+                            normalized_id.clone(),
+                        );
+                        if self.use_keychain {
+                            if let Some(old_id) = &old_id {
+                                pending_keychain_deletes.push(old_id.clone());
+                            }
+                        }
+                        log::debug!(
+                            "[auth] profile id migration collision: dropped mixed-case profile_id={:?}",
+                            old_id
+                        );
+                    } else {
+                        if self.use_keychain {
+                            pending_keychain_deletes.push(id.clone());
+                        }
+                        log::debug!(
+                            "[auth] profile id migration collision: dropped mixed-case profile_id={id}"
+                        );
+                    }
+                } else {
+                    ap.id = normalized_id.clone();
+                    ap.provider = lower_provider.clone();
+                    p.provider = lower_provider;
+
+                    let migration_succeeded = if self.use_keychain
+                        && provider_or_id_changed
+                        && (ap.token.is_some() || ap.token_set.is_some())
+                    {
+                        match self.keychain_store_secrets(&ap) {
+                            Ok(()) => {
+                                keychain_migrated = true;
+                                pending_keychain_deletes.push(id.clone());
+                                true
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[auth] load: keychain profile-id migration failed old_profile_id={id}: {e}; retaining legacy entry"
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        true
+                    };
+
+                    let final_id = if migration_succeeded {
+                        if provider_or_id_changed {
+                            key_migrated = true;
+                            profile_casing_changed_count += 1;
+                        }
+                        normalized_id.clone()
+                    } else {
+                        ap.id = id.clone();
+                        p.provider = original_provider;
+                        id.clone()
+                    };
+                    profile_id_migration_targets
+                        .insert(id.clone(), final_id.clone());
+                    profile_id_migration_targets
+                        .insert(normalize_profile_id_provider(&id), final_id.clone());
+                    new_profiles.insert(final_id.clone(), ap);
+                    new_persisted_profiles.insert(final_id, p);
+                }
+            }
+        }
+        for profile_id in persisted.active_profiles.values_mut() {
+            let normalized = normalize_profile_id_provider(profile_id);
+            if let Some(target) = profile_id_migration_targets.get(&normalized) {
+                if profile_id != target {
+                    *profile_id = target.clone();
+                    key_migrated = true;
+                }
+            }
+        }
+        if profile_casing_changed_count > 0 {
+            if profile_migration_conflicts > 0 {
+                log::warn!(
+                    "[auth] profile migration: {profile_migration_conflicts} case-variant \
+                     collision(s) resolved by preferring the existing lowercase entry"
+                );
+            }
+            log::debug!(
+                "[auth] profile migration: normalized {profile_casing_changed_count} profile id(s) to lowercase"
+            );
+        }
+        persisted.profiles = new_persisted_profiles;
+        profiles = new_profiles;
+        if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated || key_migrated) {
+            self.write_persisted_locked(&persisted)?;
+            for id in pending_keychain_deletes {
+                self.keychain_delete_secrets(&id);
+            }
+        }
         Ok(AuthProfilesData {
             schema_version: persisted.schema_version,
             updated_at: parse_datetime_with_fallback(&persisted.updated_at),

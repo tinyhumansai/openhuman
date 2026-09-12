@@ -66,7 +66,16 @@ const mockIsTauri = vi.mocked(isTauri);
 async function renderLoaded(overrides: Partial<SandboxSettings> = {}) {
   mockGet.mockResolvedValue({ result: sandboxSettings(overrides), logs: [] });
   renderWithProviders(<SandboxSettingsPanel />);
-  await waitFor(() => expect(mockGet).toHaveBeenCalled());
+  // Not `waitFor(() => expect(mockGet).toHaveBeenCalled())`: the panel calls
+  // openhumanGetSandboxSettings synchronously inside its mount effect, so that
+  // assertion already holds on waitFor's first tick, while isLoading is still
+  // true and the panel is rendering the loading paragraph. The synchronous
+  // getBy* accessors below then query a DOM that has no fields in it yet. The
+  // same trap is described under flushPersist; it applies to readiness too.
+  //
+  // The backend select is rendered only by the loaded branch and by every
+  // override these tests pass, so awaiting it is the signal that was meant.
+  await screen.findByRole('combobox', { name: /backend/i });
 }
 
 /**
@@ -93,7 +102,7 @@ function blurWith(input: HTMLElement, value: string) {
 }
 
 const memoryInput = () => screen.getByDisplayValue('512');
-const cpuInput = () => screen.getByDisplayValue('1');
+const cpuInput = () => screen.getByRole('spinbutton', { name: /cpu limit/i });
 const imageInput = () => screen.getByDisplayValue('alpine:3.20');
 
 beforeEach(() => {

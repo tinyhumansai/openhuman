@@ -126,3 +126,105 @@ fn empty_history_yields_empty_bytes() {
     let bytes = build_stdin(&[], true);
     assert!(bytes.is_empty());
 }
+
+#[test]
+fn interleaved_text_and_images_keep_source_order() {
+    let s = String::from_utf8(build_stdin(
+        &[msg("user", "before [IMAGE:data:image/png;base64,QUJD] between [IMAGE:data:image/jpeg;base64,REVG] after")],
+        true,
+    )).unwrap();
+    let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
+    let content = row["message"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 5);
+    assert_eq!(content[0]["text"], "before ");
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[2]["text"], " between ");
+    assert_eq!(content[3]["type"], "image");
+    assert_eq!(content[4]["text"], " after");
+}
+
+#[test]
+fn percent_encoded_data_uri_emits_an_image_block() {
+    let s = String::from_utf8(build_stdin(
+        &[msg("user", "see [IMAGE:data:image/png,%89PNG%0D%0A]")],
+        true,
+    ))
+    .unwrap();
+    let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
+    let content = row["message"]["content"].as_array().unwrap();
+    assert!(content.len() >= 2, "expected text and image blocks: {s}");
+    let block = &content[1];
+    assert_eq!(block["type"], "image");
+    assert_eq!(block["source"]["media_type"], "image/png");
+    assert_eq!(
+        block["source"]["data"],
+        base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n")
+    );
+}
+
+#[test]
+fn readable_managed_image_file_emits_an_image_block() {
+    let dir = crate::openhuman::agent::multimodal::managed_attachments_dir_for_tests();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("input-builder-test-{}.png", std::process::id()));
+    std::fs::write(&path, b"PNG").unwrap();
+    let s = String::from_utf8(build_stdin(
+        &[msg("user", &format!("file [IMAGE:{}]", path.display()))],
+        true,
+    ))
+    .unwrap();
+    let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
+    let content = row["message"]["content"].as_array().unwrap();
+    assert!(content.len() >= 2, "expected text and image blocks: {s}");
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["data"], "UE5H");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn unmanaged_and_unreadable_images_degrade_without_reading_paths() {
+    let s = String::from_utf8(build_stdin(
+        &[msg(
+            "user",
+            "before [IMAGE:/etc/passwd] after [IMAGE:/definitely/missing.png]",
+        )],
+        true,
+    ))
+    .unwrap();
+    assert!(s.contains("before ") && s.contains(" after"));
+    assert_eq!(s.matches("an attached image could not be read").count(), 2);
+}
+
+#[test]
+fn invalid_inline_images_use_the_text_fallback() {
+    assert!(image_block("data:image/svg+xml;base64,PHN2Zz4=").is_none());
+    assert!(image_block("data:image/png;base64,not-base64").is_none());
+    assert!(image_block("data:image/png,%ZZ").is_none());
+}
+
+#[test]
+fn image_count_is_capped_at_sixteen() {
+    let marker = "[IMAGE:data:image/png;base64,QQ==]";
+    let raw = std::iter::repeat_n(marker, 17).collect::<String>();
+    let blocks = content_blocks(&raw);
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|block| block["type"] == "image")
+            .count(),
+        16
+    );
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|block| block["text"] == "[an attached image could not be read]")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn oversized_inline_images_use_the_text_fallback() {
+    let payload = "A".repeat(20 * 1024 * 1024 + 1);
+    assert!(image_block(&format!("data:image/png;base64,{payload}")).is_none());
+}

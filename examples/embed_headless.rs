@@ -13,7 +13,7 @@
 //! Run with:
 //!
 //! ```bash
-//! GGML_NATIVE=OFF cargo run --example embed_headless
+//! cargo run --example embed_headless
 //! ```
 //!
 //! To instead expose the core over HTTP for a single-core cloud deployment,

@@ -194,3 +194,54 @@ fn select_profile_prefers_override_then_active_then_default() {
         Some(id_default)
     );
 }
+
+#[test]
+fn store_provider_token_and_remove_profile_roundtrip_with_mixed_case() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = AuthService::new(tmp.path(), false);
+
+    let stored = service
+        .store_provider_token(
+            "DeepSeek",
+            "default",
+            "sk-test-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(stored.provider, "deepseek");
+    assert_eq!(stored.id, "deepseek:default");
+
+    let profile = service.get_profile("deepseek", None).unwrap();
+    assert!(profile.is_some());
+    assert_eq!(profile.unwrap().id, "deepseek:default");
+
+    let removed = service.remove_profile("deepseek", "default").unwrap();
+    assert!(removed);
+
+    let profile_after = service.get_profile("deepseek", None).unwrap();
+    assert!(profile_after.is_none());
+}
+
+#[test]
+fn remove_profile_namespace_fallback_removes_namespaced_profile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let service = AuthService::new(tmp.path(), false);
+
+    service
+        .store_provider_token(
+            "provider:deepseek",
+            "default",
+            "sk-test-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .unwrap();
+
+    let removed = service.remove_profile("deepseek", "default").unwrap();
+    assert!(removed);
+
+    let profile = service.get_profile("deepseek", None).unwrap();
+    assert!(profile.is_none());
+}

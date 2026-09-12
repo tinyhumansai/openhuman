@@ -547,13 +547,13 @@ pub async fn sweep_expired_parked_runs(config: &Config) -> usize {
     let swept = match store::expire_parked_runs(config, &cutoff, &now_str, &error_msg) {
         Ok(swept) => swept,
         Err(e) => {
-            tracing::warn!(target: "flows", error = %e, "[flows] parked-run TTL sweep failed (read continues)");
+            tracing::warn!(target: "flows", error = %format_args!("{e:#}"), "[flows] parked-run TTL sweep failed (read continues)");
             return 0;
         }
     };
     for (run_id, flow_id) in &swept {
         if let Err(e) = store::record_run(config, flow_id, "cancelled") {
-            tracing::warn!(target: "flows", run_id, flow_id, error = %e, "[flows] TTL sweep: failed to update flow summary for expired run");
+            tracing::warn!(target: "flows", run_id, flow_id, error = %format_args!("{e:#}"), "[flows] TTL sweep: failed to update flow summary for expired run");
         }
         // Announce the terminal transition (R-m4). `expire_parked_runs` writes
         // the row directly rather than going through `finish_flow_run_row`, so
@@ -619,7 +619,7 @@ pub async fn sweep_orphaned_running_runs_on_boot(config: &Config) -> usize {
     let candidates = match store::list_running_run_ids(config, floor) {
         Ok(candidates) => candidates,
         Err(e) => {
-            tracing::warn!(target: "flows", error = %e, "[flows] boot sweep: failed to list running runs (skipping)");
+            tracing::warn!(target: "flows", error = %format_args!("{e:#}"), "[flows] boot sweep: failed to list running runs (skipping)");
             return 0;
         }
     };
@@ -638,7 +638,7 @@ pub async fn sweep_orphaned_running_runs_on_boot(config: &Config) -> usize {
             Ok(true) => {
                 swept += 1;
                 if let Err(e) = store::record_run(config, &flow_id, "interrupted") {
-                    tracing::warn!(target: "flows", run_id = %run_id, flow_id = %flow_id, error = %e, "[flows] boot sweep: failed to update flow summary for reconciled run");
+                    tracing::warn!(target: "flows", run_id = %run_id, flow_id = %flow_id, error = %format_args!("{e:#}"), "[flows] boot sweep: failed to update flow summary for reconciled run");
                 }
                 crate::core::bus::BUS.publish(crate::core::events::DomainEvent::FlowRunFinished {
                     flow_id: flow_id.clone(),
@@ -652,7 +652,7 @@ pub async fn sweep_orphaned_running_runs_on_boot(config: &Config) -> usize {
                 tracing::debug!(target: "flows", run_id = %run_id, "[flows] boot sweep: row changed status concurrently — skipped");
             }
             Err(e) => {
-                tracing::warn!(target: "flows", run_id = %run_id, error = %e, "[flows] boot sweep: failed to reconcile running run");
+                tracing::warn!(target: "flows", run_id = %run_id, error = %format_args!("{e:#}"), "[flows] boot sweep: failed to reconcile running run");
             }
         }
     }
