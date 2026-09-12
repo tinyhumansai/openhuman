@@ -1195,7 +1195,6 @@ async fn subagent_clarification_flow_inner() {
         "version 2",
     )
     .await;
-    eprintln!("clarification second request id: {second_request_id}, first: {}", first["request_id"]);
     let second =
         wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
     assert_eq!(
@@ -1209,7 +1208,8 @@ async fn subagent_clarification_flow_inner() {
         .unwrap_or_else(|| panic!("turn-2 chat_done missing 'full_response': {second}"));
     assert!(
         second_response.contains("ANSWER_CANARY_V2"),
-        "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}"
+        "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}\nrequest_count: {}",
+        with_captured(|c| c.len())
     );
 
     let requests = with_captured(|c| c.clone());
