@@ -1115,6 +1115,9 @@ jobs:
       - name: Fetch submodule tags for pin verification
         run: |
           for module in tinymemory tinyjuice tinyconnectors tinydocs tinymcp tinywallet tinyvoice tinyhosts tinybox; do
+            if test "$(git -C "vendor/$module" rev-parse --is-shallow-repository)" = true; then
+              git -C "vendor/$module" fetch --no-recurse-submodules --unshallow origin
+            fi
             git -C "vendor/$module" fetch --no-recurse-submodules --tags --force origin
           done
 
