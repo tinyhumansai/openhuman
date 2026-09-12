@@ -2920,6 +2920,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         "You are a narrow coverage sub-agent.".into(),
         false,
         false,
+        false,
     )
     .build(&ctx)
     .expect("subagent builder");
@@ -2939,6 +2940,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
             include_identity: true,
             include_profile: true,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::Json,
         &integrations,
@@ -2966,7 +2968,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
     assert!(PromptTool::with_schema("x", "desc", "{}".into())
         .parameters_schema
         .is_some());
-    let options = SubagentRenderOptions::from_definition_flags(false, true, true, false);
+    let options = SubagentRenderOptions::from_definition_flags(false, true, true, false, false);
     assert!(options.include_identity);
     assert!(!options.include_safety_preamble);
     assert!(!options.include_profile);

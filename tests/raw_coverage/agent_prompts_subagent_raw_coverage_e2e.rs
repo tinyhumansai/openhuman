@@ -423,7 +423,7 @@ fn subagent_prompt_renderer_covers_format_branches_and_missing_indices() {
     std::fs::write(workspace.path().join("MEMORY.md"), "memory file").unwrap();
     let parent_tools = vec![tool("alpha")];
     let extra_tools = vec![tool("extra")];
-    let options = SubagentRenderOptions::from_definition_flags(false, false, false, false);
+    let options = SubagentRenderOptions::from_definition_flags(false, false, false, false, false);
 
     let pformat = render_subagent_system_prompt(
         workspace.path(),
