@@ -345,10 +345,9 @@ fn session_key_from_request(messages: &[ChatMessage], system_prompt: Option<&str
     conversation.update((first.len() as u64).to_be_bytes());
     conversation.update(first.as_bytes());
     let mut prompt = Sha256::new();
-    for field in [system_prompt.unwrap_or("")] {
-        prompt.update((field.len() as u64).to_be_bytes());
-        prompt.update(field.as_bytes());
-    }
+    let field = system_prompt.unwrap_or("");
+    prompt.update((field.len() as u64).to_be_bytes());
+    prompt.update(field.as_bytes());
     let conversation = conversation.finalize();
     let prompt = prompt.finalize();
     format!(
