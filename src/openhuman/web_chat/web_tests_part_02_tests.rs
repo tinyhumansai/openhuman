@@ -701,6 +701,19 @@ fn a_spawn_failure_at_turn_time_is_also_a_setup_failure() {
     assert!(classified.message.contains("failed to start"));
 }
 
+#[test]
+fn harness_wrapped_local_cli_failure_is_also_a_setup_failure() {
+    let raw = "tinyagents harness run failed: claude-code model call failed: \
+               [claude-code] `claude` CLI at /tmp/claude failed to start: \
+               No such file or directory";
+
+    let classified = classify_inference_error(raw);
+
+    assert_eq!(classified.error_type, "provider_setup");
+    assert!(!classified.retryable);
+    assert!(classified.message.contains("failed to start"));
+}
+
 /// The `Unusable` arm had no coverage either, and it is where a non-executable
 /// or crashing binary lands.
 #[test]

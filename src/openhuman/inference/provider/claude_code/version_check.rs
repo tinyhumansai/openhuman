@@ -71,7 +71,19 @@ fn well_known_install() -> Option<PathBuf> {
         }
     }
 
-    outdated.or_else(login_shell_lookup)
+    // A version-manager install may be the only supported candidate even when
+    // an older fixed-path install was found above. Prefer that shell-resolved
+    // candidate, but only retain it when its version probe succeeds.
+    if let Some(candidate) = login_shell_lookup() {
+        match version_probe_version(&candidate) {
+            Some(version) if !version_lt(&version, MIN_CLI_VERSION) => return Some(candidate),
+            Some(_) => {
+                outdated.get_or_insert(candidate);
+            }
+            None => {}
+        }
+    }
+    outdated
 }
 
 /// Check that a fallback is an executable Claude CLI, rather than merely a
@@ -153,13 +165,11 @@ fn bounded_child_output(
     let mut stdout = child.stdout.take().expect("stdout was piped");
     let mut stderr = child.stderr.take().expect("stderr was piped");
     std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
+        let bytes = read_bounded(&mut stdout, PROBE_OUTPUT_CAP);
         let _ = stdout_tx.send(bytes);
     });
     std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
+        let bytes = read_bounded(&mut stderr, PROBE_OUTPUT_CAP);
         let _ = stderr_tx.send(bytes);
     });
 
@@ -177,11 +187,11 @@ fn bounded_child_output(
         if stderr.is_none() {
             stderr = stderr_rx.try_recv().ok();
         }
-        if let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) {
+        if status.is_some() && stdout.is_some() && stderr.is_some() {
             return Ok(Some(std::process::Output {
-                status,
-                stdout,
-                stderr,
+                status: status.take().expect("status checked above"),
+                stdout: stdout.take().expect("stdout checked above"),
+                stderr: stderr.take().expect("stderr checked above"),
             }));
         }
         if std::time::Instant::now() >= deadline {
@@ -198,6 +208,27 @@ fn bounded_child_output(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Drain a probe pipe without allowing a broken executable to exhaust memory.
+/// The pipe must still be fully drained so the child cannot block on a full
+/// pipe before the process deadline is reached.
+const PROBE_OUTPUT_CAP: usize = 16 * 1024;
+
+fn read_bounded(reader: &mut impl std::io::Read, cap: usize) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(cap.min(4096));
+    let mut buffer = [0u8; 4096];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) if bytes.len() < cap => {
+                let keep = (cap - bytes.len()).min(read);
+                bytes.extend_from_slice(&buffer[..keep]);
+            }
+            Ok(_) => {}
+        }
+    }
+    bytes
 }
 
 /// Ask the user's login shell where `claude` lives — last resort, time-boxed.

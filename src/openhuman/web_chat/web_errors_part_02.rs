@@ -697,6 +697,7 @@ fn local_cli_provider_setup_detail(err: &str) -> Option<String> {
     /// The one wrapper the provider puts in front of its own errors
     /// (`ClaudeCodeProvider::map_model_error`).
     const WRAPPER: &str = "claude-code model call failed: ";
+    const HARNESS_WRAPPER: &str = "tinyagents harness run failed: ";
 
     // Anchored, not a substring search. `err.find(MARKER)` would classify any
     // error that merely *quotes* the marker — a model echoing it back, a tool
@@ -705,9 +706,13 @@ fn local_cli_provider_setup_detail(err: &str) -> Option<String> {
     // provider actually put it: at the front, or right behind its own wrapper.
     let rest = err.trim();
     let detail = rest
-        .strip_prefix(WRAPPER)
+        .strip_prefix(HARNESS_WRAPPER)
         .map(str::trim_start)
         .unwrap_or(rest);
+    let detail = detail
+        .strip_prefix(WRAPPER)
+        .map(str::trim_start)
+        .unwrap_or(detail);
     if !detail.starts_with(MARKER) {
         return None;
     }
