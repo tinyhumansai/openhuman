@@ -54,9 +54,13 @@ const listProfiles = vi.fn();
 vi.mock('./services/transport/profileStore', () => ({ listProfiles: () => listProfiles() }));
 
 const mockSetActiveCoreTransport = vi.fn();
+let activeTransport: unknown = null;
 vi.mock('./services/coreRpcClient', () => ({
-  getActiveCoreTransport: () => null,
-  setActiveCoreTransport: (transport: unknown) => mockSetActiveCoreTransport(transport),
+  getActiveCoreTransport: () => activeTransport,
+  setActiveCoreTransport: (transport: unknown) => {
+    activeTransport = transport;
+    mockSetActiveCoreTransport(transport);
+  },
 }));
 
 const mockGetTransport = vi.fn();
@@ -127,6 +131,7 @@ describe('AppRoutesIOS — re-pairing escape hatch', () => {
 describe('AppRoutesIOS — persisted transport bootstrap', () => {
   beforeEach(() => {
     listProfiles.mockReset();
+    activeTransport = null;
     mockGetTransport.mockReset();
     mockClose.mockClear();
     mockSetActiveCoreTransport.mockReset();

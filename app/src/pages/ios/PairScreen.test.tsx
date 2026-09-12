@@ -50,6 +50,7 @@ vi.mock('../../services/transport/profileStore', () => ({
 
 const mockGetTransport = vi.fn();
 const mockIsHealthy = vi.fn();
+const mockCall = vi.fn();
 const mockSetActiveCoreTransport = vi.fn();
 vi.mock('../../services/coreRpcClient', () => ({
   setActiveCoreTransport: (transport: unknown) => mockSetActiveCoreTransport(transport),
@@ -95,6 +96,7 @@ beforeEach(() => {
   mockSaveProfile.mockReset();
   mockGetTransport.mockReset();
   mockIsHealthy.mockReset();
+  mockCall.mockReset();
   mockSetActiveCoreTransport.mockReset();
 });
 
@@ -119,6 +121,7 @@ describe('PairScreen', () => {
     mockGetTransport.mockResolvedValue({
       kind: 'tunnel',
       isHealthy: mockIsHealthy,
+      call: mockCall,
       close: vi.fn().mockResolvedValue(undefined),
     });
 
@@ -192,6 +195,7 @@ describe('PairScreen', () => {
     mockGetTransport.mockResolvedValue({
       kind: 'tunnel',
       isHealthy: mockIsHealthy,
+      call: mockCall,
       close: vi.fn().mockResolvedValue(undefined),
     });
 

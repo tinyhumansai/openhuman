@@ -13,7 +13,7 @@
  *      the saved profile.
  */
 import debug from 'debug';
-import { type FC, useEffect, useState } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 
 import MobileTabBar from './components/ios/MobileTabBar';
@@ -47,7 +47,7 @@ const MobileShell: FC<{ children: React.ReactNode }> = ({ children }) => (
 
 /** Bounces to /pair when no profile exists; otherwise renders children. */
 const RequirePairing: FC<{ children: React.ReactNode }> = ({ children }) => {
-  if (!isPaired()) {
+  if (!isPaired() || !getActiveCoreTransport()) {
     log('[mobile] no pairing — redirecting to /pair');
     return <Navigate to="/pair" replace />;
   }
@@ -76,8 +76,15 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
   const location = useLocation();
   const [ready, setReady] = useState(false);
   const [bindingFailed, setBindingFailed] = useState(false);
+  const managerRef = useRef<ReturnType<typeof createTransportManager> | null>(null);
 
   useEffect(() => {
+    if (location.pathname === '/pair') {
+      setBindingFailed(false);
+      setReady(true);
+      return;
+    }
+
     // Profiles can change while the pairing screen is mounted. Read the
     // current store on each navigation so returning to a paired route binds
     // the profile created by the latest pairing attempt.
@@ -95,7 +102,9 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     }
 
     let disposed = false;
-    const manager = createTransportManager(profile, { backendSocketUrl: BACKEND_URL });
+    const manager =
+      managerRef.current ??
+      (managerRef.current = createTransportManager(profile, { backendSocketUrl: BACKEND_URL }));
     void manager
       .getTransport()
       .then(transport => {
@@ -121,11 +130,15 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
         );
       });
 
-    return () => {
-      disposed = true;
-      void manager.close();
-    };
   }, [location.pathname]);
+
+  useEffect(() => {
+    return () => {
+      void managerRef.current?.close();
+      managerRef.current = null;
+      setActiveCoreTransport(null);
+    };
+  }, []);
 
   if (location.pathname === '/pair') return <>{children}</>;
   if (bindingFailed) return <TransportBootstrapError />;
