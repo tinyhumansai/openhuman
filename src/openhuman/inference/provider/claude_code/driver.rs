@@ -60,16 +60,15 @@ fn spawn_error(
 }
 
 #[cfg(target_os = "macos")]
-fn sandbox_wrapped_cli_failed(stderr: &str) -> bool {
+fn sandbox_wrapped_cli_failed(stderr: &str, cli_path: &Path) -> bool {
     let lower = stderr.to_ascii_lowercase();
-    [
-        "no such file",
-        "permission denied",
-        "not permitted",
-        "execvp",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    // sandbox-exec reports a failed child replacement as, for example,
+    // `sandbox-exec: execvp() of '/path/to/claude': Permission denied`.
+    // Stderr is shared with the child, so generic permission/file fragments
+    // are not sufficient: Claude can emit those after it started normally.
+    lower.contains("sandbox-exec")
+        && lower.contains("execvp")
+        && lower.contains(&cli_path.display().to_string().to_ascii_lowercase())
 }
 
 fn parse_turn_timeout(raw: Option<&str>) -> Duration {
@@ -608,7 +607,7 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
 
     if !status.success() {
         #[cfg(target_os = "macos")]
-        if jailed && sandbox_wrapped_cli_failed(&stderr_text) {
+        if jailed && sandbox_wrapped_cli_failed(&stderr_text, &ctx.bin_path) {
             anyhow::bail!(
                 "[claude-code] `claude` CLI at {} failed to start: {}",
                 ctx.bin_path.display(),

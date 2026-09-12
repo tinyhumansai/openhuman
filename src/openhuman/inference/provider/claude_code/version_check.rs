@@ -41,7 +41,7 @@ pub fn resolve_binary() -> Option<PathBuf> {
 fn well_known_install() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     for candidate in well_known_candidates(home.as_deref()) {
-        if candidate.is_file() {
+        if candidate.is_file() && version_probe_succeeds(&candidate) {
             log::debug!(
                 "[claude-code][version] resolved off-PATH candidate path={}",
                 candidate.display()
@@ -51,6 +51,24 @@ fn well_known_install() -> Option<PathBuf> {
     }
 
     login_shell_lookup()
+}
+
+/// Check that a fallback is an executable Claude CLI, rather than merely a
+/// stale path left behind by an installer or migration. `probe()` performs
+/// the authoritative version check after resolution; this lightweight probe
+/// only lets resolution continue to later candidates when this one cannot
+/// answer `--version` at all.
+fn version_probe_succeeds(path: &Path) -> bool {
+    match Command::new(path).arg("--version").output() {
+        Ok(output) => output.status.success() && parse_version(&String::from_utf8_lossy(&output.stdout)).is_some(),
+        Err(err) => {
+            log::debug!(
+                "[claude-code][version] skipping unusable fallback path={} err={err}",
+                path.display()
+            );
+            false
+        }
+    }
 }
 
 /// Ask the user's login shell where `claude` lives — last resort, time-boxed.
@@ -116,28 +134,48 @@ fn login_shell_lookup() -> Option<PathBuf> {
 /// the bound exists. Reading `SHELL` inside would have forced an env-mutating
 /// test that races every other test in the binary.
 fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
-    let shell = shell.to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let output = Command::new(&shell)
-            .args(["-lc", "command -v claude"])
-            .output();
-        let _ = tx.send(output);
-    });
-
-    let output = match rx.recv_timeout(budget) {
-        Ok(Ok(output)) => output,
-        Ok(Err(err)) => {
+    let mut child = match Command::new(shell)
+        .args(["-lc", "command -v claude"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
             log::debug!("[claude-code][version] login shell probe failed err={err}");
             return None;
         }
-        Err(_) => {
-            // The worker thread is left to finish on its own; it holds nothing
-            // this process needs, and killing a shell mid-rc buys nothing.
-            log::warn!(
-                "[claude-code][version] login shell probe timed out after {}s;                  a slow or blocking shell profile can cause this",
-                LOGIN_SHELL_PROBE_TIMEOUT.as_secs()
-            );
+    };
+
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                log::warn!(
+                    "[claude-code][version] login shell probe timed out after {:?}; a slow or blocking shell profile can cause this",
+                    budget
+                );
+                return None;
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                log::debug!("[claude-code][version] login shell probe wait failed err={err}");
+                return None;
+            }
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(err) => {
+            log::debug!("[claude-code][version] login shell probe output failed err={err}");
             return None;
         }
     };

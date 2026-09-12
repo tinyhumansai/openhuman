@@ -237,6 +237,24 @@ fn only_permanent_spawn_failures_claim_the_setup_marker() {
         );
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sandbox_setup_detection_requires_the_wrapper_diagnostic_and_cli_path() {
+    let cli = std::path::Path::new("/opt/homebrew/bin/claude");
+    assert!(sandbox_wrapped_cli_failed(
+        "sandbox-exec: execvp() of '/opt/homebrew/bin/claude': Permission denied",
+        cli
+    ));
+    assert!(!sandbox_wrapped_cli_failed(
+        "Claude: permission denied while reading a project file",
+        cli
+    ));
+    assert!(!sandbox_wrapped_cli_failed(
+        "sandbox-exec: execvp() of '/usr/local/bin/claude': No such file or directory",
+        cli
+    ));
+}
 #[test]
 fn parse_error_events_produce_a_log_line() {
     let ev = ClaudeCodeEvent::ParseError {
