@@ -84,3 +84,28 @@ fn a_blocking_login_shell_is_abandoned_rather_than_waited_on() {
         "probe waited {elapsed:?}; the budget was not honoured"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_blocking_version_probe_is_killed_and_reaped() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let binary = dir.path().join("blocking-claude");
+    std::fs::write(&binary, "#!/bin/sh\nsleep 30\n").expect("write binary");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod binary");
+    }
+
+    let started = std::time::Instant::now();
+    let result = super::bounded_version_probe(&binary, Duration::from_millis(200))
+        .expect("probe should spawn");
+
+    assert_eq!(result, None, "a blocking binary must not resolve");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "probe waited {:?}; the budget was not honoured",
+        started.elapsed()
+    );
+}

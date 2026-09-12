@@ -14,6 +14,9 @@ use super::types::{CliStatus, MIN_CLI_VERSION};
 /// How long the login-shell probe may take before it is abandoned.
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Keep a stale or broken fallback binary from blocking resolution forever.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Locate the `claude` CLI binary on `PATH`.
 ///
 /// Honors `OPENHUMAN_CLAUDE_CLI` env override so tests and power users can
@@ -59,17 +62,54 @@ fn well_known_install() -> Option<PathBuf> {
 /// only lets resolution continue to later candidates when this one cannot
 /// answer `--version` at all.
 fn version_probe_succeeds(path: &Path) -> bool {
-    match Command::new(path).arg("--version").output() {
-        Ok(output) => {
+    match bounded_version_probe(path, VERSION_PROBE_TIMEOUT) {
+        Ok(Some(output)) => {
             output.status.success()
                 && parse_version(&String::from_utf8_lossy(&output.stdout)).is_some()
         }
+        Ok(None) => false,
         Err(err) => {
             log::debug!(
                 "[claude-code][version] skipping unusable fallback path={} err={err}",
                 path.display()
             );
             false
+        }
+    }
+}
+
+/// Run a fallback binary's `--version` probe with a hard bound.
+///
+/// This is deliberately synchronous because fallback resolution is synchronous.
+/// A timed-out child is killed and reaped before returning, so repeated turns do
+/// not leak processes or leave a probe holding a worker thread indefinitely.
+fn bounded_version_probe(
+    path: &Path,
+    budget: Duration,
+) -> std::io::Result<Option<std::process::Output>> {
+    let mut child = Command::new(path)
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let deadline = std::time::Instant::now() + budget;
+
+    loop {
+        match child.try_wait()? {
+            Some(_) => return child.wait_with_output().map(Some),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                log::debug!(
+                    "[claude-code][version] fallback version probe timed out path={} after {:?}",
+                    path.display(),
+                    budget
+                );
+                return Ok(None);
+            }
         }
     }
 }
