@@ -12,7 +12,7 @@ use crate::openhuman::security::credentials::session_support::{
 use crate::openhuman::security::keyring::SecretStore;
 use crate::rpc::RpcOutcome;
 
-use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use super::{normalize_provider, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::openhuman::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id,

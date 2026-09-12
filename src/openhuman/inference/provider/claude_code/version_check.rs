@@ -19,8 +19,17 @@ const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Locate the `claude` CLI binary on `PATH`.
 ///
-/// Honors `OPENHUMAN_CLAUDE_CLI` env override so tests and power users can
-/// point at a specific binary.
+/// Resolution order:
+/// 1. `OPENHUMAN_CLAUDE_CLI` env override (tests / power users / a fixed path).
+/// 2. `PATH` search.
+/// 3. Well-known absolute install locations ([`well_known_candidates`]).
+///
+/// Step 3 exists because a macOS app launched from Finder/Dock inherits only
+/// the stripped launchd `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which never
+/// contains the native installer's `~/.local/bin` — so a PATH-only lookup
+/// reports the CLI "not installed" even though it is present. (Terminal
+/// launches inherit the shell `PATH` and hit step 2, so this only bites GUI
+/// launches.)
 pub fn resolve_binary() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("OPENHUMAN_CLAUDE_CLI") {
         let p = PathBuf::from(explicit);
@@ -295,7 +304,11 @@ pub fn probe() -> CliStatus {
     };
     let path_str = path.display().to_string();
 
-    let output = match Command::new(&path).arg("--version").output() {
+    let output = match Command::new(&path)
+        .arg("--version")
+        .env("PATH", super::driver::child_path_with_user_bins(&path))
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             log::warn!("[claude-code][version] spawn failed path={path_str} err={e}");

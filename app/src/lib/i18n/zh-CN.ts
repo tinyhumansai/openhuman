@@ -4450,6 +4450,7 @@ const messages: TranslationMap = {
     'OpenHuman 通过我们的后端代理工具调用（推荐）。认证由我们处理，你无需粘贴 Composio API 密钥。Webhook 完全路由。',
   'settings.composio.routingMode': '路由模式',
   'settings.composio.saveErrorNoKey': '保存失败。直连模式需要非空的 API 密钥。',
+  'settings.composio.invalidApiKey': 'Composio API 密钥无效。',
   'settings.composio.saving': '保存中…',
   'settings.composio.switching': '切换中…',
   'settings.cron.jobs.commandRequired': 'Shell 任务必须填写命令',

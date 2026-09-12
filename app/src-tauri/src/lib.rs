@@ -2789,7 +2789,7 @@ pub fn run() {
             ForwardResult::Forwarded => {
                 std::process::exit(0);
             }
-            ForwardResult::NoPrimary | ForwardResult::NoUrls => {}
+            ForwardResult::NoPrimary | ForwardResult::ForwardFailed | ForwardResult::NoUrls => {}
         }
         deep_link_ipc::bind_and_listen()
     };

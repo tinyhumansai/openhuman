@@ -20,6 +20,53 @@ fn write_mcp_http_config_emits_http_url_with_bearer_header() {
 }
 
 #[test]
+fn child_path_prepends_cli_dir_and_keeps_inherited_entries() {
+    let _env = super::super::ENV_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    struct PathRestore(Option<std::ffi::OsString>);
+    impl Drop for PathRestore {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    let _restore = PathRestore(std::env::var_os("PATH"));
+    let inherited = std::env::join_paths([
+        std::path::Path::new("/usr/bin"),
+        std::path::Path::new("/bin"),
+    ])
+    .expect("valid test paths");
+    std::env::set_var("PATH", inherited);
+
+    let combined = child_path_with_user_bins(std::path::Path::new("/Users/test/.local/bin/claude"));
+    let dirs: Vec<PathBuf> = std::env::split_paths(&combined).collect();
+
+    assert_eq!(
+        dirs.first().map(|p| p.as_path()),
+        Some(std::path::Path::new("/Users/test/.local/bin"))
+    );
+    assert!(dirs.iter().any(|p| p == std::path::Path::new("/usr/bin")));
+    assert!(dirs.iter().any(|p| p == std::path::Path::new("/bin")));
+    let cli_idx = dirs
+        .iter()
+        .position(|p| p == std::path::Path::new("/Users/test/.local/bin"))
+        .expect("CLI directory");
+    let usr_idx = dirs
+        .iter()
+        .position(|p| p == std::path::Path::new("/usr/bin"))
+        .expect("inherited directory");
+    assert!(
+        cli_idx < usr_idx,
+        "CLI dir must come before inherited /usr/bin"
+    );
+    assert!(!dirs.iter().any(|p| p.as_os_str().is_empty()));
+}
+
+#[test]
 fn large_system_prompt_is_written_to_file_instead_of_argv() {
     let dir = tempfile::tempdir().expect("tempdir");
     let prompt = "system instruction\n".repeat(2_500);
@@ -255,6 +302,50 @@ fn sandbox_setup_detection_requires_the_wrapper_diagnostic_and_cli_path() {
         cli
     ));
 }
+/// `String::truncate` takes a byte index and panics when it is not a character
+/// boundary, so bounding the stderr accumulator with `acc.truncate(16_384)`
+/// aborted the drain task whenever a multi-byte character straddled the cap.
+/// The join is `unwrap_or_default()`, so the operator saw `stderr=` and lost
+/// the whole error output for that turn.
+#[test]
+fn push_bounded_never_splits_a_character() {
+    // "aéb" is 4 bytes: a=0, é=1..2, b=3. A cap of 2 lands *inside* 'é', so the
+    // helper must back up to byte 1 -- `String::truncate(2)` would panic here.
+    let mut acc = String::new();
+    super::push_bounded(&mut acc, "aéb", 2);
+    assert_eq!(acc, "a", "must back up to the boundary, not split it");
+
+    // A cap of 3 lands exactly on a boundary, so nothing is given up needlessly.
+    let mut acc = String::new();
+    super::push_bounded(&mut acc, "aéb", 3);
+    assert_eq!(acc, "aé");
+    assert!(acc.len() <= 3);
+
+    // The same, driven the way the reader does it: many small chunks over the cap.
+    let mut acc = String::new();
+    for _ in 0..600 {
+        super::push_bounded(&mut acc, "日本語テキスト", 1024);
+    }
+    assert!(acc.len() <= 1024);
+    // The real assertion: it is still valid UTF-8 and did not panic getting here.
+    assert!(std::str::from_utf8(acc.as_bytes()).is_ok());
+}
+
+#[test]
+fn push_bounded_keeps_everything_below_the_cap() {
+    let mut acc = String::new();
+    super::push_bounded(&mut acc, "hello ", 64);
+    super::push_bounded(&mut acc, "world", 64);
+    assert_eq!(acc, "hello world");
+}
+
+#[test]
+fn push_bounded_handles_an_ascii_cap_exactly() {
+    let mut acc = String::new();
+    super::push_bounded(&mut acc, "abcdef", 3);
+    assert_eq!(acc, "abc");
+}
+
 #[test]
 fn parse_error_events_produce_a_log_line() {
     let ev = ClaudeCodeEvent::ParseError {

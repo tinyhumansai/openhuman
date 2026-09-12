@@ -586,6 +586,27 @@ fn attachments_dir() -> PathBuf {
         .unwrap_or_else(fallback_attachments_dir)
 }
 
+/// Whether a provider image reference points inside this process' managed
+/// attachment stash. Raw channel-supplied filesystem paths are never trusted.
+pub fn is_managed_attachment_path(path: &str) -> bool {
+    managed_attachment_path(path).is_some()
+}
+
+/// Return the canonical path when `path` resolves inside the managed stash.
+/// Callers should use this returned path for subsequent reads so the checked
+/// path, rather than an attacker-controlled spelling, is what gets opened.
+pub fn managed_attachment_path(path: &str) -> Option<PathBuf> {
+    let candidate = Path::new(path);
+    let candidate = candidate.canonicalize().ok()?;
+    let root = attachments_dir().canonicalize().ok()?;
+    candidate.starts_with(root).then_some(candidate)
+}
+
+#[cfg(test)]
+pub(crate) fn managed_attachments_dir_for_tests() -> PathBuf {
+    attachments_dir()
+}
+
 /// Per-user fallback attachments dir used only when [`init_attachments_dir`]
 /// was never called. Uses the OS user cache dir (e.g. `~/Library/Caches/…`,
 /// `~/.cache/…`) so persisted image bytes aren't dropped into a world-readable

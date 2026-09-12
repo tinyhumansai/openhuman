@@ -4657,6 +4657,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': '라우팅 모드',
   'settings.composio.saveErrorNoKey':
     '저장에 실패했습니다. Direct 모드에는 비어 있지 않은 API 키가 필요합니다.',
+  'settings.composio.invalidApiKey': 'Composio API 키가 유효하지 않습니다.',
   'settings.composio.saving': '저장 중…',
   'settings.composio.switching': '전환 중…',
   'settings.cron.jobs.commandRequired': '셸 작업에는 명령어가 필요합니다',

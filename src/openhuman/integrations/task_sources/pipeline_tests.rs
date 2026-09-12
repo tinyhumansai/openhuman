@@ -2,6 +2,7 @@ use super::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::task_sources::store;
 use crate::openhuman::integrations::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
+use crate::openhuman::integrations::task_sources::NormalizedTask;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -104,6 +105,43 @@ async fn refusal_records_a_fetch_history_entry() {
         recorded.is_some(),
         "source must still be listed after a refused fetch"
     );
+}
+
+#[tokio::test]
+async fn full_page_fetch_skips_prune_then_resumes_below_cap() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let source = add_github_source(&config);
+    let stale = NormalizedTask {
+        external_id: "stale-task".into(),
+        source_id: source.id.clone(),
+        provider: "github".into(),
+        title: "Stale task".into(),
+        ..Default::default()
+    };
+    // An empty card id keeps this focused on reconciliation: the store row is
+    // the stale ingestion that a complete fetch must retain and a later
+    // below-cap fetch must remove.
+    store::mark_ingested(&config, &source.id, &stale, "").unwrap();
+    let current_external_ids = std::collections::HashSet::new();
+
+    assert_eq!(
+        reconcile_if_complete(&config, &source, &current_external_ids, 2, 2)
+            .await
+            .unwrap(),
+        0,
+        "a full-page fetch must not prune tasks truncated out of the window"
+    );
+    assert_eq!(
+        reconcile_if_complete(&config, &source, &current_external_ids, 1, 2)
+            .await
+            .unwrap(),
+        1,
+        "a below-cap fetch resumes reconciliation and prunes the stale task"
+    );
+    assert!(store::list_ingested_refs(&config, &source.id)
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

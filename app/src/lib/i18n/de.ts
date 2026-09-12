@@ -4840,6 +4840,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Routing-Modus',
   'settings.composio.saveErrorNoKey':
     'Speichern fehlgeschlagen. Der Direktmodus erfordert einen nicht leeren Schlüssel API.',
+  'settings.composio.invalidApiKey': 'Der Composio-API-Schlüssel ist ungültig.',
   'settings.composio.saving': 'Sparen…',
   'settings.composio.switching': 'Wechseln…',
   'settings.cron.jobs.commandRequired': 'Bei Shell-Jobs ist ein Befehl erforderlich',

@@ -360,6 +360,10 @@ pub async fn list_provider_credentials(
     provider_filter: Option<String>,
 ) -> Result<RpcOutcome<Vec<super::responses::AuthProfileSummary>>, String> {
     let auth = AuthService::from_config(config);
+    let provider_filter = provider_filter
+        .map(|provider| normalize_provider(&provider))
+        .transpose()
+        .map_err(|e| e.to_string())?;
     let profiles = auth.load_profiles().map_err(|e| e.to_string())?;
     let mut items = profiles
         .profiles

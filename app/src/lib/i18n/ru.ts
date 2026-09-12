@@ -4757,6 +4757,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Режим маршрутизации',
   'settings.composio.saveErrorNoKey':
     'Не удалось сохранить. Прямой режим требует непустой API-ключ.',
+  'settings.composio.invalidApiKey': 'Недействительный API-ключ Composio.',
   'settings.composio.saving': 'Сохранение…',
   'settings.composio.switching': 'Переключение…',
   'settings.cron.jobs.commandRequired': 'Для shell-задач требуется команда',

@@ -86,25 +86,6 @@ impl ToolMiddleware<()> for CredentialScrubMiddleware {
     }
 }
 
-/// Recursively scrub credential-shaped string leaves inside a JSON value.
-fn scrub_json_credentials(value: serde_json::Value) -> serde_json::Value {
-    use serde_json::Value;
-    match value {
-        Value::String(s) => {
-            Value::String(crate::openhuman::agent::harness::credentials::scrub_credentials(&s))
-        }
-        Value::Array(items) => {
-            Value::Array(items.into_iter().map(scrub_json_credentials).collect())
-        }
-        Value::Object(map) => Value::Object(
-            map.into_iter()
-                .map(|(k, v)| (k, scrub_json_credentials(v)))
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
 /// `wrap_tool`: enforce the agent's builder-configured [`ToolPolicy`] at the tool
 /// boundary (issue #4249). The in-house engine ran this check in
 /// `agent_tool_exec` (`ctx.tool_policy.check(...)`); the tinyagents path bypassed
@@ -324,17 +305,4 @@ impl ToolPolicyMiddleware {
         None
     }
 
-    fn generated_context(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
-        self.tool_sets
-            .iter()
-            .flat_map(|set| set.iter())
-            .find(|t| t.name() == name)
-            .and_then(|t| {
-                crate::openhuman::tools::traits::generated_runtime_context(t.as_ref(), args)
-            })
-    }
 }

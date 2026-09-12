@@ -59,8 +59,8 @@ cargo check --manifest-path Cargo.toml
 cargo build --manifest-path Cargo.toml --bin openhuman-core
 cargo check --manifest-path app/src-tauri/Cargo.toml
 
-# Apple Silicon workaround for llama.cpp
-GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml
+# Standard root-crate validation
+cargo check --manifest-path Cargo.toml
 ```
 
 Use the summary-sized debug runners for long test output:
