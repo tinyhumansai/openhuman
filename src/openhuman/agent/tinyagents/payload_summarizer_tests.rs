@@ -12,6 +12,7 @@ fn dummy_definition() -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
+        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Hint("summarization".into()),

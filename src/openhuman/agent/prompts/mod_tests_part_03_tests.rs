@@ -563,7 +563,6 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
         connected_identities_md: String::new(),
         include_profile: false,
         include_memory_md: false,
-        include_skills_catalog: false,
         curated_snapshot: None,
         user_identity: None,
         personality_soul_md: None,
