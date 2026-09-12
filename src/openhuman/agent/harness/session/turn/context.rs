@@ -3,8 +3,8 @@
 use super::super::turn_checkpoint::assistant_message_has_tool_calls;
 use super::super::types::Agent;
 use super::{collect_tree_root_summaries, sanitize_learned_entry};
-use crate::openhuman::agent::learning::prompt_sections::merge_standing_preferences;
 use crate::openhuman::agent::context::prompt::{LearnedContextData, PromptContext, PromptTool};
+use crate::openhuman::agent::learning::prompt_sections::merge_standing_preferences;
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::tools::agent_policy::render_tool_policy_boundary;
@@ -217,8 +217,11 @@ impl Agent {
             "[learning] fetch_learned_context: loaded {} explicit standing preference(s)",
             general.len()
         );
-        let facets = crate::openhuman::agent::learning::prompt_sections::
-            load_learned_from_global_cache(&self.workspace_dir, None)
+        let facets =
+            crate::openhuman::agent::learning::prompt_sections::load_learned_from_global_cache(
+                &self.workspace_dir,
+                None,
+            )
             .await;
         let user_profile = merge_standing_preferences(general, facets);
         tracing::debug!(
